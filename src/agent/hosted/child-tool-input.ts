@@ -1,4 +1,4 @@
-import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, getJsonValueSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { withDefaultResearchArtifactPath } from "../artifacts/default-research-artifact-policy.ts";
 import type { RuntimeAgentThinkingConfig } from "../runtime/agent-definition.ts";
@@ -22,6 +22,9 @@ export const getHostedChildForkToolInputSchema = defineSchema((v) =>
   v.object({
     description: v.string().describe("3-5 word task summary"),
     prompt: v.string().describe("Detailed instructions for the task"),
+    context: v.record(v.string(), getJsonValueSchema()).optional().describe(
+      "Structured data payload for the child task. Use this for critical facts and records the child must act on.",
+    ),
     evidence_refs: v.array(getHostedChildForkEvidenceRefSchema()).optional().describe(
       "Generic source-of-truth references for facts the child must preserve. " +
         "Use run_id/message_id/tool_call_id plus result_path instead of copying critical facts as prose.",
@@ -69,7 +72,14 @@ export type HostedChildForkRuntimeConfig = {
 export type ResolveHostedChildForkRuntimeConfigInput = {
   forkInput: Pick<
     HostedChildForkToolInput,
-    "description" | "prompt" | "evidence_refs" | "tools" | "model" | "thinking" | "max_steps"
+    | "description"
+    | "prompt"
+    | "context"
+    | "evidence_refs"
+    | "tools"
+    | "model"
+    | "thinking"
+    | "max_steps"
   >;
   contextModel?: string;
   defaultModel: string;
@@ -107,11 +117,29 @@ function appendEvidenceRefsToPrompt(
   }\n</evidence_refs>\nTreat these references as source-of-truth pointers. If prose conflicts with referenced evidence, prefer the referenced evidence and say what conflicted.`;
 }
 
+function hasStructuredContext(context: HostedChildForkToolInput["context"]): boolean {
+  return context !== undefined && Object.keys(context).length > 0;
+}
+
+function appendStructuredContextToPrompt(
+  prompt: string,
+  context: HostedChildForkToolInput["context"],
+): string {
+  if (!hasStructuredContext(context)) {
+    return prompt;
+  }
+
+  return `${prompt}\n\n<structured_context>\n${
+    JSON.stringify(context)
+  }\n</structured_context>\nTreat structured_context as the authoritative data payload for the child task. If prose conflicts with structured_context, use structured_context and say what conflicted.`;
+}
+
 /** Configuration used by resolve hosted child fork runtime. */
 export function resolveHostedChildForkRuntimeConfig(
   input: ResolveHostedChildForkRuntimeConfigInput,
 ): HostedChildForkRuntimeConfig {
-  const { description, prompt, evidence_refs, tools, model, thinking, max_steps } = input.forkInput;
+  const { description, prompt, context, evidence_refs, tools, model, thinking, max_steps } =
+    input.forkInput;
   const forkModel = input.resolveModelId(model || input.contextModel || input.defaultModel);
   const requestedMaxSteps = typeof max_steps === "number" ? max_steps : undefined;
   const promptWithArtifactPath = withDefaultResearchArtifactPath({
@@ -122,7 +150,10 @@ export function resolveHostedChildForkRuntimeConfig(
 
   return {
     description,
-    effectivePrompt: appendEvidenceRefsToPrompt(promptWithArtifactPath, evidence_refs),
+    effectivePrompt: appendEvidenceRefsToPrompt(
+      appendStructuredContextToPrompt(promptWithArtifactPath, context),
+      evidence_refs,
+    ),
     requestedTools: tools,
     forkModel,
     provider: input.resolveProvider(forkModel),

@@ -11,6 +11,13 @@ Deno.test("hostedChildForkToolInputSchema accepts the hosted child fork fields",
   const parsed = hostedChildForkToolInputSchema.parse({
     description: "review auth flow",
     prompt: "Review the authentication flow and report issues.",
+    context: {
+      matched_invoice: {
+        invoice_id: "INV-2026-00491",
+        supplier: "Meyer Papier GmbH",
+        amount: 2180,
+      },
+    },
     evidence_refs: [{
       run_id: "run_123",
       tool_call_id: "tool_123",
@@ -27,6 +34,13 @@ Deno.test("hostedChildForkToolInputSchema accepts the hosted child fork fields",
   assertEquals(parsed, {
     description: "review auth flow",
     prompt: "Review the authentication flow and report issues.",
+    context: {
+      matched_invoice: {
+        invoice_id: "INV-2026-00491",
+        supplier: "Meyer Papier GmbH",
+        amount: 2180,
+      },
+    },
     evidence_refs: [{
       run_id: "run_123",
       tool_call_id: "tool_123",
@@ -39,6 +53,49 @@ Deno.test("hostedChildForkToolInputSchema accepts the hosted child fork fields",
     thinking: 1024,
     max_steps: 12,
   });
+});
+
+Deno.test("resolveHostedChildForkRuntimeConfig appends structured context before evidence refs", () => {
+  const result = resolveHostedChildForkRuntimeConfig({
+    forkInput: {
+      description: "release invoice",
+      prompt: "Release the invoice if the structured context is valid.",
+      context: {
+        matched_invoice: {
+          invoice_id: "INV-2026-00491",
+          supplier: "Meyer Papier GmbH",
+          amount: 2180,
+          currency: "EUR",
+        },
+      },
+      evidence_refs: [{
+        run_id: "run_match",
+        tool_call_id: "tool_match",
+        result_path: "$.matched_invoices[1]",
+      }],
+    },
+    contextModel: "opus",
+    defaultModel: "haiku",
+    defaultMaxSteps: 80,
+    runId: "tool-call-1",
+    resolveModelId: (modelId) => `resolved-${modelId}`,
+    resolveProvider: (modelId) => `provider-for-${modelId}`,
+  });
+
+  assertEquals(result.effectivePrompt.includes("<structured_context>"), true);
+  assertEquals(result.effectivePrompt.includes('"supplier":"Meyer Papier GmbH"'), true);
+  assertEquals(result.effectivePrompt.includes("<evidence_refs>"), true);
+  assertEquals(
+    result.effectivePrompt.indexOf("<structured_context>") <
+      result.effectivePrompt.indexOf("<evidence_refs>"),
+    true,
+  );
+  assertEquals(
+    result.effectivePrompt.includes(
+      "Treat structured_context as the authoritative data payload for the child task.",
+    ),
+    true,
+  );
 });
 
 Deno.test("resolveHostedChildForkRuntimeConfig appends evidence refs as structured child context", () => {

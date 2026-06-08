@@ -298,6 +298,36 @@ describe("current-run tool state", () => {
     );
   });
 
+  it("derives delegated agent semantic record keys from structured context", () => {
+    const state = createCurrentRunToolState();
+    const now = new Date("2026-01-01T00:00:00.000Z");
+
+    recordCurrentRunToolResult(state, {
+      toolCallId: "call_1",
+      toolName: "invoke_agent",
+      input: {
+        agent_id: "payment-approval-agent",
+        prompt: "Approve the matched invoice from structured context.",
+        context: {
+          matched_invoice: {
+            invoice_id: "INV-2026-00491",
+            supplier: "Meyer Papier GmbH",
+          },
+        },
+      },
+      result: { status: "completed", output: "Approved INV-2026-00491" },
+      now,
+    });
+
+    const prompt = appendCurrentRunToolStateToSystemPrompt("Base system", state);
+
+    assertStringIncludes(prompt, '"agent:payment-approval-agent:record:INV-2026-00491"');
+    assertStringIncludes(
+      prompt,
+      '"parameters":{"agent_id":"payment-approval-agent","record_id":"INV-2026-00491"}',
+    );
+  });
+
   it("blocks invoke_agent inputs that contradict prior current-run tool evidence", () => {
     const state = createCurrentRunToolState();
 

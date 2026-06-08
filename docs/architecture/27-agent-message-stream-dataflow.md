@@ -168,12 +168,16 @@ when the tool input is complete enough to commit.
 conversation context and tool inventory. The parent transcript receives a compact
 summary/result and durable child-run identifiers, not the full child transcript.
 
-When the parent needs the child to use structured facts from prior tool results,
-it can pass generic `evidence_refs`. These refs point to prior run/message/tool
-evidence and are appended to the child prompt as structured context. They are
-also stored in child-run metadata. This avoids asking the parent model to
-rewrite critical facts as prose and lets the child prefer referenced evidence
-when prose conflicts with the refs.
+When the parent needs the child to act on critical facts from prior tool
+results, it should pass generic `context`. This is the child execution payload:
+records, ids, decisions, and other structured values the child must preserve.
+The prompt explains the task, but `context` carries the data to act on.
+
+The parent can also pass generic `evidence_refs`. These refs point to prior
+run/message/tool evidence and are stored with the child-run metadata for audit
+and replay. `context` is enough for execution correctness; `evidence_refs`
+explain where the context came from. The child prompt receives both blocks and
+is instructed to prefer `structured_context` when prose conflicts with it.
 
 Child run events should remain inspectable and streamable through child-run
 views. They should not be dumped into the parent context, because that would
