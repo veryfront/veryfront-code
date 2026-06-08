@@ -24,7 +24,7 @@ import {
 ```ts
 import { resolveModel } from "veryfront/provider";
 
-const model = resolveModel("veryfront-cloud/openai/gpt-5.2");
+const model = resolveModel("veryfront-cloud/openai/gpt-5.5");
 ```
 
 ## API

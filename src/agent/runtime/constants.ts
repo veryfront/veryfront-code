@@ -7,15 +7,26 @@ export const DEFAULT_MAX_STEPS = 20;
 
 /** Max output token limits per model (normalized IDs without `veryfront-cloud/` prefix). */
 const MODEL_MAX_OUTPUT_TOKENS: Record<string, number> = {
+  "anthropic/claude-opus-4-8": 128_000,
   "anthropic/claude-opus-4-6": 128_000,
   "anthropic/claude-sonnet-4-6": 64_000,
   "anthropic/claude-haiku-4-5-20251001": 64_000,
+  "openai/gpt-5.5": 128_000,
   "openai/gpt-5.2": 128_000,
+  "google-ai-studio/gemini-3.1-pro-preview": 65_536,
+  "google-ai-studio/gemini-3.5-flash": 65_536,
+  "google-ai-studio/gemini-3-flash-preview": 65_536,
+  "google-ai-studio/gemini-3.1-flash-lite": 65_536,
   "google-ai-studio/gemini-2.5-pro": 65_536,
   "google-ai-studio/gemini-2.5-flash": 65_536,
 };
 
 const MODEL_MAX_OUTPUT_TOKEN_ALIASES: Record<string, string> = {
+  "google/gemini-3.1-pro": "google-ai-studio/gemini-3.1-pro-preview",
+  "google/gemini-3.1-pro-preview": "google-ai-studio/gemini-3.1-pro-preview",
+  "google/gemini-3.5-flash": "google-ai-studio/gemini-3.5-flash",
+  "google/gemini-3-flash-preview": "google-ai-studio/gemini-3-flash-preview",
+  "google/gemini-3.1-flash-lite": "google-ai-studio/gemini-3.1-flash-lite",
   "google/gemini-2.5-pro": "google-ai-studio/gemini-2.5-pro",
   "google/gemini-2.5-flash": "google-ai-studio/gemini-2.5-flash",
 };
