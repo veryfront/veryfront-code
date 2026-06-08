@@ -160,6 +160,8 @@ export interface AgentConfig {
   /** Remote MCP servers available to this agent. */
   mcpServers?: AgentMcpServerConfig[];
   maxSteps?: number;
+  /** Sampling temperature for model generation. Defaults to 0. */
+  temperature?: number;
   streaming?: boolean;
   memory?: MemoryConfig;
   middleware?: AgentMiddleware[];

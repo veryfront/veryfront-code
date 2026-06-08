@@ -226,6 +226,7 @@ export function createAgentServiceRuntime<
       id: agentConfig.id,
       system: agentConfig.instructions,
       model: agentConfig.model,
+      temperature: agentConfig.temperature,
       maxSteps: agentConfig.maxSteps,
     }),
     server: {

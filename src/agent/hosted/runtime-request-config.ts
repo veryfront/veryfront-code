@@ -18,7 +18,7 @@ export type HostedRuntimeRequestConfigRequest = Pick<
 /** Public API contract for hosted runtime request config agent. */
 export type HostedRuntimeRequestConfigAgent = Pick<
   RuntimeAgentMarkdownDefinition,
-  "model" | "thinking" | "maxSteps"
+  "model" | "thinking" | "temperature" | "maxSteps"
 >;
 
 /** Input payload for resolve hosted runtime request config. */
@@ -37,6 +37,7 @@ export type ResolvedHostedRuntimeRequestConfig = {
   requestedModel: string | undefined;
   clientProfile: RuntimeClientProfile | null;
   requestedThinking: RuntimeAgentThinkingConfig | undefined;
+  requestedTemperature: number | undefined;
   requestedMaxSteps: number | undefined;
 };
 
@@ -114,6 +115,7 @@ export function resolveHostedRuntimeRequestConfig(
         input.agentConfig.thinking,
       requestedThinking: effectiveRuntimeOverrides?.thinking,
     }),
+    requestedTemperature: input.agentConfig.temperature,
     requestedMaxSteps: effectiveRuntimeOverrides?.maxSteps ??
       input.agentConfig.maxSteps,
   };

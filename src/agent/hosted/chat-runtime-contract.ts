@@ -96,6 +96,7 @@ export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingC
   authToken: string;
   instructions: string | ChatSystemMessage[];
   model?: string;
+  temperature?: number;
   maxSteps?: number;
   allowedTools?: string[];
   allowDelegation?: boolean;

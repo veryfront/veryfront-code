@@ -287,6 +287,9 @@ export async function prepareHostedChatRuntimeCreationOptions<
       ...(input.branchId !== undefined ? { branchId: input.branchId } : {}),
       ...(runtimeConfig.requestedModel ? { model: runtimeConfig.requestedModel } : {}),
       ...(runtimeConfig.requestedThinking ? { thinking: runtimeConfig.requestedThinking } : {}),
+      ...(runtimeConfig.requestedTemperature !== undefined
+        ? { temperature: runtimeConfig.requestedTemperature }
+        : {}),
       ...(runtimeConfig.requestedMaxSteps !== undefined
         ? { maxSteps: runtimeConfig.requestedMaxSteps }
         : {}),
