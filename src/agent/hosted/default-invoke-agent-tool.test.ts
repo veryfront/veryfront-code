@@ -52,11 +52,13 @@ Deno.test("defaultHostedInvokeAgentInputSchema accepts child-agent selection", (
     defaultHostedInvokeAgentInputSchema.parse({
       description: "inspect auth",
       prompt: "Inspect auth flow.",
+      context: {},
       agent_id: "security-reviewer",
     }),
     {
       description: "inspect auth",
       prompt: "Inspect auth flow.",
+      context: {},
       agent_id: "security-reviewer",
     },
   );
@@ -69,6 +71,7 @@ Deno.test("executeDefaultHostedInvokeAgentTool returns durable context failure b
     {
       description: "inspect auth",
       prompt: "Inspect auth flow.",
+      context: {},
       agent_id: undefined,
     },
     "security-reviewer",
@@ -105,6 +108,7 @@ Deno.test("createDefaultHostedInvokeAgentTool adds child selection guidance and 
     {
       description: "inspect auth",
       prompt: "Inspect auth flow.",
+      context: {},
       agent_id: "custom-child",
     },
     { toolCallId: "tool-call-2" },
