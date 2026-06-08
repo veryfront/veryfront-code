@@ -29,6 +29,11 @@ import { type RuntimeClientProfile } from "../runtime/client-profile.ts";
 import { selectProviderCompatibleToolNames } from "../runtime/provider-tool-compat.ts";
 import { getProviderNativeToolNames } from "../runtime/provider-native-tool-inventory.ts";
 import { flattenSystemInstructions, withRuntimeToolInventory } from "../runtime/tool-inventory.ts";
+import {
+  type HostedRuntimeAllowedToolNames,
+  normalizeHostedRuntimeAllowedToolNames,
+  resolveHostedRuntimeAllowedToolNames,
+} from "./runtime-essential-tools.ts";
 
 /** Context for hosted chat runtime tool assembly. */
 export type HostedChatRuntimeToolAssemblyContext = DefaultResearchArtifactContext & {
@@ -38,11 +43,12 @@ export type HostedChatRuntimeToolAssemblyContext = DefaultResearchArtifactContex
   model?: string;
   clientProfile?: RuntimeClientProfile | null;
   availableToolNames?: string[];
+  availableSkillIds?: readonly string[];
   userId?: string | null;
 };
 
 /** Public API contract for hosted chat runtime allowed tool names. */
-export type HostedChatRuntimeAllowedToolNames = readonly string[] | ReadonlySet<string> | null;
+export type HostedChatRuntimeAllowedToolNames = HostedRuntimeAllowedToolNames;
 
 /** Result returned from hosted chat runtime tool assembly. */
 export type HostedChatRuntimeToolAssemblyResult = {
@@ -82,16 +88,6 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
   preloadLatestConversationUserText?: boolean;
 };
 
-function normalizeAllowedToolNames(
-  toolNames: HostedChatRuntimeAllowedToolNames | undefined,
-): ReadonlySet<string> | null {
-  if (!toolNames) {
-    return null;
-  }
-
-  return new Set(toolNames);
-}
-
 function activeProjectId(taskContext: HostedChatRuntimeToolAssemblyContext): string | null {
   return taskContext.projectId || null;
 }
@@ -105,7 +101,7 @@ export function filterHostedChatRuntimeLocalTools(input: {
   tools: HostToolSet;
   allowedToolNames?: HostedChatRuntimeAllowedToolNames;
 }): HostToolSet {
-  const allowedToolNames = normalizeAllowedToolNames(input.allowedToolNames);
+  const allowedToolNames = normalizeHostedRuntimeAllowedToolNames(input.allowedToolNames);
   const entries = Object.entries(input.tools).filter(([toolName]) =>
     allowedToolNames ? allowedToolNames.has(toolName) : true
   );
@@ -119,7 +115,11 @@ export async function prepareHostedChatRuntimeToolAssembly<
 >(
   input: PrepareHostedChatRuntimeToolAssemblyInput<TTraceAttributes>,
 ): Promise<HostedChatRuntimeToolAssemblyResult> {
-  const allowedToolNames = normalizeAllowedToolNames(input.allowedToolNames);
+  const allowedToolNames = resolveHostedRuntimeAllowedToolNames({
+    allowedToolNames: input.allowedToolNames,
+    localToolNames: Object.keys(input.localTools),
+    availableSkillIds: input.taskContext.availableSkillIds,
+  });
   const sortedLocalTools = filterHostedChatRuntimeLocalTools({
     tools: input.localTools,
     allowedToolNames,
