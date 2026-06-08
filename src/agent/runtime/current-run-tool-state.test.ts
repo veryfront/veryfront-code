@@ -215,6 +215,36 @@ describe("current-run tool state", () => {
     assert(!prompt.includes("call_1"));
   });
 
+  it("keeps delegated agent summary facts visible in current-run state", () => {
+    const state = createCurrentRunToolState();
+
+    recordCurrentRunToolResult(state, {
+      toolCallId: "call_match",
+      toolName: "invoke_agent",
+      input: {
+        agent_id: "invoice-matching-agent",
+        prompt: "Perform a 3-way match for invoice INV-2026-00491.",
+      },
+      result: {
+        ok: true,
+        status: "completed",
+        summary: {
+          text:
+            "Invoice INV-2026-00491 matched PO-2026-1197 for supplier Meyer Papier GmbH with zero variance.",
+        },
+        finishReason: "stop",
+        childRunId: "child-run-1",
+        childConversationId: "child-conversation-1",
+      },
+      now: new Date("2026-01-01T00:00:00.000Z"),
+    });
+
+    const prompt = appendCurrentRunToolStateToSystemPrompt("Base system", state);
+
+    assertStringIncludes(prompt, "Meyer Papier GmbH");
+    assertStringIncludes(prompt, "PO-2026-1197");
+  });
+
   it("hydrates prior tool calls and results from persisted run messages", () => {
     const state = createCurrentRunToolState();
 

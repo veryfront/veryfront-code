@@ -32,6 +32,7 @@ export type CurrentRunToolStateHydrationMessage = {
 
 const MAX_FALLBACK_ITEMS = 5;
 const MAX_FALLBACK_STRING_LENGTH = 300;
+const MAX_INVOKE_AGENT_SUMMARY_TEXT_LENGTH = 4000;
 const MAX_OBJECT_ARRAY_ITEMS = 5;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -250,12 +251,45 @@ function summarizeFallback(result: unknown): { summary: unknown; status: ToolSta
   return { status: result == null ? "empty" : "success", summary: result };
 }
 
+function summarizeInvokeAgentResult(
+  result: unknown,
+): { summary: unknown; status: ToolStatus } | null {
+  if (!isRecord(result)) return null;
+
+  const summaryRecord = isRecord(result.summary) ? result.summary : null;
+  const summaryText = typeof summaryRecord?.text === "string"
+    ? summaryRecord.text
+    : typeof result.terminalErrorMessage === "string"
+    ? result.terminalErrorMessage
+    : null;
+  if (!summaryText) return null;
+
+  return {
+    status: "error" in result ? "error" : "success",
+    summary: {
+      ok: typeof result.ok === "boolean" ? result.ok : undefined,
+      status: typeof result.status === "string" ? result.status : undefined,
+      text: truncate(summaryText, MAX_INVOKE_AGENT_SUMMARY_TEXT_LENGTH),
+      agentId: typeof result.agentId === "string" ? result.agentId : undefined,
+      finishReason: typeof result.finishReason === "string" ? result.finishReason : undefined,
+      terminalErrorCode: typeof result.terminalErrorCode === "string"
+        ? result.terminalErrorCode
+        : undefined,
+    },
+  };
+}
+
 export function summarizeToolResultForCurrentRunState(
   toolName: string,
   result: unknown,
 ): { summary: unknown; status: ToolStatus } {
   if (isRecord(result) && "error" in result) {
     return { status: "error", summary: summarizeFallbackRecord(result) };
+  }
+
+  if (toolName === "invoke_agent") {
+    const summarized = summarizeInvokeAgentResult(result);
+    if (summarized) return summarized;
   }
 
   const contract = historicalToolSummaries[toolName];
