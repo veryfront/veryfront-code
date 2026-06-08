@@ -103,6 +103,7 @@ Deno.test("resolveHostedChildForkRuntimeConfig appends evidence refs as structur
     forkInput: {
       description: "release matched record",
       prompt: "Use the matched record and perform the requested action.",
+      context: {},
       evidence_refs: [{
         run_id: "run_match",
         tool_call_id: "tool_match",
@@ -119,20 +120,32 @@ Deno.test("resolveHostedChildForkRuntimeConfig appends evidence refs as structur
   });
 
   assertEquals(result.effectivePrompt.includes("Use the matched record"), true);
+  assertEquals(result.effectivePrompt.includes("<structured_context>\n{}"), true);
   assertEquals(result.effectivePrompt.includes("<evidence_refs>"), true);
   assertEquals(result.effectivePrompt.includes('"run_id":"run_match"'), true);
   assertEquals(result.effectivePrompt.includes('"result_path":"$.records[0]"'), true);
+});
+
+Deno.test("hostedChildForkToolInputSchema requires structured child context", () => {
+  const result = hostedChildForkToolInputSchema.safeParse({
+    description: "write tests",
+    prompt: "Add focused tests for the changed helper.",
+  });
+
+  assertEquals(result.success, false);
 });
 
 Deno.test("hostedChildForkToolInputSchema preserves omitted optional fork controls", () => {
   const parsed = hostedChildForkToolInputSchema.parse({
     description: "write tests",
     prompt: "Add focused tests for the changed helper.",
+    context: {},
   });
 
   assertEquals(parsed, {
     description: "write tests",
     prompt: "Add focused tests for the changed helper.",
+    context: {},
   });
 });
 
@@ -140,6 +153,7 @@ Deno.test("hostedChildForkToolInputSchema rejects negative thinking budgets", ()
   const result = hostedChildForkToolInputSchema.safeParse({
     description: "bad budget",
     prompt: "Try an invalid budget.",
+    context: {},
     thinking: -1,
   });
 
@@ -164,6 +178,7 @@ Deno.test("resolveHostedChildForkRuntimeConfig resolves reusable child fork runt
     forkInput: {
       description: "research solar panels",
       prompt: "Research solar panels and save the report to the project.",
+      context: {},
       tools: ["readFile"],
       model: "sonnet",
       thinking: 1024,
@@ -194,6 +209,7 @@ Deno.test("resolveHostedChildForkRuntimeConfig raises low requested child max st
     forkInput: {
       description: "research services",
       prompt: "Research the available services and report findings.",
+      context: {},
       max_steps: 15,
     },
     contextModel: "opus",
@@ -212,6 +228,7 @@ Deno.test("resolveHostedChildForkRuntimeConfig preserves high requested child ma
     forkInput: {
       description: "build feature",
       prompt: "Build the requested feature.",
+      context: {},
       max_steps: 160,
     },
     contextModel: "opus",
@@ -230,6 +247,7 @@ Deno.test("resolveHostedChildForkRuntimeConfig falls back to context model and d
     forkInput: {
       description: "write tests",
       prompt: "Write focused tests.",
+      context: {},
     },
     contextModel: "opus",
     defaultModel: "haiku",
@@ -243,5 +261,6 @@ Deno.test("resolveHostedChildForkRuntimeConfig falls back to context model and d
   assertEquals(result.provider, "provider-for-resolved-opus");
   assertEquals(result.maxSteps, 80);
   assertEquals(result.thinkingConfig, undefined);
-  assertEquals(result.effectivePrompt, "Write focused tests.");
+  assertEquals(result.effectivePrompt.includes("Write focused tests."), true);
+  assertEquals(result.effectivePrompt.includes("<structured_context>\n{}"), true);
 });

@@ -22,8 +22,8 @@ export const getHostedChildForkToolInputSchema = defineSchema((v) =>
   v.object({
     description: v.string().describe("3-5 word task summary"),
     prompt: v.string().describe("Detailed instructions for the task"),
-    context: v.record(v.string(), getJsonValueSchema()).optional().describe(
-      "Structured data payload for the child task. Use this for critical facts and records the child must act on.",
+    context: v.record(v.string(), getJsonValueSchema()).describe(
+      "Required structured data payload for the child task. Use this for critical facts, records, ids, decisions, and values the child must act on. Use {} only when the delegation has no record or evidence payload.",
     ),
     evidence_refs: v.array(getHostedChildForkEvidenceRefSchema()).optional().describe(
       "Generic source-of-truth references for facts the child must preserve. " +
@@ -117,18 +117,10 @@ function appendEvidenceRefsToPrompt(
   }\n</evidence_refs>\nTreat these references as source-of-truth pointers. If prose conflicts with referenced evidence, prefer the referenced evidence and say what conflicted.`;
 }
 
-function hasStructuredContext(context: HostedChildForkToolInput["context"]): boolean {
-  return context !== undefined && Object.keys(context).length > 0;
-}
-
 function appendStructuredContextToPrompt(
   prompt: string,
   context: HostedChildForkToolInput["context"],
 ): string {
-  if (!hasStructuredContext(context)) {
-    return prompt;
-  }
-
   return `${prompt}\n\n<structured_context>\n${
     JSON.stringify(context)
   }\n</structured_context>\nTreat structured_context as the authoritative data payload for the child task. If prose conflicts with structured_context, use structured_context and say what conflicted.`;

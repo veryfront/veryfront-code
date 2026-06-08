@@ -370,6 +370,41 @@ describe("current-run tool state", () => {
     );
   });
 
+  it("blocks invoke_agent structured context that contradicts prior current-run evidence", () => {
+    const state = createCurrentRunToolState();
+
+    recordCurrentRunToolResult(state, {
+      toolCallId: "invoke-ingest-1",
+      toolName: "invoke_agent",
+      input: { agent_id: "ingest-invoice-agent", prompt: "Load open invoices" },
+      result: {
+        status: "completed",
+        summary: {
+          text: "| Invoice | Supplier | Route |\n" +
+            "| --- | --- | --- |\n" +
+            "| INV-2026-00491 | Meyer Papier GmbH | Matching (valid) |\n",
+        },
+      },
+    });
+
+    const invalid = validateInvokeAgentInputAgainstCurrentRunEvidence(state, {
+      agent_id: "payment-approval-agent",
+      prompt: "Approve the matched invoice INV-2026-00491 from the structured context.",
+      context: {
+        invoice: {
+          invoice_id: "INV-2026-00491",
+          supplier: "Brenntag Schweizerhall AG",
+        },
+      },
+    });
+
+    assertEquals(invalid.ok, false);
+    if (!invalid.ok) {
+      assertStringIncludes(invalid.error, 'INV-2026-00491 supplier is "Meyer Papier GmbH"');
+      assertStringIncludes(invalid.error, "Brenntag Schweizerhall AG");
+    }
+  });
+
   it("keeps hidden evidence out of the projected current-run prompt state", () => {
     const state = createCurrentRunToolState();
 

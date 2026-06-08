@@ -43,6 +43,7 @@ const MAX_EVIDENCE_TEXT_LENGTH = 20_000;
 const MAX_EVIDENCE_STRINGS = 12;
 const MAX_EVIDENCE_RECORDS = 25;
 const MAX_EVIDENCE_FIELDS_PER_RECORD = 12;
+const MAX_STRUCTURED_ASSERTION_LINES = 80;
 const RECORD_ID_PATTERN = /\b[A-Z][A-Z0-9]+-\d{4}-\d{3,}\b/g;
 const NEXT_RECORD_ID_PATTERN = /\b[A-Z][A-Z0-9]+-\d{4}-\d{3,}\b/;
 const GUARDED_FACT_ALIASES: Record<string, string[]> = {
@@ -317,13 +318,56 @@ function getRecordTextWindows(text: string, recordId: string): string[] {
   return windows;
 }
 
+function primitiveStructuredValueToString(value: unknown): string | null {
+  if (typeof value === "string") return value.trim() || null;
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (typeof value === "boolean") return String(value);
+  return null;
+}
+
+function collectStructuredAssertionLines(
+  value: unknown,
+  lines: string[] = [],
+  path: string[] = [],
+): string[] {
+  if (lines.length >= MAX_STRUCTURED_ASSERTION_LINES) return lines;
+
+  const primitiveValue = primitiveStructuredValueToString(value);
+  if (primitiveValue !== null && path.length > 0) {
+    lines.push(`${path.join(".")}: ${truncate(primitiveValue, 300)}`);
+    return lines;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectStructuredAssertionLines(item, lines, path);
+      if (lines.length >= MAX_STRUCTURED_ASSERTION_LINES) break;
+    }
+    return lines;
+  }
+
+  if (!isRecord(value)) return lines;
+
+  for (const [key, entry] of Object.entries(value)) {
+    collectStructuredAssertionLines(entry, lines, [...path, key]);
+    if (lines.length >= MAX_STRUCTURED_ASSERTION_LINES) break;
+  }
+
+  return lines;
+}
+
 export function validateInvokeAgentInputAgainstCurrentRunEvidence(
   state: CurrentRunToolState,
   input: unknown,
 ): { ok: true } | { ok: false; error: string } {
   if (!isRecord(input)) return { ok: true };
   const text = normalizeWhitespace(
-    [input.prompt, input.description, input.input]
+    [
+      input.prompt,
+      input.description,
+      input.input,
+      ...collectStructuredAssertionLines(input.context),
+    ]
       .filter((value): value is string => typeof value === "string")
       .join("\n"),
   );
