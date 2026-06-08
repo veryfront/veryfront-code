@@ -6,7 +6,7 @@ import { resolveProviderOptionsWithDefaults } from "./default-provider-options.t
 describe("resolveProviderOptionsWithDefaults", () => {
   it("enables Anthropic thinking by default for Anthropic models", () => {
     const result = resolveProviderOptionsWithDefaults(
-      "anthropic/claude-opus-4-6",
+      "anthropic/claude-sonnet-4-6",
       undefined,
     );
 
@@ -34,11 +34,18 @@ describe("resolveProviderOptionsWithDefaults", () => {
 
   it("does not enable thinking for non-Anthropic models", () => {
     assertEquals(
-      resolveProviderOptionsWithDefaults("openai/gpt-5.2", undefined),
+      resolveProviderOptionsWithDefaults("openai/gpt-5.5", undefined),
       undefined,
     );
     assertEquals(
-      resolveProviderOptionsWithDefaults("google/gemini-2.5-pro", undefined),
+      resolveProviderOptionsWithDefaults("google/gemini-3.1-pro-preview", undefined),
+      undefined,
+    );
+  });
+
+  it("does not enable extended thinking for Claude Opus 4.8", () => {
+    assertEquals(
+      resolveProviderOptionsWithDefaults("anthropic/claude-opus-4-8", undefined),
       undefined,
     );
   });
@@ -51,7 +58,7 @@ describe("resolveProviderOptionsWithDefaults", () => {
     };
 
     const result = resolveProviderOptionsWithDefaults(
-      "anthropic/claude-opus-4-6",
+      "anthropic/claude-sonnet-4-6",
       existing,
     );
 
@@ -66,7 +73,7 @@ describe("resolveProviderOptionsWithDefaults", () => {
     };
 
     const result = resolveProviderOptionsWithDefaults(
-      "anthropic/claude-opus-4-6",
+      "anthropic/claude-sonnet-4-6",
       existing,
     );
 
@@ -81,7 +88,7 @@ describe("resolveProviderOptionsWithDefaults", () => {
     };
 
     const result = resolveProviderOptionsWithDefaults(
-      "anthropic/claude-opus-4-6",
+      "anthropic/claude-sonnet-4-6",
       existing,
     );
 
@@ -102,7 +109,7 @@ describe("resolveProviderOptionsWithDefaults", () => {
     };
 
     const result = resolveProviderOptionsWithDefaults(
-      "anthropic/claude-opus-4-6",
+      "anthropic/claude-sonnet-4-6",
       existing,
     );
 

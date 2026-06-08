@@ -73,9 +73,9 @@ Explicit provider env vars still work when you want to pin a provider directly:
 import { agent } from "veryfront/agent";
 
 export default agent({
-  model: "openai/gpt-5.2", // OpenAI
+  model: "openai/gpt-5.5", // OpenAI
   // model: "anthropic/claude-sonnet-4-6", // Anthropic
-  // model: "google/gemini-2.5-flash",     // Google
+  // model: "google/gemini-3.5-flash",     // Google
   system: "You are a helpful assistant.",
 });
 ```
@@ -116,10 +116,10 @@ Agents reference models as `"provider/model"`. The framework splits on the first
 
 ```ts
 // Veryfront Cloud explicit override
-agent({ model: "veryfront-cloud/openai/gpt-5.2" });
+agent({ model: "veryfront-cloud/openai/gpt-5.5" });
 
 // Direct provider override
-agent({ model: "openai/gpt-5.2" });
+agent({ model: "openai/gpt-5.5" });
 
 // Nested model ID (e.g. OpenRouter)
 agent({ model: "openai/meta-llama/llama-3.1-405b" });
@@ -167,8 +167,8 @@ For cases outside the agent system:
 ```ts
 import { resolveModel } from "veryfront/provider";
 
-const model = resolveModel("openai/gpt-5.2");
-const cloudModel = resolveModel("veryfront-cloud/openai/gpt-5.2");
+const model = resolveModel("openai/gpt-5.5");
+const cloudModel = resolveModel("veryfront-cloud/openai/gpt-5.5");
 ```
 
 ## Verify it worked

@@ -20,17 +20,22 @@ describe("provider/veryfront-cloud/model-catalog", () => {
     assertExists(opus);
     assertEquals(opus.provider, "anthropic");
     assertEquals(findVeryfrontCloudModel("sonnet")?.provider, "anthropic");
-    assertEquals(findVeryfrontCloudModel("gpt-5.2")?.provider, "openai");
-    assertEquals(findVeryfrontCloudModel("gemini-2.5-pro")?.provider, "google");
-    assertEquals(findVeryfrontCloudModel("kimi-k2.5")?.provider, "moonshotai");
+    assertEquals(opus.modelId, "anthropic/claude-opus-4-8");
+    assertEquals(findVeryfrontCloudModel("gpt-5.5")?.provider, "openai");
+    assertEquals(findVeryfrontCloudModel("gemini-3.1-pro-preview")?.provider, "google");
+    assertEquals(findVeryfrontCloudModel("gemini-3.5-flash")?.provider, "google");
+    assertEquals(findVeryfrontCloudModel("kimi-k2.6")?.provider, "moonshotai");
     assertEquals(findVeryfrontCloudModel("nonexistent"), undefined);
   });
 
   it("extracts providers from direct and hosted model ids", () => {
-    assertEquals(getVeryfrontCloudProviderFromModelId("anthropic/claude-opus-4-6"), "anthropic");
-    assertEquals(getVeryfrontCloudProviderFromModelId("veryfront-cloud/openai/gpt-5.2"), "openai");
-    assertEquals(getVeryfrontCloudProviderFromModelId("google-ai-studio/gemini-2.5-pro"), "google");
-    assertEquals(getVeryfrontCloudProviderFromModelId("moonshotai/kimi-k2.5"), "moonshotai");
+    assertEquals(getVeryfrontCloudProviderFromModelId("anthropic/claude-opus-4-8"), "anthropic");
+    assertEquals(getVeryfrontCloudProviderFromModelId("veryfront-cloud/openai/gpt-5.5"), "openai");
+    assertEquals(
+      getVeryfrontCloudProviderFromModelId("google-ai-studio/gemini-3.1-pro-preview"),
+      "google",
+    );
+    assertEquals(getVeryfrontCloudProviderFromModelId("moonshotai/kimi-k2.6"), "moonshotai");
     assertThrows(
       () => getVeryfrontCloudProviderFromModelId("unknown/model"),
       Error,
@@ -40,18 +45,18 @@ describe("provider/veryfront-cloud/model-catalog", () => {
 
   it("returns undefined for unknown provider prefixes in the try helper", () => {
     assertEquals(
-      tryGetVeryfrontCloudProviderFromModelId("veryfront-cloud/anthropic/claude-opus-4-6"),
+      tryGetVeryfrontCloudProviderFromModelId("veryfront-cloud/anthropic/claude-opus-4-8"),
       "anthropic",
     );
     assertEquals(tryGetVeryfrontCloudProviderFromModelId("unknown/model"), undefined);
   });
 
   it("finds catalog entries for direct and hosted model ids", () => {
-    assertEquals(findVeryfrontCloudModelByModelId("anthropic/claude-opus-4-6")?.id, "opus");
+    assertEquals(findVeryfrontCloudModelByModelId("anthropic/claude-opus-4-8")?.id, "opus");
     assertEquals(
-      findVeryfrontCloudModelByModelId("veryfront-cloud/anthropic/claude-opus-4-6")
+      findVeryfrontCloudModelByModelId("veryfront-cloud/anthropic/claude-opus-4-8")
         ?.thinkingBudgetTokens,
-      2048,
+      undefined,
     );
   });
 
@@ -71,9 +76,9 @@ describe("provider/veryfront-cloud/model-catalog", () => {
   });
 
   it("resolves aliases and preserves direct model ids", () => {
-    assertEquals(resolveVeryfrontCloudModelId("opus"), "anthropic/claude-opus-4-6");
-    assertEquals(resolveVeryfrontCloudModelId("gpt-5.2"), "openai/gpt-5.2");
-    assertEquals(resolveVeryfrontCloudModelId("openai/gpt-5.2"), "openai/gpt-5.2");
+    assertEquals(resolveVeryfrontCloudModelId("opus"), "anthropic/claude-opus-4-8");
+    assertEquals(resolveVeryfrontCloudModelId("gpt-5.5"), "openai/gpt-5.5");
+    assertEquals(resolveVeryfrontCloudModelId("openai/gpt-5.5"), "openai/gpt-5.5");
     assertThrows(
       () => resolveVeryfrontCloudModelId("not-a-real-model"),
       Error,
@@ -82,15 +87,12 @@ describe("provider/veryfront-cloud/model-catalog", () => {
   });
 
   it("resolves default thinking budgets for catalog models", () => {
-    assertEquals(resolveVeryfrontCloudModelThinking("anthropic/claude-opus-4-6"), {
-      enabled: true,
-      budgetTokens: 2048,
-    });
-    assertEquals(resolveVeryfrontCloudModelThinking("veryfront-cloud/anthropic/claude-opus-4-6"), {
-      enabled: true,
-      budgetTokens: 2048,
-    });
-    assertEquals(resolveVeryfrontCloudModelThinking("openai/gpt-5.2"), undefined);
+    assertEquals(resolveVeryfrontCloudModelThinking("anthropic/claude-opus-4-8"), undefined);
+    assertEquals(
+      resolveVeryfrontCloudModelThinking("veryfront-cloud/anthropic/claude-opus-4-8"),
+      undefined,
+    );
+    assertEquals(resolveVeryfrontCloudModelThinking("openai/gpt-5.5"), undefined);
     assertEquals(resolveVeryfrontCloudModelThinking("anthropic/claude-sonnet-4-6")?.enabled, true);
     assertEquals(
       resolveVeryfrontCloudModelThinking("anthropic/claude-haiku-4-5-20251001")?.enabled,
@@ -100,28 +102,28 @@ describe("provider/veryfront-cloud/model-catalog", () => {
 
   it("prefixes direct provider model ids for the Veryfront Cloud gateway", () => {
     assertEquals(
-      resolveVeryfrontCloudGatewayModelId("anthropic/claude-opus-4-6"),
-      "veryfront-cloud/anthropic/claude-opus-4-6",
+      resolveVeryfrontCloudGatewayModelId("anthropic/claude-opus-4-8"),
+      "veryfront-cloud/anthropic/claude-opus-4-8",
     );
     assertEquals(
-      resolveVeryfrontCloudGatewayModelId("google-ai-studio/gemini-2.5-flash"),
-      "veryfront-cloud/google-ai-studio/gemini-2.5-flash",
+      resolveVeryfrontCloudGatewayModelId("google-ai-studio/gemini-3.5-flash"),
+      "veryfront-cloud/google-ai-studio/gemini-3.5-flash",
     );
     assertEquals(
-      resolveVeryfrontCloudGatewayModelId("veryfront-cloud/openai/gpt-5.2"),
-      "veryfront-cloud/openai/gpt-5.2",
+      resolveVeryfrontCloudGatewayModelId("veryfront-cloud/openai/gpt-5.5"),
+      "veryfront-cloud/openai/gpt-5.5",
     );
     assertEquals(resolveVeryfrontCloudGatewayModelId("opus"), "opus");
     assertEquals(resolveVeryfrontCloudGatewayModelId(undefined), undefined);
     assertEquals(
-      resolveHostedVeryfrontCloudModelId("openai/gpt-5.2"),
-      "veryfront-cloud/openai/gpt-5.2",
+      resolveHostedVeryfrontCloudModelId("openai/gpt-5.5"),
+      "veryfront-cloud/openai/gpt-5.5",
     );
   });
 
   it("maps enabled Anthropic thinking into provider options", () => {
     assertEquals(
-      resolveVeryfrontCloudThinkingProviderOptions("veryfront-cloud/anthropic/claude-opus-4-6", {
+      resolveVeryfrontCloudThinkingProviderOptions("veryfront-cloud/anthropic/claude-sonnet-4-6", {
         enabled: true,
         budgetTokens: 2048,
       }),
@@ -139,15 +141,19 @@ describe("provider/veryfront-cloud/model-catalog", () => {
 
   it("omits disabled, missing-budget, and non-Anthropic thinking options", () => {
     assertEquals(
-      resolveVeryfrontCloudThinkingProviderOptions("anthropic/claude-opus-4-6", { enabled: false }),
+      resolveVeryfrontCloudThinkingProviderOptions("anthropic/claude-sonnet-4-6", {
+        enabled: false,
+      }),
       undefined,
     );
     assertEquals(
-      resolveVeryfrontCloudThinkingProviderOptions("anthropic/claude-opus-4-6", { enabled: true }),
+      resolveVeryfrontCloudThinkingProviderOptions("anthropic/claude-sonnet-4-6", {
+        enabled: true,
+      }),
       undefined,
     );
     assertEquals(
-      resolveVeryfrontCloudThinkingProviderOptions("openai/gpt-5.2", {
+      resolveVeryfrontCloudThinkingProviderOptions("openai/gpt-5.5", {
         enabled: true,
         budgetTokens: 2048,
       }),

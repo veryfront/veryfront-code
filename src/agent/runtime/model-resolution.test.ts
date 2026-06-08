@@ -61,20 +61,32 @@ describe("agent/runtime/model-resolution", () => {
 
   it("upgrades legacy bare model ids to provider/model strings", () => {
     assertEquals(
-      resolveConfiguredAgentModel("claude-opus-4-6"),
-      "anthropic/claude-opus-4-6",
+      resolveConfiguredAgentModel("claude-opus-4-8"),
+      "anthropic/claude-opus-4-8",
     );
     assertEquals(
       resolveConfiguredAgentModel("opus"),
-      "anthropic/claude-opus-4-6",
+      "anthropic/claude-opus-4-8",
     );
     assertEquals(
-      resolveConfiguredAgentModel("gpt-5.2"),
-      "openai/gpt-5.2",
+      resolveConfiguredAgentModel("gpt-5.5"),
+      "openai/gpt-5.5",
     );
     assertEquals(
-      resolveConfiguredAgentModel("kimi-k2.5"),
-      "moonshotai/kimi-k2.5",
+      resolveConfiguredAgentModel("gpt-5.4-mini"),
+      "openai/gpt-5.4-mini",
+    );
+    assertEquals(
+      resolveConfiguredAgentModel("gemini-3.1-pro"),
+      "google-ai-studio/gemini-3.1-pro-preview",
+    );
+    assertEquals(
+      resolveConfiguredAgentModel("gemini-3.5-flash"),
+      "google-ai-studio/gemini-3.5-flash",
+    );
+    assertEquals(
+      resolveConfiguredAgentModel("kimi-k2.6"),
+      "moonshotai/kimi-k2.6",
     );
   });
 
@@ -103,16 +115,16 @@ describe("agent/runtime/model-resolution", () => {
     setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
 
     assertEquals(
-      resolveRuntimeModel("google-ai-studio/gemini-2.5-flash"),
-      "veryfront-cloud/google-ai-studio/gemini-2.5-flash",
+      resolveRuntimeModel("google-ai-studio/gemini-3.5-flash"),
+      "veryfront-cloud/google-ai-studio/gemini-3.5-flash",
     );
     assertEquals(
-      resolveRuntimeModel("moonshotai/kimi-k2.5"),
-      "veryfront-cloud/moonshotai/kimi-k2.5",
+      resolveRuntimeModel("moonshotai/kimi-k2.6"),
+      "veryfront-cloud/moonshotai/kimi-k2.6",
     );
     assertEquals(
-      resolveRuntimeModel("kimi-k2.5"),
-      "veryfront-cloud/moonshotai/kimi-k2.5",
+      resolveRuntimeModel("kimi-k2.6"),
+      "veryfront-cloud/moonshotai/kimi-k2.6",
     );
   });
 
@@ -133,8 +145,8 @@ describe("agent/runtime/model-resolution", () => {
     setEnv("GOOGLE_API_KEY", "google-test");
 
     assertEquals(
-      resolveRuntimeModel("google-ai-studio/gemini-2.5-flash"),
-      "google/gemini-2.5-flash",
+      resolveRuntimeModel("google-ai-studio/gemini-3.5-flash"),
+      "google/gemini-3.5-flash",
     );
   });
 
