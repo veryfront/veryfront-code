@@ -277,7 +277,7 @@ function toAnthropicMessages(
         skippingHistoricalToolResults = shouldCompactCompletedToolRound;
         break;
       }
-      case "tool":
+      case "tool": {
         if (skippingHistoricalToolResults) {
           break;
         }
@@ -299,6 +299,7 @@ function toAnthropicMessages(
           pendingToolUseIds.delete(part.toolCallId);
         }
         break;
+      }
     }
   }
 

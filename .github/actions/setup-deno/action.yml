@@ -42,18 +42,27 @@ runs:
 
         deno_dir="${RUNNER_TEMP}/deno-${version}-${arch_target}-${os_target}"
         deno_bin="${deno_dir}/${deno_exe}"
+        deno_path="${deno_dir}"
+        deno_cmd="${deno_bin}"
         if [ ! -x "${deno_bin}" ]; then
           mkdir -p "${deno_dir}"
           zip_path="${deno_dir}/deno.zip"
-          curl --fail --location --show-error --retry 5 --retry-delay 2 \
+          if curl --fail --location --show-error --retry 5 --retry-delay 2 \
             "https://github.com/denoland/deno/releases/download/v${version}/deno-${arch_target}-${os_target}.zip" \
-            --output "${zip_path}"
-          unzip -oq "${zip_path}" -d "${deno_dir}"
-          chmod +x "${deno_bin}"
+            --output "${zip_path}"; then
+            unzip -oq "${zip_path}" -d "${deno_dir}"
+            chmod +x "${deno_bin}"
+          else
+            echo "GitHub release download failed; installing pinned deno@${version} from npm." >&2
+            npm_prefix="${deno_dir}/npm"
+            npm --prefix "${npm_prefix}" install --no-audit --no-fund "deno@${version}"
+            deno_path="${npm_prefix}/node_modules/.bin"
+            deno_cmd="${deno_path}/deno"
+          fi
         fi
 
-        echo "${deno_dir}" >> "${GITHUB_PATH}"
-        "${deno_bin}" --version
+        echo "${deno_path}" >> "${GITHUB_PATH}"
+        "${deno_cmd}" --version
 
     - name: Generate template manifest
       shell: bash
