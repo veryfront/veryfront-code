@@ -179,6 +179,14 @@ describe("current-run tool state", () => {
     });
 
     recordCurrentRunToolResult(state, {
+      toolCallId: "call_5",
+      toolName: "load_skill",
+      input: { skillId: "supplier-invoice-processing" },
+      result: { skillId: "supplier-invoice-processing", instructions: "Process invoices" },
+      now,
+    });
+
+    recordCurrentRunToolResult(state, {
       toolCallId: "call_4",
       toolName: "studio_todo_write",
       input: { taskId: "supplier-invoice-processing", title: "Supplier Invoice Processing" },
@@ -190,9 +198,15 @@ describe("current-run tool state", () => {
 
     assertStringIncludes(prompt, '<run_state current_run="true">');
     assertStringIncludes(prompt, '"semanticCalls"');
+    assertStringIncludes(prompt, '"skills"');
     assertStringIncludes(prompt, '"actions"');
     assertStringIncludes(prompt, '"agent:ingest-invoice-agent"');
     assertStringIncludes(prompt, '"skill:supplier-invoice-processing"');
+    assertStringIncludes(prompt, '"supplier-invoice-processing"');
+    assertStringIncludes(
+      prompt,
+      '"supplier-invoice-processing":{"status":"success","callCount":2,"source":"tools.load_skill.semanticCalls.skill:supplier-invoice-processing"',
+    );
     assertStringIncludes(prompt, '"todo:supplier-invoice-processing"');
     assertStringIncludes(prompt, '"parameters":{"agent_id":"ingest-invoice-agent"}');
     assertStringIncludes(prompt, '"callCount":2');
