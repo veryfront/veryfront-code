@@ -7,7 +7,11 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "#veryfront/errors";
-import { loadModuleFromEsmSh, loadPlugin } from "./plugin-loader.ts";
+import {
+  loadModuleFromEsmSh,
+  loadPlugin,
+  rewriteEsmShRootRelativeImports,
+} from "./plugin-loader.ts";
 import {
   bareName,
   PACKAGE_SPEC_RE,
@@ -225,6 +229,25 @@ describe("styles-builder/plugin-loader", () => {
         delete (globalThis as { process?: unknown }).process;
       }
     }
+  });
+
+  it("rewrites esm.sh root-relative bundle imports before temp-file import", () => {
+    const code = [
+      `import parser from "/postcss-selector-parser@6.0.10/denonext/dist/processor.mjs";`,
+      `import plugin from '/tailwindcss@4.0.0/denonext/plugin.mjs';`,
+      `export * from "/@tailwindcss/forms@0.5.11/denonext/forms.mjs";`,
+      `const local = "/not-an-import";`,
+    ].join("\n");
+
+    assertEquals(
+      rewriteEsmShRootRelativeImports(code),
+      [
+        `import parser from "https://esm.sh/postcss-selector-parser@6.0.10/denonext/dist/processor.mjs";`,
+        `import plugin from 'https://esm.sh/tailwindcss@4.0.0/denonext/plugin.mjs';`,
+        `export * from "https://esm.sh/@tailwindcss/forms@0.5.11/denonext/forms.mjs";`,
+        `const local = "/not-an-import";`,
+      ].join("\n"),
+    );
   });
 });
 

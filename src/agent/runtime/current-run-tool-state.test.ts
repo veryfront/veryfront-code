@@ -5,9 +5,11 @@ import {
   appendCurrentRunToolStateToSystemPrompt,
   createCurrentRunToolState,
   createToolInputFingerprint,
+  extractCurrentRunEvidence,
   hydrateCurrentRunToolStateFromMessages,
   recordCurrentRunToolResult,
   summarizeToolResultForCurrentRunState,
+  validateInvokeAgentInputAgainstCurrentRunEvidence,
 } from "./current-run-tool-state.ts";
 
 describe("current-run tool state", () => {
@@ -293,6 +295,144 @@ describe("current-run tool state", () => {
     assertStringIncludes(
       prompt,
       '"parameters":{"agent_id":"payment-approval-agent","record_id":"INV-2026-00492"}',
+    );
+  });
+
+  it("blocks invoke_agent inputs that contradict prior current-run tool evidence", () => {
+    const state = createCurrentRunToolState();
+
+    recordCurrentRunToolResult(state, {
+      toolCallId: "invoke-ingest-1",
+      toolName: "invoke_agent",
+      input: { agent_id: "ingest-invoice-agent", prompt: "Load open invoices" },
+      result: {
+        status: "completed",
+        summary: {
+          text: "Ingestion complete. 2 open invoices loaded:\n\n" +
+            "| Invoice | Supplier | Route |\n" +
+            "| --- | --- | --- |\n" +
+            "| INV-2026-00482 | Alpine Claims Services | Escalation (blocked) |\n" +
+            "| INV-2026-00491 | Meyer Papier GmbH | Matching (valid) |\n",
+        },
+      },
+    });
+
+    const invalid = validateInvokeAgentInputAgainstCurrentRunEvidence(state, {
+      agent_id: "payment-approval-agent",
+      description: "Approve matched invoice INV-2026-00491 (Meridian Logistics GmbH)",
+      prompt:
+        "Approve invoice INV-2026-00491 for payment. This invoice from supplier Meridian Logistics GmbH for €2,180.00 matched PO-2026-1197 with zero variance.",
+    });
+
+    assertEquals(invalid.ok, false);
+    if (!invalid.ok) {
+      assertStringIncludes(invalid.error, 'INV-2026-00491 supplier is "Meyer Papier GmbH"');
+      assertStringIncludes(invalid.error, "Meridian Logistics GmbH");
+    }
+
+    assertEquals(
+      validateInvokeAgentInputAgainstCurrentRunEvidence(state, {
+        agent_id: "payment-approval-agent",
+        prompt:
+          "Approve invoice INV-2026-00491 for payment. This invoice from supplier Meyer Papier GmbH for €2,180.00 matched PO-2026-1197 with zero variance.",
+      }),
+      { ok: true },
+    );
+  });
+
+  it("keeps hidden evidence out of the projected current-run prompt state", () => {
+    const state = createCurrentRunToolState();
+
+    recordCurrentRunToolResult(state, {
+      toolCallId: "invoke-ingest-1",
+      toolName: "invoke_agent",
+      input: { agent_id: "ingest-invoice-agent", prompt: "Load open invoices" },
+      result: {
+        status: "completed",
+        summary: {
+          text: "| Invoice | Supplier | Route |\n" +
+            "| --- | --- | --- |\n" +
+            "| INV-2026-00491 | Meyer Papier GmbH | Matching (valid) |\n",
+        },
+      },
+    });
+
+    const prompt = appendCurrentRunToolStateToSystemPrompt("Base system", state);
+
+    assert(!prompt.includes('"evidence"'));
+    assert(!prompt.includes("Meyer Papier GmbH"));
+  });
+
+  it("does not treat loaded skill instructions as evidence", () => {
+    const state = createCurrentRunToolState();
+
+    recordCurrentRunToolResult(state, {
+      toolCallId: "load-skill-1",
+      toolName: "load_skill",
+      input: { skillId: "supplier-invoice-processing" },
+      result: {
+        skillId: "supplier-invoice-processing",
+        instructions: "| Invoice | Supplier |\n" +
+          "| --- | --- |\n" +
+          "| INV-2026-00491 | Example Supplier GmbH |\n",
+      },
+    });
+
+    assertEquals(
+      validateInvokeAgentInputAgainstCurrentRunEvidence(state, {
+        agent_id: "payment-approval-agent",
+        prompt: "Approve invoice INV-2026-00491 from supplier Meyer Papier GmbH.",
+      }),
+      { ok: true },
+    );
+  });
+
+  it("validates invoke_agent facts against the matching record window only", () => {
+    const state = createCurrentRunToolState();
+
+    recordCurrentRunToolResult(state, {
+      toolCallId: "invoke-ingest-1",
+      toolName: "invoke_agent",
+      input: { agent_id: "ingest-invoice-agent", prompt: "Load open invoices" },
+      result: {
+        status: "completed",
+        summary: {
+          text: "| Invoice | Supplier | Route |\n" +
+            "| --- | --- | --- |\n" +
+            "| INV-2026-00482 | Alpine Claims Services | Escalation (blocked) |\n" +
+            "| INV-2026-00491 | Meyer Papier GmbH | Matching (valid) |\n",
+        },
+      },
+    });
+
+    assertEquals(
+      validateInvokeAgentInputAgainstCurrentRunEvidence(state, {
+        agent_id: "invoice-work-agent",
+        prompt:
+          "Escalate invoice INV-2026-00482 from supplier Alpine Claims Services. Approve invoice INV-2026-00491 from supplier Meyer Papier GmbH.",
+      }),
+      { ok: true },
+    );
+  });
+
+  it("extracts evidence from key-value child result tables", () => {
+    assertEquals(
+      extractCurrentRunEvidence({
+        summary: {
+          text: "| Field | Value |\n" +
+            "| --- | --- |\n" +
+            "| Invoice ID | INV-2026-00491 |\n" +
+            "| Supplier | Meyer Papier GmbH |\n" +
+            "| Purchase Order ID | PO-2026-1197 |\n",
+        },
+      }),
+      [{
+        recordId: "INV-2026-00491",
+        fields: {
+          supplier: "Meyer Papier GmbH",
+          purchase_order_id: "PO-2026-1197",
+        },
+      }],
     );
   });
 

@@ -126,6 +126,7 @@ import {
   type CurrentRunToolState,
   hydrateCurrentRunToolStateFromMessages,
   recordCurrentRunToolResult,
+  validateInvokeAgentInputAgainstCurrentRunEvidence,
 } from "./current-run-tool-state.ts";
 import {
   applySkillDelegationOverridesToToolInput,
@@ -1159,6 +1160,32 @@ export class AgentRuntime {
                 toolCall.args,
                 activeSkillDelegationOverrides,
               );
+              if (tc.toolName === "invoke_agent") {
+                const evidenceCheck = validateInvokeAgentInputAgainstCurrentRunEvidence(
+                  currentRunToolState,
+                  toolCall.args,
+                );
+                if (!evidenceCheck.ok) {
+                  toolCall.status = "error";
+                  toolCall.error = evidenceCheck.error;
+
+                  const errorMessage = createToolErrorMessage(
+                    tc.toolCallId,
+                    tc.toolName,
+                    evidenceCheck.error,
+                  );
+                  currentMessages.push(errorMessage);
+                  await this.memory.add(errorMessage);
+                  recordCurrentRunToolResult(currentRunToolState, {
+                    toolCallId: tc.toolCallId,
+                    toolName: tc.toolName,
+                    input: toolCall.args,
+                    result: { error: evidenceCheck.error },
+                  });
+                  toolCalls.push(toolCall);
+                  return;
+                }
+              }
               const executionContext = {
                 toolCallId: tc.toolCallId,
                 ...toolContext,
@@ -1584,6 +1611,24 @@ export class AgentRuntime {
             toolCall.args,
             activeSkillDelegationOverrides,
           );
+          if (tc.name === "invoke_agent") {
+            const evidenceCheck = validateInvokeAgentInputAgainstCurrentRunEvidence(
+              currentRunToolState,
+              toolCall.args,
+            );
+            if (!evidenceCheck.ok) {
+              await this.recordToolError(
+                toolCall,
+                evidenceCheck.error,
+                controller,
+                encoder,
+                currentMessages,
+                toolCalls,
+                currentRunToolState,
+              );
+              continue;
+            }
+          }
 
           callbacks?.onToolCall?.(toolCall);
 

@@ -4,11 +4,17 @@ import type { IntegrationEndpointHistoricalSummary } from "../../integrations/sc
 type SummaryField = IntegrationEndpointHistoricalSummary["itemFields"][number];
 type ToolStatus = "success" | "empty" | "error";
 
+export type CurrentRunToolEvidence = {
+  recordId: string;
+  fields: Record<string, string>;
+};
+
 export type CurrentRunToolStateCall = {
   toolCallIds: string[];
   input: unknown;
   status: ToolStatus;
   summary: unknown;
+  evidence?: CurrentRunToolEvidence[];
   updatedAt: string;
 };
 
@@ -33,6 +39,27 @@ export type CurrentRunToolStateHydrationMessage = {
 const MAX_FALLBACK_ITEMS = 5;
 const MAX_FALLBACK_STRING_LENGTH = 300;
 const MAX_OBJECT_ARRAY_ITEMS = 5;
+const MAX_EVIDENCE_TEXT_LENGTH = 20_000;
+const MAX_EVIDENCE_STRINGS = 12;
+const MAX_EVIDENCE_RECORDS = 25;
+const MAX_EVIDENCE_FIELDS_PER_RECORD = 12;
+const RECORD_ID_PATTERN = /\b[A-Z][A-Z0-9]+-\d{4}-\d{3,}\b/g;
+const NEXT_RECORD_ID_PATTERN = /\b[A-Z][A-Z0-9]+-\d{4}-\d{3,}\b/;
+const GUARDED_FACT_ALIASES: Record<string, string[]> = {
+  supplier: ["supplier", "vendor"],
+  vendor: ["vendor", "supplier"],
+  customer: ["customer", "client"],
+  client: ["client", "customer"],
+  owner: ["owner", "assignee", "assigned_to"],
+  assignee: ["assignee", "owner", "assigned_to"],
+  company: ["company", "organization", "account"],
+  account: ["account", "company", "organization"],
+};
+const NON_EVIDENCE_TOOL_NAMES = new Set([
+  "load_skill",
+  "load_skill_reference",
+  "execute_skill_script",
+]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -40,6 +67,286 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function truncate(value: string, maxLength: number): string {
   return value.length > maxLength ? `${value.slice(0, maxLength)}…` : value;
+}
+
+function normalizeWhitespace(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function stripMarkdownCell(value: string): string {
+  return normalizeWhitespace(value.replace(/^[-–—>→\s]+/, "").replace(/\*\*/g, ""));
+}
+
+function normalizeEvidenceField(value: string): string {
+  return normalizeWhitespace(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function normalizeEvidenceValue(value: string): string {
+  return stripMarkdownCell(value)
+    .replace(/^["'`]+|["'`]+$/g, "")
+    .replace(/[.!?;,]+$/g, "")
+    .trim();
+}
+
+function getRecordIds(value: string): string[] {
+  return Array.from(new Set(value.match(RECORD_ID_PATTERN) ?? []));
+}
+
+function mergeEvidenceField(
+  evidenceByRecordId: Map<string, Record<string, string>>,
+  recordId: string,
+  field: string,
+  value: string,
+): void {
+  const normalizedField = normalizeEvidenceField(field);
+  const normalizedValue = normalizeEvidenceValue(value);
+  if (!normalizedField || !normalizedValue || normalizedValue === recordId) return;
+  if (getRecordIds(normalizedValue).includes(recordId)) return;
+
+  const fields = evidenceByRecordId.get(recordId) ?? {};
+  if (
+    Object.keys(fields).length >= MAX_EVIDENCE_FIELDS_PER_RECORD && !(normalizedField in fields)
+  ) {
+    return;
+  }
+  fields[normalizedField] = truncate(normalizedValue, 160);
+  evidenceByRecordId.set(recordId, fields);
+}
+
+function parseMarkdownTableRow(line: string): string[] {
+  const trimmed = line.trim();
+  const withoutOuterPipes = trimmed.replace(/^\|/, "").replace(/\|$/, "");
+  return withoutOuterPipes.split("|").map(stripMarkdownCell);
+}
+
+function isMarkdownTableSeparator(line: string): boolean {
+  const trimmed = line.trim();
+  const withoutOuterPipes = trimmed.replace(/^\|/, "").replace(/\|$/, "");
+  const cells = withoutOuterPipes.split("|").map((cell) => cell.trim());
+  return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell.replace(/\s+/g, "")));
+}
+
+function collectStringLeaves(value: unknown, strings: string[] = []): string[] {
+  if (strings.length >= MAX_EVIDENCE_STRINGS) return strings;
+
+  if (typeof value === "string") {
+    if (value.trim()) strings.push(value.slice(0, MAX_EVIDENCE_TEXT_LENGTH));
+    return strings;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) collectStringLeaves(item, strings);
+    return strings;
+  }
+
+  if (isRecord(value)) {
+    for (const entry of Object.values(value)) collectStringLeaves(entry, strings);
+  }
+  return strings;
+}
+
+function extractEvidenceFromMarkdownTable(
+  lines: readonly string[],
+  startIndex: number,
+  evidenceByRecordId: Map<string, Record<string, string>>,
+): number {
+  const headers = parseMarkdownTableRow(lines[startIndex] ?? "");
+  let cursor = startIndex + 2;
+  const rows: string[][] = [];
+
+  while (cursor < lines.length && lines[cursor]?.includes("|")) {
+    const row = parseMarkdownTableRow(lines[cursor] ?? "");
+    if (row.length === headers.length) rows.push(row);
+    cursor++;
+  }
+
+  const keyValueRows = rows.filter((row) => row.length >= 2);
+  const isKeyValueTable = headers.length === 2 &&
+    normalizeEvidenceField(headers[0] ?? "") === "field" &&
+    normalizeEvidenceField(headers[1] ?? "") === "value";
+  const primaryRecordId = keyValueRows
+    .map((row) => getRecordIds(row[1] ?? "")[0])
+    .find((recordId): recordId is string => typeof recordId === "string");
+
+  if (isKeyValueTable && primaryRecordId) {
+    for (const row of keyValueRows) {
+      mergeEvidenceField(evidenceByRecordId, primaryRecordId, row[0] ?? "", row[1] ?? "");
+    }
+    return cursor;
+  }
+
+  for (const row of rows) {
+    const rowIds = row.flatMap(getRecordIds);
+    for (const recordId of rowIds) {
+      for (const [index, value] of row.entries()) {
+        const field = headers[index] ?? "";
+        if (!field || getRecordIds(value).includes(recordId)) continue;
+        mergeEvidenceField(evidenceByRecordId, recordId, field, value);
+      }
+    }
+  }
+
+  return cursor;
+}
+
+export function extractCurrentRunEvidence(result: unknown): CurrentRunToolEvidence[] {
+  const evidenceByRecordId = new Map<string, Record<string, string>>();
+
+  for (const text of collectStringLeaves(result)) {
+    const lines = text.split(/\r?\n/);
+    for (let index = 0; index < lines.length; index++) {
+      const line = lines[index] ?? "";
+      if (!line.includes("|") || !lines[index + 1]?.includes("|")) continue;
+      if (!isMarkdownTableSeparator(lines[index + 1] ?? "")) continue;
+      index = extractEvidenceFromMarkdownTable(lines, index, evidenceByRecordId) - 1;
+    }
+  }
+
+  return Array.from(evidenceByRecordId.entries())
+    .slice(0, MAX_EVIDENCE_RECORDS)
+    .map(([recordId, fields]) => ({ recordId, fields }));
+}
+
+function getEvidenceFieldsForRecord(
+  state: CurrentRunToolState,
+  recordId: string,
+): Record<string, string> {
+  const fields: Record<string, string> = {};
+  for (const bucket of Object.values(state)) {
+    for (const call of Object.values(bucket.calls)) {
+      for (const evidence of call.evidence ?? []) {
+        if (evidence.recordId !== recordId) continue;
+        Object.assign(fields, evidence.fields);
+      }
+    }
+  }
+  return fields;
+}
+
+function getExpectedEvidenceField(
+  fields: Record<string, string>,
+  field: string,
+): { field: string; value: string } | null {
+  const aliases = GUARDED_FACT_ALIASES[field] ?? [field];
+  for (const alias of aliases) {
+    if (fields[alias]) return { field: alias, value: fields[alias] };
+  }
+  return null;
+}
+
+function hasCompanyLikeShape(value: string): boolean {
+  if (getRecordIds(value).length > 0) return false;
+  if (/[€$£¥]\s?\d|\d{4,}/.test(value)) return false;
+  if (/\b(invoice|record|item|payment|approval|escalation|matching)\b/i.test(value)) return false;
+  return /\b(GmbH|LLC|Ltd|Limited|Inc|Corp|Corporation|Company|Co\.?|AG|SA|BV|NV|PLC)\b/.test(
+    value,
+  ) ||
+    /^[A-Z][\p{L}'&.-]+(?:\s+[A-Z][\p{L}'&.-]+)+$/u.test(value);
+}
+
+function extractAssertedFieldValues(text: string): Array<{ field: string; value: string }> {
+  const assertions: Array<{ field: string; value: string }> = [];
+  for (const field of Object.keys(GUARDED_FACT_ALIASES)) {
+    const aliases = GUARDED_FACT_ALIASES[field] ?? [field];
+    for (const alias of aliases) {
+      const pattern = new RegExp(
+        `\\b${
+          alias.replace(/_/g, "[ _-]")
+        }\\b\\s*(?:is|:|=|named|called)?\\s+(.{2,100}?)(?=\\s+(?:for|with|matched|against|on|and|to|has|was|will|ready|blocked|created|released)\\b|[.,;\\n]|$)`,
+        "giu",
+      );
+      for (const match of text.matchAll(pattern)) {
+        const value = normalizeEvidenceValue(match[1] ?? "");
+        if (hasCompanyLikeShape(value)) assertions.push({ field, value });
+      }
+    }
+  }
+  return assertions;
+}
+
+function valuesConflict(actual: string, expected: string): boolean {
+  const normalize = (value: string) => normalizeWhitespace(value).toLowerCase();
+  const left = normalize(actual);
+  const right = normalize(expected);
+  return left !== right && !left.includes(right) && !right.includes(left);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function getRecordTextWindows(text: string, recordId: string): string[] {
+  const windows: string[] = [];
+  const pattern = new RegExp(escapeRegExp(recordId), "g");
+
+  for (const match of text.matchAll(pattern)) {
+    const index = match.index ?? 0;
+    const before = text.slice(0, index);
+    const after = text.slice(index + recordId.length);
+    const previousRecordMatches = Array.from(before.matchAll(RECORD_ID_PATTERN));
+    const previousRecordMatch = previousRecordMatches.at(-1);
+    const previousRecordEnd = previousRecordMatch && typeof previousRecordMatch.index === "number"
+      ? previousRecordMatch.index + previousRecordMatch[0].length
+      : -1;
+    const windowStart = Math.max(
+      before.lastIndexOf("."),
+      before.lastIndexOf("\n"),
+      before.lastIndexOf(";"),
+    );
+    const nextRecordMatch = after.match(NEXT_RECORD_ID_PATTERN);
+    const nextRecordIndex = nextRecordMatch?.index;
+    const windowEnd = typeof nextRecordIndex === "number"
+      ? Math.max(0, nextRecordIndex)
+      : Math.min(after.length, 300);
+    windows.push(
+      normalizeWhitespace(
+        text.slice(
+          Math.max(
+            previousRecordEnd,
+            windowStart >= 0 ? windowStart + 1 : Math.max(0, index - 160),
+          ),
+          index + recordId.length + windowEnd,
+        ),
+      ),
+    );
+  }
+
+  return windows;
+}
+
+export function validateInvokeAgentInputAgainstCurrentRunEvidence(
+  state: CurrentRunToolState,
+  input: unknown,
+): { ok: true } | { ok: false; error: string } {
+  if (!isRecord(input)) return { ok: true };
+  const text = normalizeWhitespace(
+    [input.prompt, input.description, input.input]
+      .filter((value): value is string => typeof value === "string")
+      .join("\n"),
+  );
+  if (!text) return { ok: true };
+
+  for (const recordId of getRecordIds(text)) {
+    const evidenceFields = getEvidenceFieldsForRecord(state, recordId);
+    for (const window of getRecordTextWindows(text, recordId)) {
+      for (const assertion of extractAssertedFieldValues(window)) {
+        const expected = getExpectedEvidenceField(evidenceFields, assertion.field);
+        if (!expected || !valuesConflict(assertion.value, expected.value)) continue;
+        return {
+          ok: false,
+          error:
+            `invoke_agent input conflicts with current run evidence: ${recordId} ${expected.field} is ` +
+            `"${expected.value}", but the tool input says "${assertion.value}". ` +
+            "Regenerate the tool call from recorded evidence, or delegate only the record id.",
+        };
+      }
+    }
+  }
+
+  return { ok: true };
 }
 
 function normalizeForFingerprint(value: unknown): unknown {
@@ -279,6 +586,9 @@ export function recordCurrentRunToolResult(
   const toolBucket = state[input.toolName] ?? { calls: {} };
   const existingCall = toolBucket.calls[fingerprint];
   const { summary, status } = summarizeToolResultForCurrentRunState(input.toolName, input.result);
+  const evidence = NON_EVIDENCE_TOOL_NAMES.has(input.toolName)
+    ? []
+    : extractCurrentRunEvidence(input.result);
 
   toolBucket.calls[fingerprint] = {
     toolCallIds: existingCall?.toolCallIds.includes(input.toolCallId)
@@ -287,6 +597,7 @@ export function recordCurrentRunToolResult(
     input: input.input ?? {},
     status,
     summary,
+    ...(evidence.length > 0 ? { evidence } : {}),
     updatedAt: (input.now ?? new Date()).toISOString(),
   };
   state[input.toolName] = toolBucket;
