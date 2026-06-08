@@ -56,6 +56,87 @@ Deno.test("filterHostedChatRuntimeLocalTools filters and sorts local tools", () 
   assertEquals(Object.keys(result), ["invoke_agent", "sleep"]);
 });
 
+Deno.test("prepareHostedChatRuntimeToolAssembly preserves runtime-essential skill tools under non-empty allowed tools", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+    availableSkillIds: ["plan"],
+  };
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    taskContext,
+    instructions: "Base instructions",
+    localTools: {
+      invoke_agent: localTool("Invoke agent"),
+      load_skill: localTool("Load skill"),
+      sleep: localTool("Sleep"),
+    },
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: ["sleep"],
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.localToolNames, ["invoke_agent", "load_skill", "sleep"]);
+  assertEquals(taskContext.availableToolNames, ["invoke_agent", "load_skill", "sleep"]);
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly keeps empty allowed tools as explicit deny-all", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+    availableSkillIds: ["plan"],
+  };
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    taskContext,
+    instructions: "Base instructions",
+    localTools: {
+      invoke_agent: localTool("Invoke agent"),
+      load_skill: localTool("Load skill"),
+      sleep: localTool("Sleep"),
+    },
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: [],
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.localToolNames, []);
+  assertEquals(taskContext.availableToolNames, []);
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly does not add skill tools when no skills are active", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+    availableSkillIds: [],
+  };
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    taskContext,
+    instructions: "Base instructions",
+    localTools: {
+      invoke_agent: localTool("Invoke agent"),
+      load_skill: localTool("Load skill"),
+      sleep: localTool("Sleep"),
+    },
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: ["sleep"],
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.localToolNames, ["sleep"]);
+  assertEquals(taskContext.availableToolNames, ["sleep"]);
+});
+
 Deno.test("prepareHostedChatRuntimeToolAssembly builds provider-compatible runtime inventory", async () => {
   const taskContext: HostedChatRuntimeToolAssemblyContext = {
     authToken: "token",
