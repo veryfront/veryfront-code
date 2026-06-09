@@ -1,4 +1,4 @@
-import type { CachePayload, CacheStore } from "../types.ts";
+import type { CachePayload, CacheStore, CacheStoreStats } from "../types.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { MemoryCacheStore } from "./memory-store.ts";
@@ -263,5 +263,9 @@ export class RedisCacheStore implements CacheStore {
 
     await this.client.disconnect();
     this.client = null;
+  }
+
+  getStats(): CacheStoreStats {
+    return this.fallbackStore?.getStats() ?? { size: 0 };
   }
 }

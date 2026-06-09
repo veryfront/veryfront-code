@@ -1,4 +1,4 @@
-import type { CachePayload, CacheStore } from "../types.ts";
+import type { CachePayload, CacheStore, CacheStoreStats } from "../types.ts";
 import { MemoryCacheStore } from "./memory-store.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { type CacheBackend, createCacheBackend } from "#veryfront/cache/backend.ts";
@@ -218,5 +218,9 @@ export class APICacheStore implements CacheStore {
     await this.localCache?.destroy();
     this.backend = null;
     this.backendInitPromise = null;
+  }
+
+  getStats(): CacheStoreStats {
+    return this.localCache?.getStats() ?? { size: 0 };
   }
 }

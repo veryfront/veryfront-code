@@ -9,7 +9,7 @@
 
 import { getDisableLruIntervalEnv } from "#veryfront/config/env.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
-import type { CachePayload, CacheStore } from "../types.ts";
+import type { CachePayload, CacheStore, CacheStoreStats } from "../types.ts";
 
 const DEFAULT_MAX_ENTRIES = 100;
 
@@ -86,6 +86,10 @@ export class MemoryCacheStore implements CacheStore {
     let count = 0;
     for (const _ of this.cache.keys()) count++;
     return count;
+  }
+
+  getStats(): CacheStoreStats {
+    return { size: this.size() };
   }
 }
 
