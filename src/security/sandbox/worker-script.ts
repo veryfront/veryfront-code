@@ -29,9 +29,27 @@ import type {
   WorkerStreamChunk,
   WorkerStreamEnd,
 } from "./worker-types.ts";
+import { resolve as resolvePath } from "node:path";
 
 // Module-level singletons to avoid per-call allocation churn
 const encoder = new TextEncoder();
+
+/**
+ * Build a path guard that confines filesystem access to `projectDir`.
+ * In compiled-binary mode the worker has full read permission, so the
+ * read-only `ctx.fs` adapter is the only thing keeping user route handlers
+ * from reading arbitrary host files. Every path must be validated here.
+ */
+function makeProjectPathGuard(projectDir: string): (path: string) => string {
+  const root = resolvePath(projectDir);
+  return (path: string): string => {
+    const resolved = resolvePath(root, path);
+    if (resolved !== root && !resolved.startsWith(root + "/")) {
+      throw new Error(`Path escapes project directory: ${path}`);
+    }
+    return resolved;
+  };
+}
 
 // Load React lazily for SSR requests. API-only workers and health checks should
 // start without resolving React, and the runtime caches dynamic imports after
@@ -299,20 +317,23 @@ async function handlePagesRoute(req: ExecutePagesRouteRequest): Promise<Serializ
     const { request, params, cookies } = deserializePagesRequest(req.context);
     const url = new URL(request.url);
 
-    // Build a minimal read-only fs adapter scoped to the project directory
+    // Build a minimal read-only fs adapter scoped to the project directory.
+    // Every path is validated against the project root before it reaches a
+    // Deno API so user route handlers cannot read arbitrary host files.
+    const assertContained = makeProjectPathGuard(req.projectDir);
     const workerFs = {
-      readTextFile: (path: string) => Deno.readTextFile(path),
-      readFile: (path: string) => Deno.readFile(path),
+      readTextFile: (path: string) => Deno.readTextFile(assertContained(path)),
+      readFile: (path: string) => Deno.readFile(assertContained(path)),
       exists: async (path: string) => {
         try {
-          await Deno.stat(path);
+          await Deno.stat(assertContained(path));
           return true;
         } catch {
           return false;
         }
       },
       stat: async (path: string) => {
-        const info = await Deno.stat(path);
+        const info = await Deno.stat(assertContained(path));
         return {
           isFile: info.isFile,
           isDirectory: info.isDirectory,
@@ -322,7 +343,7 @@ async function handlePagesRoute(req: ExecutePagesRouteRequest): Promise<Serializ
         };
       },
       readDir: async function* (path: string) {
-        for await (const entry of Deno.readDir(path)) {
+        for await (const entry of Deno.readDir(assertContained(path))) {
           yield { name: entry.name, isFile: entry.isFile, isDirectory: entry.isDirectory };
         }
       },
