@@ -8,6 +8,28 @@ import {
   WaitNotPendingError,
 } from "./resume-session.ts";
 
+function createManualTimers(): {
+  callbacks: Array<() => void>;
+  setTimeoutFn: typeof setTimeout;
+  clearTimeoutFn: typeof clearTimeout;
+} {
+  const callbacks: Array<() => void> = [];
+  const setTimeoutFn: typeof setTimeout = (callback, _delay, ...args) => {
+    callbacks.push(() => {
+      if (typeof callback !== "function") {
+        throw new TypeError("String timer handlers are unsupported in resume-session tests");
+      }
+      callback(...args);
+    });
+    return globalThis.setTimeout(() => {}, 60_000);
+  };
+  return {
+    callbacks,
+    setTimeoutFn,
+    clearTimeoutFn: globalThis.clearTimeout.bind(globalThis),
+  };
+}
+
 describe("agent/runtime/resume-session", () => {
   it("accepts duplicate resume values and rejects conflicting ones", async () => {
     const manager = new RunResumeSessionManager<{ ok: boolean }>({
@@ -89,21 +111,18 @@ describe("agent/runtime/resume-session", () => {
   });
 
   it("expires waiting runs after the configured TTL", async () => {
-    const timerCallbacks: Array<() => void> = [];
+    const timers = createManualTimers();
     const manager = new RunResumeSessionManager<{ ok: boolean }>({
       waitingTtlMs: 1,
-      setTimeoutFn: ((callback: () => void) => {
-        timerCallbacks.push(callback);
-        return timerCallbacks.length as unknown as number;
-      }) as typeof setTimeout,
-      clearTimeoutFn: (() => {}) as typeof clearTimeout,
+      setTimeoutFn: timers.setTimeoutFn,
+      clearTimeoutFn: timers.clearTimeoutFn,
     });
     manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
 
     const pending = manager.waitForSignal("run_1", "tool_1");
     assertEquals(manager.getRunStatus("run_1"), "waiting");
 
-    timerCallbacks[0]?.();
+    timers.callbacks[0]?.();
 
     await assertRejects(
       async () => {
@@ -115,20 +134,17 @@ describe("agent/runtime/resume-session", () => {
   });
 
   it("evicts stale running sessions after the configured session TTL", () => {
-    const timerCallbacks: Array<() => void> = [];
+    const timers = createManualTimers();
     const manager = new RunResumeSessionManager<{ ok: boolean }>({
       sessionTtlMs: 1,
-      setTimeoutFn: ((callback: () => void) => {
-        timerCallbacks.push(callback);
-        return timerCallbacks.length as unknown as number;
-      }) as typeof setTimeout,
-      clearTimeoutFn: (() => {}) as typeof clearTimeout,
+      setTimeoutFn: timers.setTimeoutFn,
+      clearTimeoutFn: timers.clearTimeoutFn,
     });
 
     manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
     assertEquals(manager.getRunStatus("run_1"), "running");
 
-    timerCallbacks[0]?.();
+    timers.callbacks[0]?.();
 
     assertEquals(manager.getRunStatus("run_1"), null);
   });
