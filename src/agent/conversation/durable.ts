@@ -366,6 +366,7 @@ export interface CreateConversationAgentRunInput {
   apiUrl: string;
   conversationId: string;
   runId?: string;
+  parentRunId?: string;
   agentId: string;
   implementationKind?: string | null;
   projectId?: string | null;
@@ -1394,6 +1395,7 @@ export async function createConversationAgentRun(
         id: input.conversationId,
       },
       public_id: runId,
+      ...(input.parentRunId ? { parent_run_id: input.parentRunId } : {}),
       request,
     },
     responseSchema: CreateConversationRunAcceptedSchema,

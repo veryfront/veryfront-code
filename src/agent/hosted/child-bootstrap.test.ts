@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { bootstrapHostedChildRun, buildHostedChildConversationBody } from "./child-bootstrap.ts";
 
@@ -125,7 +125,14 @@ describe("agent/hosted-child-bootstrap", () => {
       latestExternalEventSequence: 3,
       status: "running",
     });
-    assertEquals(requests[1].body, {
+    const childConversationRequest = requests[1];
+    const handoffMessageRequest = requests[2];
+    const childRunRequest = requests[3];
+    assertExists(childConversationRequest);
+    assertExists(handoffMessageRequest);
+    assertExists(childRunRequest);
+
+    assertEquals(childConversationRequest.body, {
       project_id: PROJECT_ID,
       type: "project_agent",
       title: "Inspect logs",
@@ -140,17 +147,18 @@ describe("agent/hosted-child-bootstrap", () => {
         },
       },
     });
-    assertEquals(requests[2].body, {
+    assertEquals(handoffMessageRequest.body, {
       role: "user",
       parts: [{ type: "text", text: "Find the latest logs." }],
     });
-    assertEquals(requests[3].body, {
+    assertEquals(childRunRequest.body, {
       kind: "agent",
       owner: {
         kind: "conversation",
         id: CHILD_CONVERSATION_ID,
       },
       public_id: "run_child_1",
+      parent_run_id: "parent-run-1",
       request: {
         mode: "agent",
         agent_id: "invoke-agent-child",
@@ -219,13 +227,17 @@ describe("agent/hosted-child-bootstrap", () => {
     });
 
     assertEquals(result.status, "pending");
-    assertEquals(requests[3].body, {
+    const childRunRequest = requests[3];
+    assertExists(childRunRequest);
+
+    assertEquals(childRunRequest.body, {
       kind: "agent",
       owner: {
         kind: "conversation",
         id: CHILD_CONVERSATION_ID,
       },
       public_id: "run_child_queued",
+      parent_run_id: "parent-run-1",
       request: {
         mode: "agent",
         agent_id: "invoke-agent-child",
