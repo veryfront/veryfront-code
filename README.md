@@ -136,7 +136,7 @@ If you are a developer and would like to contribute with code, please open an is
 
 ## Support
 
-We have an [open community Discord](https://discord.gg/veryfront). Come say hello and let us know if you have any questions or need help getting things running.
+We have an [open community Discord](https://discord.gg/xWuRjafrtV). Come say hello and let us know if you have any questions or need help getting things running.
 
 It's also super helpful if you leave the project a star here at the [top of the page](https://github.com/veryfront/veryfront-code).
 
