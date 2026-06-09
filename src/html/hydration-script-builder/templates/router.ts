@@ -42,6 +42,11 @@ export const getRouterScript = () => `
     const log = DEBUG ? console.log.bind(console, '[Veryfront]') : () => {};
     const logError = console.error.bind(console, '[Veryfront]');
 
+    function logBackgroundFetchFailure(reason, path, error) {
+      const message = error?.message ?? String(error);
+      log(reason + ' failed:', path, message);
+    }
+
     function getDocumentNonce() {
       const element = document.querySelector('script[nonce], style[nonce], link[nonce]');
       if (!element) return undefined;
@@ -290,7 +295,9 @@ export const getRouterScript = () => `
       const cached = getCachedPageData(path);
       if (cached) {
         log('Using cached page data:', path);
-        fetchPageDataFresh(path, null).catch(() => {});
+        fetchPageDataFresh(path, null).catch((error) => {
+          logBackgroundFetchFailure('Stale page data refresh', path, error);
+        });
         return cached;
       }
 
@@ -299,7 +306,9 @@ export const getRouterScript = () => `
 
     async function fetchPageDataForPrefetch(path) {
       if (getCachedPageData(path)) return;
-      return fetchPageDataFresh(path, null).catch(() => {});
+      return fetchPageDataFresh(path, null).catch((error) => {
+        logBackgroundFetchFailure('Page data prefetch', path, error);
+      });
     }
 
     // ============================================
