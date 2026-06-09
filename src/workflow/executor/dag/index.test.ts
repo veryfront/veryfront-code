@@ -407,6 +407,36 @@ describe("DAGExecutor", () => {
       assertEquals(result.nodeStates["map1"]!.status, "completed");
     });
 
+    it("should pass each item as processor input and preserve ordered outputs", async () => {
+      const items = [{ value: "a" }, { value: "b" }, { value: "c" }];
+      const seenInputs: unknown[] = [];
+      const trackingExecutor = new MockStepExecutor(new Map(), (node) => {
+        const input = (node.config as { input?: unknown }).input;
+        seenInputs.push(input);
+        return { success: true, output: { processed: input }, executionTime: 1 };
+      });
+      const exec = new DAGExecutor({ stepExecutor: trackingExecutor, maxConcurrency: 1 });
+      const nodes: WorkflowNode[] = [
+        {
+          id: "map-inputs",
+          dependsOn: [],
+          config: {
+            type: "map",
+            items,
+            processor: { id: "proc", config: { type: "step" } as any },
+          } as any,
+        },
+      ];
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      const expected = items.map((item) => ({ processed: item }));
+      assertEquals(result.completed, true);
+      assertEquals(seenInputs, items);
+      assertEquals(result.nodeStates["map-inputs"]!.output, expected);
+      assertEquals(result.context["map-inputs"], expected);
+    });
+
     it("should handle empty items array", async () => {
       const nodes: WorkflowNode[] = [
         {
@@ -488,6 +518,36 @@ describe("DAGExecutor", () => {
       assertEquals(result.completed, true);
       const output = result.nodeStates["loop-max"]!.output as any;
       assertEquals(output.iterations, 2);
+    });
+
+    it("should record failed loop output when an iteration step fails", async () => {
+      const failingExecutor = new MockStepExecutor(
+        new Map([["bad-step", { success: false, error: "bad step" }]]),
+      );
+      const exec = new DAGExecutor({ stepExecutor: failingExecutor });
+      const nodes: WorkflowNode[] = [
+        {
+          id: "loop-error",
+          dependsOn: [],
+          config: {
+            type: "loop",
+            maxIterations: 3,
+            while: () => true,
+            steps: [{ id: "bad-step", config: { type: "step" } as any }],
+          } as any,
+        },
+      ];
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      const state = result.nodeStates["loop-error"]!;
+      const output = state.output as { exitReason: string; iterations: number };
+      assertEquals(result.completed, false);
+      assertEquals(state.status, "failed");
+      assertEquals(state.error, 'Node "bad-step" failed: bad step');
+      assertEquals(output.exitReason, "error");
+      assertEquals(output.iterations, 0);
+      assertEquals(result.context["loop-error"], output);
     });
   });
 
