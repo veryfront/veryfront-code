@@ -126,14 +126,53 @@ export function clearModuleCache(): void {
   moduleCache.clear();
 }
 
+function getMethodExport(mod: Record<string, unknown>, method: string): unknown {
+  switch (method.toUpperCase()) {
+    case "DELETE":
+      return mod.DELETE;
+    case "GET":
+      return mod.GET;
+    case "HEAD":
+      return mod.HEAD;
+    case "OPTIONS":
+      return mod.OPTIONS;
+    case "PATCH":
+      return mod.PATCH;
+    case "POST":
+      return mod.POST;
+    case "PUT":
+      return mod.PUT;
+    default:
+      return undefined;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Project Env Overlay
 // ---------------------------------------------------------------------------
 
-function applyProjectEnv(env: Record<string, string> | undefined): void {
-  if (!env) return;
+async function withProjectEnv<T>(
+  env: Record<string, string> | undefined,
+  operation: () => Promise<T>,
+): Promise<T> {
+  if (!env) return await operation();
+
+  const previousValues = new Map<string, string | undefined>();
   for (const [key, value] of Object.entries(env)) {
+    previousValues.set(key, Deno.env.get(key));
     Deno.env.set(key, value);
+  }
+
+  try {
+    return await operation();
+  } finally {
+    for (const [key, value] of previousValues) {
+      if (value === undefined) {
+        Deno.env.delete(key);
+      } else {
+        Deno.env.set(key, value);
+      }
+    }
   }
 }
 
@@ -174,29 +213,29 @@ async function ensureAgentDiscovery(projectDir: string): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function handleAppRoute(req: ExecuteAppRouteRequest): Promise<SerializedResponse> {
-  applyProjectEnv(req.projectEnv);
-  await ensureAgentDiscovery(req.projectDir);
-  const mod = await loadModule(req.modulePath);
-  const method = req.method.toUpperCase();
+  return await withProjectEnv(req.projectEnv, async () => {
+    await ensureAgentDiscovery(req.projectDir);
+    const mod = await loadModule(req.modulePath);
 
-  const handlerFn = (mod[method] ?? mod.default) as
-    | ((
-      request: Request,
-      context: { params: Record<string, string | string[]> },
-    ) => Promise<Response> | Response)
-    | undefined;
+    const handlerFn = (getMethodExport(mod, req.method) ?? mod.default) as
+      | ((
+        request: Request,
+        context: { params: Record<string, string | string[]> },
+      ) => Promise<Response> | Response)
+      | undefined;
 
-  if (!handlerFn) {
-    return {
-      status: 405,
-      statusText: "Method Not Allowed",
-      headers: [["content-type", "application/json"]],
-      body: encoder.encode(JSON.stringify({ error: "Method not allowed" })),
-    };
-  }
+    if (!handlerFn) {
+      return {
+        status: 405,
+        statusText: "Method Not Allowed",
+        headers: [["content-type", "application/json"]],
+        body: encoder.encode(JSON.stringify({ error: "Method not allowed" })),
+      };
+    }
 
-  const response = await handlerFn(deserializeRequest(req.request), { params: req.params ?? {} });
-  return serializeResponse(response);
+    const response = await handlerFn(deserializeRequest(req.request), { params: req.params ?? {} });
+    return serializeResponse(response);
+  });
 }
 
 function deserializeDataContext(
@@ -240,80 +279,80 @@ async function handleFetchData(req: FetchDataRequest): Promise<SerializedDataRes
 }
 
 async function handlePagesRoute(req: ExecutePagesRouteRequest): Promise<SerializedResponse> {
-  applyProjectEnv(req.projectEnv);
-  await ensureAgentDiscovery(req.projectDir);
-  const mod = await loadModule(req.modulePath);
-  const method = req.method as string;
+  return await withProjectEnv(req.projectEnv, async () => {
+    await ensureAgentDiscovery(req.projectDir);
+    const mod = await loadModule(req.modulePath);
 
-  const handlerFn = (mod[method] ?? mod.default) as
-    | ((ctx: unknown) => Promise<Response> | Response)
-    | undefined;
+    const handlerFn = (getMethodExport(mod, req.method) ?? mod.default) as
+      | ((ctx: unknown) => Promise<Response> | Response)
+      | undefined;
 
-  if (!handlerFn) {
-    return {
-      status: 405,
-      statusText: "Method Not Allowed",
-      headers: [["content-type", "application/json"]],
-      body: encoder.encode(JSON.stringify({ error: "Method not allowed" })),
-    };
-  }
-
-  const { request, params, cookies } = deserializePagesRequest(req.context);
-  const url = new URL(request.url);
-
-  // Build a minimal read-only fs adapter scoped to the project directory
-  const workerFs = {
-    readTextFile: (path: string) => Deno.readTextFile(path),
-    readFile: (path: string) => Deno.readFile(path),
-    exists: async (path: string) => {
-      try {
-        await Deno.stat(path);
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    stat: async (path: string) => {
-      const info = await Deno.stat(path);
+    if (!handlerFn) {
       return {
-        isFile: info.isFile,
-        isDirectory: info.isDirectory,
-        isSymlink: info.isSymlink,
-        size: info.size,
-        mtime: info.mtime,
+        status: 405,
+        statusText: "Method Not Allowed",
+        headers: [["content-type", "application/json"]],
+        body: encoder.encode(JSON.stringify({ error: "Method not allowed" })),
       };
-    },
-    readDir: async function* (path: string) {
-      for await (const entry of Deno.readDir(path)) {
-        yield { name: entry.name, isFile: entry.isFile, isDirectory: entry.isDirectory };
-      }
-    },
-  };
+    }
 
-  // Build a minimal APIContext (subset of the full context)
-  const ctx = {
-    request,
-    req: request,
-    params,
-    query: url.searchParams,
-    cookies,
-    headers: request.headers,
-    url,
-    json: (data: unknown, init?: ResponseInit): Response =>
-      new Response(JSON.stringify(data), {
-        ...init,
-        headers: { "Content-Type": "application/json", ...init?.headers },
-      }),
-    text: (data: string, init?: ResponseInit): Response =>
-      new Response(data, {
-        ...init,
-        headers: { "Content-Type": "text/plain", ...init?.headers },
-      }),
-    fs: workerFs,
-  };
+    const { request, params, cookies } = deserializePagesRequest(req.context);
+    const url = new URL(request.url);
 
-  const response = await handlerFn(ctx);
-  return serializeResponse(response);
+    // Build a minimal read-only fs adapter scoped to the project directory
+    const workerFs = {
+      readTextFile: (path: string) => Deno.readTextFile(path),
+      readFile: (path: string) => Deno.readFile(path),
+      exists: async (path: string) => {
+        try {
+          await Deno.stat(path);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      stat: async (path: string) => {
+        const info = await Deno.stat(path);
+        return {
+          isFile: info.isFile,
+          isDirectory: info.isDirectory,
+          isSymlink: info.isSymlink,
+          size: info.size,
+          mtime: info.mtime,
+        };
+      },
+      readDir: async function* (path: string) {
+        for await (const entry of Deno.readDir(path)) {
+          yield { name: entry.name, isFile: entry.isFile, isDirectory: entry.isDirectory };
+        }
+      },
+    };
+
+    // Build a minimal APIContext (subset of the full context)
+    const ctx = {
+      request,
+      req: request,
+      params,
+      query: url.searchParams,
+      cookies,
+      headers: request.headers,
+      url,
+      json: (data: unknown, init?: ResponseInit): Response =>
+        new Response(JSON.stringify(data), {
+          ...init,
+          headers: { "Content-Type": "application/json", ...init?.headers },
+        }),
+      text: (data: string, init?: ResponseInit): Response =>
+        new Response(data, {
+          ...init,
+          headers: { "Content-Type": "text/plain", ...init?.headers },
+        }),
+      fs: workerFs,
+    };
+
+    const response = await handlerFn(ctx);
+    return serializeResponse(response);
+  });
 }
 
 // ---------------------------------------------------------------------------
