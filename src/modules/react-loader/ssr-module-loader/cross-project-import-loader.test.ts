@@ -130,7 +130,7 @@ describe("modules/react-loader/ssr-module-loader/cross-project-import-loader", (
       },
       fetchImpl: async (input, init) => {
         fetchedUrl = String(input);
-        fetchedHeaders = init?.headers as Headers;
+        fetchedHeaders = (init as { headers?: Headers } | undefined)?.headers;
         return new Response("export const remoteValue = 1;", { status: 200 });
       },
       injectContextImpl: (headers) => {
@@ -170,6 +170,43 @@ describe("modules/react-loader/ssr-module-loader/cross-project-import-loader", (
     assertEquals(cached?.contentHash, "1234abcd");
     assertEquals(debugLogs.includes("[SSR-MODULE-LOADER] Fetching cross-project import"), true);
     assertEquals(debugLogs.includes("[SSR-MODULE-LOADER] Cross-project import transformed"), true);
+  });
+
+  it("rejects source bodies whose UTF-8 byte size exceeds the fallback limit", async () => {
+    globalCrossProjectCache.clear();
+
+    let transformed = false;
+    const oversizedUtf8Source = "é".repeat(3_000_000);
+
+    await assertRejects(
+      () =>
+        transformCrossProjectImportFlow({
+          crossProjectImport,
+          options: {
+            projectId: "project-a",
+            projectDir: "/project",
+            dev: true,
+            apiBaseUrl: "https://registry.example.com/api",
+            adapter: denoAdapter,
+          },
+          cache: {
+            hashContentAsync: async () => "unused",
+            getTempPath: async () => "/tmp/unused.mjs",
+            getFs: () => createMockCacheFs(),
+          },
+          withTransformCapacity: async (_syntheticFilePath, operation) => await operation(),
+          fetchImpl: async () => new Response(oversizedUtf8Source, { status: 200 }),
+          transformToESMImpl: async () => {
+            transformed = true;
+            return "";
+          },
+          loggerImpl: { debug: () => {}, error: () => {} },
+        }),
+      Error,
+      "Cross-project source exceeds size limit",
+    );
+
+    assertEquals(transformed, false);
   });
 
   it("throws with equivalent fetch error message and logs failure context", async () => {

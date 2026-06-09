@@ -14,6 +14,10 @@ import type { SSRModuleLoaderOptions } from "./types.ts";
 /** Max size of a fetched cross-project module source, to bound memory use. */
 const MAX_CROSS_PROJECT_SOURCE_BYTES = 5 * 1024 * 1024; // 5MB
 
+function getSourceByteLength(source: string): number {
+  return new TextEncoder().encode(source).byteLength;
+}
+
 interface CrossProjectImportCache {
   hashContentAsync(content: string): Promise<string>;
   getTempPath(filePath: string, contentHash?: string): Promise<string>;
@@ -103,9 +107,11 @@ export async function transformCrossProjectImportFlow(
     }
 
     const sourceCode = await response.text();
-    if (sourceCode.length > MAX_CROSS_PROJECT_SOURCE_BYTES) {
+    const sourceByteLength = getSourceByteLength(sourceCode);
+    if (sourceByteLength > MAX_CROSS_PROJECT_SOURCE_BYTES) {
       throw NETWORK_ERROR.create({
-        detail: `Cross-project source exceeds size limit: ${registryUrl}`,
+        detail:
+          `Cross-project source exceeds size limit: ${registryUrl} (${sourceByteLength} bytes)`,
       });
     }
     const contentHash = await cache.hashContentAsync(sourceCode);

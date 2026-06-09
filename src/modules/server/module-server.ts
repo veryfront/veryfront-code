@@ -98,6 +98,10 @@ const CROSS_PROJECT_LATEST_PREFIX = /^\/_vf_modules\/_cross\/([a-z0-9-]+)\/\@\/(
 /** Max size of a fetched cross-project module source, to bound memory use. */
 const MAX_CROSS_PROJECT_SOURCE_BYTES = 5 * 1024 * 1024; // 5MB
 
+function getSourceByteLength(source: string): number {
+  return new TextEncoder().encode(source).byteLength;
+}
+
 export interface ModuleServerOptions {
   /** Project identifier (directory path, legacy naming) */
   projectId: string;
@@ -789,10 +793,11 @@ async function fetchCrossProjectSource(
   }
 
   const text = await response.text();
-  if (text.length > MAX_CROSS_PROJECT_SOURCE_BYTES) {
+  const sourceByteLength = getSourceByteLength(text);
+  if (sourceByteLength > MAX_CROSS_PROJECT_SOURCE_BYTES) {
     logger.warn("Cross-project source exceeds size limit", {
       registryUrl,
-      size: text.length,
+      size: sourceByteLength,
     });
     return null;
   }
