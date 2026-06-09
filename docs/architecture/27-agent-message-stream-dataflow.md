@@ -173,11 +173,11 @@ results, it should pass generic `context`. This is the child execution payload:
 records, ids, decisions, and other structured values the child must preserve.
 The prompt explains the task, but `context` carries the data to act on.
 
-The parent can also pass generic `evidence_refs`. These refs point to prior
-run/message/tool evidence and are stored with the child-run metadata for audit
-and replay. `context` is enough for execution correctness; `evidence_refs`
-explain where the context came from. The child prompt receives both blocks and
-is instructed to prefer `structured_context` when prose conflicts with it.
+The hosted child input does not accept a separate evidence reference payload.
+Critical facts must be copied into `context`; durable child-run ids, parent tool
+calls, and child summaries provide the audit trail. The child prompt receives
+the `structured_context` block and is instructed to prefer it when prose
+conflicts with it.
 
 Child run events should remain inspectable and streamable through child-run
 views. They should not be dumped into the parent context, because that would

@@ -18,12 +18,6 @@ Deno.test("hostedChildForkToolInputSchema accepts the hosted child fork fields",
         amount: 2180,
       },
     },
-    evidence_refs: [{
-      run_id: "run_123",
-      tool_call_id: "tool_123",
-      result_path: "$.records[0]",
-      label: "matched record",
-    }],
     project_id: "project-123",
     tools: ["readFile", "bash"],
     model: "sonnet",
@@ -41,12 +35,6 @@ Deno.test("hostedChildForkToolInputSchema accepts the hosted child fork fields",
         amount: 2180,
       },
     },
-    evidence_refs: [{
-      run_id: "run_123",
-      tool_call_id: "tool_123",
-      result_path: "$.records[0]",
-      label: "matched record",
-    }],
     project_id: "project-123",
     tools: ["readFile", "bash"],
     model: "sonnet",
@@ -55,7 +43,7 @@ Deno.test("hostedChildForkToolInputSchema accepts the hosted child fork fields",
   });
 });
 
-Deno.test("resolveHostedChildForkRuntimeConfig appends structured context before evidence refs", () => {
+Deno.test("resolveHostedChildForkRuntimeConfig appends structured child context", () => {
   const result = resolveHostedChildForkRuntimeConfig({
     forkInput: {
       description: "release invoice",
@@ -68,11 +56,6 @@ Deno.test("resolveHostedChildForkRuntimeConfig appends structured context before
           currency: "EUR",
         },
       },
-      evidence_refs: [{
-        run_id: "run_match",
-        tool_call_id: "tool_match",
-        result_path: "$.matched_invoices[1]",
-      }],
     },
     contextModel: "opus",
     defaultModel: "haiku",
@@ -84,12 +67,6 @@ Deno.test("resolveHostedChildForkRuntimeConfig appends structured context before
 
   assertEquals(result.effectivePrompt.includes("<structured_context>"), true);
   assertEquals(result.effectivePrompt.includes('"supplier":"Meyer Papier GmbH"'), true);
-  assertEquals(result.effectivePrompt.includes("<evidence_refs>"), true);
-  assertEquals(
-    result.effectivePrompt.indexOf("<structured_context>") <
-      result.effectivePrompt.indexOf("<evidence_refs>"),
-    true,
-  );
   assertEquals(
     result.effectivePrompt.includes(
       "Treat structured_context as the authoritative data payload for the child task.",
@@ -98,7 +75,7 @@ Deno.test("resolveHostedChildForkRuntimeConfig appends structured context before
   );
 });
 
-Deno.test("resolveHostedChildForkRuntimeConfig appends evidence refs as structured child context", () => {
+Deno.test("resolveHostedChildForkRuntimeConfig does not append evidence refs", () => {
   const result = resolveHostedChildForkRuntimeConfig({
     forkInput: {
       description: "release matched record",
@@ -110,7 +87,7 @@ Deno.test("resolveHostedChildForkRuntimeConfig appends evidence refs as structur
         result_path: "$.records[0]",
         label: "matched source record",
       }],
-    },
+    } as never,
     contextModel: "opus",
     defaultModel: "haiku",
     defaultMaxSteps: 80,
@@ -121,9 +98,9 @@ Deno.test("resolveHostedChildForkRuntimeConfig appends evidence refs as structur
 
   assertEquals(result.effectivePrompt.includes("Use the matched record"), true);
   assertEquals(result.effectivePrompt.includes("<structured_context>\n{}"), true);
-  assertEquals(result.effectivePrompt.includes("<evidence_refs>"), true);
-  assertEquals(result.effectivePrompt.includes('"run_id":"run_match"'), true);
-  assertEquals(result.effectivePrompt.includes('"result_path":"$.records[0]"'), true);
+  assertEquals(result.effectivePrompt.includes("<evidence_refs>"), false);
+  assertEquals(result.effectivePrompt.includes('"run_id":"run_match"'), false);
+  assertEquals(result.effectivePrompt.includes('"result_path":"$.records[0]"'), false);
 });
 
 Deno.test("hostedChildForkToolInputSchema requires structured child context", () => {

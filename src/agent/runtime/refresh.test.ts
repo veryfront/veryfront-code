@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { type ModelRuntime } from "#veryfront/provider";
 import { tool } from "#veryfront/tool";
@@ -29,13 +29,6 @@ function extractSystemPrompt(options: unknown): string {
     .filter((entry) => entry?.role === "system" && typeof entry.content === "string")
     .map((entry) => entry.content as string)
     .join("\n");
-}
-
-function stripCurrentRunToolStateSystemPrompt(systemPrompt: string): string {
-  return systemPrompt.replace(
-    /\n\n<run_state current_run="true">\n[\s\S]*?\n<\/run_state>$/u,
-    "",
-  );
 }
 
 function supplierInvoiceEvidenceMessages(): Message[] {
@@ -421,142 +414,6 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(invokeResult?.result, { ok: true, max_steps: 160 });
   });
 
-  it("injects current-run run_state with semantic tool state between generate steps", async () => {
-    const observedSystems: string[] = [];
-    let callCount = 0;
-    const model: ModelRuntime = {
-      provider: "hosted",
-      modelId: "hosted/run-state-generate",
-      async doGenerate(options: unknown) {
-        callCount++;
-        observedSystems.push(extractSystemPrompt(options));
-
-        if (callCount === 1) {
-          return {
-            content: [{
-              type: "tool-call",
-              toolCallId: "invoke-ingest-1",
-              toolName: "invoke_agent",
-              input: '{"agent_id":"ingest-invoice-agent","input":"Load open supplier invoices"}',
-            }],
-            finishReason: "tool-calls",
-            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-          };
-        }
-
-        return {
-          content: [{ type: "text", text: "done" }],
-          finishReason: "stop",
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        };
-      },
-      async doStream() {
-        return { stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]) };
-      },
-    };
-    const invokeAgent = tool({
-      id: "invoke_agent",
-      description: "Invoke an agent",
-      inputSchema: defineSchema((v) =>
-        v.object({
-          agent_id: v.string(),
-          input: v.string(),
-        })
-      )(),
-      execute: ({ agent_id }) => ({ agent_id, status: "completed" }),
-    });
-    const assistant = agent({
-      model: "hosted/run-state-generate",
-      system: "Run state generate test",
-      tools: { invoke_agent: invokeAgent },
-      maxSteps: 2,
-      resolveModelTransport: async () => ({ model }),
-    });
-
-    await assistant.generate({ input: "Run ingest" });
-
-    assertEquals(observedSystems.length, 2);
-    assertStringIncludes(observedSystems[1] ?? "", '<run_state current_run="true">');
-    assertStringIncludes(observedSystems[1] ?? "", '"semanticCalls"');
-    assertStringIncludes(observedSystems[1] ?? "", '"agent:ingest-invoice-agent"');
-    assertStringIncludes(observedSystems[1] ?? "", '"actions"');
-    assertStringIncludes(observedSystems[1] ?? "", '"invoke_agent:agent:ingest-invoice-agent"');
-    assertEquals((observedSystems[1] ?? "").includes("Load open supplier invoices"), false);
-  });
-
-  it("injects current-run run_state from persisted messages before a resumed stream step", async () => {
-    const observedSystems: string[] = [];
-    const model: ModelRuntime = {
-      provider: "hosted",
-      modelId: "hosted/run-state-stream-resume",
-      async doGenerate() {
-        return {
-          content: [{ type: "text", text: "unused" }],
-          finishReason: "stop",
-          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-        };
-      },
-      async doStream(options: unknown) {
-        observedSystems.push(extractSystemPrompt(options));
-        return {
-          stream: createRuntimeStream([
-            { type: "text-delta", text: "resumed" },
-            { type: "finish", finishReason: "stop", usage: { inputTokens: 1, outputTokens: 1 } },
-          ]),
-        };
-      },
-    };
-    const assistant = agent({
-      model: "hosted/run-state-stream-resume",
-      system: "Run state resumed stream test",
-      tools: {},
-      maxSteps: 1,
-      resolveModelTransport: async () => ({ model }),
-    });
-    const resumedMessages: Message[] = [
-      {
-        id: "user-1",
-        role: "user",
-        parts: [{ type: "text", text: "Process invoices" }],
-        timestamp: 1,
-      },
-      {
-        id: "assistant-1",
-        role: "assistant",
-        parts: [{
-          type: "tool-invoke_agent",
-          toolCallId: "invoke-ingest-1",
-          toolName: "invoke_agent",
-          args: {
-            agent_id: "ingest-invoice-agent",
-            input: "Load open supplier invoices",
-          },
-        }],
-        timestamp: 2,
-      },
-      {
-        id: "tool-1",
-        role: "tool",
-        parts: [{
-          type: "tool-result",
-          toolCallId: "invoke-ingest-1",
-          toolName: "invoke_agent",
-          result: { status: "completed", output: "Loaded invoices" },
-        }],
-        timestamp: 3,
-      },
-    ];
-
-    const response = (await assistant.stream({ messages: resumedMessages })).toDataStreamResponse();
-    await response.text();
-
-    assertEquals(observedSystems.length, 1);
-    assertStringIncludes(observedSystems[0] ?? "", '<run_state current_run="true">');
-    assertStringIncludes(observedSystems[0] ?? "", '"agent:ingest-invoice-agent"');
-    assertStringIncludes(observedSystems[0] ?? "", '"invoke_agent:agent:ingest-invoice-agent"');
-    assertEquals((observedSystems[0] ?? "").includes("Load open supplier invoices"), false);
-  });
-
   it("hydrates loaded skill delegation overrides from persisted messages before stream tool execution", async () => {
     const toolResults: ToolExecutionResultRequest[] = [];
     let callCount = 0;
@@ -669,7 +526,7 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(invokeResult?.result, { ok: true, max_steps: 160 });
   });
 
-  it("blocks generate() invoke_agent calls that contradict persisted current-run evidence", async () => {
+  it("does not locally block generate() invoke_agent calls that contradict prior tool output", async () => {
     let executed = false;
     let callCount = 0;
     const model: ModelRuntime = {
@@ -732,16 +589,12 @@ describe("agent runtime refresh hooks", () => {
       input: supplierInvoiceEvidenceMessages(),
     });
 
-    assertEquals(executed, false);
-    assertEquals(result.toolCalls[0]?.status, "error");
-    assertStringIncludes(
-      result.toolCalls[0]?.error ?? "",
-      'INV-2026-00491 supplier is "Meyer Papier GmbH"',
-    );
-    assertStringIncludes(result.toolCalls[0]?.error ?? "", "Meridian Logistics GmbH");
+    assertEquals(executed, true);
+    assertEquals(result.toolCalls[0]?.status, "completed");
+    assertEquals(result.toolCalls[0]?.result, { ok: true });
   });
 
-  it("blocks stream() invoke_agent calls that contradict persisted current-run evidence", async () => {
+  it("does not locally block stream() invoke_agent calls that contradict prior tool output", async () => {
     let executed = false;
     let callCount = 0;
     const model: ModelRuntime = {
@@ -815,9 +668,9 @@ describe("agent runtime refresh hooks", () => {
     })).toDataStreamResponse();
     const body = await response.text();
 
-    assertEquals(executed, false);
-    assertStringIncludes(body, 'INV-2026-00491 supplier is \\"Meyer Papier GmbH\\"');
-    assertStringIncludes(body, "Meridian Logistics GmbH");
+    assertEquals(executed, true);
+    assertEquals(body.includes('INV-2026-00491 supplier is \\"Meyer Papier GmbH\\"'), false);
+    assertEquals(body.includes("Meridian Logistics GmbH"), true);
   });
 
   it("refreshes system and context at step boundaries for generate()", async () => {
@@ -831,9 +684,7 @@ describe("agent runtime refresh hooks", () => {
       modelId: "hosted/runtime-refresh-generate",
       async doGenerate(options: unknown) {
         callCount++;
-        observedSystems.push(
-          stripCurrentRunToolStateSystemPrompt(extractSystemPrompt(options)),
-        );
+        observedSystems.push(extractSystemPrompt(options));
 
         if (callCount === 1) {
           return {
@@ -972,9 +823,7 @@ describe("agent runtime refresh hooks", () => {
       },
       async doStream(options: unknown) {
         callCount++;
-        observedSystems.push(
-          stripCurrentRunToolStateSystemPrompt(extractSystemPrompt(options)),
-        );
+        observedSystems.push(extractSystemPrompt(options));
 
         if (callCount === 1) {
           return {
