@@ -312,25 +312,25 @@ export async function bootstrap(
 
     // Inject server-layer callbacks into FS config so the platform layer
     // doesn't need to import from the server layer
-    const configuredFs = config.fs as Partial<FSAdapterConfig> | undefined;
-    const fsWithCallbacks = {
-      ...config.fs,
+    const configuredFs = (config.fs ?? {}) as Partial<FSAdapterConfig>;
+    const fsWithCallbacks: FSAdapterConfig = {
+      ...configuredFs,
       invalidationCallbacks: {
         ...createServerStyleInvalidationCallbacks(),
-        ...configuredFs?.invalidationCallbacks,
+        ...configuredFs.invalidationCallbacks,
         triggerReload: (changedPaths?: string[], project?: InvalidationProjectContext) =>
           ReloadNotifier.triggerReload(changedPaths, project),
         clearDomainCache,
       },
       styleCallbacks: {
         ...createServerStyleCallbacks(),
-        ...configuredFs?.styleCallbacks,
+        ...configuredFs.styleCallbacks,
       },
     };
 
     const enhancedAdapter = await enhanceAdapterWithFS(
       adapter,
-      { ...config, fs: fsWithCallbacks } as any,
+      { fs: fsWithCallbacks },
       projectDir,
     );
 
