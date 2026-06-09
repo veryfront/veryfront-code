@@ -436,6 +436,7 @@ export class WorkflowRunManager {
       }
     } catch (error) {
       logger.error(`Failed to create run execution for ${run.id}:`, error);
+      this.stats.executionsFailed++;
 
       // Mark workflow as failed
       await this.config.backend.updateRun(run.id, {

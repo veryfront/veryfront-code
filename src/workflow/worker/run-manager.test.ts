@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { MemoryBackend } from "../backends/memory.ts";
+import type { WorkflowRun } from "../types.ts";
 import type { RunExecutionConfig, RunExecutionInfo, RunExecutor } from "./executors/types.ts";
 import { createWorkflowRunManager, WorkflowRunManager } from "./run-manager.ts";
 
@@ -45,6 +46,12 @@ class FakeRunExecutor implements RunExecutor {
   }
 }
 
+class FailingRunExecutor extends FakeRunExecutor {
+  override createRunExecution(_config: RunExecutionConfig): Promise<string> {
+    return Promise.reject(new Error("spawn failed"));
+  }
+}
+
 // A poll interval large enough that the first scheduled poll never fires during
 // a test; stop() clears the pending timer, so no work runs and no timer leaks.
 const NO_POLL = 1_000_000;
@@ -53,6 +60,25 @@ function makeManager(executor: RunExecutor = new FakeRunExecutor()) {
   const backend = new MemoryBackend();
   const manager = new WorkflowRunManager({ backend, executor, pollInterval: NO_POLL });
   return { backend, executor, manager };
+}
+
+function createPendingRun(id: string): WorkflowRun {
+  return {
+    id,
+    workflowId: "workflow-1",
+    status: "pending",
+    input: {},
+    nodeStates: {},
+    currentNodes: [],
+    context: { input: {} },
+    checkpoints: [],
+    pendingApprovals: [],
+    createdAt: new Date(),
+  };
+}
+
+function pollOnce(manager: WorkflowRunManager): Promise<void> {
+  return (manager as unknown as { poll(): Promise<void> }).poll();
 }
 
 describe("workflow/worker/run-manager", () => {
@@ -161,6 +187,46 @@ describe("workflow/worker/run-manager", () => {
     const fresh = manager.getStats();
     assertEquals(fresh.pollCount, 0);
     assertEquals(fresh.status, "idle");
+  });
+
+  it("poll() claims a pending run, starts one isolated execution, and releases the pending lock", async () => {
+    const executor = new FakeRunExecutor();
+    const { backend, manager } = makeManager(executor);
+    track(manager);
+    const run = createPendingRun("run-pending");
+    await backend.createRun(run);
+    await manager.start();
+
+    await pollOnce(manager);
+
+    const updatedRun = await backend.getRun(run.id);
+    assertExists(updatedRun);
+    assertEquals(executor.created.length, 1);
+    assertEquals(executor.created[0]?.run.id, run.id);
+    assertEquals(updatedRun.status, "running");
+    assertEquals(updatedRun.workerId?.startsWith("run-execution:run_exec"), true);
+    assertEquals(await backend.isLocked(run.id), false);
+    assertEquals(manager.getActiveExecutions().length, 1);
+    assertEquals(manager.getStats().executionsCreated, 1);
+  });
+
+  it("poll() records execution creation failures in manager stats and failed run state", async () => {
+    const executor = new FailingRunExecutor();
+    const { backend, manager } = makeManager(executor);
+    track(manager);
+    const run = createPendingRun("run-create-failure");
+    await backend.createRun(run);
+    await manager.start();
+
+    await pollOnce(manager);
+
+    const updatedRun = await backend.getRun(run.id);
+    assertExists(updatedRun);
+    assertEquals(updatedRun.status, "failed");
+    assertEquals(updatedRun.error?.message.includes("RUN_EXECUTION_CREATION_FAILED"), true);
+    assertEquals(await backend.isLocked(run.id), false);
+    assertEquals(manager.getActiveExecutions(), []);
+    assertEquals(manager.getStats().executionsFailed, 1);
   });
 
   it("createWorkflowRunManager builds a WorkflowRunManager", () => {
