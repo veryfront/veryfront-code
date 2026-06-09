@@ -32,7 +32,12 @@ import { transformResolvedModuleSource } from "./source-transform.ts";
 
 // Re-export extracted modules for backward compatibility
 export { rewriteDntImports } from "./import-rewriter.ts";
-export { endRenderSession, hasRenderSession, startRenderSession } from "./render-sessions.ts";
+export {
+  endRenderSession,
+  hasRenderSession,
+  runInRenderSession,
+  startRenderSession,
+} from "./render-sessions.ts";
 
 /**
  * Maximum time allowed for the entire transform tree (recursive module resolution).

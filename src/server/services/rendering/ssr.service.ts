@@ -12,6 +12,7 @@ import { getColorSchemeFromRequest } from "#veryfront/security/http/client-hints
 import {
   endRenderSession,
   hasRenderSession,
+  runInRenderSession,
   startRenderSession,
 } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/index.ts";
 import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
@@ -172,28 +173,32 @@ export class SSRService implements SSRServiceLike {
       });
 
       const renderStartTime = performance.now();
-      const result = await profilePhase(
-        "ssr.render_page",
-        () =>
-          timeAsync("render-page", () =>
-            renderer.renderPage(slug, {
-              delivery: "stream",
-              request,
-              url,
-              nonce,
-              studioEmbed,
-              projectId,
-              pageId,
-              colorScheme,
-              colorSchemeFromParam,
-              colorSchemeFromHeader,
-              environment: ctx.requestContext?.mode,
-              projectSlug: ctx.projectSlug,
-              noHmr,
-              forceProductionScripts: options.forceProductionScripts,
-              renderSessionId,
-            })),
-      );
+      // Bind the render session to this async context so modules fetched
+      // during the render are attributed to THIS render, not whichever
+      // concurrent session started first.
+      const result = await runInRenderSession(renderSessionId, () =>
+        profilePhase(
+          "ssr.render_page",
+          () =>
+            timeAsync("render-page", () =>
+              renderer.renderPage(slug, {
+                delivery: "stream",
+                request,
+                url,
+                nonce,
+                studioEmbed,
+                projectId,
+                pageId,
+                colorScheme,
+                colorSchemeFromParam,
+                colorSchemeFromHeader,
+                environment: ctx.requestContext?.mode,
+                projectSlug: ctx.projectSlug,
+                noHmr,
+                forceProductionScripts: options.forceProductionScripts,
+                renderSessionId,
+              })),
+        ));
 
       logger.debug("renderPage DONE", {
         projectSlug: ctx.projectSlug,
