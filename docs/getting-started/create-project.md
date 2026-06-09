@@ -11,13 +11,18 @@ order: 3
 
 ## Scaffold
 
+Run `veryfront init` to open the project wizard:
+
 ```bash
 veryfront init test-app
 cd test-app
 ```
 
-Choose `minimal` for a blank app or `ai-agent` for an agent and chat route. Pass
-`--template` to skip the prompt:
+The wizard asks which template to use. Choose `minimal` for a blank app or
+`ai-agent` for an agent and chat route.
+
+Pass `--template` when you already know which template you want, or when running
+the command from a non-interactive script:
 
 ```bash
 veryfront init test-app --template ai-agent

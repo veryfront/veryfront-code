@@ -16,6 +16,10 @@ veryfront init support-agent --template ai-agent
 cd support-agent
 ```
 
+The quickstart passes `--template ai-agent` so the command creates the exact
+agent app shown below. If you omit `--template`, `veryfront init` opens the
+template picker in interactive terminals.
+
 The `ai-agent` template creates a runnable chat app:
 
 ```text
