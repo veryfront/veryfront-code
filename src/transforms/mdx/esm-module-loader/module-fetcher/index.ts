@@ -22,18 +22,17 @@ import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import type { ModuleFetcherContext } from "../types.ts";
-import { getLocalFs, getModulePathCache } from "../cache/index.ts";
+import { getModulePathCache } from "../cache/index.ts";
 import { hashString } from "../utils/hash.ts";
 import { resolveModuleFile } from "../resolution/file-finder.ts";
 import { buildMissingModuleError } from "../missing-module.ts";
 import { getTransformCacheKey, getVersionedPathCacheKey } from "./cache-keys.ts";
 import { rewriteDntImports, rewriteVeryfrontImports } from "./import-rewriter.ts";
 import { findNestedImports, processNestedImports } from "./nested-imports.ts";
-import { validateCachedModule } from "./framework-validator.ts";
-import { recordModuleToSession } from "./render-sessions.ts";
 import { readDistributedCache, writeDistributedCache } from "./distributed-cache.ts";
 import { fetchModuleViaHTTP } from "./http-fetcher.ts";
 import { cacheModule, normalizePath } from "./module-cache.ts";
+import { readValidCachedModulePath } from "./path-cache-lookup.ts";
 
 // Re-export extracted modules for backward compatibility
 export { rewriteDntImports } from "./import-rewriter.ts";
@@ -196,38 +195,19 @@ async function doFetchAndCacheModule(
 
   const pathCache = await getModulePathCache(esmCacheDir);
   const versionedKey = getVersionedPathCacheKey(normalizedPath, effectiveReactVersion);
-  const cachedPath = pathCache.get(versionedKey);
-
-  if (cachedPath) {
-    try {
-      const stat = await getLocalFs().stat(cachedPath);
-      if (stat?.isFile) {
-        const cachedCode = await getLocalFs().readTextFile(cachedPath);
-        if (
-          await validateCachedModule(
-            normalizedPath,
-            cachedPath,
-            cachedCode,
-            log,
-            pathCache,
-            versionedKey,
-            context.contentSourceId
-              ? {
-                projectId: context.projectId,
-                contentSourceId: context.contentSourceId,
-              }
-              : undefined,
-          )
-        ) {
-          recordModuleToSession(normalizedPath);
-          return cachedPath;
-        }
+  const cachedPath = await readValidCachedModulePath({
+    normalizedPath,
+    pathCache,
+    versionedKey,
+    log,
+    recoveryOptions: context.contentSourceId
+      ? {
+        projectId: context.projectId,
+        contentSourceId: context.contentSourceId,
       }
-    } catch (_) {
-      /* expected: cached file may no longer exist on disk */
-      pathCache.delete(versionedKey);
-    }
-  }
+      : undefined,
+  });
+  if (cachedPath) return cachedPath;
 
   try {
     const resolved = await resolveModuleFile(normalizedPath, adapter, projectDir);
