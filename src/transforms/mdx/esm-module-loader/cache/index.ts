@@ -511,7 +511,13 @@ export async function lookupMdxEsmCache(
       // Delete the stale file so it gets recreated
       try {
         await getLocalFs().remove(cachedPath);
-      } catch (_) { /* expected: stale cached file may already be removed */ }
+      } catch (error) {
+        logger.debug(`${LOG_PREFIX_MDX_LOADER} Stale cached module cleanup failed`, {
+          filePath,
+          cachedPath,
+          error,
+        });
+      }
       return {
         status: "corrupted",
         reason: "Unresolved _vf_modules imports in cached code",
@@ -547,7 +553,13 @@ export async function lookupMdxEsmCache(
       // Delete the stale file so it gets recreated
       try {
         await getLocalFs().remove(cachedPath);
-      } catch (_) { /* expected: stale cached file may already be removed */ }
+      } catch (error) {
+        logger.debug(`${LOG_PREFIX_MDX_LOADER} Stale cached module cleanup failed`, {
+          filePath,
+          cachedPath,
+          error,
+        });
+      }
       return {
         status: "corrupted",
         reason: `Missing file dependencies: ${missingDeps.slice(0, 3).join(", ")}`,

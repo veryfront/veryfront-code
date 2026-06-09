@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import {
   clearModulePathCache,
+  getLocalFs,
   getModulePathCache,
   invalidateMdxEsmModule,
   invalidateModulePaths,
@@ -86,6 +87,66 @@ describe("MDX module path cache", () => {
       await Promise.all([
         remove(cacheDirA, { recursive: true }),
         remove(cacheDirB, { recursive: true }),
+      ]);
+      clearModulePathCache();
+    }
+  });
+
+  it("logs stale cached file removal failures during corrupted-cache invalidation", async () => {
+    clearModulePathCache();
+
+    const cacheDir = await makeTempDir({ prefix: "vf-mdx-remove-log-" });
+    const projectDir = await makeTempDir({ prefix: "vf-mdx-remove-log-project-" });
+    const filePath = join(projectDir, "app/page.tsx");
+    const cachedPath = join(cacheDir, buildMdxEsmModuleFileName("unresolved"));
+    const key = buildMdxEsmPathCacheKey("_vf_modules/app/page.js", "19.1.1");
+    const localFs = getLocalFs();
+    const originalRemove = localFs.remove.bind(localFs);
+    const originalDebug = log.debug.bind(log);
+    const debugEntries: Array<{ message: string; metadata: unknown[] }> = [];
+
+    try {
+      await writeTextFile(
+        cachedPath,
+        'import stale from "/_vf_modules/_veryfront/stale.mjs"; export default stale;',
+      );
+      await writeTextFile(join(cacheDir, "_index.json"), JSON.stringify({ [key]: cachedPath }));
+
+      localFs.remove = (path: string, options?: { recursive?: boolean }): Promise<void> => {
+        if (path === cachedPath) return Promise.reject(new Error("remove denied"));
+        return originalRemove(path, options);
+      };
+      log.debug = (message: string, ...metadata: unknown[]): void => {
+        debugEntries.push({ message, metadata });
+        originalDebug(message, ...metadata);
+      };
+
+      const result = await lookupMdxEsmCache(
+        filePath,
+        cacheDir,
+        projectDir,
+        undefined,
+        undefined,
+        "19.1.1",
+      );
+
+      assertEquals(result.status, "corrupted");
+      assertEquals(
+        debugEntries.some((entry) => {
+          const metadata = entry.metadata[0] as { error?: unknown } | undefined;
+          return entry.message.includes("Stale cached module cleanup failed") &&
+            metadata?.error instanceof Error &&
+            metadata.error.message === "remove denied";
+        }),
+        true,
+        "failed stale-file cleanup should be observable",
+      );
+    } finally {
+      localFs.remove = originalRemove;
+      log.debug = originalDebug;
+      await Promise.all([
+        remove(cacheDir, { recursive: true }).catch(() => {}),
+        remove(projectDir, { recursive: true }).catch(() => {}),
       ]);
       clearModulePathCache();
     }
