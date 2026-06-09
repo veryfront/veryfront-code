@@ -3,7 +3,6 @@ import { runtimeProcess } from "./runtime-process.ts";
 
 type EnvOverlayValue = string | null;
 type EnvOverlayStore = Map<string, EnvOverlayValue>;
-type HostProcessEnvGetter = (key: string) => string | undefined;
 
 export type EnvOverlayStorage = {
   getStore: () => unknown;
@@ -27,11 +26,6 @@ function getOverlayEnvValue(
 
   const value = store.get(key);
   return { hasValue: true, value: value ?? undefined };
-}
-
-function getHostProcessEnvFromProjectProxy(key: string): string | undefined {
-  const getter = (globalThis as Record<string, unknown>).__vfHostProcessEnvGetter;
-  return typeof getter === "function" ? (getter as HostProcessEnvGetter)(key) : undefined;
 }
 
 /** Read and write process environment variables. */
@@ -67,8 +61,6 @@ export function getHostEnv(key: string): string | undefined {
   }
 
   if (IS_DENO) return Deno.env.get(key);
-  const projectProxyHostValue = getHostProcessEnvFromProjectProxy(key);
-  if (projectProxyHostValue !== undefined) return projectProxyHostValue;
   if (runtimeProcess) return runtimeProcess.env[key];
   return undefined;
 }
