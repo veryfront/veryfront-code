@@ -55,4 +55,26 @@ describe("mcp/session", () => {
     const id = manager.create();
     assertEquals(/^[\x21-\x7E]+$/.test(id), true);
   });
+
+  it("expires sessions after the inactivity TTL", () => {
+    let clock = 1_000;
+    const manager = new SessionManager({ ttlMs: 5_000, now: () => clock });
+    const id = manager.create();
+    assertEquals(manager.isValid(id), true);
+
+    clock += 6_000; // advance past the TTL
+    assertEquals(manager.isValid(id), false);
+    assertEquals(manager.size, 0); // pruned, not leaked
+  });
+
+  it("refreshes the inactivity window on access", () => {
+    let clock = 1_000;
+    const manager = new SessionManager({ ttlMs: 5_000, now: () => clock });
+    const id = manager.create();
+
+    clock += 4_000;
+    assertEquals(manager.isValid(id), true); // touch refreshes lastSeen
+    clock += 4_000; // 8s since create, but only 4s since last access
+    assertEquals(manager.isValid(id), true);
+  });
 });
