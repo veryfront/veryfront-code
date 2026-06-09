@@ -3,7 +3,7 @@ import {
   MEMORY_CACHE_MAX_SIZE_BYTES,
 } from "#veryfront/utils/constants/cache.ts";
 import type { CacheBackend } from "../types.ts";
-import { buildBatchResults } from "./batch-results.ts";
+import { buildBatchResults } from "../batch-results.ts";
 
 const DEFAULT_TTL_SECONDS = 300;
 const MAX_REGEX_CACHE_SIZE = 100;

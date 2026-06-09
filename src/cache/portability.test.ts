@@ -30,6 +30,14 @@ class MockDistributedBackend implements CacheBackend {
     return Promise.resolve(this.store.get(key) ?? null);
   }
 
+  getBatch(keys: string[]): Promise<Map<string, string | null>> {
+    const results = new Map<string, string | null>();
+    for (const key of keys) {
+      results.set(key, this.store.get(key) ?? null);
+    }
+    return Promise.resolve(results);
+  }
+
   set(key: string, value: string, _ttl?: number): Promise<void> {
     this.store.set(key, value);
     return Promise.resolve();
@@ -247,6 +255,21 @@ describe("Cache Portability", () => {
 
       assert(!code?.includes(CACHE_DIR_TOKEN), "Retrieved code should not contain token");
       assert(code?.includes(localCacheDir), "Retrieved code should contain local dir");
+    });
+
+    it("detokenizes batch results and preserves missing keys", async () => {
+      const tokenizedCode =
+        `import x from "file://${CACHE_DIR_TOKEN}/veryfront-http-bundle/http-123.mjs"`;
+      await mockBackend.set("first", tokenizedCode);
+      await mockBackend.set("third", "export const value = 1;");
+
+      const results = await gateway.getCodeBatch?.(["first", "missing", "third"]);
+
+      assertEquals([...results?.keys() ?? []], ["first", "missing", "third"]);
+      assert(!results?.get("first")?.includes(CACHE_DIR_TOKEN));
+      assert(results?.get("first")?.includes(localCacheDir));
+      assertEquals(results?.get("missing"), null);
+      assertEquals(results?.get("third"), "export const value = 1;");
     });
 
     it("provides isDistributed() = true for distributed backends", () => {

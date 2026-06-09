@@ -5,7 +5,7 @@ import { tryGetCacheKeyContext } from "../cache-key-builder.ts";
 import { CircuitBreakerOpen, getCircuitBreaker } from "#veryfront/utils/circuit-breaker.ts";
 import type { CacheBackend } from "../types.ts";
 import { getEnvValue } from "./helpers.ts";
-import { buildBatchResults } from "./batch-results.ts";
+import { buildBatchResults } from "../batch-results.ts";
 import { REQUEST_ERROR } from "#veryfront/errors";
 
 const logger = baseLogger.component("api-cache-backend");

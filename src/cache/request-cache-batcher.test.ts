@@ -254,6 +254,38 @@ describe("cache/request-cache-batcher", () => {
       });
     });
 
+    it("should preserve requested keys when falling back to individual batch gets", async () => {
+      const store = new Map([["a", "val-a"], ["c", "val-c"]]);
+      const getCalls: string[] = [];
+
+      const backend: CacheBackend = {
+        type: "memory",
+        get(key: string) {
+          getCalls.push(key);
+          return Promise.resolve(store.get(key) ?? null);
+        },
+        set() {
+          return Promise.resolve();
+        },
+        del() {
+          return Promise.resolve();
+        },
+      };
+
+      await runWithCacheBatching(async () => {
+        const [a, b, c] = await Promise.all([
+          getCachedWithBatching(backend, "a"),
+          getCachedWithBatching(backend, "b"),
+          getCachedWithBatching(backend, "c"),
+        ]);
+
+        assertEquals(a, "val-a");
+        assertEquals(b, null);
+        assertEquals(c, "val-c");
+        assertEquals(getCalls, ["a", "b", "c"]);
+      });
+    });
+
     it("should handle backend errors by rejecting pending requests", async () => {
       const backend: CacheBackend = {
         type: "memory",

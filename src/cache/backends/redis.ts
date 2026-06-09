@@ -8,7 +8,7 @@ import {
   type RedisClient,
 } from "#veryfront/utils/redis-client.ts";
 import type { CacheBackend } from "../types.ts";
-import { buildBatchResults } from "./batch-results.ts";
+import { buildBatchResults } from "../batch-results.ts";
 
 const logger = baseLogger.component("redis-cache-backend");
 

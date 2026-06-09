@@ -15,6 +15,7 @@
 
 import { logger } from "#veryfront/utils";
 import type { CacheBackend } from "./types.ts";
+import { buildBatchResults } from "./batch-results.ts";
 import { assertPortableCode, detokenizeAllCachePaths, tokenizeAllVeryFrontPaths } from "./paths.ts";
 
 /**
@@ -131,35 +132,30 @@ export class TokenizingCacheGateway implements CodeCacheGateway {
    * Get multiple codes from cache with automatic detokenization.
    */
   async getCodeBatch(keys: string[]): Promise<Map<string, string | null>> {
-    const results = new Map<string, string | null>();
-    if (keys.length === 0) return results;
+    if (keys.length === 0) return new Map<string, string | null>();
 
     if (!this.backend.getBatch) {
-      // Fallback to individual gets
-      for (const key of keys) {
-        results.set(key, await this.getCode(key));
-      }
-      return results;
+      const values = new Map<string, string | null>();
+      await Promise.all(
+        keys.map(async (key) => values.set(key, await this.getCode(key))),
+      );
+      return buildBatchResults(keys, (key) => values.get(key) ?? null);
     }
 
     const rawResults = await this.backend.getBatch(keys);
-
-    for (const [key, raw] of rawResults) {
+    return buildBatchResults(keys, (key) => {
+      const raw = rawResults.get(key) ?? null;
       if (!raw) {
-        results.set(key, null);
-        continue;
+        return null;
       }
 
       // Only detokenize for distributed backends
       if (!this.isDistributed()) {
-        results.set(key, raw);
-        continue;
+        return raw;
       }
 
-      results.set(key, detokenizeAllCachePaths(raw));
-    }
-
-    return results;
+      return detokenizeAllCachePaths(raw);
+    });
   }
 
   /**
