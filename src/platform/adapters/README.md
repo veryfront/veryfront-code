@@ -2,14 +2,14 @@
 
 The Adapters module provides runtime abstraction layer for cross-platform compatibility across Deno, Node.js, Bun, and Cloudflare Workers.
 
-## Import Map Alias
+## Imports
 
 ```typescript
-// Using import map alias (recommended)
-import { BunAdapter, DenoAdapter, getAdapter, NodeAdapter, RuntimeAdapter } from "#adapters";
+// Public runtime adapter API
+import { runtime, type RuntimeAdapter } from "veryfront/platform";
 
-// Using barrel file
-import { getAdapter, RuntimeAdapter } from "./adapters/index.ts";
+// Concrete adapter classes for adapter-maintainer code
+import { BunAdapter, DenoAdapter, NodeAdapter } from "#veryfront/platform/adapters/index.ts";
 ```
 
 ## Public API Overview
@@ -17,36 +17,29 @@ import { getAdapter, RuntimeAdapter } from "./adapters/index.ts";
 The Adapters module exports:
 
 - **`RuntimeAdapter`** - Base adapter interface for runtime abstraction
-- **`getAdapter()`** - Auto-detects and returns current runtime adapter
+- **`runtime.get()`** - Auto-detects and returns the singleton runtime adapter
 - **Runtime-Specific Adapters** - BunAdapter, DenoAdapter, NodeAdapter
 - **Filesystem Abstraction** - FSAdapter, VeryfrontFSAdapter, FSAdapterWrapper
-- **API Client** - VeryfrontAPIClient for remote filesystem access
-- **Utility Namespaces** - compat, react, security adapters
+- **API Client** - VeryfrontApiClient for remote filesystem access
+- **Security Adapter Helpers** - Permission and sandbox utilities
 
 ## File Structure
 
 ```
 adapters/
-├── index.ts                    # Public API (barrel file) ← USE THIS
-├── README.md                   # This file
-├── base.ts                     # RuntimeAdapter base interface
-├── deno.ts                     # Deno runtime adapter
-├── node.ts                     # Node.js runtime adapter
-├── bun.ts                      # Bun runtime adapter
-├── detect.ts                   # Runtime detection
-├── compat/                     # Runtime compatibility utilities
-│   ├── index.ts
-│   ├── kv/                     # KV store compatibility layer
-│   └── fs.ts                   # Filesystem compatibility
-├── react/                      # React-specific adapters
-│   ├── index.ts
-│   └── ssr-adapter/            # SSR rendering adapters
-├── security/                   # Security adapters
-│   └── index.ts
-├── veryfront-api-client.ts     # API client for remote FS
-├── veryfront-fs-adapter.ts     # Remote FS adapter
-├── fs-adapter-wrapper.ts       # FS adapter wrapper utilities
-└── fs-integration.ts           # FS adapter integration helpers
+|-- index.ts                    # Adapter barrel for internal imports
+|-- base.ts                     # RuntimeAdapter base interface
+|-- detect.ts                   # Runtime detection compatibility helper
+|-- registry.ts                 # Singleton runtime adapter registry
+|-- runtime-detection.ts        # Runtime detection primitives
+|-- bun.ts                      # Bun runtime adapter
+|-- deno.ts                     # Deno runtime adapter
+|-- node.ts                     # Node.js runtime adapter
+|-- runtime/                    # Runtime-specific HTTP/WebSocket adapters
+|-- fs/                         # Filesystem adapters and wrappers
+|-- security/                   # Permission and sandbox helpers
+|-- token/                      # Token storage adapters
+`-- veryfront-api-client/       # API client for remote filesystem access
 ```
 
 ## Quick Start
@@ -54,21 +47,21 @@ adapters/
 ### Auto-Detect Runtime
 
 ```ts
-import { getAdapter } from "#adapters";
+import { runtime } from "veryfront/platform";
 
-const adapter = await getAdapter();
+const adapter = await runtime.get();
 
 // Check which runtime
 console.log(adapter.name); // 'deno' | 'node' | 'bun' | 'cloudflare-workers'
 
 // Use adapter APIs
-const config = await adapter.readTextFile("./config.json");
+const config = await adapter.fs.readFile("./config.json");
 ```
 
 ### Runtime-Specific Adapters
 
 ```ts
-import { BunAdapter, DenoAdapter, NodeAdapter } from "#adapters";
+import { BunAdapter, DenoAdapter, NodeAdapter } from "#veryfront/platform/adapters/index.ts";
 
 // Deno
 const denoAdapter = new DenoAdapter();
@@ -86,7 +79,7 @@ await bunAdapter.initialize();
 ### Filesystem Abstraction
 
 ```ts
-import { createFSAdapter, type FSAdapter } from "#adapters";
+import { createFSAdapter, type FSAdapter } from "#veryfront/platform/adapters/index.ts";
 
 // Local filesystem
 const fsAdapter: FSAdapter = await createFSAdapter({
@@ -98,8 +91,8 @@ const fsAdapter: FSAdapter = await createFSAdapter({
 const remoteFS: FSAdapter = await createFSAdapter({
   type: "veryfront-api",
   veryfront: {
-    apiKey: process.env.VERYFRONT_API_KEY,
-    projectSlug: "my-project",
+    apiToken: "<API_TOKEN>",
+    projectSlug: "<PROJECT_SLUG>",
   },
 });
 
@@ -119,19 +112,21 @@ All runtime adapters implement the `RuntimeAdapter` interface:
 
 ```ts
 interface RuntimeAdapter {
-  name: "deno" | "node" | "bun" | "cloudflare-workers";
+  id: "deno" | "node" | "bun" | "cloudflare" | "memory";
+  name: string;
+  capabilities: RuntimeCapabilities;
 
   // Lifecycle
-  initialize(): Promise<void>;
+  initialize?(): Promise<void>;
+  shutdown?(): Promise<void>;
 
   // Filesystem
   fs: {
-    readFile(path: string): Promise<Uint8Array>;
-    readTextFile(path: string): Promise<string>;
-    writeFile(path: string, data: Uint8Array | string): Promise<void>;
+    readFile(path: string): Promise<string>;
+    writeFile(path: string, data: string): Promise<void>;
     exists(path: string): Promise<boolean>;
     stat(path: string): Promise<FileInfo>;
-    readDir(path: string): AsyncIterableIterator<DirEntry>;
+    readDir(path: string): AsyncIterable<DirEntry>;
     mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
     remove(path: string, options?: { recursive?: boolean }): Promise<void>;
   };
@@ -142,47 +137,32 @@ interface RuntimeAdapter {
     set(key: string, value: string): void;
   };
 
-  // Process
-  exit(code?: number): never;
-  cwd(): string;
+  // Server
+  serve(
+    handler: (request: Request) => Response | Promise<Response>,
+    options: ServeOptions,
+  ): Promise<Server>;
 
   // File watching (optional)
-  watch?(paths: string[]): AsyncIterableIterator<FileChangeEvent>;
+  watcher?: FileWatcherAdapter;
 }
 ```
 
 ## Compatibility Layer
 
-The compat namespace provides cross-runtime utilities:
+Use `veryfront/platform` for cross-runtime compatibility utilities:
 
 ```ts
-import { compat } from "#adapters";
+import { openKv, readTextFile, writeTextFile } from "veryfront/platform";
 
 // KV store (Deno.Kv compatible API)
-const kv = await compat.openKv("./data.db");
+const kv = await openKv("./data.db");
 await kv.set(["users", "alice"], { name: "Alice" });
 const entry = await kv.get(["users", "alice"]);
 
 // Filesystem utilities
-const content = await compat.fs.readText("./file.txt");
-await compat.fs.writeText("./output.txt", "Hello");
-```
-
-## React Adapters
-
-React-specific adapters for server-side rendering:
-
-```ts
-import { react } from "#adapters";
-
-// Get SSR adapter for current runtime
-const ssrAdapter = await react.getSSRAdapter();
-
-// Render to stream (React 18+)
-const stream = await ssrAdapter.renderToReadableStream(<App />);
-
-// Render to string (React 17)
-const html = await ssrAdapter.renderToString(<App />);
+const content = await readTextFile("./file.txt");
+await writeTextFile("./output.txt", "Hello");
 ```
 
 ## Security Adapters
@@ -190,17 +170,14 @@ const html = await ssrAdapter.renderToString(<App />);
 Security utilities for secure operations:
 
 ```ts
-import { security } from "#adapters";
+import { requestPermission, runInWorker } from "#veryfront/platform/adapters/security/index.ts";
 
-// Hash generation
-const hash = await security.generateHash("data", "sha256");
+const permission = await requestPermission({ name: "read", path: "./src" });
+if (permission.state !== "granted") {
+  throw new Error("Read permission is required");
+}
 
-// Secure random
-const randomBytes = security.randomBytes(32);
-
-// JWT operations (if available)
-const token = await security.signJWT({ userId: "123" }, "secret");
-const payload = await security.verifyJWT(token, "secret");
+const result = await runInWorker("return 'hello'.toUpperCase();");
 ```
 
 ## Remote Filesystem (Veryfront API)
@@ -208,26 +185,27 @@ const payload = await security.verifyJWT(token, "secret");
 Access project files via Veryfront API:
 
 ```ts
-import { VeryfrontAPIClient, VeryfrontFSAdapter } from "#adapters";
+import { VeryfrontApiClient, VeryfrontFSAdapter } from "#veryfront/platform/adapters/index.ts";
 
 // Direct API client
-const client = new VeryfrontAPIClient({
-  apiKey: process.env.VERYFRONT_API_KEY,
-  projectSlug: "my-project",
+const client = new VeryfrontApiClient({
+  apiBaseUrl: "https://api.veryfront.com",
+  apiToken: "<API_TOKEN>",
+  projectSlug: "<PROJECT_SLUG>",
 });
 
 // List files
-const files = await client.listFiles("/src");
+const files = await client.listFiles({ pattern: "src/**" });
 
 // Get file content
-const content = await client.getFile("/src/index.ts");
+const content = await client.getFileContent("/src/index.ts");
 
 // Or use as FSAdapter
 const fsAdapter = new VeryfrontFSAdapter({
   type: "veryfront-api",
   veryfront: {
-    apiKey: process.env.VERYFRONT_API_KEY,
-    projectSlug: "my-project",
+    apiToken: "<API_TOKEN>",
+    projectSlug: "<PROJECT_SLUG>",
     cache: {
       enabled: true,
       ttl: 300000, // 5 minutes
@@ -245,13 +223,14 @@ const file = await fsAdapter.readTextFile("/config.json");
 
 ```ts
 interface FSAdapterConfig {
-  type?: "local" | "veryfront-api" | "memory";
+  type?: "local" | "veryfront-api" | "memory" | "github";
   projectDir?: string;
   veryfront?: {
-    apiKey?: string;
     apiToken?: string;
     projectSlug?: string;
-    baseUrl?: string;
+    projectId?: string;
+    apiBaseUrl?: string;
+    proxyMode?: boolean;
     cache?: {
       enabled?: boolean;
       ttl?: number;
@@ -268,16 +247,15 @@ interface FSAdapterConfig {
 
 ```ts
 interface VeryfrontAPIConfig {
-  apiKey: string;
-  projectSlug: string;
-  baseUrl?: string; // Default: 'https://api.veryfront.com'
-  cache?: {
-    enabled?: boolean;
-    ttl?: number; // Cache TTL in milliseconds
-  };
+  apiBaseUrl: string;
+  apiToken?: string;
+  projectSlug?: string;
+  projectId?: string;
+  proxyMode?: boolean;
   retry?: {
     maxRetries?: number; // Default: 3
-    retryDelay?: number; // Default: 1000ms
+    initialDelay?: number; // Default: 1000ms
+    maxDelay?: number; // Default: 10000ms
   };
 }
 ```
@@ -285,9 +263,9 @@ interface VeryfrontAPIConfig {
 ## Runtime Detection
 
 ```ts
-import { getAdapter } from "#adapters";
+import { runtime } from "veryfront/platform";
 
-const adapter = await getAdapter();
+const adapter = await runtime.get();
 
 // Detect specific runtime
 if (adapter.name === "deno") {
@@ -310,15 +288,20 @@ if (adapter.watch) {
 ## Error Handling
 
 ```ts
-import { NotSupportedError, VeryfrontAPIError } from "#adapters";
+import {
+  API_CLIENT_ERROR,
+  NotSupportedError,
+  VeryfrontError,
+} from "#veryfront/platform/adapters/index.ts";
+import { runtime } from "veryfront/platform";
 
 try {
-  const adapter = await getAdapter();
+  const adapter = await runtime.get();
   await adapter.fs.readFile("/config.json");
 } catch (error) {
-  if (error instanceof VeryfrontAPIError) {
+  if (error instanceof VeryfrontError && error.slug === API_CLIENT_ERROR.slug) {
     // API-specific error
-    console.error("API error:", error.statusCode, error.message);
+    console.error("API error:", error.status, error.message);
   } else if (error instanceof NotSupportedError) {
     // Feature not supported in current runtime
     console.error("Not supported:", error.message);
@@ -328,7 +311,7 @@ try {
 
 ## Best Practices
 
-1. **Use getAdapter() for auto-detection** - Let the runtime be detected automatically
+1. **Use `runtime.get()` for auto-detection** - Let the runtime be detected automatically and reused
 2. **Initialize adapters** - Always call `initialize()` after creating an adapter
 3. **Handle missing features** - Check for optional methods before using them
 4. **Cache remote FS calls** - Enable caching for Veryfront API to reduce latency
@@ -337,7 +320,7 @@ try {
 ## Testing with Adapters
 
 ```ts
-import { createFSAdapter } from "#adapters";
+import { createFSAdapter } from "#veryfront/platform/adapters/index.ts";
 
 // Use memory adapter for tests
 const testFS = await createFSAdapter({

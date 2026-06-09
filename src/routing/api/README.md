@@ -82,9 +82,9 @@ export async function POST(request: Request) {
 
 ```ts
 import { APIRouteHandler } from "#api";
-import { getAdapter } from "../adapters/index.ts";
+import { runtime } from "veryfront/platform";
 
-const adapter = await getAdapter();
+const adapter = await runtime.get();
 const handler = new APIRouteHandler({
   projectDir: "./my-app",
   adapter,
