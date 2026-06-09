@@ -1,7 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { findNestedImports, hasUnresolvedImports } from "./nested-imports.ts";
+import {
+  findNestedImports,
+  hasUnresolvedImports,
+  resolveNestedModuleImports,
+} from "./nested-imports.ts";
 
 describe("transforms/mdx/esm-module-loader/module-fetcher/nested-imports", () => {
   describe("findNestedImports", () => {
@@ -84,6 +88,40 @@ import { bar } from "./local.js";
     it("returns empty for empty string", () => {
       const result = hasUnresolvedImports("");
       assertEquals(result.count, 0);
+    });
+  });
+
+  describe("resolveNestedModuleImports", () => {
+    it("resolves vf module imports before relative imports", async () => {
+      const calls: Array<{ path: string; parent?: string }> = [];
+      const result = await resolveNestedModuleImports({
+        moduleCode: [
+          `import { shared } from "/_vf_modules/lib/shared.js";`,
+          `import local from "./local.js";`,
+          `export { shared, local };`,
+        ].join("\n"),
+        esmCacheDir: "/tmp/veryfront-unused",
+        normalizedPath: "_vf_modules/pages/index.js",
+        projectSlug: "docs",
+        strictMissingModules: true,
+        fetchAndCacheModule: (path, parent) => {
+          calls.push({ path, parent });
+          return Promise.resolve(`/cache/${path.replaceAll("/", "__")}.mjs`);
+        },
+      });
+
+      assertEquals(calls, [
+        { path: "_vf_modules/lib/shared.js", parent: "_vf_modules/pages/index.js" },
+        { path: "./local.js", parent: "_vf_modules/pages/index.js" },
+      ]);
+      assertEquals(
+        result,
+        [
+          `import { shared } from "file:///cache/_vf_modules__lib__shared.js.mjs";`,
+          `import local from "file:///cache/.__local.js.mjs";`,
+          `export { shared, local };`,
+        ].join("\n"),
+      );
     });
   });
 });

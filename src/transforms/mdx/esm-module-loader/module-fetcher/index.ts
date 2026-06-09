@@ -28,7 +28,7 @@ import { resolveModuleFile } from "../resolution/file-finder.ts";
 import { buildMissingModuleError } from "../missing-module.ts";
 import { getTransformCacheKey, getVersionedPathCacheKey } from "./cache-keys.ts";
 import { rewriteDntImports, rewriteVeryfrontImports } from "./import-rewriter.ts";
-import { findNestedImports, processNestedImports } from "./nested-imports.ts";
+import { resolveNestedModuleImports } from "./nested-imports.ts";
 import { readDistributedCache, writeDistributedCache } from "./distributed-cache.ts";
 import { fetchModuleViaHTTP } from "./http-fetcher.ts";
 import { cacheModule, normalizePath } from "./module-cache.ts";
@@ -343,69 +343,15 @@ async function doFetchAndCacheModule(
       needsDistributedCacheWrite = true;
     }
 
-    const { vfModules, relative } = findNestedImports(moduleCode);
-    log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] found nested imports`, {
-      projectSlug,
-      normalizedPath,
-      vfModulesCount: vfModules.length,
-      relativeCount: relative.length,
-      vfModulePaths: vfModules.map((m) => m.path).slice(0, 5),
-      relativePaths: relative.map((m) => m.path).slice(0, 5),
-    });
-
-    log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing vfModules START`, {
-      projectSlug,
-      normalizedPath,
-      count: vfModules.length,
-    });
-    const vfStart = performance.now();
-    const nestedResults = await Promise.all(
-      vfModules.map(async ({ original, path }) => ({
-        original,
-        nestedFilePath: await fetchAndCacheModuleFn(path, normalizedPath),
-        nestedPath: path,
-      })),
-    );
-    log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing vfModules DONE`, {
-      projectSlug,
-      normalizedPath,
-      vfMs: (performance.now() - vfStart).toFixed(1),
-    });
-    moduleCode = await processNestedImports(
+    moduleCode = await resolveNestedModuleImports({
       moduleCode,
-      nestedResults,
       esmCacheDir,
-      context.strictMissingModules ?? true,
       normalizedPath,
+      strictMissingModules: context.strictMissingModules ?? true,
       projectSlug,
-    );
-
-    log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing relative imports START`, {
-      projectSlug,
-      normalizedPath,
-      count: relative.length,
+      fetchAndCacheModule: fetchAndCacheModuleFn,
+      log,
     });
-    const relStart = performance.now();
-    const relativeResults = await Promise.all(
-      relative.map(async ({ original, path }) => ({
-        original,
-        nestedFilePath: await fetchAndCacheModuleFn(path, normalizedPath),
-        relativePath: path,
-      })),
-    );
-    log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing relative imports DONE`, {
-      projectSlug,
-      normalizedPath,
-      relMs: (performance.now() - relStart).toFixed(1),
-    });
-    moduleCode = await processNestedImports(
-      moduleCode,
-      relativeResults,
-      esmCacheDir,
-      context.strictMissingModules ?? true,
-      normalizedPath,
-      projectSlug,
-    );
 
     // Write to distributed cache AFTER nested imports are resolved.
     // This ensures other pods get fully-resolved code without /_vf_modules/ paths.

@@ -5,6 +5,7 @@
  */
 
 import {
+  LOG_PREFIX_MDX_LOADER,
   RELATIVE_IMPORT_PATTERN,
   UNRESOLVED_VF_MODULES_PATTERN,
   VF_MODULE_IMPORT_PATTERN,
@@ -12,6 +13,7 @@ import {
 import type { NestedImportResult } from "../types.ts";
 import { createStubModule } from "../utils/stub-module.ts";
 import { buildMissingModuleError } from "../missing-module.ts";
+import type { Logger } from "#veryfront/utils/logger/logger.ts";
 
 /**
  * Find nested module imports in code.
@@ -92,4 +94,93 @@ export async function processNestedImports(
   }
 
   return result;
+}
+
+export interface ResolveNestedModuleImportsInput {
+  moduleCode: string;
+  esmCacheDir: string;
+  normalizedPath: string;
+  projectSlug: string;
+  strictMissingModules: boolean;
+  fetchAndCacheModule: (path: string, parent?: string) => Promise<string | null>;
+  log?: Logger;
+}
+
+/**
+ * Resolve nested /_vf_modules and relative imports into local file:// cache paths.
+ */
+export async function resolveNestedModuleImports(
+  input: ResolveNestedModuleImportsInput,
+): Promise<string> {
+  let moduleCode = input.moduleCode;
+  const { vfModules, relative } = findNestedImports(moduleCode);
+
+  input.log?.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] found nested imports`, {
+    projectSlug: input.projectSlug,
+    normalizedPath: input.normalizedPath,
+    vfModulesCount: vfModules.length,
+    relativeCount: relative.length,
+    vfModulePaths: vfModules.map((module) => module.path).slice(0, 5),
+    relativePaths: relative.map((module) => module.path).slice(0, 5),
+  });
+
+  input.log?.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing vfModules START`, {
+    projectSlug: input.projectSlug,
+    normalizedPath: input.normalizedPath,
+    count: vfModules.length,
+  });
+  const vfStart = performance.now();
+  const nestedResults = await Promise.all(
+    vfModules.map(async ({ original, path }) => ({
+      original,
+      nestedFilePath: await input.fetchAndCacheModule(path, input.normalizedPath),
+      nestedPath: path,
+    })),
+  );
+  input.log?.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing vfModules DONE`, {
+    projectSlug: input.projectSlug,
+    normalizedPath: input.normalizedPath,
+    vfMs: (performance.now() - vfStart).toFixed(1),
+  });
+  moduleCode = await processNestedImports(
+    moduleCode,
+    nestedResults,
+    input.esmCacheDir,
+    input.strictMissingModules,
+    input.normalizedPath,
+    input.projectSlug,
+  );
+
+  input.log?.debug(
+    `${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing relative imports START`,
+    {
+      projectSlug: input.projectSlug,
+      normalizedPath: input.normalizedPath,
+      count: relative.length,
+    },
+  );
+  const relStart = performance.now();
+  const relativeResults = await Promise.all(
+    relative.map(async ({ original, path }) => ({
+      original,
+      nestedFilePath: await input.fetchAndCacheModule(path, input.normalizedPath),
+      relativePath: path,
+    })),
+  );
+  input.log?.debug(
+    `${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing relative imports DONE`,
+    {
+      projectSlug: input.projectSlug,
+      normalizedPath: input.normalizedPath,
+      relMs: (performance.now() - relStart).toFixed(1),
+    },
+  );
+  return await processNestedImports(
+    moduleCode,
+    relativeResults,
+    input.esmCacheDir,
+    input.strictMissingModules,
+    input.normalizedPath,
+    input.projectSlug,
+  );
 }
