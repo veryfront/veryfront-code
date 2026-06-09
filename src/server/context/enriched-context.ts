@@ -13,9 +13,19 @@ export function buildEnrichedContext(options: BuildEnrichedContextOptions): Enri
     throw INVALID_ARGUMENT.create({ detail: `Missing contentSourceId for ${options.projectSlug}` });
   }
 
-  const releaseKey = options.environment === "production"
-    ? (options.releaseId ?? "unknown")
-    : (options.branch ?? "main");
+  let releaseKey: string;
+  if (options.isLocalProject) {
+    releaseKey = options.branch ?? "main";
+  } else if (options.environment === "production") {
+    if (!options.releaseId) {
+      throw INVALID_ARGUMENT.create({
+        detail: "Production requires releaseId for cache isolation",
+      });
+    }
+    releaseKey = options.releaseId;
+  } else {
+    releaseKey = options.branch ?? "main";
+  }
 
   return {
     projectId: options.projectId,

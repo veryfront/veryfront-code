@@ -93,7 +93,14 @@ function getReleaseKey(
   releaseId?: string,
 ): string {
   if (isLocal) return branch ?? "main";
-  if (environment === "production") return releaseId!;
+  if (environment === "production") {
+    if (!releaseId) {
+      throw INVALID_ARGUMENT.create({
+        detail: "Production requires releaseId for cache isolation",
+      });
+    }
+    return releaseId;
+  }
   return branch ?? "main";
 }
 

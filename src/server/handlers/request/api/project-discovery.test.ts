@@ -111,6 +111,32 @@ describe(
       assertEquals(cachedAgent.config.system, "FIRST");
     });
 
+    it("does not cache completed production discovery without a release id", async () => {
+      agentRegistry.clearAll();
+      toolRegistry.clearAll();
+
+      const ctx = createHandlerContext(
+        "/production-missing-release-project",
+        "production-missing-release-project",
+        "production",
+      );
+      const agentId = "production-missing-release-agent";
+
+      await writeAgentFile(ctx, agentId, "FIRST");
+      await ensureProjectDiscovery(ctx);
+
+      const firstAgent = getAgent(agentId);
+      assertExists(firstAgent);
+      assertEquals(firstAgent.config.system, "FIRST");
+
+      await writeAgentFile(ctx, agentId, "SECOND");
+      await ensureProjectDiscovery(ctx);
+
+      const updatedAgent = getAgent(agentId);
+      assertExists(updatedAgent);
+      assertEquals(updatedAgent.config.system, "SECOND");
+    });
+
     it("uses cache-key context to isolate production discovery by release", async () => {
       agentRegistry.clearAll();
       toolRegistry.clearAll();

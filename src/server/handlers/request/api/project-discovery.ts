@@ -32,7 +32,7 @@ function discoveryKey(ctx: HandlerContext): string {
     (ctx.releaseId ? "production" : "preview");
 
   if (environment === "production") {
-    return `${slug}:release:${ctx.releaseId ?? "unknown"}`;
+    return ctx.releaseId ? `${slug}:release:${ctx.releaseId}` : `${slug}:production:unreleased`;
   }
 
   const branch = ctx.requestContext?.branch ?? ctx.enriched?.branch ?? ctx.parsedDomain?.branch ??
@@ -48,7 +48,7 @@ function shouldCacheCompletedDiscovery(ctx: HandlerContext): boolean {
 
   const environment = ctx.enriched?.environment ?? ctx.resolvedEnvironment ??
     (ctx.releaseId ? "production" : "preview");
-  return environment === "production";
+  return environment === "production" && !!ctx.releaseId;
 }
 
 /**
