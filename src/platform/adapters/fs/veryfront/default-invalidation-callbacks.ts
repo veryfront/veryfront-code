@@ -44,23 +44,6 @@ export function createDefaultInvalidationCallbacks(
       }>("#veryfront/rendering/renderer.ts");
       return clearRendererCacheForProject(projectId);
     },
-    clearProjectCSSCache: (projectSlug: string) => {
-      void Promise.all([
-        loadModule<{ invalidateProjectCSS: (projectSlug: string) => void }>(
-          "#veryfront/html/styles-builder/tailwind-compiler.ts",
-        ),
-        loadModule<{ invalidatePreparedProjectCSS: (projectSlug: string) => void }>(
-          "#veryfront/html/styles-builder/prepared-project-css-cache.ts",
-        ),
-        loadModule<{ invalidateProjectCandidateManifests: (projectSlug: string) => void }>(
-          "#veryfront/rendering/orchestrator/css-candidate-manifest.ts",
-        ),
-      ]).then(([tailwind, prepared, manifest]) => {
-        tailwind.invalidateProjectCSS(projectSlug);
-        prepared.invalidatePreparedProjectCSS(projectSlug);
-        manifest.invalidateProjectCandidateManifests(projectSlug);
-      });
-    },
     ...callbacks,
   };
 }

@@ -68,6 +68,29 @@ export interface ResolvedContentContext {
   releaseId?: string;
 }
 
+export interface StylePregenerationFile {
+  path: string;
+  content?: string;
+}
+
+export interface PreviewStyleArtifactInfo {
+  hash: string;
+  assetPath: string;
+}
+
+export interface StylePregenerationContext {
+  projectSlug: string;
+  projectDir?: string;
+  contentContext: ResolvedContentContext | null;
+}
+
+export interface StyleCallbacks {
+  pregenerateStyles?: (
+    files: StylePregenerationFile[],
+    context: StylePregenerationContext,
+  ) => Promise<PreviewStyleArtifactInfo | undefined>;
+}
+
 export interface FSAdapterConfig {
   type?: "local" | "veryfront-api" | "memory" | "github";
   projectDir?: string;
@@ -89,6 +112,7 @@ export interface FSAdapterConfig {
   };
   github?: GitHubConfig;
   invalidationCallbacks?: InvalidationCallbacks;
+  styleCallbacks?: StyleCallbacks;
 }
 
 export interface VeryfrontFSState {

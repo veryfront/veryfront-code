@@ -8,6 +8,8 @@ import type {
   FSAdapterConfig,
   InvalidationCallbacks,
   ResolvedContentContext,
+  StyleCallbacks,
+  StylePregenerationFile,
 } from "./types.ts";
 import type { FileInfo, ResolveFileOptions } from "../../base.ts";
 import { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
@@ -55,6 +57,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private apiToken: string;
   private projectSlug: string;
   private invalidationCallbacks: InvalidationCallbacks;
+  private styleCallbacks: StyleCallbacks;
   private wsManager: WebSocketManager;
 
   /** Per-request branch override (for branch preview URLs) */
@@ -107,6 +110,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   constructor(config: FSAdapterConfig) {
     this.invalidationCallbacks = config.invalidationCallbacks ?? {};
+    this.styleCallbacks = config.styleCallbacks ?? {};
     const vf = config.veryfront;
     if (!vf) {
       throw toError(
@@ -692,71 +696,29 @@ export class VeryfrontFSAdapter implements FSAdapter {
    * Uses dynamic import to avoid circular dependencies.
    */
   private async triggerCSSPregeneration(
-    files: Array<{ path: string; content?: string }>,
+    files: StylePregenerationFile[],
   ): Promise<{ hash: string; assetPath: string } | undefined> {
-    try {
-      const { buildPreparedCSSArtifactFromFiles, findStylesheetFromFiles } = await import(
-        "../../../../html/styles-builder/css-pregeneration.ts"
-      );
-      const { resolveStyleContentVersion } = await import(
-        "../../../../html/styles-builder/content-version.ts"
-      );
-      const { createStyleScopeProfile } = await import(
-        "../../../../html/styles-builder/style-scope-profile.ts"
-      );
-
-      let stylesheetPath: string | undefined;
-      let styleProfile = createStyleScopeProfile();
-      const projectDir = this.normalizer.getProjectDir();
-
-      if (!projectDir) {
-        logger.debug("Skipping CSS pre-generation without projectDir", {
-          projectSlug: this.projectSlug,
-        });
-        return undefined;
-      }
-
-      try {
-        const { runtime } = await import("#veryfront/platform/adapters/registry.ts");
-        const { getConfig } = await import("#veryfront/config");
-        const adapter = await runtime.get();
-        const cacheKey = this.client.getProjectId() || this.projectSlug;
-        const config = await getConfig(projectDir, adapter, { cacheKey });
-        stylesheetPath = config?.tailwind?.stylesheet;
-        styleProfile = createStyleScopeProfile(config);
-      } catch (error) {
-        logger.debug("Failed to load config for CSS pre-generation", {
-          projectSlug: this.projectSlug,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-
-      const stylesheet = findStylesheetFromFiles(files, stylesheetPath);
-      const projectVersion = resolveStyleContentVersion(this.contentContext, {
-        branch: this.contentContext?.branch ?? null,
-        releaseId: this.contentContext?.releaseId ?? null,
-        environmentName: this.contentContext?.environmentName ?? null,
-      });
-
-      const result = await buildPreparedCSSArtifactFromFiles({
+    const pregenerateStyles = this.styleCallbacks.pregenerateStyles;
+    if (!pregenerateStyles) {
+      logger.debug("Skipping CSS pre-generation without style callback", {
         projectSlug: this.projectSlug,
-        projectVersion,
-        projectDir,
-        files,
-        styleProfile,
-        stylesheet,
-        stylesheetPath,
-        minify: true,
-        environment: "preview",
-        buildMode: "production",
       });
+      return undefined;
+    }
+
+    try {
+      const projectDir = this.normalizer.getProjectDir();
+      const result = await pregenerateStyles(files, {
+        projectSlug: this.projectSlug,
+        projectDir,
+        contentContext: this.contentContext,
+      });
+
+      if (!result) return undefined;
 
       logger.debug("CSS pre-generation complete", {
         projectSlug: this.projectSlug,
-        projectVersion,
         cssHash: result.hash,
-        candidateCount: result.candidateCount,
-        fromCache: result.fromCache,
       });
 
       return {
