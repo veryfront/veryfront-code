@@ -13,8 +13,8 @@
     "esbuild": "npm:esbuild@0.27.4",
     "esbuild/mod.js": "npm:esbuild@0.27.4",
     "es-module-lexer": "npm:es-module-lexer@2.0.0",
-    "@std/assert": "jsr:@std/assert@1",
-    "@std/testing/bdd": "jsr:@std/testing@1/bdd",
+    "@std/assert": "jsr:@std/assert@1.0.19",
+    "@std/testing/bdd": "jsr:@std/testing@1.0.17/bdd",
     "veryfront/extensions": "../../src/extensions/index.ts",
     "veryfront/extensions/bundler": "../../src/extensions/bundler/index.ts"
   },

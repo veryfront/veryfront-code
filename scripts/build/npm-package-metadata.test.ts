@@ -31,7 +31,7 @@ describe("normalizeNpmPackageMetadata", () => {
 
 		assertEquals(pkg.dependencies, { zod: "4.3.6" });
 		assertEquals(pkg.optionalDependencies, {
-			"@huggingface/transformers": "^3.4.2",
+			"@huggingface/transformers": "3.4.2",
 		});
 		assertEquals(pkg.peerDependencies, {
 			"@kreuzberg/node": "^4.4.2",
@@ -98,7 +98,42 @@ describe("normalizeNpmPackageMetadata", () => {
 			},
 		});
 
-		assertEquals(pkg.devDependencies, { "@types/node": "^20.9.0" });
+		assertEquals(pkg.devDependencies, { "@types/node": "20.9.0" });
+	});
+
+	it("pins automatic npm dependency ranges while preserving peer compatibility ranges", () => {
+		const pkg = normalizeNpmPackageMetadata({
+			dependencies: {
+				"@types/react": "^19.2.14",
+				"@deno/shim-deno": "~0.18.0",
+				zod: "4.3.6",
+			},
+			optionalDependencies: {
+				"just-bash": "^2.14.5",
+			},
+			devDependencies: {
+				"@types/node": "^20.9.0",
+			},
+			peerDependencies: {
+				react: "^19.0.0",
+			},
+		});
+
+		assertEquals(pkg.dependencies, {
+			"@types/react": "19.2.14",
+			"@deno/shim-deno": "0.18.0",
+			zod: "4.3.6",
+		});
+		assertEquals(pkg.optionalDependencies, {
+			"just-bash": "2.14.5",
+		});
+		assertEquals(pkg.devDependencies, {
+			"@types/node": "20.9.0",
+		});
+		assertEquals(pkg.peerDependencies, {
+			react: "^19.0.0",
+			"better-sqlite3": ">=9.0.0",
+		});
 	});
 });
 

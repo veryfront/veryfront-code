@@ -9,7 +9,7 @@
  *   deno task lint:style
  */
 
-import { parseArgs } from "jsr:@std/cli/parse-args";
+import { parseArgs } from "#std/flags";
 import { walk } from "@std/fs";
 import {
   getColumn,

@@ -1,5 +1,5 @@
 import { assertEquals } from "#std/assert";
-import { describe, it } from "jsr:@std/testing/bdd";
+import { describe, it } from "#std/testing/bdd";
 import { findIllegalZodImports, shouldCheckZodImportPath } from "./ban-zod-imports.ts";
 
 describe("findIllegalZodImports", () => {

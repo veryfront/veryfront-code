@@ -20,7 +20,7 @@
  * Or:  deno run --allow-read scripts/validate-architecture.ts
  */
 
-import { walk } from "jsr:@std/fs/walk";
+import { walk } from "#std/fs/walk";
 
 interface ValidationRule {
   name: string;

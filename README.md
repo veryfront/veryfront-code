@@ -134,6 +134,15 @@ Looking to contribute? All types of help are appreciated, from coding to testing
 
 If you are a developer and would like to contribute with code, please open an issue to discuss before opening a Pull Request.
 
+## Supply-Chain Hardening
+
+Veryfront Code treats dependency changes as reviewed code changes.
+
+- Workspace Deno dependencies use exact versions and are resolved through the checked-in `deno.lock`.
+- `deno.json` sets `minimumDependencyAge` to delay freshly published dependency versions during Deno resolution.
+- `.npmrc` sets `save-exact=true` so npm-compatible tooling records exact versions.
+- The npm package generator pins automatic `dependencies`, `optionalDependencies`, and `devDependencies`; peer ranges remain available only for opt-in compatibility constraints.
+
 ## Support
 
 We have an [open community Discord](https://discord.gg/veryfront). Come say hello and let us know if you have any questions or need help getting things running.

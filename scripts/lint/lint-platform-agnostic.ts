@@ -12,8 +12,8 @@
  * Or:  deno task lint:platform
  */
 
-import { walk } from "jsr:@std/fs@1/walk";
-import { relative } from "jsr:@std/path@1";
+import { walk } from "#std/fs/walk";
+import { relative } from "#std/path";
 
 // Patterns that indicate platform-specific code
 const VIOLATION_PATTERNS = [

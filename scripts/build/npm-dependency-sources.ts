@@ -29,7 +29,7 @@ export async function readDenoConfigSet(
 export function npmDependencyRange(
 	configs: DenoConfig[],
 	specifier: string,
-	rangePrefix: "" | "^" = "^",
+	rangePrefix: "" | "^" = "",
 ): string {
 	const target = configs
 		.map((config) => config.imports?.[specifier])

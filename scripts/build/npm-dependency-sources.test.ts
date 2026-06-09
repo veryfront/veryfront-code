@@ -37,7 +37,7 @@ describe("npm dependency source helpers", () => {
 			},
 		}];
 
-		assertEquals(npmDependencyRange(configs, "ws"), "^8.18.0");
+		assertEquals(npmDependencyRange(configs, "ws"), "8.18.0");
 		assertEquals(npmDependencyRange(configs, "react", ""), "19.2.4");
 	});
 
@@ -45,9 +45,9 @@ describe("npm dependency source helpers", () => {
 		const rootConfig = JSON.parse(await Deno.readTextFile("deno.json"));
 		const configs = await readDenoConfigSet(".", rootConfig);
 
-		assertEquals(npmDependencyRange(configs, "@types/react"), "^19.2.14");
-		assertEquals(npmDependencyRange(configs, "@types/react-dom"), "^19.2.3");
-		assertEquals(npmDependencyRange(configs, "@kreuzberg/node"), "^4.4.2");
+		assertEquals(npmDependencyRange(configs, "@types/react"), "19.2.14");
+		assertEquals(npmDependencyRange(configs, "@types/react-dom"), "19.2.3");
+		assertEquals(npmDependencyRange(configs, "@kreuzberg/node"), "4.4.2");
 		assertEquals(npmDependencyRange(configs, "better-sqlite3", ""), "9.6.0");
 	});
 

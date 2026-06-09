@@ -3,7 +3,7 @@
  * Compile the Veryfront CLI binary with all required embedded assets.
  */
 
-import { parseArgs } from "jsr:@std/cli/parse-args";
+import { parseArgs } from "#std/flags";
 import { fromFileUrl, isAbsolute, join } from "#std/path.ts";
 import { getBinaryPluginBundleIncludes } from "../../src/build/binary-plugin-includes.ts";
 

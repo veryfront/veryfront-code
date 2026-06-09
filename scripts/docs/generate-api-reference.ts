@@ -10,8 +10,8 @@
  *        deno task docs -- --output ../../docs/docs/code/api-reference
  */
 
-import { parseArgs } from "jsr:@std/cli/parse-args";
-import { ensureDir } from "jsr:@std/fs/ensure-dir";
+import { parseArgs } from "#std/flags";
+import { ensureDir } from "#std/fs/ensure-dir";
 import { COMMANDS } from "../../cli/help/command-definitions.ts";
 import type { CommandCategory, CommandHelp } from "../../cli/help/types.ts";
 

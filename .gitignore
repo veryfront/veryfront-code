@@ -36,13 +36,14 @@ __test_project__/
 # Dependencies
 node_modules/
 
+# NPM config
+# Local npm configs may contain credentials. Track only the root policy file.
+.npmrc
+!/.npmrc
+
 # Binaries
 bin/
 veryfront-local
-
-# NPM config
-.npmrc
-deno.lock
 
 # Generated integration data (rebuild with generate-integrations-module.ts)
 src/integrations/_data.ts

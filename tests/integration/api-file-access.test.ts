@@ -11,7 +11,7 @@
  */
 
 import "../_helpers/contract-init.ts";
-import { assertEquals, assertExists } from "jsr:@std/assert";
+import { assertEquals, assertExists } from "#std/assert";
 
 async function withTempDir(fn: (tempDir: string) => Promise<void>): Promise<void> {
   const tempDir = await Deno.makeTempDir({ prefix: "vf-api-test-" });

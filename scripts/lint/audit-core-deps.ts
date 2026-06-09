@@ -1,4 +1,4 @@
-import { walk } from "jsr:@std/fs";
+import { walk } from "#std/fs";
 
 export interface CoreDependencyIssue {
   specifier: string;
