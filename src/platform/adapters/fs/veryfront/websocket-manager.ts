@@ -1,7 +1,12 @@
 import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
 import type { FileCache } from "../cache/file-cache.ts";
 import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
-import type { ContentSource, InvalidationCallbacks, ResolvedContentContext } from "./types.ts";
+import type {
+  ContentSource,
+  InvalidationCallbacks,
+  PreviewStyleArtifactInfo,
+  ResolvedContentContext,
+} from "./types.ts";
 import {
   buildDirCacheKeyPrefix,
   buildFileCacheKeyPrefix,
@@ -21,7 +26,6 @@ import {
   getReconnectDelay as getReconnectDelayHelper,
   INVALIDATION_DEBOUNCE_MS,
   parsePokeWebSocketMessage,
-  type PreviewStyleArtifactInfo,
   WS_HEARTBEAT_INTERVAL_MS,
   WS_HEARTBEAT_TIMEOUT_MS,
   WS_RECONNECT_MAX_DELAY_MS,

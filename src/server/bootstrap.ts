@@ -1,6 +1,9 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
-import type { InvalidationProjectContext } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
+import type {
+  FSAdapterConfig,
+  InvalidationProjectContext,
+} from "#veryfront/platform/adapters/fs/veryfront/types.ts";
 import { clearConfigCache, getConfig } from "#veryfront/config";
 import { type ExtensionLoader, orchestrateExtensions, tryResolve } from "veryfront/extensions";
 import {
@@ -45,6 +48,10 @@ import {
   type FileLogSubscriber,
 } from "#veryfront/observability/file-log-subscriber.ts";
 import { ReloadNotifier } from "./reload-notifier.ts";
+import {
+  createServerStyleCallbacks,
+  createServerStyleInvalidationCallbacks,
+} from "./style-callbacks.ts";
 import { clearDomainCache } from "./utils/domain-lookup.ts";
 
 const bootstrapLog = logger.component("bootstrap");
@@ -305,12 +312,19 @@ export async function bootstrap(
 
     // Inject server-layer callbacks into FS config so the platform layer
     // doesn't need to import from the server layer
+    const configuredFs = config.fs as Partial<FSAdapterConfig> | undefined;
     const fsWithCallbacks = {
       ...config.fs,
       invalidationCallbacks: {
+        ...createServerStyleInvalidationCallbacks(),
+        ...configuredFs?.invalidationCallbacks,
         triggerReload: (changedPaths?: string[], project?: InvalidationProjectContext) =>
           ReloadNotifier.triggerReload(changedPaths, project),
         clearDomainCache,
+      },
+      styleCallbacks: {
+        ...createServerStyleCallbacks(),
+        ...configuredFs?.styleCallbacks,
       },
     };
 

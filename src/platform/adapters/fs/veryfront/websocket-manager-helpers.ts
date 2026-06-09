@@ -1,4 +1,4 @@
-import type { ContentSource, ResolvedContentContext } from "./types.ts";
+import type { ContentSource, PreviewStyleArtifactInfo, ResolvedContentContext } from "./types.ts";
 import { buildFileCacheKeyPrefix } from "./cache-keys.ts";
 
 export const INVALIDATION_DEBOUNCE_MS = 100;
@@ -7,11 +7,6 @@ export const WS_RECONNECT_MAX_DELAY_MS = 120000;
 export const WS_RECONNECT_MAX_FAILURES = 10;
 export const WS_HEARTBEAT_INTERVAL_MS = 60000;
 export const WS_HEARTBEAT_TIMEOUT_MS = 300000;
-
-export interface PreviewStyleArtifactInfo {
-  hash: string;
-  assetPath: string;
-}
 
 export function getConnectionLogContext(
   projectSlug: string | undefined,

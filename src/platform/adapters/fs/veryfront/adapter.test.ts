@@ -456,6 +456,9 @@ describe("VeryfrontFSAdapter", () => {
           getProjectId: () => string;
           getCachedProject: () => { provider: string; layout: string };
           listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
+          listAllEnvironmentFiles: (
+            environmentName: string,
+          ) => Promise<Array<{ path: string; content?: string }>>;
         };
       }).client;
 
@@ -517,6 +520,9 @@ describe("VeryfrontFSAdapter", () => {
           getProjectId: () => string;
           getCachedProject: () => { provider: string; layout: string };
           listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
+          listAllEnvironmentFiles: (
+            environmentName: string,
+          ) => Promise<Array<{ path: string; content?: string }>>;
         };
       }).client;
 
@@ -553,6 +559,71 @@ describe("VeryfrontFSAdapter", () => {
       await adapter.initialize();
 
       assertEquals(pregenerationCalls, 0);
+    });
+
+    it("uses injected style pregeneration during published initialization", async () => {
+      let pregenerationCalls = 0;
+      const files = [{
+        path: "pages/index.tsx",
+        content: "export default function Page() { return <main /> }",
+      }];
+
+      const adapter = createAdapter({
+        projectDir: "/tmp/test-project",
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          cache: { enabled: true },
+        },
+        styleCallbacks: {
+          pregenerateStyles: async (receivedFiles, context) => {
+            pregenerationCalls++;
+            assertEquals(receivedFiles, files);
+            assertEquals(context.projectSlug, "test-project");
+            assertEquals(context.projectDir, "/tmp/test-project");
+            assertEquals(context.contentContext?.sourceType, "environment");
+            return { hash: "hash-1", assetPath: "/_vf/css/hash-1.css" };
+          },
+        },
+      });
+
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
+          listAllEnvironmentFiles: (
+            environmentName: string,
+          ) => Promise<Array<{ path: string; content?: string }>>;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = () => Promise.resolve(files);
+      client.listAllEnvironmentFiles = (environmentName) => {
+        assertEquals(environmentName, "production");
+        return Promise.resolve(files);
+      };
+
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      adapter.setContentContext({
+        sourceType: "environment",
+        projectSlug: "test-project",
+        environmentName: "production",
+        releaseId: "release-123",
+      });
+
+      await adapter.initialize();
+
+      await waitFor(async () => pregenerationCalls === 1);
     });
 
     it("does not pregenerate CSS during branch cache warmup", async () => {
