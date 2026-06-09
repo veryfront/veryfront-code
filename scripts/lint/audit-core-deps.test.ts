@@ -1,5 +1,5 @@
 import { assertEquals } from "#std/assert";
-import { describe, it } from "jsr:@std/testing/bdd";
+import { describe, it } from "#std/testing/bdd";
 import {
   findCoreThirdPartyImports,
   findCoreThirdPartySourceImports,
@@ -150,7 +150,7 @@ describe("findCoreThirdPartySourceImports", () => {
             'import { join } from "#veryfront/platform/path";',
             'import { defineConfig } from "veryfront/config";',
             'import extSchema from "@veryfront/ext-schema-zod";',
-            'import { assertEquals } from "jsr:@std/assert";',
+            'import { assertEquals } from "#std/assert";',
             'import local from "./local.ts";',
           ].join("\n"),
         },

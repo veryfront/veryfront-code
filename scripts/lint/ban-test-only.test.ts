@@ -1,5 +1,5 @@
-import { assertEquals } from "jsr:@std/assert";
-import { describe, it } from "jsr:@std/testing/bdd";
+import { assertEquals } from "#std/assert";
+import { describe, it } from "#std/testing/bdd";
 import { findFocusedTests, isTestFile } from "./ban-test-only.ts";
 
 describe("findFocusedTests", () => {

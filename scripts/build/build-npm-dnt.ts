@@ -11,7 +11,7 @@
  *   deno run -A scripts/build-npm-dnt.ts
  */
 
-import { build, emptyDir } from "jsr:@deno/dnt";
+import { build, emptyDir } from "#dnt";
 import {
 	BROWSER_SAFE_CLIENT_MODULES,
 	BROWSER_SAFE_DNT_TIMER_MODULES,
@@ -143,12 +143,12 @@ await build({
 			"@types/react-dom": npmDependencyRange(denoConfigSet, "@types/react-dom"),
 			// Root deno.json intentionally rejects core npm imports; ws is a
 			// Node-only dynamic import used by the npm server/HMR path.
-			"ws": "^8.18.0",
+			"ws": "8.18.0",
 			"@kreuzberg/node": npmDependencyRange(denoConfigSet, "@kreuzberg/node"),
 		},
 		// Native binary deps that should not block install if they fail
 		optionalDependencies: {
-			"@huggingface/transformers": `^${OPAQUE_DEPENDENCY_VERSIONS["@huggingface/transformers"]}`,
+			"@huggingface/transformers": OPAQUE_DEPENDENCY_VERSIONS["@huggingface/transformers"],
 			// ext-sandbox-shell-tools is auto-enabled by the hosted agent service,
 			// so its runtime implementation must be installable with the npm package.
 			"bash-tool": npmDependencyRange(denoConfigSet, "bash-tool"),

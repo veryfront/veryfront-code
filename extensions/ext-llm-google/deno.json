@@ -11,8 +11,8 @@
     "capabilities": []
   },
   "imports": {
-    "@std/assert": "jsr:@std/assert@1",
-    "@std/testing/bdd": "jsr:@std/testing@1/bdd",
+    "@std/assert": "jsr:@std/assert@1.0.19",
+    "@std/testing/bdd": "jsr:@std/testing@1.0.17/bdd",
     "veryfront/extensions": "../../src/extensions/index.ts",
     "veryfront/extensions/llm": "../../src/extensions/llm/index.ts",
     "veryfront/provider/shared": "../../src/provider/shared/index.ts",

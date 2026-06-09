@@ -40,8 +40,8 @@ let DRY_RUN = false;
 
 async function loadDeps(): Promise<void> {
   if (isDenoRuntime) {
-    const pathModule = await import("jsr:@std/path");
-    const { parseArgs } = await import("jsr:@std/cli/parse-args");
+    const pathModule = await import("#std/path");
+    const { parseArgs } = await import("#std/flags");
     pathMod = pathModule;
     parseArgsFn = parseArgs as ParseArgsFn;
     return;

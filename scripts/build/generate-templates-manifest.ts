@@ -9,8 +9,8 @@
  *   deno run -A scripts/build/generate-templates-manifest.ts --check
  */
 
-import { walk } from "jsr:@std/fs/walk";
-import { relative } from "jsr:@std/path";
+import { walk } from "#std/fs/walk";
+import { relative } from "#std/path";
 
 interface TemplateManifest {
 	version: number;

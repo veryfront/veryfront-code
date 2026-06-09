@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { FakeTime } from "jsr:@std/testing@1.0.17/time";
+import { FakeTime } from "#std/testing/time";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createConversationRunStreamMirror } from "./run-stream-mirror.ts";
 import { type ConversationRunEventQueueController } from "./durable.ts";

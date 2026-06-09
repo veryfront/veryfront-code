@@ -1,8 +1,15 @@
 {
+  "lock": "../deno.lock",
+  "minimumDependencyAge": "P2D",
   "imports": {
-    "#std/assert": "jsr:@std/assert",
-    "#std/flags": "jsr:@std/cli/parse-args",
-    "#std/path": "jsr:@std/path",
-    "#std/testing/bdd": "jsr:@std/testing/bdd"
+    "#dnt": "jsr:@deno/dnt@0.42.3",
+    "#std/assert": "jsr:@std/assert@1.0.19",
+    "#std/flags": "jsr:@std/cli@1.0.28/parse-args",
+    "#std/fs": "jsr:@std/fs@1.0.23",
+    "#std/fs/walk": "jsr:@std/fs@1.0.23/walk",
+    "#std/fs/ensure-dir": "jsr:@std/fs@1.0.23/ensure-dir",
+    "#std/path": "jsr:@std/path@1.1.4",
+    "#std/path.ts": "jsr:@std/path@1.1.4",
+    "#std/testing/bdd": "jsr:@std/testing@1.0.17/bdd"
   }
 }

@@ -1,6 +1,6 @@
-import { assertEquals } from "jsr:@std/assert";
-import { walk } from "jsr:@std/fs/walk";
-import { fromFileUrl } from "jsr:@std/path";
+import { assertEquals } from "#std/assert";
+import { walk } from "#std/fs/walk";
+import { fromFileUrl } from "#std/path";
 
 const repoRoot = fromFileUrl(new URL("../../", import.meta.url));
 

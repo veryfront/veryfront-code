@@ -15,9 +15,9 @@
  */
 
 import { parse } from "npm:@babel/parser@7.29.2";
-import { walk } from "jsr:@std/fs/walk";
-import { parseArgs } from "jsr:@std/cli/parse-args";
-import { relative, resolve } from "jsr:@std/path";
+import { walk } from "#std/fs/walk";
+import { parseArgs } from "#std/flags";
+import { relative, resolve } from "#std/path";
 
 type UnknownRecord = Record<string, unknown>;
 

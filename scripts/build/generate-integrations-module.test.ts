@@ -1,5 +1,5 @@
 import { assertEquals, assertStringIncludes } from "#std/assert";
-import { describe, it } from "jsr:@std/testing/bdd";
+import { describe, it } from "#std/testing/bdd";
 import { formatGeneratedModuleEntries } from "./integrations-module-format.ts";
 
 describe("formatGeneratedModuleEntries", () => {

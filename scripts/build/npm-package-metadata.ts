@@ -88,7 +88,24 @@ export function normalizeNpmPackageMetadata(pkg: PackageJson): PackageJson {
 		pkg.overrides[name] = version;
 	}
 
+	pinAutomaticDependencyRanges(pkg);
+
 	return pkg;
+}
+
+function pinAutomaticDependencyRanges(pkg: PackageJson): void {
+	for (const key of ["dependencies", "optionalDependencies", "devDependencies"] as const) {
+		const dependencies = pkg[key];
+		if (!dependencies) continue;
+
+		for (const [name, range] of Object.entries(dependencies)) {
+			dependencies[name] = stripLeadingRangeOperator(range);
+		}
+	}
+}
+
+function stripLeadingRangeOperator(range: string): string {
+	return range.replace(/^[\^~]/, "");
 }
 
 function movePackageToOptionalPeer(pkg: PackageJson, name: string): void {
