@@ -5,6 +5,7 @@ import {
   BINARY_TAILWIND_PLUGIN_PACKAGES,
   getBinaryPluginBundleIncludes,
   getTailwindPluginBundleUrl,
+  resolveTailwindPluginBundlePackage,
 } from "./binary-plugin-includes.ts";
 
 describe("build/binary-plugin-includes", () => {
@@ -12,6 +13,24 @@ describe("build/binary-plugin-includes", () => {
     assertEquals(
       getTailwindPluginBundleUrl("tailwindcss-animate@1.0.7"),
       "https://esm.sh/tailwindcss-animate@1.0.7?bundle&external=tailwindcss&target=denonext",
+    );
+  });
+
+  it("resolves bare bundled plugin names to the pinned binary package", () => {
+    assertEquals(
+      resolveTailwindPluginBundlePackage("@tailwindcss/typography"),
+      "@tailwindcss/typography@0.5.19",
+    );
+    assertEquals(
+      getTailwindPluginBundleUrl("@tailwindcss/typography"),
+      "https://esm.sh/@tailwindcss/typography@0.5.19?bundle&external=tailwindcss&target=denonext",
+    );
+  });
+
+  it("keeps explicit plugin versions unchanged", () => {
+    assertEquals(
+      resolveTailwindPluginBundlePackage("@tailwindcss/typography@0.5.18"),
+      "@tailwindcss/typography@0.5.18",
     );
   });
 

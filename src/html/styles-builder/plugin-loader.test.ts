@@ -196,6 +196,38 @@ describe("styles-builder/plugin-loader", () => {
     }
   });
 
+  it("loads bare bundled plugin names through pinned binary bundle URLs", async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchedUrls: string[] = [];
+
+    globalThis.fetch = ((input: Parameters<typeof fetch>[0]) => {
+      const url = String(input);
+      fetchedUrls.push(url);
+
+      if (url.includes("?bundle")) {
+        return Promise.resolve(
+          new Response(`export * from "/v1/pinned-typography.bundle.mjs";`, { status: 200 }),
+        );
+      }
+
+      return Promise.resolve(
+        new Response(`export default { id: "pinned-typography" };`, { status: 200 }),
+      );
+    }) as typeof fetch;
+
+    try {
+      const plugin = await loadModuleFromEsmSh("@tailwindcss/typography");
+
+      assertEquals((plugin as { default?: { id?: string } }).default?.id, "pinned-typography");
+      assertEquals(
+        fetchedUrls[0],
+        "https://esm.sh/@tailwindcss/typography@0.5.19?bundle&external=tailwindcss&target=denonext",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("uses the non-Deno import path in Node-like runtimes with Deno shims", async () => {
     const originalFetch = globalThis.fetch;
     const originalProcess = Object.getOwnPropertyDescriptor(globalThis, "process");

@@ -6,8 +6,31 @@ const BINARY_TAILWIND_PLUGIN_PACKAGES = [
   "daisyui@5.5.14",
 ] as const;
 
+function barePackageName(spec: string): string {
+  if (spec.startsWith("@")) {
+    const versionIndex = spec.indexOf("@", 1);
+    return versionIndex === -1 ? spec : spec.slice(0, versionIndex);
+  }
+
+  const versionIndex = spec.indexOf("@");
+  return versionIndex === -1 ? spec : spec.slice(0, versionIndex);
+}
+
+const BINARY_TAILWIND_PLUGIN_PACKAGE_BY_NAME = new Map(
+  BINARY_TAILWIND_PLUGIN_PACKAGES.map((pkg) => [barePackageName(pkg), pkg]),
+);
+
+export function resolveTailwindPluginBundlePackage(packageName: string): string {
+  if (packageName.includes("@", packageName.startsWith("@") ? 1 : 0)) {
+    return packageName;
+  }
+
+  return BINARY_TAILWIND_PLUGIN_PACKAGE_BY_NAME.get(packageName) ?? packageName;
+}
+
 export function getTailwindPluginBundleUrl(packageName: string): string {
-  return `https://esm.sh/${packageName}?bundle&external=tailwindcss&target=denonext`;
+  const resolvedPackage = resolveTailwindPluginBundlePackage(packageName);
+  return `https://esm.sh/${resolvedPackage}?bundle&external=tailwindcss&target=denonext`;
 }
 
 export function getBinaryPluginBundleIncludes(): string[] {
