@@ -15,10 +15,6 @@
 import { rendererLogger as globalLogger } from "#veryfront/utils";
 import type { Logger } from "#veryfront/utils/logger/logger.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { transformToESM } from "../../../esm-transform.ts";
-import { cacheHttpImportsToLocal } from "../../../esm/http-cache.ts";
-import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
-import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import type { ModuleFetcherContext } from "../types.ts";
@@ -27,12 +23,12 @@ import { hashString } from "../utils/hash.ts";
 import { resolveModuleFile } from "../resolution/file-finder.ts";
 import { buildMissingModuleError } from "../missing-module.ts";
 import { getTransformCacheKey, getVersionedPathCacheKey } from "./cache-keys.ts";
-import { rewriteDntImports, rewriteVeryfrontImports } from "./import-rewriter.ts";
 import { resolveNestedModuleImports } from "./nested-imports.ts";
 import { readDistributedCache, writeDistributedCache } from "./distributed-cache.ts";
 import { fetchModuleViaHTTP } from "./http-fetcher.ts";
 import { cacheModule, normalizePath } from "./module-cache.ts";
 import { readValidCachedModulePath } from "./path-cache-lookup.ts";
+import { transformResolvedModuleSource } from "./source-transform.ts";
 
 // Re-export extracted modules for backward compatibility
 export { rewriteDntImports } from "./import-rewriter.ts";
@@ -280,63 +276,17 @@ async function doFetchAndCacheModule(
     }
 
     if (!moduleCode) {
-      log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] transformToESM START`, {
-        projectSlug,
-        normalizedPath,
+      moduleCode = await transformResolvedModuleSource({
+        sourceCode,
         actualFilePath,
-        sourceLength: sourceCode.length,
-      });
-
-      // Rewrite veryfront/* imports to /_vf_modules/ paths BEFORE transform
-      // so that ssrVfModulesPlugin can resolve them to file:// paths.
-      // Cached files don't have access to import maps, so we need to do this mapping here.
-      const preprocessedSource = rewriteVeryfrontImports(sourceCode);
-
-      const transformStart = performance.now();
-      try {
-        moduleCode = await transformToESM(preprocessedSource, actualFilePath, projectDir, adapter, {
-          projectId,
-          dev: true,
-          ssr: true,
-          reactVersion: context.reactVersion,
-        });
-      } catch (transformError) {
-        log.error(`${LOG_PREFIX_MDX_LOADER} Transform failed for module`, {
-          normalizedPath,
-          actualFilePath,
-          sourceLength: sourceCode.length,
-          sourcePreview: sourceCode.slice(0, 200),
-          error: transformError instanceof Error ? transformError.message : String(transformError),
-        });
-        throw transformError;
-      }
-
-      log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] transformToESM DONE`, {
-        projectSlug,
+        projectDir,
+        projectId,
         normalizedPath,
-        transformMs: (performance.now() - transformStart).toFixed(1),
-        outputLength: moduleCode.length,
+        projectSlug,
+        reactVersion: context.reactVersion,
+        adapter,
+        log,
       });
-
-      // Rewrite _dnt.polyfills.js / _dnt.shims.js relative imports to absolute file:// paths
-      moduleCode = await rewriteDntImports(moduleCode, actualFilePath);
-
-      // Cache HTTP imports (esm.sh URLs) to local file:// paths.
-      // This ensures the same cache works for both compiled and non-compiled Deno.
-      // Compiled binaries cannot do dynamic HTTP imports, but non-compiled Deno
-      // also works fine with file:// paths, so we always cache for consistency.
-      {
-        log.debug(`${LOG_PREFIX_MDX_LOADER} Caching HTTP imports to local files`, {
-          normalizedPath,
-        });
-        const importMap = await loadImportMap(projectDir);
-        const cacheResult = await cacheHttpImportsToLocal(moduleCode, {
-          cacheDir: getHttpBundleCacheDir(),
-          importMap,
-          reactVersion: context.reactVersion,
-        });
-        moduleCode = cacheResult.code;
-      }
 
       // Mark for distributed cache write AFTER nested imports are resolved.
       // This ensures we don't cache code with unresolved /_vf_modules/ paths.
