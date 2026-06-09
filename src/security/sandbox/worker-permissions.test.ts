@@ -20,6 +20,15 @@ describe("worker-permissions", () => {
     assertEquals(perms.read, false);
   });
 
+  it("keeps compiled-binary read permissions scoped to explicit paths", () => {
+    const perms = buildWorkerPermissions(["/tmp/project-a"], {
+      isCompiledBinary: true,
+      compiledReadPaths: ["/tmp/deno-compile-abc/dist/framework-src"],
+    });
+
+    assertEquals(perms.read, ["/tmp/project-a", "/tmp/deno-compile-abc/dist/framework-src"]);
+  });
+
   it("always denies write, run, ffi, sys", () => {
     const perms = buildWorkerPermissions(["/anything"]);
     assertEquals(perms.write, false);

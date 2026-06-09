@@ -277,6 +277,59 @@ testSuite("ProjectWorker - real worker request isolation", () => {
       await Deno.remove(projectDir, { recursive: true });
     }
   });
+
+  it("rejects direct Deno file reads outside scoped worker read permissions", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const outsideDir = await Deno.makeTempDir();
+    const outsidePath = await Deno.makeTempFile({ dir: outsideDir, suffix: ".txt" });
+    const modulePath = await Deno.makeTempFile({ dir: projectDir, suffix: ".mjs" });
+
+    await Deno.writeTextFile(outsidePath, "outside secret");
+    await Deno.writeTextFile(
+      modulePath,
+      `
+        export async function GET() {
+          await Deno.readTextFile(${JSON.stringify(outsidePath)});
+          return Response.json({ leaked: true });
+        }
+      `,
+    );
+
+    const worker = new ProjectWorker({
+      projectId: "test-direct-deno-read-denied",
+      permissions: { ...REAL_WORKER_PERMISSIONS, read: [projectDir] },
+      requestTimeoutMs: 10_000,
+    });
+
+    worker.start();
+    try {
+      const response = await worker.execute({
+        type: "execute-app-route",
+        id: "direct-read",
+        modulePath,
+        method: "GET",
+        request: {
+          url: "http://localhost/api/read",
+          method: "GET",
+          headers: [],
+          body: null,
+        },
+        params: {},
+        projectDir,
+      });
+
+      assertEquals(response.type, "error");
+      if (response.type !== "error") throw new Error("expected error response");
+      assert(
+        response.error.message.includes("Requires read access"),
+        `expected permission denial, got: ${response.error.message}`,
+      );
+    } finally {
+      worker.terminate();
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(outsideDir, { recursive: true });
+    }
+  });
 });
 
 testSuite("ProjectWorker - executeStream", () => {

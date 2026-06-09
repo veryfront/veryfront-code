@@ -7,6 +7,14 @@
  * @module security/sandbox/worker-permissions
  */
 
+import { getFrameworkRootFromMeta } from "#veryfront/platform/compat/vfs-paths.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import {
+  getCacheBaseDir,
+  getHttpBundleCacheDir,
+  getMdxEsmCacheDir,
+} from "#veryfront/utils/cache-dir.ts";
+
 /**
  * Deno Worker permission object.
  * See: https://docs.deno.com/runtime/fundamentals/permissions/
@@ -21,6 +29,13 @@ export interface WorkerPermissions {
   sys: boolean;
 }
 
+interface WorkerPermissionOptions {
+  /** Override for tests that need to exercise compiled-binary behavior. */
+  isCompiledBinary?: boolean;
+  /** Override for tests that need deterministic compiled-binary support paths. */
+  compiledReadPaths?: string[];
+}
+
 // Cache compiled binary check — Deno.execPath() is a syscall that never changes at runtime
 const _isCompiledBinary = (() => {
   try {
@@ -32,6 +47,27 @@ const _isCompiledBinary = (() => {
     return false;
   }
 })();
+
+function normalizeReadPaths(paths: Array<string | undefined>): string[] {
+  const unique = new Set<string>();
+  for (const path of paths) {
+    if (!path) continue;
+    const trimmed = path.trim();
+    if (!trimmed) continue;
+    unique.add(trimmed);
+  }
+  return [...unique];
+}
+
+function getDefaultCompiledReadPaths(): string[] {
+  return normalizeReadPaths([
+    getFrameworkRootFromMeta(import.meta.url),
+    getCacheBaseDir(),
+    getMdxEsmCacheDir(),
+    getHttpBundleCacheDir(),
+    getHostEnv("DENO_DIR"),
+  ]);
+}
 
 /**
  * Build scoped permissions for a project worker.
@@ -46,20 +82,16 @@ const _isCompiledBinary = (() => {
  */
 export function buildWorkerPermissions(
   readPaths: string[],
+  options: WorkerPermissionOptions = {},
 ): WorkerPermissions {
-  // In compiled binaries, user modules import from the VFS temp dir which
-  // is outside the project directory. Rather than trying to enumerate all
-  // read paths, grant full read access — the security boundary is enforced
-  // by denying write/run/ffi/sys, not by restricting reads.
-  //
-  // SECURITY (residual, tracked in #2245): with read:true a user route
-  // handler can call Deno.readTextFile directly to read any host file,
-  // bypassing the project-scoped ctx.fs adapter. Narrowing this to a
-  // binary-validated allow-list (or removing direct Deno fs from user module
-  // scope) is blocking work for the next security batch.
-  if (_isCompiledBinary) {
+  const isCompiledBinary = options.isCompiledBinary ?? _isCompiledBinary;
+  const normalizedReadPaths = normalizeReadPaths(readPaths);
+
+  if (isCompiledBinary) {
+    const compiledReadPaths = options.compiledReadPaths ?? getDefaultCompiledReadPaths();
+    const scopedReadPaths = normalizeReadPaths([...normalizedReadPaths, ...compiledReadPaths]);
     return {
-      read: true,
+      read: scopedReadPaths.length > 0 ? scopedReadPaths : false,
       write: false,
       net: true,
       env: true,
@@ -70,7 +102,7 @@ export function buildWorkerPermissions(
   }
 
   return {
-    read: readPaths.length > 0 ? readPaths : false,
+    read: normalizedReadPaths.length > 0 ? normalizedReadPaths : false,
     write: false,
     net: true,
     env: true,
