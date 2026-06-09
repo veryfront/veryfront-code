@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import type { CreateSandboxBashTool } from "#veryfront/sandbox";
 import {
   createDefaultHostedInvokeAgentTool,
@@ -64,6 +64,33 @@ Deno.test("defaultHostedInvokeAgentInputSchema accepts child-agent selection", (
   );
 });
 
+Deno.test("defaultHostedInvokeAgentInputSchema requires explicit child-agent selection", async () => {
+  await assertRejects(
+    async () =>
+      defaultHostedInvokeAgentInputSchema.parse({
+        description: "inspect auth",
+        prompt: "Inspect auth flow.",
+        context: {},
+      }),
+    Error,
+    "agent_id",
+  );
+});
+
+Deno.test("defaultHostedInvokeAgentInputSchema rejects blank child-agent selection", async () => {
+  await assertRejects(
+    async () =>
+      defaultHostedInvokeAgentInputSchema.parse({
+        description: "inspect auth",
+        prompt: "Inspect auth flow.",
+        context: {},
+        agent_id: "   ",
+      }),
+    Error,
+    "agent_id must not be blank",
+  );
+});
+
 Deno.test("executeDefaultHostedInvokeAgentTool returns durable context failure before local execution", async () => {
   const traceAttributes: DefaultHostedInvokeAgentTraceAttributes[] = [];
   const result = await executeDefaultHostedInvokeAgentTool(
@@ -72,7 +99,7 @@ Deno.test("executeDefaultHostedInvokeAgentTool returns durable context failure b
       description: "inspect auth",
       prompt: "Inspect auth flow.",
       context: {},
-      agent_id: undefined,
+      agent_id: "security-reviewer",
     },
     "security-reviewer",
     { toolCallId: "tool-call-1" },
@@ -102,7 +129,7 @@ Deno.test("createDefaultHostedInvokeAgentTool adds child selection guidance and 
     createTestOptions({ traceAttributes }),
   );
 
-  assertStringIncludes(invokeTool.description, "Use agent_id to target");
+  assertStringIncludes(invokeTool.description, "agent_id is required");
 
   const result = await invokeTool.execute(
     {
