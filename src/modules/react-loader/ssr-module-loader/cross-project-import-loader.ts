@@ -11,6 +11,9 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import { globalCrossProjectCache } from "./cache/index.ts";
 import type { SSRModuleLoaderOptions } from "./types.ts";
 
+/** Max size of a fetched cross-project module source, to bound memory use. */
+const MAX_CROSS_PROJECT_SOURCE_BYTES = 5 * 1024 * 1024; // 5MB
+
 interface CrossProjectImportCache {
   hashContentAsync(content: string): Promise<string>;
   getTempPath(filePath: string, contentHash?: string): Promise<string>;
@@ -89,7 +92,22 @@ export async function transformCrossProjectImportFlow(
       });
     }
 
+    // Bound the response size — registryUrl derives from the requested ref, so
+    // an oversized body would otherwise be buffered whole into memory (OOM).
+    const declaredLength = Number(response.headers.get("content-length") ?? "");
+    if (Number.isFinite(declaredLength) && declaredLength > MAX_CROSS_PROJECT_SOURCE_BYTES) {
+      await response.body?.cancel();
+      throw NETWORK_ERROR.create({
+        detail: `Cross-project source too large: ${registryUrl} (${declaredLength} bytes)`,
+      });
+    }
+
     const sourceCode = await response.text();
+    if (sourceCode.length > MAX_CROSS_PROJECT_SOURCE_BYTES) {
+      throw NETWORK_ERROR.create({
+        detail: `Cross-project source exceeds size limit: ${registryUrl}`,
+      });
+    }
     const contentHash = await cache.hashContentAsync(sourceCode);
 
     const ext = path.match(/\.(tsx?|jsx?|mdx)$/)?.[0] ?? ".tsx";
