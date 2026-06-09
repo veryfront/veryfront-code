@@ -77,7 +77,12 @@ export class FileLogSubscriber {
   }
 
   private enqueue(entry: LogEntry): void {
-    this.writeQueue = this.writeQueue.then(() => this.writeEntry(entry)).catch(() => {});
+    this.writeQueue = this.writeQueue.then(() => this.writeEntry(entry)).catch((error) => {
+      console.error(
+        `[FileLogSubscriber] Failed writing to ${this.config.path}. File logging will continue.`,
+        error instanceof Error ? error.message : String(error),
+      );
+    });
   }
 
   private async writeEntry(entry: LogEntry): Promise<void> {
