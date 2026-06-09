@@ -1,6 +1,13 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { readTextFile, resolve, cwd } from "veryfront/fs";
+import { cwd, readTextFile, realPath, resolve } from "veryfront/fs";
+
+/** True when `target` is the same as, or nested under, `root` (both canonical). */
+function isWithin(root: string, target: string): boolean {
+  const r = root.replace(/\\/g, "/");
+  const t = target.replace(/\\/g, "/");
+  return t === r || t.startsWith(`${r}/`);
+}
 
 export default tool({
   id: "read-file",
@@ -9,18 +16,20 @@ export default tool({
     path: v.string().describe("File path relative to the project root"),
   }))(),
   execute: async ({ path }) => {
-    const projectDir = resolve(cwd());
-    const absolute = resolve(projectDir, path);
-    // Keep file access inside the project directory — reject traversal like
-    // "../../etc/passwd" before touching the filesystem.
-    if (absolute !== projectDir && !absolute.startsWith(projectDir + "/")) {
-      return { error: `Path escapes project directory: ${path}` };
-    }
+    let projectDir: string;
+    let absolute: string;
     try {
-      const content = await readTextFile(absolute);
-      return { path, content };
+      // Canonicalize both sides so a symlink that points outside the project
+      // is resolved to its real target before the containment check.
+      projectDir = await realPath(cwd());
+      absolute = await realPath(resolve(projectDir, path));
     } catch {
       return { error: `File not found: ${path}` };
     }
+    if (!isWithin(projectDir, absolute)) {
+      return { error: `Path escapes project directory: ${path}` };
+    }
+    const content = await readTextFile(absolute);
+    return { path, content };
   },
 });
