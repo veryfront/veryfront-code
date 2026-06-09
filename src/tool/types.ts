@@ -73,6 +73,8 @@ export interface ToolExecutionContext {
   toolCallId?: string;
   /** Project identity used by integration token resolution */
   projectId?: string;
+  /** Request-scoped Veryfront auth token for project-local platform API tools */
+  authToken?: string;
   /** Abort signal for cooperative cancellation during long-running tool execution */
   abortSignal?: AbortSignal;
   /** Progress token for sending progress notifications (MCP 2025-11-25) */

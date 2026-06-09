@@ -441,6 +441,9 @@ export async function createRuntimeAgentStreamResponse(
       {
         threadId: input.threadId,
         runId: input.runId,
+        ...(deps.projectAgentSandbox?.authToken
+          ? { authToken: deps.projectAgentSandbox.authToken }
+          : {}),
         ...(input.parentRunId ? { parentRunId: input.parentRunId } : {}),
         ...(input.state !== undefined ? { state: input.state } : {}),
         context: input.context,
