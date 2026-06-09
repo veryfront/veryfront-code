@@ -7,6 +7,7 @@ import {
   isProjectEnvActive,
   runWithProjectEnv,
 } from "./storage.ts";
+import { getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
 
 describe("project-env/storage", () => {
   it("returns undefined outside any context", () => {
@@ -95,5 +96,55 @@ describe("project-env/storage", () => {
 
     assertEquals(results.includes("task1:task1"), true);
     assertEquals(results.includes("task2:task2"), true);
+  });
+
+  it("exposes project-scoped env through process.env without host fallthrough", () => {
+    const hostKey = "__VF_PROJECT_ENV_HOST_ONLY__";
+    const projectKey = "__VF_PROJECT_ENV_PROJECT_ONLY__";
+    const originalHostValue = Deno.env.get(hostKey);
+    Deno.env.set(hostKey, "host-secret");
+
+    try {
+      runWithProjectEnv({ [projectKey]: "project-token" }, () => {
+        assertEquals(process.env[projectKey], "project-token");
+        assertEquals(process.env[hostKey], undefined);
+        assertEquals(getEnv(projectKey), "project-token");
+        assertEquals(getEnv(hostKey), undefined);
+        assertEquals(getHostEnv(hostKey), "host-secret");
+      });
+    } finally {
+      if (originalHostValue === undefined) {
+        Deno.env.delete(hostKey);
+      } else {
+        Deno.env.set(hostKey, originalHostValue);
+      }
+    }
+  });
+
+  it("keeps process.env isolated across concurrent project env contexts", async () => {
+    const results: string[] = [];
+
+    const task1 = new Promise<void>((resolve) => {
+      runWithProjectEnv({ VERYFRONT_API_TOKEN: "run-token-1" }, () => {
+        setTimeout(() => {
+          results.push(`task1:${process.env.VERYFRONT_API_TOKEN}`);
+          resolve();
+        }, 10);
+      });
+    });
+
+    const task2 = new Promise<void>((resolve) => {
+      runWithProjectEnv({ VERYFRONT_API_TOKEN: "run-token-2" }, () => {
+        setTimeout(() => {
+          results.push(`task2:${process.env.VERYFRONT_API_TOKEN}`);
+          resolve();
+        }, 5);
+      });
+    });
+
+    await Promise.all([task1, task2]);
+
+    assertEquals(results.includes("task1:run-token-1"), true);
+    assertEquals(results.includes("task2:run-token-2"), true);
   });
 });

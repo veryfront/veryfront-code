@@ -10,12 +10,129 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
 const projectEnvStorage = new AsyncLocalStorage<Record<string, string>>();
+const PROCESS_ENV_PROXY_FLAG = "__vfProjectEnvProcessProxyInstalled";
+const PROCESS_ENV_PROXY_REF = "__vfProjectEnvProcessProxy";
+const PROCESS_ENV_HOST_GETTER = "__vfHostProcessEnvGetter";
+
+type ProcessLike = {
+  env?: Record<string | symbol, string | undefined>;
+};
+
+function getGlobalProcess(): ProcessLike | undefined {
+  const candidate = (globalThis as { process?: unknown }).process;
+  return candidate && typeof candidate === "object" ? candidate as ProcessLike : undefined;
+}
+
+function getActiveStore(): Record<string, string> | undefined {
+  return projectEnvStorage.getStore();
+}
+
+function installProcessEnvProxy(): void {
+  const globals = globalThis as Record<string, unknown>;
+
+  const processLike = getGlobalProcess();
+  if (!processLike?.env) return;
+  if (globals[PROCESS_ENV_PROXY_FLAG] && globals[PROCESS_ENV_PROXY_REF] === processLike.env) return;
+
+  const hostEnv = processLike.env;
+  globals[PROCESS_ENV_HOST_GETTER] = (key: string): string | undefined => hostEnv[key];
+
+  const proxy = new Proxy(hostEnv, {
+    get(target, property, receiver) {
+      if (typeof property !== "string") {
+        return Reflect.get(target, property, receiver);
+      }
+
+      const store = getActiveStore();
+      if (store !== undefined) {
+        return Object.prototype.hasOwnProperty.call(store, property) ? store[property] : undefined;
+      }
+
+      return target[property];
+    },
+    set(target, property, value, receiver) {
+      if (typeof property !== "string") {
+        return Reflect.set(target, property, value, receiver);
+      }
+
+      const normalized = String(value);
+      const store = getActiveStore();
+      if (store !== undefined) {
+        store[property] = normalized;
+        return true;
+      }
+
+      target[property] = normalized;
+      return true;
+    },
+    deleteProperty(target, property) {
+      if (typeof property !== "string") {
+        return Reflect.deleteProperty(target, property);
+      }
+
+      const store = getActiveStore();
+      if (store !== undefined) {
+        delete store[property];
+        return true;
+      }
+
+      return Reflect.deleteProperty(target, property);
+    },
+    has(target, property) {
+      if (typeof property !== "string") {
+        return Reflect.has(target, property);
+      }
+
+      const store = getActiveStore();
+      if (store !== undefined) {
+        return Object.prototype.hasOwnProperty.call(store, property);
+      }
+
+      return property in target;
+    },
+    ownKeys(target) {
+      const store = getActiveStore();
+      return store !== undefined ? Reflect.ownKeys(store) : Reflect.ownKeys(target);
+    },
+    getOwnPropertyDescriptor(target, property) {
+      if (typeof property !== "string") {
+        return Reflect.getOwnPropertyDescriptor(target, property);
+      }
+
+      const store = getActiveStore();
+      if (store !== undefined) {
+        if (!Object.prototype.hasOwnProperty.call(store, property)) {
+          return undefined;
+        }
+
+        return {
+          configurable: true,
+          enumerable: true,
+          writable: true,
+          value: store[property],
+        };
+      }
+
+      return Reflect.getOwnPropertyDescriptor(target, property);
+    },
+  });
+
+  Object.defineProperty(processLike, "env", {
+    configurable: true,
+    enumerable: true,
+    writable: true,
+    value: proxy,
+  });
+  globals[PROCESS_ENV_PROXY_FLAG] = true;
+  globals[PROCESS_ENV_PROXY_REF] = proxy;
+}
 
 /**
  * Run a function with project-specific environment variables.
  * Within the callback, `getProjectEnv()` will return values from `vars`.
  */
 export function runWithProjectEnv<T>(vars: Record<string, string>, fn: () => T): T {
+  installProcessEnvProxy();
   return projectEnvStorage.run(vars, fn);
 }
 
@@ -50,3 +167,4 @@ export function getProjectEnvSnapshot(): Record<string, string> | undefined {
 (globalThis as Record<string, unknown>).__vfProjectEnvGetter = getProjectEnv;
 (globalThis as Record<string, unknown>).__vfProjectEnvActiveChecker = isProjectEnvActive;
 (globalThis as Record<string, unknown>).__vfProjectEnvSnapshotGetter = getProjectEnvSnapshot;
+installProcessEnvProxy();
