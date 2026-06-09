@@ -7,12 +7,26 @@ const logger = serverLogger.component("redis-ratelimit");
 interface RedisClient {
   connect(): Promise<void>;
   disconnect(): Promise<void>;
+  eval(
+    script: string,
+    options: { keys: string[]; arguments: string[] },
+  ): Promise<unknown>;
   incr(key: string): Promise<number>;
   pExpire(key: string, milliseconds: number): Promise<boolean>;
   pTTL(key: string): Promise<number>;
   del(key: string): Promise<number>;
   on?(event: string, listener: (...args: unknown[]) => void): void;
 }
+
+const INCREMENT_WITH_TTL_SCRIPT = `
+local count = redis.call("INCR", KEYS[1])
+local ttl = redis.call("PTTL", KEYS[1])
+if ttl < 0 then
+  redis.call("PEXPIRE", KEYS[1], ARGV[1])
+  ttl = tonumber(ARGV[1])
+end
+return { count, ttl }
+`;
 
 /** Options accepted by redis rate limit. */
 export interface RedisRateLimitOptions {
@@ -38,6 +52,22 @@ export class RedisRateLimitStore implements RateLimitStore {
     return this.clientPromise;
   }
 
+  private clearCachedClient(): void {
+    this.client = null;
+    this.clientPromise = null;
+  }
+
+  private attachClientLifecycleHandlers(client: RedisClient): void {
+    client.on?.("error", (err: unknown) => {
+      logger.error("client error", err);
+      this.clearCachedClient();
+    });
+
+    client.on?.("end", () => {
+      this.clearCachedClient();
+    });
+  }
+
   private async connectClient(): Promise<RedisClient> {
     let createClient: (options: { url?: string }) => RedisClient;
 
@@ -59,13 +89,11 @@ export class RedisRateLimitStore implements RateLimitStore {
 
     try {
       const client = createClient({ url: this.url });
-
-      client.on?.("error", (err: unknown) => {
-        logger.error("client error", err);
-      });
+      this.attachClientLifecycleHandlers(client);
 
       await client.connect();
       this.client = client;
+      this.clientPromise = null;
       return client;
     } catch (error) {
       this.clientPromise = null;
@@ -81,19 +109,12 @@ export class RedisRateLimitStore implements RateLimitStore {
     const client = await this.ensureClient();
     const redisKey = this.storageKey(key);
 
-    const count = await client.incr(redisKey);
-
-    if (count === 1) {
-      await client.pExpire(redisKey, windowMs);
-    }
-
-    const pttl = await client.pTTL(redisKey);
-
-    if (pttl === -1) {
-      await client.pExpire(redisKey, windowMs);
-      return { count, resetAt: Date.now() + windowMs };
-    }
-
+    const [count, pttl] = parseIncrementResult(
+      await client.eval(INCREMENT_WITH_TTL_SCRIPT, {
+        keys: [redisKey],
+        arguments: [String(windowMs)],
+      }),
+    );
     const ttl = pttl > 0 ? pttl : windowMs;
     return { count, resetAt: Date.now() + ttl };
   }
@@ -106,6 +127,31 @@ export class RedisRateLimitStore implements RateLimitStore {
   async destroy(): Promise<void> {
     if (!this.client) return;
     await this.client.disconnect();
-    this.client = null;
+    this.clearCachedClient();
   }
+}
+
+function parseIncrementResult(result: unknown): [number, number] {
+  if (!Array.isArray(result) || result.length < 2) {
+    throw toError(
+      createError({
+        type: "config",
+        message: "Redis rate limit eval returned an invalid result.",
+      }),
+    );
+  }
+
+  const count = Number(result[0]);
+  const ttl = Number(result[1]);
+
+  if (!Number.isFinite(count) || !Number.isFinite(ttl)) {
+    throw toError(
+      createError({
+        type: "config",
+        message: "Redis rate limit eval returned non-numeric values.",
+      }),
+    );
+  }
+
+  return [count, ttl];
 }

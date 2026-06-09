@@ -6,25 +6,50 @@ import { RedisRateLimitStore } from "./redis-rate-limit.ts";
 function createMockRedisClient(): {
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
+  eval: (
+    script: string,
+    options: { keys: string[]; arguments: string[] },
+  ) => Promise<[number, number]>;
   incr: (key: string) => Promise<number>;
   pExpire: (key: string, ms: number) => Promise<boolean>;
   pTTL: (key: string) => Promise<number>;
   del: (key: string) => Promise<number>;
-  on: () => void;
+  on: (event: string, listener: (...args: unknown[]) => void) => void;
+  _emit: (event: string, ...args: unknown[]) => void;
+  _evalCalls: number;
+  _incrCalls: number;
+  _pExpireCalls: number;
   _store: Map<string, { count: number; ttl: number }>;
 } {
   const store = new Map<string, { count: number; ttl: number }>();
+  const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
+  let evalCalls = 0;
+  let incrCalls = 0;
+  let pExpireCalls = 0;
 
   return {
     connect: () => Promise.resolve(),
     disconnect: () => Promise.resolve(),
+    eval: (_script: string, options: { keys: string[]; arguments: string[] }) => {
+      evalCalls += 1;
+      const key = options.keys[0];
+      if (!key) throw new Error("Expected eval key");
+      const windowMs = Number(options.arguments[0]);
+      const entry = store.get(key) ?? { count: 0, ttl: -1 };
+      entry.count += 1;
+      if (entry.ttl < 0) entry.ttl = windowMs;
+      store.set(key, entry);
+      return Promise.resolve([entry.count, entry.ttl]);
+    },
     incr: (key: string) => {
+      incrCalls += 1;
       const entry = store.get(key) ?? { count: 0, ttl: -1 };
       entry.count += 1;
       store.set(key, entry);
       return Promise.resolve(entry.count);
     },
     pExpire: (key: string, ms: number) => {
+      pExpireCalls += 1;
       const entry = store.get(key);
       if (entry) entry.ttl = ms;
       return Promise.resolve(true);
@@ -38,7 +63,23 @@ function createMockRedisClient(): {
       store.delete(key);
       return Promise.resolve(deleted);
     },
-    on: () => {},
+    on: (event: string, listener: (...args: unknown[]) => void) => {
+      const eventListeners = listeners.get(event) ?? [];
+      eventListeners.push(listener);
+      listeners.set(event, eventListeners);
+    },
+    _emit: (event: string, ...args: unknown[]) => {
+      for (const listener of listeners.get(event) ?? []) listener(...args);
+    },
+    get _evalCalls() {
+      return evalCalls;
+    },
+    get _incrCalls() {
+      return incrCalls;
+    },
+    get _pExpireCalls() {
+      return pExpireCalls;
+    },
     _store: store,
   };
 }
@@ -91,6 +132,17 @@ describe("middleware/builtin/security/redis-rate-limit", () => {
         await rateStore.increment("key1", 60000);
         const storedEntry = mockClient._store.get("veryfront:ratelimit:key1");
         assertEquals(storedEntry?.ttl, 60000);
+      });
+
+      it("should increment and set missing TTL in one Redis eval", async () => {
+        const { rateStore, mockClient } = createStoreWithMock();
+
+        const entry = await rateStore.increment("key1", 60000);
+
+        assertEquals(entry.count, 1);
+        assertEquals(mockClient._evalCalls, 1);
+        assertEquals(mockClient._incrCalls, 0);
+        assertEquals(mockClient._pExpireCalls, 0);
       });
 
       it("should increment count for existing key", async () => {
@@ -176,6 +228,32 @@ describe("middleware/builtin/security/redis-rate-limit", () => {
         await rateStore.increment("a", 1000);
         // deno-lint-ignore no-explicit-any
         assertEquals((rateStore as any).client, mockClient);
+      });
+
+      it("should clear cached clients when redis emits error or end", () => {
+        const { rateStore, mockClient } = createStoreWithMock();
+
+        // deno-lint-ignore no-explicit-any
+        (rateStore as any).attachClientLifecycleHandlers(mockClient);
+        // deno-lint-ignore no-explicit-any
+        (rateStore as any).clientPromise = Promise.resolve(mockClient);
+
+        mockClient._emit("error", new Error("network partition"));
+        // deno-lint-ignore no-explicit-any
+        assertEquals((rateStore as any).client, null);
+        // deno-lint-ignore no-explicit-any
+        assertEquals((rateStore as any).clientPromise, null);
+
+        // deno-lint-ignore no-explicit-any
+        (rateStore as any).client = mockClient;
+        // deno-lint-ignore no-explicit-any
+        (rateStore as any).clientPromise = Promise.resolve(mockClient);
+
+        mockClient._emit("end");
+        // deno-lint-ignore no-explicit-any
+        assertEquals((rateStore as any).client, null);
+        // deno-lint-ignore no-explicit-any
+        assertEquals((rateStore as any).clientPromise, null);
       });
     });
   });
