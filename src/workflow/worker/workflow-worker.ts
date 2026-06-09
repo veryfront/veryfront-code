@@ -20,6 +20,9 @@ const DEFAULT_POLL_INTERVAL_MS = 5_000;
 /** Default threshold after which a run is considered stalled */
 const DEFAULT_STALLED_THRESHOLD_MS = 60_000;
 
+/** Maximum time stop() waits for in-flight resumes before abandoning them */
+const WORKER_STOP_TIMEOUT_MS = 30_000;
+
 /**
  * Configuration for the workflow worker
  */
@@ -173,8 +176,16 @@ export class WorkflowWorker {
       this.pollTimeout = undefined;
     }
 
-    // Wait for active resumes to complete
+    // Wait for active resumes to complete, but bound the wait: a hung
+    // resumeFn (e.g. an unreachable backend) must not block shutdown forever.
+    const stopDeadline = Date.now() + WORKER_STOP_TIMEOUT_MS;
     while (this.activeResumes.size > 0) {
+      if (Date.now() >= stopDeadline) {
+        logger.warn(
+          `[WorkflowWorker] Stop timed out with ${this.activeResumes.size} active resume(s); abandoning wait`,
+        );
+        break;
+      }
       if (this.config.debug) {
         logger.debug(
           `[WorkflowWorker] Waiting for ${this.activeResumes.size} active resumes to complete`,
