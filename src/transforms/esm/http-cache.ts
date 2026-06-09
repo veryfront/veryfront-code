@@ -19,6 +19,7 @@ import { createBundleManifest, storeBundleManifest } from "./bundle-manifest.ts"
 import { HTTP_MODULE_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
 import { HTTP_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
 import { httpBundleCache } from "./http-cache-wrapper.ts";
+import { unbrand } from "./http-cache-types.ts";
 import { asLocalModuleCode, VeryfrontError } from "./http-cache-invariants.ts";
 import {
   CACHE_DIR_TOKEN,
@@ -164,7 +165,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
     const cacheResult = await httpBundleCache.getCodeByUrl(String(hash));
 
     if (cacheResult.code) {
-      const cachedCode = cacheResult.code as unknown as string;
+      const cachedCode = unbrand(cacheResult.code);
       const deps = extractBundleDeps(cachedCode);
 
       if (deps.length > 0) {
