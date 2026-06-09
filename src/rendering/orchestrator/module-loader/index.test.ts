@@ -1,7 +1,112 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { isMissingModuleError } from "./index.ts";
+import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
+import { dirname, join } from "#veryfront/compat/path/index.ts";
+import { isMissingModuleError, type ModuleLoaderConfig, transformModuleWithDeps } from "./index.ts";
+
+async function withModuleLoaderFixture<T>(
+  files: Record<string, string>,
+  test: (fixture: { projectDir: string; tmpDir: string; config: ModuleLoaderConfig }) => Promise<T>,
+): Promise<T> {
+  const projectDir = await Deno.makeTempDir({ prefix: "vf-module-loader-project-" });
+  const tmpDir = await Deno.makeTempDir({ prefix: "vf-module-loader-out-" });
+  const adapter = await getLocalAdapter();
+
+  try {
+    for (const [relativePath, content] of Object.entries(files)) {
+      const absolutePath = join(projectDir, relativePath);
+      await Deno.mkdir(dirname(absolutePath), { recursive: true });
+      await Deno.writeTextFile(absolutePath, content);
+    }
+
+    return await test({
+      projectDir,
+      tmpDir,
+      config: {
+        projectDir,
+        adapter,
+        mode: "development",
+        moduleCache: new Map(),
+        esmCache: new Map(),
+      },
+    });
+  } finally {
+    await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
+    await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
+  }
+}
+
+function assertTransformedImportPath(code: string, expectedPathPart: string): string {
+  const match = code.match(/from\s+"file:\/\/([^"]+)"/);
+  assert(match, `expected transformed import in code:\n${code}`);
+  const importPath = match[1]!;
+  assertStringIncludes(importPath, expectedPathPart);
+  return importPath;
+}
+
+describe("module-loader/transformModuleWithDeps", () => {
+  it("transforms @/ alias dependencies before rewriting the import to a file URL", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.json": [
+          `import { label } from "@/components/Label";`,
+          `export const pageLabel = label;`,
+        ].join("\n"),
+        "components/Label.json": `export const label = "alias-label";`,
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        const fsWithJsonResolve = Object.assign(Object.create(config.adapter.fs), {
+          async resolveFile(basePath: string): Promise<string | null> {
+            const jsonPath = `${basePath}.json`;
+            return await config.adapter.fs.exists(jsonPath) ? jsonPath : null;
+          },
+        });
+        const resolveJsonAdapter = {
+          ...config.adapter,
+          fs: fsWithJsonResolve,
+        };
+        const jsonConfig = { ...config, adapter: resolveJsonAdapter };
+        const transformedPath = await transformModuleWithDeps(
+          join(projectDir, "app/page.json"),
+          tmpDir,
+          resolveJsonAdapter,
+          jsonConfig,
+        );
+        const transformedCode = await Deno.readTextFile(transformedPath);
+        const depPath = assertTransformedImportPath(transformedCode, "/components/Label.json");
+
+        assertStringIncludes(transformedPath, "/app/page.json");
+        assertEquals((await Deno.stat(depPath)).isFile, true);
+      },
+    );
+  });
+
+  it("resolves relative imports before rewriting them to file URLs", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.json": [
+          `import { value } from "../lib/value.json";`,
+          `export const pageValue = value;`,
+        ].join("\n"),
+        "lib/value.json": `export const value = "relative-value";`,
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        const transformedPath = await transformModuleWithDeps(
+          join(projectDir, "app/page.json"),
+          tmpDir,
+          config.adapter,
+          config,
+        );
+        const transformedCode = await Deno.readTextFile(transformedPath);
+        const depPath = assertTransformedImportPath(transformedCode, "/lib/value.json");
+
+        assertStringIncludes(transformedPath, "/app/page.json");
+        assertEquals((await Deno.stat(depPath)).isFile, true);
+      },
+    );
+  });
+});
 
 describe("module-loader/isMissingModuleError (#2077)", () => {
   it("matches Node/Deno ERR_MODULE_NOT_FOUND by code", () => {
