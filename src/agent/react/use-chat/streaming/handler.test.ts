@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { handleStreamingResponse } from "./handler.ts";
+import { handleAgUiStreamingResponse, handleStreamingResponse } from "./handler.ts";
 import type { StreamingCallbacks } from "./types.ts";
 import type { ChatMessage, ChatMessagePart, OnToolCallArg } from "../types.ts";
 
@@ -13,6 +13,23 @@ import type { ChatMessage, ChatMessagePart, OnToolCallArg } from "../types.ts";
 function sseStream(events: unknown[], chunkSplitter?: (sse: string) => string[]): ReadableStream {
   const encoder = new TextEncoder();
   const sse = events.map((e) => `data: ${JSON.stringify(e)}\n`).join("");
+  const chunks = chunkSplitter ? chunkSplitter(sse) : [sse];
+  return new ReadableStream({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+      controller.close();
+    },
+  });
+}
+
+function agUiSseStream(
+  events: Array<{ event: string; data: unknown }>,
+  chunkSplitter?: (sse: string) => string[],
+): ReadableStream {
+  const encoder = new TextEncoder();
+  const sse = events
+    .map(({ event, data }) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+    .join("");
   const chunks = chunkSplitter ? chunkSplitter(sse) : [sse];
   return new ReadableStream({
     start(controller) {
@@ -231,5 +248,92 @@ describe("use-chat streaming handler", () => {
       rec.callbacks,
     );
     assertEquals(rec.messages.length, 0);
+  });
+
+  it("maps AG-UI tool-call args and results through the default stream handler", async () => {
+    const rec = recorder();
+    await handleAgUiStreamingResponse(
+      agUiSseStream([
+        {
+          event: "ToolCallStart",
+          data: { toolCallId: "tool-1", toolCallName: "lookupDocs" },
+        },
+        {
+          event: "ToolCallArgs",
+          data: { toolCallId: "tool-1", delta: '{"query":' },
+        },
+        {
+          event: "ToolCallArgs",
+          data: { toolCallId: "tool-1", delta: '"agents"}' },
+        },
+        { event: "ToolCallEnd", data: { toolCallId: "tool-1" } },
+        {
+          event: "ToolCallResult",
+          data: {
+            toolCallId: "tool-1",
+            result: { count: 2 },
+          },
+        },
+        { event: "RunFinished", data: { metadata: { finishReason: "stop" } } },
+      ]),
+      rec.callbacks,
+    );
+
+    assertEquals(rec.toolCalls.length, 1);
+    assertEquals(rec.toolCalls[0]!.toolCall, {
+      toolCallId: "tool-1",
+      toolName: "lookupDocs",
+      input: { query: "agents" },
+      dynamic: false,
+    });
+
+    const message = rec.messages[0];
+    assertExists(message);
+    assert(message.id.startsWith("msg-"));
+    assertEquals(message.parts, [
+      {
+        type: "tool-lookupDocs",
+        toolCallId: "tool-1",
+        toolName: "lookupDocs",
+        state: "output-available",
+        input: { query: "agents" },
+        output: { count: 2 },
+        errorText: undefined,
+      },
+    ]);
+  });
+
+  it("flushes AG-UI events split across chunk boundaries", async () => {
+    const rec = recorder();
+    await handleAgUiStreamingResponse(
+      agUiSseStream(
+        [
+          {
+            event: "TextMessageStart",
+            data: { messageId: "agui-msg", contentId: "text:0", role: "assistant" },
+          },
+          {
+            event: "TextMessageContent",
+            data: { messageId: "agui-msg", contentId: "text:0", delta: "split" },
+          },
+          {
+            event: "TextMessageEnd",
+            data: { messageId: "agui-msg", contentId: "text:0" },
+          },
+          { event: "RunFinished", data: {} },
+        ],
+        (sse) => {
+          const splitAt = sse.indexOf("split");
+          return [sse.slice(0, splitAt + 2), sse.slice(splitAt + 2)];
+        },
+      ),
+      rec.callbacks,
+    );
+
+    assertEquals(rec.messages.length, 1);
+    assertEquals(rec.messages[0]!.id, "agui-msg");
+    assertEquals(rec.messages[0]!.parts, [
+      { type: "text", text: "split", state: "done" },
+    ]);
   });
 });
