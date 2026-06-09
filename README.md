@@ -58,17 +58,18 @@ Use the interactive project wizard when you want to compare templates:
 npm create veryfront
 ```
 
-Choose a starting point when you already know what you want to build:
+Choose a starting point directly with `npx` when you already know what you want
+to build:
 
 ```bash
 # Agent app with a chat UI, tool, and AG-UI route
-veryfront init support-agent --template ai-agent
+npx veryfront init support-agent --template ai-agent
 
 # Blank full-stack app with pages and routing
-veryfront init my-app --template minimal
+npx veryfront init my-app --template minimal
 
 # Durable multi-step AI pipeline
-veryfront init my-workflow --template agentic-workflow
+npx veryfront init my-workflow --template agentic-workflow
 ```
 
 <details>
