@@ -68,6 +68,11 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     });
   }
 
+  function extractChildVersion(code: string): string {
+    const match = code.match(/\.\/child\.js\?ssr=true&v=([^"']+)/);
+    return match?.[1] ?? "";
+  }
+
   it("should return 404 for non-module path prefix", async () => {
     const response = await serve(new Request("http://localhost:3000/not-a-module"));
 
@@ -206,5 +211,38 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(response.status, 200);
     const contentType = response.headers.get("content-type") ?? "";
     assertEquals(contentType.includes("javascript"), true);
+  });
+
+  it("uses child source content for SSR import cache busters", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-ssr-cache-buster-" });
+    try {
+      await Deno.writeTextFile(
+        `${projectDir}/page.ts`,
+        `import { child } from "./child.js";\nexport const page = child;\n`,
+      );
+      await Deno.writeTextFile(`${projectDir}/child.ts`, `export const child = "one";\n`);
+
+      const firstResponse = await serve(
+        new Request("http://localhost:3000/_vf_modules/page.js?ssr=true"),
+        projectDir,
+      );
+      assertEquals(firstResponse.status, 200);
+      const firstVersion = extractChildVersion(await firstResponse.text());
+
+      await Deno.writeTextFile(`${projectDir}/child.ts`, `export const child = "two";\n`);
+
+      const secondResponse = await serve(
+        new Request("http://localhost:3000/_vf_modules/page.js?ssr=true"),
+        projectDir,
+      );
+      assertEquals(secondResponse.status, 200);
+      const secondVersion = extractChildVersion(await secondResponse.text());
+
+      assertEquals(firstVersion.length > 0, true);
+      assertEquals(secondVersion.length > 0, true);
+      assertEquals(firstVersion !== secondVersion, true);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
   });
 });

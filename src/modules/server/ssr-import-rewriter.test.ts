@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { applySSRImportRewrites } from "./ssr-import-rewriter.ts";
+import { applySSRImportRewrites, applySSRImportRewritesAsync } from "./ssr-import-rewriter.ts";
 
 describe("modules/server/ssr-import-rewriter", () => {
   describe("applySSRImportRewrites - path aliases (@/)", () => {
@@ -130,6 +130,63 @@ describe("modules/server/ssr-import-rewriter", () => {
       const result = applySSRImportRewrites(code, { cacheBuster: 9999 });
       assertEquals(result.includes("/_vf_modules/components/A.js?ssr=true"), true);
       assertEquals(result.includes("./local.js?ssr=true"), true);
+    });
+
+    it("uses deterministic default versions for the same target", () => {
+      const originalNow = Date.now;
+      try {
+        Date.now = () => 1;
+        const first = applySSRImportRewrites([
+          `import { A } from "@/components/A";`,
+          `import { helper } from "./local.js";`,
+        ].join("\n"));
+
+        Date.now = () => 2;
+        const second = applySSRImportRewrites([
+          `import { A } from "@/components/A";`,
+          `import { helper } from "./local.js";`,
+        ].join("\n"));
+
+        assertEquals(second, first);
+      } finally {
+        Date.now = originalNow;
+      }
+    });
+
+    it("versions each rewritten target independently", () => {
+      const result = applySSRImportRewrites([
+        `import { A } from "@/components/A";`,
+        `import { B } from "@/components/B";`,
+        `import { helper } from "./local.js";`,
+      ].join("\n"));
+
+      const versions = Array.from(result.matchAll(/[?&]v=([^"']+)/g), (match) => match[1]);
+
+      assertEquals(versions.length, 3);
+      assertEquals(new Set(versions).size, 3);
+    });
+
+    it("uses async per-target version resolver when provided", async () => {
+      const code = [
+        `import { A } from "@/components/A";`,
+        `import { B } from "./local.js";`,
+      ].join("\n");
+
+      const result = await applySSRImportRewritesAsync(code, {
+        resolveCacheBuster: (target) => {
+          if (target.modulePath === "components/A.js") return "hash-a";
+          if (target.specifier === "./local.js") return "hash-local";
+          return "fallback";
+        },
+      });
+
+      assertEquals(
+        result,
+        [
+          `import { A } from "/_vf_modules/components/A.js?ssr=true&v=hash-a";`,
+          `import { B } from "./local.js?ssr=true&v=hash-local";`,
+        ].join("\n"),
+      );
     });
   });
 
