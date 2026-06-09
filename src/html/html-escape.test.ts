@@ -1,9 +1,48 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { buildAttributes, buildNonceAttribute, escapeHTML, escapeHtml } from "./html-escape.ts";
+import {
+  buildAttributes,
+  buildNonceAttribute,
+  escapeHTML,
+  escapeHtml,
+  jsonForInlineScript,
+  neutralizeRawTextContent,
+} from "./html-escape.ts";
 
 describe("html-escape", () => {
+  describe("jsonForInlineScript", () => {
+    it("neutralizes </script> breakout", () => {
+      const out = jsonForInlineScript({ title: "</script><script>alert(1)</script>" });
+      assertEquals(out.includes("</script>"), false);
+      assertEquals(out.includes("\\u003c/script>"), true);
+    });
+
+    it("escapes U+2028 and U+2029 line separators", () => {
+      const out = jsonForInlineScript({ t: "a\u2028b\u2029c" });
+      assertEquals(out.includes("\u2028"), false);
+      assertEquals(out.includes("\u2029"), false);
+      assertEquals(out.includes("\\u2028"), true);
+      assertEquals(out.includes("\\u2029"), true);
+    });
+
+    it("round-trips as valid JSON", () => {
+      const data = { a: 1, b: "</script>", c: ["x", "y"] };
+      assertEquals(JSON.parse(jsonForInlineScript(data)), data);
+    });
+  });
+
+  describe("neutralizeRawTextContent", () => {
+    it("neutralizes a closing script tag without escaping other content", () => {
+      const out = neutralizeRawTextContent("var a = 1; </script>", "script");
+      assertEquals(out, "var a = 1; <\\/script>");
+    });
+
+    it("neutralizes a closing style tag case-insensitively", () => {
+      assertEquals(neutralizeRawTextContent("a{} </STYLE>", "style"), "a{} <\\/STYLE>");
+    });
+  });
+
   describe("escapeHTML", () => {
     it("should escape ampersand", () => {
       assertEquals(escapeHTML("foo & bar"), "foo &amp; bar");
