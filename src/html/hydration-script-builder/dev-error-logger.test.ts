@@ -46,6 +46,13 @@ describe("hydration-script-builder/dev-error-logger", () => {
       assertEquals(result.includes("/_veryfront/log"), true);
     });
 
+    it("should make failed log POSTs observable without blocking", () => {
+      const result = generateDevErrorLoggerScript();
+      assertEquals(result.includes(".catch((error) => {"), true);
+      assertEquals(result.includes("console.debug?.('[Veryfront] dev log POST failed'"), true);
+      assertEquals(result.includes(".catch(() => {})"), false);
+    });
+
     it("should override console.error", () => {
       const result = generateDevErrorLoggerScript();
       assertEquals(result.includes("console.error"), true);

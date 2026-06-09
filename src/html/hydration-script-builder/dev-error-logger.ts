@@ -16,7 +16,9 @@ export function generateDevErrorLoggerScript(nonce?: string): string {
               details,
               timestamp: new Date().toISOString()
             })
-          }).catch(() => {});
+          }).catch((error) => {
+            console.debug?.('[Veryfront] dev log POST failed', error);
+          });
         } catch (_) { /* expected: fire-and-forget log, network errors ignored */ }
       };
 
