@@ -57,6 +57,7 @@ function createInvocation(overrides: Record<string, unknown> = {}) {
       },
     }],
     context: [{ type: "text", text: "Current file: app.tsx" }],
+    credentials: { authToken: "request-scoped-user-token" },
     agentSource: { type: "branch", branch: "main" },
     forwardedProps: { activeChatId: "chat_123" },
     ...overrides,
@@ -72,6 +73,7 @@ describe("agent/runtime-agent-invocation-contract", () => {
     assertEquals(parsed.run.validatedClaims?.scopes, ["agent:run"]);
     assertEquals(parsed.messages.length, 2);
     assertEquals(parsed.tools[0]?.name, "studio_focus_component");
+    assertEquals(parsed.credentials?.authToken, "request-scoped-user-token");
   });
 
   it("accepts main branch runtime targets without branch or environment selectors", () => {
@@ -232,6 +234,7 @@ describe("agent/runtime-agent-invocation-contract", () => {
       messages: parsed.messages,
       tools: parsed.tools,
       context: parsed.context,
+      credentials: parsed.credentials,
       agentSource: parsed.agentSource,
       forwardedProps: parsed.forwardedProps,
     });

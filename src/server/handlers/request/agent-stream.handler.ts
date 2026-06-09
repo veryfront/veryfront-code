@@ -442,9 +442,11 @@ export class AgentStreamHandler extends BaseHandler {
             }
 
             const runtimeInput = toRuntimeRunAgentInput(payload);
+            const apiAuthToken = payload.credentials?.authToken || ctx.proxyToken ||
+              getHostEnv("VERYFRONT_API_TOKEN") || "";
             const runtimeAgent = await withVeryfrontPlatformRemoteTools({
               agent: agent as Agent,
-              token: ctx.proxyToken || getHostEnv("VERYFRONT_API_TOKEN") || null,
+              token: apiAuthToken || null,
               projectId: ctx.projectId ?? null,
               availableToolNames: runtimeInput.tools.map((tool) => tool.name),
             });
@@ -454,13 +456,13 @@ export class AgentStreamHandler extends BaseHandler {
             // therefore don't carry x-environment-id, so we discover the production env ID
             // from the API (one fetch per project per server lifetime, then cached).
             let envVarsForAgent: Record<string, string> = {};
-            if (ctx.projectSlug && ctx.proxyToken) {
+            if (ctx.projectSlug && apiAuthToken) {
               const environmentId = ctx.environmentId ??
-                await _resolveProductionEnvironmentId(ctx.projectSlug, ctx.proxyToken);
+                await _resolveProductionEnvironmentId(ctx.projectSlug, apiAuthToken);
               if (environmentId) {
                 envVarsForAgent = await _agentEnvVarCache.get(
                   environmentId,
-                  ctx.proxyToken,
+                  apiAuthToken,
                   ctx.projectSlug,
                 );
                 logger.debug("Agent stream env vars loaded", {
@@ -477,16 +479,16 @@ export class AgentStreamHandler extends BaseHandler {
                 ...this.deps,
                 projectAgentSandbox: {
                   apiUrl: getHostEnv("VERYFRONT_API_URL") ?? "https://api.veryfront.com",
-                  authToken: ctx.proxyToken || getHostEnv("VERYFRONT_API_TOKEN") || undefined,
+                  authToken: apiAuthToken || undefined,
                   projectId: ctx.projectId ?? null,
                 },
               });
-            const shouldIsolateEnv = !!ctx.proxyToken;
+            const shouldIsolateEnv = apiAuthToken.length > 0;
             const response = shouldIsolateEnv
               ? await runWithProjectEnv(
                 buildAgentStreamEnv({
                   envVars: envVarsForAgent,
-                  proxyToken: ctx.proxyToken,
+                  proxyToken: apiAuthToken,
                   projectSlug: ctx.projectSlug,
                 }),
                 runAgentStream,
