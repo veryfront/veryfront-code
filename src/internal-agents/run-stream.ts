@@ -549,7 +549,14 @@ export async function createRuntimeAgentStreamResponse(
           threadId: input.threadId,
           agentId: agent.id,
         });
-        reader.cancel(new AgentRunCancelledError()).catch(() => {});
+        reader.cancel(new AgentRunCancelledError()).catch((error) => {
+          logger.debug("Internal agent runtime reader cancellation failed during abort cleanup", {
+            runId: input.runId,
+            threadId: input.threadId,
+            agentId: agent.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
       };
 
       abortSignal.addEventListener("abort", abortHandler, { once: true });
