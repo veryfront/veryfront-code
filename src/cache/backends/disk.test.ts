@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "@std/assert";
 import { join } from "#veryfront/compat/path/index.ts";
+import { logger } from "#veryfront/utils";
 import { DiskCacheBackend } from "./disk.ts";
 import {
   runCacheInvariantTests,
@@ -12,6 +13,26 @@ const TEST_DIR = join(Deno.makeTempDirSync(), "disk-cache-test");
 
 function makeBackend(): DiskCacheBackend {
   return new DiskCacheBackend(TEST_DIR);
+}
+
+function captureDebugLogs(): {
+  entries: Array<{ message: string; args: unknown[] }>;
+  restore: () => void;
+} {
+  const entries: Array<{ message: string; args: unknown[] }> = [];
+  const target = logger as unknown as {
+    debug: (message: string, ...args: unknown[]) => void;
+  };
+  const original = target.debug;
+  target.debug = (message: string, ...args: unknown[]) => {
+    entries.push({ message, args });
+  };
+  return {
+    entries,
+    restore: () => {
+      target.debug = original;
+    },
+  };
 }
 
 /** Adapter: wraps DiskCacheBackend for the MinimalCache invariant test interface */
@@ -66,6 +87,33 @@ Deno.test("DiskCacheBackend", async (t) => {
     // TTL=0 means expiresAt = Date.now() + 0; wait 1ms to ensure it's expired
     await new Promise((r) => setTimeout(r, 5));
     assertEquals(await backend.get("ttl-zero"), null);
+  });
+
+  await t.step("logs expired-entry cleanup failures", async () => {
+    const backend = makeBackend();
+    const key = "expired-cleanup-fails";
+    await backend.set(key, "val", 0);
+    await new Promise((r) => setTimeout(r, 5));
+
+    const originalDel = backend.del.bind(backend);
+    (backend as unknown as { del: (entryKey: string) => Promise<void> }).del = (entryKey: string) =>
+      entryKey === key ? Promise.reject(new Error("delete rejected")) : originalDel(entryKey);
+
+    const debugCapture = captureDebugLogs();
+    try {
+      assertEquals(await backend.get(key), null);
+      await Promise.resolve();
+
+      assertEquals(debugCapture.entries.length, 1);
+      assertEquals(debugCapture.entries[0]?.message, "[DiskCache] Expired entry cleanup failed");
+      assertEquals(
+        (debugCapture.entries[0]?.args[0] as Record<string, unknown> | undefined)?.key,
+        key,
+      );
+    } finally {
+      debugCapture.restore();
+      (backend as unknown as { del: (entryKey: string) => Promise<void> }).del = originalDel;
+    }
   });
 
   await t.step("TTL non-expired returns value", async () => {

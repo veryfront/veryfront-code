@@ -53,7 +53,12 @@ export class DiskCacheBackend implements CacheBackend {
       const envelope: DiskCacheEnvelope = JSON.parse(raw);
       if (envelope.key !== key) return null;
       if (envelope.expiresAt != null && Date.now() > envelope.expiresAt) {
-        this.del(key).catch(() => {});
+        this.del(key).catch((cleanupError) => {
+          logger.debug("[DiskCache] Expired entry cleanup failed", {
+            key: key.slice(-60),
+            error: cleanupError,
+          });
+        });
         return null;
       }
       return envelope.value;
@@ -85,7 +90,13 @@ export class DiskCacheBackend implements CacheBackend {
       await writeFile(tmpPath, content, "utf-8");
       await rename(tmpPath, filePath);
     } catch (error) {
-      await unlink(tmpPath).catch(() => {});
+      await unlink(tmpPath).catch((cleanupError) => {
+        logger.debug("[DiskCache] Temp file cleanup failed", {
+          key: key.slice(-60),
+          tmpPath,
+          error: cleanupError,
+        });
+      });
       throw error;
     }
   }
