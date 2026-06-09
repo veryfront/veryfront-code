@@ -12,14 +12,17 @@ export function corsSimple(options: CORSOptions | string = "*"): Middleware {
     const validation = validateOriginSync(req.headers.get("origin"), { origin });
 
     if (req.method === "OPTIONS") {
-      return new Response(null, {
-        status: HTTP_NO_CONTENT,
-        headers: {
-          "Access-Control-Allow-Origin": validation.allowedOrigin || origin,
-          "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type,Authorization",
-        },
-      });
+      // Only echo Access-Control-Allow-Origin when the origin actually passed
+      // validation. Falling back to the configured origin (e.g. "*") here would
+      // grant a permissive preflight to an origin we just rejected.
+      const headers: Record<string, string> = {
+        "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type,Authorization",
+      };
+      if (validation.allowedOrigin) {
+        headers["Access-Control-Allow-Origin"] = validation.allowedOrigin;
+      }
+      return new Response(null, { status: HTTP_NO_CONTENT, headers });
     }
 
     const res = await next();
