@@ -284,6 +284,8 @@ await build({
 		await Deno.chmod("./npm/bin/veryfront.js", 0o755);
 
 		// Copy LICENSE and README (must exist at repo root)
+		await Deno.mkdir("./npm/assets", { recursive: true });
+		await Deno.copyFile("./assets/banner.svg", "./npm/assets/banner.svg");
 		await Deno.copyFile("./LICENSE", "./npm/LICENSE");
 		await Deno.copyFile("./README.md", "./npm/README.md");
 
@@ -306,7 +308,7 @@ await build({
 		pkg.type = "module"; // Required for ESM imports without warnings
 		pkg.types = "./esm/src/index.d.ts";
 		pkg.bin = { veryfront: "bin/veryfront.js" };
-		pkg.files = ["esm", "script", "bin", "tsconfig.json", "LICENSE", "README.md"];
+		pkg.files = ["esm", "script", "bin", "assets", "tsconfig.json", "LICENSE", "README.md"];
 		pkg.exports["./tsconfig.json"] = "./tsconfig.json";
 		addTypesExportEntries(pkg.exports);
 		normalizeNpmPackageMetadata(pkg);
