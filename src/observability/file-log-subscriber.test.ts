@@ -230,7 +230,7 @@ describe("observability/file-log-subscriber", () => {
       const content = await Deno.readTextFile(logPath);
       const lines = content.trim().split("\n");
       assertEquals(lines.length, 1);
-      assertEquals(JSON.parse(lines[0]).message, "before");
+      assertEquals(JSON.parse(lines[0] ?? "").message, "before");
     });
 
     it("should include data field in text format", async () => {
@@ -248,6 +248,34 @@ describe("observability/file-log-subscriber", () => {
       assertEquals(content.includes('"key":"value"'), true);
 
       await sub.close();
+    });
+
+    it("should log non-permission write queue failures", async () => {
+      const dir = await makeTempDir();
+      const sub = new FileLogSubscriber(makeConfig({ path: dir }));
+      const originalError = console.error;
+      const errors: string[] = [];
+      console.error = (...args: unknown[]) => {
+        errors.push(args.map(String).join(" "));
+      };
+
+      try {
+        const buf = new LogBuffer();
+        buf.subscribe(sub.getSubscriber());
+
+        buf.info("cannot write to a directory", "test");
+        await sub.flush();
+      } finally {
+        console.error = originalError;
+      }
+
+      assertEquals(
+        errors.some((line) =>
+          line.includes("[FileLogSubscriber] Failed writing to") &&
+          line.includes("File logging will continue")
+        ),
+        true,
+      );
     });
   });
 });
