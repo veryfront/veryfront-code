@@ -178,16 +178,25 @@ export async function releaseProjectSlot(
 ): Promise<void> {
   if (RENDER_PER_PROJECT_LIMIT <= 0) return;
 
-  const release = await acquireProjectLock(projectId);
+  const mutex = getProjectMutex(projectId);
+  const release = await mutex.acquire(LOCK_TIMEOUT_MS);
+  let deleteIdleMutex = false;
   try {
     const current = projectRenderCounts.get(projectId) ?? 0;
     if (current <= 1) {
       projectRenderCounts.delete(projectId);
-      projectMutexes.delete(projectId);
+      deleteIdleMutex = mutex.waiting === 0;
       return;
     }
     projectRenderCounts.set(projectId, current - 1);
   } finally {
     release();
+    if (
+      deleteIdleMutex &&
+      !projectRenderCounts.has(projectId) &&
+      projectMutexes.get(projectId) === mutex
+    ) {
+      projectMutexes.delete(projectId);
+    }
   }
 }
