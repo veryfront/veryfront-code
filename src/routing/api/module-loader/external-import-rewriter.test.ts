@@ -1,14 +1,58 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import type { FileInfo } from "#veryfront/platform/adapters/base.ts";
+import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import {
   generateCompiledBinaryRequireShim,
   getNodeExternalPackagesToResolve,
   NODE_BUILTINS,
+  resolveEsmUserDependencies,
   rewriteCompiledBinaryUserDependencyImports,
   rewriteCompiledBinaryVeryfrontImports,
   rewriteDenoNodeBuiltinImports,
+  rewriteDenoNpmDependencyImports,
 } from "./external-import-rewriter.ts";
+
+function createFakeFileSystem(files: Record<string, string>): FileSystem {
+  return {
+    readTextFile(path: string): Promise<string> {
+      const content = files[path];
+      if (content === undefined) throw new Error(`missing test file: ${path}`);
+      return Promise.resolve(content);
+    },
+    readFile(): Promise<Uint8Array> {
+      throw new Error("readFile not implemented in fake fs");
+    },
+    writeTextFile(): Promise<void> {
+      throw new Error("writeTextFile not implemented in fake fs");
+    },
+    writeFile(): Promise<void> {
+      throw new Error("writeFile not implemented in fake fs");
+    },
+    exists(path: string): Promise<boolean> {
+      return Promise.resolve(path in files);
+    },
+    stat(): Promise<FileInfo> {
+      throw new Error("stat not implemented in fake fs");
+    },
+    mkdir(): Promise<void> {
+      throw new Error("mkdir not implemented in fake fs");
+    },
+    readDir(): AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean }> {
+      throw new Error("readDir not implemented in fake fs");
+    },
+    remove(): Promise<void> {
+      throw new Error("remove not implemented in fake fs");
+    },
+    makeTempDir(): Promise<string> {
+      throw new Error("makeTempDir not implemented in fake fs");
+    },
+    chmod(): Promise<void> {
+      throw new Error("chmod not implemented in fake fs");
+    },
+  };
+}
 
 describe("external-import-rewriter", () => {
   describe("getNodeExternalPackagesToResolve", () => {
@@ -108,6 +152,108 @@ describe("external-import-rewriter", () => {
     it("leaves imports for packages not in userDeps untouched", () => {
       const code = `import x from "react";`;
       assertEquals(rewriteCompiledBinaryUserDependencyImports(code, deps), code);
+    });
+
+    it("rewrites ESM-only dependency imports to resolved file URLs", () => {
+      const esmDeps = new Map([
+        ["esm-only", {
+          entryUrl: "file:///srv/app/node_modules/esm-only/dist/index.mjs",
+          packageDir: "/srv/app/node_modules/esm-only",
+        }],
+      ]);
+
+      const out = rewriteCompiledBinaryUserDependencyImports(
+        [
+          `import mod from "esm-only";`,
+          `import util from "esm-only/utils.js";`,
+          `const lazy = import("esm-only/lazy.js");`,
+        ].join("\n"),
+        new Map([["esm-only", "^1"]]),
+        esmDeps,
+      );
+
+      assertStringIncludes(out, `from "file:///srv/app/node_modules/esm-only/dist/index.mjs"`);
+      assertStringIncludes(out, `from "file:///srv/app/node_modules/esm-only/utils.js"`);
+      assertStringIncludes(out, `import("file:///srv/app/node_modules/esm-only/lazy.js")`);
+    });
+
+    it("leaves ESM subpath imports untouched when they escape the package directory", () => {
+      const esmDeps = new Map([
+        ["esm-only", {
+          entryUrl: "file:///srv/app/node_modules/esm-only/dist/index.mjs",
+          packageDir: "/srv/app/node_modules/esm-only",
+        }],
+      ]);
+      const code = `import secret from "esm-only/../../secret.js";`;
+
+      assertEquals(
+        rewriteCompiledBinaryUserDependencyImports(
+          code,
+          new Map([["esm-only", "^1"]]),
+          esmDeps,
+        ),
+        code,
+      );
+    });
+  });
+
+  describe("resolveEsmUserDependencies", () => {
+    it("resolves type=module dependencies to contained file URLs", async () => {
+      const fs = createFakeFileSystem({
+        "/srv/app/node_modules/esm-only/package.json": JSON.stringify({
+          type: "module",
+          exports: { ".": { import: "./dist/index.mjs" } },
+        }),
+      });
+
+      const deps = await resolveEsmUserDependencies(
+        "/srv/app",
+        fs,
+        new Map([["esm-only", "^1"]]),
+      );
+
+      assertEquals(deps.get("esm-only"), {
+        entryUrl: "file:///srv/app/node_modules/esm-only/dist/index.mjs",
+        packageDir: "/srv/app/node_modules/esm-only",
+      });
+    });
+
+    it("rejects ESM package entries that resolve outside the package directory", async () => {
+      const fs = createFakeFileSystem({
+        "/srv/app/node_modules/evil/package.json": JSON.stringify({
+          type: "module",
+          main: "../../secret.mjs",
+        }),
+      });
+
+      const deps = await resolveEsmUserDependencies(
+        "/srv/app",
+        fs,
+        new Map([["evil", "^1"]]),
+      );
+
+      assertEquals(deps.size, 0);
+    });
+  });
+
+  describe("rewriteDenoNpmDependencyImports", () => {
+    it("rewrites user dependency imports to npm specifiers using installed package version", async () => {
+      const fs = createFakeFileSystem({
+        "/srv/app/node_modules/lodash/package.json": JSON.stringify({ version: "4.17.21" }),
+      });
+
+      const out = await rewriteDenoNpmDependencyImports(
+        [
+          `import lodash from "lodash";`,
+          `import merge from "lodash/merge";`,
+        ].join("\n"),
+        "/srv/app",
+        fs,
+        new Map([["lodash", "^4"]]),
+      );
+
+      assertStringIncludes(out, `from "npm:lodash@4.17.21"`);
+      assertStringIncludes(out, `from "npm:lodash@4.17.21/merge"`);
     });
   });
 
