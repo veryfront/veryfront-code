@@ -9,8 +9,14 @@ export default tool({
     path: v.string().describe("File path relative to the project root"),
   }))(),
   execute: async ({ path }) => {
+    const projectDir = resolve(cwd());
+    const absolute = resolve(projectDir, path);
+    // Keep file access inside the project directory — reject traversal like
+    // "../../etc/passwd" before touching the filesystem.
+    if (absolute !== projectDir && !absolute.startsWith(projectDir + "/")) {
+      return { error: `Path escapes project directory: ${path}` };
+    }
     try {
-      const absolute = resolve(cwd(), path);
       const content = await readTextFile(absolute);
       return { path, content };
     } catch {

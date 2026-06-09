@@ -11,7 +11,13 @@ export default tool({
     replace: v.string().describe("String to replace it with"),
   }))(),
   execute: async ({ path, search, replace }) => {
-    const absolute = resolve(cwd(), path);
+    const projectDir = resolve(cwd());
+    const absolute = resolve(projectDir, path);
+    // Keep file access inside the project directory — reject traversal like
+    // "../../etc/passwd" before touching the filesystem.
+    if (absolute !== projectDir && !absolute.startsWith(projectDir + "/")) {
+      return { error: `Path escapes project directory: ${path}` };
+    }
 
     let content: string;
     try {
