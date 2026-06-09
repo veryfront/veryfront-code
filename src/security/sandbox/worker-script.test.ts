@@ -137,7 +137,7 @@ describe("worker-script serializeError", () => {
     assertEquals(serialized.message, "wrapper failure");
     assertEquals(serialized.name, "Error");
     // The serialized shape does not carry a `cause` field.
-    assertEquals((serialized as Record<string, unknown>).cause, undefined);
+    assertEquals((serialized as unknown as Record<string, unknown>).cause, undefined);
   });
 });
 
