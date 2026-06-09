@@ -106,6 +106,18 @@ function createMapInterface(cache: LRUCache<string, string>): ModuleCacheMap {
   return new LRUBackedMap(cache);
 }
 
+function toMapIterator<T>(source: IterableIterator<T>): MapIterator<T> {
+  if (typeof Iterator !== "undefined") {
+    return Iterator.from(source);
+  }
+
+  const snapshot = new Map<number, T>();
+  for (const value of source) {
+    snapshot.set(snapshot.size, value);
+  }
+  return snapshot.values();
+}
+
 class LRUBackedMap implements ModuleCacheMap {
   readonly [Symbol.toStringTag] = "Map";
 
@@ -155,29 +167,29 @@ class LRUBackedMap implements ModuleCacheMap {
   }
 
   keys(): MapIterator<string> {
-    return this.cache.keys() as unknown as MapIterator<string>;
+    return toMapIterator(this.cache.keys());
   }
 
   values(): MapIterator<string> {
     const keysIter = this.cache.keys();
     const cacheRef = this.cache;
-    return (function* () {
+    return toMapIterator((function* () {
       for (const key of keysIter) {
         const value = cacheRef.get(key);
         if (value !== undefined) yield value;
       }
-    })() as unknown as MapIterator<string>;
+    })());
   }
 
   entries(): MapIterator<[string, string]> {
     const keysIter = this.cache.keys();
     const cacheRef = this.cache;
-    return (function* () {
+    return toMapIterator((function* () {
       for (const key of keysIter) {
         const value = cacheRef.get(key);
         if (value !== undefined) yield [key, value] as [string, string];
       }
-    })() as unknown as MapIterator<[string, string]>;
+    })());
   }
 
   forEach(
