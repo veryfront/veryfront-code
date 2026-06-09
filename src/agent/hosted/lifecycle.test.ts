@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { __resetLoggerConfigForTests, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import {
   type HostedLifecycleAdapter,
   type HostedLifecycleTerminalState,
@@ -9,6 +10,41 @@ import {
 
 function createAbortSignal(): AbortSignal {
   return new AbortController().signal;
+}
+
+function captureConsoleLog(): { getOutput: () => string; restore: () => void } {
+  const originalLog = console.log;
+  const originalDebug = console.debug;
+  let capturedOutput = "";
+
+  const capture = (msg: string) => {
+    capturedOutput = msg;
+  };
+
+  console.log = capture;
+  console.debug = capture;
+
+  return {
+    getOutput: () => capturedOutput,
+    restore: () => {
+      console.log = originalLog;
+      console.debug = originalDebug;
+    },
+  };
+}
+
+async function withJsonDebugLogFormat<T>(fn: () => Promise<T>): Promise<T> {
+  Deno.env.set("LOG_FORMAT", "json");
+  Deno.env.set("LOG_LEVEL", "DEBUG");
+  __resetLoggerConfigForTests();
+
+  try {
+    return await fn();
+  } finally {
+    Deno.env.delete("LOG_FORMAT");
+    Deno.env.delete("LOG_LEVEL");
+    __resetLoggerConfigForTests();
+  }
 }
 
 describe("agent/hosted-lifecycle", () => {
@@ -224,39 +260,55 @@ describe("agent/hosted-lifecycle", () => {
   it("rethrows the original execution error even when terminal hooks fail", async () => {
     const calls: string[] = [];
     const executionError = new Error("stream exploded");
+    const { getOutput, restore } = captureConsoleLog();
 
-    await assertRejects(
-      () =>
-        runHostedLifecycle({
-          abortSignal: createAbortSignal(),
-          execution: {
-            stream: {
-              [Symbol.asyncIterator]() {
-                return {
-                  next: async () => {
-                    throw executionError;
+    try {
+      await withJsonDebugLogFormat(async () => {
+        await assertRejects(
+          () =>
+            runHostedLifecycle({
+              abortSignal: createAbortSignal(),
+              execution: {
+                stream: {
+                  [Symbol.asyncIterator]() {
+                    return {
+                      next: async () => {
+                        throw executionError;
+                      },
+                    };
                   },
-                };
+                },
+                waitForFinish: async () => {},
               },
-            },
-            waitForFinish: async () => {},
-          },
-          adapter: {
-            startRun: () => ({ runId: "run-1" }),
-            onTerminalState: () => {
-              calls.push("onTerminal");
-              throw new Error("observer failed");
-            },
-            finalizeRun: () => {
-              calls.push("finalize");
-            },
-          },
-          resolveTerminalState: () => ({ status: "completed" }),
-        }),
-      Error,
-      "stream exploded",
-    );
+              adapter: {
+                startRun: () => ({ runId: "run-1" }),
+                onTerminalState: () => {
+                  calls.push("onTerminal");
+                  throw new Error("observer failed");
+                },
+                finalizeRun: () => {
+                  calls.push("finalize");
+                },
+              },
+              resolveTerminalState: () => ({ status: "completed" }),
+            }),
+          Error,
+          "stream exploded",
+        );
+      });
+    } finally {
+      restore();
+    }
 
     assertEquals(calls, ["onTerminal", "finalize"]);
+    const entry = JSON.parse(getOutput()) as LogEntry;
+    assertEquals(entry.component, "hosted-lifecycle");
+    assertEquals(
+      entry.message,
+      "Hosted lifecycle terminal hooks failed while preserving execution error",
+    );
+    assertEquals(entry.level, "debug");
+    assertEquals(entry.context?.terminalStatus, "failed");
+    assertEquals(entry.context?.terminalErrorCode, "STREAM_ERROR");
   });
 });
