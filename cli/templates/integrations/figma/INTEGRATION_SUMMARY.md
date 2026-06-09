@@ -6,10 +6,10 @@ A complete Figma integration for Veryfront following the established Notion inte
 
 ## Statistics
 
-- **Total Lines of Code**: 1,689
-- **Files Created**: 12
-- **AI Tools**: 5
-- **API Endpoints**: 8+
+- **Total Lines of Code**: 1,500+
+- **Files Created**: 10
+- **AI Tools**: 4
+- **API Endpoints**: 6+
 - **Type Definitions**: 50+ interfaces
 
 ## File Breakdown
@@ -28,11 +28,9 @@ A complete Figma integration for Veryfront following the established Notion inte
 - `app/api/auth/figma/callback/route.ts` (44 lines) - OAuth callback handler
 
 ### AI Tools
-1. `tools/list-projects.ts` (66 lines) - Team and project browsing
-2. `tools/list-files.ts` (36 lines) - File discovery
-3. `tools/get-file.ts` (46 lines) - Deep file inspection
-4. `tools/get-comments.ts` (71 lines) - Comment thread reading
-5. `tools/post-comment.ts` (47 lines) - Comment posting
+1. `tools/get-file.ts` (46 lines) - Deep file inspection
+2. `tools/get-comments.ts` (71 lines) - Comment thread reading
+3. `tools/post-comment.ts` (47 lines) - Comment posting
 
 ### Documentation
 - `README.md` (783 lines) - Comprehensive documentation
@@ -62,9 +60,6 @@ getFileImages(fileKey, nodeIds, options?) → ImageResponse
 getComments(fileKey) → CommentResponse
 postComment(fileKey, message, options?) → Comment
 
-// Projects & Teams
-getTeamProjects(teamId) → ProjectsResponse
-getProjectFiles(projectId) → FilesResponse
 ```
 
 #### Helper Functions
@@ -93,28 +88,7 @@ getFileSummary(file) → FileSummary
 
 ### AI Tool Capabilities
 
-#### 1. list-projects
-**Purpose**: Browse team organization structure
-
-**Parameters**:
-- `teamId` - Team to list projects from
-- `includeFiles` - Optionally fetch files per project
-- `filesPerProject` - Limit files returned
-- `limit` - Max projects to return
-
-**Returns**: Projects with optional file listings
-
-#### 2. list-files
-**Purpose**: Discover Figma files
-
-**Parameters**:
-- `teamId` - Team ID
-- `projectId` - Optional project filter
-- `limit` - Max files to return
-
-**Returns**: File metadata with URLs and thumbnails
-
-#### 3. get-file
+#### 1. get-file
 **Purpose**: Deep inspection of file structure
 
 **Parameters**:
@@ -125,7 +99,7 @@ getFileSummary(file) → FileSummary
 
 **Returns**: Complete file data with components, styles, pages
 
-#### 4. get-comments
+#### 2. get-comments
 **Purpose**: Read design feedback and discussions
 
 **Parameters**:
@@ -135,7 +109,7 @@ getFileSummary(file) → FileSummary
 
 **Returns**: Threaded comments with metadata and location data
 
-#### 5. post-comment
+#### 3. post-comment
 **Purpose**: Provide design feedback
 
 **Parameters**:
@@ -171,7 +145,7 @@ getFileSummary(file) → FileSummary
 ```
 Auth URL: https://www.figma.com/oauth
 Token URL: https://www.figma.com/api/oauth/token
-Scopes: file_content:read
+Scopes: current_user:read, file_content:read, file_comments:read, file_comments:write
 Callback: https://yourdomain.com/api/auth/figma/callback
 ```
 
@@ -194,8 +168,13 @@ FIGMA_CLIENT_SECRET=your_client_secret
 - Node inspection and exports
 - Image generation
 - Comment reading and posting
+
+### Not Exposed for Public OAuth Apps
 - Team project listing
 - Project file listing
+- Project metadata lookup
+
+Figma marks project endpoints as limited access. Team and project file listing require `projects:read`, and project metadata is not available to public OAuth apps. The integration therefore operates from known Figma file or design URLs.
 
 ### Ready for Extension
 - File versions and history
@@ -209,12 +188,12 @@ FIGMA_CLIENT_SECRET=your_client_secret
 
 ### 1. Design Review
 ```
-list-projects → get-file → get-comments → post-comment
+get-file → get-comments → post-comment
 ```
 
 ### 2. Component Audit
 ```
-list-files → get-file (with components) → extract & document
+get-file (with components) → extract & document
 ```
 
 ### 3. Design System Documentation
@@ -250,7 +229,6 @@ Works seamlessly with:
 3. Add rate limiting and backoff
 4. Cache frequently accessed files
 5. Add webhook support for real-time updates
-6. Implement team/project discovery
 
 ### Example Database Token Store
 ```typescript

@@ -96,16 +96,6 @@ export interface FigmaComment {
   order_id: string;
 }
 
-export interface FigmaProject {
-  id: string;
-  name: string;
-}
-
-export interface FigmaTeamProject {
-  id: string;
-  name: string;
-}
-
 export interface FigmaUser {
   id: string;
   handle: string;
@@ -232,34 +222,6 @@ export function postComment(
       ...(options?.parent_id ? { parent_id: options.parent_id } : {}),
     }),
   });
-}
-
-export function getTeamProjects(teamId: string): Promise<{ projects: FigmaTeamProject[] }> {
-  return figmaFetch<{ projects: FigmaTeamProject[] }>(`/teams/${teamId}/projects`);
-}
-
-export function getProjectFiles(projectId: string): Promise<{
-  files: Array<{
-    key: string;
-    name: string;
-    thumbnail_url: string;
-    last_modified: string;
-  }>;
-}> {
-  return figmaFetch(`/projects/${projectId}/files`);
-}
-
-export function getUserFiles(): Promise<{
-  files: Array<{
-    key: string;
-    name: string;
-    thumbnail_url: string;
-    last_modified: string;
-  }>;
-}> {
-  throw new Error(
-    "Getting user files requires team ID. Use getTeamProjects and getProjectFiles instead.",
-  );
 }
 
 export function extractComponents(file: FigmaFile): Array<{
