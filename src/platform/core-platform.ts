@@ -11,24 +11,33 @@ interface PlatformCapabilities {
   displayName: string;
 }
 
+type RuntimeGlobal = typeof globalThis & {
+  Deno?: { version?: { deno?: string } };
+  Bun?: { version?: string };
+  caches?: unknown;
+  navigator?: { userAgent?: string };
+  process?: { versions?: { node?: string } };
+};
+
+function runtimeGlobal(): RuntimeGlobal {
+  return globalThis as RuntimeGlobal;
+}
+
 export function detectPlatform(): Platform {
-  // @ts-ignore - Deno global may not exist
-  if (typeof Deno !== "undefined" && Deno.version?.deno) return "deno";
+  const global = runtimeGlobal();
 
-  // @ts-ignore - Bun global may not exist
-  if (typeof Bun !== "undefined" && Bun.version) return "bun";
+  if (global.Deno?.version?.deno) return "deno";
 
-  // @ts-ignore - caches global specific to CF Workers
+  if (global.Bun?.version) return "bun";
+
   if (
-    typeof caches !== "undefined" &&
-    typeof navigator !== "undefined" &&
-    navigator.userAgent === "Cloudflare-Workers"
+    global.caches !== undefined &&
+    global.navigator?.userAgent === "Cloudflare-Workers"
   ) {
     return "cloudflare-workers";
   }
 
-  const globalProcess = (globalThis as { process?: { versions?: { node?: string } } }).process;
-  if (globalProcess?.versions?.node) return "node";
+  if (global.process?.versions?.node) return "node";
 
   return "unknown";
 }
