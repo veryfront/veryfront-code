@@ -2,15 +2,60 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
-import type { Agent } from "#veryfront/agent";
+import type { Agent, AgentMessage } from "#veryfront/agent";
 import type {
   AgentServiceSandboxToolsOptions,
   AgentServiceSandboxToolsResult,
   CreateSandboxBashTool,
 } from "#veryfront/sandbox";
 import { type Tool, toolRegistry } from "#veryfront/tool";
+import { __resetLoggerConfigForTests, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import { AgentRunSessionManager } from "./session-manager.ts";
 import { createRuntimeAgentStreamResponse } from "./run-stream.ts";
+
+function captureConsoleJsonLogs(): { getEntries: () => LogEntry[]; restore: () => void } {
+  const originalLog = console.log;
+  const originalDebug = console.debug;
+  const originalWarn = console.warn;
+  const originalError = console.error;
+  const capturedOutput: string[] = [];
+
+  const capture = (msg: string) => {
+    capturedOutput.push(msg);
+  };
+
+  console.log = capture;
+  console.debug = capture;
+  console.warn = capture;
+  console.error = capture;
+
+  return {
+    getEntries: () =>
+      capturedOutput
+        .filter((line) => line.trim().startsWith("{"))
+        .map((line) => JSON.parse(line) as LogEntry),
+    restore: () => {
+      console.log = originalLog;
+      console.debug = originalDebug;
+      console.warn = originalWarn;
+      console.error = originalError;
+    },
+  };
+}
+
+async function withJsonDebugLogFormat<T>(fn: () => Promise<T>): Promise<T> {
+  Deno.env.set("LOG_FORMAT", "json");
+  Deno.env.set("LOG_LEVEL", "DEBUG");
+  __resetLoggerConfigForTests();
+
+  try {
+    return await fn();
+  } finally {
+    Deno.env.delete("LOG_FORMAT");
+    Deno.env.delete("LOG_LEVEL");
+    __resetLoggerConfigForTests();
+  }
+}
 
 describe("internal-agents/run-stream", () => {
   it("filters unavailable boolean source tool declarations before constructing the runtime", async () => {
@@ -204,7 +249,9 @@ describe("internal-agents/run-stream", () => {
       {
         sessionManager,
         createRuntime: (runtimeAgent, mergedTools) => {
-          capturedAllowedRemoteTools = runtimeAgent.config.__vfAllowedRemoteTools;
+          capturedAllowedRemoteTools = (
+            runtimeAgent.config as Agent["config"] & { __vfAllowedRemoteTools?: string[] }
+          ).__vfAllowedRemoteTools;
           capturedToolNames = Object.keys(mergedTools ?? {}).sort();
           return {
             stream: async () =>
@@ -224,7 +271,7 @@ describe("internal-agents/run-stream", () => {
 
   it("compacts oversized internal runtime message history before streaming", async () => {
     const sessionManager = new AgentRunSessionManager();
-    let capturedMessages: Message[] = [];
+    let capturedMessages: AgentMessage[] = [];
 
     const agent = {
       id: "research-agent",
@@ -281,7 +328,10 @@ describe("internal-agents/run-stream", () => {
     assertEquals(capturedMessages.length, 3);
     assertEquals(capturedMessages[0]?.role, "user");
     const firstText = capturedMessages[0]?.parts.find((part) => part.type === "text");
-    assertStringIncludes(firstText && "text" in firstText ? firstText.text : "", "[Compressed:");
+    assertStringIncludes(
+      firstText && "text" in firstText && typeof firstText.text === "string" ? firstText.text : "",
+      "[Compressed:",
+    );
     assertStringIncludes(JSON.stringify(capturedMessages), "Continue and finish the diagram.");
   });
 
@@ -645,5 +695,70 @@ describe("internal-agents/run-stream", () => {
 
     runtimeControllers[0]?.close();
     await reader.cancel();
+  });
+
+  it("debug logs runtime reader cancellation failures during abort cleanup", async () => {
+    const logs = captureConsoleJsonLogs();
+    try {
+      await withJsonDebugLogFormat(async () => {
+        const sessionManager = new AgentRunSessionManager();
+        const agent = {
+          id: "abort-agent",
+          config: {
+            id: "abort-agent",
+            model: "anthropic/claude-opus-4-6",
+            system: "test",
+          },
+        } as unknown as Agent;
+
+        const input = {
+          agentId: "abort-agent",
+          threadId: crypto.randomUUID(),
+          runId: "run_abort",
+          messages: [],
+          tools: [],
+          context: [],
+        } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+        let cancelCalls = 0;
+        const response = await createRuntimeAgentStreamResponse(
+          input,
+          agent,
+          {
+            sessionManager,
+            createRuntime: () => ({
+              stream: async () =>
+                new ReadableStream<Uint8Array>({
+                  cancel() {
+                    cancelCalls++;
+                    throw new Error("runtime cancel rejected");
+                  },
+                }),
+            }),
+          },
+        );
+
+        const reader = response.body?.getReader();
+        if (!reader) {
+          throw new Error("Expected a runtime response body");
+        }
+
+        const decoder = new TextDecoder();
+        const started = await reader.read();
+        assertStringIncludes(decoder.decode(started.value), "event: RunStarted");
+
+        assertEquals(sessionManager.cancelRun(input.runId), true);
+        await reader.read();
+        assertEquals(cancelCalls, 1);
+      });
+    } finally {
+      logs.restore();
+    }
+
+    const debugEntry = logs.getEntries().find((entry) =>
+      entry.level === "debug" &&
+      entry.message === "Internal agent runtime reader cancellation failed during abort cleanup"
+    );
+    assertEquals(debugEntry?.component, "internal-agent-run-stream");
   });
 });
