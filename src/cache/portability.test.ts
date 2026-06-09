@@ -94,6 +94,11 @@ describe("Cache Portability", () => {
       const code = `import x from "file:///usr/local/lib/node_modules/react/index.js"`;
       assertEquals(hasHardcodedCachePaths(code), false);
     });
+
+    it("does not detect cache marker text without file URLs", () => {
+      const code = `const cacheDir = "veryfront-http-bundle/http-123.mjs";`;
+      assertEquals(hasHardcodedCachePaths(code), false);
+    });
   });
 
   describe("Tokenization", () => {

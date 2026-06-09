@@ -60,6 +60,7 @@ export class FileLogSubscriber {
   private closed = false;
   private permissionFailed = false;
   private config: FileLogConfig;
+  private readonly encoder = new TextEncoder();
 
   constructor(config: FileLogConfig) {
     this.config = config;
@@ -90,7 +91,7 @@ export class FileLogSubscriber {
       if (!this.file) await this.openFile();
 
       const line = this.formatter(entry) + "\n";
-      const bytes = new TextEncoder().encode(line);
+      const bytes = this.encoder.encode(line);
 
       if (this.currentSize + bytes.length > this.maxSizeBytes) {
         await this.rotate();
