@@ -8,6 +8,10 @@ export interface CachePayload {
   nodeMapEntries?: Array<[number, unknown]>;
 }
 
+export interface CacheStoreStats {
+  size: number;
+}
+
 export interface CacheStore {
   get(key: string): Promise<CachePayload | undefined>;
   set(key: string, value: CachePayload): Promise<void>;
@@ -16,6 +20,8 @@ export interface CacheStore {
   deleteByPrefix?(prefix: string): Promise<number>;
   clear(): Promise<void>;
   destroy(): Promise<void>;
+  /** Optional stats contract for stores that can report entry counts */
+  getStats?(): CacheStoreStats;
   /** Optional size accessor for cache stats */
   size?(): number;
 }

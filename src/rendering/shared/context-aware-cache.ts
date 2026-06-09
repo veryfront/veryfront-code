@@ -216,11 +216,9 @@ export class ContextAwareCacheCoordinator {
   }
 
   getStats(): { size: number } {
-    const storeWithSize = this.store as unknown as { size?: number | (() => number) };
-    const sizeValue = storeWithSize.size;
-    // Call size() with the correct `this` context to avoid "undefined" errors
-    if (typeof sizeValue === "function") return { size: sizeValue.call(this.store) };
-    if (typeof sizeValue === "number") return { size: sizeValue };
+    const stats = this.store.getStats?.();
+    if (stats) return stats;
+    if (this.store.size) return { size: this.store.size() };
     return { size: 0 };
   }
 

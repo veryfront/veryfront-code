@@ -2,18 +2,18 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ContextAwareCacheCoordinator } from "./context-aware-cache.ts";
-import type { CacheStore } from "../cache/types.ts";
+import type { CachePayload, CacheStore } from "../cache/types.ts";
 import type { RenderContext } from "../context/render-context.ts";
 
-function createInMemoryStore(): CacheStore & { data: Map<string, unknown> } {
-  const data = new Map<string, unknown>();
+function createInMemoryStore(): CacheStore & { data: Map<string, CachePayload> } {
+  const data = new Map<string, CachePayload>();
 
   return {
     data,
     get(key: string) {
       return Promise.resolve(data.get(key));
     },
-    set(key: string, value: unknown) {
+    set(key: string, value: CachePayload) {
       data.set(key, value);
       return Promise.resolve();
     },
@@ -257,11 +257,11 @@ describe("rendering/shared/context-aware-cache", () => {
 
     it("should clear slug without deleteByPrefix (fallback to individual deletes)", async () => {
       // Create a store WITHOUT deleteByPrefix
-      const data = new Map<string, unknown>();
+      const data = new Map<string, CachePayload>();
       const deletedKeys: string[] = [];
       const storeWithoutPrefix: CacheStore = {
         get: (key: string) => Promise.resolve(data.get(key)),
-        set: (key: string, value: unknown) => {
+        set: (key: string, value: CachePayload) => {
           data.set(key, value);
           return Promise.resolve();
         },
@@ -306,16 +306,15 @@ describe("rendering/shared/context-aware-cache", () => {
       assertEquals(lookup.hit, false);
     });
 
-    it("should return stats with populated store that has size property", async () => {
+    it("should return stats with populated store that has size method", async () => {
       const baseStore = createInMemoryStore();
-      // Add a size getter that getStats() can read
-      Object.defineProperty(baseStore, "size", {
-        get() {
+      const store = {
+        ...baseStore,
+        size() {
           return baseStore.data.size;
         },
-        enumerable: true,
-      });
-      const cache = new ContextAwareCacheCoordinator({ store: baseStore });
+      };
+      const cache = new ContextAwareCacheCoordinator({ store });
       const ctx = makeMockCtx();
 
       const result = {
@@ -331,7 +330,19 @@ describe("rendering/shared/context-aware-cache", () => {
       assertEquals(stats.size >= 1, true);
     });
 
-    it("should return size 0 when store has no size property", () => {
+    it("should read stats from the cache store stats contract", () => {
+      const store = {
+        ...createInMemoryStore(),
+        getStats() {
+          return { size: 7 };
+        },
+      };
+      const cache = new ContextAwareCacheCoordinator({ store });
+
+      assertEquals(cache.getStats(), { size: 7 });
+    });
+
+    it("should return size 0 when store has no stats contract", () => {
       const cache = new ContextAwareCacheCoordinator();
       const stats = cache.getStats();
       assertEquals(stats.size, 0);
