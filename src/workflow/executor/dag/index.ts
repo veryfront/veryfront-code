@@ -472,12 +472,14 @@ export class DAGExecutor {
       return await this.execute(nodes, run);
     }
 
-    const originalConcurrency = this.config.maxConcurrency;
-    this.config.maxConcurrency = options.maxConcurrency;
-    try {
-      return await this.execute(nodes, run);
-    } finally {
-      this.config.maxConcurrency = originalConcurrency;
-    }
+    // Run the child graph on a scoped executor rather than mutating
+    // this.config.maxConcurrency. Concurrent child graphs (e.g. parallel map
+    // nodes) would otherwise race on the shared field and leave the parent
+    // executor's concurrency permanently corrupted.
+    const childExecutor = new DAGExecutor({
+      ...this.config,
+      maxConcurrency: options.maxConcurrency,
+    });
+    return await childExecutor.execute(nodes, run);
   }
 }
