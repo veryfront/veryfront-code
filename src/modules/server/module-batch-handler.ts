@@ -28,12 +28,18 @@ import { createSecureFs } from "#veryfront/security";
 import { transformToESM } from "#veryfront/transforms/esm-transform.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
-import { applySSRImportRewrites } from "./ssr-import-rewriter.ts";
+import {
+  applySSRImportRewritesAsync,
+  resolveSSRImportTargetModulePath,
+  type SSRImportRewriteTarget,
+  stripSSRModuleJsExtension,
+} from "./ssr-import-rewriter.ts";
 import { buildModuleTransformCacheKey } from "#veryfront/cache/keys.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getFrameworkRootFromMeta } from "#veryfront/platform/compat/vfs-paths.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
+import { sha256Short } from "#veryfront/cache/hash.ts";
 
 const logger = serverLogger.component("module-batch");
 
@@ -294,7 +300,7 @@ async function loadAndTransformModule(
       if (!stat.isFile) continue;
 
       const source = await secureFs.readFile(fullPath);
-      return transformModule(source, fullPath, projectDir, adapter, options);
+      return transformModule(source, fullPath, modulePath, projectDir, adapter, secureFs, options);
     } catch (_) {
       /* expected: file may not exist at this extension */
     }
@@ -317,7 +323,15 @@ async function loadAndTransformModule(
         if (!stat.isFile) continue;
 
         const source = await platformFs.readTextFile(frameworkPath);
-        return transformModule(source, frameworkPath, projectDir, adapter, options);
+        return transformModule(
+          source,
+          frameworkPath,
+          modulePath,
+          projectDir,
+          adapter,
+          secureFs,
+          options,
+        );
       } catch (_) {
         /* expected: framework file may not exist at this extension */
       }
@@ -330,8 +344,10 @@ async function loadAndTransformModule(
 async function transformModule(
   source: string,
   sourceFile: string,
+  modulePath: string,
   projectDir: string,
   adapter: RuntimeAdapter,
+  secureFs: ReturnType<typeof createSecureFs>,
   options: {
     dev: boolean;
     ssr: boolean;
@@ -349,13 +365,90 @@ async function transformModule(
   });
 
   if (options.ssr) {
-    code = applySSRImportRewrites(code, {
+    code = await applySSRImportRewritesAsync(code, {
       projectSlug: options.projectSlug,
       branch: options.branch,
+      resolveCacheBuster: createBatchSSRTargetCacheBusterResolver({
+        projectDir,
+        secureFs,
+        currentModulePath: modulePath,
+      }),
     });
   }
 
   return code;
+}
+
+async function readBatchTargetSource(
+  projectDir: string,
+  secureFs: ReturnType<typeof createSecureFs>,
+  modulePath: string,
+): Promise<{ path: string; source: string } | null> {
+  const basePath = stripSSRModuleJsExtension(modulePath);
+
+  for (const ext of EXTENSIONS) {
+    const fullPath = join(projectDir, basePath + ext);
+    try {
+      const stat = await secureFs.stat(fullPath);
+      if (!stat.isFile) continue;
+
+      return {
+        path: fullPath,
+        source: await secureFs.readFile(fullPath),
+      };
+    } catch (_) {
+      /* expected: file may not exist at this extension */
+    }
+  }
+
+  if (!basePath.startsWith("lib/")) return null;
+
+  const frameworkLookupDirs = [EMBEDDED_SRC_DIR, join(FRAMEWORK_ROOT, "src")];
+  const platformFs = createFileSystem();
+  for (const lookupDir of frameworkLookupDirs) {
+    for (const ext of FRAMEWORK_EXTENSIONS) {
+      const frameworkPath = join(lookupDir, basePath + ext);
+      try {
+        const stat = await platformFs.stat(frameworkPath);
+        if (!stat.isFile) continue;
+
+        return {
+          path: frameworkPath,
+          source: await platformFs.readTextFile(frameworkPath),
+        };
+      } catch (_) {
+        /* expected: framework file may not exist at this extension */
+      }
+    }
+  }
+
+  return null;
+}
+
+function createBatchSSRTargetCacheBusterResolver(options: {
+  projectDir: string;
+  secureFs: ReturnType<typeof createSecureFs>;
+  currentModulePath: string;
+}): (target: SSRImportRewriteTarget) => Promise<string | undefined> {
+  const versions = new Map<string, Promise<string | undefined>>();
+
+  return (target) => {
+    const targetPath = resolveSSRImportTargetModulePath(target, options.currentModulePath);
+    let promise = versions.get(targetPath);
+    if (!promise) {
+      promise = (async () => {
+        const resolved = await readBatchTargetSource(
+          options.projectDir,
+          options.secureFs,
+          targetPath,
+        );
+        if (!resolved) return undefined;
+        return await sha256Short(`${resolved.path}\0${resolved.source}`);
+      })();
+      versions.set(targetPath, promise);
+    }
+    return promise;
+  };
 }
 
 /**

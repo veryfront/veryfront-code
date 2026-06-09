@@ -13,7 +13,12 @@ import { getApiBaseUrlEnv } from "#veryfront/config/env.ts";
 import { injectContext, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { injectNodePositions } from "#veryfront/transforms/plugins/babel-node-positions.ts";
 import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
-import { applySSRImportRewrites } from "./ssr-import-rewriter.ts";
+import {
+  applySSRImportRewritesAsync,
+  resolveSSRImportTargetModulePath,
+  type SSRImportRewriteTarget,
+  stripSSRModuleJsExtension,
+} from "./ssr-import-rewriter.ts";
 import { addHMRTimestamps } from "#veryfront/transforms/esm/import-rewriter.ts";
 import {
   FRAMEWORK_ROOT,
@@ -21,6 +26,7 @@ import {
 } from "#veryfront/platform/compat/framework-source-resolver.ts";
 import { getReactUrls, REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { readLimitedCrossProjectSource } from "./cross-project-source-limit.ts";
+import { sha256Short } from "#veryfront/cache/hash.ts";
 
 const logger = serverLogger.component("module-server");
 
@@ -221,9 +227,15 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           );
 
           if (isSSR) {
-            transformedCode = applySSRImportRewrites(transformedCode, {
+            transformedCode = await applySSRImportRewritesAsync(transformedCode, {
               projectSlug: snippetProjectSlug,
               branch: snippetBranch,
+              resolveCacheBuster: createSSRTargetCacheBusterResolver({
+                secureFs,
+                projectDir,
+                currentModulePath: `_snippets/${hash}.js`,
+                reactVersion,
+              }),
             });
           }
 
@@ -303,7 +315,16 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           });
 
           if (isSSR) {
-            code = applySSRImportRewrites(code, { crossProjectRef: projectRef });
+            code = await applySSRImportRewritesAsync(code, {
+              crossProjectRef: projectRef,
+              resolveCacheBuster: createSSRTargetCacheBusterResolver({
+                secureFs,
+                projectDir,
+                currentModulePath: crossPath,
+                crossProjectRef: projectRef,
+                reactVersion,
+              }),
+            });
           }
 
           return createModuleResponse(method, code, HTTP_OK, {
@@ -407,7 +428,16 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           code = await transformToESM(source, sourceFile, projectDir, adapter, transformOpts);
 
           if (isSSR) {
-            code = applySSRImportRewrites(code, { projectSlug, branch });
+            code = await applySSRImportRewritesAsync(code, {
+              projectSlug,
+              branch,
+              resolveCacheBuster: createSSRTargetCacheBusterResolver({
+                secureFs,
+                projectDir,
+                currentModulePath: modulePath,
+                reactVersion,
+              }),
+            });
           }
 
           const hmrTimestamp = url.searchParams.get("t");
@@ -446,6 +476,55 @@ interface FindSourceFileResult {
   isFrameworkFile: boolean;
   /** Embedded content for compiled binaries (no filesystem access needed) */
   embeddedContent?: string;
+}
+
+async function readSourceFileForVersion(
+  secureFs: ReturnType<typeof createSecureFs>,
+  findResult: FindSourceFileResult,
+): Promise<string> {
+  if (findResult.embeddedContent !== undefined) return findResult.embeddedContent;
+
+  const platformFs = createFileSystem();
+  return findResult.isFrameworkFile
+    ? await platformFs.readTextFile(findResult.path)
+    : await secureFs.readFile(findResult.path);
+}
+
+function createSSRTargetCacheBusterResolver(options: {
+  secureFs: ReturnType<typeof createSecureFs>;
+  projectDir: string;
+  currentModulePath: string;
+  crossProjectRef?: string;
+  reactVersion?: string;
+}): (target: SSRImportRewriteTarget) => Promise<string | undefined> {
+  const versions = new Map<string, Promise<string | undefined>>();
+
+  return (target) => {
+    const targetPath = resolveSSRImportTargetModulePath(target, options.currentModulePath);
+    const key = `${options.crossProjectRef ?? "local"}\0${targetPath}`;
+    let promise = versions.get(key);
+    if (!promise) {
+      promise = (async () => {
+        if (options.crossProjectRef) {
+          const source = await fetchCrossProjectSource(options.crossProjectRef, targetPath);
+          return source === null ? undefined : await sha256Short(`${targetPath}\0${source}`);
+        }
+
+        const findResult = await findSourceFile(
+          options.secureFs,
+          options.projectDir,
+          stripSSRModuleJsExtension(targetPath),
+          options.reactVersion,
+        );
+        if (!findResult) return undefined;
+
+        const source = await readSourceFileForVersion(options.secureFs, findResult);
+        return await sha256Short(`${findResult.path}\0${source}`);
+      })();
+      versions.set(key, promise);
+    }
+    return promise;
+  };
 }
 
 const REACT_PACKAGE_ASSET_SPECIFIERS: Record<string, string> = {

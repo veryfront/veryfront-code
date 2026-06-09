@@ -4,14 +4,57 @@ import {
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { getLocalReactPaths } from "#veryfront/platform/compat/react-paths.ts";
+import { hashString } from "#veryfront/cache/hash.ts";
+
+type CacheBuster = number | string;
+
+export interface SSRImportRewriteTarget {
+  specifier: string;
+  kind: "alias" | "relative";
+  modulePath: string;
+  rewrittenPath: string;
+}
+
+export function stripSSRModuleJsExtension(path: string): string {
+  return path.replace(/\.(?:mjs|js)$/i, "");
+}
+
+function normalizeSSRModulePath(path: string): string {
+  let normalized = path.replace(/^\/+/, "");
+  if (normalized.startsWith("_vf_modules/")) {
+    normalized = normalized.slice("_vf_modules/".length);
+  }
+  if (normalized.startsWith("@/")) normalized = normalized.slice(2);
+  return normalized;
+}
+
+export function resolveSSRImportTargetModulePath(
+  target: SSRImportRewriteTarget,
+  currentModulePath: string,
+): string {
+  if (target.kind === "alias") return normalizeSSRModulePath(target.modulePath);
+
+  const currentPath = normalizeSSRModulePath(currentModulePath);
+  if (target.specifier.startsWith("/")) {
+    return normalizeSSRModulePath(target.specifier);
+  }
+
+  const basePath = currentPath.startsWith("/") ? currentPath : `/${currentPath}`;
+  const resolved = new URL(target.specifier, `http://veryfront.local${basePath}`).pathname;
+  return normalizeSSRModulePath(resolved);
+}
 
 interface SSRRewriteOptions {
   /** Project slug for multi-project routing */
   projectSlug?: string | null;
   /** Branch name for branch-aware routing */
   branch?: string | null;
-  /** Cache buster timestamp */
-  cacheBuster?: number;
+  /** Cache buster token. When omitted, each rewritten target gets a stable token. */
+  cacheBuster?: CacheBuster;
+  /** Resolve a cache buster token for each rewritten target. */
+  resolveCacheBuster?: (
+    target: SSRImportRewriteTarget,
+  ) => CacheBuster | null | undefined | Promise<CacheBuster | null | undefined>;
   /** Cross-project reference (e.g., "demo@0.0") for @/ path rewrites */
   crossProjectRef?: string;
   /** React version to use for import rewrites */
@@ -82,29 +125,105 @@ function rewriteBareImports(code: string, version?: string): string {
   });
 }
 
+function getDefaultCacheBuster(target: SSRImportRewriteTarget, options: SSRRewriteOptions): string {
+  return hashString([
+    target.kind,
+    target.modulePath,
+    target.rewrittenPath,
+    options.projectSlug ?? "",
+    options.branch ?? "",
+    options.crossProjectRef ?? "",
+    options.reactVersion ?? "",
+  ].join("\0"));
+}
+
+function getCacheBusterSync(
+  target: SSRImportRewriteTarget,
+  options: SSRRewriteOptions,
+): string {
+  if (options.cacheBuster !== undefined) return String(options.cacheBuster);
+  return getDefaultCacheBuster(target, options);
+}
+
+async function getCacheBusterAsync(
+  target: SSRImportRewriteTarget,
+  options: SSRRewriteOptions,
+): Promise<string> {
+  if (options.cacheBuster !== undefined) return String(options.cacheBuster);
+  const resolved = await options.resolveCacheBuster?.(target);
+  if (resolved !== undefined && resolved !== null) return String(resolved);
+  return getDefaultCacheBuster(target, options);
+}
+
+function buildAliasRewrite(
+  specifierPath: string,
+  options: SSRRewriteOptions,
+): { target: SSRImportRewriteTarget; prefix: string } {
+  const { crossProjectRef } = options;
+  const jsPath = specifierPath.endsWith(".js") ? specifierPath : `${specifierPath}.js`;
+
+  if (crossProjectRef) {
+    const rewrittenPath = `/_vf_modules/_cross/${crossProjectRef}/@/${jsPath}`;
+    return {
+      target: {
+        specifier: `@/${specifierPath}`,
+        kind: "alias",
+        modulePath: jsPath,
+        rewrittenPath,
+      },
+      prefix: `${rewrittenPath}?ssr=true`,
+    };
+  }
+
+  const rewrittenPath = `/_vf_modules/${jsPath}`;
+  return {
+    target: {
+      specifier: `@/${specifierPath}`,
+      kind: "alias",
+      modulePath: jsPath,
+      rewrittenPath,
+    },
+    prefix: `${rewrittenPath}?ssr=true`,
+  };
+}
+
+function buildRelativeRewrite(
+  specifier: string,
+): { target: SSRImportRewriteTarget; prefix: string } {
+  return {
+    target: {
+      specifier,
+      kind: "relative",
+      modulePath: specifier,
+      rewrittenPath: specifier,
+    },
+    prefix: `${specifier}?ssr=true`,
+  };
+}
+
+function buildScopedParams(options: SSRRewriteOptions): string {
+  const projectParam = options.projectSlug ? `&project=${options.projectSlug}` : "";
+  const branchParam = options.branch ? `&branch=${options.branch}` : "";
+  return `${projectParam}${branchParam}`;
+}
+
 function rewritePathAliases(code: string, options: SSRRewriteOptions): string {
-  const { projectSlug, branch, cacheBuster = Date.now(), crossProjectRef } = options;
-  const projectParam = projectSlug ? `&project=${projectSlug}` : "";
-  const branchParam = branch ? `&branch=${branch}` : "";
+  const scopedParams = buildScopedParams(options);
 
   return code.replace(/from\s+["']@\/([^"']+)["']/g, (_match, path: string) => {
-    const jsPath = path.endsWith(".js") ? path : `${path}.js`;
-
-    if (crossProjectRef) {
-      return `from "/_vf_modules/_cross/${crossProjectRef}/@/${jsPath}?ssr=true&v=${cacheBuster}"`;
-    }
-
-    return `from "/_vf_modules/${jsPath}?ssr=true${projectParam}${branchParam}&v=${cacheBuster}"`;
+    const { target, prefix } = buildAliasRewrite(path, options);
+    const cacheBuster = getCacheBusterSync(target, options);
+    return `from "${prefix}${scopedParams}&v=${cacheBuster}"`;
   });
 }
 
 function rewriteRelativeImports(code: string, options: SSRRewriteOptions): string {
-  const { projectSlug, branch, cacheBuster = Date.now() } = options;
-  const projectParam = projectSlug ? `&project=${projectSlug}` : "";
-  const branchParam = branch ? `&branch=${branch}` : "";
+  const scopedParams = buildScopedParams(options);
 
   return code.replace(/from\s+["']((?:\.\.?\/|\/)[^"']+\.js)["']/g, (_match, path: string) => {
-    return `from "${path}?ssr=true${projectParam}${branchParam}&v=${cacheBuster}"`;
+    const { target, prefix } = buildRelativeRewrite(path);
+    const cacheBuster = getCacheBusterSync(target, options);
+    return `from "${prefix}${scopedParams}&v=${cacheBuster}"`;
   });
 }
 
@@ -112,5 +231,60 @@ export function applySSRImportRewrites(code: string, options: SSRRewriteOptions 
   let result = rewriteBareImports(code, options.reactVersion);
   result = rewritePathAliases(result, options);
   result = rewriteRelativeImports(result, options);
+  return result;
+}
+
+async function replaceAsync(
+  code: string,
+  pattern: RegExp,
+  replacer: (match: RegExpExecArray) => Promise<string>,
+): Promise<string> {
+  const chunks: string[] = [];
+  let lastIndex = 0;
+  pattern.lastIndex = 0;
+
+  for (let match = pattern.exec(code); match; match = pattern.exec(code)) {
+    chunks.push(code.slice(lastIndex, match.index));
+    chunks.push(await replacer(match));
+    lastIndex = match.index + match[0].length;
+  }
+
+  chunks.push(code.slice(lastIndex));
+  return chunks.join("");
+}
+
+async function rewritePathAliasesAsync(
+  code: string,
+  options: SSRRewriteOptions,
+): Promise<string> {
+  const scopedParams = buildScopedParams(options);
+  return await replaceAsync(code, /from\s+["']@\/([^"']+)["']/g, async (match) => {
+    const path = match[1] ?? "";
+    const { target, prefix } = buildAliasRewrite(path, options);
+    const cacheBuster = await getCacheBusterAsync(target, options);
+    return `from "${prefix}${scopedParams}&v=${cacheBuster}"`;
+  });
+}
+
+async function rewriteRelativeImportsAsync(
+  code: string,
+  options: SSRRewriteOptions,
+): Promise<string> {
+  const scopedParams = buildScopedParams(options);
+  return await replaceAsync(code, /from\s+["']((?:\.\.?\/|\/)[^"']+\.js)["']/g, async (match) => {
+    const path = match[1] ?? "";
+    const { target, prefix } = buildRelativeRewrite(path);
+    const cacheBuster = await getCacheBusterAsync(target, options);
+    return `from "${prefix}${scopedParams}&v=${cacheBuster}"`;
+  });
+}
+
+export async function applySSRImportRewritesAsync(
+  code: string,
+  options: SSRRewriteOptions = {},
+): Promise<string> {
+  let result = rewriteBareImports(code, options.reactVersion);
+  result = await rewritePathAliasesAsync(result, options);
+  result = await rewriteRelativeImportsAsync(result, options);
   return result;
 }

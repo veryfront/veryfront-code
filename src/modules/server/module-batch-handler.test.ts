@@ -57,6 +57,11 @@ describe(
         };
       }
 
+      function extractChildVersion(code: string): string {
+        const match = code.match(/\.\/child\.js\?ssr=true&project=test&v=([^"']+)/);
+        return match?.[1] ?? "";
+      }
+
       it("should return 400 when paths parameter is missing", async () => {
         const response = await handleModuleBatch(createBatchRequest(), createOptions());
         assertEquals(response.status, 400);
@@ -166,6 +171,45 @@ describe(
 
         assertEquals(response.status, 200);
         assertEquals(response.headers.get("Cache-Control")?.includes("immutable"), true);
+      });
+
+      it("uses child source content for SSR import cache busters", async () => {
+        const adapter = createMockAdapter();
+        adapter.fs.files.set(
+          "/test-project/page.ts",
+          `import { child } from "./child.js";\nexport const page = child;\n`,
+        );
+        adapter.fs.files.set("/test-project/child.ts", `export const child = "one";\n`);
+
+        const firstResponse = await handleModuleBatch(
+          createBatchRequest("page.js", "ssr=true"),
+          {
+            projectDir: "/test-project",
+            adapter,
+            projectSlug: "test",
+            dev: true,
+          },
+        );
+        assertEquals(firstResponse.status, 200);
+        const firstVersion = extractChildVersion(await firstResponse.text());
+
+        adapter.fs.files.set("/test-project/child.ts", `export const child = "two";\n`);
+
+        const secondResponse = await handleModuleBatch(
+          createBatchRequest("page.js", "ssr=true"),
+          {
+            projectDir: "/test-project",
+            adapter,
+            projectSlug: "test",
+            dev: true,
+          },
+        );
+        assertEquals(secondResponse.status, 200);
+        const secondVersion = extractChildVersion(await secondResponse.text());
+
+        assertEquals(firstVersion.length > 0, true);
+        assertEquals(secondVersion.length > 0, true);
+        assertEquals(firstVersion !== secondVersion, true);
       });
     });
   },
