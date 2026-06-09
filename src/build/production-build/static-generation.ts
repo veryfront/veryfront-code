@@ -361,7 +361,7 @@ function generateClientRuntime(
   <script type="module">
     import { boot } from '/_veryfront/client.js';
     if (typeof boot === 'function') {
-      boot({ slug: '${route.slug}' });
+      boot({ slug: ${JSON.stringify(route.slug)} });
     }
   </script>
 </body>`;

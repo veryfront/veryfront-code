@@ -8,6 +8,7 @@ import {
   injectHTMLContent,
   isFullHTMLDocument,
 } from "#veryfront/html";
+import { buildNonceAttribute } from "#veryfront/html/html-escape.ts";
 import type { MDXFrontmatter } from "#veryfront/types";
 import { DEFAULT_DASHBOARD_PORT, rendererLogger } from "#veryfront/utils";
 import { addNonceToHtmlTags } from "#veryfront/html/nonce-injection.ts";
@@ -81,7 +82,7 @@ function injectThemePersistenceScript(
   if (!enabled || !colorScheme || !/<\/head>/i.test(html)) return html;
   if (html.includes(`localStorage.setItem('theme','${colorScheme}')`)) return html;
 
-  const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
+  const nonceAttr = buildNonceAttribute(nonce);
   const script = `<script${nonceAttr}>
 (function(){try{localStorage.setItem('theme','${colorScheme}')}catch(e){/* SILENT: localStorage may be unavailable */}})();
 </script>`;

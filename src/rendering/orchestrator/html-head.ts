@@ -1,5 +1,6 @@
 import type { CollectedHead } from "#veryfront/react/head-collector.ts";
 import type { MdxBundle, MDXFrontmatter } from "#veryfront/types";
+import { escapeHTML, neutralizeRawTextContent } from "#veryfront/html/html-escape.ts";
 
 interface FrontmatterContextLike {
   pageInfo: { entity: { frontmatter?: Record<string, unknown> } };
@@ -29,9 +30,11 @@ export function buildHeadElements(head?: CollectedHead): { scripts: string; othe
       attrPairs.push(["data-vf-hash", "vf" + Math.abs(sum).toString(36)]);
     }
 
-    const attrStr = attrPairs.map(([k, v]) => `${k}="${v}"`).join(" ");
+    const attrStr = attrPairs.map(([k, v]) => `${k}="${escapeHTML(v)}"`).join(" ");
     if (content) {
-      scriptParts.push(`<script ${attrStr}>${content}</script>`);
+      scriptParts.push(
+        `<script ${attrStr}>${neutralizeRawTextContent(content, "script")}</script>`,
+      );
     } else if (attrs.src) {
       scriptParts.push(`<script ${attrStr}></script>`);
     }
@@ -41,22 +44,22 @@ export function buildHeadElements(head?: CollectedHead): { scripts: string; othe
     if (meta.name === "description") continue;
 
     const attrs: string[] = [];
-    if (meta.name) attrs.push(`name="${meta.name}"`);
-    if (meta.property) attrs.push(`property="${meta.property}"`);
-    if (meta.content) attrs.push(`content="${meta.content}"`);
+    if (meta.name) attrs.push(`name="${escapeHTML(meta.name)}"`);
+    if (meta.property) attrs.push(`property="${escapeHTML(meta.property)}"`);
+    if (meta.content) attrs.push(`content="${escapeHTML(meta.content)}"`);
     if (attrs.length) otherParts.push(`<meta ${attrs.join(" ")}>`);
   }
 
   for (const link of head.links) {
     const attrs = Object.entries(link)
       .filter(([, v]) => v != null)
-      .map(([k, v]) => `${k}="${v}"`)
+      .map(([k, v]) => `${k}="${escapeHTML(String(v))}"`)
       .join(" ");
     if (attrs) otherParts.push(`<link ${attrs}>`);
   }
 
   for (const style of head.styles) {
-    otherParts.push(`<style>${style}</style>`);
+    otherParts.push(`<style>${neutralizeRawTextContent(style, "style")}</style>`);
   }
 
   return {
