@@ -182,4 +182,17 @@ describe("npm generated integration artifacts", () => {
 			false,
 		);
 	});
+
+	it("publishes README banner assets with the npm package", async () => {
+		const source = await Deno.readTextFile("scripts/build/build-npm-dnt.ts");
+
+		assertStringIncludes(
+			source,
+			'await Deno.copyFile("./assets/banner.svg", "./npm/assets/banner.svg");',
+		);
+		assertStringIncludes(
+			source,
+			'pkg.files = ["esm", "script", "bin", "assets", "tsconfig.json", "LICENSE", "README.md"];',
+		);
+	});
 });
