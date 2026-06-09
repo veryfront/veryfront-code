@@ -51,6 +51,12 @@ export function buildWorkerPermissions(
   // is outside the project directory. Rather than trying to enumerate all
   // read paths, grant full read access — the security boundary is enforced
   // by denying write/run/ffi/sys, not by restricting reads.
+  //
+  // SECURITY (residual, tracked in #2245): with read:true a user route
+  // handler can call Deno.readTextFile directly to read any host file,
+  // bypassing the project-scoped ctx.fs adapter. Narrowing this to a
+  // binary-validated allow-list (or removing direct Deno fs from user module
+  // scope) is blocking work for the next security batch.
   if (_isCompiledBinary) {
     return {
       read: true,
