@@ -20,6 +20,7 @@ import { runWithProjectEnv } from "../server/project-env/storage.ts";
 import type { ExecStreamEvent } from "./sandbox.ts";
 import { Sandbox } from "./sandbox.ts";
 import { resolveDefaultSandboxRuntimeEndpoint } from "./lazy-sandbox.ts";
+import { logger } from "#veryfront/utils";
 
 // Mock fetch for testing
 const originalFetch = globalThis.fetch;
@@ -894,6 +895,75 @@ describe("Sandbox", () => {
       assertStringIncludes(fetchCalls[2]!.url, "/sandbox-sessions/sandbox-1");
       assertEquals(fetchCalls[2]!.init?.method, "DELETE");
       assertEquals(sandbox.isActive, false);
+    });
+
+    it("logs startup failures observed while close waits for in-flight ensure", async () => {
+      let resolveCreate!: (response: Response) => void;
+      let hasResolveCreate = false;
+      const originalDebug = logger.debug.bind(logger);
+      const debugEntries: Array<{ message: string; metadata: unknown[] }> = [];
+
+      logger.debug = (message: string, ...metadata: unknown[]): void => {
+        debugEntries.push({ message, metadata });
+        originalDebug(message, ...metadata);
+      };
+
+      try {
+        globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+          const url = typeof input === "string"
+            ? input
+            : input instanceof URL
+            ? input.toString()
+            : input.url;
+          fetchCalls.push({ url, init });
+
+          if (fetchCalls.length === 1) {
+            return new Promise<Response>((resolve) => {
+              resolveCreate = resolve;
+              hasResolveCreate = true;
+            });
+          }
+
+          throw new Error(`Unexpected fetch call: ${url}`);
+        }) as typeof fetch;
+
+        const sandbox = Sandbox.createLazy({
+          authToken: "test-token",
+          apiUrl: "https://api.test.com",
+        });
+
+        const ensurePromise = sandbox.ensure();
+        await Promise.resolve();
+
+        const closePromise = sandbox.close();
+
+        if (!hasResolveCreate) {
+          throw new Error("Expected create promise resolver to be captured");
+        }
+
+        resolveCreate(textResponse("create failed", 503));
+
+        await assertRejects(
+          () => ensurePromise,
+          Error,
+          "Failed to create sandbox",
+        );
+        await closePromise;
+
+        assertEquals(sandbox.isActive, false);
+        assertEquals(
+          debugEntries.some((entry) => {
+            const metadata = entry.metadata[0] as { error?: unknown } | undefined;
+            return entry.message.includes("startup failed while closing") &&
+              metadata?.error instanceof Error &&
+              metadata.error.message.includes("Failed to create sandbox");
+          }),
+          true,
+          "close should log the already-handled startup failure",
+        );
+      } finally {
+        logger.debug = originalDebug;
+      }
     });
 
     it("keeps an active sandbox session heartbeating until close", async () => {
