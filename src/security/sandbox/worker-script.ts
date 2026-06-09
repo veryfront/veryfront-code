@@ -52,9 +52,9 @@ async function tryRealPath(path: string): Promise<string | null> {
 /**
  * Build a path guard that confines filesystem access to `projectDir`.
  *
- * In compiled-binary mode the worker has full read permission, so this
- * read-only `ctx.fs` adapter is a key barrier against user route handlers
- * reading arbitrary host files. The guard is both:
+ * Worker permissions restrict direct Deno filesystem reads to an explicit
+ * allow-list, and this read-only `ctx.fs` adapter further confines framework
+ * filesystem access to the project directory. The guard is both:
  *  - cross-platform (uses `relative()`, not a hard-coded `/` separator), and
  *  - symlink-safe (canonicalizes via `Deno.realPath` so a symlink inside the
  *    project that points outside it is rejected, not followed).
