@@ -1,5 +1,20 @@
-// @ts-ignore - Global Deno shim for Node.js
-globalThis.Deno ??= {
+type DenoEnvShim = {
+  env: {
+    get(key: string): string | undefined;
+    set(key: string, value: string): void;
+    delete(key: string): void;
+    has(key: string): boolean;
+    toObject(): Record<string, string>;
+  };
+};
+
+type DenoEnvShimGlobal = Omit<typeof globalThis, "Deno"> & {
+  Deno?: DenoEnvShim;
+};
+
+const global = globalThis as DenoEnvShimGlobal;
+
+global.Deno ??= {
   env: {
     get(key: string): string | undefined {
       return process.env[key];
