@@ -6,6 +6,7 @@
  */
 
 import type { Plugin, PluginBuild } from "veryfront/extensions/bundler";
+import type { BundleOptions } from "veryfront/extensions/bundler";
 import { isDeno, isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
@@ -184,7 +185,7 @@ export async function importModule(
   // Use fsAdapter plugin whenever a VFS adapter is available (regardless of runtime)
   const plugins = hasFsAdapter ? [createFsAdapterPlugin(context.fsAdapter!)] : [];
 
-  const result = await build({
+  const buildOptions: BundleOptions = {
     bundle: true,
     write: false,
     format: "esm",
@@ -217,7 +218,36 @@ export async function importModule(
       resolveDir: fileDir,
       sourcefile: filePath,
     },
-  });
+  };
+
+  let result;
+  try {
+    result = await build(buildOptions);
+  } catch (error) {
+    if (
+      !isCompiledRuntimeUnrefError(error) ||
+      hasRelativeRuntimeImports(source)
+    ) {
+      throw error;
+    }
+
+    const { transform } = await import("veryfront/extensions/bundler");
+    const transformed = await transform(source, {
+      loader,
+      format: "esm",
+      target: "es2022",
+      jsx: "automatic",
+      jsxImportSource: "react",
+    });
+    result = {
+      errors: [],
+      outputFiles: [{
+        path: filePath,
+        contents: new TextEncoder().encode(transformed.code),
+        text: transformed.code,
+      }],
+    };
+  }
 
   if (result.errors.length > 0) {
     throw COMPILATION_ERROR.create({
@@ -253,4 +283,15 @@ export async function importModule(
  */
 export function clearTranspileCache(): void {
   transpileCache.clear();
+}
+
+function isCompiledRuntimeUnrefError(error: unknown): boolean {
+  return error instanceof Error &&
+    error.message.includes("Cannot read properties of undefined") &&
+    error.message.includes("unref");
+}
+
+function hasRelativeRuntimeImports(source: string): boolean {
+  return /\b(?:import|export)\s+(?:[^"']*from\s*)?["']\.\.?\//.test(source) ||
+    /\bimport\s*\(\s*["']\.\.?\//.test(source);
 }

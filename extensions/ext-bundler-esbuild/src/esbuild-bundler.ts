@@ -72,6 +72,12 @@ function mapOptions(options: BundleOptions): Record<string, unknown> {
   return mapped;
 }
 
+function isCompiledRuntimeUnrefError(error: unknown): boolean {
+  return error instanceof Error &&
+    error.message.includes("Cannot read properties of undefined") &&
+    error.message.includes("unref");
+}
+
 /** esbuild-backed {@link Bundler} implementation. */
 export class EsbuildBundler implements Bundler {
   async bundle(options: BundleOptions): Promise<BundleResult> {
@@ -88,7 +94,15 @@ export class EsbuildBundler implements Bundler {
   async transform(options: TransformOptions): Promise<TransformResult> {
     const esbuild = await getEsbuild();
     const { code, ...rest } = options;
-    const result = await esbuild.transform(code, rest);
+    let result;
+    try {
+      result = await esbuild.transform(code, rest);
+    } catch (error) {
+      if (!isCompiledRuntimeUnrefError(error) || typeof esbuild.transformSync !== "function") {
+        throw error;
+      }
+      result = esbuild.transformSync(code, rest);
+    }
     return {
       code: result.code,
       map: result.map,
