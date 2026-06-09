@@ -1,14 +1,27 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import {
+  type FetchCall,
+  installMockFetch,
+  jsonResponse,
+  type MockResponseEntry,
+  ndjsonResponse,
+  textResponse,
+} from "../sandbox/sandbox.test-helpers.ts";
 import { detectRuntime, getSkillScriptExecutor, LocalScriptExecutor } from "./executor.ts";
 
 const SKILL_ENV_KEYS = [
   "SANDBOX_AUTH_TOKEN",
   "VERYFRONT_API_TOKEN",
+  "VERYFRONT_API_URL",
 ] as const;
+
+const originalFetch = globalThis.fetch;
+let fetchCalls: FetchCall[] = [];
+let fetchResponses: MockResponseEntry[] = [];
 
 function clearSkillEnv(): void {
   for (const key of SKILL_ENV_KEYS) {
@@ -20,8 +33,33 @@ function clearSkillEnv(): void {
   }
 }
 
+function mockFetch(responses: MockResponseEntry[]): void {
+  fetchCalls = [];
+  fetchResponses = [...responses];
+  globalThis.fetch = installMockFetch({ calls: fetchCalls, responses: fetchResponses });
+}
+
+function delayedErrorNdjsonResponse(error: Error, delayMs: number): Response {
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      setTimeout(() => controller.error(error), delayMs);
+    },
+  });
+
+  return new Response(body, {
+    status: 200,
+    headers: { "Content-Type": "application/x-ndjson" },
+  });
+}
+
 describe("src/skill/executor", () => {
+  beforeEach(() => {
+    fetchCalls = [];
+    fetchResponses = [];
+  });
+
   afterEach(() => {
+    globalThis.fetch = originalFetch;
     clearSkillEnv();
   });
 
@@ -107,6 +145,37 @@ describe("src/skill/executor", () => {
 
       const executor = getSkillScriptExecutor();
       assertEquals(executor.constructor.name, "CloudScriptExecutor");
+    });
+
+    it("handles a late sandbox command rejection after timeout", async () => {
+      setEnv("SANDBOX_AUTH_TOKEN", "sandbox-token");
+      setEnv("VERYFRONT_API_URL", "https://api.test.com");
+      mockFetch([
+        jsonResponse({
+          id: "session-timeout",
+          endpoint: "https://sandbox.example.com",
+          status: "running",
+        }),
+        textResponse(""),
+        ndjsonResponse([{ type: "exit", exitCode: 0 }]),
+        delayedErrorNdjsonResponse(new Error("sandbox process killed"), 30),
+        ndjsonResponse([{ type: "exit", exitCode: 0 }]),
+        textResponse(""),
+      ]);
+
+      const executor = getSkillScriptExecutor();
+      const result = await executor.execute({
+        scriptPath: "scripts/run.sh",
+        scriptContent: "sleep 10",
+        timeoutMs: 1,
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      assertEquals(result.exitCode, 124);
+      assertStringIncludes(result.stderr, "timed out");
+      assertEquals(fetchCalls.length, 6);
+      assertStringIncludes(fetchCalls[4]!.init?.body?.toString() ?? "", "kill -9 -1");
     });
 
     it("falls back to local execution without cloud credentials", () => {

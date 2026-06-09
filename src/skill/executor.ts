@@ -176,6 +176,9 @@ class CloudScriptExecutor implements SkillScriptExecutor {
       const result = await withTimeout(commandPromise, timeoutMs);
 
       if (result === TIMEOUT_SENTINEL) {
+        commandPromise.catch(() => {
+          // The command may reject after the timeout path has already returned.
+        });
         // Kill any running processes before returning — withTimeout only
         // races the timer, it doesn't terminate the sandbox command.
         try {
