@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { TokenManager } from "./token-manager.ts";
 import type { TokenCache, TokenCacheEntry } from "./cache/types.ts";
@@ -28,8 +28,12 @@ class SpyCache implements TokenCache {
     this.store.clear();
   }
 
-  async stats() {
-    return { hits: 0, misses: 0, size: this.store.size, type: "spy" };
+  has(key: string): Promise<boolean> {
+    return Promise.resolve(this.store.has(key));
+  }
+
+  async stats(): Promise<{ hits: number; misses: number; size: number; type: "memory" }> {
+    return { hits: 0, misses: 0, size: this.store.size, type: "memory" };
   }
 
   async close(): Promise<void> {}
@@ -60,7 +64,7 @@ describe("TokenManager", () => {
         }, 50);
       });
     });
-    serverPort = mockServer.addr.port;
+    serverPort = (mockServer.addr as Deno.NetAddr).port;
   });
 
   afterEach(async () => {
@@ -118,6 +122,42 @@ describe("TokenManager", () => {
     // Different keys should result in separate fetches
     assertEquals(fetchCount, 2);
     assertEquals(cache.setCount, 2);
+
+    await manager.close();
+  });
+
+  it("negative-caches typed 404 token failures", async () => {
+    await mockServer?.shutdown();
+    mockServer = Deno.serve({ port: 0, onListen() {} }, () => {
+      fetchCount++;
+      return new Response("Project missing", { status: 404 });
+    });
+    serverPort = (mockServer.addr as Deno.NetAddr).port;
+
+    const cache = new SpyCache();
+    const manager = new TokenManager(
+      {
+        apiBaseUrl: `http://localhost:${serverPort}`,
+        apiClientId: "id",
+        apiClientSecret: "secret",
+        previewApiClientId: "pid",
+        previewApiClientSecret: "psecret",
+      },
+      { cache },
+    );
+
+    await assertRejects(
+      () => manager.getToken("production", "missing-project"),
+      Error,
+      "404",
+    );
+    await assertRejects(
+      () => manager.getToken("production", "missing-project"),
+      Error,
+      "404",
+    );
+
+    assertEquals(fetchCount, 1);
 
     await manager.close();
   });
