@@ -1,7 +1,68 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { clearModuleCache, loadModule, serializeError } from "./worker-script.ts";
+import { join } from "node:path";
+import {
+  clearModuleCache,
+  loadModule,
+  makeProjectPathGuard,
+  serializeError,
+} from "./worker-script.ts";
+
+describe("worker-script makeProjectPathGuard", () => {
+  it("allows a real file inside the project", async () => {
+    const projectDir = await Deno.makeTempDir();
+    try {
+      const filePath = join(projectDir, "data.json");
+      await Deno.writeTextFile(filePath, "{}");
+      const guard = makeProjectPathGuard(projectDir);
+      const resolved = await guard("data.json");
+      assertEquals(resolved, await Deno.realPath(filePath));
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("rejects plain ../ traversal", async () => {
+    const projectDir = await Deno.makeTempDir();
+    try {
+      const guard = makeProjectPathGuard(projectDir);
+      await assertRejects(() => guard("../../etc/passwd"), Error, "escapes project directory");
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("rejects a symlink inside the project that points outside it", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const outsideDir = await Deno.makeTempDir();
+    try {
+      const secret = join(outsideDir, "secret.txt");
+      await Deno.writeTextFile(secret, "leaked-by-symlink");
+      // A symlink that lives inside the project but resolves outside it.
+      await Deno.symlink(secret, join(projectDir, "link.txt"));
+
+      const guard = makeProjectPathGuard(projectDir);
+      await assertRejects(() => guard("link.txt"), Error, "escapes project directory");
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(outsideDir, { recursive: true });
+    }
+  });
+
+  it("allows a not-yet-existing path that is lexically contained", async () => {
+    const projectDir = await Deno.makeTempDir();
+    try {
+      const guard = makeProjectPathGuard(projectDir);
+      const resolved = await guard("nested/new-file.txt");
+      // The target doesn't exist so it can't be canonicalized; it is still
+      // accepted (lexically contained) and points at the nested path.
+      assert(resolved.endsWith(join("nested", "new-file.txt")));
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+});
 
 describe("worker-script serializeError", () => {
   it("serializes a standard Error preserving message, name, and stack", () => {

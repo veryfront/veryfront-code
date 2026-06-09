@@ -29,25 +29,60 @@ import type {
   WorkerStreamChunk,
   WorkerStreamEnd,
 } from "./worker-types.ts";
-import { resolve as resolvePath } from "node:path";
+import { isAbsolute, relative, resolve as resolvePath, sep as PATH_SEP } from "node:path";
 
 // Module-level singletons to avoid per-call allocation churn
 const encoder = new TextEncoder();
 
+/** True when `child` is the same as, or nested under, `root`. Cross-platform. */
+function isContained(root: string, child: string): boolean {
+  if (child === root) return true;
+  const rel = relative(root, child);
+  return rel !== "" && rel !== ".." && !rel.startsWith(`..${PATH_SEP}`) && !isAbsolute(rel);
+}
+
+async function tryRealPath(path: string): Promise<string | null> {
+  try {
+    return await Deno.realPath(path);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Build a path guard that confines filesystem access to `projectDir`.
- * In compiled-binary mode the worker has full read permission, so the
- * read-only `ctx.fs` adapter is the only thing keeping user route handlers
- * from reading arbitrary host files. Every path must be validated here.
+ *
+ * In compiled-binary mode the worker has full read permission, so this
+ * read-only `ctx.fs` adapter is a key barrier against user route handlers
+ * reading arbitrary host files. The guard is both:
+ *  - cross-platform (uses `relative()`, not a hard-coded `/` separator), and
+ *  - symlink-safe (canonicalizes via `Deno.realPath` so a symlink inside the
+ *    project that points outside it is rejected, not followed).
  */
-function makeProjectPathGuard(projectDir: string): (path: string) => string {
+export function makeProjectPathGuard(projectDir: string): (path: string) => Promise<string> {
   const root = resolvePath(projectDir);
-  return (path: string): string => {
+  let realRootPromise: Promise<string> | null = null;
+
+  return async (path: string): Promise<string> => {
     const resolved = resolvePath(root, path);
-    if (resolved !== root && !resolved.startsWith(root + "/")) {
+
+    // Lexical containment first — cheap, and catches plain `../` traversal
+    // even when the target doesn't exist yet.
+    if (!isContained(root, resolved)) {
       throw new Error(`Path escapes project directory: ${path}`);
     }
-    return resolved;
+
+    // Canonicalize to defeat symlinks that escape the project. realPath fails
+    // for a not-yet-existing target (e.g. a fresh path); the lexical check
+    // above already covers that case, so fall back to the resolved path.
+    realRootPromise ??= tryRealPath(root).then((r) => r ?? root);
+    const realRoot = await realRootPromise;
+    const realResolved = await tryRealPath(resolved);
+    if (realResolved !== null && !isContained(realRoot, realResolved)) {
+      throw new Error(`Path escapes project directory: ${path}`);
+    }
+
+    return realResolved ?? resolved;
   };
 }
 
@@ -322,18 +357,18 @@ async function handlePagesRoute(req: ExecutePagesRouteRequest): Promise<Serializ
     // Deno API so user route handlers cannot read arbitrary host files.
     const assertContained = makeProjectPathGuard(req.projectDir);
     const workerFs = {
-      readTextFile: (path: string) => Deno.readTextFile(assertContained(path)),
-      readFile: (path: string) => Deno.readFile(assertContained(path)),
+      readTextFile: async (path: string) => Deno.readTextFile(await assertContained(path)),
+      readFile: async (path: string) => Deno.readFile(await assertContained(path)),
       exists: async (path: string) => {
         try {
-          await Deno.stat(assertContained(path));
+          await Deno.stat(await assertContained(path));
           return true;
         } catch {
           return false;
         }
       },
       stat: async (path: string) => {
-        const info = await Deno.stat(assertContained(path));
+        const info = await Deno.stat(await assertContained(path));
         return {
           isFile: info.isFile,
           isDirectory: info.isDirectory,
@@ -343,7 +378,8 @@ async function handlePagesRoute(req: ExecutePagesRouteRequest): Promise<Serializ
         };
       },
       readDir: async function* (path: string) {
-        for await (const entry of Deno.readDir(assertContained(path))) {
+        const safePath = await assertContained(path);
+        for await (const entry of Deno.readDir(safePath)) {
           yield { name: entry.name, isFile: entry.isFile, isDirectory: entry.isDirectory };
         }
       },
