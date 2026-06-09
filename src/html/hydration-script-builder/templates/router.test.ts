@@ -70,6 +70,13 @@ describe("hydration-script-builder/templates/router", () => {
       assertIncludes(result, "const logError = console.error");
     });
 
+    it("should log non-blocking background page-data fetch failures", () => {
+      const result = getRouterScript();
+      assertIncludes(result, "function logBackgroundFetchFailure(reason, path, error)");
+      assertIncludes(result, "logBackgroundFetchFailure('Stale page data refresh', path, error)");
+      assertIncludes(result, "logBackgroundFetchFailure('Page data prefetch', path, error)");
+    });
+
     it("should define version tracking for cache invalidation", () => {
       const result = getRouterScript();
       assertIncludes(result, "function checkVersionMismatch(newVersion)");
