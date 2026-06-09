@@ -221,5 +221,40 @@ describe("hydration-data-generator", () => {
       const result = generateHydrationData("page", {}, {}, baseOptions, { pretty: false });
       assertEquals(result.includes("\n"), false);
     });
+
+    it("escapes JSON for inline script contexts", () => {
+      const scriptBreakout = "</script><script>alert(1)</script>";
+      const lineSeparators = "\u2028\u2029";
+      const result = generateHydrationData(
+        "page",
+        {},
+        { title: scriptBreakout, lineSeparators },
+        {
+          ...baseOptions,
+          frontmatter: { description: scriptBreakout },
+          layoutProps: {
+            "layouts/main.tsx": { lineSeparators },
+          },
+        },
+      );
+
+      assertEquals(result.includes("</script>"), false);
+      assertEquals(result.includes("<script>"), false);
+      assertEquals(result.includes("\u2028"), false);
+      assertEquals(result.includes("\u2029"), false);
+      assertStringIncludes(result, "\\u003c/script\\u003e");
+      assertStringIncludes(result, "\\u2028");
+      assertStringIncludes(result, "\\u2029");
+
+      const parsed = JSON.parse(result) as {
+        props: { title: string; lineSeparators: string };
+        frontmatter: { description: string };
+        layoutProps: Record<string, { lineSeparators: string }>;
+      };
+      assertEquals(parsed.props.title, scriptBreakout);
+      assertEquals(parsed.props.lineSeparators, lineSeparators);
+      assertEquals(parsed.frontmatter.description, scriptBreakout);
+      assertEquals(parsed.layoutProps["layouts/main.tsx"]?.lineSeparators, lineSeparators);
+    });
   });
 });
