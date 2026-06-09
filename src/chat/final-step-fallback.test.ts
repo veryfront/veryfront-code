@@ -106,6 +106,84 @@ describe("chat/final-step-fallback", () => {
     ]);
   });
 
+  it("preserves reasoning parts from response message content", () => {
+    const step = {
+      response: {
+        messages: [
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "reasoning",
+                text: "Checking the available tool.",
+                signature: "sig_123",
+              },
+              { type: "text", text: "Use the saved draft." },
+            ],
+          },
+        ],
+      },
+    };
+
+    assertEquals(buildFallbackUiMessageParts(step), [
+      {
+        type: "reasoning",
+        text: "Checking the available tool.",
+        signature: "sig_123",
+      },
+      { type: "text", text: "Use the saved draft." },
+    ]);
+  });
+
+  it("builds fallback chunks from response message reasoning, tool calls, tool results, and text", () => {
+    const step = {
+      response: {
+        messages: [
+          {
+            role: "assistant",
+            content: [
+              { type: "reasoning", text: "Need the draft status." },
+              {
+                type: "tool-call",
+                toolCallId: "tool-form",
+                toolName: "form_input",
+                input: { title: "Topic" },
+              },
+              {
+                type: "tool-result",
+                toolCallId: "tool-form",
+                toolName: "form_input",
+                output: { submitted: true },
+              },
+              { type: "text", text: "Draft is ready." },
+            ],
+          },
+        ],
+      },
+    };
+
+    assertEquals(buildFallbackUiMessageChunks(step, "assistant-1"), [
+      { type: "reasoning-start", id: "assistant-1:reasoning" },
+      {
+        type: "reasoning-delta",
+        id: "assistant-1:reasoning",
+        delta: "Need the draft status.",
+      },
+      { type: "reasoning-end", id: "assistant-1:reasoning" },
+      { type: "tool-input-start", toolCallId: "tool-form", toolName: "form_input" },
+      {
+        type: "tool-input-available",
+        toolCallId: "tool-form",
+        toolName: "form_input",
+        input: { title: "Topic" },
+      },
+      { type: "tool-output-available", toolCallId: "tool-form", output: { submitted: true } },
+      { type: "text-start", id: "assistant-1" },
+      { type: "text-delta", id: "assistant-1", delta: "Draft is ready." },
+      { type: "text-end", id: "assistant-1" },
+    ]);
+  });
+
   it("preserves ordered text and tool parts from UI response messages", () => {
     const step = {
       response: {
