@@ -17,6 +17,16 @@ const TEST_PERMISSIONS: WorkerPermissions = {
   sys: false,
 };
 
+const REAL_WORKER_PERMISSIONS: WorkerPermissions = {
+  read: true,
+  write: false,
+  net: false,
+  env: true,
+  run: false,
+  ffi: false,
+  sys: false,
+};
+
 const TEST_WORKER_SCRIPT_URL = `data:application/typescript,${
   encodeURIComponent(`
     self.onmessage = (event) => {
@@ -135,6 +145,7 @@ testSuite("ProjectWorker - error handling", () => {
           body: null,
         },
         params: {},
+        projectDir: Deno.cwd(),
       });
       assertEquals(true, false, "Should have thrown");
     } catch (error) {
@@ -167,6 +178,104 @@ testSuite("ProjectWorker - clearModuleCache", () => {
     const worker = createTestWorker("test-clear-cache");
     worker.clearModuleCache();
     // Should not throw
+  });
+});
+
+testSuite("ProjectWorker - real worker request isolation", () => {
+  it("returns a serialized error for unknown worker request types", async () => {
+    const worker = new ProjectWorker({
+      projectId: "test-unknown-request",
+      permissions: REAL_WORKER_PERMISSIONS,
+      requestTimeoutMs: 10_000,
+    });
+
+    worker.start();
+    try {
+      const response = await worker.execute(
+        {
+          type: "unknown-request",
+          id: "unknown",
+        } as unknown as Parameters<ProjectWorker["execute"]>[0],
+      );
+
+      assertEquals(response.type, "error");
+      if (response.type !== "error") throw new Error("expected error response");
+      assertEquals(response.id, "unknown");
+      assertEquals(response.error.name, "Error");
+      assertEquals(response.error.message, "Unknown request type: unknown-request");
+    } finally {
+      worker.terminate();
+    }
+  });
+
+  it("does not leak projectEnv overlays across requests in the same worker", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const modulePath = await Deno.makeTempFile({ dir: projectDir, suffix: ".mjs" });
+    await Deno.writeTextFile(
+      modulePath,
+      `
+        export function GET() {
+          return Response.json({ value: Deno.env.get("VERYFRONT_TEST_TENANT_SECRET") ?? null });
+        }
+      `,
+    );
+
+    const worker = new ProjectWorker({
+      projectId: "test-env-overlay-scope",
+      permissions: REAL_WORKER_PERMISSIONS,
+      requestTimeoutMs: 10_000,
+    });
+
+    worker.start();
+    try {
+      const first = await worker.execute({
+        type: "execute-app-route",
+        id: "first",
+        modulePath,
+        method: "GET",
+        request: {
+          url: "http://localhost/api/env",
+          method: "GET",
+          headers: [],
+          body: null,
+        },
+        params: {},
+        projectDir,
+        projectEnv: { VERYFRONT_TEST_TENANT_SECRET: "tenant-a" },
+      });
+
+      assertEquals(first.type, "result");
+      if (first.type !== "result") throw new Error("expected result response");
+      assertEquals(
+        JSON.parse(new TextDecoder().decode(first.response.body ?? new Uint8Array())),
+        { value: "tenant-a" },
+      );
+
+      const second = await worker.execute({
+        type: "execute-app-route",
+        id: "second",
+        modulePath,
+        method: "GET",
+        request: {
+          url: "http://localhost/api/env",
+          method: "GET",
+          headers: [],
+          body: null,
+        },
+        params: {},
+        projectDir,
+      });
+
+      assertEquals(second.type, "result");
+      if (second.type !== "result") throw new Error("expected result response");
+      assertEquals(
+        JSON.parse(new TextDecoder().decode(second.response.body ?? new Uint8Array())),
+        { value: null },
+      );
+    } finally {
+      worker.terminate();
+      await Deno.remove(projectDir, { recursive: true });
+    }
   });
 });
 
