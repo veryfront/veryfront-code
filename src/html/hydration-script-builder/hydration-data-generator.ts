@@ -2,6 +2,7 @@ import type { ComponentProps } from "#veryfront/types";
 import { resolveRelativePath } from "#veryfront/modules/react-loader/path-resolver.ts";
 import { getExtensionName } from "#veryfront/utils/path-utils.ts";
 import { determineClientModuleStrategy } from "#veryfront/rendering/rsc/client-module-strategy.ts";
+import { jsonForInlineScript } from "../html-escape.ts";
 import type { HTMLGenerationOptions } from "../types.ts";
 import type { HydrationDataStructure } from "./types.ts";
 
@@ -84,5 +85,7 @@ export function generateHydrationData(
     studioEmbed: options.studioEmbed,
   };
 
-  return JSON.stringify(data, null, serializeOptions?.pretty ?? true ? 2 : undefined);
+  // Escape for inline <script> embedding: JSON.stringify alone leaves
+  // </script> breakouts and U+2028/U+2029 in user-influenced frontmatter/props.
+  return jsonForInlineScript(data, serializeOptions?.pretty ?? true ? 2 : undefined);
 }
