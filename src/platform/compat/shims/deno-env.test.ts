@@ -10,6 +10,11 @@ describe("platform/compat/shims/deno-env", () => {
   describe("Deno.env.get/set/delete/has/toObject", () => {
     const testKey = "__VF_TEST_DENO_ENV_SHIM__";
 
+    it("does not rely on TypeScript ignore comments for the shim global", async () => {
+      const source = await Deno.readTextFile(new URL("./deno-env.ts", import.meta.url));
+      assertEquals(source.includes("@ts-ignore"), false);
+    });
+
     it("should get undefined for a missing key", () => {
       assertEquals(Deno.env.get(testKey), undefined);
     });
