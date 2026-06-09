@@ -31,6 +31,8 @@ export interface FSAdapter {
 interface ImportMatch {
   original: string;
   path: string;
+  start: number;
+  end: number;
 }
 
 interface ModuleFetchResult {
@@ -41,6 +43,8 @@ interface ModuleFetchResult {
 
 export interface NestedImportResult {
   original: string;
+  start: number;
+  end: number;
   nestedFilePath: string | null;
   nestedPath?: string;
   relativePath?: string;

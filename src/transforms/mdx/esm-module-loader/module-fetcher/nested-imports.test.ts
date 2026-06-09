@@ -123,5 +123,29 @@ import { bar } from "./local.js";
         ].join("\n"),
       );
     });
+
+    it("rewrites the matched import instead of the same text in an earlier comment", async () => {
+      const result = await resolveNestedModuleImports({
+        moduleCode: [
+          `// Previous example: from "./local.js"`,
+          `import local from "./local.js";`,
+          `export { local };`,
+        ].join("\n"),
+        esmCacheDir: "/tmp/veryfront-unused",
+        normalizedPath: "_vf_modules/pages/index.js",
+        projectSlug: "docs",
+        strictMissingModules: true,
+        fetchAndCacheModule: (path) => Promise.resolve(`/cache/${path.replaceAll("/", "__")}.mjs`),
+      });
+
+      assertEquals(
+        result,
+        [
+          `// Previous example: from "./local.js"`,
+          `import local from "file:///cache/.__local.js.mjs";`,
+          `export { local };`,
+        ].join("\n"),
+      );
+    });
   });
 });

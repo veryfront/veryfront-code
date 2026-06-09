@@ -14,6 +14,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { rewriteVeryfrontImports } from "./import-rewriter.ts";
 import { findNestedImports } from "./nested-imports.ts";
+import { replaceSourceSpans, type SourceSpanReplacement } from "../utils/source-spans.ts";
 
 /**
  * Fetch module via HTTP as a fallback (local development only).
@@ -60,26 +61,44 @@ export async function fetchModuleViaHTTP(
     return null;
   }
 
-  let moduleCode = rewriteVeryfrontImports(await response.text());
+  const moduleCode = rewriteVeryfrontImports(await response.text());
 
   const { vfModules, relative } = findNestedImports(moduleCode);
   const allImports = [
-    ...vfModules.map(({ original, path }) => ({ original, path, key: "nestedPath" as const })),
-    ...relative.map(({ original, path }) => ({ original, path, key: "relativePath" as const })),
+    ...vfModules.map(({ original, path, start, end }) => ({
+      original,
+      path,
+      start,
+      end,
+      key: "nestedPath" as const,
+    })),
+    ...relative.map(({ original, path, start, end }) => ({
+      original,
+      path,
+      start,
+      end,
+      key: "relativePath" as const,
+    })),
   ];
 
   const results = await Promise.all(
-    allImports.map(async ({ original, path, key }) => {
+    allImports.map(async ({ original, path, start, end, key }) => {
       const nestedFilePath = await fetchAndCacheModuleFn(path, normalizedPath);
-      return { original, nestedFilePath, [key]: path };
+      return { original, start, end, nestedFilePath, [key]: path };
     }),
   );
 
-  for (const { original, nestedFilePath } of results) {
+  const replacements: SourceSpanReplacement[] = [];
+  for (const { original, start, end, nestedFilePath } of results) {
     if (nestedFilePath) {
-      moduleCode = moduleCode.replace(original, `from "file://${nestedFilePath}"`);
+      replacements.push({
+        start,
+        end,
+        expected: original,
+        replacement: `from "file://${nestedFilePath}"`,
+      });
     }
   }
 
-  return moduleCode;
+  return replaceSourceSpans(moduleCode, replacements);
 }
