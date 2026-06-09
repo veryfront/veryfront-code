@@ -662,4 +662,4 @@ By default, tokens are stored in memory. For production:
 
 - Run `veryfront doctor` to diagnose issues
 - Check the [Veryfront Documentation](https://veryfront.com/docs)
-- Join our [Discord community](https://discord.gg/veryfront)
+- Join our [Discord community](https://discord.gg/xWuRjafrtV)
