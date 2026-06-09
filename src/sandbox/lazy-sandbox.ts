@@ -1,5 +1,6 @@
 import { REQUEST_ERROR } from "#veryfront/errors/error-registry.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { logger } from "#veryfront/utils";
 import { resolveSandboxApiUrl, resolveSandboxAuthToken } from "./config.ts";
 import {
   type BackgroundCommand,
@@ -418,8 +419,11 @@ export class LazySandbox {
         if (this.ensurePromise) {
           try {
             await this.ensurePromise.promise;
-          } catch {
+          } catch (error) {
             // startup failure already handled by the caller path
+            logger.debug("Lazy sandbox startup failed while closing; continuing cleanup", {
+              error,
+            });
           }
         }
 
