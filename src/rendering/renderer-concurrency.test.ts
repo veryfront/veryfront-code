@@ -114,3 +114,51 @@ describe("Mutex", () => {
     assertEquals(counter, 20);
   });
 });
+
+describe("project render slots", () => {
+  it("does not delete a held project mutex while waiters are queued", async () => {
+    const previousLimit = Deno.env.get("RENDER_PER_PROJECT_LIMIT");
+    Deno.env.set("RENDER_PER_PROJECT_LIMIT", "1");
+    const originalDelete = Map.prototype.delete;
+    try {
+      const concurrency = await import(
+        `./renderer-concurrency.ts?queued-slot-race=${crypto.randomUUID()}`
+      );
+      const projectId = `project-${crypto.randomUUID()}`;
+      let projectDeleteCount = 0;
+      let competingAcquire: Promise<boolean> | undefined;
+
+      Map.prototype.delete = function patchedDelete<K, V>(
+        this: Map<K, V>,
+        key: K,
+      ): boolean {
+        const result = originalDelete.call(this, key);
+        if (key === projectId) {
+          projectDeleteCount++;
+          if (projectDeleteCount === 2) {
+            competingAcquire = concurrency.acquireProjectSlot(projectId);
+          }
+        }
+        return result;
+      };
+
+      assertEquals(await concurrency.acquireProjectSlot(projectId), true);
+
+      const releasing = concurrency.releaseProjectSlot(projectId);
+      const queuedAcquire = concurrency.acquireProjectSlot(projectId);
+
+      await releasing;
+      competingAcquire ??= concurrency.acquireProjectSlot(projectId);
+
+      assertEquals(await queuedAcquire, true);
+      assertEquals(await competingAcquire, false);
+    } finally {
+      Map.prototype.delete = originalDelete;
+      if (previousLimit === undefined) {
+        Deno.env.delete("RENDER_PER_PROJECT_LIMIT");
+      } else {
+        Deno.env.set("RENDER_PER_PROJECT_LIMIT", previousLimit);
+      }
+    }
+  });
+});
