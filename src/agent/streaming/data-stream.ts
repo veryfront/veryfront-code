@@ -1,4 +1,7 @@
+import { serverLogger } from "#veryfront/utils";
 import type { AgUiRuntimeStreamEvent } from "../ag-ui/browser-encoder.ts";
+
+const logger = serverLogger.component("agent-data-stream");
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -208,7 +211,11 @@ export async function* streamDataStreamEvents(
     }
   } finally {
     if (!completed) {
-      await reader.cancel().catch(() => undefined);
+      try {
+        await reader.cancel();
+      } catch (error) {
+        logger.debug("Data stream reader cancellation failed during cleanup", { error });
+      }
     }
     reader.releaseLock();
   }

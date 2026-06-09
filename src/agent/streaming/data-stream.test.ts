@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { __resetLoggerConfigForTests, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import {
   mergeToolCallInput,
   mergeToolInputDelta,
@@ -12,8 +13,43 @@ import {
 
 const encoder = new TextEncoder();
 
+function captureConsoleLog(): { getOutput: () => string; restore: () => void } {
+  const originalLog = console.log;
+  const originalDebug = console.debug;
+  let capturedOutput = "";
+
+  const capture = (msg: string) => {
+    capturedOutput = msg;
+  };
+
+  console.log = capture;
+  console.debug = capture;
+
+  return {
+    getOutput: () => capturedOutput,
+    restore: () => {
+      console.log = originalLog;
+      console.debug = originalDebug;
+    },
+  };
+}
+
 function encodeEvent(payload: Record<string, unknown>): Uint8Array {
   return encoder.encode(`data: ${JSON.stringify(payload)}\n\n`);
+}
+
+async function withJsonDebugLogFormat<T>(fn: () => Promise<T>): Promise<T> {
+  Deno.env.set("LOG_FORMAT", "json");
+  Deno.env.set("LOG_LEVEL", "DEBUG");
+  __resetLoggerConfigForTests();
+
+  try {
+    return await fn();
+  } finally {
+    Deno.env.delete("LOG_FORMAT");
+    Deno.env.delete("LOG_LEVEL");
+    __resetLoggerConfigForTests();
+  }
 }
 
 describe("agent/data-stream", () => {
@@ -70,6 +106,35 @@ describe("agent/data-stream", () => {
       Error,
       "stream exploded",
     );
+  });
+
+  it("debug logs reader cancellation failures when the consumer stops early", async () => {
+    const { getOutput, restore } = captureConsoleLog();
+
+    try {
+      await withJsonDebugLogFormat(async () => {
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(encodeEvent({ type: "message-start", messageId: "assistant-1" }));
+          },
+          cancel() {
+            throw new Error("cancel failed");
+          },
+        });
+
+        for await (const event of streamDataStreamEvents(stream)) {
+          assertEquals(event, { type: "message-start", messageId: "assistant-1" });
+          break;
+        }
+      });
+    } finally {
+      restore();
+    }
+
+    const entry = JSON.parse(getOutput()) as LogEntry;
+    assertEquals(entry.component, "agent-data-stream");
+    assertEquals(entry.level, "debug");
+    assertEquals(entry.message, "Data stream reader cancellation failed during cleanup");
   });
 
   it("normalizes streamed tool input placeholders consistently", () => {
