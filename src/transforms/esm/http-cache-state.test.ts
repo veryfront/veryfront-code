@@ -73,7 +73,13 @@ describe("transforms/esm/http-cache-state", () => {
       try {
         const stats = getCacheStats();
 
-        assertEquals(stats.find((s) => s.name === "http-bundle-paths")?.entries, 2);
+        const bundlePathStats = stats.find((s) => s.name === "http-bundle-paths");
+        assertEquals(bundlePathStats?.entries, 2);
+        assertEquals(
+          bundlePathStats?.estimatedSizeBytes,
+          "cache-dir:https://esm.sh/react".length + "/tmp/http-1.mjs".length +
+            "cache-dir:https://esm.sh/react-dom".length + "/tmp/http-2.mjs".length,
+        );
         assertEquals(stats.find((s) => s.name === "http-bundle-ttl-refreshes")?.entries, 1);
         assertEquals(stats.find((s) => s.name === "http-bundle-in-flight")?.entries, 1);
       } finally {
