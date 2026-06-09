@@ -14,6 +14,19 @@ import type { SSRRenderResult } from "../../../services/rendering/ssr.service.ts
 import { ErrorPages } from "../../../utils/error-html.ts";
 import type { ResponseBuilder } from "#veryfront/security/http/response/builder.ts";
 import { addNonceToHtmlStream, addNonceToHtmlTags } from "#veryfront/html/nonce-injection.ts";
+import { serverLogger } from "#veryfront/utils";
+
+const logger = serverLogger.component("ssr-response-builder");
+
+async function cancelHeadResponseBody(body: ReadableStream<Uint8Array> | null): Promise<void> {
+  if (!body) return;
+
+  try {
+    await body.cancel();
+  } catch (error) {
+    logger.debug("SSR response body cancellation failed during HEAD cleanup", { error });
+  }
+}
 
 /**
  * Build an HTTP response from an SSR render result.
@@ -45,7 +58,7 @@ export async function buildSSRResponse(
 
     if (!isHeadRequest) return response;
 
-    await response.body?.cancel().catch(() => {});
+    await cancelHeadResponseBody(response.body);
     return new Response(null, { status: response.status, headers: response.headers });
   }
 
@@ -83,6 +96,6 @@ export async function buildSSRResponse(
 
   if (!isHeadRequest || !finalResponse.body) return finalResponse;
 
-  await finalResponse.body.cancel().catch(() => {});
+  await cancelHeadResponseBody(finalResponse.body);
   return new Response(null, { status: finalResponse.status, headers: finalResponse.headers });
 }

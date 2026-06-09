@@ -1,11 +1,47 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { __resetLoggerConfigForTests, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import { buildSSRResponse } from "./ssr-response-builder.ts";
 import type { SSRRenderResult } from "../../../services/rendering/ssr.service.ts";
 import { ResponseBuilder } from "#veryfront/security/http/response/builder.ts";
 import type { HandlerContext } from "../../types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+
+function captureConsoleLog(): { getOutput: () => string; restore: () => void } {
+  const originalLog = console.log;
+  const originalDebug = console.debug;
+  let capturedOutput = "";
+
+  const capture = (msg: string) => {
+    capturedOutput = msg;
+  };
+
+  console.log = capture;
+  console.debug = capture;
+
+  return {
+    getOutput: () => capturedOutput,
+    restore: () => {
+      console.log = originalLog;
+      console.debug = originalDebug;
+    },
+  };
+}
+
+async function withJsonDebugLogFormat<T>(fn: () => Promise<T>): Promise<T> {
+  Deno.env.set("LOG_FORMAT", "json");
+  Deno.env.set("LOG_LEVEL", "DEBUG");
+  __resetLoggerConfigForTests();
+
+  try {
+    return await fn();
+  } finally {
+    Deno.env.delete("LOG_FORMAT");
+    Deno.env.delete("LOG_LEVEL");
+    __resetLoggerConfigForTests();
+  }
+}
 
 function createMockAdapter(): RuntimeAdapter {
   return {
@@ -200,6 +236,38 @@ describe("server/handlers/request/ssr/ssr-response-builder", () => {
       const response = await buildSSRResponse(req, ctx, result, builder);
       assertEquals(response.status, 200);
       assertEquals(response.body, null);
+    });
+
+    it("debug logs streaming HEAD body cancellation failures", async () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        await withJsonDebugLogFormat(async () => {
+          const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode("<p>Streamed</p>"));
+            },
+            cancel() {
+              throw new Error("head cancel failed");
+            },
+          });
+          const req = new Request("http://localhost/", { method: "HEAD" });
+          const ctx = makeCtx();
+          const result = makeResult({ isStreaming: true, stream, html: undefined });
+          const builder = new ResponseBuilder();
+
+          const response = await buildSSRResponse(req, ctx, result, builder);
+          assertEquals(response.status, 200);
+          assertEquals(response.body, null);
+        });
+      } finally {
+        restore();
+      }
+
+      const entry = JSON.parse(getOutput()) as LogEntry;
+      assertEquals(entry.component, "ssr-response-builder");
+      assertEquals(entry.level, "debug");
+      assertEquals(entry.message, "SSR response body cancellation failed during HEAD cleanup");
     });
 
     it("includes etag header when etag is provided (buffered)", async () => {
