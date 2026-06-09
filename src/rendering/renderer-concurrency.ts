@@ -136,6 +136,15 @@ function getProjectMutex(projectId: string): Mutex {
   return mutex;
 }
 
+export function __getProjectMutexForTests(projectId: string): Mutex | undefined {
+  return projectMutexes.get(projectId);
+}
+
+export function __resetProjectConcurrencyForTests(): void {
+  projectRenderCounts.clear();
+  projectMutexes.clear();
+}
+
 // ---------------------------------------------------------------------------
 // Slot Functions
 // ---------------------------------------------------------------------------
@@ -183,7 +192,6 @@ export async function releaseProjectSlot(
     const current = projectRenderCounts.get(projectId) ?? 0;
     if (current <= 1) {
       projectRenderCounts.delete(projectId);
-      projectMutexes.delete(projectId);
       return;
     }
     projectRenderCounts.set(projectId, current - 1);

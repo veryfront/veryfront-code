@@ -1,7 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { Mutex } from "./renderer-concurrency.ts";
+import {
+  __getProjectMutexForTests,
+  __resetProjectConcurrencyForTests,
+  acquireProjectSlot,
+  Mutex,
+  projectRenderCounts,
+  releaseProjectSlot,
+} from "./renderer-concurrency.ts";
 
 describe("Mutex", () => {
   it("acquires immediately when unlocked", async () => {
@@ -112,5 +119,27 @@ describe("Mutex", () => {
 
     await Promise.all(tasks);
     assertEquals(counter, 20);
+  });
+});
+
+describe("project render slots", () => {
+  it("keeps the project mutex stable after releasing the final slot", async () => {
+    const projectId = `project-${crypto.randomUUID()}`;
+    __resetProjectConcurrencyForTests();
+    try {
+      assertEquals(await acquireProjectSlot(projectId), true);
+      const mutex = __getProjectMutexForTests(projectId);
+
+      await releaseProjectSlot(projectId);
+
+      assertEquals(projectRenderCounts.has(projectId), false);
+      assertEquals(__getProjectMutexForTests(projectId), mutex);
+
+      assertEquals(await acquireProjectSlot(projectId), true);
+      assertEquals(__getProjectMutexForTests(projectId), mutex);
+    } finally {
+      await releaseProjectSlot(projectId);
+      __resetProjectConcurrencyForTests();
+    }
   });
 });
