@@ -60,6 +60,7 @@ type AgentRuntimeMessageLikePart =
     result?: unknown;
     output?: unknown;
   }
+  | { type: "runtime-context"; name: string; state: Record<string, unknown> }
   | { type: "image"; url: string; mediaType: string }
   | { type: "file"; url: string; mediaType: string };
 
@@ -79,6 +80,7 @@ export type AgentRuntimeMessagePart =
     toolName: string;
     result: unknown;
   }
+  | { type: "runtime-context"; name: string; state: Record<string, unknown> }
   | { type: "image"; url: string; mediaType: string }
   | { type: "file"; url: string; mediaType: string };
 

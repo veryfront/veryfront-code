@@ -101,6 +101,11 @@ export const getMessagePartSchema = defineSchema((v) =>
     inlineToolCallPartShape(v),
     getToolResultPartSchema(),
     v.object({
+      type: v.literal("runtime-context"),
+      name: v.string(),
+      state: v.record(v.string(), v.unknown()),
+    }),
+    v.object({
       type: v.literal("image"),
       url: v.string(),
       mediaType: v.string(),

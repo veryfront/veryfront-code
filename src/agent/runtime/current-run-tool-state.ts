@@ -35,6 +35,11 @@ export type CurrentRunToolStateHydrationMessage = {
   role?: string;
   parts?: readonly unknown[];
 };
+export type CurrentRunToolStateRuntimeContextPart = {
+  type: "runtime-context";
+  name: "current-run-tool-state";
+  state: CurrentRunToolState;
+};
 
 const MAX_FALLBACK_ITEMS = 5;
 const MAX_FALLBACK_STRING_LENGTH = 300;
@@ -45,7 +50,6 @@ const MAX_EVIDENCE_RECORDS = 25;
 const MAX_EVIDENCE_FIELDS_PER_RECORD = 12;
 const MAX_STRUCTURED_ASSERTION_LINES = 80;
 const RECORD_ID_PATTERN = /\b[A-Z][A-Z0-9]+-\d{4}-\d{3,}\b/g;
-const NEXT_RECORD_ID_PATTERN = /\b[A-Z][A-Z0-9]+-\d{4}-\d{3,}\b/;
 const GUARDED_FACT_ALIASES: Record<string, string[]> = {
   supplier: ["supplier", "vendor"],
   vendor: ["vendor", "supplier"],
@@ -60,6 +64,16 @@ const NON_EVIDENCE_TOOL_NAMES = new Set([
   "load_skill",
   "load_skill_reference",
   "execute_skill_script",
+]);
+const WEAK_FIELD_MATCH_TOKENS = new Set([
+  "id",
+  "ids",
+  "name",
+  "names",
+  "ref",
+  "refs",
+  "reference",
+  "references",
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -180,13 +194,13 @@ function extractEvidenceFromMarkdownTable(
   }
 
   for (const row of rows) {
-    const rowIds = row.flatMap(getRecordIds);
-    for (const recordId of rowIds) {
-      for (const [index, value] of row.entries()) {
-        const field = headers[index] ?? "";
-        if (!field || getRecordIds(value).includes(recordId)) continue;
-        mergeEvidenceField(evidenceByRecordId, recordId, field, value);
-      }
+    const recordId = row.flatMap(getRecordIds)[0];
+    if (!recordId) continue;
+
+    for (const [index, value] of row.entries()) {
+      const field = headers[index] ?? "";
+      if (!field || getRecordIds(value).includes(recordId)) continue;
+      mergeEvidenceField(evidenceByRecordId, recordId, field, value);
     }
   }
 
@@ -238,6 +252,35 @@ function getExpectedEvidenceField(
   return null;
 }
 
+function getCompatibleEvidenceField(
+  fields: Record<string, string>,
+  field: string,
+): { field: string; value: string } | null {
+  const expected = getExpectedEvidenceField(fields, field);
+  if (expected) return expected;
+
+  const fieldTokens = getComparableFieldTokens(field);
+  if (fieldTokens.length === 0) return null;
+
+  for (const [evidenceField, value] of Object.entries(fields)) {
+    const evidenceTokens = getComparableFieldTokens(evidenceField);
+    if (evidenceTokens.length === 0) continue;
+    if (
+      fieldTokens.length === evidenceTokens.length && fieldTokens.every((token, index) => {
+        return token === evidenceTokens[index];
+      })
+    ) {
+      return { field: evidenceField, value };
+    }
+  }
+
+  return null;
+}
+
+function getComparableFieldTokens(field: string): string[] {
+  return field.split("_").filter((token) => token && !WEAK_FIELD_MATCH_TOKENS.has(token));
+}
+
 function hasCompanyLikeShape(value: string): boolean {
   if (getRecordIds(value).length > 0) return false;
   if (/[€$£¥]\s?\d|\d{4,}/.test(value)) return false;
@@ -250,6 +293,7 @@ function hasCompanyLikeShape(value: string): boolean {
 
 function extractAssertedFieldValues(text: string): Array<{ field: string; value: string }> {
   const assertions: Array<{ field: string; value: string }> = [];
+
   for (const field of Object.keys(GUARDED_FACT_ALIASES)) {
     const aliases = GUARDED_FACT_ALIASES[field] ?? [field];
     for (const alias of aliases) {
@@ -269,25 +313,50 @@ function extractAssertedFieldValues(text: string): Array<{ field: string; value:
 }
 
 function valuesConflict(actual: string, expected: string): boolean {
-  const normalize = (value: string) => normalizeWhitespace(value).toLowerCase();
-  const left = normalize(actual);
-  const right = normalize(expected);
+  const left = normalizeComparableValue(actual);
+  const right = normalizeComparableValue(expected);
   return left !== right && !left.includes(right) && !right.includes(left);
+}
+
+function normalizeComparableValue(value: string): string {
+  const normalized = normalizeWhitespace(value).toLowerCase();
+  const numeric = normalizeNumericValue(value);
+  return numeric ?? normalized;
+}
+
+function normalizeNumericValue(value: string): string | null {
+  const compact = normalizeWhitespace(value)
+    .replace(/\p{Sc}/gu, "")
+    .replace(/,/g, "")
+    .replace(/\s+/g, "");
+  if (!/^[+-]?\d+(?:\.\d+)?$/.test(compact)) return null;
+
+  const parsed = Number.parseFloat(compact);
+  return Number.isFinite(parsed) ? parsed.toFixed(2) : null;
 }
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function getRecordTextWindows(text: string, recordId: string): string[] {
+function getRecordBoundaryPattern(recordIds: readonly string[]): RegExp {
+  return new RegExp(`\\b(?:${recordIds.map(escapeRegExp).join("|")})\\b`, "g");
+}
+
+function getRecordTextWindows(
+  text: string,
+  recordId: string,
+  boundaryRecordIds: readonly string[],
+): string[] {
   const windows: string[] = [];
   const pattern = new RegExp(escapeRegExp(recordId), "g");
+  const boundaryPattern = getRecordBoundaryPattern(boundaryRecordIds);
 
   for (const match of text.matchAll(pattern)) {
     const index = match.index ?? 0;
     const before = text.slice(0, index);
     const after = text.slice(index + recordId.length);
-    const previousRecordMatches = Array.from(before.matchAll(RECORD_ID_PATTERN));
+    const previousRecordMatches = Array.from(before.matchAll(boundaryPattern));
     const previousRecordMatch = previousRecordMatches.at(-1);
     const previousRecordEnd = previousRecordMatch && typeof previousRecordMatch.index === "number"
       ? previousRecordMatch.index + previousRecordMatch[0].length
@@ -297,7 +366,8 @@ function getRecordTextWindows(text: string, recordId: string): string[] {
       before.lastIndexOf("\n"),
       before.lastIndexOf(";"),
     );
-    const nextRecordMatch = after.match(NEXT_RECORD_ID_PATTERN);
+    boundaryPattern.lastIndex = 0;
+    const nextRecordMatch = boundaryPattern.exec(after);
     const nextRecordIndex = nextRecordMatch?.index;
     const windowEnd = typeof nextRecordIndex === "number"
       ? Math.max(0, nextRecordIndex)
@@ -356,6 +426,57 @@ function collectStructuredAssertionLines(
   return lines;
 }
 
+type StructuredContextFieldAssertion = {
+  recordId: string;
+  field: string;
+  value: string;
+};
+
+function directRecordIdsFromRecord(value: Record<string, unknown>): string[] {
+  const ids: string[] = [];
+  for (const entry of Object.values(value)) {
+    const primitiveValue = primitiveStructuredValueToString(entry);
+    if (primitiveValue !== null) ids.push(...getRecordIds(primitiveValue));
+  }
+  return Array.from(new Set(ids));
+}
+
+function collectStructuredContextFieldAssertions(
+  value: unknown,
+  assertions: StructuredContextFieldAssertion[] = [],
+  activeRecordIds: readonly string[] = [],
+  fieldName?: string,
+): StructuredContextFieldAssertion[] {
+  const primitiveValue = primitiveStructuredValueToString(value);
+  if (primitiveValue !== null) {
+    if (fieldName) {
+      const field = normalizeEvidenceField(fieldName);
+      for (const recordId of activeRecordIds) {
+        if (primitiveValue === recordId) continue;
+        assertions.push({ recordId, field, value: primitiveValue });
+      }
+    }
+    return assertions;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectStructuredContextFieldAssertions(item, assertions, activeRecordIds, fieldName);
+    }
+    return assertions;
+  }
+
+  if (!isRecord(value)) return assertions;
+
+  const directRecordIds = directRecordIdsFromRecord(value);
+  const recordIds = directRecordIds.length > 0 ? directRecordIds : activeRecordIds;
+  for (const [key, entry] of Object.entries(value)) {
+    collectStructuredContextFieldAssertions(entry, assertions, recordIds, key);
+  }
+
+  return assertions;
+}
+
 export function validateInvokeAgentInputAgainstCurrentRunEvidence(
   state: CurrentRunToolState,
   input: unknown,
@@ -373,9 +494,12 @@ export function validateInvokeAgentInputAgainstCurrentRunEvidence(
   );
   if (!text) return { ok: true };
 
-  for (const recordId of getRecordIds(text)) {
+  const recordIds = getRecordIds(text).filter((recordId) =>
+    Object.keys(getEvidenceFieldsForRecord(state, recordId)).length > 0
+  );
+  for (const recordId of recordIds) {
     const evidenceFields = getEvidenceFieldsForRecord(state, recordId);
-    for (const window of getRecordTextWindows(text, recordId)) {
+    for (const window of getRecordTextWindows(text, recordId, recordIds)) {
       for (const assertion of extractAssertedFieldValues(window)) {
         const expected = getExpectedEvidenceField(evidenceFields, assertion.field);
         if (!expected || !valuesConflict(assertion.value, expected.value)) continue;
@@ -388,6 +512,20 @@ export function validateInvokeAgentInputAgainstCurrentRunEvidence(
         };
       }
     }
+  }
+
+  for (const assertion of collectStructuredContextFieldAssertions(input.context)) {
+    const evidenceFields = getEvidenceFieldsForRecord(state, assertion.recordId);
+    const expected = getCompatibleEvidenceField(evidenceFields, assertion.field);
+    if (!expected || !valuesConflict(assertion.value, expected.value)) continue;
+
+    return {
+      ok: false,
+      error:
+        `invoke_agent context conflicts with current run evidence: ${assertion.recordId} ${expected.field} is ` +
+        `"${expected.value}", but context.${assertion.field} is "${assertion.value}". ` +
+        "Regenerate the tool call from recorded evidence, or delegate only the record id.",
+    };
   }
 
   return { ok: true };
@@ -711,6 +849,37 @@ function isToolResultLikePart(part: unknown): part is Record<string, unknown> {
   return getToolCallIdentity(part) !== null && ("result" in part || "output" in part);
 }
 
+function isCurrentRunToolStateRuntimeContextPart(
+  part: unknown,
+): part is CurrentRunToolStateRuntimeContextPart {
+  return isRecord(part) && part.type === "runtime-context" &&
+    part.name === "current-run-tool-state" && isRecord(part.state);
+}
+
+function mergeCurrentRunToolState(target: CurrentRunToolState, source: CurrentRunToolState): void {
+  for (const [toolName, bucket] of Object.entries(source)) {
+    const targetBucket = target[toolName] ?? { calls: {} };
+    for (const [fingerprint, call] of Object.entries(bucket.calls ?? {})) {
+      const existing = targetBucket.calls[fingerprint];
+      targetBucket.calls[fingerprint] = existing
+        ? {
+          ...call,
+          toolCallIds: Array.from(new Set([...existing.toolCallIds, ...call.toolCallIds])),
+        }
+        : call;
+    }
+    target[toolName] = targetBucket;
+  }
+}
+
+export function createCurrentRunToolStateRuntimeContextPart(
+  state: CurrentRunToolState,
+): CurrentRunToolStateRuntimeContextPart | null {
+  return hasCurrentRunToolState(state)
+    ? { type: "runtime-context", name: "current-run-tool-state", state }
+    : null;
+}
+
 export function hydrateCurrentRunToolStateFromMessages(
   state: CurrentRunToolState,
   messages: readonly CurrentRunToolStateHydrationMessage[],
@@ -720,6 +889,11 @@ export function hydrateCurrentRunToolStateFromMessages(
 
   for (const message of messages) {
     for (const part of message.parts ?? []) {
+      if (isCurrentRunToolStateRuntimeContextPart(part)) {
+        mergeCurrentRunToolState(state, part.state);
+        continue;
+      }
+
       if (isToolCallPart(part)) {
         const identity = getToolCallIdentity(part);
         if (!identity) continue;

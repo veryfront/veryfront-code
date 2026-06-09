@@ -2,6 +2,11 @@ import { estimateTokens } from "../../chat/message-prep.ts";
 import { defineSchema } from "../../schemas/index.ts";
 import type { InferSchema } from "../../extensions/schema/index.ts";
 import type { AgentRuntimeMessage } from "../runtime/message-adapter.ts";
+import {
+  createCurrentRunToolState,
+  createCurrentRunToolStateRuntimeContextPart,
+  hydrateCurrentRunToolStateFromMessages,
+} from "../runtime/current-run-tool-state.ts";
 
 export const AGENT_RUN_CONTEXT_COMPACTED_EVENT_TYPE = "AGENT_RUN_CONTEXT_COMPACTED" as const;
 
@@ -105,12 +110,19 @@ function getUsableTokenBudget(
   return options.tokenBudget - options.reserveTokens;
 }
 
+function getBudgetedMessage(message: AgentRuntimeMessage): AgentRuntimeMessage {
+  return {
+    ...message,
+    parts: message.parts.filter((part) => part.type !== "runtime-context"),
+  };
+}
+
 function getMessageTokens(message: AgentRuntimeMessage): number {
-  return estimateTokens(message);
+  return estimateTokens(getBudgetedMessage(message));
 }
 
 function getMessageListTokens(messages: readonly AgentRuntimeMessage[]): number {
-  return estimateTokens(messages);
+  return estimateTokens(messages.map(getBudgetedMessage));
 }
 
 function isUserMessage(message: AgentRuntimeMessage): boolean {
@@ -245,14 +257,22 @@ function createSyntheticSummaryMessage(input: {
   text: string;
   firstKeptEntryId: string;
   timestamp: number;
+  messagesToSummarize: readonly AgentRuntimeMessage[];
 }): AgentRuntimeMessage {
+  const compactedState = createCurrentRunToolState();
+  hydrateCurrentRunToolStateFromMessages(compactedState, input.messagesToSummarize);
+  const statePart = createCurrentRunToolStateRuntimeContextPart(compactedState);
+
   return {
     id: `context_compaction_summary:${input.firstKeptEntryId}`,
     role: "system",
-    parts: [{
-      type: "text",
-      text: `Previous context summary:\n${input.text}`,
-    }],
+    parts: [
+      {
+        type: "text",
+        text: `Previous context summary:\n${input.text}`,
+      },
+      ...(statePart ? [statePart] : []),
+    ],
     timestamp: input.timestamp,
   };
 }
@@ -343,6 +363,8 @@ export async function applyContextBudget(
   const tailStartIndex = expandTailForToolPairs(messages, conversationTailStartIndex);
   const messagesToSummarize = messages.slice(0, tailStartIndex);
   const retainedMessages = messages.slice(tailStartIndex);
+  const summaryMessagesToSummarize = messagesToSummarize.map(getBudgetedMessage);
+  const summaryRetainedMessages = retainedMessages.map(getBudgetedMessage);
   const firstKeptEntryId = retainedMessages[0]?.id;
 
   if (!firstKeptEntryId) {
@@ -353,8 +375,8 @@ export async function applyContextBudget(
   try {
     summary = getContextCompactionSummarySchema().parse(
       await options.summaryGenerator({
-        messagesToSummarize,
-        retainedMessages,
+        messagesToSummarize: summaryMessagesToSummarize,
+        retainedMessages: summaryRetainedMessages,
         customInstructions: options.customInstructions,
       }),
     );
@@ -372,6 +394,7 @@ export async function applyContextBudget(
     text: summary.text,
     firstKeptEntryId,
     timestamp: options.now?.() ?? Date.now(),
+    messagesToSummarize,
   });
   const compactedMessages = [summaryMessage, ...retainedMessages];
   const tokensAfter = getMessageListTokens(compactedMessages);

@@ -183,6 +183,15 @@ describe("agent/schema", () => {
       assertEquals(result.success, true);
     });
 
+    it("should accept internal runtime context part", () => {
+      const result = getMessagePartSchema().safeParse({
+        type: "runtime-context",
+        name: "current-run-tool-state",
+        state: { invoke_agent: { calls: {} } },
+      });
+      assertEquals(result.success, true);
+    });
+
     it("should reject invalid part type", () => {
       const result = getMessagePartSchema().safeParse({
         type: "unknown",

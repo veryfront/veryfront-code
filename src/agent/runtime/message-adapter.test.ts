@@ -467,4 +467,21 @@ describe("agent runtime message adapter", () => {
 
     assertEquals(providerMessages, []);
   });
+
+  it("omits internal runtime context parts from provider messages", () => {
+    assertEquals(
+      convertAgentRuntimeMessagesToProviderMessages([{
+        role: "system",
+        parts: [
+          { type: "text", text: "Previous context summary." },
+          {
+            type: "runtime-context",
+            name: "current-run-tool-state",
+            state: { invoke_agent: { calls: {} } },
+          },
+        ],
+      }]),
+      [{ role: "system", content: "Previous context summary." }],
+    );
+  });
 });

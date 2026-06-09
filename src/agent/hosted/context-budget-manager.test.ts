@@ -5,7 +5,17 @@ import {
   assertRejects,
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
-import type { AgentRuntimeMessage } from "../runtime/message-adapter.ts";
+import {
+  type AgentRuntimeMessage,
+  convertAgentRuntimeMessagesToProviderMessages,
+} from "../runtime/message-adapter.ts";
+import {
+  createCurrentRunToolState,
+  createCurrentRunToolStateRuntimeContextPart,
+  hydrateCurrentRunToolStateFromMessages,
+  recordCurrentRunToolResult,
+  validateInvokeAgentInputAgainstCurrentRunEvidence,
+} from "../runtime/current-run-tool-state.ts";
 import {
   AGENT_RUN_CONTEXT_COMPACTED_EVENT_TYPE,
   applyContextBudget,
@@ -56,6 +66,26 @@ function toolResultMessage(id: string, toolCallId: string): AgentRuntimeMessage 
       toolCallId,
       toolName: "search_docs",
       result: { ok: true },
+    }],
+    timestamp: 1,
+  };
+}
+
+function invoiceEvidenceToolResultMessage(id: string, toolCallId: string): AgentRuntimeMessage {
+  return {
+    id,
+    role: "tool",
+    parts: [{
+      type: "tool-result",
+      toolCallId,
+      toolName: "invoke_agent",
+      result: {
+        summary: {
+          text: "| Invoice | Supplier | Amount | PO |\n" +
+            "| --- | --- | --- | --- |\n" +
+            "| INV-2026-00491 | Meyer Papier GmbH | €2,180.00 | PO-2026-1197 |\n",
+        },
+      },
     }],
     timestamp: 1,
   };
@@ -160,6 +190,107 @@ Deno.test("applyContextBudget keeps tool call and result pairs in the retained t
     "tool-result-1",
     "user-2",
   ]);
+});
+
+Deno.test("applyContextBudget blocks contradicted handoffs after provider-visible evidence is compacted", async () => {
+  const result = await applyContextBudget([
+    message("user-1", "user", "Older goal ".repeat(200)),
+    toolCallMessage("assistant-tool-1", "tool-1"),
+    invoiceEvidenceToolResultMessage("tool-result-1", "tool-1"),
+    message("assistant-1", "assistant", "Older answer ".repeat(100)),
+    message("user-2", "user", "Different follow-up ".repeat(100)),
+    message("assistant-2", "assistant", "Recent answer"),
+    message("user-3", "user", "Schedule the invoice"),
+  ], {
+    tokenBudget: 420,
+    reserveTokens: 20,
+    recentTailTokens: 20,
+    now: () => 123,
+    summaryGenerator: () => ({ text: "Earlier context summarized." }),
+  });
+
+  const providerReplayText = convertAgentRuntimeMessagesToProviderMessages(result.messages)
+    .map((message) => typeof message.content === "string" ? message.content : "")
+    .join("\n");
+  assertEquals(providerReplayText.includes("Meyer Papier GmbH"), false);
+  assertEquals(providerReplayText.includes("PO-2026-1197"), false);
+
+  const state = createCurrentRunToolState();
+  hydrateCurrentRunToolStateFromMessages(state, result.messages);
+
+  const invalid = validateInvokeAgentInputAgainstCurrentRunEvidence(state, {
+    agent_id: "payment-schedule-agent",
+    prompt: "Schedule invoice INV-2026-00491 from supplier Wolff & Partner Consulting GmbH.",
+    context: {
+      invoice: {
+        invoice_id: "INV-2026-00491",
+        supplier: "Wolff & Partner Consulting GmbH",
+      },
+    },
+  });
+
+  assertEquals(invalid.ok, false);
+});
+
+Deno.test("applyContextBudget strips internal runtime context before summary generation", async () => {
+  const compactedState = createCurrentRunToolState();
+  recordCurrentRunToolResult(compactedState, {
+    toolCallId: "invoke-ingest-1",
+    toolName: "invoke_agent",
+    input: { agent_id: "ingest-records-agent", prompt: "Load open records" },
+    result: {
+      summary: {
+        text: "| Invoice | Supplier |\n" +
+          "| --- | --- |\n" +
+          "| INV-2026-00491 | Meyer Papier GmbH |\n",
+      },
+    },
+  });
+  const statePart = createCurrentRunToolStateRuntimeContextPart(compactedState);
+  assertExists(statePart);
+
+  let summaryInputHadRuntimeContext = false;
+  const result = await applyContextBudget([
+    {
+      id: "context_compaction_summary:old-tail",
+      role: "system",
+      parts: [
+        { type: "text", text: "Previous context summary." },
+        statePart,
+      ],
+      timestamp: 1,
+    },
+    message("assistant-1", "assistant", "Older answer ".repeat(100)),
+    message("user-1", "user", "Different follow-up ".repeat(100)),
+    message("assistant-2", "assistant", "Recent answer"),
+    message("user-2", "user", "Schedule the invoice"),
+  ], {
+    tokenBudget: 320,
+    reserveTokens: 20,
+    recentTailTokens: 20,
+    now: () => 123,
+    summaryGenerator: ({ messagesToSummarize }) => {
+      summaryInputHadRuntimeContext = messagesToSummarize.some((entry) =>
+        entry.parts.some((part) => part.type === "runtime-context")
+      );
+      return { text: "Earlier compacted context summarized again." };
+    },
+  });
+
+  assertEquals(summaryInputHadRuntimeContext, false);
+
+  const hydratedState = createCurrentRunToolState();
+  hydrateCurrentRunToolStateFromMessages(hydratedState, result.messages);
+  const invalid = validateInvokeAgentInputAgainstCurrentRunEvidence(hydratedState, {
+    agent_id: "payment-schedule-agent",
+    context: {
+      invoice: {
+        invoice_id: "INV-2026-00491",
+        supplier: "Wolff & Partner Consulting GmbH",
+      },
+    },
+  });
+  assertEquals(invalid.ok, false);
 });
 
 Deno.test("applyContextBudget rejects invalid summary output", async () => {

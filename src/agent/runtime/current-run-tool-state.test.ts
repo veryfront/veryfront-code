@@ -405,6 +405,81 @@ describe("current-run tool state", () => {
     }
   });
 
+  it("blocks invoke_agent context fields that contradict prior evidence for the same record", () => {
+    const state = createCurrentRunToolState();
+
+    recordCurrentRunToolResult(state, {
+      toolCallId: "invoke-ingest-1",
+      toolName: "invoke_agent",
+      input: { agent_id: "ingest-records-agent", prompt: "Load open records" },
+      result: {
+        status: "completed",
+        summary: {
+          text: "| Record | Supplier | Amount | PO | Due date |\n" +
+            "| --- | --- | --- | --- | --- |\n" +
+            "| INV-2026-00491 | Meyer Papier GmbH | €2,180.00 | PO-2026-1197 | 2026-06-18 |\n",
+        },
+      },
+    });
+
+    const invalidAmount = validateInvokeAgentInputAgainstCurrentRunEvidence(state, {
+      agent_id: "payment-schedule-agent",
+      prompt: "Schedule record INV-2026-00491 from structured context.",
+      context: {
+        record: {
+          record_id: "INV-2026-00491",
+          supplier: "Meyer Papier GmbH",
+          amount: 47250,
+          po_reference: "PO-2026-1197",
+          due_date: "2026-06-18",
+        },
+      },
+    });
+
+    assertEquals(invalidAmount.ok, false);
+    if (!invalidAmount.ok) {
+      assertStringIncludes(invalidAmount.error, 'INV-2026-00491 amount is "€2,180.00"');
+      assertStringIncludes(invalidAmount.error, "47250");
+    }
+
+    const invalidPo = validateInvokeAgentInputAgainstCurrentRunEvidence(state, {
+      agent_id: "payment-schedule-agent",
+      prompt: "Schedule record INV-2026-00491 from structured context.",
+      context: {
+        record: {
+          record_id: "INV-2026-00491",
+          supplier: "Meyer Papier GmbH",
+          amount: 2180,
+          po_reference: "PO-2026-1192",
+          due_date: "2026-06-18",
+        },
+      },
+    });
+
+    assertEquals(invalidPo.ok, false);
+    if (!invalidPo.ok) {
+      assertStringIncludes(invalidPo.error, 'INV-2026-00491 po is "PO-2026-1197"');
+      assertStringIncludes(invalidPo.error, "PO-2026-1192");
+    }
+
+    assertEquals(
+      validateInvokeAgentInputAgainstCurrentRunEvidence(state, {
+        agent_id: "payment-schedule-agent",
+        prompt: "Schedule record INV-2026-00491 from structured context.",
+        context: {
+          record: {
+            record_id: "INV-2026-00491",
+            supplier: "Meyer Papier GmbH",
+            amount: 2180,
+            po_reference: "PO-2026-1197",
+            due_date: "2026-06-18",
+          },
+        },
+      }),
+      { ok: true },
+    );
+  });
+
   it("keeps hidden evidence out of the projected current-run prompt state", () => {
     const state = createCurrentRunToolState();
 
@@ -496,6 +571,26 @@ describe("current-run tool state", () => {
         fields: {
           supplier: "Meyer Papier GmbH",
           purchase_order_id: "PO-2026-1197",
+        },
+      }],
+    );
+  });
+
+  it("treats secondary ids in row tables as field values, not records", () => {
+    assertEquals(
+      extractCurrentRunEvidence({
+        summary: {
+          text: "| Invoice | Supplier | Amount | PO |\n" +
+            "| --- | --- | --- | --- |\n" +
+            "| INV-2026-00491 | Meyer Papier GmbH | €2,180.00 | PO-2026-1197 |\n",
+        },
+      }),
+      [{
+        recordId: "INV-2026-00491",
+        fields: {
+          supplier: "Meyer Papier GmbH",
+          amount: "€2,180.00",
+          po: "PO-2026-1197",
         },
       }],
     );
