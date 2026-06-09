@@ -135,7 +135,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
       }),
     });
 
-    const body = createAgentStreamRequestBody();
+    const body = createAgentStreamRequestBody({
+      credentials: { authToken: "request-scoped-user-token" },
+    });
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
 
     const result = await handler.handle(
@@ -728,7 +730,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
     Deno.env.set("VERYFRONT_API_URL", "https://api.veryfront.org");
     globalThis.fetch = ((url, init) => {
       assertEquals(String(url), "https://api.veryfront.org/mcp");
-      assertEquals(new Headers(init?.headers).get("authorization"), "Bearer run-scoped-token");
+      assertEquals(
+        new Headers(init?.headers).get("authorization"),
+        "Bearer request-scoped-user-token",
+      );
       return Promise.resolve(
         new Response(
           JSON.stringify({
@@ -801,7 +806,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
         }),
       });
 
-      const body = createAgentStreamRequestBody();
+      const body = createAgentStreamRequestBody({
+        credentials: { authToken: "request-scoped-user-token" },
+      });
       const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
         audience: "support-agent-fork",
         requestId: "run_1",
@@ -890,7 +897,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
       }),
     });
 
-    const body = createAgentStreamRequestBody();
+    const body = createAgentStreamRequestBody({
+      credentials: { authToken: "request-scoped-user-token" },
+    });
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
       audience: "support-agent-fork",
       requestId: "run_1",
@@ -906,7 +915,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
     Deno.env.set("VERYFRONT_API_URL", "https://api.veryfront.org");
     globalThis.fetch = ((url, init) => {
       fetchUrls.push(String(url));
-      assertEquals(new Headers(init?.headers).get("authorization"), "Bearer run-scoped-token");
+      assertEquals(
+        new Headers(init?.headers).get("authorization"),
+        "Bearer request-scoped-user-token",
+      );
 
       if (String(url).endsWith("/projects/support-agent-fork/environments")) {
         return Promise.resolve(
@@ -994,7 +1006,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertExists(result.response);
     assertEquals(result.response.status, 200);
     assertEquals(capturedEnv, {
-      VERYFRONT_API_TOKEN: "run-scoped-token",
+      VERYFRONT_API_TOKEN: "request-scoped-user-token",
       VERYFRONT_API_URL: "https://api.veryfront.org",
       VERYFRONT_PROJECT_SLUG: "support-agent-fork",
       CUSTOM_PROJECT_ENV: "project-value",
@@ -1002,7 +1014,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(capturedSystem, "project_reference=support-agent-fork");
     assertEquals(capturedMcpRequest, {
       url: "https://api.veryfront.org/mcp",
-      authorization: "Bearer run-scoped-token",
+      authorization: "Bearer request-scoped-user-token",
     });
     assertEquals(capturedAllowedRemoteTools, ["list_projects", "search_knowledge"]);
     assertEquals(capturedRemoteToolNames, ["search_knowledge", "list_projects"]);

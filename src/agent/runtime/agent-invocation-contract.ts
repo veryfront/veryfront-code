@@ -9,6 +9,7 @@ const MAX_TOOL_PARAMETERS_BYTES = 16_384;
 const MAX_CONTEXT_ITEM_BYTES = 16_384;
 const MAX_CONTEXT_TOTAL_BYTES = 65_536;
 const MAX_FORWARDED_PROPS_BYTES = 196_608;
+const MAX_CREDENTIAL_BYTES = 16_384;
 const encoder = new TextEncoder();
 
 function isWithinJsonSizeLimit(value: unknown, maxBytes: number): boolean {
@@ -296,6 +297,12 @@ export const getRuntimeAgentRunContextSchema = defineSchema((v) =>
  */
 export const RuntimeAgentRunContextSchema = lazySchema(getRuntimeAgentRunContextSchema);
 
+export const getRuntimeAgentCredentialsSchema = defineSchema((v) =>
+  v.object({
+    authToken: v.string().min(1).max(MAX_CREDENTIAL_BYTES),
+  }).strict()
+);
+
 export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
   v.object({
     run: getRuntimeAgentRunContextSchema(),
@@ -306,6 +313,7 @@ export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
       { message: "context must be less than 64 KB total" },
     ),
     agentSource: getRuntimeAgentSourceContextSchema().optional(),
+    credentials: getRuntimeAgentCredentialsSchema().optional(),
     forwardedProps: v.record(v.string(), v.unknown()).optional().refine(
       (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_FORWARDED_PROPS_BYTES),
       { message: "forwardedProps must be less than 192 KB" },
@@ -358,6 +366,7 @@ export type RuntimeAgentControlPlaneStreamRequest = {
   messages: RuntimeAgentRunInvocation["messages"];
   tools: RuntimeAgentRunInvocation["tools"];
   context: RuntimeAgentRunInvocation["context"];
+  credentials?: RuntimeAgentRunInvocation["credentials"];
   agentSource?: RuntimeAgentRunInvocation["agentSource"];
   forwardedProps?: RuntimeAgentRunInvocation["forwardedProps"];
 };
@@ -374,6 +383,7 @@ export function buildRuntimeAgentControlPlaneStreamRequestFromInvocation(
     messages: input.messages,
     tools: input.tools,
     context: input.context,
+    ...(input.credentials ? { credentials: input.credentials } : {}),
     ...(input.agentSource ? { agentSource: input.agentSource } : {}),
     ...(input.forwardedProps ? { forwardedProps: input.forwardedProps } : {}),
   };

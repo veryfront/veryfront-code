@@ -15,6 +15,7 @@ import {
 import { stripLeadingEmptyObjectPlaceholder } from "#veryfront/agent/streaming/data-stream.ts";
 import {
   buildRuntimeAgentControlPlaneStreamRequestFromInvocation,
+  getRuntimeAgentCredentialsSchema,
   getRuntimeAgentRunInvocationSchema,
   getRuntimeAgentSourceContextSchema,
   type RuntimeAgentSourceContext,
@@ -73,6 +74,7 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
       { message: "context must be less than 64 KB total" },
     ),
     agentSource: getRuntimeAgentSourceContextSchema().optional(),
+    credentials: getRuntimeAgentCredentialsSchema().optional(),
     forwardedProps: v.record(v.string(), v.unknown()).optional().refine(
       (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_FORWARDED_PROPS_BYTES),
       { message: "forwardedProps must be less than 192 KB" },
