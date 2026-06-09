@@ -17,6 +17,25 @@ function createConfig(overrides: Partial<VeryfrontTokenConfig> = {}): VeryfrontT
 }
 
 describe("platform/adapters/token/veryfront/api-client", () => {
+  describe("cleanup observability", () => {
+    it("does not swallow failed response body cancellation without debug logging", async () => {
+      const contents = await Deno.readTextFile(
+        "src/platform/adapters/token/veryfront/api-client.ts",
+      );
+
+      assertEquals(
+        contents.includes("response.body?.cancel().catch(() => {})"),
+        false,
+        "non-OK response cleanup should not use an empty catch",
+      );
+      assertEquals(
+        contents.includes("cancelResponseBody"),
+        true,
+        "non-OK response cleanup should go through the shared debug-logging helper",
+      );
+    });
+  });
+
   describe("constructor", () => {
     it("should create client with valid config", () => {
       const client = new TokenStorageApiClient(createConfig());

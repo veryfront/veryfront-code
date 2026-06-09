@@ -9,6 +9,20 @@ const logger = baseLogger.component("token-storage-api-client");
 /** Default timeout for token storage API requests (30 seconds) */
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
+async function cancelResponseBody(response: Response, operation: string): Promise<void> {
+  if (!response.body) return;
+
+  try {
+    await response.body.cancel();
+  } catch (error) {
+    logger.debug("Response body cancellation failed during token storage cleanup", {
+      operation,
+      status: response.status,
+      error,
+    });
+  }
+}
+
 export class TokenStorageApiClient {
   private config: VeryfrontTokenConfig;
 
@@ -30,7 +44,7 @@ export class TokenStorageApiClient {
       }
 
       if (!response.ok) {
-        await response.body?.cancel().catch(() => {});
+        await cancelResponseBody(response, "get");
         throw TOKEN_STORAGE_ERROR.create({
           detail: `Failed to get token: ${response.statusText}`,
           status: response.status,
@@ -58,7 +72,7 @@ export class TokenStorageApiClient {
       });
 
       if (!response.ok) {
-        await response.body?.cancel().catch(() => {});
+        await cancelResponseBody(response, "set");
         throw TOKEN_STORAGE_ERROR.create({
           detail: `Failed to set token: ${response.statusText}`,
           status: response.status,
@@ -82,7 +96,7 @@ export class TokenStorageApiClient {
         return;
       }
 
-      await response.body?.cancel().catch(() => {});
+      await cancelResponseBody(response, "delete");
       throw TOKEN_STORAGE_ERROR.create({
         detail: `Failed to delete token: ${response.statusText}`,
         status: response.status,
@@ -109,7 +123,7 @@ export class TokenStorageApiClient {
       });
 
       if (!response.ok) {
-        await response.body?.cancel().catch(() => {});
+        await cancelResponseBody(response, "list");
         throw TOKEN_STORAGE_ERROR.create({
           detail: `Failed to list tokens: ${response.statusText}`,
           status: response.status,
