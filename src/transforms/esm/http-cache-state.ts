@@ -33,10 +33,27 @@ function getCacheEntryCount(cache: unknown): number {
   return typeof size === "number" ? size : -1;
 }
 
+function estimateStringCacheBytes(cache: unknown): number | undefined {
+  const entries = (cache as { entries?: unknown }).entries;
+  if (typeof entries !== "function") return undefined;
+
+  let total = 0;
+  try {
+    for (const [key, value] of entries.call(cache) as Iterable<[unknown, unknown]>) {
+      total += String(key).length + String(value).length;
+    }
+  } catch (_) {
+    return undefined;
+  }
+
+  return total;
+}
+
 registerCache("http-bundle-paths", () => ({
   name: "http-bundle-paths",
   entries: getCacheEntryCount(getCachedPaths()),
   maxEntries: HTTP_MODULE_CACHE_MAX_ENTRIES,
+  estimatedSizeBytes: estimateStringCacheBytes(getCachedPaths()),
 }));
 
 registerCache("http-bundle-ttl-refreshes", () => ({
