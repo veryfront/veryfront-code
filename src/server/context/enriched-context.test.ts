@@ -38,6 +38,7 @@ function makeOptions(
     branch: null,
     isLocalProject: false,
     contentSourceId: "release-abc123",
+    releaseId: "rel_abc123",
     parsedDomain: stubParsedDomain,
     adapter: stubAdapter,
     config: stubConfig,
@@ -119,11 +120,13 @@ describe("enriched-context", () => {
       assertEquals(ctx.cachePrefix.startsWith("proj_1:production:rel_99:"), true);
     });
 
-    it("should fallback to 'unknown' when releaseId is undefined in production", () => {
-      const ctx = buildEnrichedContext(
-        makeOptions({ environment: "production", releaseId: undefined }),
+    it("should throw when releaseId is undefined in production", () => {
+      assertThrows(
+        () =>
+          buildEnrichedContext(makeOptions({ environment: "production", releaseId: undefined })),
+        Error,
+        "Production requires releaseId for cache isolation",
       );
-      assertEquals(ctx.cachePrefix.startsWith("proj_1:production:unknown:"), true);
     });
 
     it("should use branch as releaseKey in preview environment", () => {
@@ -154,7 +157,13 @@ describe("enriched-context", () => {
     });
 
     it("should leave optional fields undefined when not provided", () => {
-      const ctx = buildEnrichedContext(makeOptions());
+      const ctx = buildEnrichedContext(
+        makeOptions({
+          contentSourceId: "preview-main",
+          environment: "preview",
+          releaseId: undefined,
+        }),
+      );
       assertEquals(ctx.moduleServerUrl, undefined);
       assertEquals(ctx.nonce, undefined);
       assertEquals(ctx.debug, undefined);
