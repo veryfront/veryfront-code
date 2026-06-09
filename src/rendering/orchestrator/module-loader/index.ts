@@ -7,10 +7,9 @@
  * @module rendering/orchestrator/module-loader
  */
 
-import { parallelMap, rendererLogger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
-import { findSourceFile } from "../file-resolver/index.ts";
 import { transformToESM } from "#veryfront/transforms/esm-transform.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getProjectTmpDir } from "#veryfront/modules/react-loader/index.ts";
@@ -23,7 +22,7 @@ import {
 import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
 import { validateCachedBundlesByManifestOrCode } from "#veryfront/transforms/esm/cached-bundle-validation.ts";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
-import { dirname, join, normalize } from "#veryfront/compat/path/index.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import {
   getModulePathCache,
@@ -32,6 +31,10 @@ import {
   saveModulePathCache,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 import { buildMdxEsmPathCacheKey } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
+import {
+  resolveModuleDependencies,
+  rewriteResolvedDependencyImports,
+} from "./dependency-resolver.ts";
 
 const logger = rendererLogger.component("module-loader");
 
@@ -89,85 +92,6 @@ async function ensureDir(adapter: RuntimeAdapter, dir: string): Promise<void> {
     createdDirs.add(dir);
     pruneCreatedDirs();
   }
-}
-
-type AliasImport = { full: string; path: string };
-type RelativeImport = { full: string; path: string; fromDir: string };
-type ResolvedDep = {
-  full: string;
-  path: string;
-  relativePath: string;
-  depFilePath: string | null;
-  isLocalLib: boolean;
-};
-
-async function resolveAliasImport(
-  imp: AliasImport,
-  projectDir: string,
-  adapter: RuntimeAdapter,
-): Promise<ResolvedDep> {
-  const relativePath = imp.path.substring(2); // Remove @/ prefix
-
-  const depFilePath = (await findSourceFile(relativePath, projectDir, adapter)) ??
-    (await findSourceFile(`components/${relativePath}`, projectDir, adapter));
-
-  return { ...imp, relativePath, depFilePath, isLocalLib: false };
-}
-
-async function resolveRelativeImport(
-  imp: RelativeImport,
-  adapter: RuntimeAdapter,
-): Promise<ResolvedDep> {
-  // Resolve the path relative to the file's directory and normalize to resolve ..
-  const basePath = normalize(join(imp.fromDir, imp.path));
-
-  logger.debug("Resolving relative import:", {
-    path: imp.path,
-    fromDir: imp.fromDir,
-    basePath,
-  });
-
-  // Try to find the source file with various extensions
-  const extensions = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
-  let depFilePath: string | null = null;
-
-  // First try the exact path (in case it already has an extension)
-  if (await adapter.fs.exists(basePath)) {
-    const stat = await adapter.fs.stat(basePath);
-    if (!stat.isDirectory) {
-      depFilePath = basePath;
-    }
-  }
-
-  // Try with extensions
-  if (!depFilePath) {
-    for (const ext of extensions) {
-      const pathWithExt = basePath + ext;
-      if (await adapter.fs.exists(pathWithExt)) {
-        depFilePath = pathWithExt;
-        break;
-      }
-    }
-  }
-
-  // Try index files if path is a directory
-  if (!depFilePath) {
-    for (const ext of extensions) {
-      const indexPath = join(basePath, `index${ext}`);
-      if (await adapter.fs.exists(indexPath)) {
-        depFilePath = indexPath;
-        break;
-      }
-    }
-  }
-
-  return {
-    full: imp.full,
-    path: imp.path,
-    relativePath: imp.path,
-    depFilePath,
-    isLocalLib: false,
-  };
 }
 
 /**
@@ -251,47 +175,15 @@ export async function transformModuleWithDeps(
   const readAdapter = useLocalAdapter ? localAdapter : adapter;
   let fileContent = decodeFileContent(await readAdapter.fs.readFile(filePath));
 
-  const fileDir = dirname(filePath);
-
-  // Match @/ alias imports
-  const aliasImports: AliasImport[] = [...fileContent.matchAll(/from\s+["'](@\/[^"']+)["']/g)].map(
-    (m) => ({ full: m[0], path: m[1] ?? "" }),
-  );
-
-  // Match relative imports (./ and ../) - exclude npm:, http://, https://, file://
-  const relativeImports: RelativeImport[] = [
-    ...fileContent.matchAll(/from\s+["'](\.\.?\/[^"']+)["']/g),
-  ]
-    .map((m) => ({ full: m[0], path: m[1] ?? "", fromDir: fileDir }))
-    // Filter out already-transformed file:// imports
-    .filter((imp) => !imp.path.includes("file://"));
-
-  logger.debug("Processing file:", {
+  const resolvedDeps = await resolveModuleDependencies({
+    adapter,
+    fileContent,
     filePath,
-    aliasImportsCount: aliasImports.length,
-    relativeImportsCount: relativeImports.length,
-    aliasImports: aliasImports.map((i) => i.path),
-    relativeImports: relativeImports.map((i) => i.path),
+    projectDir,
   });
 
-  // Resolve alias imports
-  const resolvedAliasDeps = await parallelMap(
-    aliasImports,
-    (imp) => resolveAliasImport(imp, projectDir, adapter),
-  );
-
-  // Resolve relative imports
-  const resolvedRelativeDeps = await parallelMap(
-    relativeImports,
-    (imp) => resolveRelativeImport(imp, adapter),
-  );
-
-  // Combine all resolved dependencies
-  const resolvedDeps = [...resolvedAliasDeps, ...resolvedRelativeDeps];
-
-  const transformedDeps = await parallelMap(
-    resolvedDeps.filter((d) => d.depFilePath),
-    async (dep) => {
+  const transformedDeps = await Promise.all(
+    resolvedDeps.filter((d) => d.depFilePath).map(async (dep) => {
       logger.debug("Found dependency:", {
         path: dep.path,
         depFilePath: dep.depFilePath,
@@ -307,11 +199,11 @@ export async function transformModuleWithDeps(
       );
 
       return { ...dep, depTempPath };
-    },
+    }),
   );
 
+  fileContent = rewriteResolvedDependencyImports(fileContent, transformedDeps);
   for (const dep of transformedDeps) {
-    fileContent = fileContent.replace(dep.full, `from "file://${dep.depTempPath}"`);
     logger.debug("Replaced import:", {
       path: dep.path,
       depTempPath: dep.depTempPath,
