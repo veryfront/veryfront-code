@@ -2,8 +2,37 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path/index.ts";
-import { ensureHttpBundlesExist, invalidateHttpBundle } from "./bundle-recovery.ts";
+import type { CacheBackend } from "#veryfront/cache/types.ts";
+import {
+  ensureHttpBundlesExist,
+  invalidateHttpBundle,
+  recoverHttpBundleByHash,
+} from "./bundle-recovery.ts";
+import { __injectCachesForTests } from "./http-cache-state.ts";
 import { __setDistributedCacheAccessorForTests } from "./http-cache-wrapper.ts";
+
+function createSuffixCacheBackend(entries: Record<string, string>): CacheBackend {
+  const values = new Map(Object.entries(entries));
+
+  function suffixKey(key: string): string {
+    const match = /^[^:]+:([^:]+):(.+)$/.exec(key);
+    if (!match) return key;
+    return `${match[1]}:${match[2]}`;
+  }
+
+  return {
+    type: "memory",
+    get: (key) => Promise.resolve(values.get(suffixKey(key)) ?? null),
+    set: (key, value) => {
+      values.set(suffixKey(key), value);
+      return Promise.resolve();
+    },
+    del: (key) => {
+      values.delete(suffixKey(key));
+      return Promise.resolve();
+    },
+  };
+}
 
 // Force the distributed cache to be unavailable so the recovery/invalidation
 // code paths are fully deterministic and never touch a real backend.
@@ -13,9 +42,67 @@ beforeEach(() => {
 
 afterEach(() => {
   __setDistributedCacheAccessorForTests(null);
+  __injectCachesForTests(null);
 });
 
 describe("transforms/esm/bundle-recovery", () => {
+  describe("recoverHttpBundleByHash", () => {
+    it("writes code recovered by hash from distributed cache and refreshes local path state", async () => {
+      const cacheDir = await Deno.makeTempDir();
+      const cachedPaths = new Map<string, string>();
+      __injectCachesForTests({ cachedPaths });
+      __setDistributedCacheAccessorForTests(() =>
+        Promise.resolve(createSuffixCacheBackend({
+          "code:123": "export const recovered = true;\n",
+          "hash:123": "https://esm.sh/recovered@1",
+        }))
+      );
+
+      try {
+        const recovered = await recoverHttpBundleByHash(
+          "123",
+          cacheDir,
+          () => Promise.resolve(null),
+        );
+
+        assertEquals(recovered, true);
+        assertEquals(
+          await Deno.readTextFile(join(cacheDir, "http-123.mjs")),
+          "export const recovered = true;\n",
+        );
+        assertEquals([...cachedPaths.values()], [join(cacheDir, "http-123.mjs")]);
+      } finally {
+        await Deno.remove(cacheDir, { recursive: true });
+      }
+    });
+
+    it("falls back to original URL re-fetch when distributed cache has URL metadata but no code", async () => {
+      const cacheDir = await Deno.makeTempDir();
+      const calls: Array<{ url: string; cacheDir: string }> = [];
+      __setDistributedCacheAccessorForTests(() =>
+        Promise.resolve(createSuffixCacheBackend({
+          "hash:404": "https://esm.sh/fallback@1",
+        }))
+      );
+
+      try {
+        const recovered = await recoverHttpBundleByHash(
+          "404",
+          cacheDir,
+          (url, options) => {
+            calls.push({ url, cacheDir: options.cacheDir });
+            return Promise.resolve(join(cacheDir, "http-404.mjs"));
+          },
+        );
+
+        assertEquals(recovered, true);
+        assertEquals(calls, [{ url: "https://esm.sh/fallback@1", cacheDir }]);
+      } finally {
+        await Deno.remove(cacheDir, { recursive: true });
+      }
+    });
+  });
+
   describe("ensureHttpBundlesExist", () => {
     it("returns an empty array for an empty bundle list without touching the cache", async () => {
       const failed = await ensureHttpBundlesExist(
