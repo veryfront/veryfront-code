@@ -30,7 +30,7 @@ Purpose-built for TypeScript and React, Veryfront Code gives you everything you 
 
 - [**Memory & Streaming**](https://veryfront.com/docs/code/guides/memory-and-streaming) - Give agents conversation history, streamed responses, and React chat UI components with AG-UI support.
 
-- [**Multi-Agent**](https://veryfront.com/docs/code/guides/multi-agent) - Compose agents that delegate to each other as tools for coordinated work.
+- [**Multi-Agent Systems**](https://veryfront.com/docs/code/guides/multi-agent) - Compose orchestrators and sub-agents that delegate to each other as tools for coordinated work.
 
 - [**Tasks**](https://veryfront.com/docs/code/guides/tasks) - Define file-based background jobs that Veryfront Code discovers and runs as task executions.
 
