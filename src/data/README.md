@@ -129,9 +129,9 @@ export async function getStaticProps(
 
 ```typescript
 import { DataFetcher } from "#data";
-import { getAdapter } from "../adapters/index.ts";
+import { runtime } from "veryfront/platform";
 
-const adapter = await getAdapter();
+const adapter = await runtime.get();
 const fetcher = new DataFetcher({
   projectDir: "./my-app",
   adapter,

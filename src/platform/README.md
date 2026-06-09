@@ -33,38 +33,43 @@ Provides unified abstractions for platform-specific APIs:
 
 ```typescript
 // Automatic platform detection
-import { getAdapter } from "#veryfront/platform/adapters/detect";
+import { runtime } from "veryfront/platform";
 
-const adapter = await getAdapter();
-console.log(adapter.runtime); // 'deno' | 'node' | 'bun' | 'cloudflare'
+const adapter = await runtime.get();
+console.log(adapter.id); // 'deno' | 'node' | 'bun' | 'cloudflare'
 
 // Filesystem operations
-const content = await adapter.fs.readTextFile("/path/to/file.txt");
-await adapter.fs.writeTextFile("/path/to/output.txt", "Hello World");
+const content = await adapter.fs.readFile("/path/to/file.txt");
+await adapter.fs.writeFile("/path/to/output.txt", "Hello World");
 
 const exists = await adapter.fs.exists("/path/to/check.txt");
 const stats = await adapter.fs.stat("/path/to/file.txt");
 
 // HTTP Server
-import { createHttpServer } from "#veryfront/platform/compat/http";
+import { createHttpServer } from "#veryfront/platform/compat/http/index.ts";
 
 const server = createHttpServer();
-await server.listen(3000, async (req) => {
+await server.serve(async (req) => {
   return new Response("Hello!");
+}, {
+  port: 3000,
 });
 
 // File watching
-adapter.fs.watch("/src", (event, path) => {
-  console.log(`File ${event}: ${path}`);
-});
+if (adapter.watcher) {
+  const watcher = adapter.watcher.watch("/src");
+  for await (const event of watcher) {
+    console.log(`Files changed: ${event.paths.join(", ")}`);
+  }
+}
 
-// Cached filesystem (faster reads)
-import { createFileCacheAdapter } from "#veryfront/platform/adapters/fs/cache";
+// File cache
+import { createFileCache } from "#veryfront/platform/adapters/fs/cache/index.ts";
 
-const cachedFs = createFileCacheAdapter(adapter.fs, {
-  maxSize: 100 * 1024 * 1024, // 100MB cache
-  ttl: 5000, // 5 second TTL
+const fileCache = createFileCache({
+  ttl: 5000, // 5 seconds
 });
+await fileCache.setAsync("/src/index.ts", content);
 ```
 
 ## Structure
@@ -208,14 +213,14 @@ const adapter = new BunAdapter();
 ## Testing
 
 ```typescript
-import { assertEquals } from "std/assert/mod.ts";
-import { MockAdapter } from "#veryfront/platform/adapters/mock";
+import { assertEquals } from "veryfront/testing/assert";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 
 Deno.test("Filesystem operations", async () => {
-  const adapter = new MockAdapter();
+  const adapter = createMockAdapter();
 
-  await adapter.fs.writeTextFile("/tmp/test.txt", "Hello");
-  const content = await adapter.fs.readTextFile("/tmp/test.txt");
+  await adapter.fs.writeFile("/tmp/test.txt", "Hello");
+  const content = await adapter.fs.readFile("/tmp/test.txt");
 
   assertEquals(content, "Hello");
 });

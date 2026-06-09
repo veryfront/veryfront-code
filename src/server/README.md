@@ -111,10 +111,10 @@ console.log("Production server running on http://0.0.0.0:8000");
 ```ts
 import { createHandler } from "#server";
 import { getConfig } from "#config";
-import { getAdapter } from "#adapters";
+import { runtime } from "veryfront/platform";
 import { cwd } from "../../platform/compat/process.ts"; // Assuming cwd is available from compat
 
-const adapter = await getAdapter();
+const adapter = await runtime.get();
 const config = await getConfig(cwd(), adapter);
 
 const handler = await createHandler({
@@ -221,7 +221,7 @@ Server-side modules:
 - **#rendering** - SSR and RSC rendering
 - **#api** - API route handling
 - **#middleware** - Request pipeline
-- **#adapters** - Runtime compatibility
+- **veryfront/platform** - Runtime compatibility
 
 ## References
 
