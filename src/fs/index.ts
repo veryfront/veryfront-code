@@ -35,6 +35,7 @@ export {
   mkdir,
   readDir,
   readTextFile,
+  realPath,
   remove,
   writeTextFile,
 } from "#veryfront/platform/compat/fs.ts";

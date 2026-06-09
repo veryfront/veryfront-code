@@ -663,10 +663,12 @@ export class MCPServer {
         level as typeof MCPServer.LOG_LEVELS[number],
       )
     ) {
-      return Promise.reject({
-        code: -32602,
-        message: `Invalid log level: ${level}. Valid levels: ${MCPServer.LOG_LEVELS.join(", ")}`,
-      });
+      return Promise.reject(
+        new JsonRpcError(
+          -32602,
+          `Invalid log level: ${level}. Valid levels: ${MCPServer.LOG_LEVELS.join(", ")}`,
+        ),
+      );
     }
     this.logLevel = level as typeof MCPServer.LOG_LEVELS[number];
     return Promise.resolve({});

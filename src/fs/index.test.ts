@@ -18,6 +18,7 @@ const expectedRuntimeExports = [
   "mkdir",
   "readDir",
   "readTextFile",
+  "realPath",
   "remove",
   "resolve",
   "writeTextFile",
@@ -36,6 +37,7 @@ describe("fs/index.ts exports", () => {
     assertEquals(fsModule.exists, compatFsModule.exists);
     assertEquals(fsModule.remove, compatFsModule.remove);
     assertEquals(fsModule.readDir, compatFsModule.readDir);
+    assertEquals(fsModule.realPath, compatFsModule.realPath);
     assertEquals(fsModule.basename, pathModule.basename);
     assertEquals(fsModule.dirname, pathModule.dirname);
     assertEquals(fsModule.extname, pathModule.extname);

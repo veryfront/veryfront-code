@@ -208,9 +208,10 @@ Deno.test("init handler: returns 500 when state persistence fails", async () => 
   const response = await handler(new Request("http://localhost:3000/api/auth/test-provider"));
 
   assertEquals(response.status, 500);
+  // SEC-009: the response must NOT leak internal error details (e.g. the
+  // underlying "state store failed" message). It is logged server-side only.
   assertEquals(await response.json(), {
     error: "Failed to initiate OAuth flow",
-    details: "state store failed",
   });
 });
 

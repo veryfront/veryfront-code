@@ -59,12 +59,12 @@ function createNotConfiguredResponse(config: OAuthServiceConfig): Response {
   );
 }
 
-function createInitErrorResponse(error: unknown): Response {
+function createInitErrorResponse(): Response {
+  // SEC-009: do NOT leak internal error details (file paths, library
+  // internals) to the client. The caller already logs the full error
+  // server-side; return a generic message here.
   return Response.json(
-    {
-      error: "Failed to initiate OAuth flow",
-      details: error instanceof Error ? error.message : "Unknown error",
-    },
+    { error: "Failed to initiate OAuth flow" },
     { status: 500 },
   );
 }
@@ -151,7 +151,7 @@ export function createOAuthInitHandler(
       return Response.redirect(url);
     } catch (error) {
       logger.error("Init error", { serviceId: config.serviceId }, error);
-      return createInitErrorResponse(error);
+      return createInitErrorResponse();
     }
   };
 }

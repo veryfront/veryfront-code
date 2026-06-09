@@ -338,6 +338,20 @@ export async function symlink(target: string, path: string): Promise<void> {
   await fs.symlink(target, path);
 }
 
+/**
+ * Resolve a path to its canonical absolute form, following symlinks.
+ * Throws if the path does not exist. Useful for containment checks where a
+ * symlink could otherwise escape an intended directory.
+ */
+export async function realPath(path: string): Promise<string> {
+  if (isDeno) {
+    return await denoGlobal().realPath(path);
+  }
+
+  const fs = await import("node:fs/promises");
+  return await fs.realpath(path);
+}
+
 type DenoGlobal = typeof globalThis & {
   Deno?: {
     errors?: {

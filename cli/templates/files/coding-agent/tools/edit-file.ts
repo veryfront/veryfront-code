@@ -1,6 +1,13 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { readTextFile, writeTextFile, resolve, cwd } from "veryfront/fs";
+import { cwd, readTextFile, realPath, resolve, writeTextFile } from "veryfront/fs";
+
+/** True when `target` is the same as, or nested under, `root` (both canonical). */
+function isWithin(root: string, target: string): boolean {
+  const r = root.replace(/\\/g, "/");
+  const t = target.replace(/\\/g, "/");
+  return t === r || t.startsWith(`${r}/`);
+}
 
 export default tool({
   id: "edit-file",
@@ -11,15 +18,21 @@ export default tool({
     replace: v.string().describe("String to replace it with"),
   }))(),
   execute: async ({ path, search, replace }) => {
-    const absolute = resolve(cwd(), path);
-
-    let content: string;
+    let projectDir: string;
+    let absolute: string;
     try {
-      content = await readTextFile(absolute);
+      // Canonicalize both sides so a symlink that points outside the project
+      // is resolved to its real target before the containment check.
+      projectDir = await realPath(cwd());
+      absolute = await realPath(resolve(projectDir, path));
     } catch {
       return { error: `File not found: ${path}` };
     }
+    if (!isWithin(projectDir, absolute)) {
+      return { error: `Path escapes project directory: ${path}` };
+    }
 
+    const content = await readTextFile(absolute);
     if (!content.includes(search)) {
       return { error: "Search string not found in file" };
     }

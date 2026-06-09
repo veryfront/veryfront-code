@@ -34,7 +34,13 @@ export async function readValidCachedModulePath(
 
   try {
     const stat = await getLocalFs().stat(cachedPath);
-    if (!stat?.isFile) return null;
+    if (!stat?.isFile) {
+      // The cached path exists but is no longer a regular file (e.g. replaced
+      // by a directory). Drop the stale entry so we don't re-stat it on every
+      // future lookup.
+      input.pathCache.delete(input.versionedKey);
+      return null;
+    }
 
     const cachedCode = await getLocalFs().readTextFile(cachedPath);
     if (
