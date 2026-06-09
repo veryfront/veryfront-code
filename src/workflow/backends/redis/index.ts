@@ -22,11 +22,7 @@ import { requeueRun } from "../shared/requeue-run.ts";
 import { INITIALIZATION_ERROR, INVALID_ARGUMENT, RESOURCE_NOT_FOUND } from "#veryfront/errors";
 
 import type { RedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
-import {
-  DenoRedisAdapter,
-  getRedisModule,
-  NodeRedisAdapter,
-} from "#veryfront/platform/adapters/redis/index.ts";
+import { getRedisModule, NodeRedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
 
 export type { RedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
 export type { RedisBackendConfig } from "./types.ts";
@@ -205,7 +201,7 @@ export class RedisBackend implements WorkflowBackend {
   }
 
   private async createConnection(): Promise<RedisAdapter> {
-    const { DenoRedis: denoRedis, NodeRedis: nodeRedis } = await getRedisModule();
+    const { NodeRedis: nodeRedis } = await getRedisModule();
 
     if (this.config.debug) {
       logger.debug(
@@ -222,15 +218,6 @@ export class RedisBackend implements WorkflowBackend {
       });
       await client.connect();
       this.client = new NodeRedisAdapter(client);
-      return this.client;
-    }
-
-    if (denoRedis) {
-      const client = await denoRedis.connect({
-        hostname: this.config.hostname,
-        port: this.config.port,
-      });
-      this.client = new DenoRedisAdapter(client);
       return this.client;
     }
 

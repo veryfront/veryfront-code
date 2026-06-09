@@ -11,8 +11,6 @@ import type { RedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
 
 // Re-export platform types for convenience
 export type {
-  DenoRedisClient,
-  DenoRedisModule,
   NodeRedisClient,
   NodeRedisModule,
   RedisAdapter,
