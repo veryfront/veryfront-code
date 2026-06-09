@@ -3,6 +3,7 @@ import { ensureError } from "#veryfront/errors/veryfront-error.ts";
 import { logger as baseLogger } from "#veryfront/utils";
 import { MAX_BATCH_SIZE } from "#veryfront/utils/constants/limits.ts";
 import type { CacheBackend } from "./backend.ts";
+import { buildBatchResults } from "./batch-results.ts";
 
 const logger = baseLogger.component("request-cache-batcher");
 
@@ -122,13 +123,11 @@ async function getIndividually(
   backend: CacheBackend,
   keys: string[],
 ): Promise<Map<string, string | null>> {
-  const results = new Map<string, string | null>();
+  const entries = new Map<string, string | null>();
   await Promise.all(
-    keys.map(async (key) => {
-      results.set(key, await backend.get(key));
-    }),
+    keys.map(async (key) => entries.set(key, await backend.get(key))),
   );
-  return results;
+  return buildBatchResults(keys, (key) => entries.get(key) ?? null);
 }
 
 export function setInRequestCache(key: string, value: string | null): void {
