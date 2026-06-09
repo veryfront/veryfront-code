@@ -23,6 +23,7 @@ export class SessionManager {
   private sessions = new Map<string, number>();
   private readonly ttlMs: number;
   private readonly now: () => number;
+  private sessionHeaderRequired = false;
 
   constructor(options: SessionManagerOptions = {}) {
     this.ttlMs = options.ttlMs ?? DEFAULT_SESSION_TTL_MS;
@@ -33,6 +34,7 @@ export class SessionManager {
     this.pruneExpired();
     const id = crypto.randomUUID();
     this.sessions.set(id, this.now());
+    this.sessionHeaderRequired = true;
     return id;
   }
 
@@ -50,6 +52,7 @@ export class SessionManager {
 
   terminate(id: string): void {
     this.sessions.delete(id);
+    if (this.sessions.size === 0) this.sessionHeaderRequired = false;
   }
 
   get size(): number {
@@ -59,6 +62,11 @@ export class SessionManager {
 
   clear(): void {
     this.sessions.clear();
+    this.sessionHeaderRequired = false;
+  }
+
+  requiresSessionHeader(): boolean {
+    return this.sessionHeaderRequired;
   }
 
   private isExpired(lastSeen: number): boolean {

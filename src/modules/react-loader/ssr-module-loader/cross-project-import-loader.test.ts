@@ -172,7 +172,7 @@ describe("modules/react-loader/ssr-module-loader/cross-project-import-loader", (
     assertEquals(debugLogs.includes("[SSR-MODULE-LOADER] Cross-project import transformed"), true);
   });
 
-  it("rejects source bodies whose UTF-8 byte size exceeds the fallback limit", async () => {
+  it("rejects source bodies whose UTF-8 byte size exceeds the fallback limit before transform", async () => {
     globalCrossProjectCache.clear();
 
     let transformed = false;

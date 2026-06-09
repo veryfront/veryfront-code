@@ -20,6 +20,7 @@ import {
   resolveFrameworkSourcePath,
 } from "#veryfront/platform/compat/framework-source-resolver.ts";
 import { getReactUrls, REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
+import { readLimitedCrossProjectSource } from "./cross-project-source-limit.ts";
 
 const logger = serverLogger.component("module-server");
 
@@ -95,13 +96,6 @@ const SNIPPET_MODULE_PREFIX = /^\/_vf_modules\/_snippets\/([a-f0-9]+)\.js/;
 const CROSS_PROJECT_VERSIONED_PREFIX =
   /^\/_vf_modules\/_cross\/([a-z0-9-]+)@([\d^~x][\d.x^~-]*)\/\@\/(.+)$/;
 const CROSS_PROJECT_LATEST_PREFIX = /^\/_vf_modules\/_cross\/([a-z0-9-]+)\/\@\/(.+)$/;
-/** Max size of a fetched cross-project module source, to bound memory use. */
-const MAX_CROSS_PROJECT_SOURCE_BYTES = 5 * 1024 * 1024; // 5MB
-
-function getSourceByteLength(source: string): number {
-  return new TextEncoder().encode(source).byteLength;
-}
-
 export interface ModuleServerOptions {
   /** Project identifier (directory path, legacy naming) */
   projectId: string;
@@ -781,25 +775,13 @@ async function fetchCrossProjectSource(
     return null;
   }
 
-  // Bound the response size: registryUrl is derived from the request path, so
-  // a crafted cross-project ref could otherwise stream an arbitrarily large
-  // body into memory (OOM). Reject oversized responses up front via
-  // Content-Length, and guard again after reading in case it was absent.
-  const contentLength = Number(response.headers.get("content-length") ?? "");
-  if (Number.isFinite(contentLength) && contentLength > MAX_CROSS_PROJECT_SOURCE_BYTES) {
-    logger.warn("Cross-project source too large", { registryUrl, contentLength });
-    await response.body?.cancel();
-    return null;
-  }
-
-  const text = await response.text();
-  const sourceByteLength = getSourceByteLength(text);
-  if (sourceByteLength > MAX_CROSS_PROJECT_SOURCE_BYTES) {
-    logger.warn("Cross-project source exceeds size limit", {
+  try {
+    return await readLimitedCrossProjectSource(response, registryUrl);
+  } catch (error) {
+    logger.warn("Cross-project source too large", {
       registryUrl,
-      size: sourceByteLength,
+      error: error instanceof Error ? error.message : String(error),
     });
     return null;
   }
-  return text;
 }
