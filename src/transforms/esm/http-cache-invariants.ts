@@ -8,7 +8,13 @@
  */
 
 import { rendererLogger } from "#veryfront/utils";
-import type { BundleHash, LocalModuleCode, PortableModuleCode } from "./http-cache-types.ts";
+import {
+  brand,
+  type BundleHash,
+  type LocalModuleCode,
+  type PortableModuleCode,
+  unbrand,
+} from "./http-cache-types.ts";
 import {
   CACHE_DIR_TOKEN,
   CACHE_INVARIANT_VIOLATION,
@@ -53,7 +59,7 @@ function hasPortableTokens(code: string): boolean {
  * @throws VeryfrontError (cache-invariant-violation) if code contains hardcoded paths
  */
 export function assertPortable(code: PortableModuleCode): void {
-  const codeStr = code as unknown as string;
+  const codeStr = unbrand(code);
 
   if (hasHardcodedCachePaths(codeStr)) {
     logger.error("Invariant violation: hardcoded paths in portable code", {
@@ -75,7 +81,7 @@ export function assertPortable(code: PortableModuleCode): void {
  * @throws VeryfrontError (cache-invariant-violation) if code contains portable tokens
  */
 export function assertLocal(code: LocalModuleCode): void {
-  const codeStr = code as unknown as string;
+  const codeStr = unbrand(code);
 
   if (hasPortableTokens(codeStr)) {
     logger.error("Invariant violation: portable tokens in local code", {
@@ -106,7 +112,7 @@ export function asBundleHash(hash: string): BundleHash {
         `[CACHE INVARIANT VIOLATION] Invalid bundle hash format: "${hash}" (expected numeric)`,
     });
   }
-  return hash as unknown as BundleHash;
+  return brand<BundleHash>(hash);
 }
 
 /**
@@ -124,5 +130,5 @@ export function asLocalModuleCode(code: string): LocalModuleCode {
         `[CACHE INVARIANT VIOLATION] Cannot treat code as LocalModuleCode: contains ${CACHE_DIR_TOKEN} tokens`,
     });
   }
-  return code as unknown as LocalModuleCode;
+  return brand<LocalModuleCode>(code);
 }

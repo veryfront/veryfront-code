@@ -11,6 +11,7 @@ import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { httpBundleCache } from "./http-cache-wrapper.ts";
+import { unbrand } from "./http-cache-types.ts";
 import { extractSourceUrl } from "./source-url-embed.ts";
 import { ensureAbsoluteDir, hasIncompatibleFilePaths } from "./http-cache-helpers.ts";
 
@@ -118,7 +119,7 @@ export async function validateBundleDepsExist(
         return false;
       }
 
-      const code = localCode as unknown as string;
+      const code = unbrand(localCode);
 
       if (hasIncompatibleFilePaths(code, absoluteCacheDir)) {
         logger.debug("Dep has incompatible paths, rejecting cache", { hash });

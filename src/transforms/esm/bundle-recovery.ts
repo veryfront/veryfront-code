@@ -13,6 +13,7 @@ import { join } from "#veryfront/compat/path/index.ts";
 import { rendererLogger } from "#veryfront/utils/logger/logger.ts";
 import { simpleHash } from "#veryfront/utils/hash-utils.ts";
 import { httpBundleCache } from "./http-cache-wrapper.ts";
+import { unbrand } from "./http-cache-types.ts";
 import { VeryfrontError } from "./http-cache-invariants.ts";
 import { extractSourceUrl } from "./source-url-embed.ts";
 import {
@@ -48,7 +49,7 @@ export async function recoverHttpBundleByHash(
     const result = await httpBundleCache.getCodeByHash(hash);
 
     if (result.code) {
-      const cachedCode = result.code as unknown as string;
+      const cachedCode = unbrand(result.code);
 
       if (hasIncompatibleFilePaths(cachedCode, absoluteCacheDir)) {
         logger.warn("Cached code has incompatible file paths, will re-fetch", {
@@ -282,7 +283,7 @@ export async function ensureHttpBundlesExist(
           return;
         }
 
-        const code = localCode as unknown as string;
+        const code = unbrand(localCode);
 
         if (hasIncompatibleFilePaths(code, absoluteCacheDir)) {
           logger.warn(
