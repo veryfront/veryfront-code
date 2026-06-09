@@ -7,6 +7,7 @@ import {
   isClientComponent,
   registerClientRef,
   type RSCComponent,
+  type RSCComponentProps,
 } from "./component-detector.ts";
 import { escapeHtml, renderAttributes, treeToHTML } from "./html-generator.ts";
 import { serializeProps } from "./prop-serializer.ts";
@@ -14,10 +15,9 @@ import { serializeProps } from "./prop-serializer.ts";
 const logger = serverLogger.component("rsc");
 
 /** Recursively renders a component tree to RSC nodes */
-export async function renderTree(
-  // deno-lint-ignore no-explicit-any -- RSC components accept arbitrary props at runtime
-  Component: React.ComponentType<any> | React.ReactElement | string | number | null | undefined,
-  props: Record<string, unknown>,
+export async function renderTree<Props extends RSCComponentProps = RSCComponentProps>(
+  Component: React.ComponentType<Props> | React.ReactElement | string | number | null | undefined,
+  props: Props,
   clientManifest: Map<string, ClientComponentMeta>,
   clientRefs: Map<string, string>,
 ): Promise<RSCNode> {
@@ -33,7 +33,7 @@ export async function renderTree(
     return { type: "html", html: escapeHtml(String(Component)) };
   }
 
-  const rscComponent = Component as RSCComponent;
+  const rscComponent = Component as unknown as RSCComponent;
 
   if (isClientComponent(rscComponent, clientManifest)) {
     const componentId = getComponentId(rscComponent);
@@ -48,8 +48,8 @@ export async function renderTree(
 
   try {
     const element = Component.prototype?.render
-      ? React.createElement(Component as React.ComponentClass, props)
-      : await (Component as React.FC)(props);
+      ? React.createElement(Component as React.ComponentClass<Props>, props)
+      : await (Component as React.FC<Props>)(props);
 
     if (!element) return { type: "html", html: "" };
     if (React.isValidElement(element)) return processElement(element, clientManifest, clientRefs);
@@ -100,7 +100,12 @@ export async function processElement(
   }
 
   if (typeof type === "function") {
-    return renderTree(type, props, clientManifest, clientRefs);
+    return renderTree(
+      type as React.ComponentType<RSCComponentProps>,
+      props,
+      clientManifest,
+      clientRefs,
+    );
   }
 
   const html = await renderToStringAdapter(element);

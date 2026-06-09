@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
+import { join } from "#veryfront/compat/path";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   getComponentId,
@@ -14,6 +15,31 @@ function makeComponent(overrides: Partial<RSCComponent> = {}): RSCComponent {
 }
 
 describe("rendering/rsc/server-renderer/component-detector", () => {
+  describe("type boundary", () => {
+    it("does not use explicit any for production RSC component props", async () => {
+      const sourceDir = join("src", "rendering", "rsc", "server-renderer");
+      const productionSources = [
+        "component-detector.ts",
+        "rsc-renderer.ts",
+        "tree-processor.ts",
+      ];
+
+      for (const source of productionSources) {
+        const contents = await Deno.readTextFile(join(sourceDir, source));
+        assertEquals(
+          contents.includes("React.ComponentType<any>"),
+          false,
+          `${source} should use the shared arbitrary-props component type`,
+        );
+        assertEquals(
+          contents.includes("no-explicit-any"),
+          false,
+          `${source} should not need an explicit-any lint suppression`,
+        );
+      }
+    });
+  });
+
   describe("isClientComponent", () => {
     it("should return false for null/undefined component", () => {
       assertEquals(isClientComponent(null as unknown as RSCComponent, new Map()), false);
