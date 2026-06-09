@@ -4,20 +4,14 @@ import {
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { getLocalReactPaths } from "#veryfront/platform/compat/react-paths.ts";
-import { hashString } from "#veryfront/cache/hash.ts";
 
 interface SSRRewriteOptions {
   /** Project slug for multi-project routing */
   projectSlug?: string | null;
   /** Branch name for branch-aware routing */
   branch?: string | null;
-  /**
-   * Cache buster appended as `&v=` to rewritten module URLs. Defaults to a
-   * content hash of the source so identical input produces identical output
-   * (a per-call `Date.now()` would defeat all downstream caching). Pass an
-   * explicit value only when you need a different invalidation key.
-   */
-  cacheBuster?: number | string;
+  /** Cache buster timestamp */
+  cacheBuster?: number;
   /** Cross-project reference (e.g., "demo@0.0") for @/ path rewrites */
   crossProjectRef?: string;
   /** React version to use for import rewrites */
@@ -89,7 +83,7 @@ function rewriteBareImports(code: string, version?: string): string {
 }
 
 function rewritePathAliases(code: string, options: SSRRewriteOptions): string {
-  const { projectSlug, branch, cacheBuster = hashString(code), crossProjectRef } = options;
+  const { projectSlug, branch, cacheBuster = Date.now(), crossProjectRef } = options;
   const projectParam = projectSlug ? `&project=${projectSlug}` : "";
   const branchParam = branch ? `&branch=${branch}` : "";
 
@@ -105,7 +99,7 @@ function rewritePathAliases(code: string, options: SSRRewriteOptions): string {
 }
 
 function rewriteRelativeImports(code: string, options: SSRRewriteOptions): string {
-  const { projectSlug, branch, cacheBuster = hashString(code) } = options;
+  const { projectSlug, branch, cacheBuster = Date.now() } = options;
   const projectParam = projectSlug ? `&project=${projectSlug}` : "";
   const branchParam = branch ? `&branch=${branch}` : "";
 
@@ -115,13 +109,8 @@ function rewriteRelativeImports(code: string, options: SSRRewriteOptions): strin
 }
 
 export function applySSRImportRewrites(code: string, options: SSRRewriteOptions = {}): string {
-  // Resolve the cache buster once from the original source so both rewrite
-  // passes share a single deterministic token (content-derived by default).
-  const cacheBuster = options.cacheBuster ?? hashString(code);
-  const resolvedOptions: SSRRewriteOptions = { ...options, cacheBuster };
-
   let result = rewriteBareImports(code, options.reactVersion);
-  result = rewritePathAliases(result, resolvedOptions);
-  result = rewriteRelativeImports(result, resolvedOptions);
+  result = rewritePathAliases(result, options);
+  result = rewriteRelativeImports(result, options);
   return result;
 }
