@@ -48,7 +48,6 @@ import {
 } from "./durable-child-fork-execution.ts";
 import type { HostedChildRunIdentifiers } from "./child-status.ts";
 import {
-  DEFAULT_HOSTED_CHILD_AGENT_ID,
   getHostedChildForkToolInputSchema,
   type HostedChildForkRuntimeConfig,
   type HostedChildForkToolInput,
@@ -147,7 +146,10 @@ export type DefaultHostedInvokeAgentToolOptions<TContext extends DefaultHostedIn
   };
 
 const defaultHostedInvokeAgentSelectionFields = (v: SchemaValidator) => ({
-  agent_id: v.string().optional().describe("Built-in child agent type or user-defined agent id."),
+  agent_id: v.string()
+    .min(1, "agent_id is required")
+    .regex(/\S/, "agent_id must not be blank")
+    .describe("Built-in child agent type or user-defined agent id."),
 });
 
 export const getDefaultHostedInvokeAgentSelectionSchema = defineSchema((v) =>
@@ -183,7 +185,7 @@ const DURABLE_INVOKE_CONTEXT_UNAVAILABLE = "DURABLE_INVOKE_CONTEXT_UNAVAILABLE";
 const DURABLE_INVOKE_SETUP_FAILED = "DURABLE_INVOKE_SETUP_FAILED";
 
 function resolveDefaultChildAgentId(input: DefaultHostedInvokeAgentInput): string {
-  return input.agent_id?.trim() || DEFAULT_HOSTED_CHILD_AGENT_ID;
+  return input.agent_id.trim();
 }
 
 function resolveChildAgentId(
@@ -580,7 +582,7 @@ export function createDefaultHostedInvokeAgentTool<
   >({
     inputSchema: defaultHostedInvokeAgentInputSchema,
     additionalDescriptionParts: [
-      "Use agent_id to target a specific built-in or custom child agent.",
+      "agent_id is required. Use it to target a specific built-in or custom child agent.",
     ],
     buildFailureResult: buildHostedDurableChildInvokeFailureResult,
     decorateResult: withRootOwnedChildResultHint,
