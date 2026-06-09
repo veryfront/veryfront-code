@@ -68,6 +68,7 @@ function createRuntimeAgentRunInvocationBody() {
 describe("server/handlers/request/agent-stream.handler", () => {
   it("streams AG-UI events for a valid signed request", async () => {
     let discoveryCalls = 0;
+    let streamContext: Record<string, unknown> | undefined;
     const handler = new AgentStreamHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
@@ -77,7 +78,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
       sessionManager: new AgentRunSessionManager(),
       resolveRuntimeOwnerInvokeUrl: async () => "http://10.0.0.7:20000/channels/invoke",
       createRuntime: () => ({
-        stream: async (_messages, _context, callbacks) => {
+        stream: async (_messages, context, callbacks) => {
+          streamContext = context;
           callbacks?.onFinish?.({
             text: "hello from runtime",
             messages: [],
@@ -155,6 +157,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertExists(result.response);
     assertEquals(result.response.status, 200);
     assertEquals(discoveryCalls, 1);
+    assertEquals(streamContext?.authToken, "request-scoped-user-token");
     assertEquals(result.response.headers.get("content-type"), "text/event-stream");
     assertEquals(
       result.response.headers.get("x-veryfront-runtime-owner-invoke-url"),
