@@ -2,6 +2,7 @@ import type * as React from "react";
 import { serverLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { ClientComponentMeta, RSCPayload, RSCRendererOptions } from "../types.ts";
+import type { RSCComponentProps } from "./component-detector.ts";
 import { treeToHTML } from "./html-generator.ts";
 import { renderTree } from "./tree-processor.ts";
 
@@ -17,10 +18,9 @@ export class RSCRenderer {
     this.mode = options.mode ?? "development";
   }
 
-  renderToPayload(
-    // deno-lint-ignore no-explicit-any -- RSC components accept arbitrary props at runtime
-    Component: React.ComponentType<any> | React.ReactElement,
-    props: Record<string, unknown> = {},
+  renderToPayload<Props extends RSCComponentProps = RSCComponentProps>(
+    Component: React.ComponentType<Props> | React.ReactElement,
+    props: Props = {} as Props,
   ): Promise<RSCPayload> {
     return withSpan(
       "rsc.renderToPayload",
