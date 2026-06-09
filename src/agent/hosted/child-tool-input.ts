@@ -10,8 +10,8 @@ export const getHostedChildForkToolInputSchema = defineSchema((v) =>
   v.object({
     description: v.string().describe("3-5 word task summary"),
     prompt: v.string().describe("Detailed instructions for the task"),
-    context: v.record(v.string(), getJsonValueSchema()).describe(
-      "Required structured data payload for the child task. Use this for critical facts, records, ids, decisions, and values the child must act on. Use {} only when the delegation has no record or evidence payload.",
+    context: v.record(v.string(), getJsonValueSchema()).default({}).describe(
+      "Structured data payload for the child task. Use this for critical facts, records, ids, decisions, and values the child must act on. Defaults to {} when the delegation has no record or evidence payload.",
     ),
     project_id: v.string().optional().describe(
       "Override project context. Use after studio_open_project.",

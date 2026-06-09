@@ -156,3 +156,36 @@ Deno.test("createDefaultHostedInvokeAgentTool adds child selection guidance and 
   });
   assertEquals(traceAttributes.at(-1)?.["child.agent.id"], "custom-child");
 });
+
+Deno.test("createDefaultHostedInvokeAgentTool treats omitted context as empty structured context", async () => {
+  const traceAttributes: DefaultHostedInvokeAgentTraceAttributes[] = [];
+  const invokeTool = createDefaultHostedInvokeAgentTool(
+    createTestOptions({ traceAttributes }),
+  );
+
+  const result = await invokeTool.execute(
+    {
+      description: "load invoices",
+      prompt: "Load the current supplier invoice working list.",
+      agent_id: "ingest-invoice-agent",
+      max_steps: 10,
+    } as never,
+    { toolCallId: "tool-call-missing-context" },
+  );
+
+  assertEquals(result, {
+    ok: false,
+    status: "failed",
+    text:
+      "invoke_agent failed: invoke_agent requires durable conversation context when durable child runs are enabled.",
+    summary: {
+      text:
+        "invoke_agent failed: invoke_agent requires durable conversation context when durable child runs are enabled.",
+    },
+    terminalErrorCode: "DURABLE_INVOKE_CONTEXT_UNAVAILABLE",
+    terminalErrorMessage:
+      "invoke_agent requires durable conversation context when durable child runs are enabled.",
+  });
+  assertEquals(traceAttributes.at(-1)?.["child.agent.id"], "ingest-invoice-agent");
+  assertEquals(traceAttributes.at(-1)?.["tool.call.id"], "tool-call-missing-context");
+});

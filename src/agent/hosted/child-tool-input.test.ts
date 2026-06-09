@@ -103,13 +103,17 @@ Deno.test("resolveHostedChildForkRuntimeConfig does not append evidence refs", (
   assertEquals(result.effectivePrompt.includes('"result_path":"$.records[0]"'), false);
 });
 
-Deno.test("hostedChildForkToolInputSchema requires structured child context", () => {
-  const result = hostedChildForkToolInputSchema.safeParse({
+Deno.test("hostedChildForkToolInputSchema defaults omitted structured child context", () => {
+  const parsed = hostedChildForkToolInputSchema.parse({
     description: "write tests",
     prompt: "Add focused tests for the changed helper.",
   });
 
-  assertEquals(result.success, false);
+  assertEquals(parsed, {
+    description: "write tests",
+    prompt: "Add focused tests for the changed helper.",
+    context: {},
+  });
 });
 
 Deno.test("hostedChildForkToolInputSchema preserves omitted optional fork controls", () => {
