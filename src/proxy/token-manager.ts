@@ -1,4 +1,4 @@
-import { fetchOAuthToken, type TokenResponse } from "./oauth-client.ts";
+import { fetchOAuthToken, OAuthTokenRequestError, type TokenResponse } from "./oauth-client.ts";
 import type { TokenCache, TokenCacheEntry } from "./cache/types.ts";
 import { MemoryCache } from "./cache/memory-cache.ts";
 import { ProxySpanNames, withSpan } from "./tracing.ts";
@@ -140,7 +140,7 @@ export class TokenManager {
         customDomain,
       });
     } catch (error) {
-      const status = this.parseStatusFromError(error);
+      const status = error instanceof OAuthTokenRequestError ? error.status : null;
       if (status === 400 || status === 404) {
         const projectKey = projectSlug || customDomain;
         const cacheKey = this.getCacheKey(scope, projectKey);
@@ -167,12 +167,6 @@ export class TokenManager {
     });
 
     return response.access_token;
-  }
-
-  private parseStatusFromError(error: unknown): number | null {
-    const message = error instanceof Error ? error.message : String(error);
-    const match = message.match(/failed: (\d+)/);
-    return match ? Number(match[1]) : null;
   }
 
   private calculateExpiresAt(response: TokenResponse): number {

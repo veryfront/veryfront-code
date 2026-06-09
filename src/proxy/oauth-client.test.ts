@@ -23,7 +23,7 @@ describe("OAuth Client", () => {
     });
 
     it("throws on HTTP error", async () => {
-      const { fetchOAuthToken } = await import("./oauth-client.ts");
+      const { fetchOAuthToken, OAuthTokenRequestError } = await import("./oauth-client.ts");
       const { server, port } = createMockServer(
         () => new Response("Unauthorized", { status: 401 }),
       );
@@ -36,9 +36,36 @@ describe("OAuth Client", () => {
               apiClientId: "test",
               apiClientSecret: "test",
             }),
-          Error,
+          OAuthTokenRequestError,
           "401",
         );
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("exposes HTTP status and response text on token request errors", async () => {
+      const { fetchOAuthToken, OAuthTokenRequestError } = await import("./oauth-client.ts");
+      const { server, port } = createMockServer(
+        () => new Response("Project missing", { status: 404 }),
+      );
+
+      try {
+        const error = await assertRejects(
+          () =>
+            fetchOAuthToken({
+              apiBaseUrl: `http://127.0.0.1:${port}`,
+              apiClientId: "test",
+              apiClientSecret: "test",
+            }),
+          OAuthTokenRequestError,
+        );
+
+        if (!(error instanceof OAuthTokenRequestError)) {
+          throw new Error("Expected OAuthTokenRequestError");
+        }
+        assertEquals(error.status, 404);
+        assertEquals(error.responseText, "Project missing");
       } finally {
         await server.shutdown();
       }
