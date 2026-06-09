@@ -397,6 +397,20 @@ describe("html-generation/html-shell-generator", () => {
       );
     });
 
+    it("escapes body class values from frontmatter", async () => {
+      const result = await wrapInHTMLShell(
+        "<div>Content</div>",
+        createMeta({ frontmatter: { bodyClass: `theme" onclick="alert(1)` } }),
+        createOptions(),
+      );
+
+      assertStringIncludes(
+        result,
+        '<body class="theme&quot; onclick=&quot;alert(1)" suppressHydrationWarning>',
+      );
+      assert(!result.includes('class="theme" onclick="alert(1)"'));
+    });
+
     it("should include veryfront-portals div", async () => {
       const result = await wrapInHTMLShell(
         "<div>Content</div>",

@@ -147,6 +147,16 @@ describe("tag-generators", () => {
       assertStringIncludes(result, "</script>");
     });
 
+    it("neutralizes closing script tags in inline script content", () => {
+      const result = generateScriptTags({
+        scripts: [{ content: `globalThis.value="</script><script>alert(1)</script>"` }],
+      });
+
+      assertEquals(result.includes("</script><script>alert(1)</script>"), false);
+      assertStringIncludes(result, `<\\/script><script>alert(1)<\\/script>`);
+      assertStringIncludes(result, "</script>");
+    });
+
     it("should add nonce to inline scripts", () => {
       assertStringIncludes(
         generateScriptTags({ scripts: [{ content: "alert(1);" }] }, "abc123"),
@@ -190,6 +200,16 @@ describe("tag-generators", () => {
         styles: [{ content: "body { color: red; }" }],
       });
       assertStringIncludes(result, "body { color: red; }");
+      assertStringIncludes(result, "</style>");
+    });
+
+    it("neutralizes closing style tags in inline style content", () => {
+      const result = generateStyleTags({
+        styles: [{ content: `body:after{content:"</style><style>body{color:red}</style>"}` }],
+      });
+
+      assertEquals(result.includes("</style><style>body{color:red}</style>"), false);
+      assertStringIncludes(result, `<\\/style><style>body{color:red}<\\/style>`);
       assertStringIncludes(result, "</style>");
     });
 

@@ -74,6 +74,48 @@ describe("HTMLGenerator helpers", () => {
       assertEquals(result.includes("integrity"), false);
     });
 
+    it("escapes collected head attributes and neutralizes raw text closing tags", () => {
+      const result = buildHeadElements({
+        metas: [
+          {
+            name: `viewport" onmouseover="alert(1)`,
+            content: `" < > &`,
+          },
+        ],
+        links: [
+          {
+            rel: `stylesheet" onload="alert(1)`,
+            href: `/style.css?x="<&`,
+          },
+        ],
+        styles: [`body:after{content:"</style><style>body{color:red}</style>"}`],
+        scripts: [
+          {
+            id: `head" onload="alert(1)`,
+            content: `globalThis.value="</script><script>alert(1)</script>"`,
+          },
+        ],
+      } as any);
+
+      assertEquals(result.other.includes('name="viewport" onmouseover="alert(1)"'), false);
+      assertEquals(result.other.includes('rel="stylesheet" onload="alert(1)"'), false);
+      assertEquals(result.scripts.includes('id="head" onload="alert(1)"'), false);
+      assertEquals(result.scripts.includes("</script><script>alert(1)</script>"), false);
+      assertEquals(result.other.includes("</style><style>body{color:red}</style>"), false);
+      assertEquals(result.other.includes('content="&quot; &lt; &gt; &amp;"'), true);
+      assertEquals(
+        result.other.includes('name="viewport&quot; onmouseover=&quot;alert(1)"'),
+        true,
+      );
+      assertEquals(
+        result.other.includes('rel="stylesheet&quot; onload=&quot;alert(1)"'),
+        true,
+      );
+      assertEquals(result.scripts.includes('id="head&quot; onload=&quot;alert(1)"'), true);
+      assertEquals(result.scripts.includes("<\\/script><script>alert(1)<\\/script>"), true);
+      assertEquals(result.other.includes("<\\/style><style>body{color:red}<\\/style>"), true);
+    });
+
     it("should render style tags", () => {
       const head: Head = {
         metas: [],
@@ -259,6 +301,39 @@ describe("HTMLGenerator helpers", () => {
       );
       assertEquals(html.includes('data-theme="dark"'), true);
       assertEquals(html.includes("color-scheme: dark;"), true);
+      assertEquals(html.includes(`localStorage.setItem('theme','dark')`), true);
+    });
+
+    it("escapes nonce values before injecting theme persistence scripts", async () => {
+      const mockAdapter = createMockAdapter(async () => `'use client';`);
+
+      const generator = createHTMLGenerator({
+        readFile: mockAdapter.fs.readFile,
+      });
+
+      const html = await generator.generateFullHTML({
+        html: "<!DOCTYPE html><html><head></head><body><main>Hello</main></body></html>",
+        pageInfo: {
+          entity: {
+            path: "/project/app/page.tsx",
+            frontmatter: {},
+          },
+        } as any,
+        pageBundle: {} as any,
+        layoutBundle: undefined,
+        nestedLayouts: [],
+        collectedMetadata: {},
+        slug: "test-page",
+        ssrHash: "hash123",
+        options: {
+          nonce: `nonce-"<&'`,
+          colorScheme: "dark",
+          colorSchemeFromParam: true,
+        },
+      });
+
+      assertEquals(html.includes('nonce="nonce-&quot;&lt;&amp;&#39;"'), true);
+      assertEquals(html.includes(`nonce="nonce-"<&'"`), false);
       assertEquals(html.includes(`localStorage.setItem('theme','dark')`), true);
     });
 

@@ -1,5 +1,10 @@
 import type { CollectedHead } from "#veryfront/react/head-collector.ts";
 import type { MdxBundle, MDXFrontmatter } from "#veryfront/types";
+import {
+  buildAttributes,
+  escapeInlineScriptContent,
+  escapeInlineStyleContent,
+} from "#veryfront/html/html-escape.ts";
 
 interface FrontmatterContextLike {
   pageInfo: { entity: { frontmatter?: Record<string, unknown> } };
@@ -29,9 +34,9 @@ export function buildHeadElements(head?: CollectedHead): { scripts: string; othe
       attrPairs.push(["data-vf-hash", "vf" + Math.abs(sum).toString(36)]);
     }
 
-    const attrStr = attrPairs.map(([k, v]) => `${k}="${v}"`).join(" ");
+    const attrStr = buildAttributes(Object.fromEntries(attrPairs));
     if (content) {
-      scriptParts.push(`<script ${attrStr}>${content}</script>`);
+      scriptParts.push(`<script ${attrStr}>${escapeInlineScriptContent(content)}</script>`);
     } else if (attrs.src) {
       scriptParts.push(`<script ${attrStr}></script>`);
     }
@@ -40,23 +45,25 @@ export function buildHeadElements(head?: CollectedHead): { scripts: string; othe
   for (const meta of head.metas) {
     if (meta.name === "description") continue;
 
-    const attrs: string[] = [];
-    if (meta.name) attrs.push(`name="${meta.name}"`);
-    if (meta.property) attrs.push(`property="${meta.property}"`);
-    if (meta.content) attrs.push(`content="${meta.content}"`);
-    if (attrs.length) otherParts.push(`<meta ${attrs.join(" ")}>`);
+    const attrs: [string, string][] = [];
+    if (meta.name) attrs.push(["name", meta.name]);
+    if (meta.property) attrs.push(["property", meta.property]);
+    if (meta.content) attrs.push(["content", meta.content]);
+    if (attrs.length) otherParts.push(`<meta ${buildAttributes(Object.fromEntries(attrs))}>`);
   }
 
   for (const link of head.links) {
-    const attrs = Object.entries(link)
-      .filter(([, v]) => v != null)
-      .map(([k, v]) => `${k}="${v}"`)
-      .join(" ");
-    if (attrs) otherParts.push(`<link ${attrs}>`);
+    const attrs = Object.fromEntries(
+      Object.entries(link)
+        .filter(([, v]) => v != null)
+        .map(([k, v]) => [k, String(v)]),
+    );
+    const attrStr = buildAttributes(attrs);
+    if (attrStr) otherParts.push(`<link ${attrStr}>`);
   }
 
   for (const style of head.styles) {
-    otherParts.push(`<style>${style}</style>`);
+    otherParts.push(`<style>${escapeInlineStyleContent(style)}</style>`);
   }
 
   return {

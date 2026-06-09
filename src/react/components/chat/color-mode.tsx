@@ -8,6 +8,7 @@
 
 import * as React from "react";
 import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
+import { jsonForInlineScript } from "#veryfront/security/client/html-sanitizer.ts";
 
 type ColorMode = "light" | "dark" | "system";
 type ResolvedColorMode = "light" | "dark";
@@ -132,8 +133,9 @@ export function ColorModeScript({
   const applyAttribute = attribute === "class"
     ? 'd.classList.add(r);d.classList.remove(r==="dark"?"light":"dark")'
     : 'd.setAttribute("data-theme",r)';
-  const script =
-    `(function(){try{var m=localStorage.getItem("${storageKey}")||"${defaultMode}";var r=m==="system"?globalThis.matchMedia("(prefers-color-scheme:dark)").matches?"dark":"light":m;var d=document.documentElement;${applyAttribute};d.style.colorScheme=r}catch(e){}})()`;
+  const script = `(function(){try{var m=localStorage.getItem(${jsonForInlineScript(storageKey)})||${
+    jsonForInlineScript(defaultMode)
+  };var r=m==="system"?globalThis.matchMedia("(prefers-color-scheme:dark)").matches?"dark":"light":m;var d=document.documentElement;${applyAttribute};d.style.colorScheme=r}catch(e){}})()`;
   return <script dangerouslySetInnerHTML={{ __html: script }} />;
 }
 ColorModeScript.displayName = "ColorModeScript";

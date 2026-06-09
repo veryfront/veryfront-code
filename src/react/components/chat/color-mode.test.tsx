@@ -2,9 +2,9 @@ import * as React from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { ColorModeProvider, useColorMode } from "./color-mode.tsx";
+import { ColorModeProvider, ColorModeScript, useColorMode } from "./color-mode.tsx";
 
 function installDomGlobals(dom: JSDOM): () => void {
   const window = dom.window;
@@ -67,6 +67,18 @@ function ToggleFixture(): React.ReactElement {
 }
 
 describe("react/components/chat/color-mode", () => {
+  it("escapes storage keys before embedding them in the inline color-mode script", () => {
+    const storageKey = `vf";</script><script>alert(1)</script>//`;
+    const element = ColorModeScript({ defaultMode: "dark", storageKey }) as React.ReactElement<{
+      dangerouslySetInnerHTML: { __html: string };
+    }>;
+    const script = element.props.dangerouslySetInnerHTML.__html;
+
+    assertEquals(script.includes(`</script><script>alert(1)</script>`), false);
+    assertStringIncludes(script, `\\u003c/script\\u003e`);
+    assertStringIncludes(script, `localStorage.getItem("vf\\";\\u003c/script`);
+  });
+
   it("updates the html color-scheme inline style when toggling color mode", async () => {
     const dom = new JSDOM(
       '<!doctype html><html style="color-scheme: dark;"><body><div id="root"></div></body></html>',

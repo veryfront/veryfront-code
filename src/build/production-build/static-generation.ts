@@ -21,6 +21,7 @@ import {
 } from "#veryfront/html/styles-builder/index.ts";
 import { DEFAULT_STYLESHEET } from "#veryfront/html/styles-builder/css-hash-cache.ts";
 import { FRAMEWORK_CANDIDATES } from "#veryfront/server/handlers/dev/framework-candidates.generated.ts";
+import { jsonForInlineScript } from "#veryfront/security/client/html-sanitizer.ts";
 
 export interface PageRenderResult {
   html: string;
@@ -354,14 +355,14 @@ function generateClientRuntime(
   return `
   <!-- Page data for hydration -->
   <script data-veryfront-page type="application/json">
-    ${JSON.stringify(pageData)}
+    ${jsonForInlineScript(pageData)}
   </script>
 
   <!-- Client runtime bootstrap -->
   <script type="module">
     import { boot } from '/_veryfront/client.js';
     if (typeof boot === 'function') {
-      boot({ slug: '${route.slug}' });
+      boot({ slug: ${jsonForInlineScript(route.slug)} });
     }
   </script>
 </body>`;
