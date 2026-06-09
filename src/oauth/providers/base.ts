@@ -316,6 +316,7 @@ export class OAuthProvider {
 export class OAuthService extends OAuthProvider {
   protected serviceConfig: OAuthServiceConfig;
   protected tokenStore?: TokenStore;
+  private refreshPromises = new Map<string, Promise<string | null>>();
 
   constructor(config: OAuthServiceConfig, tokenStore?: TokenStore, envReader?: EnvReader) {
     super(config, envReader);
@@ -329,6 +330,10 @@ export class OAuthService extends OAuthProvider {
 
   get apiBaseUrl(): string {
     return this.serviceConfig.apiBaseUrl;
+  }
+
+  private refreshKey(userId: string): string {
+    return JSON.stringify([this.serviceId, userId]);
   }
 
   override createAuthorizationUrl(
@@ -356,7 +361,27 @@ export class OAuthService extends OAuthProvider {
 
     if (!tokens.refreshToken) return null;
 
-    const result = await this.refreshTokens(tokens.refreshToken);
+    const key = this.refreshKey(userId);
+    const existingRefresh = this.refreshPromises.get(key);
+    if (existingRefresh) return existingRefresh;
+
+    const refreshPromise = this.refreshAndStoreAccessToken(userId, tokens.refreshToken);
+    this.refreshPromises.set(key, refreshPromise);
+
+    try {
+      return await refreshPromise;
+    } finally {
+      if (this.refreshPromises.get(key) === refreshPromise) {
+        this.refreshPromises.delete(key);
+      }
+    }
+  }
+
+  private async refreshAndStoreAccessToken(
+    userId: string,
+    refreshToken: string,
+  ): Promise<string | null> {
+    const result = await this.refreshTokens(refreshToken);
     if (!result.success || !result.tokens) return null;
 
     if (!this.tokenStore) {

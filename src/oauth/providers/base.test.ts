@@ -197,6 +197,75 @@ async function withTokenFetch(
 }
 
 Deno.test(
+  "OAuthService.getAccessToken: concurrent expired-token reads share one refresh",
+  async () => {
+    let storedTokens: OAuthTokens = {
+      accessToken: "expired-access-token",
+      refreshToken: "rotating-refresh-token",
+      tokenType: "Bearer",
+      scope: "read",
+      expiresAt: Date.now() - 60_000,
+    };
+    let setTokenCalls = 0;
+    const tokenStore: TokenStore = {
+      getTokens(): Promise<OAuthTokens | null> {
+        return Promise.resolve(storedTokens);
+      },
+      setTokens(_serviceId: string, _userId: string, tokens: OAuthTokens): Promise<void> {
+        setTokenCalls++;
+        storedTokens = tokens;
+        return Promise.resolve();
+      },
+      clearTokens(): Promise<void> {
+        return Promise.resolve();
+      },
+      setState(): Promise<void> {
+        return Promise.resolve();
+      },
+      consumeState(): Promise<StoredOAuthState | null> {
+        return Promise.resolve(null);
+      },
+    };
+    const service = new OAuthService(TEST_CONFIG, tokenStore, (k) => ENV[k]);
+    const original = globalThis.fetch;
+    let refreshCalls = 0;
+    globalThis.fetch = ((): Promise<Response> => {
+      refreshCalls++;
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            access_token: "fresh-access-token",
+            refresh_token: "rotated-refresh-token",
+            token_type: "Bearer",
+            scope: "read",
+            expires_in: 3600,
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      );
+    }) as typeof fetch;
+
+    try {
+      const [first, second] = await Promise.all([
+        service.getAccessToken("user-1"),
+        service.getAccessToken("user-1"),
+      ]);
+
+      assertEquals(first, "fresh-access-token");
+      assertEquals(second, "fresh-access-token");
+      assertEquals(refreshCalls, 1);
+      assertEquals(setTokenCalls, 1);
+      assertEquals(storedTokens.refreshToken, "rotated-refresh-token");
+    } finally {
+      globalThis.fetch = original;
+    }
+  },
+);
+
+Deno.test(
   "OAuthService.exchangeCode: 200 with no access_token is treated as failure (H11)",
   async () => {
     const service = new OAuthService(TEST_CONFIG, makeAuthedTokenStore(), (k) => ENV[k]);
