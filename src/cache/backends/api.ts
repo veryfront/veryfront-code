@@ -85,7 +85,7 @@ export class ApiCacheBackend implements CacheBackend {
 
     try {
       return await this.circuitBreaker.execute(async () => {
-        const url = `${this.apiBaseUrl}/projects/${projectRef}/cache${path}`;
+        const url = `${this.apiBaseUrl}/projects/${encodeURIComponent(projectRef)}/cache${path}`;
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
 
@@ -104,7 +104,10 @@ export class ApiCacheBackend implements CacheBackend {
               }),
             {
               "http.method": method,
-              "http.url": url,
+              // Drop the query string: it carries the (encoded) cache key,
+              // and span attributes bypass log redaction on their way to the
+              // tracing backend.
+              "http.url": url.split("?")[0] ?? url,
               "http.host": new URL(this.apiBaseUrl).host,
               "cache.operation": path,
               "cache.project_slug": projectRef,
