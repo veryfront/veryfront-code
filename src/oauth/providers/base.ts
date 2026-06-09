@@ -312,11 +312,51 @@ export class OAuthProvider {
   }
 }
 
+/**
+ * Module-level singleflight for token refreshes, scoped by TokenStore instance
+ * and then `(serviceId, userId)`. This dedupes separate OAuthService instances
+ * that share the same scoped store without making different project stores
+ * share refresh promises.
+ */
+const refreshInFlightByStore = new WeakMap<TokenStore, Map<string, Promise<string | null>>>();
+
+function getRefreshInFlight(
+  tokenStore: TokenStore,
+  key: string,
+): Promise<string | null> | undefined {
+  return refreshInFlightByStore.get(tokenStore)?.get(key);
+}
+
+function setRefreshInFlight(
+  tokenStore: TokenStore,
+  key: string,
+  promise: Promise<string | null>,
+): void {
+  let storeInflight = refreshInFlightByStore.get(tokenStore);
+  if (!storeInflight) {
+    storeInflight = new Map();
+    refreshInFlightByStore.set(tokenStore, storeInflight);
+  }
+  storeInflight.set(key, promise);
+}
+
+function clearRefreshInFlight(
+  tokenStore: TokenStore,
+  key: string,
+  promise: Promise<string | null>,
+): void {
+  const storeInflight = refreshInFlightByStore.get(tokenStore);
+  if (!storeInflight || storeInflight.get(key) !== promise) return;
+  storeInflight.delete(key);
+  if (storeInflight.size === 0) {
+    refreshInFlightByStore.delete(tokenStore);
+  }
+}
+
 /** Implement oauth service. */
 export class OAuthService extends OAuthProvider {
   protected serviceConfig: OAuthServiceConfig;
   protected tokenStore?: TokenStore;
-  private refreshPromises = new Map<string, Promise<string | null>>();
 
   constructor(config: OAuthServiceConfig, tokenStore?: TokenStore, envReader?: EnvReader) {
     super(config, envReader);
@@ -330,10 +370,6 @@ export class OAuthService extends OAuthProvider {
 
   get apiBaseUrl(): string {
     return this.serviceConfig.apiBaseUrl;
-  }
-
-  private refreshKey(userId: string): string {
-    return JSON.stringify([this.serviceId, userId]);
   }
 
   override createAuthorizationUrl(
@@ -361,19 +397,22 @@ export class OAuthService extends OAuthProvider {
 
     if (!tokens.refreshToken) return null;
 
-    const key = this.refreshKey(userId);
-    const existingRefresh = this.refreshPromises.get(key);
+    if (!this.tokenStore) {
+      throw new Error("TokenStore not configured");
+    }
+
+    const key = JSON.stringify([this.serviceId, userId]);
+    const existingRefresh = getRefreshInFlight(this.tokenStore, key);
     if (existingRefresh) return existingRefresh;
 
+    const tokenStore = this.tokenStore;
     const refreshPromise = this.refreshAndStoreAccessToken(userId, tokens.refreshToken);
-    this.refreshPromises.set(key, refreshPromise);
+    setRefreshInFlight(tokenStore, key, refreshPromise);
 
     try {
       return await refreshPromise;
     } finally {
-      if (this.refreshPromises.get(key) === refreshPromise) {
-        this.refreshPromises.delete(key);
-      }
+      clearRefreshInFlight(tokenStore, key, refreshPromise);
     }
   }
 

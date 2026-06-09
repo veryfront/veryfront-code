@@ -367,3 +367,121 @@ Deno.test(
     );
   },
 );
+
+Deno.test(
+  "OAuthService.getAccessToken: separate service instances share refresh by token store",
+  async () => {
+    const expired: OAuthTokens = {
+      accessToken: "old-token",
+      refreshToken: "refresh-token",
+      tokenType: "Bearer",
+      scope: "read",
+      idToken: undefined,
+      expiresAt: Date.now() - 1_000,
+    };
+    let setCount = 0;
+    const store: TokenStore = {
+      getTokens: () => Promise.resolve(expired),
+      setTokens: () => {
+        setCount++;
+        return Promise.resolve();
+      },
+      clearTokens: () => Promise.resolve(),
+      setState: () => Promise.resolve(),
+      consumeState: () => Promise.resolve(null),
+    };
+    const firstService = new OAuthService(TEST_CONFIG, store, (k) => ENV[k]);
+    const secondService = new OAuthService(TEST_CONFIG, store, (k) => ENV[k]);
+
+    const original = globalThis.fetch;
+    let tokenCalls = 0;
+    globalThis.fetch = ((input: string | URL | Request): Promise<Response> => {
+      const url = typeof input === "string"
+        ? input
+        : input instanceof URL
+        ? input.toString()
+        : input.url;
+      if (url === TEST_CONFIG.tokenUrl) tokenCalls++;
+      return Promise.resolve(
+        new Response(JSON.stringify({ access_token: "new-token", token_type: "Bearer" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    }) as typeof fetch;
+
+    try {
+      const [first, second] = await Promise.all([
+        firstService.getAccessToken("user-concurrent"),
+        secondService.getAccessToken("user-concurrent"),
+      ]);
+      assertEquals(first, "new-token");
+      assertEquals(second, "new-token");
+      assertEquals(tokenCalls, 1);
+      assertEquals(setCount, 1);
+    } finally {
+      globalThis.fetch = original;
+    }
+  },
+);
+
+Deno.test(
+  "OAuthService.getAccessToken: separate token stores do not share refresh promises",
+  async () => {
+    function makeExpiredStore(refreshToken: string): TokenStore {
+      const expired: OAuthTokens = {
+        accessToken: `old-${refreshToken}`,
+        refreshToken,
+        tokenType: "Bearer",
+        scope: "read",
+        idToken: undefined,
+        expiresAt: Date.now() - 1_000,
+      };
+      return {
+        getTokens: () => Promise.resolve(expired),
+        setTokens: () => Promise.resolve(),
+        clearTokens: () => Promise.resolve(),
+        setState: () => Promise.resolve(),
+        consumeState: () => Promise.resolve(null),
+      };
+    }
+
+    const firstService = new OAuthService(
+      TEST_CONFIG,
+      makeExpiredStore("refresh-a"),
+      (k) => ENV[k],
+    );
+    const secondService = new OAuthService(
+      TEST_CONFIG,
+      makeExpiredStore("refresh-b"),
+      (k) => ENV[k],
+    );
+
+    const original = globalThis.fetch;
+    const refreshBodies: string[] = [];
+    globalThis.fetch = ((
+      _input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      refreshBodies.push(String(init?.body ?? ""));
+      return Promise.resolve(
+        new Response(JSON.stringify({ access_token: "new-token", token_type: "Bearer" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    }) as typeof fetch;
+
+    try {
+      await Promise.all([
+        firstService.getAccessToken("same-user"),
+        secondService.getAccessToken("same-user"),
+      ]);
+      assertEquals(refreshBodies.length, 2);
+      assertEquals(refreshBodies.some((body) => body.includes("refresh-a")), true);
+      assertEquals(refreshBodies.some((body) => body.includes("refresh-b")), true);
+    } finally {
+      globalThis.fetch = original;
+    }
+  },
+);
