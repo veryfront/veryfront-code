@@ -1,3 +1,7 @@
+import { serverLogger } from "#veryfront/utils";
+
+const logger = serverLogger.component("hosted-lifecycle");
+
 /** State for hosted lifecycle terminal. */
 export interface HostedLifecycleTerminalState {
   status: "completed" | "failed" | "cancelled";
@@ -149,7 +153,13 @@ export async function runHostedLifecycle<TRun, TChunk>(
       run,
       terminalState,
       adapter: options.adapter,
-    }).catch(() => undefined);
+    }).catch((terminalHookError) => {
+      logger.debug("Hosted lifecycle terminal hooks failed while preserving execution error", {
+        terminalStatus: terminalState.status,
+        terminalErrorCode: terminalState.terminalErrorCode ?? null,
+        terminalHookError,
+      });
+    });
 
     throw error;
   }
