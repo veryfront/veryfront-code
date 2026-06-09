@@ -1,7 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
-import { clearConfigCache, getCachedConfigSync, getConfig } from "./loader.ts";
+import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
+import { stop as stopEsbuild } from "veryfront/extensions/bundler";
+import {
+  clearConfigCache,
+  getCachedConfigSync,
+  getConfig,
+  transpileConfigSourceForImport,
+} from "./loader.ts";
 import { createMockAdapter } from "../platform/adapters/mock.ts";
 
 function setup() {
@@ -10,6 +16,36 @@ function setup() {
 }
 
 describe("config/loader", () => {
+  describe("transpileConfigSourceForImport", () => {
+    afterAll(async () => {
+      await stopEsbuild();
+    });
+
+    it("should transpile typed config files without rewriting string literals", async () => {
+      const source = `
+type LocalConfig = { title: string; description: string };
+const literal = "keep as const text";
+const config: LocalConfig = {
+  title: "Typed Project",
+  description: literal as string,
+};
+
+export default config as const;
+`;
+
+      const result = await transpileConfigSourceForImport(source, "/app/veryfront.config.ts");
+      const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+        default: { title: string; description: string };
+      };
+
+      assert(!result.includes("type LocalConfig"));
+      assert(!result.includes(": LocalConfig"));
+      assert(result.includes('"keep as const text"'));
+      assertEquals(module.default.title, "Typed Project");
+      assertEquals(module.default.description, "keep as const text");
+    });
+  });
+
   describe("clearConfigCache", () => {
     it("should not throw when called on empty cache", () => {
       clearConfigCache();
