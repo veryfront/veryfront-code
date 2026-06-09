@@ -6,28 +6,12 @@ import type { RuntimeAgentThinkingConfig } from "../runtime/agent-definition.ts"
 /** Default value for hosted child agent ID. */
 export const DEFAULT_HOSTED_CHILD_AGENT_ID = "invoke-agent-child";
 
-const getHostedChildForkEvidenceRefSchema = defineSchema((v) =>
-  v.object({
-    id: v.string().optional().describe("Optional stable evidence reference id."),
-    run_id: v.string().optional().describe("Run id that produced the evidence."),
-    message_id: v.string().optional().describe("Message id that stores the evidence."),
-    tool_call_id: v.string().optional().describe("Tool call id that produced the evidence."),
-    result_path: v.string().optional().describe("JSONPath-style path into the structured result."),
-    label: v.string().optional().describe("Short human-readable label for this evidence."),
-    summary: v.string().optional().describe("Optional compact summary of the referenced evidence."),
-  })
-);
-
 export const getHostedChildForkToolInputSchema = defineSchema((v) =>
   v.object({
     description: v.string().describe("3-5 word task summary"),
     prompt: v.string().describe("Detailed instructions for the task"),
     context: v.record(v.string(), getJsonValueSchema()).describe(
       "Required structured data payload for the child task. Use this for critical facts, records, ids, decisions, and values the child must act on. Use {} only when the delegation has no record or evidence payload.",
-    ),
-    evidence_refs: v.array(getHostedChildForkEvidenceRefSchema()).optional().describe(
-      "Generic source-of-truth references for facts the child must preserve. " +
-        "Use run_id/message_id/tool_call_id plus result_path instead of copying critical facts as prose.",
     ),
     project_id: v.string().optional().describe(
       "Override project context. Use after studio_open_project.",
@@ -75,7 +59,6 @@ export type ResolveHostedChildForkRuntimeConfigInput = {
     | "description"
     | "prompt"
     | "context"
-    | "evidence_refs"
     | "tools"
     | "model"
     | "thinking"
@@ -104,19 +87,6 @@ export function resolveHostedChildForkThinkingOverride(
   return undefined;
 }
 
-function appendEvidenceRefsToPrompt(
-  prompt: string,
-  evidenceRefs: HostedChildForkToolInput["evidence_refs"],
-): string {
-  if (!evidenceRefs || evidenceRefs.length === 0) {
-    return prompt;
-  }
-
-  return `${prompt}\n\n<evidence_refs>\n${
-    JSON.stringify(evidenceRefs)
-  }\n</evidence_refs>\nTreat these references as source-of-truth pointers. If prose conflicts with referenced evidence, prefer the referenced evidence and say what conflicted.`;
-}
-
 function appendStructuredContextToPrompt(
   prompt: string,
   context: HostedChildForkToolInput["context"],
@@ -130,8 +100,7 @@ function appendStructuredContextToPrompt(
 export function resolveHostedChildForkRuntimeConfig(
   input: ResolveHostedChildForkRuntimeConfigInput,
 ): HostedChildForkRuntimeConfig {
-  const { description, prompt, context, evidence_refs, tools, model, thinking, max_steps } =
-    input.forkInput;
+  const { description, prompt, context, tools, model, thinking, max_steps } = input.forkInput;
   const forkModel = input.resolveModelId(model || input.contextModel || input.defaultModel);
   const requestedMaxSteps = typeof max_steps === "number" ? max_steps : undefined;
   const promptWithArtifactPath = withDefaultResearchArtifactPath({
@@ -142,10 +111,7 @@ export function resolveHostedChildForkRuntimeConfig(
 
   return {
     description,
-    effectivePrompt: appendEvidenceRefsToPrompt(
-      appendStructuredContextToPrompt(promptWithArtifactPath, context),
-      evidence_refs,
-    ),
+    effectivePrompt: appendStructuredContextToPrompt(promptWithArtifactPath, context),
     requestedTools: tools,
     forkModel,
     provider: input.resolveProvider(forkModel),

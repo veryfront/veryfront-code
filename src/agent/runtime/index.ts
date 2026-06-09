@@ -121,14 +121,6 @@ import { resolveConfiguredAgentModel, resolveRuntimeModel } from "./model-resolu
 import type { RuntimeGenerateToolResult } from "./runtime-tool-types.ts";
 import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
 import {
-  appendCurrentRunToolStateToSystemPrompt,
-  createCurrentRunToolState,
-  type CurrentRunToolState,
-  hydrateCurrentRunToolStateFromMessages,
-  recordCurrentRunToolResult,
-  validateInvokeAgentInputAgainstCurrentRunEvidence,
-} from "./current-run-tool-state.ts";
-import {
   applySkillDelegationOverridesToToolInput,
   extractSkillDelegationOverrides,
   type SkillDelegationOverrides,
@@ -942,8 +934,6 @@ export class AgentRuntime {
 
       const toolCalls: ToolCall[] = [];
       const currentMessages = [...messages];
-      const currentRunToolState = createCurrentRunToolState();
-      hydrateCurrentRunToolStateFromMessages(currentRunToolState, currentMessages);
       const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
       // Local models can't reliably do function calling — skip tools gracefully.
@@ -991,11 +981,6 @@ export class AgentRuntime {
           tools = filterToolsForSkill(tools, activeSkillPolicy);
         }
 
-        const modelSystemPrompt = appendCurrentRunToolStateToSystemPrompt(
-          currentSystemPrompt,
-          currentRunToolState,
-        );
-
         const response = await withSpan("agent.generate_text", async (span) => {
           setSpanAttributes(span, {
             "model.id": effectiveModel,
@@ -1003,7 +988,7 @@ export class AgentRuntime {
           });
           return generateText({
             model: languageModel,
-            system: modelSystemPrompt,
+            system: currentSystemPrompt,
             messages: convertToTextGenerationRuntimeMessages(currentMessages),
             tools: convertToolsToRuntimeTools(tools, {
               model: effectiveModel,
@@ -1052,7 +1037,6 @@ export class AgentRuntime {
 
         const persistGeneratedToolResult = async (
           generatedToolResult: RuntimeGenerateToolResult,
-          input: unknown = {},
         ): Promise<void> => {
           const toolResultMessage = createToolResultMessage(
             generatedToolResult.toolCallId,
@@ -1064,14 +1048,6 @@ export class AgentRuntime {
           );
           currentMessages.push(toolResultMessage);
           await this.memory.add(toolResultMessage);
-          recordCurrentRunToolResult(currentRunToolState, {
-            toolCallId: generatedToolResult.toolCallId,
-            toolName: generatedToolResult.toolName,
-            input,
-            result: generatedToolResult.isError === true
-              ? { error: stringifyToolError(generatedToolResult.result) }
-              : generatedToolResult.result,
-          });
         };
 
         if (!response.toolCalls?.length) {
@@ -1108,7 +1084,7 @@ export class AgentRuntime {
             setSpanAttributes(toolSpan, { "tool.name": tc.toolName, "tool.id": tc.toolCallId });
 
             if (generatedToolResult) {
-              await persistGeneratedToolResult(generatedToolResult, toolCall.args);
+              await persistGeneratedToolResult(generatedToolResult);
               toolCall.status = generatedToolResult.isError === true ? "error" : "completed";
               toolCall.result = generatedToolResult.result;
               toolCall.error = generatedToolResult.isError === true
@@ -1140,12 +1116,6 @@ export class AgentRuntime {
               };
               currentMessages.push(errorMessage);
               await this.memory.add(errorMessage);
-              recordCurrentRunToolResult(currentRunToolState, {
-                toolCallId: tc.toolCallId,
-                toolName: tc.toolName,
-                input: toolCall.args,
-                result: { error: policyCheck.error },
-              });
               toolCalls.push(toolCall);
               return;
             }
@@ -1160,32 +1130,6 @@ export class AgentRuntime {
                 toolCall.args,
                 activeSkillDelegationOverrides,
               );
-              if (tc.toolName === "invoke_agent") {
-                const evidenceCheck = validateInvokeAgentInputAgainstCurrentRunEvidence(
-                  currentRunToolState,
-                  toolCall.args,
-                );
-                if (!evidenceCheck.ok) {
-                  toolCall.status = "error";
-                  toolCall.error = evidenceCheck.error;
-
-                  const errorMessage = createToolErrorMessage(
-                    tc.toolCallId,
-                    tc.toolName,
-                    evidenceCheck.error,
-                  );
-                  currentMessages.push(errorMessage);
-                  await this.memory.add(errorMessage);
-                  recordCurrentRunToolResult(currentRunToolState, {
-                    toolCallId: tc.toolCallId,
-                    toolName: tc.toolName,
-                    input: toolCall.args,
-                    result: { error: evidenceCheck.error },
-                  });
-                  toolCalls.push(toolCall);
-                  return;
-                }
-              }
               const executionContext = {
                 toolCallId: tc.toolCallId,
                 ...toolContext,
@@ -1206,12 +1150,6 @@ export class AgentRuntime {
                 input: toolCall.args,
                 result,
                 context: executionContext,
-              });
-              recordCurrentRunToolResult(currentRunToolState, {
-                toolCallId: tc.toolCallId,
-                toolName: tc.toolName,
-                input: toolCall.args,
-                result,
               });
 
               toolCall.status = "completed";
@@ -1244,12 +1182,6 @@ export class AgentRuntime {
               );
               currentMessages.push(errorMessage);
               await this.memory.add(errorMessage);
-              recordCurrentRunToolResult(currentRunToolState, {
-                toolCallId: tc.toolCallId,
-                toolName: tc.toolName,
-                input: toolCall.args,
-                result: { error: toolCall.error },
-              });
             }
 
             toolCalls.push(toolCall);
@@ -1304,8 +1236,6 @@ export class AgentRuntime {
 
     const toolCalls: ToolCall[] = [];
     const currentMessages = [...messages];
-    const currentRunToolState = createCurrentRunToolState();
-    hydrateCurrentRunToolStateFromMessages(currentRunToolState, currentMessages);
     const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
     // Local models can't reliably do function calling — skip tools gracefully.
@@ -1356,11 +1286,6 @@ export class AgentRuntime {
         tools = filterToolsForSkill(tools, activeSkillPolicy);
       }
 
-      const modelSystemPrompt = appendCurrentRunToolStateToSystemPrompt(
-        currentSystemPrompt,
-        currentRunToolState,
-      );
-
       const runtimeTools = convertToolsToRuntimeTools(tools, {
         model: effectiveModel,
         providerTools,
@@ -1368,7 +1293,7 @@ export class AgentRuntime {
 
       const result = streamText({
         model: languageModel,
-        system: modelSystemPrompt,
+        system: currentSystemPrompt,
         messages: convertToTextGenerationRuntimeMessages(currentMessages),
         tools: runtimeTools,
         experimental_repairToolCall: repairToolCall,
@@ -1479,17 +1404,6 @@ export class AgentRuntime {
           toolResult.toolCallId,
           toolResultMessage.parts[0] as ToolResultPart,
         );
-        const toolCallInput = state.toolCalls.get(toolResult.toolCallId);
-        recordCurrentRunToolResult(currentRunToolState, {
-          toolCallId: toolResult.toolCallId,
-          toolName: toolResult.toolName,
-          input: toolCallInput?.inputAvailable === true
-            ? captureStreamedToolCallInput(toolCallInput).args
-            : {},
-          result: toolResult.error === undefined
-            ? toolResult.output
-            : { error: stringifyToolError(toolResult.error) },
-        });
       };
 
       if (!shouldContinueAfterStreamStep(state)) {
@@ -1536,7 +1450,6 @@ export class AgentRuntime {
             encoder,
             currentMessages,
             toolCalls,
-            currentRunToolState,
             { emitSse: tc.inputAnnounced === true },
           );
           continue;
@@ -1599,7 +1512,6 @@ export class AgentRuntime {
             encoder,
             currentMessages,
             toolCalls,
-            currentRunToolState,
           );
           continue;
         }
@@ -1613,7 +1525,6 @@ export class AgentRuntime {
             encoder,
             currentMessages,
             toolCalls,
-            currentRunToolState,
           );
           continue;
         }
@@ -1626,24 +1537,6 @@ export class AgentRuntime {
             toolCall.args,
             activeSkillDelegationOverrides,
           );
-          if (tc.name === "invoke_agent") {
-            const evidenceCheck = validateInvokeAgentInputAgainstCurrentRunEvidence(
-              currentRunToolState,
-              toolCall.args,
-            );
-            if (!evidenceCheck.ok) {
-              await this.recordToolError(
-                toolCall,
-                evidenceCheck.error,
-                controller,
-                encoder,
-                currentMessages,
-                toolCalls,
-                currentRunToolState,
-              );
-              continue;
-            }
-          }
 
           callbacks?.onToolCall?.(toolCall);
 
@@ -1667,12 +1560,6 @@ export class AgentRuntime {
             input: toolCall.args,
             result,
             context: executionContext,
-          });
-          recordCurrentRunToolResult(currentRunToolState, {
-            toolCallId: tc.id,
-            toolName: tc.name,
-            input: toolCall.args,
-            result,
           });
 
           toolCall.status = "completed";
@@ -1710,7 +1597,6 @@ export class AgentRuntime {
             encoder,
             currentMessages,
             toolCalls,
-            currentRunToolState,
           );
         }
       }
@@ -1744,7 +1630,6 @@ export class AgentRuntime {
     encoder: TextEncoder,
     currentMessages: Message[],
     toolCalls: ToolCall[],
-    currentRunToolState?: CurrentRunToolState,
     options: { emitSse?: boolean } = {},
   ): Promise<void> {
     toolCall.status = "error";
@@ -1768,14 +1653,6 @@ export class AgentRuntime {
     );
     currentMessages.push(errorMessage);
     await this.memory.add(errorMessage);
-    if (currentRunToolState) {
-      recordCurrentRunToolResult(currentRunToolState, {
-        toolCallId: toolCall.id,
-        toolName: toolCall.name,
-        input: toolCall.args,
-        result: { error: errorStr },
-      });
-    }
   }
 
   /**
