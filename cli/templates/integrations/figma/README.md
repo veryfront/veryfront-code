@@ -5,11 +5,11 @@ A complete OAuth2-based integration for accessing Figma files, components, style
 ## Overview
 
 This integration enables AI assistants to:
-- List and access Figma files across teams and projects
+- Read and analyze Figma files from file or design URLs
 - Read file structure, components, and design systems
 - Get and post comments for design feedback
 - Extract component and style information
-- Navigate team projects and file organization
+- Navigate pages, frames, components, styles, and comments inside known files
 
 ## Features
 
@@ -20,32 +20,25 @@ This integration enables AI assistants to:
 
 ### AI Tools
 
-1. **list-projects** - Browse team projects and files
-   - List all projects in a team
-   - Optional file listing per project
-   - Recent file metadata
-
-2. **list-files** - Discover Figma files
-   - Browse files by team or project
-   - Get file keys, names, thumbnails
-   - Last modified timestamps
-
-3. **get-file** - Deep file inspection
+1. **get-file** - Deep file inspection
    - Complete file structure and metadata
    - Component extraction and documentation
    - Style system information
    - Page organization
 
-4. **get-comments** - Read design feedback
+2. **get-comments** - Read design feedback
    - Threaded comment retrieval
    - Filter by resolution status
    - Author and timestamp information
    - Comment location data
 
-5. **post-comment** - Provide feedback
+3. **post-comment** - Provide feedback
    - Post new comments or replies
    - Attach to specific nodes
    - Positioned annotations
+
+4. **get-me** - Verify connection
+   - Read the connected Figma user profile
 
 ## Setup
 
@@ -56,7 +49,7 @@ This integration enables AI assistants to:
 3. Configure your app:
    - **Name**: Your app name
    - **Callback URL**: `https://yourdomain.com/api/auth/figma/callback`
-   - **Scopes**: `file_content:read` (required)
+   - **Scopes**: `current_user:read`, `file_content:read`, `file_comments:read`, `file_comments:write`
 
 ### 2. Configure Environment Variables
 
@@ -88,8 +81,6 @@ figma/
 │   │   ├── route.ts           # OAuth initiation (14 lines)
 │   │   └── callback/route.ts  # OAuth callback (44 lines)
 │   └── tools/
-│       ├── list-projects.ts   # Project listing (66 lines)
-│       ├── list-files.ts      # File discovery (36 lines)
 │       ├── get-file.ts        # File inspection (46 lines)
 │       ├── get-comments.ts    # Comment reading (71 lines)
 │       └── post-comment.ts    # Comment posting (47 lines)
@@ -144,16 +135,14 @@ await postComment('file-key', 'Great design!', {
 })
 ```
 
-### List Team Projects
+### Read a Figma file URL
 
 ```typescript
-import { getTeamProjects, getProjectFiles } from './lib/figma-client'
+import { getFile } from './lib/figma-client'
 
-const { projects } = await getTeamProjects('team-id')
-for (const project of projects) {
-  const { files } = await getProjectFiles(project.id)
-  console.log(`${project.name}: ${files.length} files`)
-}
+const file = await getFile('file-key', { depth: 2 })
+console.log(file.name)
+console.log(file.document.children?.map((page) => page.name))
 ```
 
 ## AI Prompt Examples
@@ -238,8 +227,13 @@ export async function getAccessToken(userId: string) {
 ```
 
 ### Scope Requirements
-- `file_content:read` - Required for all read operations (replaces deprecated `file_read`)
+- `current_user:read` - Read the connected Figma user profile
+- `file_content:read` - Read file document trees, including page nodes, for known file keys
+- `file_comments:read` - Read file comments
+- `file_comments:write` - Post and delete file comments
 - Additional scopes can be added in `connector.json`
+
+Figma does not provide an API to list every team available to an OAuth user. The project listing endpoints require restricted access that public OAuth apps cannot rely on, so this connector works from known Figma file or design URLs.
 
 ## Troubleshooting
 
@@ -251,7 +245,7 @@ export async function getAccessToken(userId: string) {
 ### "Figma API error: 404"
 - Verify file key is correct
 - Ensure user has access to the file
-- Check team/project IDs
+- Use a Figma file or design URL, not a team/project browser URL
 
 ### Rate Limiting
 - Figma API has rate limits per OAuth app

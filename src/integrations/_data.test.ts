@@ -185,7 +185,7 @@ describe("integration endpoint specs", () => {
   it("adds endpoint specs for the newly configured integration providers", () => {
     const expectedEndpointCounts = new Map([
       ["airtable", 11],
-      ["figma", 6],
+      ["figma", 4],
       ["notion", 8],
     ]);
 
@@ -236,10 +236,23 @@ describe("integration endpoint specs", () => {
     assertEquals(tool.endpoint?.params?.username?.required, true);
   });
 
-  it("requests the Figma current user scope needed by get_me", () => {
+  it("requests only the Figma scopes needed by the exposed profile, file, and comment tools", () => {
     const figma = getConnector("figma");
     assertEquals(figma.auth.scopes?.includes("current_user:read"), true);
     assertEquals(figma.auth.scopes?.includes("file_content:read"), true);
+    assertEquals(figma.auth.scopes?.includes("file_comments:read"), true);
+    assertEquals(figma.auth.scopes?.includes("file_comments:write"), true);
+    assertEquals(figma.auth.scopes?.includes("project_metadata:read"), false);
+    assertEquals(figma.auth.scopes?.includes("projects:read"), false);
+  });
+
+  it("does not expose unsupported Figma project listing tools for public OAuth apps", () => {
+    const figma = getConnector("figma");
+    assertEquals(figma.tools.some((tool) => tool.id === "list_projects"), false);
+    assertEquals(figma.tools.some((tool) => tool.id === "list_files"), false);
+
+    const getFile = getTool("figma", "get_file");
+    assertStringIncludes(getFile.description, "pages");
   });
 
   it("adds static endpoint specs for the next configured integration providers", () => {

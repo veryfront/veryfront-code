@@ -65,7 +65,12 @@ export const figmaConfig: OAuthServiceConfig = {
   clientIdEnvVar: "FIGMA_CLIENT_ID",
   clientSecretEnvVar: "FIGMA_CLIENT_SECRET",
   apiBaseUrl: "https://api.figma.com/v1",
-  defaultScopes: ["file_read"],
+  defaultScopes: [
+    "current_user:read",
+    "file_content:read",
+    "file_comments:read",
+    "file_comments:write",
+  ],
 };
 
 /** Configuration used by linear. */

@@ -2127,32 +2127,10 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://api.figma.com/v1/me" },
     }, {
-      "id": "list_files",
-      "name": "List Files",
-      "description": "List recent Figma files accessible to the user",
-      "requiresWrite": false,
-      "endpoint": {
-        "method": "GET",
-        "url": "https://api.figma.com/v1/projects/{projectId}/files",
-        "params": {
-          "projectId": {
-            "type": "string",
-            "in": "path",
-            "description": "Figma project ID whose files should be listed",
-            "required": true,
-          },
-          "branch_data": {
-            "type": "boolean",
-            "in": "query",
-            "description": "Include branch metadata",
-            "default": false,
-          },
-        },
-      },
-    }, {
       "id": "get_file",
       "name": "Get File",
-      "description": "Get detailed information about a Figma file including components and styles",
+      "description":
+        "Get detailed information about a Figma file, including pages, frames, components, and styles. Requires a Figma file key from a file or design URL.",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -2227,25 +2205,6 @@ export const connectors: IntegrationConfig[] = [
             "description": "Optional Figma comment position metadata",
           },
         },
-      },
-    }, {
-      "id": "list_projects",
-      "name": "List Projects",
-      "description":
-        "List all projects in a team. The teamId is the numeric ID found in the Figma URL: figma.com/files/team/{teamId}/...",
-      "requiresWrite": false,
-      "endpoint": {
-        "method": "GET",
-        "url": "https://api.figma.com/v1/teams/{teamId}/projects",
-        "params": {
-          "teamId": {
-            "type": "string",
-            "in": "path",
-            "description": "Numeric Figma team ID from the URL: figma.com/files/team/{teamId}/...",
-            "required": true,
-          },
-        },
-        "response": { "transform": "projects" },
       },
     }],
     "prompts": [{
