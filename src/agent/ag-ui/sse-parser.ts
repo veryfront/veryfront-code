@@ -271,21 +271,28 @@ export async function parseAgUiSseResponse(
     const reader = response.body.getReader();
     let buffer = "";
 
-    while (true) {
-      const result = await reader.read();
-      if (result.done) {
-        const tail = decoder.decode();
-        if (tail.length > 0) {
-          rawChunks.push(tail);
-          buffer += tail;
+    // try/finally so an error/abort mid-read still releases the reader lock;
+    // otherwise the underlying ReadableStream stays locked and the response
+    // body leaks.
+    try {
+      while (true) {
+        const result = await reader.read();
+        if (result.done) {
+          const tail = decoder.decode();
+          if (tail.length > 0) {
+            rawChunks.push(tail);
+            buffer += tail;
+          }
+          break;
         }
-        break;
-      }
 
-      const decoded = decoder.decode(result.value, { stream: true });
-      rawChunks.push(decoded);
-      buffer += decoded;
-      buffer = consumeSseBuffer(run, buffer, options, state);
+        const decoded = decoder.decode(result.value, { stream: true });
+        rawChunks.push(decoded);
+        buffer += decoded;
+        buffer = consumeSseBuffer(run, buffer, options, state);
+      }
+    } finally {
+      reader.releaseLock();
     }
   }
 

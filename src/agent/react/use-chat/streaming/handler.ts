@@ -63,40 +63,46 @@ export async function handleStreamingResponse(
 
   let buffer = "";
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  // try/finally so a read error or a throwing event handler still releases
+  // the reader lock, otherwise the stream stays locked and leaks.
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? ""; // last element may be incomplete
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? ""; // last element may be incomplete
 
-    for (const line of lines) {
-      if (!line.startsWith("data: ") || !line.trim()) continue;
+      for (const line of lines) {
+        if (!line.startsWith("data: ") || !line.trim()) continue;
 
-      const data = line.slice(6);
+        const data = line.slice(6);
+        try {
+          const raw: unknown = JSON.parse(data);
+          if (!raw || typeof raw !== "object") continue;
+          const parsed = raw as Record<string, unknown>;
+          processStreamEvent(parsed, state, callbacks, getBuildParts);
+        } catch (_) {
+          /* expected: skip malformed JSON in SSE stream */
+        }
+      }
+    }
+
+    // Process any remaining buffered data
+    if (buffer.startsWith("data: ") && buffer.trim()) {
       try {
-        const raw: unknown = JSON.parse(data);
-        if (!raw || typeof raw !== "object") continue;
-        const parsed = raw as Record<string, unknown>;
-        processStreamEvent(parsed, state, callbacks, getBuildParts);
-      } catch (_) {
-        /* expected: skip malformed JSON in SSE stream */
+        const raw: unknown = JSON.parse(buffer.slice(6));
+        if (raw && typeof raw === "object") {
+          const parsed = raw as Record<string, unknown>;
+          processStreamEvent(parsed, state, callbacks, getBuildParts);
+        }
+      } catch {
+        // Skip invalid JSON
       }
     }
-  }
-
-  // Process any remaining buffered data
-  if (buffer.startsWith("data: ") && buffer.trim()) {
-    try {
-      const raw: unknown = JSON.parse(buffer.slice(6));
-      if (raw && typeof raw === "object") {
-        const parsed = raw as Record<string, unknown>;
-        processStreamEvent(parsed, state, callbacks, getBuildParts);
-      }
-    } catch {
-      // Skip invalid JSON
-    }
+  } finally {
+    reader.releaseLock();
   }
 }
 
@@ -124,22 +130,28 @@ export async function handleAgUiStreamingResponse(
     }
   };
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  // try/finally so a read error or a throwing event handler still releases
+  // the reader lock, otherwise the stream stays locked and leaks.
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    const decoded = decodeAgUiSseChunk(
-      decoderState,
-      decoder.decode(value, { stream: true }),
-    );
-    for (const event of decoded.events) {
+      const decoded = decodeAgUiSseChunk(
+        decoderState,
+        decoder.decode(value, { stream: true }),
+      );
+      for (const event of decoded.events) {
+        processDecodedEvents(event.chatEvents);
+      }
+    }
+
+    const flushed = flushAgUiSseChunk(decoderState);
+    for (const event of flushed.events) {
       processDecodedEvents(event.chatEvents);
     }
-  }
-
-  const flushed = flushAgUiSseChunk(decoderState);
-  for (const event of flushed.events) {
-    processDecodedEvents(event.chatEvents);
+  } finally {
+    reader.releaseLock();
   }
 }
 
