@@ -1,5 +1,10 @@
 import type { HTMLMetadata } from "#veryfront/transforms/mdx/types.ts";
-import { buildAttributes, escapeHTML } from "./html-escape.ts";
+import {
+  buildAttributes,
+  escapeHTML,
+  escapeInlineScriptContent,
+  escapeInlineStyleContent,
+} from "./html-escape.ts";
 
 function filterAttrs(
   obj: Record<string, unknown>,
@@ -91,7 +96,9 @@ export function generateScriptTags(
       filterAttrs(script, ["content", "src"]),
       nonce,
     );
-    tags.push(`<script ${buildAttributes(attrs)}>${script.content}</script>`);
+    tags.push(
+      `<script ${buildAttributes(attrs)}>${escapeInlineScriptContent(script.content)}</script>`,
+    );
   }
 
   return tags.join("\n  ");
@@ -113,7 +120,9 @@ export function generateStyleTags(metadata: HTMLMetadata, nonce?: string): strin
       filterAttrs(style, ["content", "href"]),
       nonce,
     );
-    tags.push(`<style ${buildAttributes(attrs)}>${style.content}</style>`);
+    tags.push(
+      `<style ${buildAttributes(attrs)}>${escapeInlineStyleContent(style.content)}</style>`,
+    );
   }
 
   return tags.join("\n  ");

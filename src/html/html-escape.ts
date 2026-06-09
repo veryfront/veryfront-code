@@ -18,3 +18,11 @@ export function buildAttributes(attrs: Record<string, string>): string {
 export function buildNonceAttribute(nonce?: string): string {
   return nonce ? ` nonce="${escapeHTML(nonce)}"` : "";
 }
+
+export function escapeInlineScriptContent(content: string): string {
+  return String(content ?? "").replace(/<\/script/gi, "<\\/script");
+}
+
+export function escapeInlineStyleContent(content: string): string {
+  return String(content ?? "").replace(/<\/style/gi, "<\\/style");
+}

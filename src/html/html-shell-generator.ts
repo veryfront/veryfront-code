@@ -342,7 +342,7 @@ async function generateHTMLShellPartsImpl(
   ${modeStyles}
   ${slugForOverlay}
 </head>
-<body${bodyClass ? ` class="${bodyClass}"` : ""} suppressHydrationWarning>
+<body${bodyClass ? ` class="${escapeHTML(bodyClass)}"` : ""} suppressHydrationWarning>
   <div ${rootAttributes}>`;
 
   const relativePagePath = getRelativePagePath(options.pagePath, options.projectDir);

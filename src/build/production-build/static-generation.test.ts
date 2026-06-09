@@ -248,6 +248,43 @@ describe(
         assertEquals(stats.totalSize > 0, true);
       });
 
+      it("escapes route slug before embedding it in the client bootstrap script", async () => {
+        const adapter = createMemoryAdapter();
+        const slug = `bad";globalThis.__xss=1;//`;
+        const renderer = {
+          renderPage: () =>
+            Promise.resolve({
+              html: "<html><head></head><body><div>content</div></body></html>",
+              frontmatter: { description: "</script><script>alert(1)</script>" },
+              headings: [],
+            }),
+          destroy: () => Promise.resolve(),
+        } as unknown as VeryfrontRenderer;
+
+        await buildPagesRoutes(
+          [{ slug, path: "/bad", file: "pages/bad.mdx" }],
+          {
+            adapter,
+            projectDir: "/tmp/project",
+            outputDir: "/tmp/output",
+            renderer,
+            config: createMockConfig(),
+            enablePrefetch: false,
+            chunkManifest: null,
+            dryRun: false,
+          },
+        );
+
+        const html =
+          [...adapter.fs.files.values()].find((value) =>
+            value.includes("Client runtime bootstrap")
+          ) ?? "";
+        assertStringIncludes(html, `boot({ slug: ${JSON.stringify(slug)} });`);
+        assertEquals(html.includes(`boot({ slug: '${slug}' });`), false);
+        assertEquals(html.includes("</script><script>alert(1)</script>"), false);
+        assertStringIncludes(html, "\\u003c/script\\u003e");
+      });
+
       it("should handle renderer errors gracefully", async () => {
         const errorRenderer = {
           renderPage: () => Promise.reject(new Error("render failed")),

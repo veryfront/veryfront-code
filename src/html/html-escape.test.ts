@@ -1,7 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { buildAttributes, buildNonceAttribute, escapeHTML, escapeHtml } from "./html-escape.ts";
+import {
+  buildAttributes,
+  buildNonceAttribute,
+  escapeHTML,
+  escapeHtml,
+  escapeInlineScriptContent,
+  escapeInlineStyleContent,
+} from "./html-escape.ts";
 
 describe("html-escape", () => {
   describe("escapeHTML", () => {
@@ -109,6 +116,22 @@ describe("html-escape", () => {
 
     it("should omit the attribute when nonce is missing", () => {
       assertEquals(buildNonceAttribute(undefined), "");
+    });
+  });
+
+  describe("raw text element content escaping", () => {
+    it("neutralizes closing script tags without escaping ordinary script text", () => {
+      assertEquals(
+        escapeInlineScriptContent(`globalThis.value="</script><script>alert(1)</script>"`),
+        `globalThis.value="<\\/script><script>alert(1)<\\/script>"`,
+      );
+    });
+
+    it("neutralizes closing style tags without escaping ordinary style text", () => {
+      assertEquals(
+        escapeInlineStyleContent(`body:after{content:"</style><style>body{color:red}</style>"}`),
+        `body:after{content:"<\\/style><style>body{color:red}<\\/style>"}`,
+      );
     });
   });
 });
