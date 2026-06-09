@@ -281,10 +281,12 @@ async function loadConfigFromTempFile(
   const originalExt = extname(configPath) || ".mjs";
 
   // In compiled Deno binaries, we can't import TypeScript directly.
-  // Convert .ts/.tsx to .mjs and strip TypeScript-specific syntax.
+  // Convert .ts/.tsx to .mjs after running it through the bundler transform.
   const needsTranspile = isDenoCompiled && (originalExt === ".ts" || originalExt === ".tsx");
   const extension = needsTranspile ? ".mjs" : originalExt;
-  const processedSource = needsTranspile ? stripTypeScriptSyntax(source) : source;
+  const processedSource = needsTranspile
+    ? await transpileConfigSourceForImport(source, configPath)
+    : source;
 
   const tempDir = await fs.makeTempDir({ prefix: "vf-config-" });
   const tempFile = join(tempDir, `config${extension}`);
@@ -298,23 +300,20 @@ async function loadConfigFromTempFile(
   }
 }
 
-/**
- * Strip TypeScript-specific syntax for runtime import in compiled binaries.
- * This is a simple transformation for config files which typically don't use complex TS features.
- */
-function stripTypeScriptSyntax(source: string): string {
-  return source
-    // Remove 'as const' assertions
-    .replace(/\s+as\s+const\b/g, "")
-    // Remove type annotations (: string, : number, etc.)
-    .replace(
-      /:\s*(?:string|number|boolean|any|unknown|never|void|null|undefined)(?:\[\])?(?=\s*[,;=\)\}])/g,
-      "",
-    )
-    // Remove 'as Type' assertions
-    .replace(/\s+as\s+[A-Z][a-zA-Z0-9]*(?:<[^>]+>)?/g, "")
-    // Remove generic type parameters from function calls
-    .replace(/<[A-Z][a-zA-Z0-9]*(?:\s*,\s*[A-Z][a-zA-Z0-9]*)*>/g, "");
+/** @internal */
+export async function transpileConfigSourceForImport(
+  source: string,
+  configPath: string,
+): Promise<string> {
+  const { transform } = await import("veryfront/extensions/bundler");
+  const extension = extname(configPath);
+  const loader = extension === ".tsx" ? "tsx" : "ts";
+  const result = await transform(source, {
+    format: "esm",
+    loader,
+    sourcemap: false,
+  });
+  return result.code;
 }
 
 /**
