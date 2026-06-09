@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { validateTrustedHtml } from "./html-sanitizer.ts";
+import { jsonForInlineScript, validateTrustedHtml } from "./html-sanitizer.ts";
 
 describe("validateTrustedHtml", () => {
   describe("allows safe HTML", () => {
@@ -85,5 +85,27 @@ describe("validateTrustedHtml", () => {
         "data: HTML URL",
       );
     });
+  });
+});
+
+describe("jsonForInlineScript", () => {
+  it("escapes script-breaking and JavaScript separator characters", () => {
+    const value = {
+      script: "</script><script>alert(1)</script>",
+      separators: "\u2028\u2029",
+      ampersand: "a&b",
+    };
+
+    const result = jsonForInlineScript(value);
+
+    assertEquals(result.includes("</script>"), false);
+    assertEquals(result.includes("<script>"), false);
+    assertEquals(result.includes("\u2028"), false);
+    assertEquals(result.includes("\u2029"), false);
+    assertStringIncludes(result, "\\u003c/script\\u003e");
+    assertStringIncludes(result, "\\u2028");
+    assertStringIncludes(result, "\\u2029");
+    assertStringIncludes(result, "\\u0026");
+    assertEquals(JSON.parse(result), value);
   });
 });

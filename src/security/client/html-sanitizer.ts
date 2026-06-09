@@ -30,8 +30,8 @@ function createSuspiciousPatterns(): Array<{ pattern: RegExp; name: string }> {
   }));
 }
 
-function jsonForInlineScript(value: unknown): string {
-  return JSON.stringify(value)
+export function jsonForInlineScript(value: unknown, space?: string | number): string {
+  return JSON.stringify(value, null, space)
     .replace(/</g, "\\u003c")
     .replace(/>/g, "\\u003e")
     .replace(/&/g, "\\u0026")

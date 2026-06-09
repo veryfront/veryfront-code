@@ -2,6 +2,7 @@ import type { ComponentProps } from "#veryfront/types";
 import { resolveRelativePath } from "#veryfront/modules/react-loader/path-resolver.ts";
 import { getExtensionName } from "#veryfront/utils/path-utils.ts";
 import { determineClientModuleStrategy } from "#veryfront/rendering/rsc/client-module-strategy.ts";
+import { jsonForInlineScript } from "#veryfront/security/client/html-sanitizer.ts";
 import type { HTMLGenerationOptions } from "../types.ts";
 import type { HydrationDataStructure } from "./types.ts";
 
@@ -84,5 +85,6 @@ export function generateHydrationData(
     studioEmbed: options.studioEmbed,
   };
 
-  return JSON.stringify(data, null, serializeOptions?.pretty ?? true ? 2 : undefined);
+  const pretty = serializeOptions?.pretty ?? true;
+  return jsonForInlineScript(data, pretty ? 2 : undefined);
 }
