@@ -11,8 +11,14 @@
  */
 
 import { serverLogger } from "#veryfront/utils";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 
 const logger = serverLogger.component("route-module-manifest");
+
+/** Bound on tracked routes; manifests are a regenerable preload optimization. */
+const MAX_TRACKED_ROUTES = 2_000;
+/** Bound on in-flight collections; abandoned ones (render errors) get evicted. */
+const MAX_PENDING_COLLECTIONS = 2_000;
 
 interface ModuleEntry {
   path: string;
@@ -30,8 +36,10 @@ interface RouteManifest {
   renderCount: number;
 }
 
-const manifestStore = new Map<string, RouteManifest>();
-const pendingCollections = new Map<string, Set<string>>();
+const manifestStore = new LRUCache<string, RouteManifest>({ maxEntries: MAX_TRACKED_ROUTES });
+const pendingCollections = new LRUCache<string, Set<string>>({
+  maxEntries: MAX_PENDING_COLLECTIONS,
+});
 
 function buildKey(projectSlug: string | undefined, route: string): string {
   return `${projectSlug ?? "default"}:${route || "index"}`;
@@ -207,7 +215,7 @@ export function getManifestStats(): {
   const routes: Array<{ route: string; moduleCount: number; renderCount: number }> = [];
   let totalModules = 0;
 
-  for (const [key, manifest] of manifestStore) {
+  for (const [key, manifest] of manifestStore.entries()) {
     routes.push({
       route: key,
       moduleCount: manifest.moduleCount,
@@ -222,7 +230,8 @@ export function getManifestStats(): {
 export function clearProjectManifests(projectSlug: string): void {
   const prefix = `${projectSlug}:`;
 
-  for (const key of manifestStore.keys()) {
+  // Snapshot keys before deleting to avoid mutating during iteration.
+  for (const key of [...manifestStore.keys()]) {
     if (!key.startsWith(prefix)) continue;
     manifestStore.delete(key);
   }

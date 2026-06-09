@@ -245,8 +245,9 @@ export class OAuthProvider {
       return {
         success: false,
         error: "OAuth not configured",
-        errorDescription:
-          `Missing ${this.config.clientIdEnvVar} or ${this.config.clientSecretEnvVar}`,
+        // Don't leak internal env var names to the caller; this result can
+        // propagate to HTTP responses via OAuthService.
+        errorDescription: "OAuth provider credentials are not configured",
       };
     }
 

@@ -20,6 +20,7 @@ import {
   resolveFrameworkSourcePath,
 } from "#veryfront/platform/compat/framework-source-resolver.ts";
 import { getReactUrls, REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
+import { readLimitedCrossProjectSource } from "./cross-project-source-limit.ts";
 
 const logger = serverLogger.component("module-server");
 
@@ -95,7 +96,6 @@ const SNIPPET_MODULE_PREFIX = /^\/_vf_modules\/_snippets\/([a-f0-9]+)\.js/;
 const CROSS_PROJECT_VERSIONED_PREFIX =
   /^\/_vf_modules\/_cross\/([a-z0-9-]+)@([\d^~x][\d.x^~-]*)\/\@\/(.+)$/;
 const CROSS_PROJECT_LATEST_PREFIX = /^\/_vf_modules\/_cross\/([a-z0-9-]+)\/\@\/(.+)$/;
-
 export interface ModuleServerOptions {
   /** Project identifier (directory path, legacy naming) */
   projectId: string;
@@ -775,5 +775,13 @@ async function fetchCrossProjectSource(
     return null;
   }
 
-  return response.text();
+  try {
+    return await readLimitedCrossProjectSource(response, registryUrl);
+  } catch (error) {
+    logger.warn("Cross-project source too large", {
+      registryUrl,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
 }

@@ -10,6 +10,7 @@ import { writeCacheFile } from "#veryfront/utils/cache-file-ops.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { globalCrossProjectCache } from "./cache/index.ts";
 import type { SSRModuleLoaderOptions } from "./types.ts";
+import { readLimitedCrossProjectSource } from "#veryfront/modules/server/cross-project-source-limit.ts";
 
 interface CrossProjectImportCache {
   hashContentAsync(content: string): Promise<string>;
@@ -89,7 +90,7 @@ export async function transformCrossProjectImportFlow(
       });
     }
 
-    const sourceCode = await response.text();
+    const sourceCode = await readLimitedCrossProjectSource(response, registryUrl);
     const contentHash = await cache.hashContentAsync(sourceCode);
 
     const ext = path.match(/\.(tsx?|jsx?|mdx)$/)?.[0] ?? ".tsx";

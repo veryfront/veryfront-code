@@ -416,10 +416,9 @@ function generateBatchBundle(
  * Converts ES module syntax to work within the bundle wrapper
  */
 function transformExportsForBundle(code: string): string {
-  return code
-    .split("\n")
-    .map((line) => `  ${line}`)
-    .join("\n");
+  // Indent every line by two spaces. A single regex avoids allocating an
+  // intermediate array of lines per module on the batch hot path.
+  return code.replace(/^/gm, "  ");
 }
 
 /**

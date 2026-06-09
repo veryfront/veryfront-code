@@ -141,7 +141,7 @@ export function createMCPHTTPHandler(
     }
 
     let sessionId: string | undefined;
-    if (sessionManager.size > 0) {
+    if (sessionManager.requiresSessionHeader()) {
       sessionId = request.headers.get("MCP-Session-Id") ?? undefined;
       if (!sessionId) {
         return createJSONRPCErrorResponse(400, -32600, "Missing MCP-Session-Id header");

@@ -187,17 +187,26 @@ export async function* withToolInputStatusTransitions(
 
     if (nextDueAt !== null) {
       let timeoutId: ReturnType<typeof setTimeout> | null = null;
-      const timeoutResult = await Promise.race([
-        nextPartPromise.then((result) => ({ kind: "part" as const, result })),
-        new Promise<{ kind: "timeout" }>((resolve) => {
-          timeoutId = setTimeout(
-            () => resolve({ kind: "timeout" }),
-            Math.max(0, nextDueAt - Date.now()),
-          );
-        }),
-      ]);
-      if (timeoutId !== null) {
-        clearTimeout(timeoutId);
+      // Clear the timer in finally so it is released even when the race
+      // rejects (iterator error) or the generator is abandoned mid-await
+      // (consumer break/return), not just on the happy path.
+      let timeoutResult:
+        | { kind: "part"; result: IteratorResult<unknown> }
+        | { kind: "timeout" };
+      try {
+        timeoutResult = await Promise.race([
+          nextPartPromise.then((result) => ({ kind: "part" as const, result })),
+          new Promise<{ kind: "timeout" }>((resolve) => {
+            timeoutId = setTimeout(
+              () => resolve({ kind: "timeout" }),
+              Math.max(0, nextDueAt - Date.now()),
+            );
+          }),
+        ]);
+      } finally {
+        if (timeoutId !== null) {
+          clearTimeout(timeoutId);
+        }
       }
 
       if (timeoutResult.kind === "timeout") {

@@ -6,6 +6,7 @@
  * @module transforms/mdx/esm-module-loader/module-fetcher/render-sessions
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { rendererLogger as globalLogger } from "#veryfront/utils";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { recordSSRModules } from "#veryfront/modules/manifest/route-module-manifest.ts";
@@ -24,6 +25,21 @@ interface RenderSession {
  * Key: renderSessionId, Value: RenderSession
  */
 const renderSessions = new Map<string, RenderSession>();
+
+/**
+ * The render session id active on the current async execution context.
+ * Set via {@link runInRenderSession} so concurrent SSR renders each resolve
+ * their own session instead of sharing whichever one started first.
+ */
+const currentSessionIdStorage = new AsyncLocalStorage<string>();
+
+/**
+ * Run `fn` with `sessionId` bound as the active render session for all async
+ * work it spawns. Modules fetched inside are attributed to this session.
+ */
+export function runInRenderSession<T>(sessionId: string, fn: () => T): T {
+  return currentSessionIdStorage.run(sessionId, fn);
+}
 
 /**
  * Start a render session to track module loading.
@@ -85,8 +101,20 @@ export function hasRenderSession(sessionId: string): boolean {
  * Used to record modules during fetch and for per-session in-flight deduplication.
  */
 function getCurrentSession(): RenderSession | null {
-  const firstSession = renderSessions.values().next();
-  return firstSession.done ? null : firstSession.value;
+  const activeId = currentSessionIdStorage.getStore();
+  if (activeId !== undefined) {
+    return renderSessions.get(activeId) ?? null;
+  }
+
+  // No session bound on the async context (caller not wrapped in
+  // runInRenderSession). Fall back to the single-session heuristic only when
+  // it is unambiguous; with multiple concurrent sessions, decline rather than
+  // mis-attribute modules to the wrong render.
+  if (renderSessions.size === 1) {
+    const firstSession = renderSessions.values().next();
+    return firstSession.done ? null : firstSession.value;
+  }
+  return null;
 }
 
 export function recordModuleToSession(normalizedPath: string): void {
