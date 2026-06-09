@@ -311,6 +311,7 @@ export async function bootstrapConversationAgentRun(input: {
   conversationBody: unknown;
   handoffMessageBody: unknown;
   runId?: string;
+  parentRunId?: string;
   agentId: string;
   implementationKind?: string | null;
   projectId?: string | null;
@@ -342,6 +343,7 @@ export async function bootstrapConversationAgentRun(input: {
     apiUrl: input.apiUrl,
     conversationId: conversation.id,
     runId: input.runId,
+    parentRunId: input.parentRunId,
     agentId: input.agentId,
     implementationKind: input.implementationKind,
     projectId: effectiveProjectId,

@@ -657,6 +657,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
         id: CHILD_CONVERSATION_ID,
       },
       public_id: getPublicId(createRunBody),
+      parent_run_id: "run_parent_1",
       request: {
         mode: "agent",
         agent_id: "invoke-agent-child",

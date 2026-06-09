@@ -63,6 +63,7 @@ export async function bootstrapHostedChildRun(
       parts: [{ type: "text", text: input.prompt }],
     },
     runId: input.runId,
+    parentRunId: input.parentRunId,
     agentId: input.agentId,
     implementationKind: input.implementationKind,
     projectId: input.runProjectId ?? null,
