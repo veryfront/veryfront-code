@@ -16,9 +16,14 @@ import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { cacheHttpImportsToLocal } from "../../../esm/http-cache.ts";
 import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
-import { buildReactUrl, getReactImportMap } from "../../../import-rewriter/url-builder.ts";
+import { getReactImportMap } from "../../../import-rewriter/url-builder.ts";
 import { findRelativeImports } from "./import-finder.ts";
 import { resolveRelativeFrameworkImport, resolveVeryfrontSourcePath } from "./path-resolver.ts";
+import {
+  createFrameworkSpecifierResolver,
+  reactReExportToEsmUrl,
+  resolveReactSpecifier,
+} from "./specifier-resolver.ts";
 import {
   EMBEDDED_SRC_DIR,
   FRAMEWORK_ROOT,
@@ -102,83 +107,7 @@ const fallbackTransformCache = new LRUCache<string, string>({
   maxEntries: FALLBACK_TRANSFORM_CACHE_MAX_ENTRIES,
 });
 
-/**
- * Resolve a bare `react` / `react-dom` (or subpath) specifier to its esm.sh
- * URL for the given React version. Returns `null` for anything that is not a
- * React specifier.
- *
- * Both the main transform path and the depth-limit fallback use this so a
- * framework module always links against the single esm.sh React bundle used
- * during SSR. Leaving `react` bare would resolve it to the project's own
- * React copy — a second React instance whose dispatcher is null, which makes
- * the first hook throw "Cannot read properties of null (reading 'useEffect')".
- */
-function resolveReactSpecifier(
-  specifier: string,
-  reactVersion: string,
-  reactImportMap: Record<string, string> = getReactImportMap(reactVersion),
-): string | null {
-  const mapped = reactImportMap[specifier];
-  if (mapped) return mapped;
-  if (specifier.startsWith("react/")) {
-    return buildReactUrl("react", reactVersion, "/" + specifier.slice("react/".length), true);
-  }
-  if (specifier.startsWith("react-dom/")) {
-    return buildReactUrl(
-      "react-dom",
-      reactVersion,
-      "/" + specifier.slice("react-dom/".length),
-      true,
-    );
-  }
-  return null;
-}
-
-/**
- * veryfront's own React re-export modules under `FRAMEWORK_ROOT/react/`
- * mapped to the bare specifier they stand in for. Each re-export bridges to
- * project React via `export * from "react"` (etc.), which during SSR resolves
- * to the project's `node_modules` copy — a *different* React instance than
- * the esm.sh react-dom bundle uses. The dnt build rewrites framework
- * `import ... from "react"` to a relative import of these files, so a
- * framework module that does `useEffect` ends up reading a null dispatcher.
- * Rewriting these imports straight to the esm.sh bundle keeps every SSR
- * module on a single React instance.
- *
- * Keys must match the compiled re-export filenames under
- * `FRAMEWORK_ROOT/react/`, which the build emits from the `react/*.ts` source
- * modules (`react.ts`, `react-dom.ts`, `react-dom-client.ts`,
- * `react-dom-server.ts`, `jsx-runtime.ts`, `jsx-dev-runtime.ts`). If one is
- * renamed or added, update this map too: a stale key silently reintroduces
- * the dual-React-instance bug.
- */
-const REACT_REEXPORT_SPECIFIERS: Record<string, string> = {
-  "react.js": "react",
-  "react-dom.js": "react-dom",
-  "react-dom-client.js": "react-dom/client",
-  "react-dom-server.js": "react-dom/server",
-  "jsx-runtime.js": "react/jsx-runtime",
-  "jsx-dev-runtime.js": "react/jsx-dev-runtime",
-};
-
-/** `FRAMEWORK_ROOT/react/` prefix, precomputed (invariant per process). */
-const REACT_REEXPORT_DIR = join(FRAMEWORK_ROOT, "react") + "/";
-
-/**
- * If `resolvedPath` is one of veryfront's React re-export modules
- * (`FRAMEWORK_ROOT/react/*.js`), return the esm.sh URL it should be rewritten
- * to for the given React version. Returns `null` for anything else.
- */
-export function reactReExportToEsmUrl(
-  resolvedPath: string,
-  reactVersion: string,
-  reactImportMap?: Record<string, string>,
-): string | null {
-  if (!resolvedPath.startsWith(REACT_REEXPORT_DIR)) return null;
-  const specifier = REACT_REEXPORT_SPECIFIERS[resolvedPath.slice(REACT_REEXPORT_DIR.length)];
-  if (!specifier) return null;
-  return resolveReactSpecifier(specifier, reactVersion, reactImportMap);
-}
+export { reactReExportToEsmUrl } from "./specifier-resolver.ts";
 
 /**
  * Pick an esbuild loader for a file path, honoring the embedded `.src`
@@ -601,24 +530,16 @@ export async function transformFrameworkCode(
       denoConfigStubUrl = `file://${stubPath}`;
     }
 
-    transformed = await replaceSpecifiers(transformed, (specifier) => {
-      // Handle Deno import-map aliases
-      if (specifier === "#deno-config") {
-        return denoConfigStubUrl;
-      }
-
-      // Handle #veryfront/ imports
-      if (specifier.startsWith("#veryfront/")) {
-        return veryfrontReplacements.get(specifier) ?? null;
-      }
-
-      // Handle relative imports
-      if (specifier.startsWith("./") || specifier.startsWith("../")) {
-        return relativeReplacements.get(specifier) ?? null;
-      }
-
-      return resolveReactSpecifier(specifier, ctx.reactVersion, reactImportMap);
-    });
+    transformed = await replaceSpecifiers(
+      transformed,
+      createFrameworkSpecifierResolver({
+        denoConfigStubUrl,
+        veryfrontReplacements,
+        relativeReplacements,
+        reactVersion: ctx.reactVersion,
+        reactImportMap,
+      }),
+    );
 
     // Cache HTTP imports to local filesystem
     const importMap = await loadImportMap(ctx.projectDir);
