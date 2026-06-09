@@ -90,7 +90,7 @@ export function useUploads(options: UseUploadsOptions): UseUploadsResult {
     async (id: string): Promise<void> => {
       setError(null);
       try {
-        await fetch(`${options.api}/${id}`, { method: "DELETE" });
+        await fetch(`${options.api}/${encodeURIComponent(id)}`, { method: "DELETE" });
         await refresh();
       } catch (error) {
         console.debug("useUploads: failed to delete upload", error);
