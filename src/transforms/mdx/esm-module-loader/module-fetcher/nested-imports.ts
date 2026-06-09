@@ -4,14 +4,14 @@
  * @module transforms/mdx/esm-module-loader/module-fetcher/nested-imports
  */
 
-import {
-  LOG_PREFIX_MDX_LOADER,
-  RELATIVE_IMPORT_PATTERN,
-  UNRESOLVED_VF_MODULES_PATTERN,
-  VF_MODULE_IMPORT_PATTERN,
-} from "../constants.ts";
+import { LOG_PREFIX_MDX_LOADER, UNRESOLVED_VF_MODULES_PATTERN } from "../constants.ts";
 import type { NestedImportResult } from "../types.ts";
 import { createStubModule } from "../utils/stub-module.ts";
+import {
+  findStaticImportFromSpans,
+  replaceSourceSpans,
+  type SourceSpanReplacement,
+} from "../utils/source-spans.ts";
 import { buildMissingModuleError } from "../missing-module.ts";
 import type { Logger } from "#veryfront/utils/logger/logger.ts";
 
@@ -22,26 +22,39 @@ import type { Logger } from "#veryfront/utils/logger/logger.ts";
 export function findNestedImports(
   moduleCode: string,
 ): {
-  vfModules: Array<{ original: string; path: string }>;
-  relative: Array<{ original: string; path: string }>;
+  vfModules: Array<{ original: string; path: string; start: number; end: number }>;
+  relative: Array<{ original: string; path: string; start: number; end: number }>;
 } {
-  const vfModules: Array<{ original: string; path: string }> = [];
-  const relative: Array<{ original: string; path: string }> = [];
+  const vfModules: Array<{ original: string; path: string; start: number; end: number }> = [];
+  const relative: Array<{ original: string; path: string; start: number; end: number }> = [];
 
-  const vfPattern = new RegExp(VF_MODULE_IMPORT_PATTERN.source, "g");
-  let match: RegExpExecArray | null;
-  while ((match = vfPattern.exec(moduleCode)) !== null) {
-    const rawPath = match[1];
+  for (
+    const { original, path: rawPath, start, end } of findStaticImportFromSpans(
+      moduleCode,
+      (specifier) => specifier.match(/^((?:file:\/\/)?\/?\/?_vf_modules\/[^?]+)(?:\?.*)?$/)?.[1],
+    )
+  ) {
     // Strip file:// prefix and leading slashes to get clean _vf_modules/... path
-    if (rawPath) {
-      vfModules.push({ original: match[0], path: rawPath.replace(/^(?:file:\/\/)?\/+/, "") });
-    }
+    vfModules.push({
+      original,
+      path: rawPath.replace(/^(?:file:\/\/)?\/+/, ""),
+      start,
+      end,
+    });
   }
 
-  const relativePattern = new RegExp(RELATIVE_IMPORT_PATTERN.source, "g");
-  while ((match = relativePattern.exec(moduleCode)) !== null) {
-    const path = match[1];
-    if (path) relative.push({ original: match[0], path });
+  for (
+    const { original, path, start, end } of findStaticImportFromSpans(
+      moduleCode,
+      (specifier) => specifier.match(/^(\.\.?\/[^?]+)(?:\?.*)?$/)?.[1],
+    )
+  ) {
+    relative.push({
+      original,
+      path,
+      start,
+      end,
+    });
   }
 
   return { vfModules, relative };
@@ -70,11 +83,16 @@ export async function processNestedImports(
   parentModulePath?: string,
   projectSlug?: string,
 ): Promise<string> {
-  let result = moduleCode;
+  const replacements: SourceSpanReplacement[] = [];
 
-  for (const { original, nestedFilePath, nestedPath, relativePath } of results) {
+  for (const { original, start, end, nestedFilePath, nestedPath, relativePath } of results) {
     if (nestedFilePath) {
-      result = result.replace(original, `from "file://${nestedFilePath}"`);
+      replacements.push({
+        start,
+        end,
+        expected: original,
+        replacement: `from "file://${nestedFilePath}"`,
+      });
       continue;
     }
 
@@ -89,11 +107,18 @@ export async function processNestedImports(
       });
     }
 
-    const stubPath = await createStubModule(modulePath, result, original, esmCacheDir);
-    if (stubPath) result = result.replace(original, `from "file://${stubPath}"`);
+    const stubPath = await createStubModule(modulePath, moduleCode, original, esmCacheDir);
+    if (stubPath) {
+      replacements.push({
+        start,
+        end,
+        expected: original,
+        replacement: `from "file://${stubPath}"`,
+      });
+    }
   }
 
-  return result;
+  return replaceSourceSpans(moduleCode, replacements);
 }
 
 export interface ResolveNestedModuleImportsInput {
@@ -112,7 +137,7 @@ export interface ResolveNestedModuleImportsInput {
 export async function resolveNestedModuleImports(
   input: ResolveNestedModuleImportsInput,
 ): Promise<string> {
-  let moduleCode = input.moduleCode;
+  const moduleCode = input.moduleCode;
   const { vfModules, relative } = findNestedImports(moduleCode);
 
   input.log?.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] found nested imports`, {
@@ -130,11 +155,17 @@ export async function resolveNestedModuleImports(
     count: vfModules.length,
   });
   const vfStart = performance.now();
+  const allImports = [
+    ...vfModules.map((module) => ({ ...module, key: "nestedPath" as const })),
+    ...relative.map((module) => ({ ...module, key: "relativePath" as const })),
+  ];
   const nestedResults = await Promise.all(
-    vfModules.map(async ({ original, path }) => ({
+    allImports.map(async ({ original, path, start, end, key }) => ({
       original,
+      start,
+      end,
       nestedFilePath: await input.fetchAndCacheModule(path, input.normalizedPath),
-      nestedPath: path,
+      [key]: path,
     })),
   );
   input.log?.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing vfModules DONE`, {
@@ -142,42 +173,19 @@ export async function resolveNestedModuleImports(
     normalizedPath: input.normalizedPath,
     vfMs: (performance.now() - vfStart).toFixed(1),
   });
-  moduleCode = await processNestedImports(
-    moduleCode,
-    nestedResults,
-    input.esmCacheDir,
-    input.strictMissingModules,
-    input.normalizedPath,
-    input.projectSlug,
-  );
 
   input.log?.debug(
-    `${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing relative imports START`,
+    `${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing relative imports`,
     {
       projectSlug: input.projectSlug,
       normalizedPath: input.normalizedPath,
       count: relative.length,
     },
   );
-  const relStart = performance.now();
-  const relativeResults = await Promise.all(
-    relative.map(async ({ original, path }) => ({
-      original,
-      nestedFilePath: await input.fetchAndCacheModule(path, input.normalizedPath),
-      relativePath: path,
-    })),
-  );
-  input.log?.debug(
-    `${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing relative imports DONE`,
-    {
-      projectSlug: input.projectSlug,
-      normalizedPath: input.normalizedPath,
-      relMs: (performance.now() - relStart).toFixed(1),
-    },
-  );
+
   return await processNestedImports(
     moduleCode,
-    relativeResults,
+    nestedResults,
     input.esmCacheDir,
     input.strictMissingModules,
     input.normalizedPath,

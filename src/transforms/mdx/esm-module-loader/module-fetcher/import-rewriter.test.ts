@@ -32,6 +32,21 @@ describe("rewriteVeryfrontImports", () => {
     const code = `import { z } from "zod";\n`;
     assertEquals(rewriteVeryfrontImports(code), code);
   });
+
+  it("rewrites veryfront imports without changing earlier comments", () => {
+    const code = [
+      `// Previous example: from "veryfront/head"`,
+      `import { Head } from "veryfront/head";`,
+    ].join("\n");
+
+    assertEquals(
+      rewriteVeryfrontImports(code),
+      [
+        `// Previous example: from "veryfront/head"`,
+        `import { Head } from "/_vf_modules/_veryfront/react/runtime/core.js?ssr=true";`,
+      ].join("\n"),
+    );
+  });
 });
 
 describe("rewriteDntImports", () => {
@@ -68,5 +83,19 @@ describe("rewriteDntImports", () => {
     assertEquals(result.includes(`from "file://`), true);
     assertEquals(result.includes(`from "./ai/csp-nonce.js"`), false);
     assertEquals(/\/ai\/csp-nonce\./.test(rewrittenSpecifier), true);
+  });
+
+  it("rewrites the matched import instead of the same text in an earlier comment", async () => {
+    const sourceDir = join(FRAMEWORK_ROOT, "dist/framework-src/react/components");
+    const code = [
+      `// Previous example: from "./ai/csp-nonce.js"`,
+      `import { getDocumentNonce } from "./ai/csp-nonce.js";`,
+    ].join("\n");
+
+    const result = await rewriteDntImports(code, `${sourceDir}/Head.tsx.src`);
+    const lines = result.split("\n");
+
+    assertEquals(lines[0], `// Previous example: from "./ai/csp-nonce.js"`);
+    assertEquals(lines[1]?.includes(`from "file://`), true);
   });
 });

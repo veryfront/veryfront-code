@@ -18,6 +18,11 @@ import { exists as fsExists } from "#veryfront/platform/compat/fs.ts";
 import { LOG_PREFIX_MDX_LOADER } from "./constants.ts";
 import { getLocalFs } from "./cache/index.ts";
 import { createStubModule } from "./utils/stub-module.ts";
+import {
+  findStaticImportFromSpans,
+  replaceSourceSpans,
+  type SourceSpanReplacement,
+} from "./utils/source-spans.ts";
 import { createModuleFetcherContext, fetchAndCacheModule } from "./module-fetcher/index.ts";
 import { buildMissingModuleError } from "./missing-module.ts";
 import type { ESMLoaderContext } from "./types.ts";
@@ -95,17 +100,13 @@ export async function initializeCacheDir(context: ESMLoaderContext): Promise<str
 /**
  * Find /_vf_modules/ imports in code.
  */
-export function findVfModuleImports(code: string): Array<{ original: string; path: string }> {
-  const imports: Array<{ original: string; path: string }> = [];
-  const pattern = /from\s*["'](\/?)(_vf_modules\/[^"']+)["']/g;
-
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(code)) !== null) {
-    const [original, , path] = match;
-    if (path) imports.push({ original, path });
-  }
-
-  return imports;
+export function findVfModuleImports(
+  code: string,
+): Array<{ original: string; path: string; start: number; end: number }> {
+  return findStaticImportFromSpans(
+    code,
+    (specifier) => specifier.match(/^\/?(_vf_modules\/[^?]+)(?:\?.*)?$/)?.[1],
+  );
 }
 
 /**
@@ -113,7 +114,7 @@ export function findVfModuleImports(code: string): Array<{ original: string; pat
  */
 export async function processVfModuleImports(
   code: string,
-  imports: Array<{ original: string; path: string }>,
+  imports: Array<{ original: string; path: string; start: number; end: number }>,
   context: ESMLoaderContext,
   projectDir: string,
   strictMissingModules: boolean,
@@ -165,7 +166,7 @@ export async function processVfModuleImports(
   const fetchStart = performance.now();
 
   const results = await Promise.all(
-    imports.map(async ({ original, path }, index) => {
+    imports.map(async ({ original, path, start, end }, index) => {
       return await withSpan(
         SpanNames.MDX_FETCH_MODULE,
         async () => {
@@ -182,7 +183,7 @@ export async function processVfModuleImports(
             path,
             durationMs: (performance.now() - moduleStart).toFixed(1),
           });
-          return { original, filePath, path };
+          return { original, start, end, filePath, path };
         },
         {
           "mdx.module_path": path,
@@ -199,10 +200,15 @@ export async function processVfModuleImports(
     durationMs: (performance.now() - fetchStart).toFixed(1),
   });
 
-  let result = code;
-  for (const { original, filePath, path } of results) {
+  const replacements: SourceSpanReplacement[] = [];
+  for (const { original, start, end, filePath, path } of results) {
     if (filePath) {
-      result = result.replace(original, `from "file://${filePath}"`);
+      replacements.push({
+        start,
+        end,
+        expected: original,
+        replacement: `from "file://${filePath}"`,
+      });
       continue;
     }
 
@@ -216,9 +222,16 @@ export async function processVfModuleImports(
       });
     }
 
-    const stubPath = await createStubModule(path, result, original, context.esmCacheDir!);
-    if (stubPath) result = result.replace(original, `from "file://${stubPath}"`);
+    const stubPath = await createStubModule(path, code, original, context.esmCacheDir!);
+    if (stubPath) {
+      replacements.push({
+        start,
+        end,
+        expected: original,
+        replacement: `from "file://${stubPath}"`,
+      });
+    }
   }
 
-  return result;
+  return replaceSourceSpans(code, replacements);
 }

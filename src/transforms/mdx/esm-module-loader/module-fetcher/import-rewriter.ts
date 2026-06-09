@@ -8,17 +8,33 @@ import { dirname, join, resolve } from "#veryfront/compat/path";
 import { FRAMEWORK_ROOT } from "../constants.ts";
 import { resolveVeryfrontModuleUrl } from "../../../veryfront-module-urls.ts";
 import { getLocalFs } from "../cache/index.ts";
+import {
+  findStaticImportFromSpans,
+  findStaticSideEffectImportSpans,
+  replaceSourceSpans,
+  type SourceSpanReplacement,
+} from "../utils/source-spans.ts";
 
 /**
  * Rewrite veryfront/* imports to /_vf_modules/_veryfront/ paths for MDX module loading.
  * Uses deno.json exports/imports as the source of truth and appends ?ssr=true.
  */
 export function rewriteVeryfrontImports(code: string): string {
-  return code.replace(/from\s*["'](veryfront\/[^"']+)["']/g, (_match, specifier: string) => {
-    const mapped = resolveVeryfrontModuleUrl(specifier);
-    if (!mapped) return `from "${specifier}"`;
-    return `from "${mapped}?ssr=true"`;
+  const replacements: SourceSpanReplacement[] = findStaticImportFromSpans(
+    code,
+    (specifier) => specifier.startsWith("veryfront/") ? specifier : null,
+  ).flatMap(({ original, path, start, end }) => {
+    const mapped = resolveVeryfrontModuleUrl(path);
+    if (!mapped) return [];
+    return [{
+      start,
+      end,
+      expected: original,
+      replacement: `from "${mapped}?ssr=true"`,
+    }];
   });
+
+  return replaceSourceSpans(code, replacements);
 }
 
 /**
@@ -81,27 +97,39 @@ export async function rewriteDntImports(code: string, sourceFilePath: string): P
   let rewritten = code;
   const patterns = [
     {
-      regex: /from\s*["'](\.\.?\/[^"']+)["']/g,
+      findMatches: (source: string) =>
+        findStaticImportFromSpans(
+          source,
+          (specifier) => specifier.match(/^(\.\.?\/[^?]+)(?:\?.*)?$/)?.[1],
+        ),
       buildReplacement: (path: string) => `from "file://${path}"`,
     },
     {
-      regex: /import\s*["'](\.\.?\/[^"']+)["']/g,
+      findMatches: (source: string) =>
+        findStaticSideEffectImportSpans(
+          source,
+          (specifier) => specifier.match(/^(\.\.?\/[^?]+)(?:\?.*)?$/)?.[1],
+        ),
       buildReplacement: (path: string) => `import "file://${path}"`,
     },
   ] as const;
 
-  for (const { regex, buildReplacement } of patterns) {
-    const matches = [...rewritten.matchAll(regex)];
-    for (const match of matches) {
-      const original = match[0];
-      const relativePath = match[1];
-      if (!relativePath) continue;
+  for (const { findMatches, buildReplacement } of patterns) {
+    const matches = findMatches(rewritten);
+    const replacements: SourceSpanReplacement[] = [];
+    for (const { original, path: relativePath, start, end } of matches) {
       const absolutePath = resolve(sourceDir, relativePath);
       const resolvedPath = needsFrameworkSourceFallback
         ? await findExistingFrameworkRelativeTarget(absolutePath) ?? absolutePath
         : absolutePath;
-      rewritten = rewritten.replace(original, buildReplacement(resolvedPath));
+      replacements.push({
+        start,
+        end,
+        expected: original,
+        replacement: buildReplacement(resolvedPath),
+      });
     }
+    rewritten = replaceSourceSpans(rewritten, replacements);
   }
 
   return rewritten;

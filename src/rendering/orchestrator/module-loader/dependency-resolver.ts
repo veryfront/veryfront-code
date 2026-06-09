@@ -1,17 +1,24 @@
 import { dirname, join, normalize } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { parallelMap, rendererLogger } from "#veryfront/utils";
+import {
+  findStaticImportFromSpans,
+  replaceSourceSpans,
+  type SourceSpanReplacement,
+} from "#veryfront/transforms/mdx/esm-module-loader/utils/source-spans.ts";
 import { findSourceFile } from "../file-resolver/index.ts";
 
 const logger = rendererLogger.component("module-loader");
 
-type AliasImport = { full: string; path: string };
-type RelativeImport = { full: string; path: string; fromDir: string };
+type AliasImport = { full: string; path: string; start: number; end: number };
+type RelativeImport = { full: string; path: string; fromDir: string; start: number; end: number };
 
 /** Resolved local module dependency discovered in a source module. */
 export type ResolvedModuleDependency = {
   full: string;
   path: string;
+  start: number;
+  end: number;
   relativePath: string;
   depFilePath: string | null;
   isLocalLib: boolean;
@@ -31,15 +38,29 @@ export interface ResolveModuleDependenciesInput {
 }
 
 function collectAliasImports(fileContent: string): AliasImport[] {
-  return [...fileContent.matchAll(/from\s+["'](@\/[^"']+)["']/g)].map((m) => ({
-    full: m[0],
-    path: m[1] ?? "",
+  return findStaticImportFromSpans(
+    fileContent,
+    (specifier) => specifier.startsWith("@/") ? specifier : null,
+  ).map(({ original, path, start, end }) => ({
+    full: original,
+    path,
+    start,
+    end,
   }));
 }
 
 function collectRelativeImports(fileContent: string, fileDir: string): RelativeImport[] {
-  return [...fileContent.matchAll(/from\s+["'](\.\.?\/[^"']+)["']/g)]
-    .map((m) => ({ full: m[0], path: m[1] ?? "", fromDir: fileDir }))
+  return findStaticImportFromSpans(
+    fileContent,
+    (specifier) => specifier.match(/^(\.\.?\/[^?]+)(?:\?.*)?$/)?.[1],
+  )
+    .map(({ original, path, start, end }) => ({
+      full: original,
+      path,
+      fromDir: fileDir,
+      start,
+      end,
+    }))
     // Ignore already-transformed file:// imports.
     .filter((imp) => !imp.path.includes("file://"));
 }
@@ -102,6 +123,8 @@ async function resolveRelativeImport(
   return {
     full: imp.full,
     path: imp.path,
+    start: imp.start,
+    end: imp.end,
     relativePath: imp.path,
     depFilePath,
     isLocalLib: false,
@@ -141,9 +164,11 @@ export function rewriteResolvedDependencyImports(
   fileContent: string,
   transformedDeps: TransformedModuleDependency[],
 ): string {
-  let rewritten = fileContent;
-  for (const dep of transformedDeps) {
-    rewritten = rewritten.replace(dep.full, `from "file://${dep.depTempPath}"`);
-  }
-  return rewritten;
+  const replacements: SourceSpanReplacement[] = transformedDeps.map((dep) => ({
+    start: dep.start,
+    end: dep.end,
+    expected: dep.full,
+    replacement: `from "file://${dep.depTempPath}"`,
+  }));
+  return replaceSourceSpans(fileContent, replacements);
 }
