@@ -6,6 +6,12 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ClaudeCodeEvent, ClaudeCodeResult } from "../types.ts";
+import {
+  type ClaudeCodeAllToolCall,
+  type ClaudeCodeEventState,
+  createClaudeCodeEventState,
+  reduceClaudeCodeEventState,
+} from "./event-state-reducer.ts";
 import { REQUEST_ERROR } from "#veryfront/errors";
 
 /** Default delay before reconnecting after disconnect */
@@ -17,53 +23,12 @@ const DEFAULT_MAX_EVENT_HISTORY = 100;
 /**
  * State for Claude Code streaming
  */
-export interface UseClaudeCodeStreamState {
+export interface UseClaudeCodeStreamState extends ClaudeCodeEventState {
   /** Whether currently connected to stream */
   isConnected: boolean;
 
-  /** Whether agent is currently executing */
-  isRunning: boolean;
-
-  /** Current iteration number */
-  currentIteration: number;
-
-  /** Maximum iterations allowed */
-  maxIterations: number;
-
-  /** Accumulated text output */
-  text: string;
-
-  /** Current tool being executed (if any) */
-  currentTool: {
-    id: string;
-    name: string;
-    input: Record<string, unknown>;
-  } | null;
-
-  /** Tool calls in current iteration */
-  toolCalls: Array<{
-    id: string;
-    name: string;
-    input: Record<string, unknown>;
-    output?: string;
-    isError?: boolean;
-  }>;
-
   /** All tool calls across all iterations */
-  allToolCalls: Array<{
-    iteration: number;
-    id: string;
-    name: string;
-    input: Record<string, unknown>;
-    output?: string;
-    isError?: boolean;
-  }>;
-
-  /** Final result (when complete) */
-  result: ClaudeCodeResult | null;
-
-  /** Error message (if any) */
-  error: string | null;
+  allToolCalls: ClaudeCodeAllToolCall[];
 
   /** Raw events (for debugging) */
   events: ClaudeCodeEvent[];
@@ -163,16 +128,9 @@ export function useClaudeCodeStream(
   } = options;
 
   const [state, setState] = useState<UseClaudeCodeStreamState>({
+    ...createClaudeCodeEventState(),
     isConnected: false,
-    isRunning: false,
-    currentIteration: 0,
-    maxIterations: 20,
-    text: "",
-    currentTool: null,
-    toolCalls: [],
     allToolCalls: [],
-    result: null,
-    error: null,
     events: [],
   });
 
@@ -186,88 +144,14 @@ export function useClaudeCodeStream(
       onEvent?.(event);
 
       setState((prev) => {
-        const newState = { ...prev };
+        const newState = reduceClaudeCodeEventState(prev, event, {
+          keepEventHistory,
+          maxEventHistory,
+          trackAllToolCalls: true,
+        });
 
-        // Keep event history if enabled
-        if (keepEventHistory) {
-          newState.events = [...prev.events, event].slice(-maxEventHistory);
-        }
-
-        switch (event.type) {
-          case "iteration_start":
-            newState.isRunning = true;
-            newState.currentIteration = event.iteration;
-            newState.maxIterations = event.maxIterations;
-            newState.toolCalls = [];
-            newState.currentTool = null;
-            break;
-
-          case "text_delta":
-            newState.text = prev.text + event.content;
-            break;
-
-          case "text_complete":
-            newState.text = event.content;
-            break;
-
-          case "tool_call_start":
-            newState.currentTool = {
-              id: event.toolCallId,
-              name: event.toolName,
-              input: {},
-            };
-            break;
-
-          case "tool_call_complete":
-            newState.currentTool = null;
-            newState.toolCalls = [
-              ...prev.toolCalls,
-              {
-                id: event.toolCallId,
-                name: event.toolName,
-                input: event.input,
-              },
-            ];
-            break;
-
-          case "tool_result":
-            // Update the tool call with its result
-            newState.toolCalls = prev.toolCalls.map((tc) =>
-              tc.id === event.toolCallId
-                ? { ...tc, output: event.output, isError: event.isError }
-                : tc
-            );
-            // Add to all tool calls
-            newState.allToolCalls = [
-              ...prev.allToolCalls,
-              {
-                iteration: event.iteration || prev.currentIteration,
-                id: event.toolCallId,
-                name: event.toolName,
-                input: prev.toolCalls.find((tc) => tc.id === event.toolCallId)?.input || {},
-                output: event.output,
-                isError: event.isError,
-              },
-            ];
-            break;
-
-          case "iteration_complete":
-            newState.currentTool = null;
-            break;
-
-          case "complete":
-            newState.isRunning = false;
-            newState.result = event.result;
-            newState.currentTool = null;
-            onComplete?.(event.result);
-            break;
-
-          case "error":
-            newState.error = event.message;
-            if (!event.recoverable) {
-              newState.isRunning = false;
-            }
-            break;
+        if (event.type === "complete") {
+          onComplete?.(event.result);
         }
 
         return newState;

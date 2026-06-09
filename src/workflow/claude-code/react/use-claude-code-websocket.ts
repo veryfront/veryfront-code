@@ -12,6 +12,12 @@ import type {
   ClaudeCodeResult,
   InputRequestEvent,
 } from "../types.ts";
+import {
+  type ClaudeCodeEventState,
+  createClaudeCodeEventState,
+  isClaudeCodeCoreEvent,
+  reduceClaudeCodeEventState,
+} from "./event-state-reducer.ts";
 import { NETWORK_ERROR, REQUEST_ERROR } from "#veryfront/errors";
 
 /** Default delay before reconnecting after disconnect */
@@ -45,52 +51,18 @@ export interface PendingInput {
 /**
  * State for Claude Code WebSocket
  */
-export interface UseClaudeCodeWebSocketState {
+export interface UseClaudeCodeWebSocketState extends ClaudeCodeEventState {
   /** Whether currently connected */
   isConnected: boolean;
 
-  /** Whether agent is currently executing */
-  isRunning: boolean;
-
   /** Whether agent was cancelled */
   isCancelled: boolean;
-
-  /** Current iteration number */
-  currentIteration: number;
-
-  /** Maximum iterations allowed */
-  maxIterations: number;
-
-  /** Accumulated text output */
-  text: string;
-
-  /** Current tool being executed (if any) */
-  currentTool: {
-    id: string;
-    name: string;
-    input: Record<string, unknown>;
-  } | null;
-
-  /** Tool calls in current iteration */
-  toolCalls: Array<{
-    id: string;
-    name: string;
-    input: Record<string, unknown>;
-    output?: string;
-    isError?: boolean;
-  }>;
 
   /** Pending approval requests */
   pendingApprovals: PendingApproval[];
 
   /** Pending input request (if any) */
   pendingInput: PendingInput | null;
-
-  /** Final result (when complete) */
-  result: ClaudeCodeResult | null;
-
-  /** Error message (if any) */
-  error: string | null;
 }
 
 /**
@@ -211,18 +183,11 @@ export function useClaudeCodeWebSocket(
   } = options;
 
   const [state, setState] = useState<UseClaudeCodeWebSocketState>({
+    ...createClaudeCodeEventState(),
     isConnected: false,
-    isRunning: false,
     isCancelled: false,
-    currentIteration: 0,
-    maxIterations: 20,
-    text: "",
-    currentTool: null,
-    toolCalls: [],
     pendingApprovals: [],
     pendingInput: null,
-    result: null,
-    error: null,
   });
 
   const socketRef = useRef<WebSocket | null>(null);
@@ -236,71 +201,15 @@ export function useClaudeCodeWebSocket(
       onEvent?.(event);
 
       setState((prev) => {
-        const newState = { ...prev };
+        const newState = isClaudeCodeCoreEvent(event)
+          ? reduceClaudeCodeEventState(prev, event)
+          : { ...prev };
 
         switch (event.type) {
-          case "iteration_start":
-            newState.isRunning = true;
-            newState.currentIteration = event.iteration;
-            newState.maxIterations = event.maxIterations;
-            newState.toolCalls = [];
-            newState.currentTool = null;
-            break;
-
-          case "text_delta":
-            newState.text = prev.text + event.content;
-            break;
-
-          case "text_complete":
-            newState.text = event.content;
-            break;
-
-          case "tool_call_start":
-            newState.currentTool = {
-              id: event.toolCallId,
-              name: event.toolName,
-              input: {},
-            };
-            break;
-
-          case "tool_call_complete":
-            newState.currentTool = null;
-            newState.toolCalls = [
-              ...prev.toolCalls,
-              {
-                id: event.toolCallId,
-                name: event.toolName,
-                input: event.input,
-              },
-            ];
-            break;
-
-          case "tool_result":
-            newState.toolCalls = prev.toolCalls.map((tc) =>
-              tc.id === event.toolCallId
-                ? { ...tc, output: event.output, isError: event.isError }
-                : tc
-            );
-            break;
-
-          case "iteration_complete":
-            newState.currentTool = null;
-            break;
-
           case "complete":
-            newState.isRunning = false;
-            newState.result = event.result;
-            newState.currentTool = null;
             newState.pendingApprovals = [];
             newState.pendingInput = null;
             onComplete?.(event.result);
-            break;
-
-          case "error":
-            newState.error = event.message;
-            if (!event.recoverable) {
-              newState.isRunning = false;
-            }
             break;
 
           case "cancelled":
