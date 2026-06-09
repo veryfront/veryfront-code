@@ -18,14 +18,20 @@ veryfront init test-app
 cd test-app
 ```
 
-The wizard asks which template to use. Choose `minimal` for a blank app or
-`ai-agent` for an agent and chat route.
+The wizard asks which template to use.
 
-Pass `--template` when you already know which template you want, or when running
-the command from a non-interactive script:
+Choose a starting point directly when you already know what you want to build,
+or when running the command from a non-interactive script:
 
 ```bash
-veryfront init test-app --template ai-agent
+# Agent app with a chat UI, tool, and AG-UI route
+veryfront init support-agent --template ai-agent
+
+# Blank full-stack app with pages and routing
+veryfront init web-app --template minimal
+
+# Durable multi-step AI pipeline
+veryfront init workflow-app --template agentic-workflow
 ```
 
 ### Choose a runtime

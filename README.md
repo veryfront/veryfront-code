@@ -52,10 +52,23 @@ Purpose-built for TypeScript and React, Veryfront Code gives you everything you 
 
 ## Get Started
 
-The **recommended** way to get started with Veryfront:
+Use the interactive project wizard when you want to compare templates:
 
 ```bash
 npm create veryfront
+```
+
+Choose a starting point when you already know what you want to build:
+
+```bash
+# Agent app with a chat UI, tool, and AG-UI route
+veryfront init support-agent --template ai-agent
+
+# Blank full-stack app with pages and routing
+veryfront init my-app --template minimal
+
+# Durable multi-step AI pipeline
+veryfront init my-workflow --template agentic-workflow
 ```
 
 <details>
@@ -78,7 +91,7 @@ brew install veryfront/tap/veryfront
 
 </details>
 
-Follow the [Quickstart guide](https://veryfront.com/docs/code/getting-started/quickstart) for step-by-step setup, or use [Create a project](https://veryfront.com/docs/code/getting-started/create-a-project) to compare templates before you scaffold. For the full documentation, visit [veryfront.com/docs/code](https://veryfront.com/docs/code).
+Follow the [Quickstart guide](https://veryfront.com/docs/code/getting-started/quickstart) to build the agent app end-to-end, or use [Create a project](https://veryfront.com/docs/code/getting-started/create-a-project) to compare templates before you scaffold. For the full documentation, visit [veryfront.com/docs/code](https://veryfront.com/docs/code).
 
 ## Project Structure
 
