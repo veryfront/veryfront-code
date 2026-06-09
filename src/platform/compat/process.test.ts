@@ -535,6 +535,11 @@ describe("Process Compat", () => {
       unrefTimer(timer);
       clearInterval(timer);
     });
+
+    it("ignores timer-like objects without a callable unref", () => {
+      const timerLike = { unref: undefined };
+      unrefTimer(timerLike as unknown as ReturnType<typeof setInterval>);
+    });
   });
 
   describe("getEnvOverlayStorage", () => {
