@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   assertWorkerEgressAllowed,
   assertWorkerHostEgressAllowed,
+  guardedEgressFetch,
   isInternalEgressIp,
   isInternalEgressOverrideEnabled,
   WORKER_INTERNAL_EGRESS_OVERRIDE_ENV,
@@ -97,5 +98,108 @@ describe("worker-egress-guard", () => {
     assertEquals(isInternalEgressOverrideEnabled("on"), true);
     assertEquals(isInternalEgressOverrideEnabled("0"), false);
     assertEquals(isInternalEgressOverrideEnabled(undefined), false);
+  });
+});
+
+describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
+  function redirectTo(location: string, status = 302): Response {
+    return new Response(null, { status, headers: { location } });
+  }
+
+  it("blocks a public URL that redirects to an internal address", async () => {
+    let calls = 0;
+    const fetchImpl: typeof fetch = (input) => {
+      calls++;
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.startsWith("http://93.184.216.34")) {
+        return Promise.resolve(redirectTo("http://169.254.169.254/latest/meta-data"));
+      }
+      throw new Error(`fetch should not have been called for ${url}`);
+    };
+
+    await assertRejects(
+      () => guardedEgressFetch("http://93.184.216.34/start", undefined, { fetchImpl }),
+      WorkerEgressBlockedError,
+    );
+    // The internal redirect target must never be fetched.
+    assertEquals(calls, 1);
+  });
+
+  it("follows a public -> public redirect chain and returns the final response", async () => {
+    const fetchImpl: typeof fetch = (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url === "http://93.184.216.34/a") {
+        return Promise.resolve(redirectTo("http://93.184.216.35/b"));
+      }
+      if (url === "http://93.184.216.35/b") {
+        return Promise.resolve(new Response("ok", { status: 200 }));
+      }
+      throw new Error(`unexpected fetch to ${url}`);
+    };
+
+    const res = await guardedEgressFetch("http://93.184.216.34/a", undefined, { fetchImpl });
+    assertEquals(res.status, 200);
+    assertEquals(await res.text(), "ok");
+  });
+
+  it("returns the redirect unfollowed when redirect mode is 'manual'", async () => {
+    const fetchImpl: typeof fetch = () => Promise.resolve(redirectTo("http://169.254.169.254/x"));
+    const res = await guardedEgressFetch(
+      "http://93.184.216.34/a",
+      { redirect: "manual" },
+      { fetchImpl },
+    );
+    assertEquals(res.status, 302);
+  });
+
+  it("throws after exceeding the maximum redirect count", async () => {
+    const fetchImpl: typeof fetch = () => Promise.resolve(redirectTo("http://93.184.216.34/loop"));
+    await assertRejects(
+      () => guardedEgressFetch("http://93.184.216.34/loop", undefined, { fetchImpl }),
+      WorkerEgressBlockedError,
+    );
+  });
+
+  it("strips Authorization and Cookie on a cross-origin redirect", async () => {
+    const seen: Array<{ auth: string | null; cookie: string | null }> = [];
+    const fetchImpl: typeof fetch = (input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      const headers = new Headers(init?.headers);
+      seen.push({ auth: headers.get("authorization"), cookie: headers.get("cookie") });
+      if (url === "http://93.184.216.34/start") {
+        return Promise.resolve(redirectTo("http://93.184.216.35/landing"));
+      }
+      return Promise.resolve(new Response("ok", { status: 200 }));
+    };
+
+    const res = await guardedEgressFetch(
+      "http://93.184.216.34/start",
+      { headers: { Authorization: "Bearer secret", Cookie: "sid=abc" } },
+      { fetchImpl },
+    );
+    assertEquals(res.status, 200);
+    assertEquals(seen[0].auth, "Bearer secret");
+    assertEquals(seen[1].auth, null);
+    assertEquals(seen[1].cookie, null);
+  });
+
+  it("preserves Authorization on a same-origin redirect", async () => {
+    const seen: Array<string | null> = [];
+    const fetchImpl: typeof fetch = (input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      seen.push(new Headers(init?.headers).get("authorization"));
+      if (url === "http://93.184.216.34/a") {
+        return Promise.resolve(redirectTo("http://93.184.216.34/b"));
+      }
+      return Promise.resolve(new Response("ok", { status: 200 }));
+    };
+
+    await guardedEgressFetch(
+      "http://93.184.216.34/a",
+      { headers: { Authorization: "Bearer secret" } },
+      { fetchImpl },
+    );
+    assertEquals(seen[0], "Bearer secret");
+    assertEquals(seen[1], "Bearer secret");
   });
 });
