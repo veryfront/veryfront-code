@@ -60,7 +60,18 @@ export function getHostEnv(key: string): string | undefined {
     return overlayResult.value;
   }
 
-  if (IS_DENO) return Deno.env.get(key);
+  if (IS_DENO) {
+    try {
+      return Deno.env.get(key);
+    } catch {
+      // Under a tightened env permission allowlist (project isolation workers),
+      // reading a non-allowlisted variable throws NotCapable. Treat it as absent
+      // to match the prior `env: true` behavior where reads never threw, so
+      // optional-variable lookups degrade to undefined instead of crashing the
+      // request.
+      return undefined;
+    }
+  }
   if (runtimeProcess) return runtimeProcess.env[key];
   return undefined;
 }
