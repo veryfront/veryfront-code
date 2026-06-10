@@ -50,6 +50,16 @@ testSuite("WorkerPool", () => {
     assertEquals(stats.poolSize, 1);
   });
 
+  it("recreates a worker when the project env key set changes", () => {
+    const w1 = pool.getOrCreateWorker("project-a", [], ["PROJECT_SECRET_A"]);
+    const w2 = pool.getOrCreateWorker("project-a", [], ["PROJECT_SECRET_A"]);
+    const w3 = pool.getOrCreateWorker("project-a", [], ["PROJECT_SECRET_B"]);
+
+    assertEquals(w1, w2);
+    assert(w1 !== w3, "worker permissions must be rebuilt for changed env keys");
+    assertEquals(pool.getStats().poolSize, 1);
+  });
+
   it("creates separate workers for different projects", () => {
     pool.getOrCreateWorker("project-a", []);
     pool.getOrCreateWorker("project-b", []);
@@ -117,6 +127,7 @@ testSuite("WorkerPool", () => {
           method: "GET",
           request: { url: "http://localhost/api/test", method: "GET", headers: [], body: null },
           params: {},
+          projectDir: "/allowed/path",
         }),
       VeryfrontError,
       "outside allowed read paths",

@@ -13,7 +13,7 @@ import { getEnvBoolean, getEnvNumber, unrefTimer } from "#veryfront/platform/com
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SECURITY_VIOLATION } from "#veryfront/errors";
 import { ProjectWorker } from "./project-worker.ts";
-import { buildWorkerPermissions } from "./worker-permissions.ts";
+import { buildWorkerEnvAllowlist, buildWorkerPermissions } from "./worker-permissions.ts";
 import type { WorkerPoolConfig, WorkerRequest, WorkerResponse } from "./worker-types.ts";
 import { DEFAULT_WORKER_POOL_CONFIG } from "./worker-types.ts";
 
@@ -23,6 +23,23 @@ interface PoolEntry {
   worker: ProjectWorker;
   lastAccessedAt: number;
   createdAt: number;
+  projectEnvKeys: string[];
+}
+
+function extractProjectEnvKeys(request: WorkerRequest): string[] {
+  if (!("projectEnv" in request) || !request.projectEnv) return [];
+  return Object.keys(request.projectEnv);
+}
+
+function normalizeProjectEnvKeys(keys: Iterable<string | undefined>): string[] {
+  const frameworkEnvKeyCount = buildWorkerEnvAllowlist([]).length;
+  return buildWorkerEnvAllowlist(keys).slice(frameworkEnvKeyCount);
+}
+
+function sameEnvKeySet(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false;
+  const rightSet = new Set(right);
+  return left.every((key) => rightSet.has(key));
 }
 
 export class WorkerPool {
@@ -42,17 +59,27 @@ export class WorkerPool {
   /**
    * Get or create a worker for the given project.
    */
-  getOrCreateWorker(projectId: string, readPaths: string[]): ProjectWorker {
+  getOrCreateWorker(
+    projectId: string,
+    readPaths: string[],
+    projectEnvKeys: Iterable<string | undefined> = [],
+  ): ProjectWorker {
+    const normalizedProjectEnvKeys = normalizeProjectEnvKeys(projectEnvKeys);
     const existing = this.pool.get(projectId);
     if (
       existing && existing.worker.status !== "crashed" && existing.worker.status !== "terminated"
     ) {
-      existing.lastAccessedAt = Date.now();
-      return existing.worker;
+      if (!sameEnvKeySet(existing.projectEnvKeys, normalizedProjectEnvKeys)) {
+        existing.worker.terminate();
+        this.pool.delete(projectId);
+      } else {
+        existing.lastAccessedAt = Date.now();
+        return existing.worker;
+      }
     }
 
     // If an existing entry is crashed/terminated, clean it up
-    if (existing) {
+    if (existing && this.pool.has(projectId)) {
       existing.worker.terminate();
       this.pool.delete(projectId);
     }
@@ -60,7 +87,9 @@ export class WorkerPool {
     // Evict LRU if at capacity
     this.evictIfNeeded();
 
-    const permissions = buildWorkerPermissions(readPaths);
+    const permissions = buildWorkerPermissions(readPaths, {
+      projectEnvKeys: normalizedProjectEnvKeys,
+    });
     const worker = new ProjectWorker({
       projectId,
       permissions,
@@ -74,6 +103,7 @@ export class WorkerPool {
       worker,
       lastAccessedAt: now,
       createdAt: now,
+      projectEnvKeys: normalizedProjectEnvKeys,
     });
 
     logger.debug("Worker created", {
@@ -110,7 +140,8 @@ export class WorkerPool {
     return withSpan(
       "workerPool.execute",
       async () => {
-        const worker = this.getOrCreateWorker(projectId, readPaths);
+        const projectEnvKeys = extractProjectEnvKeys(request);
+        const worker = this.getOrCreateWorker(projectId, readPaths, projectEnvKeys);
 
         // Check if worker should be recycled (request count or age)
         const entry = this.pool.get(projectId);
@@ -138,12 +169,12 @@ export class WorkerPool {
           void result.then(
             () => {
               this.evictWorker(projectId);
-              this.getOrCreateWorker(projectId, readPaths);
+              this.getOrCreateWorker(projectId, readPaths, projectEnvKeys);
               this.recycling.delete(projectId);
             },
             () => {
               this.evictWorker(projectId);
-              this.getOrCreateWorker(projectId, readPaths);
+              this.getOrCreateWorker(projectId, readPaths, projectEnvKeys);
               this.recycling.delete(projectId);
             },
           );
