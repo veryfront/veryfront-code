@@ -29,10 +29,28 @@ export type CacheLookupResult =
   | { status: "corrupted"; reason: string; filePath: string };
 
 const MAX_VERIFIED_MODULE_DEPS = 2_000;
+const MAX_MODULE_PATH_CACHE_ENTRIES = 500;
 
 export const verifiedModuleDeps = new LRUCache<string, true>({
   maxEntries: MAX_VERIFIED_MODULE_DEPS,
 });
+
+class BoundedModulePathCache extends Map<string, string> {
+  constructor(private readonly maxEntries: number) {
+    super();
+  }
+
+  override set(key: string, value: string): this {
+    if (!this.has(key) && this.size >= this.maxEntries) {
+      const oldestKey = this.keys().next().value;
+      if (oldestKey !== undefined) {
+        this.delete(oldestKey);
+      }
+    }
+
+    return super.set(key, value);
+  }
+}
 
 /**
  * Check if cached code has file:// paths from a different environment.
@@ -146,6 +164,7 @@ function getModulePathCacheEntryCount(): number {
 registerCache("mdx-esm-path-caches", () => ({
   name: "mdx-esm-path-caches",
   entries: getModulePathCacheEntryCount(),
+  maxEntries: MAX_MODULE_PATH_CACHE_ENTRIES * Math.max(1, modulePathCaches.size),
   cacheDirs: modulePathCaches.size,
 }));
 
@@ -159,7 +178,7 @@ export async function getModulePathCache(cacheDir: string): Promise<Map<string, 
   const existing = modulePathCaches.get(cacheDir);
   if (existing && modulePathCacheLoaded.has(cacheDir)) return existing;
 
-  const cache = existing ?? new Map<string, string>();
+  const cache = existing ?? new BoundedModulePathCache(MAX_MODULE_PATH_CACHE_ENTRIES);
   modulePathCaches.set(cacheDir, cache);
 
   const indexPath = join(cacheDir, "_index.json");
