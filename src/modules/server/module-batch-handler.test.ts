@@ -184,6 +184,43 @@ describe(
         assertEquals(code.includes("getModule"), true);
       });
 
+      it("streams cached batch bundles without joining the full response", async () => {
+        clearBatchCache();
+        const adapter = createMockAdapter();
+        adapter.fs.files.set("/test-project/streamed.tsx", "export const streamed = true;");
+        const options = {
+          projectDir: "/test-project",
+          adapter,
+          projectSlug: "test",
+          dev: false,
+        };
+
+        const firstResponse = await handleModuleBatch(createBatchRequest("streamed.js"), options);
+        assertEquals(firstResponse.status, 200);
+        await firstResponse.text();
+
+        const originalJoin = Array.prototype.join;
+        Array.prototype.join = function patchedJoin(this: unknown[], separator?: string) {
+          if (this[0] === "// Veryfront Module Batch Bundle") {
+            throw new Error("full bundle join should not be used");
+          }
+          return originalJoin.call(this, separator);
+        };
+
+        try {
+          const secondResponse = await handleModuleBatch(
+            createBatchRequest("streamed.js"),
+            options,
+          );
+          assertEquals(secondResponse.status, 200);
+          const code = await secondResponse.text();
+          assertEquals(code.includes("__vf_batch_modules"), true);
+          assertEquals(code.includes("streamed.js"), true);
+        } finally {
+          Array.prototype.join = originalJoin;
+        }
+      });
+
       it("should include batch metadata headers", async () => {
         const adapter = createMockAdapter();
         adapter.fs.files.set("/test-project/page.tsx", "export default () => null;");

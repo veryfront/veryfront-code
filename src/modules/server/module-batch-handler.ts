@@ -268,7 +268,7 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
         });
       }
 
-      const bundleCode = generateBatchBundle(successes, failures);
+      const bundleStream = createBatchBundleStream(successes, failures);
 
       const duration = performance.now() - startTime;
       const isSlow = duration > SLOW_REQUEST_THRESHOLD_MS;
@@ -297,7 +297,7 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
         });
       }
 
-      return new Response(bundleCode, {
+      return new Response(bundleStream, {
         status: HTTP_OK,
         headers: {
           "Content-Type": "application/javascript; charset=utf-8",
@@ -500,22 +500,41 @@ function createBatchSSRTargetCacheBusterResolver(options: {
   };
 }
 
-/**
- * Generate the batch bundle code
- * Creates a module that exports all loaded modules by path
- */
-function generateBatchBundle(
+function createBatchBundleStream(
   successes: Array<{ path: string; code: string; cached: boolean }>,
   failures: Array<{ path: string; error: string }>,
-): string {
-  const parts: string[] = [
-    "// Veryfront Module Batch Bundle",
-    "// Generated: " + new Date().toISOString(),
-    `// Modules: ${successes.length} loaded, ${failures.length} failed`,
-    "",
-    "const __vf_batch_modules = new Map();",
-    "",
-  ];
+): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      let isFirstChunk = true;
+
+      for (const chunk of generateBatchBundleChunks(successes, failures)) {
+        if (!isFirstChunk) controller.enqueue(encoder.encode("\n"));
+        controller.enqueue(encoder.encode(chunk));
+        isFirstChunk = false;
+      }
+
+      controller.close();
+    },
+  });
+}
+
+/**
+ * Generate the batch bundle code chunks.
+ * Creates a module that exports all loaded modules by path.
+ */
+function* generateBatchBundleChunks(
+  successes: Array<{ path: string; code: string; cached: boolean }>,
+  failures: Array<{ path: string; error: string }>,
+): IterableIterator<string> {
+  yield "// Veryfront Module Batch Bundle";
+  yield "// Generated: " + new Date().toISOString();
+  yield `// Modules: ${successes.length} loaded, ${failures.length} failed`;
+  yield "";
+  yield "const __vf_batch_modules = new Map();";
+  yield "";
 
   for (let i = 0; i < successes.length; i++) {
     const item = successes[i];
@@ -523,34 +542,32 @@ function generateBatchBundle(
     const { path, code } = item;
     const varName = `__mod_${i}`;
 
-    parts.push(`// Module: ${path}`);
-    parts.push(`const ${varName} = await (async () => {`);
-    parts.push("  const exports = {};");
-    parts.push("  const module = { exports };");
-    parts.push("  // --- Module code start ---");
-    parts.push(transformExportsForBundle(code));
-    parts.push("  // --- Module code end ---");
-    parts.push("  return exports;");
-    parts.push("})();");
-    parts.push(`__vf_batch_modules.set("${path}", ${varName});`);
-    parts.push("");
+    yield `// Module: ${path}`;
+    yield `const ${varName} = await (async () => {`;
+    yield "  const exports = {};";
+    yield "  const module = { exports };";
+    yield "  // --- Module code start ---";
+    yield transformExportsForBundle(code);
+    yield "  // --- Module code end ---";
+    yield "  return exports;";
+    yield "})();";
+    yield `__vf_batch_modules.set("${path}", ${varName});`;
+    yield "";
   }
 
   for (const { path, error } of failures) {
-    parts.push(`// Failed: ${path} - ${error}`);
-    parts.push(`__vf_batch_modules.set("${path}", { __vf_error: "${error}" });`);
+    yield `// Failed: ${path} - ${error}`;
+    yield `__vf_batch_modules.set("${path}", { __vf_error: "${error}" });`;
   }
 
-  parts.push("");
-  parts.push("export const batchModules = __vf_batch_modules;");
-  parts.push("");
-  parts.push("export function getModule(path) {");
-  parts.push("  return __vf_batch_modules.get(path);");
-  parts.push("}");
-  parts.push("");
-  parts.push("export default { batchModules, getModule };");
-
-  return parts.join("\n");
+  yield "";
+  yield "export const batchModules = __vf_batch_modules;";
+  yield "";
+  yield "export function getModule(path) {";
+  yield "  return __vf_batch_modules.get(path);";
+  yield "}";
+  yield "";
+  yield "export default { batchModules, getModule };";
 }
 
 /**
