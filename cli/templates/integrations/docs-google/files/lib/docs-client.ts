@@ -332,6 +332,7 @@ export const docsOAuthProvider = {
   scopes: [
     "https://www.googleapis.com/auth/documents.readonly",
     "https://www.googleapis.com/auth/documents",
+    "https://www.googleapis.com/auth/docs",
     "https://www.googleapis.com/auth/drive.readonly",
   ],
   callbackPath: "/api/auth/docs-google/callback",
