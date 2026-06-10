@@ -1,7 +1,6 @@
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
 import { buildTransformCacheKey } from "#veryfront/cache/keys.ts";
-import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import {
   type CacheBackend,
   CacheBackends,
@@ -38,19 +37,64 @@ let cacheGateway: TokenizingCacheGateway | null = null;
 let cacheInitialized = false;
 let cacheInitPromise: Promise<void> | null = null;
 
-const defaultLocalFallback = new LRUCache<string, TransformCacheEntry>({
-  maxEntries: FALLBACK_MAX_ENTRIES,
-});
-
 interface LocalFallbackLike<K, V> {
   get(key: K): V | undefined;
-  set(key: K, value: V): void | this;
+  set(key: K, value: V): unknown;
   delete(key: K): boolean;
   has(key: K): boolean;
   clear(): void;
   readonly size: number;
   entries(): IterableIterator<[K, V]>;
 }
+
+class EntryBoundedFallback<K, V> implements LocalFallbackLike<K, V> {
+  private readonly store = new Map<K, V>();
+
+  constructor(private readonly maxEntries: number) {}
+
+  get(key: K): V | undefined {
+    const value = this.store.get(key);
+    if (value === undefined) return undefined;
+    this.store.delete(key);
+    this.store.set(key, value);
+    return value;
+  }
+
+  set(key: K, value: V): void {
+    this.store.delete(key);
+    this.store.set(key, value);
+
+    while (this.store.size > this.maxEntries) {
+      const oldestKey = this.store.keys().next();
+      if (oldestKey.done) break;
+      this.store.delete(oldestKey.value);
+    }
+  }
+
+  delete(key: K): boolean {
+    return this.store.delete(key);
+  }
+
+  has(key: K): boolean {
+    return this.store.has(key);
+  }
+
+  clear(): void {
+    this.store.clear();
+  }
+
+  get size(): number {
+    return this.store.size;
+  }
+
+  entries(): IterableIterator<[K, V]> {
+    return this.store.entries();
+  }
+}
+
+const defaultLocalFallback = new EntryBoundedFallback<string, TransformCacheEntry>(
+  FALLBACK_MAX_ENTRIES,
+);
 
 /** Injected caches for testing */
 let injectedLocalFallback: LocalFallbackLike<string, TransformCacheEntry> | null = null;
@@ -251,20 +295,6 @@ function normalizeTtl(ttlSeconds: number): number {
 function setLocalFallback(key: string, entry: TransformCacheEntry): void {
   const fallback = getLocalFallback();
   fallback.set(key, entry);
-  if (fallback === defaultLocalFallback) return;
-  if (fallback.size > FALLBACK_MAX_ENTRIES) pruneLocalFallback();
-}
-
-function pruneLocalFallback(): void {
-  const fallback = getLocalFallback();
-  const excess = fallback.size - FALLBACK_MAX_ENTRIES;
-  if (excess <= 0) return;
-
-  const entries = Array.from(fallback.entries()).sort(([, a], [, b]) => a.timestamp - b.timestamp);
-  for (let i = 0; i < excess; i++) {
-    const [key] = entries[i]!;
-    fallback.delete(key);
-  }
 }
 
 export function destroyTransformCache(): void {
