@@ -16,7 +16,7 @@ export interface MemoryConfigBase {
   /**
    * Persist conversation history across `stream()` / `generate()` calls on the
    * agent instance. Defaults to `true` when a memory config is provided. Set to
-   * `false` to run every call in isolation (no shared history) — the same
+   * `false` to run every call in isolation (no shared history), the same
    * effect as omitting `memory` entirely.
    */
   enabled?: boolean;

@@ -257,7 +257,7 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
  * Holds nothing and never persists. Used when an agent has no `memory` config
  * (the documented stateless default) or when `memory.enabled === false`. Every
  * `stream()` / `generate()` call then runs in isolation on just its own input,
- * which is what makes concurrent fan-out on a shared agent instance safe — runs
+ * which is what makes concurrent fan-out on a shared agent instance safe: runs
  * cannot interleave into a shared conversation. Multi-step tool loops are
  * unaffected: in-run continuity is driven by the loop's local message array,
  * not by this store.

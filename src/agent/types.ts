@@ -167,7 +167,7 @@ export interface AgentConfig {
    * Conversation memory persisted across `stream()` / `generate()` calls on this
    * instance. Omit for the stateless default: every call runs in isolation,
    * which keeps concurrent fan-out on a shared instance correct. When set, the
-   * instance accumulates one shared conversation — reuse it sequentially, not
+   * instance accumulates one shared conversation, so reuse it sequentially, not
    * across concurrent independent runs (use a separate instance per run for
    * that). Set `enabled: false` to force the stateless behavior explicitly.
    */

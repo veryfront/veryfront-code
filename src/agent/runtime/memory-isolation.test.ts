@@ -63,6 +63,27 @@ function echoModel(modelId: string): ModelRuntime {
   } as ModelRuntime;
 }
 
+/** A model that records the maxOutputTokens the runtime resolved for the call. */
+function capturingModel(modelId: string, captured: { maxOutputTokens?: number }): ModelRuntime {
+  return {
+    provider: "hosted",
+    modelId,
+    doGenerate(options: unknown) {
+      captured.maxOutputTokens = (options as { maxOutputTokens?: number }).maxOutputTokens;
+      return Promise.resolve({
+        content: [{ type: "text", text: "ok" }],
+        finishReason: "stop",
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      });
+    },
+    doStream() {
+      return Promise.resolve({
+        stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]),
+      });
+    },
+  } as ModelRuntime;
+}
+
 const WORDS = ["APPLE", "BANANA", "CHERRY"];
 const prompt = (word: string) => `The secret word is ${word}.`;
 
@@ -141,5 +162,36 @@ describe("agent memory isolation (issue 2336)", () => {
 
     await stateful.generate({ input: "second" });
     assertEquals((await stateful.getMemoryStats()).totalMessages, 4);
+  });
+
+  it("memory.enabled === false ignores leftover maxTokens for the output limit", async () => {
+    // A disabled memory config must behave exactly like omitting `memory`: its
+    // maxTokens (a conversation-window size) must not cap model output.
+    const disabledCapture: { maxOutputTokens?: number } = {};
+    const disabled = agent({
+      id: "echo-disabled-maxtokens",
+      model: "hosted/echo-disabled-maxtokens",
+      system: "x",
+      maxSteps: 1,
+      memory: { type: "conversation", enabled: false, maxTokens: 100 },
+      resolveModelTransport: () =>
+        Promise.resolve({ model: capturingModel("hosted/cap-disabled", disabledCapture) }),
+    });
+
+    const omittedCapture: { maxOutputTokens?: number } = {};
+    const omitted = agent({
+      id: "echo-omitted-memory",
+      model: "hosted/echo-omitted-memory",
+      system: "x",
+      maxSteps: 1,
+      resolveModelTransport: () =>
+        Promise.resolve({ model: capturingModel("hosted/cap-omitted", omittedCapture) }),
+    });
+
+    await disabled.generate({ input: "hi" });
+    await omitted.generate({ input: "hi" });
+
+    assertEquals(disabledCapture.maxOutputTokens, omittedCapture.maxOutputTokens);
+    assertEquals(disabledCapture.maxOutputTokens === 100, false);
   });
 });

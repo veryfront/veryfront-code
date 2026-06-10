@@ -1279,7 +1279,13 @@ export class AgentRuntime {
       return Math.floor(maxOutputTokensOverride);
     }
 
-    return this.config.memory?.maxTokens ??
+    // A disabled memory config contributes nothing, exactly like omitting
+    // `memory`, so its maxTokens (a conversation-window size) must not cap
+    // model output.
+    const memoryMaxTokens = this.config.memory?.enabled === false
+      ? undefined
+      : this.config.memory?.maxTokens;
+    return memoryMaxTokens ??
       (modelString ? getModelMaxOutputTokens(modelString) : undefined) ??
       DEFAULT_MAX_TOKENS;
   }

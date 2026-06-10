@@ -66,7 +66,7 @@ export async function inspectAgent(
       model: agent.config.model,
       maxSteps: agent.config.maxSteps ?? 20,
       // Report the resolved runtime memory type ("none" when the agent is
-      // stateless), not a guess from config — an unconfigured agent now has no
+      // stateless), not a guess from config. An unconfigured agent now has no
       // persisted memory rather than the implicit "conversation" store.
       memoryType: memoryStatsAfter.type,
     },
