@@ -80,6 +80,27 @@ describe("DependencyGraph", () => {
       expect(graph.wouldCreateCycle("/c.ts", "/a.ts")).toBe(true);
       expect(graph.wouldCreateCycle("/d.ts", "/a.ts")).toBe(false);
     });
+
+    it("short-circuits once the target dependency is found", () => {
+      class ThrowingDependencySet extends Set<string> {
+        override [Symbol.iterator](): SetIterator<string> {
+          throw new Error("unvisited dependency branch should not be traversed");
+        }
+      }
+
+      const graph = new DependencyGraph();
+      graph.addModule("/entry.ts", ["/target.ts", "/unvisited.ts"]);
+
+      const internals = graph as unknown as {
+        dependencies: Map<string, Set<string>>;
+      };
+      internals.dependencies.set(
+        "/unvisited.ts",
+        new ThrowingDependencySet(["/too-late.ts"]),
+      );
+
+      expect(graph.wouldCreateCycle("/target.ts", "/entry.ts")).toBe(true);
+    });
   });
 });
 
