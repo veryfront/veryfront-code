@@ -170,17 +170,21 @@ function warnIfUntrustedInProcessExecution(
   if (warnedUntrustedInProcessExecution) return;
 
   warnedUntrustedInProcessExecution = true;
-  logger.warn(
-    "Untrusted project code is executing in-process with worker isolation disabled. Enable WORKER_ISOLATION_ENABLED=1 and WORKER_ISOLATION_API=1 to run project routes in a permission-restricted worker.",
-    {
-      modulePath: options.modulePath,
-      pathname,
-      projectDir: options.projectDir,
-      requiredEnv: ["WORKER_ISOLATION_ENABLED", "WORKER_ISOLATION_API"],
-      routeKind,
-      workerIsolationEnabled: false,
-    },
-  );
+  try {
+    logger.warn(
+      "Untrusted project code is executing in-process with worker isolation disabled. Enable WORKER_ISOLATION_ENABLED=1 and WORKER_ISOLATION_API=1 to run project routes in a permission-restricted worker.",
+      {
+        modulePath: options.modulePath,
+        pathname,
+        projectDir: options.projectDir,
+        requiredEnv: ["WORKER_ISOLATION_ENABLED", "WORKER_ISOLATION_API"],
+        routeKind,
+        workerIsolationEnabled: false,
+      },
+    );
+  } catch {
+    // A diagnostic warning must not prevent the API route from running.
+  }
 }
 
 async function readBodyWithSizeGuard(request: Request): Promise<Uint8Array | null> {

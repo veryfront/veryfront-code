@@ -505,6 +505,57 @@ describe("routing/api/route-executor", () => {
 
       assertEquals(response.status, 500);
     });
+
+    it("continues pages API route execution when isolation warning logging fails", async () => {
+      const envSnapshot = snapshotEnv([
+        "WORKER_ISOLATION_ENABLED",
+        "WORKER_ISOLATION_API",
+        "LOG_FORMAT",
+        "LOG_LEVEL",
+        "NO_COLOR",
+      ]);
+      Deno.env.delete("WORKER_ISOLATION_ENABLED");
+      Deno.env.delete("WORKER_ISOLATION_API");
+      Deno.env.set("LOG_FORMAT", "text");
+      Deno.env.set("LOG_LEVEL", "WARN");
+      Deno.env.set("NO_COLOR", "1");
+      __resetPoolForTests();
+      __resetInProcessIsolationWarningForTests();
+      __resetLoggerConfigForTests();
+      const originalWarn = console.warn;
+
+      try {
+        console.warn = () => {
+          throw new Error("warning sink unavailable");
+        };
+
+        const handler = {
+          GET: () => Response.json({ msg: "pages api" }),
+        };
+
+        const request = new Request("http://localhost/api/hello", { method: "GET" });
+        const response = await executePagesRoute(
+          handler,
+          request,
+          makeMatch("/api/hello", "/tmp/test/pages/api/hello.ts"),
+          "/api/hello",
+          makeAdapter("production"),
+          "/tmp/test",
+          {
+            modulePath: "/tmp/test/pages/api/hello.ts",
+            projectDir: "/tmp/test",
+            isLocalProject: false,
+          },
+        );
+
+        assertEquals(response.status, 200);
+        assertEquals(await response.json(), { msg: "pages api" });
+      } finally {
+        console.warn = originalWarn;
+        restoreEnv(envSnapshot);
+        __resetLoggerConfigForTests();
+      }
+    });
   });
 
   describe("untrusted in-process execution warning", () => {
@@ -772,12 +823,14 @@ describe("routing/api/route-executor", () => {
         },
       });
 
-      const request = new Request("http://localhost/api/test", {
-        method: "POST",
-        body: stream,
-        // deno-lint-ignore no-explicit-any
-        duplex: "half" as any,
-      });
+      const request = new Request(
+        "http://localhost/api/test",
+        {
+          method: "POST",
+          body: stream,
+          duplex: "half",
+        } as RequestInit & { duplex: "half" },
+      );
 
       const response = await executeAppRoute(
         handler,
