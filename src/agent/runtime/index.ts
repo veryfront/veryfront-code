@@ -37,10 +37,7 @@ import {
 import { convertToTextGenerationRuntimeMessages } from "./text-generation-runtime-message-converter.ts";
 import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
 import { resolveProviderOptionsWithDefaults } from "./default-provider-options.ts";
-import {
-  getRuntimeRemoteToolSources,
-  type RuntimeRemoteToolConfig,
-} from "./mcp-server-tool-sources.ts";
+import { getRuntimeRemoteToolSources } from "./mcp-server-tool-sources.ts";
 import {
   createStreamState,
   processStream,
@@ -50,7 +47,7 @@ import { repairToolCall } from "./repair-tool-call.ts";
 import { MiddlewareChain } from "../middleware/chain.ts";
 import { AGENT_DEFAULTS } from "./defaults.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
-import type { ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
+import type { ToolExecutionContext } from "#veryfront/tool";
 import { isLocalModelRuntime } from "#veryfront/provider/runtime-inspection.ts";
 import { generateText, streamText } from "#veryfront/runtime/runtime-bridge.ts";
 import {
@@ -72,6 +69,11 @@ import {
   hydrateActiveSkillStateFromMessages,
   LOAD_SKILL_TOOL_ID,
 } from "./skill-policy-enforcement.ts";
+import {
+  getRuntimeAllowedRemoteTools,
+  getRuntimeForwardedIntegrationToolDefs,
+  getRuntimeProviderTools,
+} from "./runtime-tool-config.ts";
 
 // Re-export from submodules
 export { closeSSEStream, generateMessageId, sendSSE } from "./sse-utils.ts";
@@ -149,12 +151,6 @@ import {
 
 const logger = serverLogger.component("agent");
 
-type RuntimeToolFilterConfig = AgentConfig & {
-  __vfForwardedIntegrationToolDefs?: Array<
-    { name: string; description: string; parameters: Record<string, unknown> }
-  >;
-} & RuntimeRemoteToolConfig;
-
 function isAbortError(error: unknown, abortSignal?: AbortSignal): boolean {
   if (abortSignal?.aborted && error === abortSignal.reason) {
     return true;
@@ -170,50 +166,6 @@ function warnLocalToolSkipping(agentId: string, modelId: string): void {
       "Set VERYFRONT_API_TOKEN and VERYFRONT_PROJECT_SLUG, or configure " +
       "OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY for full tool support.",
   );
-}
-
-function getRuntimeAllowedRemoteTools(config: AgentConfig): string[] | undefined {
-  const configWithRuntimeFilters = config as RuntimeToolFilterConfig;
-  if (!Object.hasOwn(configWithRuntimeFilters, "__vfAllowedRemoteTools")) {
-    return undefined;
-  }
-  const raw = configWithRuntimeFilters.__vfAllowedRemoteTools;
-  if (!Array.isArray(raw)) {
-    return [];
-  }
-  return raw.every((toolName) => typeof toolName === "string") ? raw : [];
-}
-
-function getRuntimeProviderTools(config: AgentConfig): string[] {
-  const raw = config.providerTools;
-  if (!Array.isArray(raw)) {
-    return [];
-  }
-  return raw.every((toolName) => typeof toolName === "string") ? raw : [];
-}
-
-function getRuntimeForwardedIntegrationToolDefs(
-  config: AgentConfig,
-): ToolDefinition[] | undefined {
-  const configWithFilters = config as RuntimeToolFilterConfig;
-  const raw = configWithFilters.__vfForwardedIntegrationToolDefs;
-  if (!Array.isArray(raw) || raw.length === 0) return undefined;
-  return raw
-    .filter(
-      (def): def is { name: string; description: string; parameters: Record<string, unknown> } =>
-        typeof def === "object" &&
-        def !== null &&
-        typeof def.name === "string" &&
-        typeof def.description === "string",
-    )
-    .map((def) => ({
-      name: def.name,
-      description: def.description,
-      parameters: typeof def.parameters === "object" && def.parameters !== null &&
-          !Array.isArray(def.parameters)
-        ? def.parameters
-        : { type: "object", properties: {} },
-    }));
 }
 
 type ResolvedModelTransport = {
