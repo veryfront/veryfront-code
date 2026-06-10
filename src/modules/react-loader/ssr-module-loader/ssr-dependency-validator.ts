@@ -16,6 +16,10 @@ import { rendererLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { MAX_TRANSFORM_DEPTH, TRANSFORM_BATCH_SIZE } from "./constants.ts";
 import { globalModuleCache } from "./cache/index.ts";
+import {
+  createDependencyHashCache,
+  type DependencyHashCache,
+} from "#veryfront/cache/dependency-graph.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
 
@@ -35,6 +39,7 @@ export class SSRDependencyValidator {
       filePath: string,
       source: string | undefined,
       depth: number,
+      dependencyHashCache: DependencyHashCache,
     ) => Promise<void>,
     private transformCrossProjectImport: (
       crossProjectImport: CrossProjectImport,
@@ -103,7 +108,13 @@ export class SSRDependencyValidator {
     }
 
     const localFs = createFileSystem();
-    await this.processLocalImports(parseResult.imports, filePath, depth, localFs);
+    await this.processLocalImports(
+      parseResult.imports,
+      filePath,
+      depth,
+      localFs,
+      createDependencyHashCache(),
+    );
 
     for (let i = 0; i < parseResult.crossProjectImports.length; i += TRANSFORM_BATCH_SIZE) {
       const batch = parseResult.crossProjectImports.slice(i, i + TRANSFORM_BATCH_SIZE);
@@ -134,6 +145,7 @@ export class SSRDependencyValidator {
     fromFilePath: string,
     depth: number,
     localFs: ReturnType<typeof createFileSystem>,
+    dependencyHashCache: DependencyHashCache,
   ): Promise<Map<string, string>> {
     const importPathMap = new Map<string, string>();
 
@@ -146,7 +158,12 @@ export class SSRDependencyValidator {
               ? await localFs.readTextFile(imp.absolutePath)
               : await this.adapter.fs.readFile(imp.absolutePath);
 
-            await this.transformWithDependencies(imp.absolutePath, depSource, depth + 1);
+            await this.transformWithDependencies(
+              imp.absolutePath,
+              depSource,
+              depth + 1,
+              dependencyHashCache,
+            );
 
             const depCacheKey = this.getCacheKey(imp.absolutePath);
             const depEntry = globalModuleCache.get(depCacheKey);

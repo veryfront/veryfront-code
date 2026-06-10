@@ -165,7 +165,12 @@ export function runPipeline(
         dev: ctx.dev,
       });
 
-      const depsHash = await computeDepsHashSafe(filePath, projectDir, options.readFile);
+      const depsHash = await computeDepsHashSafe(
+        filePath,
+        projectDir,
+        options.readFile,
+        options.dependencyHashCache,
+      );
 
       const cacheKey = generateCacheKey(
         filePath,
@@ -285,11 +290,12 @@ async function computeDepsHashSafe(
   filePath: string,
   projectDir: string,
   readFile?: (path: string) => Promise<string>,
+  dependencyHashCache?: TransformOptions["dependencyHashCache"],
 ): Promise<string | undefined> {
   if (!readFile) return undefined;
 
   try {
-    return await computeDepsHash(filePath, readFile, projectDir);
+    return await computeDepsHash(filePath, readFile, projectDir, dependencyHashCache);
   } catch (err) {
     logger.debug("depsHash computation failed, skipping", {
       file: filePath.slice(-60),

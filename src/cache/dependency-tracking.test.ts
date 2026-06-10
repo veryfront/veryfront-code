@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
-import { computeDepsHash } from "./dependency-graph.ts";
+import { computeDepsHash, createDependencyHashCache } from "./dependency-graph.ts";
 import { computeConfigHash } from "./config-hash.ts";
 import { buildTransformCacheKey } from "./keys.ts";
 
@@ -97,6 +97,34 @@ describe("Dependency tracking cache invalidation", () => {
       );
 
       expect(hash1).not.toBe(hash2);
+    });
+
+    it("should reuse cached content for overlapping dependency graphs", async () => {
+      const files = new Map<string, string>([
+        [
+          "/project/pages/a.js",
+          `import { shared } from "../components/shared.ts";\nexport const a = shared;\n`,
+        ],
+        [
+          "/project/pages/b.js",
+          `import { shared } from "../components/shared.ts";\nexport const b = shared;\n`,
+        ],
+        ["/project/components/shared.js", "export const shared = 1;\n"],
+      ]);
+      const reads = new Map<string, number>();
+      const cache = createDependencyHashCache();
+
+      const getContent = async (path: string): Promise<string> => {
+        reads.set(path, (reads.get(path) ?? 0) + 1);
+        const content = files.get(path);
+        if (content == null) throw new Error(`not found: ${path}`);
+        return content;
+      };
+
+      await computeDepsHash("/project/pages/a.js", getContent, "/project", cache);
+      await computeDepsHash("/project/pages/b.js", getContent, "/project", cache);
+
+      expect(reads.get("/project/components/shared.js")).toBe(1);
     });
   });
 

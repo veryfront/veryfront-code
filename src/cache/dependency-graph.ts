@@ -118,6 +118,22 @@ export class DependencyGraph {
   }
 }
 
+export interface DependencyHashCache {
+  graph: DependencyGraph;
+  contentHashes: Map<string, string>;
+  completedModules: Set<string>;
+  inProgressModules: Map<string, Promise<void>>;
+}
+
+export function createDependencyHashCache(): DependencyHashCache {
+  return {
+    graph: new DependencyGraph(),
+    contentHashes: new Map<string, string>(),
+    completedModules: new Set<string>(),
+    inProgressModules: new Map<string, Promise<void>>(),
+  };
+}
+
 export async function extractImports(code: string): Promise<string[]> {
   const parsed = await parseAllImports(code);
   return parsed.imports.map((imp) => imp.specifier);
@@ -175,21 +191,18 @@ export async function computeDepsHash(
   filePath: string,
   getContent: (path: string) => Promise<string>,
   projectDir: string,
+  cache: DependencyHashCache = createDependencyHashCache(),
 ): Promise<string> {
-  const graph = new DependencyGraph();
-  const contentHashes = new Map<string, string>();
-
   await buildDependencyGraph(
     filePath,
-    graph,
-    contentHashes,
+    cache,
     getContent,
     projectDir,
   );
 
-  const deps = [filePath, ...graph.getTransitiveDependencies(filePath)].sort();
+  const deps = [filePath, ...cache.graph.getTransitiveDependencies(filePath)].sort();
   const combinedHash = deps
-    .map((dep) => contentHashes.get(dep) ?? "")
+    .map((dep) => cache.contentHashes.get(dep) ?? "")
     .filter(Boolean)
     .join(":");
 
@@ -198,33 +211,64 @@ export async function computeDepsHash(
 
 async function buildDependencyGraph(
   filePath: string,
-  graph: DependencyGraph,
-  contentHashes: Map<string, string>,
+  cache: DependencyHashCache,
   getContent: (path: string) => Promise<string>,
   projectDir: string,
   visited: Set<string> = new Set<string>(),
 ): Promise<void> {
+  if (cache.completedModules.has(filePath)) return;
   if (visited.has(filePath)) return;
   visited.add(filePath);
 
+  const inProgress = cache.inProgressModules.get(filePath);
+  if (inProgress) {
+    await inProgress;
+    return;
+  }
+
+  const buildPromise = buildDependencyGraphFresh(
+    filePath,
+    cache,
+    getContent,
+    projectDir,
+    visited,
+  );
+  cache.inProgressModules.set(filePath, buildPromise);
+
+  try {
+    await buildPromise;
+  } finally {
+    cache.inProgressModules.delete(filePath);
+  }
+}
+
+async function buildDependencyGraphFresh(
+  filePath: string,
+  cache: DependencyHashCache,
+  getContent: (path: string) => Promise<string>,
+  projectDir: string,
+  visited: Set<string>,
+): Promise<void> {
   try {
     const content = await getContent(filePath);
-    contentHashes.set(filePath, await computeHash(content));
+    cache.contentHashes.set(filePath, await computeHash(content));
 
     const allImports = await extractImports(content);
     const normalizedDeps = filterLocalImports(allImports).map((spec) =>
       normalizeSpecifierToPath(spec, filePath, projectDir)
     );
 
-    graph.addModule(filePath, normalizedDeps);
+    cache.graph.addModule(filePath, normalizedDeps);
 
     await Promise.all(
       normalizedDeps.map((dep) =>
-        buildDependencyGraph(dep, graph, contentHashes, getContent, projectDir, visited)
+        buildDependencyGraph(dep, cache, getContent, projectDir, visited)
       ),
     );
   } catch (_) {
     // expected: file may not exist or imports may fail to parse
-    graph.addModule(filePath, []);
+    cache.graph.addModule(filePath, []);
+  } finally {
+    cache.completedModules.add(filePath);
   }
 }

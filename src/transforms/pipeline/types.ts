@@ -5,6 +5,8 @@
  * Each stage handles one concern, making the pipeline testable and maintainable.
  */
 
+import type { DependencyHashCache } from "#veryfront/cache/dependency-graph.ts";
+
 /**
  * Transform stages in execution order.
  * Each stage runs after the previous completes.
@@ -57,6 +59,8 @@ export interface TransformOptions {
   reactVersion?: string;
   /** File reader for dependency hash computation. When provided, enables dependency-aware cache invalidation. */
   readFile?: (path: string) => Promise<string>;
+  /** Internal per-render dependency hash cache. */
+  dependencyHashCache?: DependencyHashCache;
 }
 
 /**

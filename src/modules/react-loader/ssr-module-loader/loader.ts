@@ -60,6 +60,10 @@ import { resolveVfModuleImports } from "./vf-module-resolver.ts";
 import { registerCSSImport } from "../css-import-collector.ts";
 import { injectNodePositions } from "#veryfront/transforms/plugins/babel-node-positions.ts";
 import { ensureMdxModuleDependencies } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/dependency-recovery.ts";
+import {
+  createDependencyHashCache,
+  type DependencyHashCache,
+} from "#veryfront/cache/dependency-graph.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
 
@@ -78,7 +82,8 @@ export class SSRModuleLoader {
     this.cache = new SSRCacheManager(options);
     this.depValidator = new SSRDependencyValidator(
       (filePath) => this.cache.getCacheKey(filePath),
-      (filePath, source, depth) => this.transformWithDependencies(filePath, source, depth),
+      (filePath, source, depth, dependencyHashCache) =>
+        this.transformWithDependencies(filePath, source, depth, dependencyHashCache),
       (crossImport) => this.transformCrossProjectImport(crossImport),
       options.adapter,
       options.projectDir,
@@ -268,7 +273,8 @@ export class SSRModuleLoader {
         this.depValidator.reset();
 
         try {
-          await this.transformWithDependencies(filePath, source);
+          const dependencyHashCache = createDependencyHashCache();
+          await this.transformWithDependencies(filePath, source, 0, dependencyHashCache);
 
           if (this.depValidator.missingDependencies.length > 0) {
             this.depValidator.throwMissingDependencies(filePath);
@@ -327,12 +333,13 @@ export class SSRModuleLoader {
     filePath: string,
     source?: string,
     depth: number = 0,
+    dependencyHashCache: DependencyHashCache = createDependencyHashCache(),
   ): Promise<void> {
     const fileName = filePath.split("/").pop() || filePath;
 
     return withSpan(
       SpanNames.SSR_TRANSFORM_DEPENDENCIES,
-      () => this.doTransformWithDependencies(filePath, source, depth),
+      () => this.doTransformWithDependencies(filePath, source, depth, dependencyHashCache),
       {
         "ssr.file": fileName,
         "ssr.depth": depth,
@@ -344,6 +351,7 @@ export class SSRModuleLoader {
     filePath: string,
     source?: string,
     depth: number = 0,
+    dependencyHashCache: DependencyHashCache = createDependencyHashCache(),
   ): Promise<void> {
     if (depth > MAX_TRANSFORM_DEPTH) {
       logger.warn("Max transform depth exceeded", {
@@ -559,6 +567,7 @@ export class SSRModuleLoader {
         filePath,
         depth,
         localFs,
+        dependencyHashCache,
       );
 
       for (let i = 0; i < parseResult.crossProjectImports.length; i += TRANSFORM_BATCH_SIZE) {
@@ -590,6 +599,7 @@ export class SSRModuleLoader {
           ssr: true,
           apiBaseUrl: this.options.apiBaseUrl,
           reactVersion: this.options.reactVersion,
+          dependencyHashCache,
         };
 
         let transformed = await withSpan(
