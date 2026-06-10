@@ -44,9 +44,11 @@ describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, ()
     const contentSourceId = `preview-${crypto.randomUUID()}`;
     const vfmodDir = join(getMdxEsmCacheDir(), projectId, contentSourceId);
     const childPath = join(vfmodDir, "vfmod-child.mjs");
+    const stablePath = join(projectDir, "stable.mjs");
 
     try {
       __injectCachesForTests({ cacheBackend: distributedCache });
+      await writeTextFile(stablePath, `export default "stable";`);
 
       await distributedCache.set(
         buildMdxEsmModuleRecoveryCacheKey(projectId, contentSourceId, "vfmod-child.mjs"),
@@ -61,8 +63,20 @@ describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, ()
         dev: true,
       });
 
+      const statCounts = new Map<string, number>();
+      const fs = cacheManager.getFs();
+      const originalStat = fs.stat.bind(fs);
+      fs.stat = async (path) => {
+        statCounts.set(path, (statCounts.get(path) ?? 0) + 1);
+        return await originalStat(path);
+      };
+
       const isValid = await cacheManager.validateCachedCode(
-        `import child from "file://${childPath}"; export default child;`,
+        [
+          `import stable from "file://${stablePath}";`,
+          `import child from "file://${childPath}";`,
+          `export default [stable, child];`,
+        ].join("\n"),
         join(projectDir, "pages", "index.tsx"),
         "redis-cache",
         {
@@ -73,6 +87,8 @@ describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, ()
 
       assertEquals(isValid, true);
       assertEquals(await readTextFile(childPath), `export default "recovered";`);
+      assertEquals(statCounts.get(stablePath), 1);
+      assertEquals(statCounts.get(childPath), 2);
     } finally {
       __injectCachesForTests(null);
       await remove(vfmodDir, { recursive: true }).catch(() => {});
