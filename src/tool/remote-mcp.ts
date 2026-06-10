@@ -397,6 +397,19 @@ function normalizeCallToolResult(input: {
   return normalizeKnownToolError(result, input.toolName, input.endpoint, input.context);
 }
 
+function buildRunContextMeta(
+  context: ToolExecutionContext | undefined,
+): Record<string, unknown> | undefined {
+  const meta: Record<string, unknown> = {};
+  if (typeof context?.runId === "string" && context.runId.length > 0) {
+    meta.run_id = context.runId;
+  }
+  if (typeof context?.agentId === "string" && context.agentId.length > 0) {
+    meta.agent_id = context.agentId;
+  }
+  return Object.keys(meta).length > 0 ? meta : undefined;
+}
+
 /** Create remote MCP tool source. */
 export function createRemoteMCPToolSource(
   config: RemoteMCPToolSourceConfig,
@@ -427,6 +440,7 @@ export function createRemoteMCPToolSource(
     async executeTool(toolName, args, context) {
       const endpoint = await resolveValue(config.endpoint, context);
       const headers = await resolveHeaders(config.headers, context);
+      const meta = buildRunContextMeta(context);
 
       try {
         const payload = await postJsonRpc(
@@ -439,6 +453,7 @@ export function createRemoteMCPToolSource(
             params: {
               name: toolName,
               arguments: args,
+              ...(meta ? { _meta: meta } : {}),
             },
           },
           config.fetch ?? globalThis.fetch,
