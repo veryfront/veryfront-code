@@ -23,6 +23,9 @@ export const getMemoryConfigSchema = defineSchema((v) =>
     type: v.enum(["conversation", "buffer", "summary", "redis"] as const),
     maxTokens: v.number().int().positive().optional(),
     maxMessages: v.number().int().positive().optional(),
+    // Persist history across calls on the agent instance. Defaults to true when
+    // a memory config is provided; set false to keep every call isolated.
+    enabled: v.boolean().optional(),
   })
 );
 

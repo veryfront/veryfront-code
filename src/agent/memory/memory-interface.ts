@@ -13,6 +13,13 @@ export interface MemoryConfigBase {
   type: string;
   maxTokens?: number;
   maxMessages?: number;
+  /**
+   * Persist conversation history across `stream()` / `generate()` calls on the
+   * agent instance. Defaults to `true` when a memory config is provided. Set to
+   * `false` to run every call in isolation (no shared history), the same
+   * effect as omitting `memory` entirely.
+   */
+  enabled?: boolean;
 }
 
 /** Public API contract for memory stats. */

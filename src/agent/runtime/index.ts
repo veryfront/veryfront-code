@@ -27,7 +27,7 @@ import {
 import { ensureModelReady, type ModelRuntime, resolveModel } from "#veryfront/provider";
 import { generateId } from "#veryfront/utils/id.ts";
 import { detectPlatform, getPlatformCapabilities } from "#veryfront/platform/core-platform.ts";
-import { createMemory, type Memory } from "../memory/index.ts";
+import { createAgentMemory, type Memory } from "../memory/index.ts";
 import { serverLogger } from "#veryfront/utils";
 import {
   addSpanEvent,
@@ -45,7 +45,6 @@ import {
 } from "./chat-stream-handler.ts";
 import { repairToolCall } from "./repair-tool-call.ts";
 import { MiddlewareChain } from "../middleware/chain.ts";
-import { AGENT_DEFAULTS } from "./defaults.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import type { ToolExecutionContext } from "#veryfront/tool";
 import { isLocalModelRuntime } from "#veryfront/provider/runtime-inspection.ts";
@@ -163,7 +162,7 @@ function isAbortError(error: unknown, abortSignal?: AbortSignal): boolean {
 function warnLocalToolSkipping(agentId: string, modelId: string): void {
   logger.warn(
     `Agent "${agentId}" has tools configured but is using local model "${modelId}". ` +
-      "Local models don't support tool calling — tools will be skipped. " +
+      "Local models don't support tool calling. Tools will be skipped. " +
       "Set VERYFRONT_API_TOKEN and VERYFRONT_PROJECT_SLUG, or configure " +
       "OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY for full tool support.",
   );
@@ -193,9 +192,25 @@ export class AgentRuntime {
     this.id = id;
     this.config = config;
 
-    const memoryConfig = config.memory ||
-      { type: "conversation", maxTokens: AGENT_DEFAULTS.memoryMaxTokens };
-    this.memory = createMemory<Message>(memoryConfig);
+    // Agents are stateless by default (see docs/guides/memory-and-streaming.md):
+    // with no `memory` config, calls never share conversation history, so
+    // concurrent stream()/generate() on a shared instance stay isolated.
+    // Providing `memory` opts in to cross-call persistence.
+    this.memory = createAgentMemory<Message>(config.memory);
+  }
+
+  /**
+   * Persist this turn's input, then resolve the messages to run on. Configured
+   * memory returns the full persisted conversation (this turn + history); the
+   * stateless default persists nothing and returns empty, so we fall back to
+   * this turn's input. That fallback is what keeps concurrent stream()/
+   * generate() calls on a shared instance isolated instead of interleaving into
+   * one conversation.
+   */
+  private async prepareTurnMessages(inputMessages: Message[]): Promise<Message[]> {
+    for (const msg of inputMessages) await this.memory.add(msg);
+    const persisted = await this.memory.getMessages();
+    return persisted.length > 0 ? persisted : inputMessages;
   }
 
   private async resolveModelTransport(
@@ -281,9 +296,8 @@ export class AgentRuntime {
       });
 
       const inputMessages = normalizeInput(input);
-      for (const msg of inputMessages) await this.memory.add(msg);
+      const messages = await this.prepareTurnMessages(inputMessages);
 
-      const messages = await this.memory.getMessages();
       const systemPrompt = await this.resolveSystemPrompt();
 
       const agentContext: AgentContext = {
@@ -342,9 +356,8 @@ export class AgentRuntime {
       );
     }
 
-    for (const msg of messages) await this.memory.add(msg);
+    const memoryMessages = await this.prepareTurnMessages(messages);
 
-    const memoryMessages = await this.memory.getMessages();
     const systemPrompt = await this.resolveSystemPrompt();
 
     const encoder = new TextEncoder();
@@ -369,7 +382,7 @@ export class AgentRuntime {
     };
     const textPartId = generateId("text");
 
-    // Resolve model BEFORE creating the ReadableStream — if this throws
+    // Resolve model BEFORE creating the ReadableStream. If this throws
     // (e.g., no_ai_available), the error propagates to the caller who can
     // return a proper error response (503) instead of a 200 with an error event.
     const languageModel = transport.languageModel;
@@ -398,7 +411,7 @@ export class AgentRuntime {
     // no-op rejection handler. When the client cancels, we abort the shared
     // signal; the loop (model fetch / tool execution) then rejects with an
     // AbortError. The `start` body awaits it, but cancellation can land after
-    // that await settles, leaving the rejection without a consumer — fatal as
+    // that await settles, leaving the rejection without a consumer, fatal as
     // an unhandled rejection under Deno (#2334).
     let inFlight: Promise<AgentResponse> | undefined;
 
@@ -410,7 +423,7 @@ export class AgentRuntime {
 
           const messageId = generateMessageId();
           sendSSE(controller, encoder, { type: "message-start", messageId });
-          // Report the effective model — when resolveModel falls back from
+          // Report the effective model. When resolveModel falls back from
           // cloud to local (e.g. missing API key), use the resolved object's
           // modelId so the client avatar matches the actual provider.
           const effectiveModel = isLocal && !resolvedModelString.startsWith("local/")
@@ -510,7 +523,7 @@ export class AgentRuntime {
       const currentMessages = [...messages];
       const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
-      // Local models can't reliably do function calling — skip tools gracefully.
+      // Local models can't reliably do function calling, so skip tools gracefully.
       const isLocal = isLocalModelRuntime(languageModel);
       if (isLocal && this.config.tools) {
         warnLocalToolSkipping(this.id, effectiveModel);
@@ -814,7 +827,7 @@ export class AgentRuntime {
     const currentMessages = [...messages];
     const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
-    // Local models can't reliably do function calling — skip tools gracefully.
+    // Local models can't reliably do function calling, so skip tools gracefully.
     const isLocalStreaming = isLocalModelRuntime(languageModel);
     if (isLocalStreaming && this.config.tools) {
       warnLocalToolSkipping(this.id, effectiveModel);
@@ -1002,13 +1015,13 @@ export class AgentRuntime {
         if (isRecoverablePlaceholderToolCall(tc)) {
           // Provisional empty-object placeholder that never finalized. The
           // model never committed arguments, so we neither execute it nor
-          // surface a stream-termination error — the loop continues and the
+          // surface a stream-termination error, so the loop continues and the
           // next model call recovers the real tool call.
           continue;
         }
         if (isStreamedToolCallIncomplete(tc)) {
           // Stream ended before the provider finalized this tool call. We
-          // cannot execute it — record a distinct stream-termination error
+          // cannot execute it, so record a distinct stream-termination error
           // (not a tool-argument parse error) so the parent step and any
           // upstream orchestrator (e.g. the child-fork watchdog) see a
           // completed step with a clearly-labelled failure and can recover.
@@ -1266,7 +1279,13 @@ export class AgentRuntime {
       return Math.floor(maxOutputTokensOverride);
     }
 
-    return this.config.memory?.maxTokens ??
+    // A disabled memory config contributes nothing, exactly like omitting
+    // `memory`, so its maxTokens (a conversation-window size) must not cap
+    // model output.
+    const memoryMaxTokens = this.config.memory?.enabled === false
+      ? undefined
+      : this.config.memory?.maxTokens;
+    return memoryMaxTokens ??
       (modelString ? getModelMaxOutputTokens(modelString) : undefined) ??
       DEFAULT_MAX_TOKENS;
   }

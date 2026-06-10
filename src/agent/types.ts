@@ -163,6 +163,14 @@ export interface AgentConfig {
   /** Sampling temperature for model generation. Defaults to 0. */
   temperature?: number;
   streaming?: boolean;
+  /**
+   * Conversation memory persisted across `stream()` / `generate()` calls on this
+   * instance. Omit for the stateless default: every call runs in isolation,
+   * which keeps concurrent fan-out on a shared instance correct. When set, the
+   * instance accumulates one shared conversation, so reuse it sequentially, not
+   * across concurrent independent runs (use a separate instance per run for
+   * that). Set `enabled: false` to force the stateless behavior explicitly.
+   */
   memory?: MemoryConfig;
   middleware?: AgentMiddleware[];
   edge?: EdgeConfig;
