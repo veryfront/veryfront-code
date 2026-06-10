@@ -154,6 +154,66 @@ describe("ragStore", () => {
     });
   });
 
+  it("resets local store when document entries fail validation", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      await Deno.mkdir(join(tempDir, "data"), { recursive: true });
+      await Deno.writeTextFile(
+        storagePath,
+        JSON.stringify({
+          documents: [{
+            id: 123,
+            title: "Invalid Doc",
+            source: "upload:invalid.txt",
+            type: "txt",
+            createdAt: 1,
+          }],
+          chunks: [],
+        }),
+      );
+
+      const store = ragStore({
+        model: "local/test-model",
+        storagePath,
+      });
+
+      assertEquals(await store.listDocuments(), []);
+    });
+  });
+
+  it("resets local store when chunk entries fail validation", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      await Deno.mkdir(join(tempDir, "data"), { recursive: true });
+      await Deno.writeTextFile(
+        storagePath,
+        JSON.stringify({
+          documents: [{
+            id: "doc-1",
+            title: "Valid Doc",
+            source: "upload:valid.txt",
+            type: "txt",
+            createdAt: 1,
+          }],
+          chunks: [{
+            id: "chunk-1",
+            documentId: "doc-1",
+            text: "content",
+            embedding: ["not-a-number"],
+            index: 0,
+          }],
+        }),
+      );
+
+      const store = ragStore({
+        model: "local/test-model",
+        storagePath,
+      });
+
+      assertEquals(await store.listDocuments(), []);
+    });
+  });
+
   it("auto-upgrades to the veryfront-cloud backend when cloud bootstrap is present", async () => {
     setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
     setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
