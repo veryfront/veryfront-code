@@ -52,22 +52,27 @@ export function rewriteLocalImports(
     ? fromFileDir.substring(normalizedProjectDir.length + 1)
     : fromFileDir;
 
-  let result = transformed;
+  const replacementByPattern = new Map<string, string>();
 
   for (const [specifierOrPath, tempPath] of localImportPaths) {
     const patterns = buildImportPatterns(specifierOrPath, fromRelativeDir, normalizedProjectDir);
 
     for (const pattern of patterns) {
-      const escapedPattern = escapeRegExp(pattern);
-      const regex = new RegExp(
-        `${IMPORT_FROM_PREFIX}(${escapedPattern})${IMPORT_FROM_SUFFIX}`,
-        "g",
-      );
-      result = result.replace(regex, `from "file://${tempPath}"`);
+      if (!replacementByPattern.has(pattern)) {
+        replacementByPattern.set(pattern, tempPath);
+      }
     }
   }
 
-  return result;
+  if (replacementByPattern.size === 0) return transformed;
+
+  const importPattern = Array.from(replacementByPattern.keys()).map(escapeRegExp).join("|");
+  const regex = new RegExp(`${IMPORT_FROM_PREFIX}(${importPattern})${IMPORT_FROM_SUFFIX}`, "g");
+
+  return transformed.replace(regex, (match, specifier: string) => {
+    const tempPath = replacementByPattern.get(specifier);
+    return tempPath === undefined ? match : `from "file://${tempPath}"`;
+  });
 }
 
 /**
