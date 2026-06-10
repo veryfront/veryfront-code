@@ -8,6 +8,7 @@ export interface RedisClient {
   connect(): Promise<void>;
   disconnect(): Promise<void>;
   get(key: string): Promise<string | null>;
+  mGet(keys: string[]): Promise<Array<string | null>>;
   set(key: string, value: string, options?: { EX?: number }): Promise<string | null>;
   del(key: string | string[]): Promise<number>;
   scan(

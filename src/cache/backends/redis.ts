@@ -67,10 +67,11 @@ export class RedisCacheBackend implements CacheBackend {
     }
 
     try {
-      const fetched = await Promise.all(
-        keys.map(async (key) => [key, await this.get(key)] as const),
+      const prefixedKeys = keys.map((key) => this.prefixKey(key));
+      const fetched = await this.client.mGet(prefixedKeys);
+      const values = new Map(
+        keys.map((key, index) => [key, fetched[index] ?? null] as const),
       );
-      const values = new Map(fetched);
       return buildBatchResults(keys, (key) => values.get(key) ?? null);
     } catch (error) {
       logger.debug("GetBatch failed", { keyCount: keys.length, error });

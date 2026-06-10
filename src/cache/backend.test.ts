@@ -17,6 +17,7 @@ import {
   type Span,
   type Tracer,
 } from "#veryfront/observability/tracing/api-shim.ts";
+import type { RedisClient } from "#veryfront/utils/redis-client.ts";
 
 type RecordedSpan = {
   name: string;
@@ -539,6 +540,39 @@ Deno.test("RedisCacheBackend getBatch returns empty map for empty keys", async (
   const cache = new RedisCacheBackend();
   const results = await cache.getBatch([]);
   assertEquals(results.size, 0);
+});
+
+Deno.test("RedisCacheBackend getBatch uses one MGET call for prefixed keys", async () => {
+  const { RedisCacheBackend } = await importBackend();
+  const cache = new RedisCacheBackend("vf:test:");
+  const getCalls: string[] = [];
+  const mGetCalls: string[][] = [];
+  const client = {
+    connect: () => Promise.resolve(),
+    disconnect: () => Promise.resolve(),
+    get: (key: string) => {
+      getCalls.push(key);
+      return Promise.resolve(`single:${key}`);
+    },
+    mGet: (keys: string[]) => {
+      mGetCalls.push([...keys]);
+      return Promise.resolve(["value-a", null, "value-c"]);
+    },
+    set: () => Promise.resolve(null),
+    del: () => Promise.resolve(0),
+    scan: () => Promise.resolve({ cursor: 0, keys: [] }),
+    expire: () => Promise.resolve(0),
+  } satisfies RedisClient;
+
+  (cache as unknown as { client: RedisClient }).client = client;
+
+  const results = await cache.getBatch(["a", "b", "c"]);
+
+  assertEquals(mGetCalls, [["vf:test:a", "vf:test:b", "vf:test:c"]]);
+  assertEquals(getCalls, []);
+  assertEquals(results.get("a"), "value-a");
+  assertEquals(results.get("b"), null);
+  assertEquals(results.get("c"), "value-c");
 });
 
 Deno.test("RedisCacheBackend setBatch is no-op without client", async () => {
