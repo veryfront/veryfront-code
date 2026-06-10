@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  AGENT_SCHEMA_LEGACY_TOOL_CALL_PART_POLICY,
   getAgentContextSchema,
   getAgentResponseSchema,
   getAgentStatusSchema,
@@ -171,6 +172,16 @@ describe("agent/schema", () => {
         args: { url: "https://api.example.com" },
       });
       assertEquals(result.success, true);
+    });
+
+    it("documents the retained legacy tool-call literal policy", () => {
+      assertEquals(AGENT_SCHEMA_LEGACY_TOOL_CALL_PART_POLICY, {
+        status: "compatibility-retained",
+        legacyShape: '{ type: "tool-call", toolCallId, toolName, args }',
+        canonicalShape: 'tool-prefixed message parts with "args" or "input"',
+        removalGate:
+          "Remove only in a planned breaking release after migration guidance and stored-message backfill coverage exist.",
+      });
     });
 
     it("should accept tool result part", () => {

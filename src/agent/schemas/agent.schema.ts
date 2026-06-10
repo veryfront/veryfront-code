@@ -74,9 +74,17 @@ export const getToolResultPartSchema = defineSchema((v) =>
   })
 );
 
-// Helper for the inline tool-call alternative within MessagePartSchema —
-// matches the legacy `{ type: "tool-call", ... }` shape distinct from the
-// top-level ToolCallPart variants above.
+/** Compatibility policy for the legacy inline tool-call message part. */
+export const AGENT_SCHEMA_LEGACY_TOOL_CALL_PART_POLICY = {
+  status: "compatibility-retained",
+  legacyShape: '{ type: "tool-call", toolCallId, toolName, args }',
+  canonicalShape: 'tool-prefixed message parts with "args" or "input"',
+  removalGate:
+    "Remove only in a planned breaking release after migration guidance and stored-message backfill coverage exist.",
+} as const;
+
+// Helper for the inline tool-call alternative within MessagePartSchema.
+// Keep this branch in sync with AGENT_SCHEMA_LEGACY_TOOL_CALL_PART_POLICY.
 const inlineToolCallPartShape = (v: SchemaValidator) =>
   v.object({
     type: v.literal("tool-call"),

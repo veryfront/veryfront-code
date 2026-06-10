@@ -5,6 +5,7 @@
  */
 
 export {
+  AGENT_SCHEMA_LEGACY_TOOL_CALL_PART_POLICY,
   type AgentContext,
   type AgentResponse,
   type AgentStatus,
