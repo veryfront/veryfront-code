@@ -151,6 +151,36 @@ describe("MDX module path cache", () => {
       clearModulePathCache();
     }
   });
+
+  it("bounds loaded path-cache entries and reports the aggregate limit", async () => {
+    clearModulePathCache();
+
+    const cacheDir = await makeTempDir({ prefix: "vf-mdx-cache-bound-" });
+    const index: Record<string, string> = {};
+    for (let i = 0; i < 501; i++) {
+      index[buildMdxEsmPathCacheKey(`_vf_modules/pages/${i}.js`)] = `/tmp/${i}.mjs`;
+    }
+
+    try {
+      await writeTextFile(join(cacheDir, "_index.json"), JSON.stringify(index));
+
+      const cache = await getModulePathCache(cacheDir);
+      const stats = getCacheStats();
+      const pathCacheStats = stats.find((s) => s.name === "mdx-esm-path-caches") as
+        | ({ entries: number; maxEntries?: number; cacheDirs?: number })
+        | undefined;
+
+      assertEquals(cache.size, 500);
+      assertEquals(pathCacheStats?.entries, 500);
+      assertEquals(pathCacheStats?.maxEntries, 500);
+      assertEquals(pathCacheStats?.cacheDirs, 1);
+      assertEquals(cache.get(buildMdxEsmPathCacheKey("_vf_modules/pages/0.js")), undefined);
+      assertEquals(cache.get(buildMdxEsmPathCacheKey("_vf_modules/pages/500.js")), "/tmp/500.mjs");
+    } finally {
+      await remove(cacheDir, { recursive: true }).catch(() => {});
+      clearModulePathCache();
+    }
+  });
 });
 
 describe("invalidateModulePaths — disk persistence", () => {
