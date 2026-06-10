@@ -91,6 +91,77 @@ describe("transforms/esm/transform-cache", () => {
       assertEquals(typeof result?.timestamp, "number");
       assertEquals(result!.timestamp > 0, true);
     });
+
+    it("does not materialize and sort fallback entries during eviction", () => {
+      __injectCachesForTests(null);
+      __injectCachesForTests({ cacheBackend: null });
+      destroyTransformCache();
+
+      const originalArrayFrom = Array.from;
+      let arrayFromCalls = 0;
+
+      Object.defineProperty(Array, "from", {
+        configurable: true,
+        writable: true,
+        value: function (...args: unknown[]) {
+          arrayFromCalls++;
+          return Reflect.apply(originalArrayFrom, Array, args);
+        },
+      });
+
+      try {
+        for (let i = 0; i < 501; i++) {
+          setCachedTransform(`key-${i}`, `const value = ${i};`, `hash-${i}`);
+        }
+
+        assertEquals(arrayFromCalls, 0);
+      } finally {
+        Object.defineProperty(Array, "from", {
+          configurable: true,
+          writable: true,
+          value: originalArrayFrom,
+        });
+        destroyTransformCache();
+      }
+    });
+
+    it("evicts the least recently used fallback entry", () => {
+      __injectCachesForTests(null);
+      __injectCachesForTests({ cacheBackend: null });
+      destroyTransformCache();
+
+      try {
+        for (let i = 0; i < 500; i++) {
+          setCachedTransform(`key-${i}`, `const value = ${i};`, `hash-${i}`);
+        }
+
+        assertEquals(getCachedTransform("key-0")?.hash, "hash-0");
+        setCachedTransform("key-500", "const value = 500;", "hash-500");
+
+        assertEquals(getCachedTransform("key-0")?.hash, "hash-0");
+        assertEquals(getCachedTransform("key-1"), undefined);
+        assertEquals(getCachedTransform("key-500")?.hash, "hash-500");
+      } finally {
+        destroyTransformCache();
+      }
+    });
+
+    it("retains fallback entries larger than the default LRU byte limit", () => {
+      __injectCachesForTests(null);
+      __injectCachesForTests({ cacheBackend: null });
+      destroyTransformCache();
+
+      try {
+        const largeTransform = "x".repeat(26 * 1024 * 1024);
+        setCachedTransform("large-key", largeTransform, "large-hash");
+
+        const result = getCachedTransform("large-key");
+        assertEquals(result?.code.length, largeTransform.length);
+        assertEquals(result?.hash, "large-hash");
+      } finally {
+        destroyTransformCache();
+      }
+    });
   });
 
   describe("default local fallback eviction", () => {
