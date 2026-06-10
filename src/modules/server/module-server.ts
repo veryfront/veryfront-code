@@ -27,6 +27,11 @@ import {
 import { getReactUrls, REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { readLimitedCrossProjectSource } from "./cross-project-source-limit.ts";
 import { sha256Short } from "#veryfront/cache/hash.ts";
+import {
+  buildSourceMissCacheKey,
+  hasSourceMiss,
+  rememberSourceMiss,
+} from "./module-source-resolution-cache.ts";
 
 const logger = serverLogger.component("module-server");
 
@@ -567,17 +572,42 @@ async function findFrameworkPackageAssetFile(
 ): Promise<string | null> {
   if (hasUnsafePackageAssetPath(basePathWithoutExt)) return null;
 
-  for (const ext of extensions) {
-    const candidatePath = join(FRAMEWORK_ROOT, basePathWithoutExt + ext);
-    try {
-      const stat = await fs.stat(candidatePath);
-      if (stat.isFile) return candidatePath;
-    } catch {
-      /* expected: package asset may not exist in source checkouts */
-    }
-  }
+  return await findFirstPlatformFile(
+    fs,
+    extensions.map((ext) => join(FRAMEWORK_ROOT, basePathWithoutExt + ext)),
+  );
+}
 
-  return null;
+async function findFirstPlatformFile(
+  fs: ReturnType<typeof createFileSystem>,
+  paths: string[],
+): Promise<string | null> {
+  const results = await Promise.all(paths.map(async (path) => {
+    try {
+      const stat = await fs.stat(path);
+      return stat.isFile ? path : null;
+    } catch {
+      return null;
+    }
+  }));
+
+  return results.find((path): path is string => path !== null) ?? null;
+}
+
+async function findFirstSecureFile(
+  secureFs: ReturnType<typeof createSecureFs>,
+  paths: string[],
+): Promise<string | null> {
+  const results = await Promise.all(paths.map(async (path) => {
+    try {
+      const stat = await secureFs.stat(path);
+      return stat.isFile ? path : null;
+    } catch {
+      return null;
+    }
+  }));
+
+  return results.find((path): path is string => path !== null) ?? null;
 }
 
 async function findSourceFile(
@@ -617,6 +647,12 @@ async function findSourceFile(
   const isFrameworkPath = basePathWithoutExt.startsWith("_veryfront/");
   const isFrameworkPackageAssetPath = basePathWithoutExt.startsWith("react/") ||
     basePathWithoutExt.startsWith("deps/");
+  const missCacheKey = buildSourceMissCacheKey({
+    resolver: "module-server",
+    projectDir,
+    basePath: basePathWithoutExt,
+    reactVersion,
+  });
 
   // Check embedded polyfills first (no filesystem access needed).
   // These cover both compiled-binary polyfills (node:async_hooks etc.)
@@ -636,6 +672,8 @@ async function findSourceFile(
       embeddedContent,
     };
   }
+
+  if (hasSourceMiss(missCacheKey)) return null;
 
   if (isFrameworkPackageAssetPath) {
     const browserReactShim = createBrowserReactPackageShim(basePathWithoutExt, reactVersion);
@@ -698,17 +736,13 @@ async function findSourceFile(
   }
 
   // Project file lookups (using secureFs which may go through FSAdapter in proxy mode)
-  for (const ext of extensions) {
-    const fullPath = join(projectDir, basePathWithoutExt + ext);
-    try {
-      const stat = await secureFs.stat(fullPath);
-      if (stat.isFile) {
-        logger.debug("Found file", { basePath, resolvedPath: fullPath });
-        return { path: fullPath, isFrameworkFile: false };
-      }
-    } catch (_) {
-      /* expected: file may not exist at this extension */
-    }
+  const projectFilePath = await findFirstSecureFile(
+    secureFs,
+    extensions.map((ext) => join(projectDir, basePathWithoutExt + ext)),
+  );
+  if (projectFilePath) {
+    logger.debug("Found file", { basePath, resolvedPath: projectFilePath });
+    return { path: projectFilePath, isFrameworkFile: false };
   }
 
   const prefixesToStrip = ["components/", "pages/", "lib/", "app/", "src/"];
@@ -716,60 +750,49 @@ async function findSourceFile(
     if (!basePathWithoutExt.startsWith(prefix)) continue;
 
     const strippedPath = basePathWithoutExt.slice(prefix.length);
-    for (const ext of extensions) {
-      const fullPath = join(projectDir, strippedPath + ext);
-      try {
-        const stat = await secureFs.stat(fullPath);
-        if (stat.isFile) {
-          logger.debug("Found file after stripping prefix", {
-            originalPath: basePathWithoutExt,
-            strippedPath,
-            resolvedPath: fullPath,
-          });
-          return { path: fullPath, isFrameworkFile: false };
-        }
-      } catch (_) {
-        /* expected: file may not exist after stripping prefix */
-      }
+    const strippedFilePath = await findFirstSecureFile(
+      secureFs,
+      extensions.map((ext) => join(projectDir, strippedPath + ext)),
+    );
+    if (strippedFilePath) {
+      logger.debug("Found file after stripping prefix", {
+        originalPath: basePathWithoutExt,
+        strippedPath,
+        resolvedPath: strippedFilePath,
+      });
+      return { path: strippedFilePath, isFrameworkFile: false };
     }
   }
 
-  for (const ext of extensions) {
-    const fullPath = join(projectDir, basePathWithoutExt, `index${ext}`);
-    try {
-      const stat = await secureFs.stat(fullPath);
-      if (stat.isFile) {
-        logger.debug("Found index file", {
-          basePath: basePathWithoutExt,
-          resolvedPath: fullPath,
-        });
-        return { path: fullPath, isFrameworkFile: false };
-      }
-    } catch (_) {
-      /* expected: index file may not exist at this extension */
-    }
+  const indexFilePath = await findFirstSecureFile(
+    secureFs,
+    extensions.map((ext) => join(projectDir, basePathWithoutExt, `index${ext}`)),
+  );
+  if (indexFilePath) {
+    logger.debug("Found index file", {
+      basePath: basePathWithoutExt,
+      resolvedPath: indexFilePath,
+    });
+    return { path: indexFilePath, isFrameworkFile: false };
   }
 
   // Try looking in common project directories
   const commonDirs = ["components", "app", "pages", "lib", "src"];
   for (const dir of commonDirs) {
-    for (const ext of extensions) {
-      const fullPath = join(projectDir, dir, basePathWithoutExt + ext);
-      try {
-        const stat = await secureFs.stat(fullPath);
-        if (stat.isFile) {
-          logger.debug("Found file in common directory", {
-            basePath,
-            resolvedPath: fullPath,
-          });
-          return { path: fullPath, isFrameworkFile: false };
-        }
-      } catch (_) {
-        /* expected: file may not exist in common directory */
-      }
+    const commonDirFilePath = await findFirstSecureFile(
+      secureFs,
+      extensions.map((ext) => join(projectDir, dir, basePathWithoutExt + ext)),
+    );
+    if (commonDirFilePath) {
+      logger.debug("Found file in common directory", {
+        basePath,
+        resolvedPath: commonDirFilePath,
+      });
+      return { path: commonDirFilePath, isFrameworkFile: false };
     }
   }
 
+  rememberSourceMiss(missCacheKey);
   return null;
 }
 

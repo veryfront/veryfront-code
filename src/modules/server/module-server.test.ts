@@ -12,8 +12,10 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
 import { isModuleRequest } from "./module-server.ts";
+import { clearSourceMissCache } from "./module-source-resolution-cache.ts";
 
 describe("isModuleRequest", () => {
   it("should return true for /_vf_modules/ path", () => {
@@ -201,6 +203,34 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     // esbuild may transform `export default {...}` into other export forms
     assertEquals(text.includes(VERSION), true);
     assertEquals(text.includes("version"), true);
+  });
+
+  it("caches missing project module lookups", async () => {
+    clearSourceMissCache("module-server");
+    const adapter = createMockAdapter();
+    const originalStat = adapter.fs.stat;
+    let statCalls = 0;
+    adapter.fs.stat = (path: string) => {
+      statCalls++;
+      return originalStat(path);
+    };
+
+    const { serveModule } = await import("./module-server.ts");
+    const request = new Request("http://localhost:3000/_vf_modules/components/Missing.js");
+    const options = {
+      projectId: "test",
+      projectDir: "/test-project",
+      adapter,
+    };
+
+    const firstResponse = await serveModule(request, options);
+    assertEquals(firstResponse.status, 404);
+    const afterFirstMiss = statCalls;
+    assertEquals(afterFirstMiss > 0, true);
+
+    const secondResponse = await serveModule(request, options);
+    assertEquals(secondResponse.status, 404);
+    assertEquals(statCalls, afterFirstMiss);
   });
 
   it("should serve dnt shims as JavaScript content type", async () => {

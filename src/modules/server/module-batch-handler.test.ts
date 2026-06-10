@@ -96,6 +96,33 @@ describe(
         assertEquals(await response.text(), "No modules could be loaded");
       });
 
+      it("caches missing module lookups", async () => {
+        clearBatchCache();
+        const adapter = createMockAdapter();
+        const originalStat = adapter.fs.stat;
+        let statCalls = 0;
+        adapter.fs.stat = (path: string) => {
+          statCalls++;
+          return originalStat(path);
+        };
+        const options = createOptions({ adapter });
+
+        const firstResponse = await handleModuleBatch(
+          createBatchRequest("components/Missing.js"),
+          options,
+        );
+        assertEquals(firstResponse.status, 404);
+        const afterFirstMiss = statCalls;
+        assertEquals(afterFirstMiss > 0, true);
+
+        const secondResponse = await handleModuleBatch(
+          createBatchRequest("components/Missing.js"),
+          options,
+        );
+        assertEquals(secondResponse.status, 404);
+        assertEquals(statCalls, afterFirstMiss);
+      });
+
       it("should successfully batch existing modules", async () => {
         const adapter = createMockAdapter();
         adapter.fs.files.set(

@@ -16,6 +16,7 @@ import {
 } from "#veryfront/rendering/router-detection.ts";
 import { clearSnippetCacheForProject } from "#veryfront/rendering/snippet-renderer.ts";
 import { resetApiHandlerForProject } from "#veryfront/server/handlers/request/api/pages-api-handler.ts";
+import { clearSourceMissCache } from "#veryfront/modules/server/module-source-resolution-cache.ts";
 
 const logger = serverLogger.component("cache-invalidation");
 
@@ -59,6 +60,7 @@ export async function invalidateProjectCaches(
     logger.debug("Clearing module path cache (full)", { projectSlug });
     clearModulePathCache();
   }
+  clearSourceMissCache();
 
   logger.debug("Clearing SSR module cache", {
     projectSlug,
