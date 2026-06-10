@@ -162,7 +162,7 @@ function isAbortError(error: unknown, abortSignal?: AbortSignal): boolean {
 function warnLocalToolSkipping(agentId: string, modelId: string): void {
   logger.warn(
     `Agent "${agentId}" has tools configured but is using local model "${modelId}". ` +
-      "Local models don't support tool calling — tools will be skipped. " +
+      "Local models don't support tool calling. Tools will be skipped. " +
       "Set VERYFRONT_API_TOKEN and VERYFRONT_PROJECT_SLUG, or configure " +
       "OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY for full tool support.",
   );
@@ -382,7 +382,7 @@ export class AgentRuntime {
     };
     const textPartId = generateId("text");
 
-    // Resolve model BEFORE creating the ReadableStream — if this throws
+    // Resolve model BEFORE creating the ReadableStream. If this throws
     // (e.g., no_ai_available), the error propagates to the caller who can
     // return a proper error response (503) instead of a 200 with an error event.
     const languageModel = transport.languageModel;
@@ -411,7 +411,7 @@ export class AgentRuntime {
     // no-op rejection handler. When the client cancels, we abort the shared
     // signal; the loop (model fetch / tool execution) then rejects with an
     // AbortError. The `start` body awaits it, but cancellation can land after
-    // that await settles, leaving the rejection without a consumer — fatal as
+    // that await settles, leaving the rejection without a consumer, fatal as
     // an unhandled rejection under Deno (#2334).
     let inFlight: Promise<AgentResponse> | undefined;
 
@@ -423,7 +423,7 @@ export class AgentRuntime {
 
           const messageId = generateMessageId();
           sendSSE(controller, encoder, { type: "message-start", messageId });
-          // Report the effective model — when resolveModel falls back from
+          // Report the effective model. When resolveModel falls back from
           // cloud to local (e.g. missing API key), use the resolved object's
           // modelId so the client avatar matches the actual provider.
           const effectiveModel = isLocal && !resolvedModelString.startsWith("local/")
@@ -523,7 +523,7 @@ export class AgentRuntime {
       const currentMessages = [...messages];
       const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
-      // Local models can't reliably do function calling — skip tools gracefully.
+      // Local models can't reliably do function calling, so skip tools gracefully.
       const isLocal = isLocalModelRuntime(languageModel);
       if (isLocal && this.config.tools) {
         warnLocalToolSkipping(this.id, effectiveModel);
@@ -827,7 +827,7 @@ export class AgentRuntime {
     const currentMessages = [...messages];
     const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
-    // Local models can't reliably do function calling — skip tools gracefully.
+    // Local models can't reliably do function calling, so skip tools gracefully.
     const isLocalStreaming = isLocalModelRuntime(languageModel);
     if (isLocalStreaming && this.config.tools) {
       warnLocalToolSkipping(this.id, effectiveModel);
@@ -1015,13 +1015,13 @@ export class AgentRuntime {
         if (isRecoverablePlaceholderToolCall(tc)) {
           // Provisional empty-object placeholder that never finalized. The
           // model never committed arguments, so we neither execute it nor
-          // surface a stream-termination error — the loop continues and the
+          // surface a stream-termination error, so the loop continues and the
           // next model call recovers the real tool call.
           continue;
         }
         if (isStreamedToolCallIncomplete(tc)) {
           // Stream ended before the provider finalized this tool call. We
-          // cannot execute it — record a distinct stream-termination error
+          // cannot execute it, so record a distinct stream-termination error
           // (not a tool-argument parse error) so the parent step and any
           // upstream orchestrator (e.g. the child-fork watchdog) see a
           // completed step with a clearly-labelled failure and can recover.
