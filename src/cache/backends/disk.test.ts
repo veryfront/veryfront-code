@@ -68,6 +68,29 @@ Deno.test("DiskCacheBackend", async (t) => {
     assertEquals(await backend.get("hello"), "world");
   });
 
+  await t.step("get returns null for invalid cache envelope fields", async () => {
+    const isolatedDir = join(Deno.makeTempDirSync(), "invalid-envelope-get");
+    const backend = new DiskCacheBackend(isolatedDir);
+    const key = "invalid-envelope";
+    await backend.set(key, "value");
+
+    const cacheDir = join(isolatedDir, "veryfront-files");
+    let wroteInvalidEnvelope = false;
+    for await (const file of Deno.readDir(cacheDir)) {
+      if (file.isFile && file.name.endsWith(".json")) {
+        await Deno.writeTextFile(
+          join(cacheDir, file.name),
+          JSON.stringify({ key, value: { nested: true } }),
+        );
+        wroteInvalidEnvelope = true;
+        break;
+      }
+    }
+
+    assertEquals(wroteInvalidEnvelope, true);
+    assertEquals(await backend.get(key), null);
+  });
+
   await t.step("del removes a key", async () => {
     const backend = makeBackend();
     await backend.set("to-delete", "value");
@@ -160,6 +183,33 @@ Deno.test("DiskCacheBackend", async (t) => {
     assertEquals(await backend.get("user:1:name"), null);
     assertEquals(await backend.get("user:2:name"), null);
     assertEquals(await backend.get("other:key"), "value");
+  });
+
+  await t.step("delByPattern skips invalid cache envelope fields", async () => {
+    const isolatedDir = join(Deno.makeTempDirSync(), "invalid-envelope-delbypattern");
+    const backend = new DiskCacheBackend(isolatedDir);
+    await backend.set("user:valid", "value");
+    await backend.set("user:invalid", "value");
+
+    const cacheDir = join(isolatedDir, "veryfront-files");
+    for await (const file of Deno.readDir(cacheDir)) {
+      if (!file.isFile || !file.name.endsWith(".json")) continue;
+      const filePath = join(cacheDir, file.name);
+      const raw = await Deno.readTextFile(filePath);
+      const parsed = JSON.parse(raw) as { key?: string };
+      if (parsed.key === "user:invalid") {
+        await Deno.writeTextFile(
+          filePath,
+          JSON.stringify({ key: "user:invalid", value: { nested: true } }),
+        );
+        break;
+      }
+    }
+
+    const deleted = await backend.delByPattern("user:*");
+    assertEquals(deleted, 1);
+    assertEquals(await backend.get("user:valid"), null);
+    assertEquals(await backend.get("user:invalid"), null);
   });
 
   await t.step("overwrite existing key", async () => {

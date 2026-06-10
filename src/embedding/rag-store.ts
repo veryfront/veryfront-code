@@ -45,6 +45,58 @@ type ResolvedRagStoreConfig = RagStoreConfig & { model: string };
 /** Default number of top results returned by similarity search. */
 const DEFAULT_TOP_K = 5;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isNumberArray(value: unknown): value is number[] {
+  return Array.isArray(value) && value.every(isFiniteNumber);
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return Number.isInteger(value) && Number(value) >= 0;
+}
+
+function isRagDocumentMeta(value: unknown): value is RagDocumentMeta {
+  if (!isRecord(value)) return false;
+  return typeof value.id === "string" &&
+    typeof value.title === "string" &&
+    typeof value.source === "string" &&
+    typeof value.type === "string" &&
+    isFiniteNumber(value.createdAt) &&
+    (value.url === undefined || typeof value.url === "string");
+}
+
+function isRagChunk(value: unknown): value is RagChunk {
+  if (!isRecord(value)) return false;
+  return typeof value.id === "string" &&
+    typeof value.documentId === "string" &&
+    typeof value.text === "string" &&
+    isNumberArray(value.embedding) &&
+    isNonNegativeInteger(value.index);
+}
+
+function isRagStoreData(value: unknown): value is RagStoreData {
+  if (!isRecord(value)) return false;
+  return Array.isArray(value.documents) &&
+    value.documents.every(isRagDocumentMeta) &&
+    Array.isArray(value.chunks) &&
+    value.chunks.every(isRagChunk);
+}
+
+function isLegacyStoredChunk(value: unknown): value is LegacyStoredChunk {
+  if (!isRecord(value)) return false;
+  return typeof value.id === "string" &&
+    typeof value.uploadId === "string" &&
+    typeof value.text === "string" &&
+    isNumberArray(value.embedding) &&
+    isNonNegativeInteger(value.index);
+}
+
 /**
  * Creates a persistent RAG store with lazy embedding and similarity search.
  *
@@ -182,7 +234,10 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
   function isLegacyUploadStoreData(value: unknown): value is LegacyUploadStoreData {
     if (!value || typeof value !== "object") return false;
     const data = value as { uploads?: unknown; chunks?: unknown };
-    return Array.isArray(data.uploads) && Array.isArray(data.chunks);
+    return Array.isArray(data.uploads) &&
+      data.uploads.every(isRagDocumentMeta) &&
+      Array.isArray(data.chunks) &&
+      data.chunks.every(isLegacyStoredChunk);
   }
 
   function migrateLegacyUploadStoreData(data: LegacyUploadStoreData): RagStoreData {
@@ -205,11 +260,11 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
       if (isLegacyUploadStoreData(parsed)) {
         return migrateLegacyUploadStoreData(parsed);
       }
-      if (!parsed || !Array.isArray(parsed.documents) || !Array.isArray(parsed.chunks)) {
+      if (!isRagStoreData(parsed)) {
         serverLogger.warn("[rag-store] Corrupted store file, resetting", { storagePath });
         return { documents: [], chunks: [] };
       }
-      return parsed as RagStoreData;
+      return parsed;
     } catch (err) {
       // File not found is expected on first run; anything else is worth logging
       if (isNotFoundError(err)) {

@@ -14,6 +14,27 @@ interface DiskCacheEnvelope {
   expiresAt?: number;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseDiskCacheEnvelope(value: unknown): DiskCacheEnvelope | null {
+  if (!isRecord(value)) return null;
+  if (typeof value.key !== "string") return null;
+  if (typeof value.value !== "string") return null;
+  if (
+    value.expiresAt !== undefined &&
+    (typeof value.expiresAt !== "number" || !Number.isFinite(value.expiresAt))
+  ) {
+    return null;
+  }
+  return {
+    key: value.key,
+    value: value.value,
+    expiresAt: value.expiresAt,
+  };
+}
+
 function hashKey(input: string): string {
   const seeds = [0x811c9dc5, 0x6c62272e, 0x2e726c6f, 0x636f6465];
   return seeds
@@ -51,7 +72,8 @@ export class DiskCacheBackend implements CacheBackend {
     try {
       const { readFile } = await fsPromises;
       const raw = await readFile(this.filePath(key), "utf-8");
-      const envelope: DiskCacheEnvelope = JSON.parse(raw);
+      const envelope = parseDiskCacheEnvelope(JSON.parse(raw));
+      if (!envelope) return null;
       if (envelope.key !== key) return null;
       if (envelope.expiresAt != null && Date.now() > envelope.expiresAt) {
         this.del(key).catch((cleanupError) => {
@@ -138,7 +160,11 @@ export class DiskCacheBackend implements CacheBackend {
         try {
           const filePath = join(this.dir, file);
           const raw = await readFile(filePath, "utf-8");
-          const envelope: DiskCacheEnvelope = JSON.parse(raw);
+          const envelope = parseDiskCacheEnvelope(JSON.parse(raw));
+          if (!envelope) {
+            logger.error("[DiskCache] Skip invalid cache file", { file });
+            continue;
+          }
           if (glob.test(envelope.key)) {
             await unlink(filePath);
             deleted++;
