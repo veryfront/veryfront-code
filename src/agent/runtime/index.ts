@@ -27,7 +27,7 @@ import {
 import { ensureModelReady, type ModelRuntime, resolveModel } from "#veryfront/provider";
 import { generateId } from "#veryfront/utils/id.ts";
 import { detectPlatform, getPlatformCapabilities } from "#veryfront/platform/core-platform.ts";
-import { createMemory, type Memory } from "../memory/index.ts";
+import { createAgentMemory, type Memory } from "../memory/index.ts";
 import { serverLogger } from "#veryfront/utils";
 import {
   addSpanEvent,
@@ -45,7 +45,6 @@ import {
 } from "./chat-stream-handler.ts";
 import { repairToolCall } from "./repair-tool-call.ts";
 import { MiddlewareChain } from "../middleware/chain.ts";
-import { AGENT_DEFAULTS } from "./defaults.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import type { ToolExecutionContext } from "#veryfront/tool";
 import { isLocalModelRuntime } from "#veryfront/provider/runtime-inspection.ts";
@@ -193,9 +192,11 @@ export class AgentRuntime {
     this.id = id;
     this.config = config;
 
-    const memoryConfig = config.memory ||
-      { type: "conversation", maxTokens: AGENT_DEFAULTS.memoryMaxTokens };
-    this.memory = createMemory<Message>(memoryConfig);
+    // Agents are stateless by default (see docs/guides/memory-and-streaming.md):
+    // with no `memory` config, calls never share conversation history, so
+    // concurrent stream()/generate() on a shared instance stay isolated.
+    // Providing `memory` opts in to cross-call persistence.
+    this.memory = createAgentMemory<Message>(config.memory);
   }
 
   private async resolveModelTransport(
@@ -282,8 +283,13 @@ export class AgentRuntime {
 
       const inputMessages = normalizeInput(input);
       for (const msg of inputMessages) await this.memory.add(msg);
+      // Configured memory returns the full persisted conversation (this turn +
+      // history). The stateless default persists nothing, so fall back to this
+      // turn's input — each call then runs in isolation, keeping concurrent
+      // calls on a shared instance from mixing into one conversation.
+      const persisted = await this.memory.getMessages();
+      const messages = persisted.length > 0 ? persisted : inputMessages;
 
-      const messages = await this.memory.getMessages();
       const systemPrompt = await this.resolveSystemPrompt();
 
       const agentContext: AgentContext = {
@@ -343,8 +349,13 @@ export class AgentRuntime {
     }
 
     for (const msg of messages) await this.memory.add(msg);
+    // Configured memory returns the full persisted conversation (this turn +
+    // history). The stateless default persists nothing, so fall back to this
+    // turn's input — concurrent streams on a shared instance then stay isolated
+    // instead of interleaving into one conversation.
+    const persisted = await this.memory.getMessages();
+    const memoryMessages = persisted.length > 0 ? persisted : messages;
 
-    const memoryMessages = await this.memory.getMessages();
     const systemPrompt = await this.resolveSystemPrompt();
 
     const encoder = new TextEncoder();

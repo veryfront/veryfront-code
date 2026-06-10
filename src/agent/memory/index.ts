@@ -12,7 +12,14 @@ export {
   type MemoryStats,
   type MinimalMessage,
 } from "./memory-interface.ts";
-export { BufferMemory, ConversationMemory, createMemory, SummaryMemory } from "./memory.ts";
+export {
+  BufferMemory,
+  ConversationMemory,
+  createAgentMemory,
+  createMemory,
+  NoMemory,
+  SummaryMemory,
+} from "./memory.ts";
 export {
   createRedisMemory,
   type RedisClient,

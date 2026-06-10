@@ -251,6 +251,35 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
   }
 }
 
+/**
+ * No-op memory.
+ *
+ * Holds nothing and never persists. Used when an agent has no `memory` config
+ * (the documented stateless default) or when `memory.enabled === false`. Every
+ * `stream()` / `generate()` call then runs in isolation on just its own input,
+ * which is what makes concurrent fan-out on a shared agent instance safe — runs
+ * cannot interleave into a shared conversation. Multi-step tool loops are
+ * unaffected: in-run continuity is driven by the loop's local message array,
+ * not by this store.
+ */
+export class NoMemory<M extends MinimalMessage = MinimalMessage> implements Memory<M> {
+  add(_message: M): Promise<void> {
+    return Promise.resolve();
+  }
+
+  getMessages(): Promise<M[]> {
+    return Promise.resolve([]);
+  }
+
+  clear(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  getStats(): Promise<MemoryStats> {
+    return Promise.resolve({ totalMessages: 0, estimatedTokens: 0, type: "none" });
+  }
+}
+
 /** Create memory. */
 export function createMemory<M extends MinimalMessage = MinimalMessage>(
   config: MemoryConfigBase,
@@ -264,4 +293,20 @@ export function createMemory<M extends MinimalMessage = MinimalMessage>(
     default:
       return new ConversationMemory<M>(config);
   }
+}
+
+/**
+ * Resolve the memory store for an agent runtime.
+ *
+ * Agents are stateless by default: with no `memory` config (or `enabled: false`)
+ * the runtime gets a {@link NoMemory} store so calls never share conversation
+ * history. A provided config opts in to cross-call persistence.
+ */
+export function createAgentMemory<M extends MinimalMessage = MinimalMessage>(
+  config?: MemoryConfigBase,
+): Memory<M> {
+  if (!config || config.enabled === false) {
+    return new NoMemory<M>();
+  }
+  return createMemory<M>(config);
 }

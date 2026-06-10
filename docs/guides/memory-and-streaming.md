@@ -4,9 +4,12 @@ description: "Conversation memory strategies and streaming responses."
 order: 21
 ---
 
-Agents are stateless by default: each request gets the messages the client
-sends, and nothing else. Configure `memory` on the agent to persist history
-across requests, and use `createAgUiHandler` to stream the response back.
+Agents are stateless by default: each `stream()` / `generate()` call gets the
+messages the client sends, and nothing else. Because nothing is shared between
+calls, you can safely reuse one agent instance across concurrent runs — fanning
+out per-item reviews or classifications over a shared instance keeps every run
+isolated. Configure `memory` on the agent to persist history across calls, and
+use `createAgUiHandler` to stream the response back.
 
 Memory configuration is independent of model selection, so these examples omit
 `model` and follow the runtime default.
@@ -21,7 +24,19 @@ Memory configuration is independent of model selection, so these examples omit
 
 ## Choose a memory mode
 
-Configure memory on your agent to persist messages across requests:
+Configure memory on your agent to persist messages across requests. A configured
+agent accumulates **one shared conversation** on the instance, so reuse it
+sequentially (a single chat thread) rather than across concurrent independent
+runs — for per-item fan-out, create a fresh agent per run instead. To keep the
+stateless default explicitly (for a single-shot agent that should never persist
+history), set `enabled: false`:
+
+```ts
+export default agent({
+  system: "You are a one-shot classifier.",
+  memory: { type: "conversation", enabled: false }, // never persists across calls
+});
+```
 
 ### Buffer memory
 
