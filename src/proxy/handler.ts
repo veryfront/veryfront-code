@@ -1,26 +1,12 @@
 import { TokenManager, type TokenScope } from "./token-manager.ts";
 import { type ParsedDomain, parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 import type { TokenCache } from "./cache/types.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { cwd, getEnv } from "#veryfront/platform/compat/process.ts";
-import { join } from "#veryfront/compat/path/index.ts";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { injectContext, ProxySpanNames, withSpan } from "./tracing.ts";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
 import { resolve as resolveContract } from "../extensions/contracts.ts";
 import type { AuthProvider } from "../extensions/auth/index.ts";
-import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
-import { registerLRUCache } from "#veryfront/cache";
-
-/**
- * Bounded cache for project paths discovered dynamically at request time
- * (slug → absolute path). Previously these were written into the per-handler
- * `localProjects` config map, which grew without bound. Using a registered
- * LRU keeps the working set capped and exposes it to cache monitoring, while
- * the static `config.localProjects` map continues to reflect *configured*
- * projects for the public `ProxyHandler.localProjects` surface.
- */
-const discoveredLocalProjects = new LRUCache<string, string>({ maxEntries: 100 });
-registerLRUCache("proxy-discovered-local-projects", discoveredLocalProjects);
+import { createLocalProjectResolver } from "./local-project-resolver.ts";
 
 /**
  * Cache the resolved AuthProvider at module scope so the proxy does not pay
@@ -337,59 +323,7 @@ function isProjectMember(
 export function createProxyHandler(options: ProxyHandlerOptions) {
   const { config, cache, logger } = options;
   const localProjects = config.localProjects ?? {};
-
-  const fs = createFileSystem();
-
-  async function findLocalProject(slug: string): Promise<string | undefined> {
-    const mapped = localProjects[slug];
-    if (mapped) return mapped;
-
-    const projectDirs = ["projects", "data/projects", "examples"];
-    const basePath = cwd();
-    // Key the discovery cache by the filesystem root as well as the slug: the
-    // cache is process-wide, so the same slug can resolve to different paths
-    // across handlers/workspaces or after a cwd change. Keying by basePath
-    // prevents a stale entry from one root being proxied for another.
-    const cacheKey = `${basePath} ${slug}`;
-
-    const cached = discoveredLocalProjects.get(cacheKey);
-    if (cached) return cached;
-
-    const candidatePaths = projectDirs.map((dir) => join(basePath, dir, slug));
-
-    const existingPaths = await Promise.all(
-      candidatePaths.map(async (projectPath) => {
-        try {
-          return (await fs.exists(projectPath)) ? projectPath : null;
-        } catch (_) {
-          /* expected: filesystem check may fail */
-          return null;
-        }
-      }),
-    );
-
-    for (const projectPath of existingPaths) {
-      if (!projectPath) continue;
-
-      try {
-        const [hasApp, hasPages, hasComponents] = await Promise.all([
-          fs.exists(join(projectPath, "app")),
-          fs.exists(join(projectPath, "pages")),
-          fs.exists(join(projectPath, "components")),
-        ]);
-
-        if (!hasApp && !hasPages && !hasComponents) continue;
-
-        discoveredLocalProjects.set(cacheKey, projectPath);
-        logger?.debug("Dynamically discovered local project", { slug, projectPath });
-        return projectPath;
-      } catch (_) {
-        // expected: filesystem check may fail
-      }
-    }
-
-    return undefined;
-  }
+  const localProjectResolver = createLocalProjectResolver({ localProjects, logger });
 
   const tokenManager = new TokenManager(
     {
@@ -652,7 +586,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       };
     }
 
-    const localPath = projectSlug ? await findLocalProject(projectSlug) : undefined;
+    const localPath = projectSlug ? await localProjectResolver.find(projectSlug) : undefined;
     const isLocalProject = !!localPath;
 
     logger?.debug("Processing request", {
