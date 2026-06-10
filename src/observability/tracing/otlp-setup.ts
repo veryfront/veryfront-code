@@ -21,11 +21,13 @@ import {
   defaultTextMapGetter,
   defaultTextMapSetter,
   getTracer,
+  getTracerProviderRevision,
   propagation as shimPropagation,
   type Span,
   SpanKind,
   SpanStatusCode,
   trace as shimTrace,
+  type Tracer,
 } from "./api-shim.ts";
 
 const logger = serverLogger.component("otel");
@@ -67,6 +69,28 @@ function getConfig(): OTLPConfig {
     endpoint: getEnv("OTEL_EXPORTER_OTLP_ENDPOINT") || "",
     headers: parseHeaders(getEnv("OTEL_EXPORTER_OTLP_HEADERS")),
   };
+}
+
+let cachedTracingRuntime:
+  | {
+    providerRevision: number;
+    config: OTLPConfig;
+    tracer: Tracer;
+  }
+  | undefined;
+
+function getTracingRuntime(): { config: OTLPConfig; tracer: Tracer } {
+  const providerRevision = getTracerProviderRevision();
+  if (!cachedTracingRuntime || cachedTracingRuntime.providerRevision !== providerRevision) {
+    const config = getConfig();
+    cachedTracingRuntime = {
+      providerRevision,
+      config,
+      tracer: getTracer(config.serviceName),
+    };
+  }
+
+  return cachedTracingRuntime;
 }
 
 // ---------------------------------------------------------------------------
@@ -121,8 +145,7 @@ export async function withSpan<T>(
   fn: () => Promise<T>,
   attributes?: Record<string, string | number | boolean>,
 ): Promise<T> {
-  const config = getConfig();
-  const tracer = getTracer(config.serviceName);
+  const { tracer } = getTracingRuntime();
   const parentContext = shimContext.active();
 
   const span = tracer.startSpan(
@@ -151,8 +174,7 @@ export function withSpanSync<T>(
   fn: () => T,
   attributes?: Record<string, string | number | boolean>,
 ): T {
-  const config = getConfig();
-  const tracer = getTracer(config.serviceName);
+  const { tracer } = getTracingRuntime();
   const parentContext = shimContext.active();
 
   const span = tracer.startSpan(
@@ -194,8 +216,7 @@ export function startServerSpan(
   path: string,
   parentContext?: unknown,
 ): { span: Span; context: Context } | null {
-  const config = getConfig();
-  const tracer = getTracer(config.serviceName);
+  const { tracer } = getTracingRuntime();
   const ctx = (parentContext || shimContext.active()) as Context;
 
   const span = tracer.startSpan(`${method} ${path}`, { kind: SpanKind.SERVER }, ctx);

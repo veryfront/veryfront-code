@@ -1,8 +1,19 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  _resetShimForTests,
+  setGlobalTracerProvider,
+  type Span,
+  type SpanContext,
+  type Tracer,
+} from "./api-shim.ts";
 
 describe("observability/tracing/otlp-setup", () => {
+  afterEach(() => {
+    _resetShimForTests();
+  });
+
   it("withSpan should execute the callback when OTLP is unavailable", async () => {
     const { withSpan } = await import("./otlp-setup.ts");
 
@@ -48,5 +59,81 @@ describe("observability/tracing/otlp-setup", () => {
     const { getTraceContext } = await import("./otlp-setup.ts");
 
     assertEquals(getTraceContext(), {});
+  });
+
+  it("span helpers reuse the resolved tracer until the provider changes", async () => {
+    const { startServerSpan, withSpan, withSpanSync } = await import("./otlp-setup.ts");
+
+    let getTracerCalls = 0;
+    const spanContext: SpanContext = {
+      traceId: "00000000000000000000000000000001",
+      spanId: "0000000000000001",
+      traceFlags: 1,
+    };
+    const span: Span = {
+      setAttribute() {
+        return span;
+      },
+      setAttributes() {
+        return span;
+      },
+      setStatus() {
+        return span;
+      },
+      recordException() {},
+      addEvent() {
+        return span;
+      },
+      end() {},
+      spanContext() {
+        return spanContext;
+      },
+      updateName() {},
+    };
+    const tracer: Tracer = {
+      startSpan() {
+        return span;
+      },
+      startActiveSpan<T>(
+        _name: string,
+        optionsOrFn:
+          | { kind?: number; attributes?: Record<string, string | number | boolean | undefined> }
+          | ((span: Span) => T),
+        contextOrFn?: unknown,
+        fn?: (span: Span) => T,
+      ): T {
+        const callback = typeof optionsOrFn === "function"
+          ? optionsOrFn
+          : typeof contextOrFn === "function"
+          ? contextOrFn as (span: Span) => T
+          : fn!;
+        return callback(span);
+      },
+    };
+
+    setGlobalTracerProvider({
+      getTracer() {
+        getTracerCalls++;
+        return tracer;
+      },
+    });
+
+    await withSpan("test.async", async () => "ok");
+    withSpanSync("test.sync", () => "ok");
+    const serverSpan = startServerSpan("GET", "/cache");
+
+    assertExists(serverSpan);
+    assertEquals(getTracerCalls, 1);
+
+    setGlobalTracerProvider({
+      getTracer() {
+        getTracerCalls++;
+        return tracer;
+      },
+    });
+
+    await withSpan("test.after-provider-swap", async () => "ok");
+
+    assertEquals(getTracerCalls, 2);
   });
 });

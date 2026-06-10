@@ -249,6 +249,7 @@ function createNoopProvider(): TracerProvider {
 // ---------------------------------------------------------------------------
 
 let _provider: TracerProvider = createNoopProvider();
+let _providerRevision = 0;
 let _activeContext: Context = NOOP_CONTEXT;
 let _propagator: TextMapPropagator | null = null;
 
@@ -279,10 +280,15 @@ export function setGlobalActiveSpanAccessor(
  */
 export function setGlobalTracerProvider(p: TracerProvider): void {
   _provider = p;
+  _providerRevision++;
 }
 
 export function getGlobalTracerProvider(): TracerProvider {
   return _provider;
+}
+
+export function getTracerProviderRevision(): number {
+  return _providerRevision;
 }
 
 /**
@@ -325,6 +331,7 @@ export const trace = {
   },
   setGlobalTracerProvider(p: TracerProvider): void {
     _provider = p;
+    _providerRevision++;
   },
   getGlobalTracerProvider(): TracerProvider {
     return _provider;
@@ -402,6 +409,7 @@ export function getGlobalMetricsAPI(): MetricsAPI | null {
 
 export function _resetShimForTests(): void {
   _provider = createNoopProvider();
+  _providerRevision++;
   _activeContext = NOOP_CONTEXT;
   _propagator = null;
   _metricsApi = null;
