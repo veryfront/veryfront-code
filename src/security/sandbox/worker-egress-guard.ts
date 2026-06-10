@@ -201,6 +201,143 @@ function getAllowInternalEgress(): boolean {
   }
 }
 
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+const MAX_EGRESS_REDIRECTS = 20;
+
+/** Dependencies for {@link guardedEgressFetch} (injectable for tests). */
+export interface GuardedEgressFetchDeps {
+  /** Underlying fetch implementation (defaults to the global `fetch`). */
+  fetchImpl?: typeof fetch;
+  /** Egress options applied to the initial URL and every redirect hop. */
+  options?: WorkerEgressGuardOptions;
+}
+
+/** A request body that can be safely replayed across a body-preserving redirect. */
+function isReplayableBody(body: BodyInit | null | undefined): boolean {
+  return body == null || typeof body === "string" ||
+    body instanceof Uint8Array || body instanceof ArrayBuffer ||
+    body instanceof URLSearchParams;
+}
+
+/**
+ * Egress-checked fetch that re-validates EVERY redirect hop.
+ *
+ * The platform `fetch` follows 3xx redirects transparently, so checking only the
+ * initial URL lets a public host redirect to an internal address (loopback,
+ * RFC1918, link-local, cloud metadata) that the guard never sees. This forces
+ * `redirect: "manual"` on the underlying fetch and re-runs the egress check on
+ * each `Location` before following it. The caller's redirect intent is honored:
+ * `manual` returns the redirect unfollowed, `error` throws, `follow` (default)
+ * follows manually after re-checking. Credential headers are stripped on a
+ * cross-origin hop, matching the platform fetch the guard wraps.
+ */
+export async function guardedEgressFetch(
+  input: Parameters<typeof fetch>[0],
+  init?: Parameters<typeof fetch>[1],
+  deps: GuardedEgressFetchDeps = {},
+): Promise<Response> {
+  const doFetch = deps.fetchImpl ?? fetch;
+  const options = deps.options ?? {};
+
+  const requestedRedirect: RequestRedirect = init?.redirect ??
+    (input instanceof Request ? input.redirect : "follow");
+
+  let url = input instanceof Request
+    ? input.url
+    : input instanceof URL
+    ? input.href
+    : String(input);
+  let method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
+  const headers = new Headers(
+    init?.headers ?? (input instanceof Request ? input.headers : undefined),
+  );
+  let body: BodyInit | undefined;
+  if (init?.body != null) {
+    body = init.body as BodyInit;
+  } else if (input instanceof Request && input.body) {
+    body = new Uint8Array(await input.arrayBuffer());
+  }
+
+  // Preserve request-level options (notably `signal`, so aborts keep working)
+  // that would otherwise be dropped when the caller passes a Request object
+  // rather than an init bag, and that must persist across every redirect hop.
+  const reqInput = input instanceof Request ? input : undefined;
+  const carryInit: RequestInit = {
+    signal: init?.signal ?? reqInput?.signal,
+    credentials: init?.credentials ?? reqInput?.credentials,
+    cache: init?.cache ?? reqInput?.cache,
+    mode: init?.mode ?? reqInput?.mode,
+    referrer: init?.referrer ?? reqInput?.referrer,
+    referrerPolicy: init?.referrerPolicy ?? reqInput?.referrerPolicy,
+    keepalive: init?.keepalive ?? reqInput?.keepalive,
+  };
+
+  for (let hop = 0;; hop++) {
+    await assertWorkerEgressAllowed(url, options);
+
+    const response = await doFetch(url, {
+      ...init,
+      ...carryInit,
+      method,
+      headers,
+      body,
+      redirect: "manual",
+    });
+
+    if (!REDIRECT_STATUSES.has(response.status)) return response;
+    const location = response.headers.get("location");
+    if (!location) return response;
+    if (requestedRedirect === "manual") return response;
+    if (requestedRedirect === "error") {
+      throw new WorkerEgressBlockedError(
+        "Worker egress: unexpected redirect with redirect mode 'error'",
+      );
+    }
+    if (hop >= MAX_EGRESS_REDIRECTS) {
+      throw new WorkerEgressBlockedError(
+        "Worker network egress blocked: exceeded maximum redirect count",
+      );
+    }
+
+    const nextUrl = new URL(location, url);
+    // Only follow redirects to http(s). The platform fetch treats a redirect to
+    // any other scheme as a network error; following e.g. file:// here would let
+    // an attacker-controlled redirect turn a network fetch into a local file
+    // read, since assertWorkerEgressAllowed no-ops for hostless (non-network)
+    // URLs.
+    if (nextUrl.protocol !== "http:" && nextUrl.protocol !== "https:") {
+      throw new WorkerEgressBlockedError(
+        `Worker network egress blocked: redirect to non-http(s) scheme ${nextUrl.protocol}`,
+      );
+    }
+    // Cross-origin redirect: strip credential-bearing headers, matching the
+    // platform fetch this guard replaces, so a redirect target cannot receive
+    // the caller's Authorization/Cookie.
+    if (nextUrl.origin !== new URL(url).origin) {
+      headers.delete("authorization");
+      headers.delete("cookie");
+      headers.delete("proxy-authorization");
+    }
+    url = nextUrl.href;
+
+    // Standard fetch redirect method/body rules: 303, and 301/302 for a
+    // non-GET/HEAD method, downgrade to GET and drop the body; 307/308 preserve.
+    const downgrades = response.status === 303 ||
+      ((response.status === 301 || response.status === 302) &&
+        method !== "GET" && method !== "HEAD");
+    if (downgrades) {
+      method = "GET";
+      body = undefined;
+      headers.delete("content-length");
+      headers.delete("content-type");
+    } else if (!isReplayableBody(body)) {
+      throw new WorkerEgressBlockedError(
+        "Worker network egress blocked: cannot safely follow a body-preserving redirect",
+      );
+    }
+  }
+}
+
 export function installWorkerEgressGuard(options: WorkerEgressGuardOptions = {}): void {
   const globalRecord = globalThis as typeof globalThis & Record<PropertyKey, unknown>;
   if (globalRecord[guardInstalled]) return;
@@ -215,8 +352,12 @@ export function installWorkerEgressGuard(options: WorkerEgressGuardOptions = {})
     input: Parameters<typeof fetch>[0],
     init?: Parameters<typeof fetch>[1],
   ): Promise<Response> => {
-    await assertWorkerEgressAllowed(input, baseOptions);
-    return await originalFetch(input, init);
+    // guardedEgressFetch checks the initial URL and re-checks every redirect hop,
+    // so a public host cannot redirect into an internal address.
+    return await guardedEgressFetch(input, init, {
+      fetchImpl: originalFetch,
+      options: baseOptions,
+    });
   };
   Object.defineProperty(fetchWrapper, guardedFetch, { value: true });
   globalThis.fetch = fetchWrapper as typeof fetch;
