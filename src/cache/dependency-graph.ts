@@ -49,7 +49,7 @@ export class DependencyGraph {
   }
 
   wouldCreateCycle(from: string, to: string): boolean {
-    return this.getTransitiveDependencies(to).includes(from);
+    return this.hasTransitiveDependency(to, from, new Set(), new Set());
   }
 
   clear(): void {
@@ -76,6 +76,28 @@ export class DependencyGraph {
     }
 
     path.delete(filePath);
+  }
+
+  private hasTransitiveDependency(
+    filePath: string,
+    target: string,
+    visited: Set<string>,
+    path: Set<string>,
+  ): boolean {
+    if (path.has(filePath) || visited.has(filePath)) return false;
+
+    visited.add(filePath);
+    path.add(filePath);
+
+    for (const dep of this.dependencies.get(filePath) ?? []) {
+      if (dep === target || this.hasTransitiveDependency(dep, target, visited, path)) {
+        path.delete(filePath);
+        return true;
+      }
+    }
+
+    path.delete(filePath);
+    return false;
   }
 
   private collectDependents(
