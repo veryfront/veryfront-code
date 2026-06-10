@@ -231,6 +231,52 @@ export function sanitizeUrlCredentials(input: string): string {
   return out;
 }
 
+function firstUrlDelimiterIndex(input: string): number {
+  const queryIndex = input.indexOf("?");
+  const hashIndex = input.indexOf("#");
+  if (queryIndex === -1) return hashIndex;
+  if (hashIndex === -1) return queryIndex;
+  return Math.min(queryIndex, hashIndex);
+}
+
+function sanitizeProtocolRelativeUrlForSpan(input: string): string | null {
+  if (!input.startsWith("//")) return null;
+
+  try {
+    const url = new URL(`https:${input}`);
+    return `//${url.host}${url.pathname}`;
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * Return the URL form safe to attach to observability span attributes.
+ *
+ * Span attributes bypass the logger's structured redaction pass, so `http.url`
+ * must not include query strings, fragments, or URL userinfo. This intentionally
+ * strips every query parameter instead of selectively redacting credential-like
+ * names because cache keys and callback state can be sensitive even when the
+ * parameter name is not obviously a credential.
+ */
+export function sanitizeUrlForSpan(input: string): string {
+  if (typeof input !== "string" || input.length === 0) return input;
+
+  try {
+    const url = new URL(input);
+    if (url.origin !== "null") return `${url.origin}${url.pathname}`;
+  } catch (_) {
+    // Relative or malformed URL-shaped strings are handled by the fallback.
+  }
+
+  const delimiterIndex = firstUrlDelimiterIndex(input);
+  const withoutQueryOrFragment = delimiterIndex === -1 ? input : input.slice(0, delimiterIndex);
+  const protocolRelativeUrl = sanitizeProtocolRelativeUrlForSpan(withoutQueryOrFragment);
+  if (protocolRelativeUrl) return protocolRelativeUrl;
+
+  return sanitizeUrlCredentials(withoutQueryOrFragment);
+}
+
 /**
  * Apply {@link sanitizeUrlCredentials} to the `message` and `stack` of a
  * serialized-error-shaped object, returning a new object. Used by the logger's

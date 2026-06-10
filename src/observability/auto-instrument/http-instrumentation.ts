@@ -1,4 +1,5 @@
 import { serverLogger } from "#veryfront/utils";
+import { sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
 import {
   context as otContext,
   propagation,
@@ -11,7 +12,9 @@ import type { ErrorAttributes, HttpAttributes } from "./types.ts";
 
 const logger = serverLogger.component("auto-instrument");
 
-const tracer = trace.getTracer("veryfront-http");
+function getHttpTracer() {
+  return trace.getTracer("veryfront-http");
+}
 
 const headersGetter = {
   keys(carrier: Headers): string[] {
@@ -42,7 +45,7 @@ export function instrumentHttpHandler(
     const parentContext = extractParentContext(request.headers);
 
     try {
-      return await tracer.startActiveSpan(
+      return await getHttpTracer().startActiveSpan(
         "http.server.request",
         { kind: SpanKind.SERVER, attributes: httpAttrs },
         parentContext,
@@ -79,11 +82,12 @@ export function createInstrumentedFetch(
     const startTime = performance.now();
     const urlString = extractFetchUrl(input);
     const method = init?.method ?? "GET";
+    const spanUrl = sanitizeUrlForSpan(urlString);
 
     const fetchAttrs: HttpAttributes = {
       "http.method": method,
-      "http.url": urlString,
-      "http.target": urlString,
+      "http.url": spanUrl,
+      "http.target": spanUrl,
       "http.host": "",
       "http.scheme": "",
     };
@@ -98,7 +102,7 @@ export function createInstrumentedFetch(
     }
 
     try {
-      return await tracer.startActiveSpan(
+      return await getHttpTracer().startActiveSpan(
         "http.client.fetch",
         { kind: SpanKind.CLIENT, attributes: fetchAttrs },
         async (span) => {
@@ -129,7 +133,7 @@ export function createInstrumentedFetch(
 function buildHttpAttributes(request: Request, url: URL): HttpAttributes {
   return {
     "http.method": request.method,
-    "http.url": request.url,
+    "http.url": sanitizeUrlForSpan(request.url),
     "http.target": url.pathname,
     "http.host": url.host,
     "http.scheme": url.protocol.replace(":", ""),

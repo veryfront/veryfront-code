@@ -7,6 +7,7 @@ import type { CacheBackend } from "../types.ts";
 import { getEnvValue } from "./helpers.ts";
 import { buildBatchResults } from "../batch-results.ts";
 import { REQUEST_ERROR } from "#veryfront/errors";
+import { sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
 
 const logger = baseLogger.component("api-cache-backend");
 
@@ -85,7 +86,10 @@ export class ApiCacheBackend implements CacheBackend {
 
     try {
       return await this.circuitBreaker.execute(async () => {
-        const url = `${this.apiBaseUrl}/projects/${projectRef}/cache${path}`;
+        const encodedProjectRef = encodeURIComponent(projectRef);
+        const url = `${this.apiBaseUrl}/projects/${encodedProjectRef}/cache${path}`;
+        const spanUrl = sanitizeUrlForSpan(url);
+        const cacheOperation = sanitizeUrlForSpan(path);
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
 
@@ -104,9 +108,9 @@ export class ApiCacheBackend implements CacheBackend {
               }),
             {
               "http.method": method,
-              "http.url": url,
+              "http.url": spanUrl,
               "http.host": new URL(this.apiBaseUrl).host,
-              "cache.operation": path,
+              "cache.operation": cacheOperation,
               "cache.project_slug": projectRef,
             },
           );
@@ -134,7 +138,7 @@ export class ApiCacheBackend implements CacheBackend {
     } catch (error) {
       if (error instanceof CircuitBreakerOpen) {
         logger.info("Circuit breaker open, failing fast", {
-          path,
+          path: sanitizeUrlForSpan(path),
           nextAttemptMs: error.nextAttemptMs,
         });
         return null;
@@ -143,7 +147,7 @@ export class ApiCacheBackend implements CacheBackend {
       const isTimeout = error instanceof Error && error.name === "AbortError";
       const errorMsg = error instanceof Error ? error.message : String(error);
       logger.info(`Request ${isTimeout ? "timeout" : "error"}`, {
-        path,
+        path: sanitizeUrlForSpan(path),
         error: errorMsg,
         isTimeout,
         tokenSource,
