@@ -7,6 +7,10 @@ import { computeContentSourceId } from "#veryfront/cache/keys.ts";
 import { resolve as resolveContract } from "../extensions/contracts.ts";
 import type { AuthProvider } from "../extensions/auth/index.ts";
 import { createLocalProjectResolver } from "./local-project-resolver.ts";
+import {
+  isMissingCustomDomainProjectError,
+  resolveProxyRequestToken,
+} from "./proxy-token-resolution.ts";
 
 /**
  * Cache the resolved AuthProvider at module scope so the proxy does not pay
@@ -234,24 +238,10 @@ function getScope(environment: string | null): TokenScope {
   return environment === "preview" ? "preview" : "production";
 }
 
-function extractUserToken(cookieHeader: string): string | undefined {
-  const match = cookieHeader.match(/(?:^|;\s*)authToken=([^;]+)/);
-  return match?.[1] ? decodeURIComponent(match[1]) : undefined;
-}
-
 function parseStatusFromError(error: unknown): number | null {
   const message = error instanceof Error ? error.message : String(error);
   const match = message.match(/failed: (\d+)/);
   return match ? Number(match[1]) : null;
-}
-
-// Brittle on purpose: we string-match the API's OAuth error body. Source of truth is
-// veryfront-api/src/api/http/rest/auth/routes.ts — `oauthError(c, 'Project not found
-// for domain', ...)`. If that string is renamed, this regex silently regresses to 502.
-// Durable fix is a typed error code from the token-mint helper; tracked separately.
-function isMissingCustomDomainProjectError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /project not found for domain/i.test(message);
 }
 
 async function extractUserIdFromToken(
@@ -408,60 +398,6 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     );
   }
 
-  async function resolveRequestToken(
-    req: Request,
-    url: URL,
-    scope: TokenScope,
-    host: string,
-    projectSlug: string | undefined,
-    options: {
-      allowSignedInternalControlPlaneToken?: boolean;
-      tokenFetchErrorMessage: string;
-    },
-  ): Promise<{ token?: string; userToken?: string; tokenFetchError?: unknown }> {
-    const userToken = extractUserToken(req.headers.get("cookie") ?? "");
-    const useSignedInternalControlPlaneToken = options.allowSignedInternalControlPlaneToken &&
-      isSignedInternalControlPlaneRequest(req, url);
-
-    let token: string | undefined;
-    let tokenFetchError: unknown;
-
-    if (useSignedInternalControlPlaneToken) {
-      token = req.headers.get("x-token") ?? undefined;
-      logger?.debug("Using signed control-plane token for internal request", {
-        pathname: url.pathname,
-        scope,
-      });
-    } else if (scope === "preview" && userToken) {
-      token = userToken;
-      logger?.debug("Using user auth token for preview");
-    }
-
-    if (!token && config.apiClientId && config.apiClientSecret) {
-      const customDomain = projectSlug ? undefined : host;
-      if (projectSlug || customDomain) {
-        try {
-          token = await tokenManager.getToken(scope, projectSlug, customDomain);
-        } catch (error) {
-          tokenFetchError = error;
-          if (!(customDomain && isMissingCustomDomainProjectError(error))) {
-            logger?.error(options.tokenFetchErrorMessage, error as Error, {
-              projectSlug,
-              customDomain,
-            });
-          }
-        }
-      }
-    }
-
-    if (!token && config.apiToken) {
-      token = config.apiToken;
-      logger?.debug("Using static API token fallback");
-    }
-
-    return { token, userToken, tokenFetchError };
-  }
-
   async function checkProtectedAccess(
     req: Request,
     url: URL,
@@ -604,14 +540,18 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     if (isLocalProject) {
       logger?.debug("Local project, skipping token fetch", { localPath });
     } else {
-      ({ token, userToken, tokenFetchError } = await resolveRequestToken(
-        req,
-        url,
-        scope,
-        host,
-        projectSlug,
+      ({ token, userToken, tokenFetchError } = await resolveProxyRequestToken(
         {
+          req,
+          url,
+          scope,
+          host,
+          projectSlug,
+          config,
+          tokenManager,
+          logger,
           allowSignedInternalControlPlaneToken: true,
+          signedInternalControlPlaneRequest: isSignedInternalControlPlaneRequest(req, url),
           tokenFetchErrorMessage: "Token fetch failed",
         },
       ));
@@ -831,16 +771,18 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     const parsedDomain = parseProjectDomain(host);
     const scope = getScope(parsedDomain.environment);
     const projectSlug = parsedDomain.slug ?? undefined;
-    const { token } = await resolveRequestToken(
+    const { token } = await resolveProxyRequestToken({
       req,
       url,
       scope,
       host,
       projectSlug,
-      {
-        tokenFetchErrorMessage: "Token fetch failed for API",
-      },
-    );
+      config,
+      tokenManager,
+      logger,
+      signedInternalControlPlaneRequest: isSignedInternalControlPlaneRequest(req, url),
+      tokenFetchErrorMessage: "Token fetch failed for API",
+    });
     return token;
   }
 
