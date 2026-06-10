@@ -144,6 +144,7 @@ import { filterToolsForSkill } from "#veryfront/skill/allowed-tools.ts";
 import { resolveConfiguredAgentModel, resolveRuntimeModel } from "./model-resolution.ts";
 import type { RuntimeGenerateToolResult } from "./runtime-tool-types.ts";
 import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
+import { supportsTemperatureParameter } from "./model-capabilities.ts";
 import {
   applySkillDelegationOverridesToToolInput,
   extractSkillDelegationOverrides,
@@ -310,6 +311,7 @@ export class AgentRuntime {
             transport.headers,
             transport.providerOptions,
             maxOutputTokensOverride,
+            requestedModel,
           ),
       );
     });
@@ -431,6 +433,7 @@ export class AgentRuntime {
                 transport.providerOptions,
                 maxOutputTokensOverride,
                 streamAbortSignal,
+                requestedModel,
               ),
           );
           throwIfAborted(streamAbortSignal);
@@ -475,6 +478,7 @@ export class AgentRuntime {
     headers?: HeadersInit,
     providerOptions?: Record<string, unknown>,
     maxOutputTokensOverride?: number,
+    temperatureModelString?: string,
   ): Promise<AgentResponse> {
     return withSpan("agent.execution_loop", async (loopSpan) => {
       const { maxAgentSteps } = getPlatformCapabilities();
@@ -531,6 +535,7 @@ export class AgentRuntime {
           tools = filterToolsForSkill(tools, activeSkillPolicy);
         }
 
+        const temperature = this.resolveTemperature(temperatureModelString ?? effectiveModel);
         const response = await withSpan("agent.generate_text", async (span) => {
           setSpanAttributes(span, {
             "model.id": effectiveModel,
@@ -546,7 +551,7 @@ export class AgentRuntime {
             }),
             experimental_repairToolCall: repairToolCall,
             maxOutputTokens: this.resolveMaxOutputTokens(effectiveModel, maxOutputTokensOverride),
-            temperature: this.resolveTemperature(),
+            ...(temperature === undefined ? {} : { temperature }),
             ...(headers ? { headers } : {}),
             ...(providerOptions ? { providerOptions } : {}),
           });
@@ -778,6 +783,7 @@ export class AgentRuntime {
     providerOptions?: Record<string, unknown>,
     maxOutputTokensOverride?: number,
     abortSignal?: AbortSignal,
+    temperatureModelString?: string,
   ): Promise<AgentResponse> {
     const { maxAgentSteps } = getPlatformCapabilities();
     const maxSteps = this.computeMaxSteps(maxAgentSteps);
@@ -841,6 +847,7 @@ export class AgentRuntime {
         providerTools,
       });
 
+      const temperature = this.resolveTemperature(temperatureModelString ?? effectiveModel);
       const result = streamText({
         model: languageModel,
         system: currentSystemPrompt,
@@ -848,7 +855,7 @@ export class AgentRuntime {
         tools: runtimeTools,
         experimental_repairToolCall: repairToolCall,
         maxOutputTokens: this.resolveMaxOutputTokens(effectiveModel, maxOutputTokensOverride),
-        temperature: this.resolveTemperature(),
+        ...(temperature === undefined ? {} : { temperature }),
         ...(headers ? { headers } : {}),
         ...(providerOptions ? { providerOptions } : {}),
         abortSignal,
@@ -1223,7 +1230,10 @@ export class AgentRuntime {
     return getMaxSteps(this.config.maxSteps, edgeMaxSteps, platformLimit);
   }
 
-  private resolveTemperature(): number {
+  private resolveTemperature(modelString?: string): number | undefined {
+    if (!supportsTemperatureParameter(modelString)) {
+      return undefined;
+    }
     return this.config.temperature ?? DEFAULT_TEMPERATURE;
   }
 
