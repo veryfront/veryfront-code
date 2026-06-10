@@ -59,6 +59,20 @@ sequenceDiagram
 5. Runtime errors are converted to Veryfront error shapes before reaching public
    handlers.
 
+## Message schema compatibility
+
+Agent message parts use the canonical tool-call shape with a `tool-` prefixed
+`type` and either `args` or `input`. The schema also accepts the legacy inline
+shape `{ type: "tool-call", toolCallId, toolName, args }` for stored messages
+and older runtime clients.
+
+That legacy branch is compatibility-retained. Do not remove it as part of a
+decomposition refactor. Removal requires a planned breaking release, migration
+guidance for saved messages, and regression coverage that proves old stored
+messages are either backfilled or rejected through an explicit migration path.
+The code-level policy lives in
+`AGENT_SCHEMA_LEGACY_TOOL_CALL_PART_POLICY` next to `getMessagePartSchema()`.
+
 ## Hosted runs
 
 Hosted agent run code adapts agent runtime execution to Veryfront-hosted
