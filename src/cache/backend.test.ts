@@ -10,6 +10,18 @@ import "#veryfront/schemas/_test-setup.ts";
  */
 
 import { assertEquals, assertExists } from "#std/assert";
+import {
+  _resetShimForTests,
+  type AttributeValue,
+  setGlobalTracerProvider,
+  type Span,
+  type Tracer,
+} from "#veryfront/observability/tracing/api-shim.ts";
+
+type RecordedSpan = {
+  name: string;
+  attributes: Record<string, AttributeValue>;
+};
 
 async function importBackend(): Promise<typeof import("./backend.ts")> {
   return await import("./backend.ts");
@@ -17,6 +29,47 @@ async function importBackend(): Promise<typeof import("./backend.ts")> {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function createRecordingSpan(record: RecordedSpan): Span {
+  return {
+    setAttribute(key, value) {
+      record.attributes[key] = value;
+      return this;
+    },
+    setAttributes(attrs) {
+      Object.assign(record.attributes, attrs);
+      return this;
+    },
+    setStatus() {
+      return this;
+    },
+    recordException() {},
+    addEvent() {
+      return this;
+    },
+    end() {},
+    spanContext() {
+      return {
+        traceId: "0".repeat(32),
+        spanId: "0".repeat(16),
+        traceFlags: 0,
+      };
+    },
+    updateName() {},
+  };
+}
+
+function installRecordingTracer(records: RecordedSpan[]): void {
+  const tracer = {
+    startSpan(name: string, options?: { attributes?: Record<string, AttributeValue> }) {
+      const record = { name, attributes: { ...(options?.attributes ?? {}) } };
+      records.push(record);
+      return createRecordingSpan(record);
+    },
+  } as unknown as Tracer;
+
+  setGlobalTracerProvider({ getTracer: () => tracer });
 }
 
 Deno.test({
@@ -373,6 +426,67 @@ Deno.test("ApiCacheBackend uses custom keyPrefix", async () => {
   const cache = new ApiCacheBackend({ keyPrefix: "custom-prefix" });
   assertExists(cache);
   assertEquals(cache.type, "api");
+});
+
+Deno.test("ApiCacheBackend URL-encodes project refs and omits cache keys from span URLs", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const globals = globalThis as Record<string, unknown>;
+  const originalAdapter = globals.__vf_multi_project_adapter;
+  const originalFetch = globalThis.fetch;
+  const records: RecordedSpan[] = [];
+  const projectRef = "team/../../demo?token=raw";
+  let capturedUrl = "";
+
+  installRecordingTracer(records);
+  globals.__vf_multi_project_adapter = {
+    getCurrentRequestContext: () => ({
+      token: "request-token",
+      projectSlug: projectRef,
+    }),
+  };
+  globalThis.fetch = ((input: RequestInfo | URL) => {
+    capturedUrl = String(input);
+    return Promise.resolve(
+      new Response(JSON.stringify({ value: null }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+  }) as typeof fetch;
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://api.example.test",
+      keyPrefix: "prefix",
+      circuitBreakerName: "api-cache-url-encoding-test",
+    });
+
+    await cache.get("secret-cache-key");
+
+    const encodedProjectRef = encodeURIComponent(projectRef);
+    assertEquals(
+      capturedUrl,
+      `https://api.example.test/projects/${encodedProjectRef}/cache/get?key=prefix%3Asecret-cache-key`,
+    );
+
+    const span = records.find((record) => record.name === "http.client.fetch");
+    assertExists(span);
+    assertEquals(
+      span.attributes["http.url"],
+      `https://api.example.test/projects/${encodedProjectRef}/cache/get`,
+    );
+    assertEquals(span.attributes["cache.operation"], "/get");
+    assertEquals(String(span.attributes["http.url"]).includes("secret-cache-key"), false);
+    assertEquals(String(span.attributes["cache.operation"]).includes("secret-cache-key"), false);
+  } finally {
+    if (originalAdapter === undefined) {
+      delete globals.__vf_multi_project_adapter;
+    } else {
+      globals.__vf_multi_project_adapter = originalAdapter;
+    }
+    globalThis.fetch = originalFetch;
+    _resetShimForTests();
+  }
 });
 
 Deno.test("RedisCacheBackend type property", async () => {

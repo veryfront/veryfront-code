@@ -7,6 +7,7 @@ import {
   redactSensitive,
   sanitizeSerializedError,
   sanitizeUrlCredentials,
+  sanitizeUrlForSpan,
 } from "./redact.ts";
 
 describe("logger/redact", () => {
@@ -107,10 +108,9 @@ describe("logger/redact", () => {
         apiKey = "sk-secret";
         name = "app";
       }
-      const result = redactSensitive({ config: new ApiConfig() }) as Record<
-        string,
-        Record<string, unknown>
-      >;
+      const result = redactSensitive({ config: new ApiConfig() }) as unknown as {
+        config: Record<string, unknown>;
+      };
       assertEquals(result.config.apiKey, REDACTED);
       assertEquals(result.config.name, "app");
     });
@@ -216,6 +216,19 @@ describe("logger/redact", () => {
 
     it("leaves non-URL strings untouched", () => {
       assertEquals(sanitizeUrlCredentials("just a plain message"), "just a plain message");
+    });
+  });
+
+  describe("sanitizeUrlForSpan", () => {
+    it("removes query strings, fragments, and URL credentials", () => {
+      assertEquals(
+        sanitizeUrlForSpan("https://user:secret@example.com/path?token=secret#frag"),
+        "https://example.com/path",
+      );
+    });
+
+    it("removes query strings from relative URL-shaped values", () => {
+      assertEquals(sanitizeUrlForSpan("/cache/get?key=secret#frag"), "/cache/get");
     });
   });
 
