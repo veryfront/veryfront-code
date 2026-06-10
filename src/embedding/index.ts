@@ -8,7 +8,9 @@
  * import { ragStore, createUploadHandler } from "veryfront/embedding";
  *
  * const store = ragStore({});
- * export const { POST, GET, DELETE } = createUploadHandler(store);
+ * export const { POST, GET, DELETE } = createUploadHandler(store, {
+ *   auth: { type: "none", allowUnauthenticated: true },
+ * });
  * ```
  */
 
@@ -43,3 +45,9 @@ export type {
   VectorStore,
   VectorStoreConfig,
 } from "./types.ts";
+export type {
+  UploadAuthorizationResult,
+  UploadAuthorize,
+  UploadHandlerAuthConfig,
+  UploadHandlerConfig,
+} from "./upload-handler.ts";
