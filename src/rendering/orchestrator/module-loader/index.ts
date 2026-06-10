@@ -10,20 +10,10 @@
 import { rendererLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
-import { transformToESM } from "#veryfront/transforms/esm-transform.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getProjectTmpDir } from "#veryfront/modules/react-loader/index.ts";
-import {
-  generateCacheKey as generateTransformCacheKey,
-  getOrComputeTransform,
-  initializeTransformCache,
-  setCachedTransformAsync,
-} from "#veryfront/transforms/esm/transform-cache.ts";
-import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
-import { validateCachedBundlesByManifestOrCode } from "#veryfront/transforms/esm/cached-bundle-validation.ts";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { join } from "#veryfront/compat/path/index.ts";
-import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import {
   invalidateMdxEsmModule,
   lookupMdxEsmCache,
@@ -33,15 +23,16 @@ import {
   rewriteResolvedDependencyImports,
 } from "./dependency-resolver.ts";
 import { persistTransformedModule } from "./module-persistence.ts";
+import {
+  transformModuleCodeWithCache,
+  UNRESOLVED_VF_MODULES_RE,
+} from "./module-transform-cache.ts";
 
 const logger = rendererLogger.component("module-loader");
 
 // Re-export utilities
 export { createEsmCache, createModuleCache, generateHash } from "./cache.ts";
 export { fetchEsmModule, rewriteEsmPaths } from "./esm-rewriter.ts";
-
-/** TTL for cached transforms (uses centralized config) */
-const TRANSFORM_CACHE_TTL_SECONDS = TRANSFORM_DISTRIBUTED_TTL_SEC;
 
 function getModuleCacheKey(
   filePath: string,
@@ -69,9 +60,6 @@ function decodeFileContent(fileContent: string | Uint8Array): string {
  * @param useLocalAdapter - Whether to use local adapter for reading
  * @returns Path to the transformed module file
  */
-/** Pattern to detect unresolved /_vf_modules/ imports that will fail at runtime */
-const UNRESOLVED_VF_MODULES_RE = /from\s*["']((?:file:\/\/)?\/?\/?_vf_modules\/[^"']+)["']/;
-
 export async function transformModuleWithDeps(
   filePath: string,
   tmpDir: string,
@@ -184,119 +172,16 @@ export async function transformModuleWithDeps(
     });
   }
 
-  const contentHash = hashCodeHex(fileContent);
   const effectiveProjectId = projectId ?? projectDir;
-  const scopedPath = `${effectiveProjectId}:${filePath}`;
-  const transformCacheKey = generateTransformCacheKey(scopedPath, contentHash, true);
-
-  await initializeTransformCache();
-
-  const transformResult = await getOrComputeTransform(
-    transformCacheKey,
-    () => {
-      logger.debug("Transform cache miss, transforming", { filePath });
-      return transformToESM(fileContent, filePath, projectDir, adapter, {
-        projectId: effectiveProjectId,
-        dev: mode === "development",
-        ssr: true,
-        reactVersion: config.reactVersion,
-      });
-    },
-    TRANSFORM_CACHE_TTL_SECONDS,
-  );
-
-  let transformedCode = transformResult.code;
-
-  const cacheDir = getHttpBundleCacheDir();
-  let bundlesValid = true;
-
-  if (transformResult.cacheHit) {
-    const validation = await validateCachedBundlesByManifestOrCode(
-      transformedCode,
-      transformResult.bundleManifestId,
-      cacheDir,
-    );
-    if (!validation.valid) {
-      logger.warn("Cached HTTP bundle validation failed, re-transforming", {
-        filePath,
-        manifestId: transformResult.bundleManifestId?.slice(0, 12),
-        failedHashes: validation.failedHashes,
-        reason: validation.reason,
-        source: validation.source,
-      });
-      bundlesValid = false;
-    }
-  }
-
-  if (!bundlesValid) {
-    transformedCode = await transformToESM(fileContent, filePath, projectDir, adapter, {
-      projectId: effectiveProjectId,
-      dev: mode === "development",
-      ssr: true,
-      reactVersion: config.reactVersion,
-    });
-
-    setCachedTransformAsync(
-      transformCacheKey,
-      transformedCode,
-      contentHash,
-      TRANSFORM_CACHE_TTL_SECONDS,
-    ).catch((error) => {
-      logger.debug("Failed to update transform cache after re-transform", {
-        filePath,
-        error,
-      });
-    });
-  }
-
-  // CRITICAL: Validate that no unresolved /_vf_modules/ imports remain after transform.
-  // These imports should have been resolved to file:// paths by ssrVfModulesPlugin.
-  // If they're still present, retry the transform bypassing all caches.
-  if (UNRESOLVED_VF_MODULES_RE.test(transformedCode)) {
-    const match = transformedCode.match(UNRESOLVED_VF_MODULES_RE);
-    const unresolvedImport = match?.[1] || "unknown";
-    logger.warn(
-      "[ModuleLoader] Transform has unresolved _vf_modules import, retrying without cache",
-      {
-        filePath: filePath.slice(-60),
-        unresolvedImport: unresolvedImport.slice(0, 80),
-        cacheHit: transformResult.cacheHit,
-      },
-    );
-
-    // Force a fresh transform bypassing all caches
-    // Import runPipeline directly to bypass getOrComputeTransform cache
-    const { runPipeline } = await import("#veryfront/transforms/pipeline/index.ts");
-    const pipelineResult = await runPipeline(fileContent, filePath, projectDir, {
-      projectId: effectiveProjectId,
-      dev: mode === "development",
-      ssr: true,
-      reactVersion: config.reactVersion,
-    });
-    transformedCode = pipelineResult.code;
-
-    // Check again after retry
-    if (UNRESOLVED_VF_MODULES_RE.test(transformedCode)) {
-      const retryMatch = transformedCode.match(UNRESOLVED_VF_MODULES_RE);
-      logger.error("Transform still has unresolved _vf_modules after retry", {
-        filePath: filePath.slice(-60),
-        unresolvedImport: retryMatch?.[1]?.slice(0, 80) || "unknown",
-        hint:
-          "Check that framework sources exist in dist/framework-src/ and ssrVfModulesPlugin is running",
-      });
-      // Continue anyway - let it fail at import time for better error context
-    } else {
-      // Retry succeeded - update the cache
-      setCachedTransformAsync(
-        transformCacheKey,
-        transformedCode,
-        hashCodeHex(transformedCode).slice(0, 16),
-        TRANSFORM_CACHE_TTL_SECONDS,
-      ).catch((error) => {
-        logger.debug("Failed to update cache after retry", { filePath, error });
-      });
-    }
-  }
+  const { code: transformedCode } = await transformModuleCodeWithCache({
+    fileContent,
+    filePath,
+    projectDir,
+    effectiveProjectId,
+    mode,
+    adapter,
+    reactVersion: config.reactVersion,
+  });
 
   return await persistTransformedModule({
     filePath,
