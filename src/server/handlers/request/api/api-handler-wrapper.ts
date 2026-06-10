@@ -110,7 +110,7 @@ export class ApiHandlerWrapper extends BaseHandler {
           await ensureProjectDiscovery(ctx);
 
           const api = await getApiHandler(ctx);
-          const apiRes = await api.handle(req);
+          const apiRes = await api.handle(req, ctx);
 
           if (!apiRes) {
             this.logDebug(

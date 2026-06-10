@@ -154,6 +154,35 @@ function checkContentLengthLimit(request: Request): void {
   }
 }
 
+let warnedUntrustedInProcessExecution = false;
+
+export function __resetInProcessIsolationWarningForTests(): void {
+  warnedUntrustedInProcessExecution = false;
+}
+
+function warnIfUntrustedInProcessExecution(
+  routeKind: "app" | "pages",
+  pathname: string,
+  options?: ExecuteRouteOptions,
+): void {
+  if (options?.isLocalProject !== false) return;
+  if (isWorkerIsolationEnabled()) return;
+  if (warnedUntrustedInProcessExecution) return;
+
+  warnedUntrustedInProcessExecution = true;
+  logger.warn(
+    "Untrusted project code is executing in-process with worker isolation disabled. Enable WORKER_ISOLATION_ENABLED=1 and WORKER_ISOLATION_API=1 to run project routes in a permission-restricted worker.",
+    {
+      modulePath: options.modulePath,
+      pathname,
+      projectDir: options.projectDir,
+      requiredEnv: ["WORKER_ISOLATION_ENABLED", "WORKER_ISOLATION_API"],
+      routeKind,
+      workerIsolationEnabled: false,
+    },
+  );
+}
+
 async function readBodyWithSizeGuard(request: Request): Promise<Uint8Array | null> {
   if (!request.body) return null;
 
@@ -343,6 +372,8 @@ export interface ExecuteRouteOptions {
   modulePath?: string;
   /** Project directory (for isolated execution scope) */
   projectDir?: string;
+  /** Whether the handler module belongs to a trusted local development project. */
+  isLocalProject?: boolean;
 }
 
 export function executeAppRoute(
@@ -370,6 +401,7 @@ export function executeAppRoute(
   }
 
   // Default path: execute in main process (existing behavior)
+  warnIfUntrustedInProcessExecution("app", pathname, options);
   const method = request.method.toUpperCase() as HTTPMethod;
 
   return withSpan(
@@ -425,6 +457,7 @@ export function executePagesRoute(
   }
 
   // Default path: execute in main process (existing behavior)
+  warnIfUntrustedInProcessExecution("pages", pathname, options);
   const method = request.method as keyof APIRoute;
 
   return withSpan(
