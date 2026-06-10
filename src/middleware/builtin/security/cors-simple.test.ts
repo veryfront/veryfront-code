@@ -43,6 +43,21 @@ describe("corsSimple", () => {
 
       assertEquals(response?.headers.get("Access-Control-Allow-Origin"), "*");
     });
+
+    it("should reject preflight requests from disallowed origins", async () => {
+      const middleware = corsSimple("https://allowed.com");
+      const ctx = createContext("OPTIONS", "https://evil.com");
+      let calledNext = false;
+
+      const response = await middleware(ctx, () => {
+        calledNext = true;
+        return Promise.resolve(new Response("OK"));
+      });
+
+      assertEquals(response?.status, 403);
+      assertEquals(response?.headers.get("Access-Control-Allow-Origin"), null);
+      assertEquals(calledNext, false);
+    });
   });
 
   describe("actual requests", () => {

@@ -2,7 +2,7 @@ import type { Middleware } from "../types.ts";
 import { getRequest } from "../types.ts";
 import type { CORSOptions } from "./types.ts";
 import { validateOriginSync } from "#veryfront/security/http/cors/validators.ts";
-import { HTTP_NO_CONTENT } from "#veryfront/utils/constants/http.ts";
+import { HTTP_FORBIDDEN, HTTP_NO_CONTENT } from "#veryfront/utils/constants/http.ts";
 
 export function corsSimple(options: CORSOptions | string = "*"): Middleware {
   const origin = typeof options === "string" ? options : options.origin ?? "*";
@@ -12,6 +12,10 @@ export function corsSimple(options: CORSOptions | string = "*"): Middleware {
     const validation = validateOriginSync(req.headers.get("origin"), { origin });
 
     if (req.method === "OPTIONS") {
+      if (!validation.allowedOrigin) {
+        return new Response(null, { status: HTTP_FORBIDDEN });
+      }
+
       // Only echo Access-Control-Allow-Origin when the origin actually passed
       // validation. Falling back to the configured origin (e.g. "*") here would
       // grant a permissive preflight to an origin we just rejected.
