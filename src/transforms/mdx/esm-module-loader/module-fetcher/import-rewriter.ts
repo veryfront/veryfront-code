@@ -6,7 +6,12 @@
 
 import { dirname, join, resolve } from "#veryfront/compat/path";
 import { FRAMEWORK_ROOT } from "../constants.ts";
-import { resolveVeryfrontModuleUrl } from "../../../veryfront-module-urls.ts";
+import {
+  DEFAULT_REACT_VERSION,
+  type ImportSpecifierInfo,
+  type RewriteContext,
+  veryfrontStrategy,
+} from "../../../import-rewriter/index.ts";
 import { getLocalFs } from "../cache/index.ts";
 import {
   findStaticImportFromSpans,
@@ -14,6 +19,31 @@ import {
   replaceSourceSpans,
   type SourceSpanReplacement,
 } from "../utils/source-spans.ts";
+
+const MODULE_FETCHER_VERYFRONT_CONTEXT: RewriteContext = {
+  filePath: "",
+  projectDir: "",
+  projectId: "",
+  target: "ssr",
+  dev: false,
+  reactVersion: DEFAULT_REACT_VERSION,
+};
+
+function rewriteVeryfrontModuleSpecifier(specifier: string): string | null {
+  const result = veryfrontStrategy.rewrite(
+    {
+      specifier,
+      isDynamic: false,
+      start: 0,
+      end: specifier.length,
+      statementStart: 0,
+      statementEnd: 0,
+      raw: {} as ImportSpecifierInfo["raw"],
+    },
+    MODULE_FETCHER_VERYFRONT_CONTEXT,
+  );
+  return result.specifier;
+}
 
 /**
  * Rewrite veryfront/* imports to /_vf_modules/_veryfront/ paths for MDX module loading.
@@ -24,13 +54,13 @@ export function rewriteVeryfrontImports(code: string): string {
     code,
     (specifier) => specifier.startsWith("veryfront/") ? specifier : null,
   ).flatMap(({ original, path, start, end }) => {
-    const mapped = resolveVeryfrontModuleUrl(path);
+    const mapped = rewriteVeryfrontModuleSpecifier(path);
     if (!mapped) return [];
     return [{
       start,
       end,
       expected: original,
-      replacement: `from "${mapped}?ssr=true"`,
+      replacement: `from "${mapped}"`,
     }];
   });
 
