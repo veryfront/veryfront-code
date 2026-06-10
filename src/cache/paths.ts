@@ -51,6 +51,10 @@ const HARDCODED_PATH_PATTERNS = [
  * Check if code contains hardcoded cache paths that should be tokenized.
  */
 export function hasHardcodedCachePaths(code: string): boolean {
+  // Fast reject: every pattern requires a "file://" prefix, so if the code
+  // contains no file:// URL at all we skip the 12 full-string regex scans.
+  // This runs on every cache write over whole (often 50-200KB) modules.
+  if (!code.includes("file://")) return false;
   return HARDCODED_PATH_PATTERNS.some((pattern) => pattern.test(code));
 }
 
