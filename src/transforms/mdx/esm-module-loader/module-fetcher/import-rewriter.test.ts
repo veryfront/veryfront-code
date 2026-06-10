@@ -47,6 +47,15 @@ describe("rewriteVeryfrontImports", () => {
       ].join("\n"),
     );
   });
+
+  it("uses the unified veryfront strategy for SSR-only module overrides", () => {
+    const code = `import { useWorkflow } from "veryfront/workflow";\n`;
+
+    assertEquals(
+      rewriteVeryfrontImports(code),
+      `import { useWorkflow } from "/_vf_modules/_veryfront/workflow/react/index.js?ssr=true";\n`,
+    );
+  });
 });
 
 describe("rewriteDntImports", () => {
