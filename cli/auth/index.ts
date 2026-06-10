@@ -1,5 +1,7 @@
 export {
   type AuthMethod,
+  createOAuthAuthorizationUrl,
+  createOAuthState,
   deleteToken,
   ensureAuthenticated,
   hasToken,

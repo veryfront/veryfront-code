@@ -87,6 +87,85 @@ describe(
         assertEquals(result.error, undefined);
       });
 
+      it("should receive token when callback state matches", async () => {
+        server = await startCallbackServer(9876, { expectedState: "expected-state" });
+        const callbackUrl = getCallbackUrl(server.port);
+
+        const callbackPromise = server.waitForCallback(scaleMs(5000));
+
+        setTimeout(() => {
+          void fetchAndCancel(`${callbackUrl}?token=test-oauth-token&state=expected-state`);
+        }, scaleMs(100));
+
+        const result = await callbackPromise;
+        assertEquals(result.token, "test-oauth-token");
+        assertEquals(result.error, undefined);
+      });
+
+      it("should reject callback token when state is missing", async () => {
+        server = await startCallbackServer(9876, { expectedState: "expected-state" });
+        const callbackUrl = getCallbackUrl(server.port);
+
+        const callbackPromise = server.waitForCallback(scaleMs(5000));
+
+        setTimeout(() => {
+          void fetchAndCancel(`${callbackUrl}?token=test-oauth-token`);
+        }, scaleMs(100));
+
+        const result = await callbackPromise;
+        assertEquals(result.token, "");
+        assertEquals(result.error, "Invalid OAuth state");
+      });
+
+      it("should reject callback token when state is mismatched", async () => {
+        server = await startCallbackServer(9876, { expectedState: "expected-state" });
+        const callbackUrl = getCallbackUrl(server.port);
+
+        const callbackPromise = server.waitForCallback(scaleMs(5000));
+
+        setTimeout(() => {
+          void fetchAndCancel(`${callbackUrl}?token=test-oauth-token&state=wrong-state`);
+        }, scaleMs(100));
+
+        const result = await callbackPromise;
+        assertEquals(result.token, "");
+        assertEquals(result.error, "Invalid OAuth state");
+      });
+
+      it("should reject callback token from cross-origin requests", async () => {
+        server = await startCallbackServer(9876, { expectedState: "expected-state" });
+        const callbackUrl = getCallbackUrl(server.port);
+
+        const callbackPromise = server.waitForCallback(scaleMs(5000));
+
+        setTimeout(() => {
+          void fetch(callbackUrl + "?token=test-oauth-token&state=expected-state", {
+            headers: { Origin: "https://evil.example" },
+          }).then((resp) => resp.body?.cancel());
+        }, scaleMs(100));
+
+        const result = await callbackPromise;
+        assertEquals(result.token, "");
+        assertEquals(result.error, "Invalid callback origin");
+      });
+
+      it("should reject callback token with cross-origin referer", async () => {
+        server = await startCallbackServer(9876, { expectedState: "expected-state" });
+        const callbackUrl = getCallbackUrl(server.port);
+
+        const callbackPromise = server.waitForCallback(scaleMs(5000));
+
+        setTimeout(() => {
+          void fetch(callbackUrl + "?token=test-oauth-token&state=expected-state", {
+            headers: { Referer: "https://evil.example/login" },
+          }).then((resp) => resp.body?.cancel());
+        }, scaleMs(100));
+
+        const result = await callbackPromise;
+        assertEquals(result.token, "");
+        assertEquals(result.error, "Invalid callback origin");
+      });
+
       it("should handle error from callback", async () => {
         server = await startCallbackServer(9876);
         const callbackUrl = getCallbackUrl(server.port);

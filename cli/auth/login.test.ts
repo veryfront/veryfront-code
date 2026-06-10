@@ -87,6 +87,46 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
     });
   });
 
+  describe("OAuth state", () => {
+    it("should generate distinct OAuth state values", async () => {
+      const loginModule = await import("./login.ts") as typeof import("./login.ts") & {
+        createOAuthState?: () => string;
+      };
+
+      assertEquals(typeof loginModule.createOAuthState, "function");
+
+      const first = loginModule.createOAuthState!();
+      const second = loginModule.createOAuthState!();
+
+      assertEquals(first.length >= 32, true);
+      assertEquals(second.length >= 32, true);
+      assertEquals(first !== second, true);
+    });
+
+    it("should include state in the OAuth authorization URL", async () => {
+      const loginModule = await import("./login.ts") as typeof import("./login.ts") & {
+        createOAuthAuthorizationUrl?: (
+          provider: "google" | "github" | "microsoft",
+          callbackUrl: string,
+          state: string,
+        ) => string;
+      };
+
+      assertEquals(typeof loginModule.createOAuthAuthorizationUrl, "function");
+
+      const authUrl = loginModule.createOAuthAuthorizationUrl!(
+        "github",
+        "http://localhost:3456/callback",
+        "expected-state",
+      );
+      const parsed = new URL(authUrl);
+
+      assertEquals(parsed.pathname, "/auth/github");
+      assertEquals(parsed.searchParams.get("redirect_uri"), "http://localhost:3456/callback");
+      assertEquals(parsed.searchParams.get("state"), "expected-state");
+    });
+  });
+
   describe("logout", { sanitizeOps: false, sanitizeResources: false }, () => {
     it("should clear stored token", async () => {
       await saveToken("test-token");

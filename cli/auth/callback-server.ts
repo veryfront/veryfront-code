@@ -17,6 +17,10 @@ export interface CallbackServer {
   stop(): Promise<void>;
 }
 
+export interface CallbackServerOptions {
+  expectedState?: string;
+}
+
 function renderSuccessPage(): string {
   return `<!DOCTYPE html>
 <html>
@@ -168,18 +172,50 @@ function isAddrInUseError(error: unknown): boolean {
   return false;
 }
 
-function handleCallback(url: URL): { result: CallbackResult; html: string } {
+function callbackError(message: string): { result: CallbackResult; html: string } {
+  return { result: { token: "", error: message }, html: renderErrorPage(message) };
+}
+
+function headerOrigin(value: string): string | null {
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
+}
+
+function hasCrossOriginHeader(headers: Headers, url: URL): boolean {
+  const expectedOrigin = url.origin;
+  const origin = headers.get("origin");
+  if (origin && headerOrigin(origin) !== expectedOrigin) return true;
+
+  const referer = headers.get("referer");
+  if (referer && headerOrigin(referer) !== expectedOrigin) return true;
+
+  return false;
+}
+
+function handleCallback(
+  url: URL,
+  headers: Headers,
+  options: CallbackServerOptions = {},
+): { result: CallbackResult; html: string } {
+  if (hasCrossOriginHeader(headers, url)) return callbackError("Invalid callback origin");
+
+  if (options.expectedState && url.searchParams.get("state") !== options.expectedState) {
+    return callbackError("Invalid OAuth state");
+  }
+
   const token = url.searchParams.get("token");
   const error = url.searchParams.get("error");
 
   if (error) return { result: { token: "", error }, html: renderErrorPage(error) };
   if (token) return { result: { token }, html: renderSuccessPage() };
 
-  const message = "No token received";
-  return { result: { token: "", error: message }, html: renderErrorPage(message) };
+  return callbackError("No token received");
 }
 
-function tryStartDenoServer(port: number): CallbackServer {
+function tryStartDenoServer(port: number, options: CallbackServerOptions = {}): CallbackServer {
   let resolveCallback: (result: CallbackResult) => void = () => {};
   const callbackPromise = new Promise<CallbackResult>((resolve) => {
     resolveCallback = resolve;
@@ -196,7 +232,7 @@ function tryStartDenoServer(port: number): CallbackServer {
         return new Response("Not Found", { status: 404, headers: { Connection: "close" } });
       }
 
-      const { result, html } = handleCallback(url);
+      const { result, html } = handleCallback(url, request.headers, options);
       resolveCallback(result);
 
       // Close connection immediately to allow clean server shutdown
@@ -215,10 +251,10 @@ function tryStartDenoServer(port: number): CallbackServer {
   };
 }
 
-function startDenoServer(startPort: number): CallbackServer {
+function startDenoServer(startPort: number, options: CallbackServerOptions = {}): CallbackServer {
   for (let port = startPort, i = 0; i < MAX_PORT_ATTEMPTS; i++, port++) {
     try {
-      return tryStartDenoServer(port);
+      return tryStartDenoServer(port, options);
     } catch (error) {
       if (!isAddrInUseError(error) || i === MAX_PORT_ATTEMPTS - 1) {
         throw error;
@@ -229,7 +265,23 @@ function startDenoServer(startPort: number): CallbackServer {
   throw new Error("Could not find an available port");
 }
 
-async function tryStartNodeServer(port: number): Promise<CallbackServer> {
+function nodeHeadersToHeaders(headers: Record<string, string | string[] | undefined>): Headers {
+  const result = new Headers();
+  for (const [name, value] of Object.entries(headers)) {
+    if (value === undefined) continue;
+    if (Array.isArray(value)) {
+      for (const item of value) result.append(name, item);
+      continue;
+    }
+    result.set(name, value);
+  }
+  return result;
+}
+
+async function tryStartNodeServer(
+  port: number,
+  options: CallbackServerOptions = {},
+): Promise<CallbackServer> {
   const http = await import("node:http");
 
   let resolveCallback: (result: CallbackResult) => void = () => {};
@@ -246,7 +298,11 @@ async function tryStartNodeServer(port: number): Promise<CallbackServer> {
       return;
     }
 
-    const { result, html } = handleCallback(url);
+    const { result, html } = handleCallback(
+      url,
+      nodeHeadersToHeaders(req.headers),
+      options,
+    );
     resolveCallback(result);
 
     res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -270,10 +326,13 @@ async function tryStartNodeServer(port: number): Promise<CallbackServer> {
   };
 }
 
-async function startNodeServer(startPort: number): Promise<CallbackServer> {
+async function startNodeServer(
+  startPort: number,
+  options: CallbackServerOptions = {},
+): Promise<CallbackServer> {
   for (let port = startPort, i = 0; i < MAX_PORT_ATTEMPTS; i++, port++) {
     try {
-      return await tryStartNodeServer(port);
+      return await tryStartNodeServer(port, options);
     } catch (error) {
       if (!isAddrInUseError(error) || i === MAX_PORT_ATTEMPTS - 1) {
         throw error;
@@ -286,9 +345,10 @@ async function startNodeServer(startPort: number): Promise<CallbackServer> {
 
 export async function startCallbackServer(
   preferredPort: number = DEFAULT_CALLBACK_PORT,
+  options: CallbackServerOptions = {},
 ): Promise<CallbackServer> {
   // Server functions handle port retry internally to avoid race conditions
-  return isDeno ? startDenoServer(preferredPort) : startNodeServer(preferredPort);
+  return isDeno ? startDenoServer(preferredPort, options) : startNodeServer(preferredPort, options);
 }
 
 export function getCallbackUrl(port: number): string {

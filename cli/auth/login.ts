@@ -6,7 +6,7 @@ import { getCallbackUrl, startCallbackServer } from "./callback-server.ts";
 import { canOpenBrowser, openBrowser } from "./browser.ts";
 import { isTTY, promptUser } from "../utils/index.ts";
 import { brand, dim, error, muted, success, warning } from "../ui/colors.ts";
-import { DEFAULT_LOGIN_TIMEOUT_MS, getApiUrl } from "../shared/constants.ts";
+import { DEFAULT_CALLBACK_PORT, DEFAULT_LOGIN_TIMEOUT_MS, getApiUrl } from "../shared/constants.ts";
 import { createSuccessEnvelope, isJsonMode, outputJson } from "../shared/json-output.ts";
 
 export type AuthMethod = "google" | "github" | "microsoft" | "token";
@@ -23,6 +23,24 @@ const AUTH_OPTIONS: { id: AuthMethod; label: string }[] = [
   { id: "microsoft", label: "Microsoft" },
   { id: "token", label: "API Token" },
 ];
+
+export function createOAuthState(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+export function createOAuthAuthorizationUrl(
+  provider: "google" | "github" | "microsoft",
+  callbackUrl: string,
+  state: string,
+): string {
+  // The hosted auth endpoint must echo `state` back to the loopback callback.
+  const authUrl = new URL(`${getApiUrl().replace(/\/$/, "")}/auth/${provider}`);
+  authUrl.searchParams.set("redirect_uri", callbackUrl);
+  authUrl.searchParams.set("state", state);
+  return authUrl.toString();
+}
 
 export async function validateToken(token: string): Promise<UserInfo | null> {
   try {
@@ -116,27 +134,26 @@ async function loginWithOAuth(provider: "google" | "github" | "microsoft"): Prom
 
   console.log("  " + dim("Starting authentication server..."));
 
+  const state = createOAuthState();
   let server: Awaited<ReturnType<typeof startCallbackServer>>;
   try {
-    server = await startCallbackServer();
+    server = await startCallbackServer(DEFAULT_CALLBACK_PORT, { expectedState: state });
   } catch (e) {
     console.log("  " + error(`Failed to start server: ${e}`));
     return null;
   }
 
   const callbackUrl = getCallbackUrl(server.port);
-  const authUrl = `${getApiUrl()}/auth/${provider}?redirect_uri=${encodeURIComponent(callbackUrl)}`;
+  const authUrl = createOAuthAuthorizationUrl(provider, callbackUrl, state);
 
   console.log("  " + brand("Opening browser to log in..."));
-  console.log();
-  console.log("  " + dim("If the browser doesn't open, visit:"));
-  console.log("  " + dim(authUrl));
   console.log();
 
   try {
     await openBrowser(authUrl);
   } catch {
     console.log("  " + dim("Could not open browser automatically."));
+    console.log("  " + dim("Please use the API token option instead."));
   }
 
   console.log("  " + muted("Waiting for login..."));
