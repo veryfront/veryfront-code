@@ -83,7 +83,16 @@ export function createToolExecutionDataEventBridgeStream(
       })();
     },
     async cancel(reason) {
-      await baseReader?.cancel(reason);
+      // Cancellation is best-effort teardown (the client disconnected / hit
+      // Stop). Forwarding the cancel to the base reader can reject — e.g. the
+      // upstream agent runtime aborts an in-flight signal whose rejection
+      // surfaces through the cancel chain. Swallow it so it does not escape as
+      // an unhandled rejection, which is fatal under Deno (#2334).
+      try {
+        await baseReader?.cancel(reason);
+      } catch {
+        // Stream is being torn down; a failed cancel is a clean stop here.
+      }
     },
   });
 }
