@@ -17,6 +17,33 @@ const CLIENT_LOG_MESSAGE_MAX_LENGTH = 5_000;
 /** Max chars of raw body shown in parse-error diagnostics */
 const CLIENT_LOG_BODY_PREVIEW_LENGTH = 500;
 
+function escapeControlCharacter(char: string): string {
+  switch (char) {
+    case "\n":
+      return "\\n";
+    case "\r":
+      return "\\r";
+    case "\t":
+      return "\\t";
+    default:
+      return `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`;
+  }
+}
+
+export function sanitizeClientLogPreview(
+  value: string,
+  maxLength = CLIENT_LOG_BODY_PREVIEW_LENGTH,
+): string {
+  let sanitized = "";
+  for (const char of value.slice(0, maxLength)) {
+    const code = char.charCodeAt(0);
+    sanitized += code <= 0x1f || (code >= 0x7f && code <= 0x9f)
+      ? escapeControlCharacter(char)
+      : char;
+  }
+  return sanitized;
+}
+
 export class ClientLogHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "ClientLogHandler",
@@ -92,15 +119,14 @@ export class ClientLogHandler extends BaseHandler {
   }
 
   private handleParseError(e: unknown, body: string): void {
-    serverLogger.error(
-      "[ClientLogHandler] Failed to parse client log. Error:",
-      getErrorMessage(e),
-    );
-    serverLogger.error(
-      `[ClientLogHandler] Raw body received (first ${CLIENT_LOG_BODY_PREVIEW_LENGTH} chars):`,
-      body.slice(0, CLIENT_LOG_BODY_PREVIEW_LENGTH),
-    );
-    logger.error("Body length:", body.length);
+    serverLogger.error("[ClientLogHandler] Failed to parse client log", {
+      parse_error_message: getErrorMessage(e),
+    });
+    serverLogger.error("[ClientLogHandler] Sanitized body preview", {
+      body_length: body.length,
+      body_preview: sanitizeClientLogPreview(body),
+      preview_length: CLIENT_LOG_BODY_PREVIEW_LENGTH,
+    });
 
     // Try to identify the problematic character for SyntaxError
     if (!(e instanceof SyntaxError) || !e.message.includes("position")) {
@@ -116,12 +142,14 @@ export class ClientLogHandler extends BaseHandler {
     const start = Math.max(0, pos - 20);
     const end = Math.min(body.length, pos + 20);
 
-    logger.error("Context around error position:", body.slice(start, end));
-    serverLogger.error(
-      "[ClientLogHandler] Character at position:",
-      body.charCodeAt(pos),
-      "which is:",
-      body.charAt(pos),
-    );
+    logger.error("Context around error position", {
+      body_context: sanitizeClientLogPreview(body.slice(start, end)),
+      error_position: pos,
+    });
+    serverLogger.error("[ClientLogHandler] Character at error position", {
+      char_code: body.charCodeAt(pos),
+      char_preview: sanitizeClientLogPreview(body.charAt(pos), 1),
+      error_position: pos,
+    });
   }
 }

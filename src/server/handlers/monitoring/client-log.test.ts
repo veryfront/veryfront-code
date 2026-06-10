@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { ClientLogHandler } from "./client-log.handler.ts";
+import { __resetLoggerConfigForTests } from "#veryfront/utils/logger/logger.ts";
+import { ClientLogHandler, sanitizeClientLogPreview } from "./client-log.handler.ts";
 
 function createHandler(): ClientLogHandler {
   return new ClientLogHandler();
@@ -22,6 +23,19 @@ async function assertOkResponse(result: { response?: Response }): Promise<void> 
 }
 
 describe("server/handlers/monitoring/client-log", () => {
+  describe("sanitizeClientLogPreview", () => {
+    it("escapes control characters before logging body previews", () => {
+      assertEquals(
+        sanitizeClientLogPreview("line\nnext\r\t\u001b[31m\u0000tail", 30),
+        "line\\nnext\\r\\t\\u001b[31m\\u0000tail",
+      );
+    });
+
+    it("truncates before escaping the preview", () => {
+      assertEquals(sanitizeClientLogPreview("abcdef\n", 3), "abc");
+    });
+  });
+
   describe("ClientLogHandler metadata", () => {
     it("should have correct handler name", () => {
       const handler = createHandler();
@@ -102,6 +116,45 @@ describe("server/handlers/monitoring/client-log", () => {
       await assertOkResponse(result);
       const body = await (result.response as Response).json();
       assertEquals(body.ok, true);
+    });
+
+    it("logs sanitized invalid-JSON previews in emitted context", async () => {
+      const originalError = console.error;
+      const originalLogFormat = Deno.env.get("LOG_FORMAT");
+      const originalLogLevel = Deno.env.get("LOG_LEVEL");
+      const originalNoColor = Deno.env.get("NO_COLOR");
+      const output: string[] = [];
+
+      console.error = (message: unknown) => {
+        output.push(String(message));
+      };
+      Deno.env.set("LOG_FORMAT", "text");
+      Deno.env.set("LOG_LEVEL", "ERROR");
+      Deno.env.set("NO_COLOR", "1");
+      __resetLoggerConfigForTests();
+
+      try {
+        const handler = createHandler();
+        const req = new Request("http://localhost/_veryfront/log", {
+          method: "POST",
+          body: '{"message":"line\n\u001b[31m"}',
+        });
+
+        await handler.handle(req, localCtx);
+      } finally {
+        console.error = originalError;
+        if (originalLogFormat === undefined) Deno.env.delete("LOG_FORMAT");
+        else Deno.env.set("LOG_FORMAT", originalLogFormat);
+        if (originalLogLevel === undefined) Deno.env.delete("LOG_LEVEL");
+        else Deno.env.set("LOG_LEVEL", originalLogLevel);
+        if (originalNoColor === undefined) Deno.env.delete("NO_COLOR");
+        else Deno.env.set("NO_COLOR", originalNoColor);
+        __resetLoggerConfigForTests();
+      }
+
+      const combinedOutput = output.join("\n");
+      assertEquals(combinedOutput.includes("body_preview="), true);
+      assertEquals(combinedOutput.includes("line\\n\\u001b[31m"), true);
     });
 
     it("should return ok:true for log data with details", async () => {
