@@ -123,6 +123,7 @@ export interface DependencyHashCache {
   contentHashes: Map<string, string>;
   completedModules: Set<string>;
   inProgressModules: Map<string, Promise<void>>;
+  buildQueue: Promise<void>;
 }
 
 export function createDependencyHashCache(): DependencyHashCache {
@@ -131,6 +132,7 @@ export function createDependencyHashCache(): DependencyHashCache {
     contentHashes: new Map<string, string>(),
     completedModules: new Set<string>(),
     inProgressModules: new Map<string, Promise<void>>(),
+    buildQueue: Promise.resolve(),
   };
 }
 
@@ -193,12 +195,13 @@ export async function computeDepsHash(
   projectDir: string,
   cache: DependencyHashCache = createDependencyHashCache(),
 ): Promise<string> {
-  await buildDependencyGraph(
-    filePath,
-    cache,
-    getContent,
-    projectDir,
-  );
+  await enqueueDependencyGraphBuild(cache, () =>
+    buildDependencyGraph(
+      filePath,
+      cache,
+      getContent,
+      projectDir,
+    ));
 
   const deps = [filePath, ...cache.graph.getTransitiveDependencies(filePath)].sort();
   const combinedHash = deps
@@ -207,6 +210,15 @@ export async function computeDepsHash(
     .join(":");
 
   return computeHash(combinedHash);
+}
+
+async function enqueueDependencyGraphBuild(
+  cache: DependencyHashCache,
+  build: () => Promise<void>,
+): Promise<void> {
+  const queuedBuild = cache.buildQueue.then(build);
+  cache.buildQueue = queuedBuild.catch(() => {});
+  await queuedBuild;
 }
 
 async function buildDependencyGraph(
