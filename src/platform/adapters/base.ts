@@ -85,9 +85,45 @@ export interface ServerAdapter {
   upgradeWebSocket(request: Request): WebSocketUpgrade;
 }
 
+export interface WebSocketConnection {
+  readonly readyState: number;
+  send(data: string | ArrayBuffer): void;
+  close(code?: number, reason?: string): void;
+  addEventListener(type: string, listener: EventListener, options?: AddEventListenerOptions): void;
+  removeEventListener(type: string, listener: EventListener): void;
+}
+
+const WEBSOCKET_UPGRADE_RESPONSE_KIND = "websocket-upgrade";
+
+export interface WebSocketUpgradeResponse {
+  readonly kind: typeof WEBSOCKET_UPGRADE_RESPONSE_KIND;
+  readonly status: 101;
+  readonly statusText: string;
+  readonly headers: Headers;
+  readonly body: null;
+}
+
 export interface WebSocketUpgrade {
-  socket: WebSocket;
-  response: Response;
+  socket: WebSocketConnection;
+  response: Response | WebSocketUpgradeResponse;
+}
+
+export function createWebSocketUpgradeResponse(
+  input: { headers?: HeadersInit; statusText?: string } = {},
+): WebSocketUpgradeResponse {
+  return {
+    kind: WEBSOCKET_UPGRADE_RESPONSE_KIND,
+    status: 101,
+    statusText: input.statusText ?? "Switching Protocols",
+    headers: new Headers(input.headers),
+    body: null,
+  };
+}
+
+export function isWebSocketUpgradeResponse(value: unknown): value is WebSocketUpgradeResponse {
+  return typeof value === "object" && value !== null &&
+    (value as { kind?: unknown }).kind === WEBSOCKET_UPGRADE_RESPONSE_KIND &&
+    (value as { status?: unknown }).status === 101;
 }
 
 export interface ServeOptions {

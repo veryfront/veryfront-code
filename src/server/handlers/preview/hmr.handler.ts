@@ -35,6 +35,10 @@ export type { HMRClientInfo } from "./hmr-client-manager.ts";
 // Priority between auth (0) and high (100)
 const PRIORITY_HMR: HandlerPriority = HandlerPriority.EARLY;
 
+function getMessageEventData(event: Event): unknown {
+  return "data" in event ? (event as { data: unknown }).data : undefined;
+}
+
 export class HMRHandler extends BaseHandler {
   private static rateLimiter = new RateLimiter(HMR_MAX_MESSAGES_PER_MINUTE);
   private static reloadUnsubscribe: (() => void) | null = null;
@@ -189,7 +193,7 @@ export class HMRHandler extends BaseHandler {
       socket.addEventListener("message", (event) => {
         handleHmrClientMessage({
           socket,
-          data: event.data,
+          data: getMessageEventData(event),
           rateLimiter: HMRHandler.rateLimiter,
           onActivity: () => {
             const client = getClient(clientId);

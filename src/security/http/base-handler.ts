@@ -7,12 +7,16 @@ import type {
 } from "#veryfront/types";
 import { runWithCacheBatching } from "#veryfront/cache/request-cache-batcher.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import type { WebSocketUpgradeResponse } from "#veryfront/platform/adapters/base.ts";
 import { serverLogger } from "#veryfront/utils";
 import { ResponseBuilder } from "./response/index.ts";
 
 export interface HandlerHelpers {
   createResponseBuilder: (ctx: HandlerContext, nonce?: string) => ResponseBuilder;
-  respond: (response: Response, metadata?: Record<string, unknown>) => HandlerResult;
+  respond: (
+    response: Response | WebSocketUpgradeResponse,
+    metadata?: Record<string, unknown>,
+  ) => HandlerResult;
   logDebug: (message: string, extra?: Record<string, unknown>, ctx?: HandlerContext) => void;
   getErrorMessage: (error: unknown) => string;
   continue: () => HandlerResult;
@@ -99,8 +103,11 @@ export abstract class BaseHandler implements Handler {
     return { continue: true };
   }
 
-  protected respond(response: Response, metadata?: Record<string, unknown>): HandlerResult {
-    return { response, continue: false, metadata };
+  protected respond(
+    response: Response | WebSocketUpgradeResponse,
+    metadata?: Record<string, unknown>,
+  ): HandlerResult {
+    return { response: response as Response, continue: false, metadata };
   }
 
   protected withProxyContext<T>(

@@ -23,8 +23,11 @@ export type {
   ServerAdapter,
   ShellAdapter,
   WatchOptions,
+  WebSocketConnection,
   WebSocketUpgrade,
+  WebSocketUpgradeResponse,
 } from "./base.ts";
+export { createWebSocketUpgradeResponse, isWebSocketUpgradeResponse } from "./base.ts";
 
 // Detection & registry
 export { getAdapter } from "./detect.ts";

@@ -15,6 +15,10 @@ class MockSocket {
   close(): void {
     this.readyState = WebSocket.CLOSED;
   }
+
+  addEventListener(): void {}
+
+  removeEventListener(): void {}
 }
 
 describe("server/handlers/preview/hmr-message-router", () => {
@@ -27,7 +31,7 @@ describe("server/handlers/preview/hmr-message-router", () => {
     const socket = new MockSocket();
     addClient({
       id: "client-1",
-      socket: socket as unknown as WebSocket,
+      socket,
       connectedAt: Date.now(),
       lastActivity: Date.now(),
       projectSlug: "demo-project",

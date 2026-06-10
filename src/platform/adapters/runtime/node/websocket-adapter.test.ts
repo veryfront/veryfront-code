@@ -1,9 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { isWebSocketUpgradeResponse } from "../../base.ts";
 import { EventEmitter } from "node:events";
 import { Buffer } from "node:buffer";
-import { NodeWebSocket } from "./websocket-adapter.ts";
+import { resolveWebSocketUpgrade } from "./http-server.ts";
+import { NodeServerAdapter, NodeWebSocket } from "./websocket-adapter.ts";
 import type { WSWebSocket } from "./types.ts";
 
 /**
@@ -29,6 +31,31 @@ function attach(): { socket: NodeWebSocket; ws: WSWebSocket & EventEmitter } {
   socket._attachRealSocket(ws);
   return { socket, ws };
 }
+
+describe("NodeServerAdapter WebSocket upgrade", () => {
+  it("returns an explicit non-DOM upgrade response signal", () => {
+    const requestId = "dGhlIHNhbXBsZSBub25jZQ==";
+    const adapter = new NodeServerAdapter();
+
+    const { response } = adapter.upgradeWebSocket(
+      new Request("http://localhost/_ws", {
+        headers: {
+          connection: "Upgrade",
+          upgrade: "websocket",
+          "sec-websocket-key": requestId,
+        },
+      }),
+    );
+
+    assertEquals(isWebSocketUpgradeResponse(response), true);
+    assertEquals(response.status, 101);
+    assertEquals(response.statusText, "Switching Protocols");
+    assertEquals(response.headers.get("upgrade"), "websocket");
+    assertEquals(response instanceof Response, false);
+
+    assertEquals(resolveWebSocketUpgrade(requestId, createMockWs()), true);
+  });
+});
 
 describe("NodeWebSocket close handling", () => {
   it("invokes onclose with a CloseEvent-shaped object on a clean close", () => {
