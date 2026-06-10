@@ -155,6 +155,35 @@ describe("logger", () => {
         __resetLoggerConfigForTests();
       }
     });
+
+    it("should not format or redact arguments for suppressed log levels", () => {
+      const previousLogLevel = Deno.env.get("LOG_LEVEL");
+      const previousLogFormat = Deno.env.get("LOG_FORMAT");
+      let getterReads = 0;
+
+      try {
+        Deno.env.set("LOG_LEVEL", "ERROR");
+        Deno.env.set("LOG_FORMAT", "json");
+        __resetLoggerConfigForTests();
+
+        const context = {
+          get password() {
+            getterReads += 1;
+            throw new Error("suppressed log context was formatted");
+          },
+        };
+
+        serverLogger.debug("Suppressed debug log", context);
+
+        assertEquals(getterReads, 0);
+      } finally {
+        if (previousLogLevel === undefined) Deno.env.delete("LOG_LEVEL");
+        else Deno.env.set("LOG_LEVEL", previousLogLevel);
+        if (previousLogFormat === undefined) Deno.env.delete("LOG_FORMAT");
+        else Deno.env.set("LOG_FORMAT", previousLogFormat);
+        __resetLoggerConfigForTests();
+      }
+    });
   });
 
   describe("LogLevel enum", () => {
