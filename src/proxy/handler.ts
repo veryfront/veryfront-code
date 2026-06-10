@@ -88,8 +88,8 @@ function isInternalControlPlanePath(pathname: string): boolean {
     pathname.startsWith("/internal/workflows/");
 }
 
-function isSignedInternalControlPlaneRequest(req: Request): boolean {
-  const pathname = new URL(req.url).pathname;
+function isSignedInternalControlPlaneRequest(req: Request, url: URL): boolean {
+  const pathname = url.pathname;
   if (!isInternalControlPlanePath(pathname)) {
     return false;
   }
@@ -236,8 +236,12 @@ export interface ProxyHandlerOptions {
   logger?: ProxyLogger;
 }
 
-function getRequestHost(req: Request): string {
-  return req.headers.get("host") ?? new URL(req.url).host;
+export interface ProxyRequestOptions {
+  url?: URL;
+}
+
+function getRequestHost(req: Request, url: URL): string {
+  return req.headers.get("host") ?? url.host;
 }
 
 function getScope(environment: string | null): TokenScope {
@@ -431,8 +435,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     };
   }
 
-  function makeAuthRedirectUrl(req: Request): string {
-    const url = new URL(req.url);
+  function makeAuthRedirectUrl(url: URL): string {
     // Collapse leading slashes to prevent protocol-relative open redirects (e.g. "//evil.com/path")
     const safePath = url.pathname.replace(/^\/\/+/, "/");
     let returnPath = safePath + url.search;
@@ -473,6 +476,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
   async function resolveRequestToken(
     req: Request,
+    url: URL,
     scope: TokenScope,
     host: string,
     projectSlug: string | undefined,
@@ -483,7 +487,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
   ): Promise<{ token?: string; userToken?: string; tokenFetchError?: unknown }> {
     const userToken = extractUserToken(req.headers.get("cookie") ?? "");
     const useSignedInternalControlPlaneToken = options.allowSignedInternalControlPlaneToken &&
-      isSignedInternalControlPlaneRequest(req);
+      isSignedInternalControlPlaneRequest(req, url);
 
     let token: string | undefined;
     let tokenFetchError: unknown;
@@ -491,7 +495,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     if (useSignedInternalControlPlaneToken) {
       token = req.headers.get("x-token") ?? undefined;
       logger?.debug("Using signed control-plane token for internal request", {
-        pathname: new URL(req.url).pathname,
+        pathname: url.pathname,
         scope,
       });
     } else if (scope === "preview" && userToken) {
@@ -526,6 +530,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
   async function checkProtectedAccess(
     req: Request,
+    url: URL,
     matchingEnv: NonNullable<DomainLookupResult["environments"]>[number] | undefined,
     userToken: string | undefined,
     users: DomainLookupResult["users"],
@@ -533,20 +538,20 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
   ): Promise<{ status: number; message: string; redirectUrl?: string } | null> {
     if (!matchingEnv?.protected) return null;
 
-    if (isSignedInternalControlPlaneRequest(req)) {
+    if (isSignedInternalControlPlaneRequest(req, url)) {
       logger?.debug(
         "Allowing signed internal control-plane request through protected environment",
         {
           ...logContext,
           environmentName: matchingEnv.name,
-          pathname: new URL(req.url).pathname,
+          pathname: url.pathname,
         },
       );
       return null;
     }
 
     if (!userToken) {
-      const redirectUrl = makeAuthRedirectUrl(req);
+      const redirectUrl = makeAuthRedirectUrl(url);
       logger?.info("Protected environment requires authentication", {
         ...logContext,
         environmentName: matchingEnv.name,
@@ -561,7 +566,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       logger,
     );
     if (!userId) {
-      const redirectUrl = makeAuthRedirectUrl(req);
+      const redirectUrl = makeAuthRedirectUrl(url);
       logger?.info("Could not extract userId from token", {
         ...logContext,
         environmentName: matchingEnv.name,
@@ -583,6 +588,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
   async function resolveReleaseAndProtection(
     req: Request,
+    url: URL,
     token: string,
     userToken: string | undefined,
     lookupKey: string,
@@ -599,6 +605,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
     const protectionError = await checkProtectedAccess(
       req,
+      url,
       matchingEnv,
       userToken,
       lookupResult.users,
@@ -613,8 +620,12 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     };
   }
 
-  async function processRequest(req: Request): Promise<ProxyContext> {
-    const rawHost = getRequestHost(req);
+  async function processRequest(
+    req: Request,
+    options: ProxyRequestOptions = {},
+  ): Promise<ProxyContext> {
+    const url = options.url ?? new URL(req.url);
+    const rawHost = getRequestHost(req, url);
     const host = rawHost.replace(/:\d+$/, "");
     const parsedDomain = parseProjectDomain(host);
     const scope = getScope(parsedDomain.environment);
@@ -661,6 +672,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     } else {
       ({ token, userToken, tokenFetchError } = await resolveRequestToken(
         req,
+        url,
         scope,
         host,
         projectSlug,
@@ -728,6 +740,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
         const protectionError = await checkProtectedAccess(
           req,
+          url,
           matchingEnv,
           userToken,
           lookupResult.users,
@@ -755,6 +768,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
         const resolved = await resolveReleaseAndProtection(
           req,
+          url,
           token,
           userToken,
           projectSlug,
@@ -798,6 +812,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         // still enforce the environment's `protected` flag like other scopes.
         const resolved = await resolveReleaseAndProtection(
           req,
+          url,
           token,
           userToken,
           projectSlug,
@@ -872,15 +887,26 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     };
   }
 
-  async function getTokenForApi(req: Request): Promise<string | undefined> {
-    const rawHost = getRequestHost(req);
+  async function getTokenForApi(
+    req: Request,
+    options: ProxyRequestOptions = {},
+  ): Promise<string | undefined> {
+    const url = options.url ?? new URL(req.url);
+    const rawHost = getRequestHost(req, url);
     const host = rawHost.replace(/:\d+$/, "");
     const parsedDomain = parseProjectDomain(host);
     const scope = getScope(parsedDomain.environment);
     const projectSlug = parsedDomain.slug ?? undefined;
-    const { token } = await resolveRequestToken(req, scope, host, projectSlug, {
-      tokenFetchErrorMessage: "Token fetch failed for API",
-    });
+    const { token } = await resolveRequestToken(
+      req,
+      url,
+      scope,
+      host,
+      projectSlug,
+      {
+        tokenFetchErrorMessage: "Token fetch failed for API",
+      },
+    );
     return token;
   }
 
