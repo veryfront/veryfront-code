@@ -239,6 +239,17 @@ function firstUrlDelimiterIndex(input: string): number {
   return Math.min(queryIndex, hashIndex);
 }
 
+function sanitizeProtocolRelativeUrlForSpan(input: string): string | null {
+  if (!input.startsWith("//")) return null;
+
+  try {
+    const url = new URL(`https:${input}`);
+    return `//${url.host}${url.pathname}`;
+  } catch (_) {
+    return null;
+  }
+}
+
 /**
  * Return the URL form safe to attach to observability span attributes.
  *
@@ -260,6 +271,9 @@ export function sanitizeUrlForSpan(input: string): string {
 
   const delimiterIndex = firstUrlDelimiterIndex(input);
   const withoutQueryOrFragment = delimiterIndex === -1 ? input : input.slice(0, delimiterIndex);
+  const protocolRelativeUrl = sanitizeProtocolRelativeUrlForSpan(withoutQueryOrFragment);
+  if (protocolRelativeUrl) return protocolRelativeUrl;
+
   return sanitizeUrlCredentials(withoutQueryOrFragment);
 }
 

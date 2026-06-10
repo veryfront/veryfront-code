@@ -230,6 +230,13 @@ describe("logger/redact", () => {
     it("removes query strings from relative URL-shaped values", () => {
       assertEquals(sanitizeUrlForSpan("/cache/get?key=secret#frag"), "/cache/get");
     });
+
+    it("removes userinfo from protocol-relative URL-shaped values", () => {
+      assertEquals(
+        sanitizeUrlForSpan("//user:secret@example.com/path?key=secret"),
+        "//example.com/path",
+      );
+    });
   });
 
   describe("sanitizeSerializedError", () => {
