@@ -34,6 +34,7 @@ import {
 } from "./module-source-resolution-cache.ts";
 
 const logger = serverLogger.component("module-server");
+const PROJECT_FALLBACK_EMBEDDED_POLYFILLS = new Set(["deno"]);
 
 /**
  * Embedded polyfills for compiled Deno binaries.
@@ -99,6 +100,8 @@ export default {};
   // Must be a JS module (not JSON) because esbuild strips `with { type: "json" }`
   // at es2020 target, and browsers reject JSON MIME type without the assertion.
   "_veryfront/_deno-config": `export default ${JSON.stringify({ version: VERSION })};\n`,
+  // dnt rewrites #deno-config to relative deno.js in npm framework modules.
+  "deno": `export default ${JSON.stringify({ version: VERSION })};\n`,
 };
 
 const DEV_MODULE_PREFIX = /^\/(?:_vf_modules|_veryfront\/modules)\//;
@@ -389,6 +392,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             releaseId: options.releaseId,
             reactVersion,
           },
+          modulePath,
         );
         if (!findResult) {
           logger.warn("Module not found", {
@@ -555,6 +559,7 @@ function createSSRTargetCacheBusterResolver(options: {
             releaseId: options.releaseId,
             reactVersion: options.reactVersion,
           },
+          targetPath,
         );
         if (!findResult) return undefined;
 
@@ -650,6 +655,7 @@ async function findSourceFile(
   projectDir: string,
   basePath: string,
   context: SourceLookupContext,
+  requestedModulePath = basePath,
 ): Promise<FindSourceFileResult | null> {
   const { reactVersion } = context;
   // Extensions including .src for compiled binary embedded sources
@@ -671,7 +677,10 @@ async function findSourceFile(
 
   logger.debug("findSourceFile called", { projectDir, basePath });
 
-  const hasKnownExt = extensions.some((ext) => basePath.endsWith(ext));
+  const knownExtMatch = basePath.match(/\.(json|tsx|ts|jsx|js|mdx|md)(\.src)?$/);
+  const requestedExtMatch = requestedModulePath.match(/\.(json|tsx|ts|jsx|js|mdx|md)(\.src)?$/);
+  const hasKnownExt = knownExtMatch !== null;
+  const requestedExt = requestedExtMatch?.[1] ?? knownExtMatch?.[1] ?? null;
   const rawBasePathWithoutExt = hasKnownExt
     ? basePath.replace(/\.(json|tsx|ts|jsx|js|mdx|md)(\.src)?$/, "")
     : basePath;
@@ -701,7 +710,9 @@ async function findSourceFile(
   // Note: checked before isFrameworkPath guard because relative imports from
   // deeply nested modules (e.g. ../../../../_dnt.shims.js) resolve outside
   // the _veryfront/ prefix.
-  const embeddedContent = EMBEDDED_POLYFILLS[basePathWithoutExt];
+  const embeddedContent = PROJECT_FALLBACK_EMBEDDED_POLYFILLS.has(basePathWithoutExt)
+    ? undefined
+    : EMBEDDED_POLYFILLS[basePathWithoutExt];
   if (embeddedContent) {
     logger.debug("Using embedded polyfill", {
       basePath: basePathWithoutExt,
@@ -775,10 +786,14 @@ async function findSourceFile(
     }
   }
 
+  const projectLookupExtensions = requestedExt !== null && requestedExt !== "json"
+    ? extensions.filter((ext) => ext !== ".json")
+    : extensions;
+
   // Project file lookups (using secureFs which may go through FSAdapter in proxy mode)
   const projectFilePath = await findFirstSecureFile(
     secureFs,
-    extensions.map((ext) => join(projectDir, basePathWithoutExt + ext)),
+    projectLookupExtensions.map((ext) => join(projectDir, basePathWithoutExt + ext)),
   );
   if (projectFilePath) {
     logger.debug("Found file", { basePath, resolvedPath: projectFilePath });
@@ -792,7 +807,7 @@ async function findSourceFile(
     const strippedPath = basePathWithoutExt.slice(prefix.length);
     const strippedFilePath = await findFirstSecureFile(
       secureFs,
-      extensions.map((ext) => join(projectDir, strippedPath + ext)),
+      projectLookupExtensions.map((ext) => join(projectDir, strippedPath + ext)),
     );
     if (strippedFilePath) {
       logger.debug("Found file after stripping prefix", {
@@ -806,7 +821,7 @@ async function findSourceFile(
 
   const indexFilePath = await findFirstSecureFile(
     secureFs,
-    extensions.map((ext) => join(projectDir, basePathWithoutExt, `index${ext}`)),
+    projectLookupExtensions.map((ext) => join(projectDir, basePathWithoutExt, `index${ext}`)),
   );
   if (indexFilePath) {
     logger.debug("Found index file", {
@@ -821,7 +836,7 @@ async function findSourceFile(
   for (const dir of commonDirs) {
     const commonDirFilePath = await findFirstSecureFile(
       secureFs,
-      extensions.map((ext) => join(projectDir, dir, basePathWithoutExt + ext)),
+      projectLookupExtensions.map((ext) => join(projectDir, dir, basePathWithoutExt + ext)),
     );
     if (commonDirFilePath) {
       logger.debug("Found file in common directory", {
@@ -830,6 +845,18 @@ async function findSourceFile(
       });
       return { path: commonDirFilePath, isFrameworkFile: false };
     }
+  }
+
+  const projectFallbackEmbeddedContent = EMBEDDED_POLYFILLS[basePathWithoutExt];
+  if (projectFallbackEmbeddedContent) {
+    logger.debug("Using embedded polyfill after project lookup", {
+      basePath: basePathWithoutExt,
+    });
+    return {
+      path: `embedded:${basePath}`,
+      isFrameworkFile: true,
+      embeddedContent: projectFallbackEmbeddedContent,
+    };
   }
 
   rememberSourceMiss(missCacheKey);
