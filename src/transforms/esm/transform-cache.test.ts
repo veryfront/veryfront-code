@@ -93,6 +93,35 @@ describe("transforms/esm/transform-cache", () => {
     });
   });
 
+  describe("default local fallback eviction", () => {
+    beforeEach(() => {
+      __injectCachesForTests(null);
+      destroyTransformCache();
+    });
+
+    afterEach(() => {
+      Array.prototype.sort = originalArraySort;
+      destroyTransformCache();
+      __injectCachesForTests(null);
+    });
+
+    const originalArraySort = Array.prototype.sort;
+
+    it("evicts without sorting all fallback entries", () => {
+      Array.prototype.sort = function sortShouldNotRun() {
+        throw new Error("fallback eviction should not sort entries");
+      } as typeof Array.prototype.sort;
+
+      for (let index = 0; index <= 500; index++) {
+        setCachedTransform(`key-${index}`, `const value = ${index};`, `hash-${index}`);
+      }
+
+      assertEquals(getCachedTransform("key-0"), undefined);
+      assertEquals(getCachedTransform("key-1")?.code, "const value = 1;");
+      assertEquals(getCachedTransform("key-500")?.code, "const value = 500;");
+    });
+  });
+
   describe("getCachedTransformAsync / setCachedTransformAsync", () => {
     beforeEach(() => {
       const testMap = new Map<string, { code: string; hash: string; timestamp: number }>();

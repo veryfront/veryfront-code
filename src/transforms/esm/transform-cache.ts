@@ -1,6 +1,7 @@
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
 import { buildTransformCacheKey } from "#veryfront/cache/keys.ts";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import {
   type CacheBackend,
   CacheBackends,
@@ -37,11 +38,13 @@ let cacheGateway: TokenizingCacheGateway | null = null;
 let cacheInitialized = false;
 let cacheInitPromise: Promise<void> | null = null;
 
-const defaultLocalFallback = new Map<string, TransformCacheEntry>();
+const defaultLocalFallback = new LRUCache<string, TransformCacheEntry>({
+  maxEntries: FALLBACK_MAX_ENTRIES,
+});
 
 interface LocalFallbackLike<K, V> {
   get(key: K): V | undefined;
-  set(key: K, value: V): this;
+  set(key: K, value: V): void | this;
   delete(key: K): boolean;
   has(key: K): boolean;
   clear(): void;
@@ -248,6 +251,7 @@ function normalizeTtl(ttlSeconds: number): number {
 function setLocalFallback(key: string, entry: TransformCacheEntry): void {
   const fallback = getLocalFallback();
   fallback.set(key, entry);
+  if (fallback === defaultLocalFallback) return;
   if (fallback.size > FALLBACK_MAX_ENTRIES) pruneLocalFallback();
 }
 
