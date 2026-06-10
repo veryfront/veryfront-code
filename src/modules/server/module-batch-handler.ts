@@ -40,6 +40,12 @@ import { getFrameworkRootFromMeta } from "#veryfront/platform/compat/vfs-paths.t
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
 import { sha256Short } from "#veryfront/cache/hash.ts";
+import {
+  buildSourceMissCacheKey,
+  clearSourceMissCache,
+  hasSourceMiss,
+  rememberSourceMiss,
+} from "./module-source-resolution-cache.ts";
 
 const logger = serverLogger.component("module-batch");
 
@@ -82,12 +88,45 @@ const FRAMEWORK_EXTENSIONS = [
   ".js", // Regular sources for dev mode
 ] as const;
 
+async function findFirstSecureFile(
+  secureFs: ReturnType<typeof createSecureFs>,
+  paths: string[],
+): Promise<string | null> {
+  const results = await Promise.all(paths.map(async (path) => {
+    try {
+      const stat = await secureFs.stat(path);
+      return stat.isFile ? path : null;
+    } catch {
+      return null;
+    }
+  }));
+
+  return results.find((path): path is string => path !== null) ?? null;
+}
+
+async function findFirstPlatformFile(
+  platformFs: ReturnType<typeof createFileSystem>,
+  paths: string[],
+): Promise<string | null> {
+  const results = await Promise.all(paths.map(async (path) => {
+    try {
+      const stat = await platformFs.stat(path);
+      return stat.isFile ? path : null;
+    } catch {
+      return null;
+    }
+  }));
+
+  return results.find((path): path is string => path !== null) ?? null;
+}
+
 export interface BatchHandlerOptions {
   projectDir: string;
   adapter: RuntimeAdapter;
   projectSlug?: string;
   projectId?: string;
   branch?: string | null;
+  releaseId?: string | null;
   dev?: boolean;
   /**
    * Restrict module imports to specific directories (opt-in security).
@@ -142,6 +181,7 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
         projectSlug,
         projectId,
         branch,
+        releaseId,
         dev = false,
         allowedImportDirs,
         reactVersion,
@@ -190,6 +230,7 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
               projectSlug,
               branch,
               projectId,
+              releaseId,
               reactVersion,
             });
 
@@ -288,25 +329,36 @@ async function loadAndTransformModule(
     projectSlug?: string;
     branch?: string | null;
     projectId?: string;
+    releaseId?: string | null;
     reactVersion?: string;
   },
 ): Promise<string | null> {
   const basePath = modulePath.replace(/\.js$/, "");
+  const missCacheKey = buildSourceMissCacheKey({
+    resolver: "module-batch",
+    projectDir,
+    projectId: options.projectId,
+    projectSlug: options.projectSlug,
+    branch: options.branch,
+    releaseId: options.releaseId,
+    basePath,
+    reactVersion: options.reactVersion,
+  });
+  if (hasSourceMiss(missCacheKey)) return null;
 
-  for (const ext of EXTENSIONS) {
-    const fullPath = join(projectDir, basePath + ext);
-    try {
-      const stat = await secureFs.stat(fullPath);
-      if (!stat.isFile) continue;
-
-      const source = await secureFs.readFile(fullPath);
-      return transformModule(source, fullPath, modulePath, projectDir, adapter, secureFs, options);
-    } catch (_) {
-      /* expected: file may not exist at this extension */
-    }
+  const sourcePath = await findFirstSecureFile(
+    secureFs,
+    EXTENSIONS.map((ext) => join(projectDir, basePath + ext)),
+  );
+  if (sourcePath) {
+    const source = await secureFs.readFile(sourcePath);
+    return transformModule(source, sourcePath, modulePath, projectDir, adapter, secureFs, options);
   }
 
-  if (!basePath.startsWith("lib/")) return null;
+  if (!basePath.startsWith("lib/")) {
+    rememberSourceMiss(missCacheKey);
+    return null;
+  }
 
   // Framework lookup directories in priority order
   const frameworkLookupDirs = [
@@ -316,28 +368,25 @@ async function loadAndTransformModule(
 
   const platformFs = createFileSystem();
   for (const lookupDir of frameworkLookupDirs) {
-    for (const ext of FRAMEWORK_EXTENSIONS) {
-      const frameworkPath = join(lookupDir, basePath + ext);
-      try {
-        const stat = await platformFs.stat(frameworkPath);
-        if (!stat.isFile) continue;
-
-        const source = await platformFs.readTextFile(frameworkPath);
-        return transformModule(
-          source,
-          frameworkPath,
-          modulePath,
-          projectDir,
-          adapter,
-          secureFs,
-          options,
-        );
-      } catch (_) {
-        /* expected: framework file may not exist at this extension */
-      }
+    const frameworkPath = await findFirstPlatformFile(
+      platformFs,
+      FRAMEWORK_EXTENSIONS.map((ext) => join(lookupDir, basePath + ext)),
+    );
+    if (frameworkPath) {
+      const source = await platformFs.readTextFile(frameworkPath);
+      return transformModule(
+        source,
+        frameworkPath,
+        modulePath,
+        projectDir,
+        adapter,
+        secureFs,
+        options,
+      );
     }
   }
 
+  rememberSourceMiss(missCacheKey);
   return null;
 }
 
@@ -518,6 +567,8 @@ function transformExportsForBundle(code: string): string {
  * Clear the transform cache (on deployment or memory pressure)
  */
 export function clearBatchCache(projectSlug?: string): void {
+  clearSourceMissCache("module-batch");
+
   if (!projectSlug) {
     transformCache.clear();
     logger.debug("Cleared all cache");
