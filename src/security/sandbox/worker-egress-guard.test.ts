@@ -202,4 +202,60 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
     assertEquals(seen[0], "Bearer secret");
     assertEquals(seen[1], "Bearer secret");
   });
+
+  it("blocks a redirect to a non-http(s) scheme (e.g. file://)", async () => {
+    let calls = 0;
+    const fetchImpl: typeof fetch = (input) => {
+      calls++;
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.startsWith("http://93.184.216.34")) {
+        return Promise.resolve(redirectTo("file:///etc/passwd"));
+      }
+      throw new Error(`fetch should not have been called for ${url}`);
+    };
+
+    await assertRejects(
+      () => guardedEgressFetch("http://93.184.216.34/start", undefined, { fetchImpl }),
+      WorkerEgressBlockedError,
+    );
+    // The file:// target must never be fetched (would be a local file read).
+    assertEquals(calls, 1);
+  });
+
+  it("preserves the abort signal across redirect hops", async () => {
+    const controller = new AbortController();
+    const seenSignals: Array<AbortSignal | null | undefined> = [];
+    const fetchImpl: typeof fetch = (input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      seenSignals.push(init?.signal);
+      if (url === "http://93.184.216.34/a") {
+        return Promise.resolve(redirectTo("http://93.184.216.35/b"));
+      }
+      return Promise.resolve(new Response("ok", { status: 200 }));
+    };
+
+    await guardedEgressFetch(
+      "http://93.184.216.34/a",
+      { signal: controller.signal },
+      { fetchImpl },
+    );
+    assertEquals(seenSignals[0], controller.signal);
+    assertEquals(seenSignals[1], controller.signal);
+  });
+
+  it("preserves request options (signal) from a Request input", async () => {
+    const controller = new AbortController();
+    // A Request wraps the passed signal in its own (following) AbortSignal, so we
+    // compare against request.signal, not controller.signal.
+    const request = new Request("http://93.184.216.34/a", { signal: controller.signal });
+    let seenSignal: AbortSignal | null | undefined;
+    const fetchImpl: typeof fetch = (_input, init) => {
+      seenSignal = init?.signal;
+      return Promise.resolve(new Response("ok", { status: 200 }));
+    };
+
+    await guardedEgressFetch(request, undefined, { fetchImpl });
+    assertEquals(seenSignal instanceof AbortSignal, true);
+    assertEquals(seenSignal, request.signal);
+  });
 });

@@ -258,10 +258,31 @@ export async function guardedEgressFetch(
     body = new Uint8Array(await input.arrayBuffer());
   }
 
+  // Preserve request-level options (notably `signal`, so aborts keep working)
+  // that would otherwise be dropped when the caller passes a Request object
+  // rather than an init bag, and that must persist across every redirect hop.
+  const reqInput = input instanceof Request ? input : undefined;
+  const carryInit: RequestInit = {
+    signal: init?.signal ?? reqInput?.signal,
+    credentials: init?.credentials ?? reqInput?.credentials,
+    cache: init?.cache ?? reqInput?.cache,
+    mode: init?.mode ?? reqInput?.mode,
+    referrer: init?.referrer ?? reqInput?.referrer,
+    referrerPolicy: init?.referrerPolicy ?? reqInput?.referrerPolicy,
+    keepalive: init?.keepalive ?? reqInput?.keepalive,
+  };
+
   for (let hop = 0;; hop++) {
     await assertWorkerEgressAllowed(url, options);
 
-    const response = await doFetch(url, { ...init, method, headers, body, redirect: "manual" });
+    const response = await doFetch(url, {
+      ...init,
+      ...carryInit,
+      method,
+      headers,
+      body,
+      redirect: "manual",
+    });
 
     if (!REDIRECT_STATUSES.has(response.status)) return response;
     const location = response.headers.get("location");
@@ -279,6 +300,16 @@ export async function guardedEgressFetch(
     }
 
     const nextUrl = new URL(location, url);
+    // Only follow redirects to http(s). The platform fetch treats a redirect to
+    // any other scheme as a network error; following e.g. file:// here would let
+    // an attacker-controlled redirect turn a network fetch into a local file
+    // read, since assertWorkerEgressAllowed no-ops for hostless (non-network)
+    // URLs.
+    if (nextUrl.protocol !== "http:" && nextUrl.protocol !== "https:") {
+      throw new WorkerEgressBlockedError(
+        `Worker network egress blocked: redirect to non-http(s) scheme ${nextUrl.protocol}`,
+      );
+    }
     // Cross-origin redirect: strip credential-bearing headers, matching the
     // platform fetch this guard replaces, so a redirect target cannot receive
     // the caller's Authorization/Cookie.
