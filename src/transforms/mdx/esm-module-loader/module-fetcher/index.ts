@@ -24,10 +24,11 @@ import { resolveModuleFile } from "../resolution/file-finder.ts";
 import { buildMissingModuleError } from "../missing-module.ts";
 import { getTransformCacheKey, getVersionedPathCacheKey } from "./cache-keys.ts";
 import { resolveNestedModuleImports } from "./nested-imports.ts";
-import { readDistributedCache, writeDistributedCache } from "./distributed-cache.ts";
+import { readDistributedCache } from "./distributed-cache.ts";
 import { fetchModuleViaHTTP } from "./http-fetcher.ts";
 import { cacheModule, normalizePath } from "./module-cache.ts";
 import { readValidCachedModulePath } from "./path-cache-lookup.ts";
+import { persistResolvedModule } from "./persistence.ts";
 import { transformResolvedModuleSource } from "./source-transform.ts";
 
 // Re-export extracted modules for backward compatibility
@@ -308,40 +309,25 @@ async function doFetchAndCacheModule(
       log,
     });
 
-    // Write to distributed cache AFTER nested imports are resolved.
-    // This ensures other pods get fully-resolved code without /_vf_modules/ paths.
-    if (needsDistributedCacheWrite && distResult?.distributedCache && transformCacheKey) {
-      writeDistributedCache(
-        distResult.distributedCache,
-        transformCacheKey,
-        projectId,
-        contentSourceId!,
-        moduleCode,
-        normalizedPath,
-        log,
-      );
-    }
-
-    log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] cacheModule START`, {
-      projectSlug,
-      normalizedPath,
-    });
-    const cacheStart = performance.now();
-    const finalCachedPath = await cacheModule(
+    return await persistResolvedModule({
       normalizedPath,
       moduleCode,
       esmCacheDir,
       pathCache,
       log,
-      effectiveReactVersion,
-    );
-    log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] cacheModule DONE`, {
       projectSlug,
-      normalizedPath,
-      cacheMs: (performance.now() - cacheStart).toFixed(1),
+      reactVersion: effectiveReactVersion,
+      distributedCacheWrite:
+        needsDistributedCacheWrite && distResult?.distributedCache && transformCacheKey &&
+          contentSourceId
+          ? {
+            distributedCache: distResult.distributedCache,
+            transformCacheKey,
+            projectId,
+            contentSourceId,
+          }
+          : undefined,
     });
-
-    return finalCachedPath;
   } catch (error) {
     log.warn(`${LOG_PREFIX_MDX_LOADER} Failed to process ${normalizedPath}`, error);
     if ((context.strictMissingModules ?? true) || isFatalModuleFetchError(error)) {
