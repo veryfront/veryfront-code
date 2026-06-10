@@ -157,6 +157,23 @@ describe("Process Compat", () => {
         assertEquals(getHostEnv(testKey), "host-value");
       });
     });
+
+    it("returns undefined instead of throwing when an env read is denied", () => {
+      // Under a tightened env permission allowlist (project isolation workers),
+      // Deno.env.get throws NotCapable for a non-allowlisted key. getHostEnv must
+      // degrade to undefined rather than propagating the throw and crashing the
+      // request. Simulate the denial by stubbing Deno.env.get.
+      if (typeof Deno === "undefined") return;
+      const original = Deno.env.get;
+      try {
+        Deno.env.get = () => {
+          throw new Error("Requires env access, run again with the --allow-env flag");
+        };
+        assertEquals(getHostEnv("__DENIED_BY_ALLOWLIST__"), undefined);
+      } finally {
+        Deno.env.get = original;
+      }
+    });
   });
 
   describe("getEnvString", () => {
