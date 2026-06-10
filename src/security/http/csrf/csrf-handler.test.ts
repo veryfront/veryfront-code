@@ -129,7 +129,7 @@ describe("security/http/csrf/csrf-handler", () => {
       const req = new Request("http://localhost/submit", {
         method: "POST",
         headers: {
-          cookie: `vf_csrf=${token}`,
+          cookie: `__Host-vf_csrf=${token}`,
           "x-csrf-token": token,
         },
       });
@@ -143,7 +143,7 @@ describe("security/http/csrf/csrf-handler", () => {
       const req = new Request("http://localhost/submit", {
         method: "POST",
         headers: {
-          cookie: `vf_csrf=${token}`,
+          cookie: `__Host-vf_csrf=${token}`,
           "x-csrf-token": "wrong-token",
         },
       });
@@ -173,7 +173,7 @@ describe("security/http/csrf/csrf-handler", () => {
       const req = new Request("http://localhost/submit", {
         method: "POST",
         headers: {
-          cookie: `vf_csrf=${token}`,
+          cookie: `__Host-vf_csrf=${token}`,
           "x-csrf-token": token,
         },
       });

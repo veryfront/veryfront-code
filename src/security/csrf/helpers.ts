@@ -12,6 +12,7 @@ import { parseCookiesFromHeaders } from "#veryfront/utils/cookie-utils.ts";
 
 /** Default CSRF token TTL: 24 hours (longer than session action TTL to avoid stale-form 403s). */
 const CSRF_DEFAULT_TTL_SEC = 86_400;
+const DEFAULT_CSRF_COOKIE_NAME = "__Host-vf_csrf";
 
 export interface CsrfConfig {
   cookieName?: string;
@@ -34,10 +35,10 @@ export function generateCsrfToken(options?: CsrfTokenOptions): {
   token: string;
   setCookie: string;
 } {
-  const cookieName = options?.cookieName ?? "vf_csrf";
+  const cookieName = options?.cookieName ?? DEFAULT_CSRF_COOKIE_NAME;
   const maxAge = options?.ttlSec ?? CSRF_DEFAULT_TTL_SEC;
   const httpOnly = options?.httpOnly ?? true;
-  const secure = options?.secure ?? true;
+  const secure = cookieName.startsWith("__Host-") ? true : options?.secure ?? true;
 
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
@@ -72,7 +73,7 @@ export function validateCsrf(
   req: Request,
   options?: { cookieName?: string; headerName?: string },
 ): boolean {
-  const cookieName = options?.cookieName ?? "vf_csrf";
+  const cookieName = options?.cookieName ?? DEFAULT_CSRF_COOKIE_NAME;
   const headerName = options?.headerName ?? "x-csrf-token";
 
   let cookieToken: string | undefined;
@@ -115,7 +116,7 @@ export function applyCsrfCookie(
   }
 
   const config = typeof csrfConfig === "boolean" ? {} : csrfConfig;
-  const cookieName = config.cookieName ?? "vf_csrf";
+  const cookieName = config.cookieName ?? DEFAULT_CSRF_COOKIE_NAME;
 
   // Skip if cookie already present in request
   let cookies: Record<string, string>;
@@ -128,7 +129,8 @@ export function applyCsrfCookie(
   if (cookies[cookieName]) return;
 
   // Detect HTTPS from request URL or forwarded proto
-  const isSecure = req.url.startsWith("https://") ||
+  const isSecure = cookieName.startsWith("__Host-") ||
+    req.url.startsWith("https://") ||
     req.headers.get("x-forwarded-proto") === "https";
 
   const { setCookie } = generateCsrfToken({

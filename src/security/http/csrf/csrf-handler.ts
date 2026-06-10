@@ -10,7 +10,7 @@
  * are **not** exempt and require a valid CSRF token. Client-side code that calls
  * Server Actions must:
  *
- * 1. Read the `vf_csrf` cookie (set automatically on HTML responses)
+ * 1. Read the `__Host-vf_csrf` cookie (set automatically on HTML responses)
  * 2. Include it as the `x-csrf-token` request header on every POST
  *
  * Example (client-side fetch wrapper):
@@ -21,7 +21,7 @@
  *
  * const res = await fetch("/_veryfront/rsc/action", {
  *   method: "POST",
- *   headers: { "x-csrf-token": getCookie("vf_csrf") ?? "" },
+ *   headers: { "x-csrf-token": getCookie("__Host-vf_csrf") ?? "" },
  *   body: actionPayload,
  * });
  * ```

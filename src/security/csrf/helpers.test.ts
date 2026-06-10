@@ -9,7 +9,7 @@ describe("security/csrf/helpers", () => {
       const result = generateCsrfToken();
       assertEquals(typeof result.token, "string");
       assertEquals(result.token.length > 0, true);
-      assertEquals(result.setCookie.includes("vf_csrf="), true);
+      assertEquals(result.setCookie.startsWith("__Host-vf_csrf="), true);
       assertEquals(result.setCookie.includes("HttpOnly"), true);
       assertEquals(result.setCookie.includes("Secure"), true);
       assertEquals(result.setCookie.includes("SameSite=Lax"), true);
@@ -22,8 +22,14 @@ describe("security/csrf/helpers", () => {
       assertEquals(result.setCookie.includes("SameSite=Lax"), true);
     });
 
-    it("should omit Secure when secure is false", () => {
+    it("should keep Secure for the default __Host- cookie when secure is false", () => {
       const result = generateCsrfToken({ secure: false });
+      assertEquals(result.setCookie.startsWith("__Host-vf_csrf="), true);
+      assertEquals(result.setCookie.includes("Secure"), true);
+    });
+
+    it("should omit Secure for custom non-__Host cookies when secure is false", () => {
+      const result = generateCsrfToken({ cookieName: "my_csrf", secure: false });
       assertEquals(result.setCookie.includes("Secure"), false);
     });
 
@@ -50,7 +56,7 @@ describe("security/csrf/helpers", () => {
       const req = new Request("http://localhost/submit", {
         method: "POST",
         headers: {
-          cookie: `vf_csrf=${token}`,
+          cookie: `__Host-vf_csrf=${token}`,
           "x-csrf-token": token,
         },
       });
@@ -61,7 +67,7 @@ describe("security/csrf/helpers", () => {
       const { token } = generateCsrfToken({ secure: false });
       const req = new Request("http://localhost/submit", {
         method: "POST",
-        headers: { cookie: `vf_csrf=${token}` },
+        headers: { cookie: `__Host-vf_csrf=${token}` },
       });
       assertEquals(validateCsrf(req), false);
     });
@@ -78,7 +84,7 @@ describe("security/csrf/helpers", () => {
       const req = new Request("http://localhost/submit", {
         method: "POST",
         headers: {
-          cookie: "vf_csrf=token-a",
+          cookie: "__Host-vf_csrf=token-a",
           "x-csrf-token": "token-b",
         },
       });
@@ -101,7 +107,7 @@ describe("security/csrf/helpers", () => {
       const req = new Request("http://localhost/submit", {
         method: "POST",
         headers: {
-          cookie: "vf_csrf=some-token",
+          cookie: "__Host-vf_csrf=some-token",
           "x-csrf-token": "",
         },
       });
@@ -112,7 +118,7 @@ describe("security/csrf/helpers", () => {
       const req = new Request("http://localhost/submit", {
         method: "POST",
         headers: {
-          cookie: "vf_csrf=%ZZbadvalue",
+          cookie: "__Host-vf_csrf=%ZZbadvalue",
           "x-csrf-token": "anything",
         },
       });
@@ -130,7 +136,7 @@ describe("security/csrf/helpers", () => {
 
       const setCookie = headers.get("set-cookie");
       assertNotEquals(setCookie, null);
-      assertEquals(setCookie!.includes("vf_csrf="), true);
+      assertEquals(setCookie!.startsWith("__Host-vf_csrf="), true);
     });
 
     it("should set cookie on GET with text/html accept", () => {
@@ -142,9 +148,9 @@ describe("security/csrf/helpers", () => {
 
       const setCookie = headers.get("set-cookie");
       assertNotEquals(setCookie, null);
-      assertEquals(setCookie!.includes("vf_csrf="), true);
+      assertEquals(setCookie!.startsWith("__Host-vf_csrf="), true);
       assertEquals(setCookie!.includes("HttpOnly"), false); // double-submit needs JS access
-      assertEquals(setCookie!.includes("Secure"), false); // http:// request
+      assertEquals(setCookie!.includes("Secure"), true); // __Host- cookies require Secure
     });
 
     it("should set Secure flag on HTTPS requests", () => {
@@ -184,7 +190,7 @@ describe("security/csrf/helpers", () => {
 
     it("should skip when cookie already present in request", () => {
       const req = new Request("http://localhost/", {
-        headers: { cookie: "vf_csrf=existing-token" },
+        headers: { cookie: "__Host-vf_csrf=existing-token" },
       });
       const headers = new Headers();
       applyCsrfCookie(req, headers, true);
@@ -289,14 +295,14 @@ describe("security/csrf/helpers", () => {
 
     it("should issue fresh token on malformed cookie instead of throwing", () => {
       const req = new Request("http://localhost/", {
-        headers: { cookie: "vf_csrf=%ZZbadvalue", accept: "text/html" },
+        headers: { cookie: "__Host-vf_csrf=%ZZbadvalue", accept: "text/html" },
       });
       const headers = new Headers();
       applyCsrfCookie(req, headers, true);
 
       const setCookie = headers.get("set-cookie");
       assertNotEquals(setCookie, null);
-      assertEquals(setCookie!.includes("vf_csrf="), true);
+      assertEquals(setCookie!.startsWith("__Host-vf_csrf="), true);
     });
   });
 });
