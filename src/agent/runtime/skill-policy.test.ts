@@ -1,7 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { enforceSkillPolicy, extractSkillPolicy } from "./index.ts";
+import {
+  enforceSkillPolicy,
+  extractSkillPolicy,
+  hydrateActiveSkillStateFromMessages,
+} from "./skill-policy-enforcement.ts";
+import type { Message } from "../types.ts";
 
 describe("src/agent/runtime skill policy helpers", () => {
   describe("extractSkillPolicy", () => {
@@ -129,6 +134,62 @@ describe("src/agent/runtime skill policy helpers", () => {
       assertEquals(enforceSkillPolicy("Read", undefined, false), { allowed: true });
       assertEquals(enforceSkillPolicy("Write", undefined, false), { allowed: true });
       assertEquals(enforceSkillPolicy("Bash", undefined, false), { allowed: true });
+    });
+  });
+
+  describe("hydrateActiveSkillStateFromMessages", () => {
+    it("hydrates the latest load_skill policy and delegation overrides from tool history", () => {
+      const messages: Message[] = [
+        {
+          id: "tool_load_skill_old",
+          role: "tool",
+          parts: [{
+            type: "tool-result",
+            toolCallId: "load_skill_old",
+            toolName: "load_skill",
+            result: {
+              allowedTools: ["Read"],
+              model: "anthropic/claude-sonnet-4-5",
+              thinking: true,
+              maxSteps: 4,
+            },
+          }],
+        },
+        {
+          id: "tool_other",
+          role: "tool",
+          parts: [{
+            type: "tool-result",
+            toolCallId: "other_tool",
+            toolName: "read_file",
+            result: { allowedTools: ["Bash"] },
+          }],
+        },
+        {
+          id: "tool_load_skill_new",
+          role: "tool",
+          parts: [{
+            type: "tool-result",
+            toolCallId: "load_skill_new",
+            toolName: "load_skill",
+            result: {
+              allowedTools: ["Write"],
+              model: "openai/gpt-5.1",
+              thinking: false,
+              maxSteps: 8,
+            },
+          }],
+        },
+      ];
+
+      const hydrated = hydrateActiveSkillStateFromMessages(messages);
+
+      assertEquals(hydrated.activeSkillPolicy, ["Write"]);
+      assertEquals(hydrated.activeSkillDelegationOverrides, {
+        model: "openai/gpt-5.1",
+        thinking: false,
+        maxSteps: 8,
+      });
     });
   });
 });

@@ -63,10 +63,15 @@ import {
   getToolResultError,
   isRecoverablePlaceholderToolCall,
   isStreamedToolCallIncomplete,
-  isToolResultPart,
   materializeStreamedToolCall,
   shouldContinueAfterStreamStep,
 } from "./tool-result-continuation.ts";
+import {
+  enforceSkillPolicy,
+  extractSkillPolicy,
+  hydrateActiveSkillStateFromMessages,
+  LOAD_SKILL_TOOL_ID,
+} from "./skill-policy-enforcement.ts";
 
 // Re-export from submodules
 export { closeSSEStream, generateMessageId, sendSSE } from "./sse-utils.ts";
@@ -123,27 +128,26 @@ export {
   shouldContinueAfterStreamStep,
   type StreamedToolCallMaterialization,
 } from "./tool-result-continuation.ts";
+export {
+  enforceSkillPolicy,
+  extractSkillPolicy,
+  type SkillPolicyResult,
+} from "./skill-policy-enforcement.ts";
 
 import { DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE, getModelMaxOutputTokens } from "./constants.ts";
 import { closeSSEStream, generateMessageId, sendSSE } from "./sse-utils.ts";
 import { executeConfiguredTool, getAvailableTools, isDynamicTool } from "./tool-helpers.ts";
 import { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
-import {
-  filterToolsForSkill,
-  isToolAllowedBySkill,
-  validateAllowedToolPatterns,
-} from "#veryfront/skill/allowed-tools.ts";
+import { filterToolsForSkill } from "#veryfront/skill/allowed-tools.ts";
 import { resolveConfiguredAgentModel, resolveRuntimeModel } from "./model-resolution.ts";
 import type { RuntimeGenerateToolResult } from "./runtime-tool-types.ts";
 import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
 import {
   applySkillDelegationOverridesToToolInput,
   extractSkillDelegationOverrides,
-  type SkillDelegationOverrides,
 } from "./skill-delegation-overrides.ts";
 
 const logger = serverLogger.component("agent");
-const LOAD_SKILL_TOOL_ID = "load_skill";
 
 type RuntimeToolFilterConfig = AgentConfig & {
   __vfForwardedIntegrationToolDefs?: Array<
@@ -159,11 +163,6 @@ function isAbortError(error: unknown, abortSignal?: AbortSignal): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
-function getSkillActivationRequiredError(toolName: string): string {
-  return `Tool "${toolName}" cannot run before load_skill succeeds in the same step. ` +
-    `Call "${LOAD_SKILL_TOOL_ID}" first to establish the active skill context.`;
-}
-
 function warnLocalToolSkipping(agentId: string, modelId: string): void {
   logger.warn(
     `Agent "${agentId}" has tools configured but is using local model "${modelId}". ` +
@@ -171,94 +170,6 @@ function warnLocalToolSkipping(agentId: string, modelId: string): void {
       "Set VERYFRONT_API_TOKEN and VERYFRONT_PROJECT_SLUG, or configure " +
       "OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY for full tool support.",
   );
-}
-
-function hydrateActiveSkillStateFromMessages(
-  messages: readonly Message[],
-): {
-  activeSkillPolicy: string[] | undefined;
-  activeSkillDelegationOverrides: SkillDelegationOverrides | undefined;
-} {
-  let activeSkillPolicy: string[] | undefined;
-  let activeSkillDelegationOverrides: SkillDelegationOverrides | undefined;
-
-  for (const message of messages) {
-    for (const part of message.parts) {
-      if (!isToolResultPart(part) || part.toolName !== LOAD_SKILL_TOOL_ID) continue;
-      activeSkillPolicy = extractSkillPolicy(part.result);
-      activeSkillDelegationOverrides = extractSkillDelegationOverrides(part.result);
-    }
-  }
-
-  return { activeSkillPolicy, activeSkillDelegationOverrides };
-}
-
-/**
- * Extract and validate the skill policy from a load_skill tool result.
- * Returns `[]` (no tools allowed) for invalid/missing policies instead of
- * `undefined` (no restrictions), preventing accidental policy bypass.
- */
-export function extractSkillPolicy(result: unknown): string[] | undefined {
-  if (!result || typeof result !== "object") return undefined;
-  const skillResult = result as { allowedTools?: unknown };
-
-  // No allowedTools key means the skill has no restrictions
-  if (!("allowedTools" in skillResult) || skillResult.allowedTools === undefined) {
-    return undefined;
-  }
-
-  // Validate the shape: must be a string array
-  const raw = skillResult.allowedTools;
-  if (!Array.isArray(raw) || !raw.every((v) => typeof v === "string")) {
-    // Invalid shape — fail closed (empty policy = no tools allowed)
-    logger.warn(
-      "load_skill returned invalid allowedTools; falling back to empty policy (no tools)",
-    );
-    return [];
-  }
-
-  // Validate each pattern against the regex
-  try {
-    return validateAllowedToolPatterns(raw);
-  } catch (error) {
-    logger.warn(
-      "load_skill returned invalid tool patterns; falling back to empty policy (no tools)",
-      { error },
-    );
-    return [];
-  }
-}
-
-/** Result of skill policy enforcement for a single tool call */
-type SkillPolicyResult =
-  | { allowed: true }
-  | { allowed: false; error: string };
-
-/**
- * Enforce skill policy on a single tool call.
- * Shared between generate() and stream() paths.
- */
-export function enforceSkillPolicy(
-  toolName: string,
-  activeSkillPolicy: string[] | undefined,
-  mustLoadSkillFirst: boolean,
-): SkillPolicyResult {
-  // Must load skill before other tools
-  if (mustLoadSkillFirst && toolName !== LOAD_SKILL_TOOL_ID) {
-    return { allowed: false, error: getSkillActivationRequiredError(toolName) };
-  }
-
-  // Check tool allowed by active skill policy (Layer 2: execution-time)
-  if (activeSkillPolicy && !isToolAllowedBySkill(toolName, activeSkillPolicy)) {
-    return {
-      allowed: false,
-      error: `Tool "${toolName}" is not allowed by the active skill policy. Allowed: ${
-        activeSkillPolicy.join(", ")
-      }`,
-    };
-  }
-
-  return { allowed: true };
 }
 
 function getRuntimeAllowedRemoteTools(config: AgentConfig): string[] | undefined {
