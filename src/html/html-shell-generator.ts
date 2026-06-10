@@ -24,7 +24,7 @@ import {
   getProjectCSS,
 } from "./styles-builder/index.ts";
 import type { HTMLGenerationOptions } from "./types.ts";
-import { buildImportMapJson, buildRootAttributes, shouldDisableLayout } from "./utils.ts";
+import { buildImportMap, buildRootAttributes, shouldDisableLayout } from "./utils.ts";
 
 function pathToModuleUrl(path: string, studioEmbed?: boolean): string {
   if (!path) return "";
@@ -195,7 +195,7 @@ async function generateHTMLShellPartsImpl(
   // unless a caller explicitly forces production client scripts for fair benchmarking.
   const useDevScripts = !options.forceProductionScripts && (isLocalProject || isPreviewMode);
 
-  const importMapJsonPromise = buildImportMapJson({
+  const importMapPromise = buildImportMap({
     projectDir: options.projectDir,
     config: options.config,
     customImports: options.importMap,
@@ -222,12 +222,12 @@ async function generateHTMLShellPartsImpl(
   const modeStyles = useDevScripts ? getErrorOverlayStyles(nonce) : "";
 
   const modulePreloadHints = generateModulePreloadHints(options);
-  const importMapJson = await profilePhase("html.import_map", () => importMapJsonPromise);
+  const importMap = await profilePhase("html.import_map", () => importMapPromise);
+  const importMapJson = importMap.json;
 
   // Preload critical React dependencies to avoid waterfall delays.
   // jsx-runtime is discovered late (only when modules execute), adding ~500ms latency.
-  const importMapData = JSON.parse(importMapJson) as { imports?: Record<string, string> };
-  const jsxRuntimeUrl = importMapData.imports?.["react/jsx-runtime"];
+  const jsxRuntimeUrl = importMap.imports["react/jsx-runtime"];
   const criticalDepsPreload = jsxRuntimeUrl
     ? `<link rel="modulepreload" href="${jsxRuntimeUrl}">`
     : "";

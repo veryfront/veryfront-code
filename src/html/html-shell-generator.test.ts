@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "./styles-builder/__tests__/css-processor-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { assert, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import {
   clearAllManifests,
   recordSSRModules,
@@ -132,6 +132,33 @@ describe("html-generation/html-shell-generator", () => {
         preloadIndex < bodyIndex,
         "jsx-runtime preload should be in <head>, before <body>",
       );
+    });
+
+    it("does not re-parse generated import map JSON for jsx-runtime preload", async () => {
+      const originalParse = JSON.parse;
+      let importMapParseCalls = 0;
+
+      JSON.parse = ((text: string, reviver?: Parameters<typeof JSON.parse>[1]) => {
+        if (typeof text === "string" && text.includes('"react/jsx-runtime"')) {
+          importMapParseCalls++;
+          throw new Error("import map JSON should not be parsed by shell generation");
+        }
+
+        return originalParse(text, reviver);
+      }) as typeof JSON.parse;
+
+      try {
+        const result = await wrapInHTMLShell(
+          "<div>Content</div>",
+          createMeta(),
+          createOptions(),
+        );
+
+        assertStringIncludes(result, "jsx-runtime");
+        assertEquals(importMapParseCalls, 0);
+      } finally {
+        JSON.parse = originalParse;
+      }
     });
 
     it("should use projectSlug for manifest-based module preloads", async () => {
