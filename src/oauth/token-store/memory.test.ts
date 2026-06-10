@@ -59,6 +59,18 @@ Deno.test("MemoryTokenStore consumeState is one-shot and rejects expired/unknown
   assertEquals(await store.consumeState("old"), null);
 });
 
+Deno.test("MemoryTokenStore bounds OAuth states via oldest-entry eviction", async () => {
+  const store = new MemoryTokenStore("default", { maxStateEntries: 2 });
+
+  await store.setState("state-1", { userId: "u1", serviceId: "svc", createdAt: Date.now() });
+  await store.setState("state-2", { userId: "u2", serviceId: "svc", createdAt: Date.now() });
+  await store.setState("state-3", { userId: "u3", serviceId: "svc", createdAt: Date.now() });
+
+  assertEquals(await store.consumeState("state-1"), null);
+  assertEquals((await store.consumeState("state-2"))?.userId, "u2");
+  assertEquals((await store.consumeState("state-3"))?.userId, "u3");
+});
+
 Deno.test("MemoryTokenStore scopes keys by projectId", async () => {
   const a = new MemoryTokenStore("project-a");
   const b = new MemoryTokenStore("project-b");
