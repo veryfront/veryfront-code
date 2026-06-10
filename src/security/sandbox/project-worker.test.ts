@@ -5,6 +5,7 @@ import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { ProjectWorker } from "./project-worker.ts";
 import { buildWorkerPermissions } from "./worker-permissions.ts";
 import type { WorkerPermissions } from "./worker-permissions.ts";
+import { WORKER_INTERNAL_EGRESS_OVERRIDE_ENV } from "./worker-egress-guard.ts";
 
 const testSuite = isDeno ? describe : describe.skip;
 
@@ -507,6 +508,184 @@ testSuite("ProjectWorker - real worker request isolation", () => {
       worker.terminate();
       await Deno.remove(projectDir, { recursive: true });
       await Deno.remove(outsideDir, { recursive: true });
+    }
+  });
+
+  it("blocks project fetches to loopback network targets", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const modulePath = await Deno.makeTempFile({ dir: projectDir, suffix: ".mjs" });
+    const loopbackServer = Deno.serve(
+      { hostname: "127.0.0.1", port: 0, onListen: () => {} },
+      () => Response.json({ leaked: true }),
+    );
+    const loopbackUrl = `http://127.0.0.1:${loopbackServer.addr.port}/secret`;
+
+    await Deno.writeTextFile(
+      modulePath,
+      `
+        export async function GET() {
+          const response = await fetch(${JSON.stringify(loopbackUrl)});
+          return Response.json({ leaked: response.ok });
+        }
+      `,
+    );
+
+    const worker = new ProjectWorker({
+      projectId: "test-worker-egress-loopback-denied",
+      permissions: buildWorkerPermissions([projectDir]),
+      requestTimeoutMs: 10_000,
+    });
+
+    worker.start();
+    try {
+      const response = await worker.execute({
+        type: "execute-app-route",
+        id: "loopback-fetch",
+        modulePath,
+        method: "GET",
+        request: {
+          url: "http://localhost/api/fetch-loopback",
+          method: "GET",
+          headers: [],
+          body: null,
+        },
+        params: {},
+        projectDir,
+      });
+
+      assertEquals(response.type, "error");
+      if (response.type !== "error") throw new Error("expected error response");
+      assert(
+        response.error.message.includes("Worker network egress blocked"),
+        `expected egress denial, got: ${response.error.message}`,
+      );
+    } finally {
+      worker.terminate();
+      await loopbackServer.shutdown();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("blocks project TCP connections to loopback network targets", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const modulePath = await Deno.makeTempFile({ dir: projectDir, suffix: ".mjs" });
+    const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+    const accept = (async () => {
+      const conn = await listener.accept();
+      conn.close();
+    })();
+
+    await Deno.writeTextFile(
+      modulePath,
+      `
+        export async function GET() {
+          const conn = await Deno.connect({
+            hostname: "127.0.0.1",
+            port: ${listener.addr.port},
+          });
+          conn.close();
+          return Response.json({ connected: true });
+        }
+      `,
+    );
+
+    const worker = new ProjectWorker({
+      projectId: "test-worker-egress-loopback-connect-denied",
+      permissions: buildWorkerPermissions([projectDir]),
+      requestTimeoutMs: 10_000,
+    });
+
+    worker.start();
+    try {
+      const response = await worker.execute({
+        type: "execute-app-route",
+        id: "loopback-connect",
+        modulePath,
+        method: "GET",
+        request: {
+          url: "http://localhost/api/connect-loopback",
+          method: "GET",
+          headers: [],
+          body: null,
+        },
+        params: {},
+        projectDir,
+      });
+
+      assertEquals(response.type, "error");
+      if (response.type !== "error") throw new Error("expected error response");
+      assert(
+        response.error.message.includes("Worker network egress blocked"),
+        `expected egress denial, got: ${response.error.message}`,
+      );
+    } finally {
+      worker.terminate();
+      listener.close();
+      await accept.catch(() => {});
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("allows project loopback fetches when internal egress override is enabled", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const modulePath = await Deno.makeTempFile({ dir: projectDir, suffix: ".mjs" });
+    const previousOverride = Deno.env.get(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV);
+    const loopbackServer = Deno.serve(
+      { hostname: "127.0.0.1", port: 0, onListen: () => {} },
+      () => Response.json({ reachable: true }),
+    );
+    const loopbackUrl = `http://127.0.0.1:${loopbackServer.addr.port}/internal`;
+
+    await Deno.writeTextFile(
+      modulePath,
+      `
+        export async function GET() {
+          const response = await fetch(${JSON.stringify(loopbackUrl)});
+          return Response.json(await response.json());
+        }
+      `,
+    );
+
+    Deno.env.set(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV, "1");
+
+    const worker = new ProjectWorker({
+      projectId: "test-worker-egress-loopback-override",
+      permissions: buildWorkerPermissions([projectDir]),
+      requestTimeoutMs: 10_000,
+    });
+
+    worker.start();
+    try {
+      const response = await worker.execute({
+        type: "execute-app-route",
+        id: "loopback-fetch-override",
+        modulePath,
+        method: "GET",
+        request: {
+          url: "http://localhost/api/fetch-loopback",
+          method: "GET",
+          headers: [],
+          body: null,
+        },
+        params: {},
+        projectDir,
+      });
+
+      assertEquals(response.type, "result");
+      if (response.type !== "result") throw new Error("expected result response");
+      assertEquals(
+        JSON.parse(new TextDecoder().decode(response.response.body ?? new Uint8Array())),
+        { reachable: true },
+      );
+    } finally {
+      worker.terminate();
+      await loopbackServer.shutdown();
+      if (previousOverride === undefined) {
+        Deno.env.delete(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV);
+      } else {
+        Deno.env.set(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV, previousOverride);
+      }
+      await Deno.remove(projectDir, { recursive: true });
     }
   });
 });

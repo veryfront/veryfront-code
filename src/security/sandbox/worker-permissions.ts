@@ -14,6 +14,7 @@ import {
   getHttpBundleCacheDir,
   getMdxEsmCacheDir,
 } from "#veryfront/utils/cache-dir.ts";
+import { WORKER_INTERNAL_EGRESS_OVERRIDE_ENV } from "./worker-egress-guard.ts";
 
 /**
  * Deno Worker permission object.
@@ -47,6 +48,7 @@ export const FRAMEWORK_WORKER_ENV_ALLOWLIST = [
   "NO_COLOR",
   "FORCE_COLOR",
   "CI",
+  WORKER_INTERNAL_EGRESS_OVERRIDE_ENV,
 ] as const;
 
 // Cache compiled binary check — Deno.execPath() is a syscall that never changes at runtime

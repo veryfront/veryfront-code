@@ -12,6 +12,11 @@ import { serverLogger } from "#veryfront/utils";
 import { isCompiledBinary } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { TIMEOUT_ERROR, UNKNOWN_ERROR } from "#veryfront/errors";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import {
+  isInternalEgressOverrideEnabled,
+  WORKER_INTERNAL_EGRESS_OVERRIDE_ENV,
+} from "./worker-egress-guard.ts";
 import type { WorkerPermissions } from "./worker-permissions.ts";
 import type {
   WorkerRequest,
@@ -22,6 +27,7 @@ import type {
 
 const logger = serverLogger.component("project-worker");
 const textEncoder = new TextEncoder();
+const WORKER_ALLOW_INTERNAL_EGRESS_PARAM = "allowInternalEgress";
 
 // Intersection with the DOM `WorkerOptions` so the value is assignable to the
 // `Worker` constructor without suppression — Deno reads the extra `deno` field
@@ -347,7 +353,21 @@ export class ProjectWorker {
 
     // Use import.meta.resolve to get the absolute URL of the worker script.
     // This works in both `deno run` and `deno compile` contexts.
-    return import.meta.resolve("./worker-script.ts");
+    return this.withEgressPolicy(import.meta.resolve("./worker-script.ts"));
+  }
+
+  private withEgressPolicy(workerScriptUrl: string): string {
+    if (!isInternalEgressOverrideEnabled(getHostEnv(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV))) {
+      return workerScriptUrl;
+    }
+
+    try {
+      const url = new URL(workerScriptUrl);
+      url.searchParams.set(WORKER_ALLOW_INTERNAL_EGRESS_PARAM, "1");
+      return url.toString();
+    } catch {
+      return workerScriptUrl;
+    }
   }
 
   private handleMessage(
