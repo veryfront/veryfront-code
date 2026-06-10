@@ -68,6 +68,15 @@ describe("logger/redact", () => {
       // masked even though it is not itself a secret.
       assertEquals(isSensitiveKey("tokenCount"), true);
     });
+
+    it("keeps results stable after the sensitive-key cache evicts old entries", () => {
+      for (let i = 0; i < 600; i++) {
+        assertEquals(isSensitiveKey(`requestId${i}`), false);
+      }
+
+      assertEquals(isSensitiveKey("token"), true);
+      assertEquals(isSensitiveKey("requestId0"), false);
+    });
   });
 
   describe("redactSensitive", () => {
