@@ -236,13 +236,14 @@ export class SSRCacheManager {
 
   private async hasMissingLocalPaths(code: string, filePath: string): Promise<boolean> {
     const allPaths = await extractAllFilePathsRecursive(code);
-    let hasMissingPath = false;
+    let firstMissingPathIndex = -1;
 
-    for (const path of allPaths) {
+    for (let index = 0; index < allPaths.length; index++) {
+      const path = allPaths[index]!;
       try {
         const stat = await this.fs.stat(path);
         if (!stat.isFile) {
-          hasMissingPath = true;
+          firstMissingPathIndex = index;
           break;
         }
       } catch (error) {
@@ -251,13 +252,14 @@ export class SSRCacheManager {
           missingPath: path.slice(-60),
           error,
         });
-        hasMissingPath = true;
+        firstMissingPathIndex = index;
         break;
       }
     }
 
+    if (firstMissingPathIndex === -1) return false;
+
     if (
-      hasMissingPath &&
       this.options.projectId &&
       this.options.contentSourceId
     ) {
@@ -274,7 +276,8 @@ export class SSRCacheManager {
       }
     }
 
-    for (const path of allPaths) {
+    for (let index = firstMissingPathIndex; index < allPaths.length; index++) {
+      const path = allPaths[index]!;
       try {
         const stat = await this.fs.stat(path);
         if (!stat.isFile) return true;
