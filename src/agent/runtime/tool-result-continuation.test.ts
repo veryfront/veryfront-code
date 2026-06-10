@@ -10,7 +10,7 @@ import {
   isStreamedToolCallIncomplete,
   materializeStreamedToolCall,
   shouldContinueAfterStreamStep,
-} from "./index.ts";
+} from "./tool-result-continuation.ts";
 import type { ChatStreamState } from "./chat-stream-handler.ts";
 import type { Message } from "../types.ts";
 
