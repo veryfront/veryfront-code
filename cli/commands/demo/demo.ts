@@ -23,10 +23,16 @@ import {
   typeLine,
 } from "#cli/ui";
 import { exitProcess, isTTY } from "#cli/utils";
-import { readToken, saveToken, validateToken } from "../../auth/index.ts";
+import {
+  createOAuthAuthorizationUrl,
+  createOAuthState,
+  readToken,
+  saveToken,
+  validateToken,
+} from "../../auth/index.ts";
 import { canOpenBrowser, openBrowser } from "../../auth/browser.ts";
 import { getCallbackUrl, startCallbackServer } from "../../auth/callback-server.ts";
-import { DEFAULT_LOGIN_TIMEOUT_MS, getApiUrl } from "#cli/shared/constants";
+import { DEFAULT_CALLBACK_PORT, DEFAULT_LOGIN_TIMEOUT_MS } from "#cli/shared/constants";
 import { initCommand } from "../init/index.ts";
 import { writeProjectSlug } from "#cli/shared/config";
 import { randomSuffix } from "#cli/shared/slug";
@@ -183,27 +189,26 @@ async function demoLogin(preselectedMethod?: AuthMethod): Promise<boolean> {
 
   console.log(`  ${dim("Starting authentication server...")}`);
 
+  const state = createOAuthState();
   let server: Awaited<ReturnType<typeof startCallbackServer>>;
   try {
-    server = await startCallbackServer();
+    server = await startCallbackServer(DEFAULT_CALLBACK_PORT, { expectedState: state });
   } catch (e) {
     console.log(`  ${error(`Failed to start server: ${e}`)}`);
     return false;
   }
 
   const callbackUrl = getCallbackUrl(server.port);
-  const authUrl = `${getApiUrl()}/auth/${method}?redirect_uri=${encodeURIComponent(callbackUrl)}`;
+  const authUrl = createOAuthAuthorizationUrl(method, callbackUrl, state);
 
   console.log(`  ${brand("Opening browser to log in...")}`);
-  console.log();
-  console.log(`  ${dim("If the browser doesn't open, visit:")}`);
-  console.log(`  ${dim(authUrl)}`);
   console.log();
 
   try {
     await openBrowser(authUrl);
   } catch {
     console.log(`  ${dim("Could not open browser automatically.")}`);
+    console.log(`  ${dim("Please use the API token option instead.")}`);
   }
 
   console.log(`  ${muted("Waiting for login...")}`);
