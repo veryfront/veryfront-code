@@ -3,6 +3,7 @@ import {
   mkdir,
   readDir,
   readTextFile,
+  stat,
   writeTextFile,
 } from "#veryfront/platform/compat/fs.ts";
 import { dirname, extname, join } from "#veryfront/platform/compat/path/basic-operations.ts";
@@ -45,6 +46,25 @@ type ResolvedRagStoreConfig = RagStoreConfig & { model: string };
 /** Default number of top results returned by similarity search. */
 const DEFAULT_TOP_K = 5;
 
+interface StoreFileSignature {
+  changeTimeMs: number | null;
+  contentHash: string;
+  mtimeMs: number | null;
+  size: number;
+}
+
+interface StoreDataCache {
+  signature: StoreFileSignature;
+  data: RagStoreData;
+}
+
+type StoreFileMetadata = Omit<StoreFileSignature, "contentHash">;
+
+interface StoreFileSnapshot {
+  signature: StoreFileSignature;
+  text: string;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -86,6 +106,35 @@ function isRagStoreData(value: unknown): value is RagStoreData {
     value.documents.every(isRagDocumentMeta) &&
     Array.isArray(value.chunks) &&
     value.chunks.every(isRagChunk);
+}
+
+function cloneRagStoreData(data: RagStoreData): RagStoreData {
+  return {
+    documents: data.documents.map((document) => ({ ...document })),
+    chunks: data.chunks.map((chunk) => ({
+      ...chunk,
+      embedding: [...chunk.embedding],
+    })),
+  };
+}
+
+function hashStoreText(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+
+function sameStoreFileSignature(
+  left: StoreFileSignature,
+  right: StoreFileSignature,
+): boolean {
+  return left.contentHash === right.contentHash &&
+    left.changeTimeMs === right.changeTimeMs &&
+    left.mtimeMs === right.mtimeMs &&
+    left.size === right.size;
 }
 
 function isLegacyStoredChunk(value: unknown): value is LegacyStoredChunk {
@@ -204,6 +253,7 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
   const contentDir = config.contentDir;
   const contentExtensions = new Set(config.contentExtensions ?? [".md", ".mdx", ".txt"]);
   const chunkOptions = config.chunkOptions;
+  let storeDataCache: StoreDataCache | null = null;
 
   const MAX_TEXT_LENGTH = 5 * 1024 * 1024; // 5 MB text limit per document
 
@@ -253,24 +303,103 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
     };
   }
 
+  async function getStoreFileMetadata(): Promise<StoreFileMetadata | null> {
+    try {
+      if (typeof Deno !== "undefined") {
+        const info = await Deno.stat(storagePath);
+        const changeTime = (info as { ctime?: Date | null }).ctime;
+        return {
+          changeTimeMs: changeTime?.getTime() ?? null,
+          mtimeMs: info.mtime?.getTime() ?? null,
+          size: info.size,
+        };
+      }
+
+      const info = await stat(storagePath);
+      let changeTimeMs: number | null = null;
+      try {
+        const nodeFs = await import("node:fs/promises");
+        const nodeInfo = await nodeFs.stat(storagePath);
+        changeTimeMs = nodeInfo.ctime.getTime();
+      } catch {
+        // expected: not every runtime exposes a file change time
+      }
+
+      return {
+        changeTimeMs,
+        mtimeMs: info.mtime?.getTime() ?? null,
+        size: info.size,
+      };
+    } catch (err) {
+      if (isNotFoundError(err)) return null;
+      throw err;
+    }
+  }
+
+  async function readStoreFileSnapshot(): Promise<StoreFileSnapshot | null> {
+    const metadata = await getStoreFileMetadata();
+    if (metadata === null) return null;
+
+    const text = await readTextFile(storagePath);
+    return {
+      signature: {
+        ...metadata,
+        contentHash: hashStoreText(text),
+      },
+      text,
+    };
+  }
+
+  async function updateStoreDataCache(data: RagStoreData, payload: string): Promise<void> {
+    const metadata = await getStoreFileMetadata();
+    storeDataCache = metadata === null ? null : {
+      signature: {
+        ...metadata,
+        contentHash: hashStoreText(payload),
+      },
+      data: cloneRagStoreData(data),
+    };
+  }
+
   async function load(): Promise<RagStoreData> {
     try {
-      const data = await readTextFile(storagePath);
-      const parsed = JSON.parse(data);
+      const snapshot = await readStoreFileSnapshot();
+      if (snapshot === null) {
+        storeDataCache = null;
+        return { documents: [], chunks: [] };
+      }
+
+      if (
+        storeDataCache !== null &&
+        sameStoreFileSignature(storeDataCache.signature, snapshot.signature)
+      ) {
+        return cloneRagStoreData(storeDataCache.data);
+      }
+
+      const parsed = JSON.parse(snapshot.text);
       if (isLegacyUploadStoreData(parsed)) {
-        return migrateLegacyUploadStoreData(parsed);
+        const migrated = migrateLegacyUploadStoreData(parsed);
+        storeDataCache = {
+          signature: snapshot.signature,
+          data: cloneRagStoreData(migrated),
+        };
+        return cloneRagStoreData(migrated);
       }
       if (!isRagStoreData(parsed)) {
         serverLogger.warn("[rag-store] Corrupted store file, resetting", { storagePath });
+        storeDataCache = null;
         return { documents: [], chunks: [] };
       }
-      return parsed;
+      storeDataCache = { signature: snapshot.signature, data: cloneRagStoreData(parsed) };
+      return cloneRagStoreData(parsed);
     } catch (err) {
       // File not found is expected on first run; anything else is worth logging
       if (isNotFoundError(err)) {
+        storeDataCache = null;
         return { documents: [], chunks: [] };
       }
       serverLogger.warn("[rag-store] Failed to load store, resetting", err);
+      storeDataCache = null;
       return { documents: [], chunks: [] };
     }
   }
@@ -280,7 +409,7 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
     if (dir && dir !== ".") {
       await mkdir(dir, { recursive: true });
     }
-    const payload = JSON.stringify(data, null, 2);
+    const payload = JSON.stringify(data);
     // Atomic write: write to temp file then rename to prevent corruption on crash
     const tmpPath = storagePath + ".tmp";
     await writeTextFile(tmpPath, payload);
@@ -295,6 +424,7 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
       // expected: rename not available in all environments, fall back to direct write
       await writeTextFile(storagePath, payload);
     }
+    await updateStoreDataCache(data, payload);
   }
 
   async function ensureEmbeddings(data: RagStoreData): Promise<boolean> {

@@ -86,12 +86,14 @@ describe("ragStore", () => {
       assertEquals(documents.length, 1);
       assertEquals(documents[0]?.id, id);
 
-      const parsed = JSON.parse(await readTextFile(storagePath)) as {
+      const persisted = await readTextFile(storagePath);
+      const parsed = JSON.parse(persisted) as {
         documents: unknown[];
         chunks: unknown[];
       };
       assertEquals(Array.isArray(parsed.documents), true);
       assertEquals(Array.isArray(parsed.chunks), true);
+      assertEquals(persisted, JSON.stringify(parsed));
       assertEquals(await exists(storagePath + ".tmp"), false);
     });
   });
@@ -111,6 +113,62 @@ describe("ragStore", () => {
 
       const results = await store.search("   ");
       assertEquals(results, []);
+    });
+  });
+
+  it("reuses parsed local store data across searches until storage changes", async () => {
+    registerTestEmbeddingProvider();
+
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const store = ragStore({
+        model: "test/demo",
+        storagePath,
+      });
+
+      await store.ingest("Doc", "Hello world", {
+        source: "upload:test.txt",
+        type: "txt",
+      });
+
+      let parseCalls = 0;
+      const originalParse = JSON.parse;
+      JSON.parse = ((text, reviver) => {
+        parseCalls++;
+        return originalParse(text, reviver);
+      }) as typeof JSON.parse;
+
+      try {
+        await store.search("hello");
+        await store.search("hello");
+
+        assertEquals(
+          parseCalls <= 1,
+          true,
+          `Expected repeated searches to parse the store at most once, got ${parseCalls}`,
+        );
+
+        parseCalls = 0;
+        const previousInfo = await Deno.stat(storagePath);
+        const previousPayload = await readTextFile(storagePath);
+        const externalPayload = previousPayload.replace('"title":"Doc"', '"title":"Alt"');
+        assertEquals(externalPayload.length, previousPayload.length);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        await Deno.writeTextFile(storagePath, externalPayload);
+        if (previousInfo.mtime !== null) {
+          await Deno.utime(
+            storagePath,
+            previousInfo.atime ?? previousInfo.mtime,
+            previousInfo.mtime,
+          );
+        }
+
+        const documents = await store.listDocuments();
+        assertEquals(documents.map((document) => document.title), ["Alt"]);
+        assertEquals(parseCalls, 1);
+      } finally {
+        JSON.parse = originalParse;
+      }
     });
   });
 
