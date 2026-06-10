@@ -176,7 +176,7 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
            * Set `true` for defaults, or pass an object to customize.
            *
            * When enabled, POST/PUT/PATCH/DELETE requests must include
-           * an `x-csrf-token` header matching the `vf_csrf` cookie.
+           * an `x-csrf-token` header matching the `__Host-vf_csrf` cookie.
            * The cookie is set automatically on HTML document responses.
            *
            * Server Actions (`/_veryfront/rsc/action`) are CSRF-protected;

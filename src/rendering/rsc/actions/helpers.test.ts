@@ -11,7 +11,7 @@ describe("rendering/rsc/actions/helpers", () => {
       const { token, setCookie } = generateCsrfToken();
       assertEquals(typeof token, "string");
       assertEquals(token.length > 0, true);
-      assertEquals(setCookie.includes("vf_csrf="), true);
+      assertEquals(setCookie.startsWith("__Host-vf_csrf="), true);
       assertEquals(setCookie.includes("HttpOnly"), true);
       assertEquals(setCookie.includes("SameSite=Lax"), true);
     });
@@ -44,7 +44,7 @@ describe("rendering/rsc/actions/helpers", () => {
     it("should return false when cookie and header differ", () => {
       const req = new Request("http://localhost/", {
         headers: {
-          cookie: "vf_csrf=token1",
+          cookie: "__Host-vf_csrf=token1",
           "x-csrf-token": "token2",
         },
       });
@@ -54,7 +54,7 @@ describe("rendering/rsc/actions/helpers", () => {
     it("should return true when cookie and header match", () => {
       const req = new Request("http://localhost/", {
         headers: {
-          cookie: "vf_csrf=matching_token",
+          cookie: "__Host-vf_csrf=matching_token",
           "x-csrf-token": "matching_token",
         },
       });
