@@ -86,11 +86,72 @@ function sanitizeFileName(raw: string): string {
   return sanitized || "untitled";
 }
 
-interface UploadHandlerConfig {
+export type UploadAuthorizationResult = boolean | Response | void | undefined;
+
+export type UploadAuthorize = (
+  request: Request,
+) => UploadAuthorizationResult | Promise<UploadAuthorizationResult>;
+
+export type UploadHandlerAuthConfig =
+  | { type: "none"; allowUnauthenticated: true }
+  | { authorize: UploadAuthorize };
+
+export interface UploadHandlerConfig {
   maxFileSize?: number;
+  auth?: UploadHandlerAuthConfig;
 }
 
 const MAX_CONCURRENT_URL_LOOKUPS = 5;
+let missingAuthWarningEmitted = false;
+
+function warnMissingAuthConfig(): void {
+  if (missingAuthWarningEmitted) return;
+  missingAuthWarningEmitted = true;
+  serverLogger.warn(
+    "createUploadHandler registered without auth. Pass auth: { authorize } for protected routes, " +
+      "or auth: { type: 'none', allowUnauthenticated: true } to explicitly allow unauthenticated uploads.",
+  );
+}
+
+function resolveUploadAuthorize(
+  auth: UploadHandlerAuthConfig | undefined,
+): UploadAuthorize | null {
+  if (auth === undefined) {
+    warnMissingAuthConfig();
+    return null;
+  }
+
+  if ("type" in auth) {
+    if (auth.type === "none" && auth.allowUnauthenticated === true) return null;
+    throw new Error(
+      "createUploadHandler auth type 'none' requires allowUnauthenticated: true.",
+    );
+  }
+
+  if (typeof auth.authorize === "function") return auth.authorize;
+
+  throw new Error(
+    "createUploadHandler auth must be { authorize } or " +
+      "{ type: 'none', allowUnauthenticated: true }.",
+  );
+}
+
+async function authorizeUploadRequest(
+  request: Request | undefined,
+  authorize: UploadAuthorize | null,
+): Promise<Response | null> {
+  if (!authorize) return null;
+  if (!request) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const result = await authorize(request);
+  if (result instanceof Response) return result;
+  if (result === false) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  return null;
+}
 
 async function enrichUploadsWithSourceUrls(
   uploads: Awaited<ReturnType<RagStore["listDocuments"]>>,
@@ -134,8 +195,11 @@ function getSourceBlobStorage(): VeryfrontCloudBlobStorage | null {
 /**
  * Creates HTTP route handlers for upload, listing, and deletion.
  *
- * **Important:** These handlers do not include authentication or authorization.
- * Add your own auth middleware before exposing them in production.
+ * Pass `auth: { authorize }` to protect these handlers before they read
+ * request bodies or access the RAG store. For local development, pass
+ * `auth: { type: "none", allowUnauthenticated: true }` to explicitly allow
+ * unauthenticated upload routes. Omitting `auth` still allows the route for
+ * compatibility and logs a warning.
  *
  * Returns `{ POST, GET, DELETE }` handlers compatible with file-based routing.
  * POST accepts multipart form data with a `file` field, extracts text via
@@ -150,7 +214,15 @@ function getSourceBlobStorage(): VeryfrontCloudBlobStorage | null {
  * import { createUploadHandler } from "veryfront/embedding";
  * import { store } from "lib/store.ts";
  *
- * export const { POST, GET } = createUploadHandler(store);
+ * export const { POST, GET } = createUploadHandler(store, {
+ *   auth: {
+ *     authorize: (request) => {
+ *       const token = Deno.env.get("UPLOAD_TOKEN");
+ *       return token !== undefined &&
+ *         request.headers.get("authorization") === `Bearer ${token}`;
+ *     },
+ *   },
+ * });
  * ```
  *
  * @example
@@ -159,7 +231,9 @@ function getSourceBlobStorage(): VeryfrontCloudBlobStorage | null {
  * import { createUploadHandler } from "veryfront/embedding";
  * import { store } from "lib/store.ts";
  *
- * export const { DELETE } = createUploadHandler(store);
+ * export const { DELETE } = createUploadHandler(store, {
+ *   auth: { type: "none", allowUnauthenticated: true },
+ * });
  * ```
  */
 export function createUploadHandler(
@@ -167,9 +241,13 @@ export function createUploadHandler(
   config?: UploadHandlerConfig,
 ) {
   const maxSize = config?.maxFileSize ?? MAX_FILE_SIZE;
+  const authorize = resolveUploadAuthorize(config?.auth);
 
   async function POST(request: Request): Promise<Response> {
     try {
+      const unauthorized = await authorizeUploadRequest(request, authorize);
+      if (unauthorized) return unauthorized;
+
       const formData = await request.formData();
       const file = formData.get("file");
 
@@ -246,8 +324,11 @@ export function createUploadHandler(
     }
   }
 
-  async function GET(): Promise<Response> {
+  async function GET(request?: Request): Promise<Response> {
     try {
+      const unauthorized = await authorizeUploadRequest(request, authorize);
+      if (unauthorized) return unauthorized;
+
       const uploads = await enrichUploadsWithSourceUrls(await store.listDocuments());
       return Response.json({ uploads });
     } catch (error) {
@@ -257,10 +338,13 @@ export function createUploadHandler(
   }
 
   async function DELETE(
-    _request: Request,
+    request: Request,
     context: { params: Record<string, string> },
   ): Promise<Response> {
     try {
+      const unauthorized = await authorizeUploadRequest(request, authorize);
+      if (unauthorized) return unauthorized;
+
       const id = context.params.id;
       if (!id) {
         return Response.json({ error: "Missing upload ID" }, { status: 400 });

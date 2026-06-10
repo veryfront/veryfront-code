@@ -1,8 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
+import { serverLogger } from "#veryfront/utils";
 import { createUploadHandler } from "./upload-handler.ts";
 import type { RagSearchOptions, RagSearchResult, RagStore } from "./types.ts";
 
@@ -46,6 +47,129 @@ function createStubStore(overrides: Partial<RagStore> = {}): RagStore {
 describe("createUploadHandler", () => {
   afterEach(() => {
     clearCloudEnv();
+  });
+
+  it("warns once when registered without explicit auth", () => {
+    const originalWarn = serverLogger.warn;
+    const warnings: string[] = [];
+    serverLogger.warn = (message: string) => {
+      warnings.push(message);
+    };
+
+    try {
+      createUploadHandler(createStubStore());
+      createUploadHandler(createStubStore());
+    } finally {
+      serverLogger.warn = originalWarn;
+    }
+
+    assertEquals(warnings.length, 1);
+    assertStringIncludes(warnings[0] ?? "", "createUploadHandler");
+    assertStringIncludes(warnings[0] ?? "", "auth");
+    assertStringIncludes(warnings[0] ?? "", "allowUnauthenticated");
+  });
+
+  it("rejects upload routes before store access when auth denies", async () => {
+    let ingestCalls = 0;
+    let listCalls = 0;
+    let removeCalls = 0;
+    const store = createStubStore({
+      async ingest(): Promise<string> {
+        ingestCalls++;
+        return "doc-denied";
+      },
+      async listDocuments() {
+        listCalls++;
+        return [];
+      },
+      async removeDocument(): Promise<void> {
+        removeCalls++;
+      },
+    });
+    const handlers = createUploadHandler(store, {
+      auth: {
+        authorize: () => Response.json({ error: "Forbidden" }, { status: 403 }),
+      },
+    });
+
+    const postResponse = await handlers.POST(
+      new Request("http://test/uploads", {
+        method: "POST",
+        body: "not multipart",
+      }),
+    );
+    const getResponse = await handlers.GET(
+      new Request("http://test/uploads", { method: "GET" }),
+    );
+    const deleteResponse = await handlers.DELETE(
+      new Request("http://test/uploads/doc-123", { method: "DELETE" }),
+      { params: { id: "doc-123" } },
+    );
+
+    assertEquals(postResponse.status, 403);
+    assertEquals(getResponse.status, 403);
+    assertEquals(deleteResponse.status, 403);
+    assertEquals(ingestCalls, 0);
+    assertEquals(listCalls, 0);
+    assertEquals(removeCalls, 0);
+  });
+
+  it("allows upload routes when auth accepts", async () => {
+    const methods: string[] = [];
+    const removed: string[] = [];
+    const store = createStubStore({
+      async listDocuments() {
+        return [];
+      },
+      async removeDocument(id: string): Promise<void> {
+        removed.push(id);
+      },
+    });
+    const handlers = createUploadHandler(store, {
+      auth: {
+        authorize: (request) => {
+          methods.push(request.method);
+          return true;
+        },
+      },
+    });
+
+    const formData = new FormData();
+    formData.append(
+      "file",
+      new File(["hello world"], "guide.txt", { type: "text/plain" }),
+    );
+
+    const postResponse = await handlers.POST(
+      new Request("http://test/uploads", {
+        method: "POST",
+        body: formData,
+      }),
+    );
+    const getResponse = await handlers.GET(
+      new Request("http://test/uploads", { method: "GET" }),
+    );
+    const deleteResponse = await handlers.DELETE(
+      new Request("http://test/uploads/doc-123", { method: "DELETE" }),
+      { params: { id: "doc-123" } },
+    );
+
+    assertEquals(postResponse.status, 200);
+    assertEquals(getResponse.status, 200);
+    assertEquals(deleteResponse.status, 200);
+    assertEquals(methods, ["POST", "GET", "DELETE"]);
+    assertEquals(removed, ["doc-123"]);
+  });
+
+  it("accepts explicit unauthenticated upload routes", async () => {
+    const store = createStubStore();
+    const { GET } = createUploadHandler(store, {
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+
+    const response = await GET(new Request("http://test/uploads", { method: "GET" }));
+
+    assertEquals(response.status, 200);
   });
 
   it("stores uploaded source binaries in Veryfront Cloud when bootstrap is present", async () => {

@@ -52,22 +52,38 @@ Set `contentDir: "knowledge"` to index `knowledge/` instead of `content/`.
 
 Create upload routes that share the same store:
 
+```ts title="lib/upload-auth.ts"
+export function authorizeUploads(request: Request): boolean {
+  const token = Deno.env.get("UPLOAD_TOKEN");
+  return token !== undefined &&
+    request.headers.get("authorization") === `Bearer ${token}`;
+}
+```
+
 ```ts title="app/api/uploads/route.ts"
 import { createUploadHandler } from "veryfront/embedding";
+import { authorizeUploads } from "../../../lib/upload-auth.ts";
 import { store } from "../../../store.ts";
 
-export const { POST, GET } = createUploadHandler(store);
+export const { POST, GET } = createUploadHandler(store, {
+  auth: { authorize: authorizeUploads },
+});
 ```
 
 ```ts title="app/api/uploads/[id]/route.ts"
 import { createUploadHandler } from "veryfront/embedding";
+import { authorizeUploads } from "../../../../lib/upload-auth.ts";
 import { store } from "../../../../store.ts";
 
-export const { DELETE } = createUploadHandler(store);
+export const { DELETE } = createUploadHandler(store, {
+  auth: { authorize: authorizeUploads },
+});
 ```
 
 `POST` ingests a file, `GET` lists ingested documents, and `DELETE` removes a
-document.
+document. For local-only prototypes, pass
+`auth: { type: "none", allowUnauthenticated: true }` to explicitly allow
+unauthenticated upload routes.
 
 ## Understand ingestion
 
