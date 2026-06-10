@@ -3,6 +3,7 @@ import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { ProjectWorker } from "./project-worker.ts";
+import { buildWorkerPermissions } from "./worker-permissions.ts";
 import type { WorkerPermissions } from "./worker-permissions.ts";
 
 const testSuite = isDeno ? describe : describe.skip;
@@ -21,7 +22,7 @@ const REAL_WORKER_PERMISSIONS: WorkerPermissions = {
   read: true,
   write: false,
   net: false,
-  env: true,
+  env: [],
   run: false,
   ffi: false,
   sys: false,
@@ -222,7 +223,9 @@ testSuite("ProjectWorker - real worker request isolation", () => {
 
     const worker = new ProjectWorker({
       projectId: "test-env-overlay-scope",
-      permissions: REAL_WORKER_PERMISSIONS,
+      permissions: buildWorkerPermissions([projectDir], {
+        projectEnvKeys: ["VERYFRONT_TEST_TENANT_SECRET"],
+      }),
       requestTimeoutMs: 10_000,
     });
 
@@ -278,6 +281,91 @@ testSuite("ProjectWorker - real worker request isolation", () => {
     }
   });
 
+  it("denies host env secrets while allowing project env keys", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const modulePath = await Deno.makeTempFile({ dir: projectDir, suffix: ".mjs" });
+    const hostKey = "VERYFRONT_TEST_HOST_ONLY_SECRET";
+    const projectKey = "VERYFRONT_TEST_PROJECT_ALLOWED_SECRET";
+    const previousHostSecret = Deno.env.get(hostKey);
+
+    await Deno.writeTextFile(
+      modulePath,
+      `
+        export function GET() {
+          let hostValue = null;
+          let hostDenied = false;
+          try {
+            hostValue = Deno.env.get(${JSON.stringify(hostKey)}) ?? null;
+          } catch {
+            hostDenied = true;
+          }
+
+          let objectHostValue = null;
+          let objectDenied = false;
+          try {
+            objectHostValue = Deno.env.toObject()[${JSON.stringify(hostKey)}] ?? null;
+          } catch {
+            objectDenied = true;
+          }
+
+          return Response.json({
+            hostValue,
+            hostDenied,
+            objectHostValue,
+            objectDenied,
+            projectValue: Deno.env.get(${JSON.stringify(projectKey)}) ?? null,
+          });
+        }
+      `,
+    );
+
+    Deno.env.set(hostKey, "host-secret");
+
+    const worker = new ProjectWorker({
+      projectId: "test-env-allowlist",
+      permissions: buildWorkerPermissions([projectDir], {
+        projectEnvKeys: [projectKey],
+      }),
+      requestTimeoutMs: 10_000,
+    });
+
+    worker.start();
+    try {
+      const response = await worker.execute({
+        type: "execute-app-route",
+        id: "env-allowlist",
+        modulePath,
+        method: "GET",
+        request: {
+          url: "http://localhost/api/env",
+          method: "GET",
+          headers: [],
+          body: null,
+        },
+        params: {},
+        projectDir,
+        projectEnv: { [projectKey]: "project-secret" },
+      });
+
+      assertEquals(response.type, "result");
+      if (response.type !== "result") throw new Error("expected result response");
+
+      const body = JSON.parse(new TextDecoder().decode(response.response.body ?? new Uint8Array()));
+      assertEquals(body.hostValue, null);
+      assertEquals(body.hostDenied, true);
+      assertEquals(body.objectHostValue, null);
+      assertEquals(body.projectValue, "project-secret");
+    } finally {
+      worker.terminate();
+      if (previousHostSecret === undefined) {
+        Deno.env.delete(hostKey);
+      } else {
+        Deno.env.set(hostKey, previousHostSecret);
+      }
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   it("rejects direct Deno file reads outside scoped worker read permissions", async () => {
     const projectDir = await Deno.makeTempDir();
     const outsideDir = await Deno.makeTempDir();
@@ -297,7 +385,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
 
     const worker = new ProjectWorker({
       projectId: "test-direct-deno-read-denied",
-      permissions: { ...REAL_WORKER_PERMISSIONS, read: [projectDir] },
+      permissions: buildWorkerPermissions([projectDir]),
       requestTimeoutMs: 10_000,
     });
 

@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { buildWorkerPermissions } from "./worker-permissions.ts";
+import { buildWorkerPermissions, FRAMEWORK_WORKER_ENV_ALLOWLIST } from "./worker-permissions.ts";
 
 describe("worker-permissions", () => {
   it("builds permissions with read paths", () => {
@@ -9,10 +9,26 @@ describe("worker-permissions", () => {
     assertEquals(perms.read, ["/tmp/project-a", "/cache"]);
     assertEquals(perms.write, false);
     assertEquals(perms.net, true);
-    assertEquals(perms.env, true);
+    assertEquals(perms.env, [...FRAMEWORK_WORKER_ENV_ALLOWLIST]);
     assertEquals(perms.run, false);
     assertEquals(perms.ffi, false);
     assertEquals(perms.sys, false);
+  });
+
+  it("allows only framework and project env keys", () => {
+    const perms = buildWorkerPermissions(["/tmp/project-a"], {
+      projectEnvKeys: [
+        "VERYFRONT_TEST_PROJECT_SECRET",
+        "NODE_ENV",
+        "",
+        "  VERYFRONT_TEST_PROJECT_SECRET  ",
+      ],
+    });
+
+    assertEquals(perms.env, [
+      ...FRAMEWORK_WORKER_ENV_ALLOWLIST,
+      "VERYFRONT_TEST_PROJECT_SECRET",
+    ]);
   });
 
   it("builds permissions with empty read paths", () => {
@@ -35,7 +51,7 @@ describe("worker-permissions", () => {
     assertEquals(perms.run, false);
     assertEquals(perms.ffi, false);
     assertEquals(perms.sys, false);
-    assertEquals(perms.env, true);
+    assertEquals(perms.env, [...FRAMEWORK_WORKER_ENV_ALLOWLIST]);
   });
 
   it("always allows net for data fetchers", () => {

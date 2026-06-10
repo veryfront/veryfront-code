@@ -23,7 +23,7 @@ export interface WorkerPermissions {
   read: string[] | boolean;
   write: boolean;
   net: boolean;
-  env: boolean;
+  env: string[] | boolean;
   run: boolean;
   ffi: boolean;
   sys: boolean;
@@ -34,7 +34,20 @@ interface WorkerPermissionOptions {
   isCompiledBinary?: boolean;
   /** Override for tests that need deterministic compiled-binary support paths. */
   compiledReadPaths?: string[];
+  /** Project-configured env keys that route code may read inside the worker. */
+  projectEnvKeys?: Iterable<string | undefined>;
 }
+
+export const FRAMEWORK_WORKER_ENV_ALLOWLIST = [
+  "NODE_ENV",
+  "DENO_ENV",
+  "VERYFRONT_ENV",
+  "LOG_LEVEL",
+  "LOG_FORMAT",
+  "NO_COLOR",
+  "FORCE_COLOR",
+  "CI",
+] as const;
 
 // Cache compiled binary check — Deno.execPath() is a syscall that never changes at runtime
 const _isCompiledBinary = (() => {
@@ -59,6 +72,26 @@ function normalizeReadPaths(paths: Array<string | undefined>): string[] {
   return [...unique];
 }
 
+function normalizeEnvKeys(keys: Iterable<string | undefined>): string[] {
+  const unique = new Set<string>();
+  for (const key of keys) {
+    if (!key) continue;
+    const trimmed = key.trim();
+    if (!trimmed) continue;
+    unique.add(trimmed);
+  }
+  return [...unique];
+}
+
+export function buildWorkerEnvAllowlist(
+  projectEnvKeys: Iterable<string | undefined> = [],
+): string[] {
+  return normalizeEnvKeys([
+    ...FRAMEWORK_WORKER_ENV_ALLOWLIST,
+    ...projectEnvKeys,
+  ]);
+}
+
 function getDefaultCompiledReadPaths(): string[] {
   return normalizeReadPaths([
     getFrameworkRootFromMeta(import.meta.url),
@@ -75,7 +108,7 @@ function getDefaultCompiledReadPaths(): string[] {
  * - read: restricted to the project temp dir (transformed modules) and cache dirs
  * - write: denied (workers produce output via postMessage, not filesystem)
  * - net: allowed (data fetchers and API routes may call external APIs)
- * - env: allowed (user code reads API keys and config from environment)
+ * - env: restricted to framework keys and the project's configured env keys
  * - run: denied (no subprocess spawning from user code)
  * - ffi: denied (no native code from user code)
  * - sys: denied (no system info access from user code)
@@ -86,6 +119,7 @@ export function buildWorkerPermissions(
 ): WorkerPermissions {
   const isCompiledBinary = options.isCompiledBinary ?? _isCompiledBinary;
   const normalizedReadPaths = normalizeReadPaths(readPaths);
+  const env = buildWorkerEnvAllowlist(options.projectEnvKeys);
 
   if (isCompiledBinary) {
     const compiledReadPaths = options.compiledReadPaths ?? getDefaultCompiledReadPaths();
@@ -94,7 +128,7 @@ export function buildWorkerPermissions(
       read: scopedReadPaths.length > 0 ? scopedReadPaths : false,
       write: false,
       net: true,
-      env: true,
+      env,
       run: false,
       ffi: false,
       sys: false,
@@ -105,7 +139,7 @@ export function buildWorkerPermissions(
     read: normalizedReadPaths.length > 0 ? normalizedReadPaths : false,
     write: false,
     net: true,
-    env: true,
+    env,
     run: false,
     ffi: false,
     sys: false,
