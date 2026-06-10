@@ -65,6 +65,13 @@ export function getTransformSemaphore(): Semaphore {
  */
 const projectTransformCounts = new Map<string, number>();
 
+type ProjectTransformWaiter = {
+  resolve: (acquired: boolean) => void;
+  timeoutId: ReturnType<typeof setTimeout>;
+};
+
+const projectTransformWaiters = new Map<string, ProjectTransformWaiter[]>();
+
 /**
  * Projects that bypass per-project rate limiting.
  * - "__single__": Used for local development and tests where there's no multi-tenancy
@@ -105,8 +112,62 @@ export function acquireTransformSlot(projectId: string, bypass = false): boolean
   return true;
 }
 
-/** How long to wait between retry attempts for per-project slots */
-const PROJECT_SLOT_RETRY_INTERVAL_MS = 50;
+function removeProjectTransformWaiter(
+  projectId: string,
+  waiter: ProjectTransformWaiter,
+): void {
+  const queue = projectTransformWaiters.get(projectId);
+  if (!queue) return;
+
+  const index = queue.indexOf(waiter);
+  if (index !== -1) queue.splice(index, 1);
+  if (queue.length === 0) projectTransformWaiters.delete(projectId);
+}
+
+function settleProjectTransformWaiter(
+  projectId: string,
+  waiter: ProjectTransformWaiter,
+  acquired: boolean,
+): void {
+  removeProjectTransformWaiter(projectId, waiter);
+  clearTimeout(waiter.timeoutId);
+  waiter.resolve(acquired);
+}
+
+function wakeNextProjectTransformWaiter(projectId: string): void {
+  const limit = getTransformPerProjectLimit();
+  if (limit <= 0) return;
+
+  const queue = projectTransformWaiters.get(projectId);
+  if (!queue?.length) return;
+
+  const current = projectTransformCounts.get(projectId) ?? 0;
+  if (current >= limit) return;
+
+  const waiter = queue.shift();
+  if (queue.length === 0) projectTransformWaiters.delete(projectId);
+  if (!waiter) return;
+
+  projectTransformCounts.set(projectId, current + 1);
+  clearTimeout(waiter.timeoutId);
+  waiter.resolve(true);
+}
+
+function rejectProjectTransformWaiters(projectId: string): void {
+  const queue = projectTransformWaiters.get(projectId);
+  if (!queue?.length) return;
+
+  projectTransformWaiters.delete(projectId);
+  for (const waiter of queue) {
+    clearTimeout(waiter.timeoutId);
+    waiter.resolve(false);
+  }
+}
+
+function rejectAllProjectTransformWaiters(): void {
+  const projectIds = Array.from(projectTransformWaiters.keys());
+  for (const projectId of projectIds) rejectProjectTransformWaiters(projectId);
+}
 
 /**
  * Try to acquire a project-level transform slot with retries.
@@ -119,14 +180,24 @@ export async function tryAcquireTransformSlot(
   bypass = false,
 ): Promise<boolean> {
   if (acquireTransformSlot(projectId, bypass)) return true;
+  if (timeoutMs <= 0) return false;
 
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    await new Promise<void>((resolve) => setTimeout(resolve, PROJECT_SLOT_RETRY_INTERVAL_MS)); // no cleanup needed: one-shot
-    if (acquireTransformSlot(projectId, bypass)) return true;
-  }
+  return new Promise<boolean>((resolve) => {
+    const waiter: ProjectTransformWaiter = {
+      resolve,
+      timeoutId: setTimeout(() => {
+        settleProjectTransformWaiter(projectId, waiter, false);
+      }, timeoutMs),
+    };
 
-  return false;
+    const queue = projectTransformWaiters.get(projectId);
+    if (queue) {
+      queue.push(waiter);
+      return;
+    }
+
+    projectTransformWaiters.set(projectId, [waiter]);
+  });
 }
 
 /**
@@ -140,10 +211,12 @@ export function releaseTransformSlot(projectId: string, bypass = false): void {
   const current = projectTransformCounts.get(projectId) ?? 0;
   if (current <= 1) {
     projectTransformCounts.delete(projectId);
+    wakeNextProjectTransformWaiter(projectId);
     return;
   }
 
   projectTransformCounts.set(projectId, current - 1);
+  wakeNextProjectTransformWaiter(projectId);
 }
 
 /**
@@ -219,6 +292,7 @@ export function clearSSRModuleCache(): void {
   globalModuleCache.clear();
   failedComponents.clear();
   projectTransformCounts.clear();
+  rejectAllProjectTransformWaiters();
   verifiedHttpBundlePaths.clear();
 
   // Reset the transform semaphore and cached limits so leaked permits
@@ -273,6 +347,7 @@ export function clearSSRModuleCacheForProject(projectId: string): void {
   }
 
   projectTransformCounts.delete(projectId);
+  rejectProjectTransformWaiters(projectId);
 
   // Clear verified HTTP bundle paths — keys are tempPath:contentHash (not project-scoped),
   // so full clear is needed. This just forces re-verification on next access.
