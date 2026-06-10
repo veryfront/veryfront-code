@@ -21,12 +21,11 @@ import type { ModuleFetcherContext } from "../types.ts";
 import { getModulePathCache } from "../cache/index.ts";
 import { hashString } from "../utils/hash.ts";
 import { resolveModuleFile } from "../resolution/file-finder.ts";
-import { buildMissingModuleError } from "../missing-module.ts";
 import { getTransformCacheKey, getVersionedPathCacheKey } from "./cache-keys.ts";
 import { resolveNestedModuleImports } from "./nested-imports.ts";
 import { readDistributedCache } from "./distributed-cache.ts";
-import { fetchModuleViaHTTP } from "./http-fetcher.ts";
-import { cacheModule, normalizePath } from "./module-cache.ts";
+import { resolveUnresolvedModuleViaHttpFallback } from "./http-fallback.ts";
+import { normalizePath } from "./module-cache.ts";
 import { readValidCachedModulePath } from "./path-cache-lookup.ts";
 import { persistResolvedModule } from "./persistence.ts";
 import { transformResolvedModuleSource } from "./source-transform.ts";
@@ -215,35 +214,19 @@ async function doFetchAndCacheModule(
     const resolved = await resolveModuleFile(normalizedPath, adapter, projectDir);
 
     if (!resolved) {
-      const moduleCode = await fetchModuleViaHTTP(
+      return await resolveUnresolvedModuleViaHttpFallback({
         normalizedPath,
         adapter,
-        fetchAndCacheModuleFn,
+        fetchAndCacheModule: fetchAndCacheModuleFn,
         log,
         projectSlug,
-        context.isLocalProject,
-      );
-
-      if (moduleCode) {
-        return await cacheModule(
-          normalizedPath,
-          moduleCode,
-          esmCacheDir,
-          pathCache,
-          log,
-          effectiveReactVersion,
-        );
-      }
-
-      if (context.strictMissingModules ?? true) {
-        throw buildMissingModuleError({
-          modulePath: normalizedPath,
-          importer: parentModulePath,
-          projectSlug,
-        });
-      }
-
-      return null;
+        isLocalProject: context.isLocalProject,
+        strictMissingModules: context.strictMissingModules ?? true,
+        esmCacheDir,
+        pathCache,
+        reactVersion: effectiveReactVersion,
+        parentModulePath,
+      });
     }
 
     const { sourceCode, actualFilePath } = resolved;
