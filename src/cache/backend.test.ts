@@ -564,6 +564,95 @@ Deno.test("RedisCacheBackend delByPattern returns 0 without client", async () =>
   assertEquals(await cache.delByPattern("*"), 0);
 });
 
+Deno.test("RedisCacheBackend delByPattern deletes every scanned key in bounded batches", async () => {
+  const { RedisCacheBackend } = await importBackend();
+  const cache = new RedisCacheBackend("vf:test:");
+  let scanCalls = 0;
+  const deleteBatches: string[][] = [];
+  const client = {
+    connect: () => Promise.resolve(),
+    disconnect: () => Promise.resolve(),
+    get: () => Promise.resolve(null),
+    mGet: () => Promise.resolve([]),
+    set: () => Promise.resolve(null),
+    del: (keys: string | string[]) => {
+      const batch = Array.isArray(keys) ? [...keys] : [keys];
+      deleteBatches.push(batch);
+      return Promise.resolve(batch.length);
+    },
+    scan: () => {
+      scanCalls += 1;
+      return Promise.resolve({
+        cursor: scanCalls < 1005 ? scanCalls : 0,
+        keys: [`vf:test:${scanCalls}`],
+      });
+    },
+    expire: () => Promise.resolve(0),
+  } satisfies RedisClient;
+
+  (cache as unknown as { client: RedisClient }).client = client;
+
+  const deleted = await cache.delByPattern("*");
+
+  assertEquals(scanCalls, 1005);
+  assertEquals(deleted, 1005);
+  assertEquals(deleteBatches.map((batch) => batch.length), [1000, 5]);
+});
+
+Deno.test("RedisCacheBackend delByPattern keeps Redis delete batches bounded", async () => {
+  const { RedisCacheBackend } = await importBackend();
+  const cache = new RedisCacheBackend("vf:test:");
+  let scanCalls = 0;
+  const deleteBatches: string[][] = [];
+  const client = {
+    connect: () => Promise.resolve(),
+    disconnect: () => Promise.resolve(),
+    get: () => Promise.resolve(null),
+    mGet: () => Promise.resolve([]),
+    set: () => Promise.resolve(null),
+    del: (keys: string | string[]) => {
+      const batch = Array.isArray(keys) ? [...keys] : [keys];
+      deleteBatches.push(batch);
+      return Promise.resolve(batch.length);
+    },
+    scan: () => {
+      scanCalls += 1;
+      const keys = Array.from(
+        { length: 250 },
+        (_, index) => `vf:test:${scanCalls}:${index}`,
+      );
+      return Promise.resolve({
+        cursor: scanCalls < 50 ? scanCalls : 0,
+        keys,
+      });
+    },
+    expire: () => Promise.resolve(0),
+  } satisfies RedisClient;
+
+  (cache as unknown as { client: RedisClient }).client = client;
+
+  const deleted = await cache.delByPattern("*");
+
+  assertEquals(scanCalls, 50);
+  assertEquals(deleted, 12500);
+  assertEquals(deleteBatches.every((batch) => batch.length <= 1000), true);
+  assertEquals(deleteBatches.map((batch) => batch.length), [
+    1000,
+    1000,
+    1000,
+    1000,
+    1000,
+    1000,
+    1000,
+    1000,
+    1000,
+    1000,
+    1000,
+    1000,
+    500,
+  ]);
+});
+
 Deno.test("RedisCacheBackend getBatch returns nulls without client", async () => {
   const { RedisCacheBackend } = await importBackend();
 
