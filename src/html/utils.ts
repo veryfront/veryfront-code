@@ -36,6 +36,12 @@ interface DetectedVersions {
 
 interface CachedImportMapEntry {
   cacheKey: string;
+  imports: Record<string, string>;
+  json: string;
+}
+
+export interface BuiltImportMap {
+  imports: Record<string, string>;
   json: string;
 }
 
@@ -264,6 +270,16 @@ interface BuildImportMapOptions {
   pretty?: boolean;
 }
 
+function stringifyImportMap(imports: Record<string, string>, pretty = true): string {
+  return JSON.stringify({ imports }, null, pretty ? 2 : undefined);
+}
+
+function stableMapKey(imports?: Record<string, string>): string {
+  return imports
+    ? JSON.stringify(Object.entries(imports).sort(([a], [b]) => a.localeCompare(b)))
+    : "";
+}
+
 function isImportMapOnlyOptions(
   options: BuildImportMapOptions | Record<string, string>,
 ): options is Record<string, string> {
@@ -273,18 +289,13 @@ function isImportMapOnlyOptions(
     !("pretty" in options);
 }
 
-export async function buildImportMapJson(
+export async function buildImportMap(
   options?: BuildImportMapOptions | Record<string, string>,
-): Promise<string> {
-  const stringifyImportMap = (imports: Record<string, string>, pretty = true) =>
-    JSON.stringify({ imports }, null, pretty ? 2 : undefined);
-  const stableMapKey = (imports?: Record<string, string>) =>
-    imports ? JSON.stringify(Object.entries(imports).sort(([a], [b]) => a.localeCompare(b))) : "";
-
+): Promise<BuiltImportMap> {
   if (options && isImportMapOnlyOptions(options)) {
-    const imports = options;
+    const imports = { ...options };
     if (Object.keys(imports).length > 0) {
-      return stringifyImportMap(imports);
+      return { imports, json: stringifyImportMap(imports) };
     }
   }
 
@@ -304,7 +315,7 @@ export async function buildImportMapJson(
       ...customImports,
     };
 
-    return stringifyImportMap(imports, pretty);
+    return { imports, json: stringifyImportMap(imports, pretty) };
   }
 
   let imports: Record<string, string>;
@@ -333,11 +344,18 @@ export async function buildImportMapJson(
     customImports: stableMapKey(customImports),
   });
   const cached = importMapJsonCache.get(cacheKey);
-  if (cached) return cached.json;
+  if (cached) return cached;
 
   const json = stringifyImportMap(imports, pretty);
-  importMapJsonCache.set(cacheKey, { cacheKey, json });
-  return json;
+  const built = { cacheKey, imports, json };
+  importMapJsonCache.set(cacheKey, built);
+  return built;
+}
+
+export async function buildImportMapJson(
+  options?: BuildImportMapOptions | Record<string, string>,
+): Promise<string> {
+  return (await buildImportMap(options)).json;
 }
 
 export function clearImportMapCache(): void {

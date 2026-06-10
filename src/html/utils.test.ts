@@ -189,8 +189,8 @@ describe("html-generation/utils", () => {
         ) as {
           imports: Record<string, string>;
         };
-        assertStringIncludes(first.imports.react, "18.3.1");
-        assertStringIncludes(first.imports["veryfront/chat"], "0.1.10");
+        assertStringIncludes(first.imports.react!, "18.3.1");
+        assertStringIncludes(first.imports["veryfront/chat"]!, "0.1.10");
 
         await new Promise((resolve) => setTimeout(resolve, 5));
         await Deno.writeTextFile(
@@ -207,8 +207,8 @@ describe("html-generation/utils", () => {
         ) as {
           imports: Record<string, string>;
         };
-        assertStringIncludes(second.imports.react, "19.0.0");
-        assertStringIncludes(second.imports["veryfront/chat"], "0.2.0");
+        assertStringIncludes(second.imports.react!, "19.0.0");
+        assertStringIncludes(second.imports["veryfront/chat"]!, "0.2.0");
       } finally {
         await Deno.remove(dir, { recursive: true });
       }
