@@ -1,10 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { executeAppRoute, executePagesRoute } from "./route-executor.ts";
+import {
+  __resetInProcessIsolationWarningForTests,
+  executeAppRoute,
+  executePagesRoute,
+} from "./route-executor.ts";
 import type { RouteMatch } from "./api-route-matcher.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { __resetPoolForTests } from "#veryfront/security/sandbox/worker-pool.ts";
+import { __resetLoggerConfigForTests } from "../../utils/logger/index.ts";
 
 function makeAdapter(mode = "development"): RuntimeAdapter {
   const envMap = new Map<string, string>([["MODE", mode]]);
@@ -66,6 +71,36 @@ function makeMatch(
   params: RouteMatch["params"] = {},
 ): RouteMatch {
   return { route: { pattern, page }, params };
+}
+
+function captureConsoleWarn(): { getOutput: () => string; restore: () => void } {
+  const originalWarn = console.warn;
+  const output: string[] = [];
+
+  console.warn = (...args: unknown[]) => {
+    output.push(args.map(String).join(" "));
+  };
+
+  return {
+    getOutput: () => output.join("\n"),
+    restore: () => {
+      console.warn = originalWarn;
+    },
+  };
+}
+
+function restoreEnv(snapshot: Map<string, string | undefined>): void {
+  for (const [key, value] of snapshot) {
+    if (value === undefined) {
+      Deno.env.delete(key);
+    } else {
+      Deno.env.set(key, value);
+    }
+  }
+}
+
+function snapshotEnv(keys: string[]): Map<string, string | undefined> {
+  return new Map(keys.map((key) => [key, Deno.env.get(key)]));
 }
 
 describe("routing/api/route-executor", () => {
@@ -470,6 +505,166 @@ describe("routing/api/route-executor", () => {
 
       assertEquals(response.status, 500);
     });
+
+    it("continues pages API route execution when isolation warning logging fails", async () => {
+      const envSnapshot = snapshotEnv([
+        "WORKER_ISOLATION_ENABLED",
+        "WORKER_ISOLATION_API",
+        "LOG_FORMAT",
+        "LOG_LEVEL",
+        "NO_COLOR",
+      ]);
+      Deno.env.delete("WORKER_ISOLATION_ENABLED");
+      Deno.env.delete("WORKER_ISOLATION_API");
+      Deno.env.set("LOG_FORMAT", "text");
+      Deno.env.set("LOG_LEVEL", "WARN");
+      Deno.env.set("NO_COLOR", "1");
+      __resetPoolForTests();
+      __resetInProcessIsolationWarningForTests();
+      __resetLoggerConfigForTests();
+      const originalWarn = console.warn;
+
+      try {
+        console.warn = () => {
+          throw new Error("warning sink unavailable");
+        };
+
+        const handler = {
+          GET: () => Response.json({ msg: "pages api" }),
+        };
+
+        const request = new Request("http://localhost/api/hello", { method: "GET" });
+        const response = await executePagesRoute(
+          handler,
+          request,
+          makeMatch("/api/hello", "/tmp/test/pages/api/hello.ts"),
+          "/api/hello",
+          makeAdapter("production"),
+          "/tmp/test",
+          {
+            modulePath: "/tmp/test/pages/api/hello.ts",
+            projectDir: "/tmp/test",
+            isLocalProject: false,
+          },
+        );
+
+        assertEquals(response.status, 200);
+        assertEquals(await response.json(), { msg: "pages api" });
+      } finally {
+        console.warn = originalWarn;
+        restoreEnv(envSnapshot);
+        __resetLoggerConfigForTests();
+      }
+    });
+  });
+
+  describe("untrusted in-process execution warning", () => {
+    const envKeys = [
+      "WORKER_ISOLATION_ENABLED",
+      "WORKER_ISOLATION_API",
+      "LOG_FORMAT",
+      "LOG_LEVEL",
+      "NO_COLOR",
+    ];
+
+    afterEach(() => {
+      Deno.env.delete("WORKER_ISOLATION_ENABLED");
+      Deno.env.delete("WORKER_ISOLATION_API");
+      __resetPoolForTests();
+      __resetInProcessIsolationWarningForTests();
+      __resetLoggerConfigForTests();
+    });
+
+    it("warns once when a remote app route falls back to in-process execution", async () => {
+      const envSnapshot = snapshotEnv(envKeys);
+      Deno.env.delete("WORKER_ISOLATION_ENABLED");
+      Deno.env.delete("WORKER_ISOLATION_API");
+      Deno.env.set("LOG_FORMAT", "text");
+      Deno.env.set("LOG_LEVEL", "WARN");
+      Deno.env.set("NO_COLOR", "1");
+      __resetPoolForTests();
+      __resetInProcessIsolationWarningForTests();
+      __resetLoggerConfigForTests();
+
+      const captured = captureConsoleWarn();
+      try {
+        const handler = {
+          GET: () => new Response("ok"),
+        };
+        const request = new Request("http://localhost/api/test", { method: "GET" });
+        const options = {
+          modulePath: "/tmp/test/handler.ts",
+          projectDir: "/tmp/test",
+          isLocalProject: false,
+        };
+
+        const first = await executeAppRoute(
+          handler,
+          request,
+          makeMatch(),
+          "/api/test",
+          makeAdapter(),
+          options,
+        );
+        const second = await executeAppRoute(
+          handler,
+          new Request("http://localhost/api/test", { method: "GET" }),
+          makeMatch(),
+          "/api/test",
+          makeAdapter(),
+          options,
+        );
+
+        assertEquals(first.status, 200);
+        assertEquals(second.status, 200);
+        assertEquals(await first.text(), "ok");
+        assertEquals(await second.text(), "ok");
+
+        const output = captured.getOutput();
+        assertEquals((output.match(/worker isolation disabled/g) ?? []).length, 1);
+        assert(output.includes("WORKER_ISOLATION_ENABLED"));
+        assert(output.includes("WORKER_ISOLATION_API"));
+      } finally {
+        captured.restore();
+        restoreEnv(envSnapshot);
+        __resetLoggerConfigForTests();
+      }
+    });
+
+    it("does not warn for local app route in-process execution", async () => {
+      const envSnapshot = snapshotEnv(envKeys);
+      Deno.env.delete("WORKER_ISOLATION_ENABLED");
+      Deno.env.delete("WORKER_ISOLATION_API");
+      Deno.env.set("LOG_FORMAT", "text");
+      Deno.env.set("LOG_LEVEL", "WARN");
+      Deno.env.set("NO_COLOR", "1");
+      __resetPoolForTests();
+      __resetInProcessIsolationWarningForTests();
+      __resetLoggerConfigForTests();
+
+      const captured = captureConsoleWarn();
+      try {
+        const response = await executeAppRoute(
+          { GET: () => new Response("ok") },
+          new Request("http://localhost/api/test", { method: "GET" }),
+          makeMatch(),
+          "/api/test",
+          makeAdapter(),
+          {
+            modulePath: "/tmp/test/handler.ts",
+            projectDir: "/tmp/test",
+            isLocalProject: true,
+          },
+        );
+
+        assertEquals(response.status, 200);
+        assertEquals(captured.getOutput(), "");
+      } finally {
+        captured.restore();
+        restoreEnv(envSnapshot);
+        __resetLoggerConfigForTests();
+      }
+    });
   });
 
   describe("body size guard (isolated execution)", () => {
@@ -628,12 +823,14 @@ describe("routing/api/route-executor", () => {
         },
       });
 
-      const request = new Request("http://localhost/api/test", {
-        method: "POST",
-        body: stream,
-        // deno-lint-ignore no-explicit-any
-        duplex: "half" as any,
-      });
+      const request = new Request(
+        "http://localhost/api/test",
+        {
+          method: "POST",
+          body: stream,
+          duplex: "half",
+        } as RequestInit & { duplex: "half" },
+      );
 
       const response = await executeAppRoute(
         handler,

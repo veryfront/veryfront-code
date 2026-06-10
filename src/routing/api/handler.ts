@@ -14,6 +14,7 @@ import { loadHandlerModule } from "./module-loader/loader.ts";
 import { discoverAppRoutes, discoverPagesRoutes } from "./route-discovery.ts";
 import { executeAppRoute, executePagesRoute, type ExecuteRouteOptions } from "./route-executor.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import type { HandlerContext } from "#veryfront/types";
 
 /** Max entries in the loaded-handler LRU cache */
 const HANDLER_CACHE_MAX_ENTRIES = 256;
@@ -129,7 +130,7 @@ export class APIRouteHandler {
     );
   }
 
-  handle(request: Request): Promise<Response | null> {
+  handle(request: Request, ctx?: HandlerContext): Promise<Response | null> {
     const { pathname } = new URL(request.url);
 
     return withSpan(
@@ -192,6 +193,7 @@ export class APIRouteHandler {
         const isolationOptions: ExecuteRouteOptions = {
           modulePath: match.route.page,
           projectDir: this.projectDir,
+          isLocalProject: ctx?.isLocalProject,
         };
 
         const response = isAppRoute
