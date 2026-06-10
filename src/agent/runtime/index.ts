@@ -199,6 +199,20 @@ export class AgentRuntime {
     this.memory = createAgentMemory<Message>(config.memory);
   }
 
+  /**
+   * Persist this turn's input, then resolve the messages to run on. Configured
+   * memory returns the full persisted conversation (this turn + history); the
+   * stateless default persists nothing and returns empty, so we fall back to
+   * this turn's input. That fallback is what keeps concurrent stream()/
+   * generate() calls on a shared instance isolated instead of interleaving into
+   * one conversation.
+   */
+  private async prepareTurnMessages(inputMessages: Message[]): Promise<Message[]> {
+    for (const msg of inputMessages) await this.memory.add(msg);
+    const persisted = await this.memory.getMessages();
+    return persisted.length > 0 ? persisted : inputMessages;
+  }
+
   private async resolveModelTransport(
     context: Record<string, unknown> | undefined,
     modelOverride: string | undefined,
@@ -282,13 +296,7 @@ export class AgentRuntime {
       });
 
       const inputMessages = normalizeInput(input);
-      for (const msg of inputMessages) await this.memory.add(msg);
-      // Configured memory returns the full persisted conversation (this turn +
-      // history). The stateless default persists nothing, so fall back to this
-      // turn's input — each call then runs in isolation, keeping concurrent
-      // calls on a shared instance from mixing into one conversation.
-      const persisted = await this.memory.getMessages();
-      const messages = persisted.length > 0 ? persisted : inputMessages;
+      const messages = await this.prepareTurnMessages(inputMessages);
 
       const systemPrompt = await this.resolveSystemPrompt();
 
@@ -348,13 +356,7 @@ export class AgentRuntime {
       );
     }
 
-    for (const msg of messages) await this.memory.add(msg);
-    // Configured memory returns the full persisted conversation (this turn +
-    // history). The stateless default persists nothing, so fall back to this
-    // turn's input — concurrent streams on a shared instance then stay isolated
-    // instead of interleaving into one conversation.
-    const persisted = await this.memory.getMessages();
-    const memoryMessages = persisted.length > 0 ? persisted : messages;
+    const memoryMessages = await this.prepareTurnMessages(messages);
 
     const systemPrompt = await this.resolveSystemPrompt();
 
