@@ -12,6 +12,7 @@ import {
   globalModuleCache,
   globalTmpDirs,
   releaseTransformSlot,
+  tryAcquireTransformSlot,
 } from "./memory.ts";
 import { verifiedHttpBundlePaths } from "../http-bundle-helpers.ts";
 import { getTransformPerProjectLimit } from "../constants.ts";
@@ -138,6 +139,41 @@ describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
       // A bypassing release must be a no-op (no underflow / phantom entry).
       releaseTransformSlot(projectId, true);
       assertEquals(getTransformStats().activeProjects.has(projectId), false);
+    });
+
+    it("should wake queued acquisitions when a slot is released", async () => {
+      const previousLimit = Deno.env.get("SSR_TRANSFORM_PER_PROJECT_LIMIT");
+      Deno.env.set("SSR_TRANSFORM_PER_PROJECT_LIMIT", "1");
+      resetState();
+
+      const originalSetTimeout = globalThis.setTimeout;
+      try {
+        const projectId = "test-wake-queued-acquire";
+        assertEquals(acquireTransformSlot(projectId), true);
+
+        globalThis.setTimeout = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+          if (timeout === 50) {
+            throw new Error("queued transform slot acquisition should not poll");
+          }
+          return originalSetTimeout(handler, timeout, ...args);
+        }) as typeof globalThis.setTimeout;
+
+        const waiter = tryAcquireTransformSlot(projectId, 1_000);
+        releaseTransformSlot(projectId);
+
+        assertEquals(await waiter, true);
+        assertEquals(getTransformStats().activeProjects.get(projectId), 1);
+
+        releaseTransformSlot(projectId);
+      } finally {
+        globalThis.setTimeout = originalSetTimeout;
+        if (previousLimit === undefined) {
+          Deno.env.delete("SSR_TRANSFORM_PER_PROJECT_LIMIT");
+        } else {
+          Deno.env.set("SSR_TRANSFORM_PER_PROJECT_LIMIT", previousLimit);
+        }
+        resetState();
+      }
     });
   });
 
