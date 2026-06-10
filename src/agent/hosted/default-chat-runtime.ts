@@ -68,6 +68,8 @@ export type DefaultHostedChatRuntimeCreationOptions =
 /** Context for default hosted chat runtime task. */
 export type DefaultHostedChatRuntimeTaskContext = HostedRuntimeStateResolverContext & {
   authToken: string;
+  runId?: string;
+  agentId?: string;
   projectId: string;
   branchId: string | null;
   model: string | undefined;
@@ -136,6 +138,8 @@ function createDefaultTaskContext(
 ): DefaultHostedChatRuntimeTaskContext {
   return {
     authToken: input.options.authToken,
+    runId: input.options.runId,
+    agentId: input.options.agentId,
     projectId: input.options.projectId ?? "",
     branchId: input.options.branchId ?? null,
     model: input.modelId,
@@ -320,6 +324,8 @@ export async function createDefaultHostedChatRuntime(
       cleanup,
       agent: createHostedChatRuntimeAgentAdapter({
         runtimeAgent,
+        runId: taskContext.runId,
+        agentId: taskContext.agentId,
         runStream: (operation) =>
           runWithDefaultHostedRequestContext({
             taskContext,

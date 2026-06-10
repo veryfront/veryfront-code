@@ -95,6 +95,8 @@ export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingC
   branchId?: string | null;
   authToken: string;
   instructions: string | ChatSystemMessage[];
+  runId?: string;
+  agentId?: string;
   model?: string;
   temperature?: number;
   maxSteps?: number;

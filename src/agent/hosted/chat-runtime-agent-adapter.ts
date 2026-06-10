@@ -21,6 +21,8 @@ export type HostedChatRuntimeAgentAdapterWarning = {
 /** Input payload for hosted chat runtime agent adapter. */
 export type HostedChatRuntimeAgentAdapterInput = {
   runtimeAgent: Pick<Agent, "stream">;
+  runId?: string;
+  agentId?: string;
   runStream?: HostedChatRuntimeAgentAdapterRunner;
   warnOrphanedToolInput?: (
     message: string,
@@ -45,6 +47,8 @@ export function createHostedChatRuntimeAgentAdapter(
         input.runtimeAgent.stream({
           messages: streamInput.messages,
           context: {
+            ...(input.runId ? { runId: input.runId } : {}),
+            ...(input.agentId ? { agentId: input.agentId } : {}),
             abortSignal: streamInput.abortSignal,
             publishDataEvent: (event: ToolExecutionDataEvent) => publishDataEvent(event),
           },

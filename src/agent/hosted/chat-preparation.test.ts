@@ -154,6 +154,13 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
     branchId: "branch-1",
     environmentContext: "Browser workspace",
     rootRunContext: {
+      durableRootRun: {
+        runId: "run-1",
+        conversationId: "conversation-1",
+        messageId: "message-1",
+        latestEventId: 1,
+        latestExternalEventSequence: 1,
+      },
       effectiveParentRunId: "run-1",
       effectiveParentMessageId: "message-1",
       publishParentRunEvents: (events) => {
@@ -209,6 +216,8 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
     allowedTools: ["load_skill"],
     allowDelegation: false,
     conversationId: "conversation-1",
+    runId: "run-1",
+    agentId: "agent-1",
     parentRunId: "run-1",
     parentMessageId: "message-1",
     availableSkillIds: ["debug"],

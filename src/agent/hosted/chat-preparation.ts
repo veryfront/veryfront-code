@@ -55,6 +55,7 @@ export type PrepareHostedChatRuntimeMessagesOptions =
 
 /** Context for hosted chat runtime preparation root run. */
 export type HostedChatRuntimePreparationRootRunContext = {
+  durableRootRun?: HostedConversationRootRunContext["durableRootRun"];
   effectiveParentRunId?: string;
   effectiveParentMessageId?: string;
   publishParentRunEvents?: (events: ConversationRunEvent[]) => Promise<void>;
@@ -80,6 +81,7 @@ export type HostedChatRuntimeInstructionsInput<TRuntimeAgentDefinition> = {
 export type HostedChatRuntimeCreationPreparationInput<TRuntimeAgentDefinition> = {
   request: ParsedHostedChatRequest;
   agentConfig: TRuntimeAgentDefinition & {
+    id: string;
     model?: string;
     thinking?: RuntimeAgentThinkingConfig;
     maxSteps?: number;
@@ -300,6 +302,10 @@ export async function prepareHostedChatRuntimeCreationOptions<
         ? { allowDelegation: input.request.allowDelegation }
         : {}),
       ...(input.conversationId ? { conversationId: input.conversationId } : {}),
+      ...(input.rootRunContext?.durableRootRun?.runId
+        ? { runId: input.rootRunContext.durableRootRun.runId }
+        : {}),
+      agentId: input.agentConfig.id,
       ...(input.rootRunContext?.effectiveParentRunId
         ? { parentRunId: input.rootRunContext.effectiveParentRunId }
         : {}),

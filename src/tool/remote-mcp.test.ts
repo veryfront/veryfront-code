@@ -93,6 +93,51 @@ describe("tool/remote-mcp", () => {
     });
   });
 
+  it("sends run-scoped execution context as MCP call metadata", async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    const source = createRemoteMCPToolSource({
+      id: "veryfront-mcp",
+      endpoint: "https://mcp.test",
+      headers: { Authorization: "Bearer remote-token" },
+    });
+
+    await withMockFetch(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        requestBody = await request.json();
+
+        return Response.json({
+          jsonrpc: "2.0",
+          id: "veryfront-mcp:tools:call:gmail__get_profile",
+          result: {
+            content: [],
+            structuredContent: { ok: true },
+          },
+        });
+      },
+      async () =>
+        await source.executeTool("gmail__get_profile", {}, {
+          projectId: "project-1",
+          runId: "run-1",
+          agentId: "gmail-agent",
+        }),
+    );
+
+    assertEquals(requestBody, {
+      jsonrpc: "2.0",
+      id: "veryfront-mcp:tools:call:gmail__get_profile",
+      method: "tools/call",
+      params: {
+        name: "gmail__get_profile",
+        arguments: {},
+        _meta: {
+          run_id: "run-1",
+          agent_id: "gmail-agent",
+        },
+      },
+    });
+  });
+
   it("prefers structuredContent for MCP isError tool results", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
