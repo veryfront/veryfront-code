@@ -31,6 +31,10 @@ export interface UseUploadsResult {
   refresh: () => Promise<void>;
 }
 
+export function buildUploadResourceUrl(api: string, id: string): string {
+  return `${api}/${encodeURIComponent(id)}`;
+}
+
 /**
  * useUploads hook for managing RAG upload lifecycle.
  */
@@ -90,7 +94,7 @@ export function useUploads(options: UseUploadsOptions): UseUploadsResult {
     async (id: string): Promise<void> => {
       setError(null);
       try {
-        await fetch(`${options.api}/${id}`, { method: "DELETE" });
+        await fetch(buildUploadResourceUrl(options.api, id), { method: "DELETE" });
         await refresh();
       } catch (error) {
         console.debug("useUploads: failed to delete upload", error);
