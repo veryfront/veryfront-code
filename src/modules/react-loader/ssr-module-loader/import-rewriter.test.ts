@@ -127,4 +127,46 @@ describe("rewriteLocalImports", () => {
     assertEquals(result.includes("file:///tmp/A.js"), true);
     assertEquals(result.includes("file:///tmp/B.js"), true);
   });
+
+  it("uses one replacement regex for local imports", () => {
+    const originalRegExp = globalThis.RegExp;
+    const constructedPatterns: string[] = [];
+
+    class CountingRegExp extends originalRegExp {
+      constructor(pattern: string | RegExp, flags?: string) {
+        constructedPatterns.push(String(pattern));
+        super(pattern, flags);
+      }
+    }
+
+    Object.defineProperty(globalThis, "RegExp", {
+      configurable: true,
+      value: CountingRegExp,
+    });
+
+    try {
+      const map = new Map([
+        ["./A", "/tmp/A.js"],
+        ["./B", "/tmp/B.js"],
+        ["./C", "/tmp/C.js"],
+      ]);
+      const code = [
+        `import { A } from "./A.js";`,
+        `import { B } from "./B.js";`,
+        `import { C } from "./C.js";`,
+      ].join("\n");
+
+      const result = rewriteLocalImports(code, map, "/project/src/index.tsx", projectDir);
+
+      assertEquals(result.includes("file:///tmp/A.js"), true);
+      assertEquals(result.includes("file:///tmp/B.js"), true);
+      assertEquals(result.includes("file:///tmp/C.js"), true);
+      assertEquals(constructedPatterns.length, 1);
+    } finally {
+      Object.defineProperty(globalThis, "RegExp", {
+        configurable: true,
+        value: originalRegExp,
+      });
+    }
+  });
 });
