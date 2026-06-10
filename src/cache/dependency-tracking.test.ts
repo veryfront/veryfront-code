@@ -126,6 +126,43 @@ describe("Dependency tracking cache invalidation", () => {
 
       expect(reads.get("/project/components/shared.js")).toBe(1);
     });
+
+    it("does not deadlock concurrent roots with circular local imports in one cache", async () => {
+      const files = new Map<string, string>([
+        ["/project/pages/a.js", `import { b } from "./b.ts"; export const a = b;`],
+        ["/project/pages/b.js", `import { a } from "./a.ts"; export const b = a;`],
+      ]);
+      const reads = new Map<string, number>();
+      const cache = createDependencyHashCache();
+
+      const getContent = async (path: string): Promise<string> => {
+        reads.set(path, (reads.get(path) ?? 0) + 1);
+        await Promise.resolve();
+        const content = files.get(path);
+        if (content == null) throw new Error(`not found: ${path}`);
+        return content;
+      };
+
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      const hashes = await Promise.race([
+        Promise.all([
+          computeDepsHash("/project/pages/a.js", getContent, "/project", cache),
+          computeDepsHash("/project/pages/b.js", getContent, "/project", cache),
+        ]),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(
+            () => reject(new Error("timed out waiting for dependency hashes")),
+            100,
+          );
+        }),
+      ]).finally(() => {
+        if (timeout !== undefined) clearTimeout(timeout);
+      });
+
+      expect(hashes[0]).toBe(hashes[1]);
+      expect(reads.get("/project/pages/a.js")).toBe(1);
+      expect(reads.get("/project/pages/b.js")).toBe(1);
+    });
   });
 
   describe("computeConfigHash", () => {
