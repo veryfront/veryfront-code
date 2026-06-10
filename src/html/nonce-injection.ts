@@ -197,12 +197,12 @@ export function addNonceToHtmlStream(
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
   let buffer = "";
+  let lowerBuffer = "";
   let rawTextTag: "script" | "style" | null = null;
 
   function transformBuffer(flush: boolean): string {
     let result = "";
     let index = 0;
-    const lowerBuffer = buffer.toLowerCase();
 
     while (index < buffer.length) {
       if (rawTextTag) {
@@ -277,7 +277,10 @@ export function addNonceToHtmlStream(
       }
     }
 
-    buffer = buffer.slice(index);
+    if (index > 0) {
+      buffer = buffer.slice(index);
+      lowerBuffer = buffer.toLowerCase();
+    }
     return result;
   }
 
@@ -297,7 +300,9 @@ export function addNonceToHtmlStream(
           const { done, value } = await reader.read();
 
           if (done) {
-            buffer += decoder.decode();
+            const decoded = decoder.decode();
+            buffer += decoded;
+            lowerBuffer += decoded.toLowerCase();
             const transformed = transformBuffer(true);
             if (transformed) controller.enqueue(encoder.encode(transformed));
             controller.close();
@@ -305,7 +310,9 @@ export function addNonceToHtmlStream(
             return;
           }
 
-          buffer += decoder.decode(value, { stream: true });
+          const decoded = decoder.decode(value, { stream: true });
+          buffer += decoded;
+          lowerBuffer += decoded.toLowerCase();
           const transformed = transformBuffer(false);
           if (transformed) {
             controller.enqueue(encoder.encode(transformed));

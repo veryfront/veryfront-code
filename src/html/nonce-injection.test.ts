@@ -133,4 +133,71 @@ describe("html/nonce-injection", () => {
         '<style nonce="nonce-123">.chat{color:red}</style>',
     );
   });
+
+  it("keeps streamed lowercase tracking aligned after expanding lowercase characters", async () => {
+    const encoder = new TextEncoder();
+    const chunks = [
+      "İ<div></div>",
+      "<script>x</script><style>y</style>",
+    ];
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) {
+          controller.enqueue(encoder.encode(chunk));
+        }
+        controller.close();
+      },
+    });
+
+    const html = await readUtf8Stream(addNonceToHtmlStream(stream, "nonce-123"));
+
+    assertEquals(
+      html,
+      'İ<div></div><script nonce="nonce-123">x</script><style nonce="nonce-123">y</style>',
+    );
+  });
+
+  it("lowercases only newly received stream text while a tag is incomplete", async () => {
+    const originalToLowerCase = String.prototype.toLowerCase;
+    let lowercasedChars = 0;
+
+    Object.defineProperty(String.prototype, "toLowerCase", {
+      configurable: true,
+      value: function toLowerCaseSpy(this: string): string {
+        lowercasedChars += String(this).length;
+        return originalToLowerCase.call(this);
+      },
+    });
+
+    try {
+      const encoder = new TextEncoder();
+      const chunks = [
+        "<script",
+        " ".repeat(1_000),
+        " ".repeat(1_000),
+        " ".repeat(1_000),
+        " ".repeat(1_000),
+        " ".repeat(1_000),
+        ">x</script>",
+      ];
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (const chunk of chunks) {
+            controller.enqueue(encoder.encode(chunk));
+          }
+          controller.close();
+        },
+      });
+
+      const html = await readUtf8Stream(addNonceToHtmlStream(stream, "nonce-123"));
+
+      assertEquals(html, `<script${" ".repeat(5_000)} nonce="nonce-123">x</script>`);
+      assertEquals(lowercasedChars < 10_000, true);
+    } finally {
+      Object.defineProperty(String.prototype, "toLowerCase", {
+        configurable: true,
+        value: originalToLowerCase,
+      });
+    }
+  });
 });
