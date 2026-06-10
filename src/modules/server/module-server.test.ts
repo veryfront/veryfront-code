@@ -205,6 +205,54 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(text.includes("version"), true);
   });
 
+  it("should serve dnt-relative deno.js as embedded JS instead of project deno.json", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-deno-module-" });
+    try {
+      await Deno.writeTextFile(
+        `${projectDir}/deno.json`,
+        JSON.stringify({ imports: { veryfront: "npm:veryfront" } }),
+      );
+
+      const response = await serve(
+        new Request("http://localhost:3000/_vf_modules/deno.js"),
+        projectDir,
+      );
+
+      assertEquals(response.status, 200);
+      const contentType = response.headers.get("content-type") ?? "";
+      assertEquals(contentType.includes("javascript"), true);
+
+      const text = await response.text();
+      assertEquals(text.includes("export"), true);
+      assertEquals(text.includes(VERSION), true);
+      assertEquals(text.includes('"imports"'), false);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("should prefer project deno.js over the dnt-relative deno fallback", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-project-deno-module-" });
+    try {
+      await Deno.writeTextFile(
+        `${projectDir}/deno.js`,
+        `export const projectDenoModule = true;\n`,
+      );
+
+      const response = await serve(
+        new Request("http://localhost:3000/_vf_modules/deno.js"),
+        projectDir,
+      );
+
+      assertEquals(response.status, 200);
+      const text = await response.text();
+      assertEquals(text.includes("projectDenoModule"), true);
+      assertEquals(text.includes(VERSION), false);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   it("caches missing project module lookups", async () => {
     clearSourceMissCache("module-server");
     const adapter = createMockAdapter();

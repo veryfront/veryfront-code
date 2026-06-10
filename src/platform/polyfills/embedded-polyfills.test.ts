@@ -82,4 +82,11 @@ describe("Embedded Polyfills", () => {
       EMBEDDED_POLYFILLS["_dnt.polyfills"],
     );
   });
+
+  it("dnt-relative deno.js uses the #deno-config browser module", () => {
+    assertEquals(
+      EMBEDDED_POLYFILLS["deno"],
+      EMBEDDED_POLYFILLS["_veryfront/_deno-config"],
+    );
+  });
 });
