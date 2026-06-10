@@ -115,6 +115,157 @@ describe("agent provider transport hooks", () => {
     assertEquals(captured.generateOptions.temperature, 0.2);
   });
 
+  it("omits temperature for Claude Opus 4.8 generate requests", async () => {
+    const captured: {
+      generateOptions?: Record<string, unknown>;
+    } = {};
+
+    const transportModel: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/gateway-model",
+      async doGenerate(options: unknown) {
+        captured.generateOptions = options as Record<string, unknown>;
+        return {
+          content: [{ type: "text", text: "opus generate" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return { stream: createTextStream([{ type: "finish" }]) };
+      },
+    };
+
+    const assistant = agent({
+      model: "anthropic/claude-opus-4-8",
+      system: "You are a helpful assistant.",
+      temperature: 0,
+      resolveModelTransport: () => ({ model: transportModel }),
+    });
+
+    await assistant.generate({ input: "Hello" });
+
+    assertExists(captured.generateOptions);
+    assertEquals("temperature" in captured.generateOptions, false);
+  });
+
+  it("omits temperature for Claude Opus 4.8 stream requests", async () => {
+    const captured: {
+      streamOptions?: Record<string, unknown>;
+    } = {};
+
+    const transportModel: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/gateway-model",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream(options: unknown) {
+        captured.streamOptions = options as Record<string, unknown>;
+        return {
+          stream: createTextStream([
+            { type: "text-delta", text: "opus stream" },
+            { type: "finish" },
+          ]),
+        };
+      },
+    };
+
+    const assistant = agent({
+      model: "anthropic/claude-opus-4-8",
+      system: "You are a helpful assistant.",
+      temperature: 0,
+      resolveModelTransport: () => ({ model: transportModel }),
+    });
+
+    const response = (await assistant.stream({ input: "Hello" })).toDataStreamResponse();
+    const body = await response.text();
+
+    assertStringIncludes(body, "opus stream");
+    assertExists(captured.streamOptions);
+    assertEquals("temperature" in captured.streamOptions, false);
+  });
+
+  it("omits temperature for Veryfront Cloud Claude Opus 4.8 generate requests", async () => {
+    const captured: {
+      generateOptions?: Record<string, unknown>;
+    } = {};
+
+    const transportModel: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/gateway-model",
+      async doGenerate(options: unknown) {
+        captured.generateOptions = options as Record<string, unknown>;
+        return {
+          content: [{ type: "text", text: "cloud opus generate" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return { stream: createTextStream([{ type: "finish" }]) };
+      },
+    };
+
+    const assistant = agent({
+      model: "veryfront-cloud/anthropic/claude-opus-4-8",
+      system: "You are a helpful assistant.",
+      temperature: 0,
+      resolveModelTransport: () => ({ model: transportModel }),
+    });
+
+    await assistant.generate({ input: "Hello" });
+
+    assertExists(captured.generateOptions);
+    assertEquals("temperature" in captured.generateOptions, false);
+  });
+
+  it("preserves temperature for other hosted models", async () => {
+    const cases = [
+      { model: "anthropic/claude-sonnet-4-6", temperature: 0 },
+      { model: "openai/gpt-5.5", temperature: 0.2 },
+      { model: "google-ai-studio/gemini-3.1-pro-preview", temperature: 0.7 },
+    ];
+
+    for (const testCase of cases) {
+      const captured: {
+        generateOptions?: Record<string, unknown>;
+      } = {};
+
+      const transportModel: ModelRuntime = {
+        provider: "hosted",
+        modelId: "hosted/gateway-model",
+        async doGenerate(options: unknown) {
+          captured.generateOptions = options as Record<string, unknown>;
+          return {
+            content: [{ type: "text", text: "other model generate" }],
+            finishReason: "stop",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          };
+        },
+        async doStream() {
+          return { stream: createTextStream([{ type: "finish" }]) };
+        },
+      };
+
+      const assistant = agent({
+        model: testCase.model,
+        system: "You are a helpful assistant.",
+        temperature: testCase.temperature,
+        resolveModelTransport: () => ({ model: transportModel }),
+      });
+
+      await assistant.generate({ input: "Hello" });
+
+      assertExists(captured.generateOptions);
+      assertEquals(captured.generateOptions.temperature, testCase.temperature);
+    }
+  });
+
   it("lets hosts attach request-aware transport options while still using the registered provider runtime for stream()", async () => {
     const captured: {
       request?: ModelTransportRequest;

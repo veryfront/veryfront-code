@@ -504,7 +504,7 @@ export function generateText(options: GenerateTextOptions): PromiseLike<RuntimeG
     options.model.doGenerate({
       prompt: toRuntimePrompt(normalizeSystemPrompt(options.system), options.messages),
       maxOutputTokens: options.maxOutputTokens,
-      temperature: options.temperature,
+      ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
       topP: options.topP,
       topK: options.topK,
       stopSequences: options.stopSequences,
@@ -529,7 +529,7 @@ export function streamText(options: StreamTextOptions): RuntimeStreamResult {
     options.model.doStream({
       prompt: toRuntimePrompt(normalizeSystemPrompt(options.system), options.messages),
       maxOutputTokens: options.maxOutputTokens,
-      temperature: options.temperature,
+      ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
       topP: options.topP,
       topK: options.topK,
       stopSequences: options.stopSequences,

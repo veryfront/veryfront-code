@@ -123,7 +123,7 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
 
     assertEquals(parts, [
       { type: "reasoning-start", id: "thinking-0" },
-      { type: "reasoning-end", id: "thinking-0" },
+      { type: "reasoning-end", id: "thinking-0", redactedData: "encrypted" },
       { type: "finish", finishReason: null },
     ]);
   });
