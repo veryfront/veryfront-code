@@ -42,21 +42,31 @@ import {
   type RuntimeRemoteToolConfig,
 } from "./mcp-server-tool-sources.ts";
 import {
-  type ChatStreamState,
   createStreamState,
   processStream,
-  type StreamingToolCall,
   type StreamingToolResult,
 } from "./chat-stream-handler.ts";
 import { repairToolCall } from "./repair-tool-call.ts";
-import { stripLeadingEmptyObjectPlaceholder } from "../streaming/data-stream.ts";
 import { MiddlewareChain } from "../middleware/chain.ts";
 import { AGENT_DEFAULTS } from "./defaults.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import type { ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
 import { isLocalModelRuntime } from "#veryfront/provider/runtime-inspection.ts";
 import { generateText, streamText } from "#veryfront/runtime/runtime-bridge.ts";
-import type { RuntimeToolSet } from "./runtime-tool-types.ts";
+import {
+  captureStreamedToolCallInput,
+  collectFinalStreamToolResults,
+  collectGeneratedToolResults,
+  createToolErrorMessage,
+  createToolResultMessage,
+  getProviderExecutedToolNames,
+  getToolResultError,
+  isRecoverablePlaceholderToolCall,
+  isStreamedToolCallIncomplete,
+  isToolResultPart,
+  materializeStreamedToolCall,
+  shouldContinueAfterStreamStep,
+} from "./tool-result-continuation.ts";
 
 // Re-export from submodules
 export { closeSSEStream, generateMessageId, sendSSE } from "./sse-utils.ts";
@@ -102,15 +112,21 @@ export {
   DEFAULT_TEMPERATURE,
   MAX_STREAM_BUFFER_SIZE,
 } from "./constants.ts";
+export {
+  captureStreamedToolCallInput,
+  collectFinalStreamToolResults,
+  collectGeneratedToolResults,
+  collectPersistedToolResults,
+  isRecoverablePlaceholderToolCall,
+  isStreamedToolCallIncomplete,
+  materializeStreamedToolCall,
+  shouldContinueAfterStreamStep,
+  type StreamedToolCallMaterialization,
+} from "./tool-result-continuation.ts";
 
 import { DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE, getModelMaxOutputTokens } from "./constants.ts";
 import { closeSSEStream, generateMessageId, sendSSE } from "./sse-utils.ts";
-import {
-  executeConfiguredTool,
-  getAvailableTools,
-  isDynamicTool,
-  parseToolArgs,
-} from "./tool-helpers.ts";
+import { executeConfiguredTool, getAvailableTools, isDynamicTool } from "./tool-helpers.ts";
 import { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
 import {
   filterToolsForSkill,
@@ -143,14 +159,6 @@ function isAbortError(error: unknown, abortSignal?: AbortSignal): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
-function getToolResultError(result: unknown): string | undefined {
-  if (!result || typeof result !== "object" || !("error" in result)) {
-    return undefined;
-  }
-
-  return stringifyToolError(result.error);
-}
-
 function getSkillActivationRequiredError(toolName: string): string {
   return `Tool "${toolName}" cannot run before load_skill succeeds in the same step. ` +
     `Call "${LOAD_SKILL_TOOL_ID}" first to establish the active skill context.`;
@@ -163,327 +171,6 @@ function warnLocalToolSkipping(agentId: string, modelId: string): void {
       "Set VERYFRONT_API_TOKEN and VERYFRONT_PROJECT_SLUG, or configure " +
       "OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY for full tool support.",
   );
-}
-
-function createToolResultMessage(
-  toolCallId: string,
-  toolName: string,
-  result: unknown,
-  providerExecuted = false,
-): Message {
-  return {
-    id: `tool_${toolCallId}`,
-    role: "tool",
-    parts: [
-      {
-        type: "tool-result",
-        toolCallId,
-        toolName,
-        result,
-        ...(providerExecuted ? { providerExecuted: true } : {}),
-      },
-    ],
-    timestamp: Date.now(),
-  };
-}
-
-function createToolErrorMessage(toolCallId: string, toolName: string, error: string): Message {
-  return {
-    id: `tool_error_${toolCallId}`,
-    role: "tool",
-    parts: [
-      {
-        type: "tool-result",
-        toolCallId,
-        toolName,
-        result: { error },
-      },
-    ],
-    timestamp: Date.now(),
-  };
-}
-
-function getProviderExecutedToolNames(runtimeTools: RuntimeToolSet | undefined): string[] {
-  if (!runtimeTools) {
-    return [];
-  }
-
-  return Object.entries(runtimeTools).flatMap(([toolName, definition]) => {
-    if (
-      definition &&
-      typeof definition === "object" &&
-      "type" in definition &&
-      definition.type === "provider"
-    ) {
-      return [toolName];
-    }
-
-    return [];
-  });
-}
-
-export function collectFinalStreamToolResults(
-  state: Pick<ChatStreamState, "toolResults">,
-): Map<string, StreamingToolResult> {
-  const finalToolResults = new Map<string, StreamingToolResult>();
-
-  for (const toolResult of state.toolResults) {
-    if (toolResult.preliminary === true) {
-      continue;
-    }
-
-    finalToolResults.set(toolResult.toolCallId, toolResult);
-  }
-
-  return finalToolResults;
-}
-
-export function collectPersistedToolResults(
-  messages: Message[],
-): Map<string, ToolResultPart> {
-  const persistedToolResults = new Map<string, ToolResultPart>();
-
-  for (const message of messages) {
-    if (message.role !== "tool") {
-      continue;
-    }
-
-    for (const part of message.parts) {
-      if (!isToolResultPart(part)) {
-        continue;
-      }
-
-      persistedToolResults.set(part.toolCallId, part);
-    }
-  }
-
-  return persistedToolResults;
-}
-
-export function collectGeneratedToolResults(
-  toolResults: RuntimeGenerateToolResult[] | undefined,
-): Map<string, RuntimeGenerateToolResult> {
-  const generatedToolResults = new Map<string, RuntimeGenerateToolResult>();
-
-  for (const toolResult of toolResults ?? []) {
-    generatedToolResults.set(toolResult.toolCallId, toolResult);
-  }
-
-  return generatedToolResults;
-}
-
-export function shouldContinueAfterStreamStep(
-  state: Pick<ChatStreamState, "accumulatedText" | "finishReason" | "toolCalls" | "toolResults">,
-): boolean {
-  if (!state.toolCalls.size) {
-    return false;
-  }
-
-  const streamedToolCalls = Array.from(state.toolCalls.values());
-  const hasIncompleteToolCall = streamedToolCalls.some(isStreamedToolCallIncomplete);
-  const hasFinalizedClientToolCall = streamedToolCalls.some((toolCall) =>
-    toolCall.inputAvailable === true && toolCall.providerExecuted !== true
-  );
-  const hasProviderExecutedToolCall = streamedToolCalls.some((toolCall) =>
-    toolCall.providerExecuted === true
-  );
-  // A non-finalized call whose only accumulated arguments are a bare
-  // empty-object placeholder is provisional streamed input the model never
-  // committed. We can recover by re-calling the model, so it must not block
-  // continuation (unlike a truncated/dead partial-JSON call).
-  const hasIncompleteDeadToolCall = streamedToolCalls.some(
-    (toolCall) =>
-      isStreamedToolCallIncomplete(toolCall) &&
-      !isRecoverablePlaceholderToolCall(toolCall),
-  );
-  const hasRecoverablePlaceholderToolCall = streamedToolCalls.some(
-    isRecoverablePlaceholderToolCall,
-  );
-
-  if (state.finishReason === "tool-calls") {
-    if (hasIncompleteDeadToolCall) {
-      return false;
-    }
-    if (hasProviderExecutedToolCall && !hasFinalizedClientToolCall) {
-      return false;
-    }
-    // Recover provisional placeholders by re-calling the model even when no
-    // client tool call finalized in this step.
-    if (hasRecoverablePlaceholderToolCall && !hasFinalizedClientToolCall) {
-      return true;
-    }
-    return !hasIncompleteToolCall && hasFinalizedClientToolCall;
-  }
-
-  if (state.finishReason !== "stop") {
-    return false;
-  }
-
-  if (state.accumulatedText.trim().length > 0) {
-    return false;
-  }
-
-  const finalToolResults = collectFinalStreamToolResults(state);
-  if (!finalToolResults.size) {
-    for (const toolCall of state.toolCalls.values()) {
-      if (toolCall.inputAvailable !== true || toolCall.providerExecuted === true) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  for (const [toolCallId, toolCall] of state.toolCalls) {
-    const toolResult = finalToolResults.get(toolCallId);
-    if (!toolResult) {
-      return false;
-    }
-
-    if (toolCall.providerExecuted !== true && toolResult.providerExecuted !== true) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-export function captureStreamedToolCallInput(
-  toolCall: Pick<StreamingToolCall, "arguments">,
-): {
-  args: Record<string, unknown>;
-  inputText?: string;
-  parseError?: string;
-} {
-  const { args, error } = parseToolArgs(toolCall.arguments);
-  return {
-    args,
-    ...(toolCall.arguments.length > 0 ? { inputText: toolCall.arguments } : {}),
-    ...(error ? { parseError: error } : {}),
-  };
-}
-
-/**
- * A streamed tool call is "incomplete" when the provider stream terminated
- * (abort, stall, timeout, transport error) before the SDK emitted the
- * finalizing `tool-call` event that sets `inputAvailable: true`. In that state
- * `arguments` only holds partial JSON fragments from `tool-input-delta` events,
- * so the tool call is NOT a committed model choice and must not be parsed or
- * executed. This is semantically distinct from a parse failure on a finalized
- * tool call (`inputAvailable: true` but malformed JSON — which only happens on
- * genuine provider bugs) and needs to be reported as a stream-termination
- * error rather than a tool-argument error.
- */
-export function isStreamedToolCallIncomplete(
-  toolCall: Pick<StreamingToolCall, "inputAvailable">,
-): boolean {
-  return toolCall.inputAvailable !== true;
-}
-
-/**
- * A non-finalized streamed tool call is a "recoverable placeholder" when its
- * accumulated `arguments` are empty or only the transient empty-object
- * placeholder `"{}"` (after stripping leading placeholders). This happens when
- * a provider emits `tool-input-start` + a `"{}"` `tool-input-delta` and then
- * finishes the step WITHOUT ever sending the finalizing `tool-call` /
- * `tool-input-end` event — the model never actually committed any arguments.
- *
- * Unlike an incomplete-dead tool call (which carries real truncated partial
- * JSON and must stop the loop to avoid retry storms), a recoverable
- * placeholder carries no committed intent, so the runtime can safely re-call
- * the model to recover the real tool call. Such placeholders must NOT be
- * executed and must NOT surface a stream-termination error.
- */
-export function isRecoverablePlaceholderToolCall(
-  toolCall: Pick<StreamingToolCall, "inputAvailable" | "arguments">,
-): boolean {
-  if (!isStreamedToolCallIncomplete(toolCall)) {
-    return false;
-  }
-  const stripped = stripLeadingEmptyObjectPlaceholder(toolCall.arguments);
-  return stripped === "" || stripped === "{}";
-}
-
-/**
- * Classification of a streamed tool call when we reach end-of-stream and need
- * to persist it into the assistant message. Three distinct cases, each with
- * different semantics downstream:
- *
- * - `complete`: provider emitted the finalizing `tool-call` event and the
- *   arguments parsed cleanly. Execute the tool normally.
- * - `parse-error`: provider emitted the finalizing `tool-call` event but the
- *   arguments are not valid JSON. This is a provider/SDK bug; record it as a
- *   tool-argument error so the step can recover.
- * - `incomplete`: stream terminated before the finalizing event fired. The
- *   model never committed this tool use; record it as a stream-termination
- *   error so the parent (e.g. child-fork watchdog) can decide whether to
- *   retry the step cleanly instead of seeing a malformed tool call.
- */
-export type StreamedToolCallMaterialization =
-  | { readonly kind: "complete"; readonly part: MessagePart }
-  | {
-    readonly kind: "parse-error";
-    readonly part: MessagePart;
-    readonly parseError: string;
-  }
-  | {
-    readonly kind: "incomplete";
-    readonly part: MessagePart;
-    readonly partialArgumentsLength: number;
-    readonly partialArgumentsPreview: string;
-  };
-
-/**
- * Classify and build the persisted `MessagePart` for a single streamed tool
- * call. Pure function — no logging, no SSE, no memory. Callers decide what to
- * do with the result so this stays unit-testable.
- *
- * The resulting `part` is always pushed into the assistant message so the
- * conversation history is transparent: even incomplete tool calls leave a
- * visible trace with their partial `inputText`. What differs is the caller's
- * error-surfacing behavior (log warning, SSE event, tool-result error).
- */
-export function materializeStreamedToolCall(
-  tc: StreamingToolCall,
-): StreamedToolCallMaterialization {
-  const providerExecutedPart: { providerExecuted?: true } = tc.providerExecuted === true
-    ? { providerExecuted: true }
-    : {};
-  const basePart: MessagePart & { providerExecuted?: true } = {
-    type: `tool-${tc.name}`,
-    toolCallId: tc.id,
-    toolName: tc.name,
-    args: {},
-    ...(tc.arguments.length > 0 ? { inputText: tc.arguments } : {}),
-    ...providerExecutedPart,
-  };
-
-  if (isStreamedToolCallIncomplete(tc)) {
-    return {
-      kind: "incomplete",
-      part: basePart,
-      partialArgumentsLength: tc.arguments.length,
-      partialArgumentsPreview: tc.arguments.slice(0, 200),
-    };
-  }
-
-  const capturedInput = captureStreamedToolCallInput(tc);
-  const part: MessagePart & { providerExecuted?: true } = {
-    type: `tool-${tc.name}`,
-    toolCallId: tc.id,
-    toolName: tc.name,
-    args: capturedInput.args,
-    ...(capturedInput.inputText ? { inputText: capturedInput.inputText } : {}),
-    ...providerExecutedPart,
-  };
-
-  if (capturedInput.parseError) {
-    return { kind: "parse-error", part, parseError: capturedInput.parseError };
-  }
-  return { kind: "complete", part };
-}
-
-function isToolResultPart(part: MessagePart): part is ToolResultPart {
-  return part.type === "tool-result" && "result" in part;
 }
 
 function hydrateActiveSkillStateFromMessages(
