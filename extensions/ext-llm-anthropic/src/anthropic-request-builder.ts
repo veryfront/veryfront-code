@@ -474,6 +474,22 @@ function resolveAnthropicProviderThinkingBudget(
   return undefined;
 }
 
+function usesDeprecatedSamplingParams(modelId: string): boolean {
+  return /claude-opus-4-[7-9]/.test(modelId);
+}
+
+function stripAnthropicSamplingParams(
+  options: Record<string, unknown>,
+): Record<string, unknown> {
+  const sanitized = { ...options };
+  delete sanitized.temperature;
+  delete sanitized.top_p;
+  delete sanitized.topP;
+  delete sanitized.top_k;
+  delete sanitized.topK;
+  return sanitized;
+}
+
 export function buildAnthropicMessagesRequest(
   modelId: string,
   providerName: string,
@@ -499,6 +515,10 @@ export function buildAnthropicMessagesRequest(
   const providerThinkingBudget = resolveAnthropicProviderThinkingBudget(rawProviderOptions);
   const effectiveThinkingBudget = thinkingBudget ?? providerThinkingBudget;
   const thinkingEnabled = effectiveThinkingBudget !== undefined;
+  const samplingParamsDeprecated = usesDeprecatedSamplingParams(modelId);
+  const providerOptions = samplingParamsDeprecated
+    ? stripAnthropicSamplingParams(rawProviderOptions)
+    : rawProviderOptions;
 
   if (options.presencePenalty !== undefined) {
     warnings.push({
@@ -541,22 +561,24 @@ export function buildAnthropicMessagesRequest(
         `Anthropic accepts at most 4 stop sequences; ${options.stopSequences.length} were provided and the extras were truncated.`,
     });
   }
-  if (thinkingEnabled && options.temperature !== undefined) {
+  if ((thinkingEnabled || samplingParamsDeprecated) && options.temperature !== undefined) {
     warnings.push({
       type: "unsupported-setting",
       provider: "anthropic",
       setting: "temperature",
-      details:
-        "Dropped because Anthropic rejects sampling params when extended thinking is enabled.",
+      details: samplingParamsDeprecated
+        ? "Dropped because this Anthropic model rejects temperature."
+        : "Dropped because Anthropic rejects sampling params when extended thinking is enabled.",
     });
   }
-  if (thinkingEnabled && options.topP !== undefined) {
+  if ((thinkingEnabled || samplingParamsDeprecated) && options.topP !== undefined) {
     warnings.push({
       type: "unsupported-setting",
       provider: "anthropic",
       setting: "topP",
-      details:
-        "Dropped because Anthropic rejects sampling params when extended thinking is enabled.",
+      details: samplingParamsDeprecated
+        ? "Dropped because this Anthropic model rejects top_p."
+        : "Dropped because Anthropic rejects sampling params when extended thinking is enabled.",
     });
   }
   if (options.responseFormat && options.responseFormat.type !== "text") {
@@ -583,10 +605,12 @@ export function buildAnthropicMessagesRequest(
     max_tokens: maxTokens,
     ...(stream ? { stream: true } : {}),
     ...(system ? { system } : {}),
-    ...(!thinkingEnabled && options.temperature !== undefined
+    ...(!thinkingEnabled && !samplingParamsDeprecated && options.temperature !== undefined
       ? { temperature: options.temperature }
       : {}),
-    ...(!thinkingEnabled && options.topP !== undefined ? { top_p: options.topP } : {}),
+    ...(!thinkingEnabled && !samplingParamsDeprecated && options.topP !== undefined
+      ? { top_p: options.topP }
+      : {}),
     ...(options.stopSequences && options.stopSequences.length > 0
       ? { stop_sequences: options.stopSequences.slice(0, 4) }
       : {}),
@@ -606,6 +630,6 @@ export function buildAnthropicMessagesRequest(
     ...(options.anthropicContainer !== undefined ? { container: options.anthropicContainer } : {}),
   };
 
-  Object.assign(body, rawProviderOptions);
+  Object.assign(body, providerOptions);
   return body;
 }

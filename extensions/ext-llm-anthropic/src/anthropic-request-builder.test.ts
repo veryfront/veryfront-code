@@ -249,6 +249,38 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
     ]);
   });
 
+  it("omits deprecated sampling settings for Claude Opus 4.8", () => {
+    const prompt: RuntimePromptMessage[] = [
+      { role: "user", content: [{ type: "text", text: "Check my inbox." }] },
+    ];
+    const warnings = createWarningCollector();
+
+    const body = buildAnthropicMessagesRequest(
+      "claude-opus-4-8",
+      "anthropic",
+      {
+        prompt,
+        temperature: 0,
+        topP: 0.9,
+        providerOptions: {
+          anthropic: {
+            temperature: 0,
+            top_p: 0.9,
+          },
+        },
+      },
+      true,
+      warnings,
+    );
+
+    assertEquals(body.temperature, undefined);
+    assertEquals(body.top_p, undefined);
+    assertEquals(warnings.drain().map((warning) => warning.setting), [
+      "temperature",
+      "topP",
+    ]);
+  });
+
   it("compacts completed historical tool rounds before replaying later user turns", () => {
     const prompt: RuntimePromptMessage[] = [
       { role: "user", content: [{ type: "text", text: "Build a briefing." }] },
