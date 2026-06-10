@@ -8,6 +8,8 @@
 export { BaseHandler } from "./http/base-handler.ts";
 export type { HandlerHelpers } from "./http/base-handler.ts";
 
+export { constantTimeEqual } from "./utils/constant-time.ts";
+
 export {
   CommonSchemas,
   createValidatedHandler,

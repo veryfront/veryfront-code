@@ -113,4 +113,59 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       assertEquals(typeof userInfo.email, "string");
     });
   });
+
+  describe("buildOAuthAuthUrl (state binding)", {
+    sanitizeOps: false,
+    sanitizeResources: false,
+  }, () => {
+    const callbackUrl = "http://localhost:9876/callback";
+
+    it("should include a URL-encoded state query parameter", async () => {
+      const { buildOAuthAuthUrl } = await import("./login.ts");
+      const state = "abc123statevalue";
+      const url = buildOAuthAuthUrl("google", callbackUrl, state);
+
+      const parsed = new URL(url);
+      assertEquals(parsed.pathname, "/auth/google");
+      assertEquals(parsed.searchParams.get("state"), state);
+      assertEquals(parsed.searchParams.get("redirect_uri"), callbackUrl);
+    });
+
+    it("should percent-encode special characters in state", async () => {
+      const { buildOAuthAuthUrl } = await import("./login.ts");
+      // A state containing reserved characters must not break out of the query.
+      const state = "a b&c=d#e";
+      const url = buildOAuthAuthUrl("github", callbackUrl, state);
+
+      // Raw reserved characters must be encoded in the URL string.
+      assertEquals(url.includes(" "), false);
+      assertEquals(url.includes("state=a b"), false);
+      // Decoding the query yields the original value back, intact.
+      const parsed = new URL(url);
+      assertEquals(parsed.searchParams.get("state"), state);
+    });
+
+    it("should bind the same state value into the callback server contract", async () => {
+      // The state generated for the flow is the value the loopback server
+      // enforces. generateCallbackState is the CSPRNG source used by login.
+      const { buildOAuthAuthUrl } = await import("./login.ts");
+      const { generateCallbackState } = await import("./callback-server.ts");
+
+      const state = generateCallbackState();
+      const url = buildOAuthAuthUrl("microsoft", callbackUrl, state);
+      const parsed = new URL(url);
+      assertEquals(parsed.searchParams.get("state"), state);
+      assertEquals(state.length, 64);
+    });
+  });
+
+  describe("API token login path", { sanitizeOps: false, sanitizeResources: false }, () => {
+    it("should keep validateToken usable for the non-OAuth path", async () => {
+      // The API-token login path must remain intact alongside the OAuth
+      // state-binding changes. An empty token is rejected without a network
+      // call returning a token.
+      const { validateToken } = await import("./login.ts");
+      assertEquals(await validateToken(""), null);
+    });
+  });
 });

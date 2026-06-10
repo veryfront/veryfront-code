@@ -1,4 +1,5 @@
 import { isDeno } from "veryfront/platform";
+import { constantTimeEqual } from "veryfront/security";
 import { escapeHtml } from "veryfront/utils/html-escape";
 import {
   DEFAULT_CALLBACK_PORT,
@@ -15,6 +16,79 @@ export interface CallbackServer {
   port: number;
   waitForCallback(timeoutMs?: number): Promise<CallbackResult>;
   stop(): Promise<void>;
+}
+
+/** Options for the loopback OAuth callback server. */
+export interface StartCallbackServerOptions {
+  /**
+   * Expected `state` nonce for this login flow (CSRF / session-fixation
+   * binding). When set, the callback accepts a token ONLY when the request
+   * carries a `?state=` that matches this value. Missing or mismatched state
+   * is rejected. Generate this with a CSPRNG (see `generateCallbackState`).
+   * When omitted, state is not enforced (kept for callers that do not pass a
+   * state through the authorization URL).
+   */
+  expectedState?: string;
+}
+
+/**
+ * Generate a cryptographically random `state` nonce for the loopback OAuth
+ * flow. Uses the platform CSPRNG (`crypto.getRandomValues`), never
+ * `Math.random`. Mirrors the server-side web flow in `src/oauth/providers`.
+ */
+export function generateCallbackState(): string {
+  // 32 random bytes rendered as hex (256 bits of entropy).
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Reject callback requests that carry a cross-origin `Origin` header.
+ *
+ * The real CSRF defense for the loopback flow is the single-use `state` nonce
+ * (validated in `handleCallback`); this is a cheap secondary check. A legitimate
+ * top-level browser redirect from the authorization server to
+ * `http://127.0.0.1:<port>/callback` is a GET navigation that carries no
+ * `Origin` header, so a present cross-site `Origin` indicates a programmatic
+ * cross-origin request (login CSRF) and is rejected.
+ *
+ * `Referer` is deliberately NOT used as a rejection trigger: on the https->http
+ * (loopback) downgrade browsers strip or vary it by `Referrer-Policy`, so
+ * rejecting on a cross-site `Referer` would break legitimate logins for no
+ * security gain beyond the `state` nonce.
+ *
+ * Returns `true` when the request must be rejected.
+ */
+function isCrossOriginRequest(headers: { origin: string | null }): boolean {
+  return isForeignHeader(headers.origin);
+}
+
+function isForeignHeader(value: string | null): boolean {
+  // Absent header is the normal case for a top-level redirect: allow it.
+  if (!value) return false;
+  // Some browsers send the opaque "null" origin (e.g. sandboxed/privacy
+  // contexts) for a legitimate top-level navigation. Treat it as not foreign.
+  if (value === "null") return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    // An unparseable Origin/Referer is not a trusted same-origin value.
+    return true;
+  }
+  return !isLoopbackHost(parsed.hostname);
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "[::1]" ||
+    hostname === "::1";
+}
+
+/** Normalize a Node.js header value (`string | string[] | undefined`) to `string | null`. */
+function headerValue(value: string | string[] | undefined): string | null {
+  if (value === undefined) return null;
+  return Array.isArray(value) ? (value[0] ?? null) : value;
 }
 
 function renderSuccessPage(): string {
@@ -168,18 +242,50 @@ function isAddrInUseError(error: unknown): boolean {
   return false;
 }
 
-function handleCallback(url: URL): { result: CallbackResult; html: string } {
-  const token = url.searchParams.get("token");
-  const error = url.searchParams.get("error");
+interface CallbackRequest {
+  url: URL;
+  origin: string | null;
+}
+
+function handleCallback(
+  request: CallbackRequest,
+  expectedState?: string,
+): { result: CallbackResult; html: string } {
+  // Reject browser-initiated cross-origin requests (login CSRF). A legitimate
+  // top-level redirect does not carry a cross-site Origin header.
+  if (isCrossOriginRequest(request)) {
+    const message = "Rejected cross-origin callback request";
+    return { result: { token: "", error: message }, html: renderErrorPage(message) };
+  }
+
+  const token = request.url.searchParams.get("token");
+  const error = request.url.searchParams.get("error");
+  const state = request.url.searchParams.get("state");
 
   if (error) return { result: { token: "", error }, html: renderErrorPage(error) };
+
+  // When a state nonce was generated for this flow, the callback MUST carry a
+  // matching state before any token is accepted. Missing or mismatched state
+  // is a CSRF / session-fixation attempt and is rejected. The state value is
+  // never included in the error message or logged.
+  if (expectedState !== undefined) {
+    if (!state) {
+      const message = "Missing state parameter";
+      return { result: { token: "", error: message }, html: renderErrorPage(message) };
+    }
+    if (!constantTimeEqual(state, expectedState)) {
+      const message = "Invalid state parameter";
+      return { result: { token: "", error: message }, html: renderErrorPage(message) };
+    }
+  }
+
   if (token) return { result: { token }, html: renderSuccessPage() };
 
   const message = "No token received";
   return { result: { token: "", error: message }, html: renderErrorPage(message) };
 }
 
-function tryStartDenoServer(port: number): CallbackServer {
+function tryStartDenoServer(port: number, expectedState?: string): CallbackServer {
   let resolveCallback: (result: CallbackResult) => void = () => {};
   const callbackPromise = new Promise<CallbackResult>((resolve) => {
     resolveCallback = resolve;
@@ -196,7 +302,10 @@ function tryStartDenoServer(port: number): CallbackServer {
         return new Response("Not Found", { status: 404, headers: { Connection: "close" } });
       }
 
-      const { result, html } = handleCallback(url);
+      const { result, html } = handleCallback({
+        url,
+        origin: request.headers.get("origin"),
+      }, expectedState);
       resolveCallback(result);
 
       // Close connection immediately to allow clean server shutdown
@@ -215,10 +324,10 @@ function tryStartDenoServer(port: number): CallbackServer {
   };
 }
 
-function startDenoServer(startPort: number): CallbackServer {
+function startDenoServer(startPort: number, expectedState?: string): CallbackServer {
   for (let port = startPort, i = 0; i < MAX_PORT_ATTEMPTS; i++, port++) {
     try {
-      return tryStartDenoServer(port);
+      return tryStartDenoServer(port, expectedState);
     } catch (error) {
       if (!isAddrInUseError(error) || i === MAX_PORT_ATTEMPTS - 1) {
         throw error;
@@ -229,7 +338,7 @@ function startDenoServer(startPort: number): CallbackServer {
   throw new Error("Could not find an available port");
 }
 
-async function tryStartNodeServer(port: number): Promise<CallbackServer> {
+async function tryStartNodeServer(port: number, expectedState?: string): Promise<CallbackServer> {
   const http = await import("node:http");
 
   let resolveCallback: (result: CallbackResult) => void = () => {};
@@ -246,7 +355,10 @@ async function tryStartNodeServer(port: number): Promise<CallbackServer> {
       return;
     }
 
-    const { result, html } = handleCallback(url);
+    const { result, html } = handleCallback({
+      url,
+      origin: headerValue(req.headers.origin),
+    }, expectedState);
     resolveCallback(result);
 
     res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -270,10 +382,10 @@ async function tryStartNodeServer(port: number): Promise<CallbackServer> {
   };
 }
 
-async function startNodeServer(startPort: number): Promise<CallbackServer> {
+async function startNodeServer(startPort: number, expectedState?: string): Promise<CallbackServer> {
   for (let port = startPort, i = 0; i < MAX_PORT_ATTEMPTS; i++, port++) {
     try {
-      return await tryStartNodeServer(port);
+      return await tryStartNodeServer(port, expectedState);
     } catch (error) {
       if (!isAddrInUseError(error) || i === MAX_PORT_ATTEMPTS - 1) {
         throw error;
@@ -286,9 +398,13 @@ async function startNodeServer(startPort: number): Promise<CallbackServer> {
 
 export async function startCallbackServer(
   preferredPort: number = DEFAULT_CALLBACK_PORT,
+  options: StartCallbackServerOptions = {},
 ): Promise<CallbackServer> {
+  const { expectedState } = options;
   // Server functions handle port retry internally to avoid race conditions
-  return isDeno ? startDenoServer(preferredPort) : startNodeServer(preferredPort);
+  return isDeno
+    ? startDenoServer(preferredPort, expectedState)
+    : startNodeServer(preferredPort, expectedState);
 }
 
 export function getCallbackUrl(port: number): string {

@@ -2,7 +2,7 @@ import { cliLogger } from "#cli/utils";
 import { getStdinReader, setRawMode, writeStdout } from "veryfront/platform";
 import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 import { deleteToken, getTokenLocation, hasToken, readToken, saveToken } from "./token-store.ts";
-import { getCallbackUrl, startCallbackServer } from "./callback-server.ts";
+import { generateCallbackState, getCallbackUrl, startCallbackServer } from "./callback-server.ts";
 import { canOpenBrowser, openBrowser } from "./browser.ts";
 import { isTTY, promptUser } from "../utils/index.ts";
 import { brand, dim, error, muted, success, warning } from "../ui/colors.ts";
@@ -105,6 +105,23 @@ async function promptAuthMethod(): Promise<AuthMethod> {
   }
 }
 
+/**
+ * Build the provider authorization URL for the loopback login flow.
+ *
+ * The `state` nonce binds the browser flow to this CLI process (CSRF /
+ * session-fixation protection) and is URL-encoded. The auth server must echo
+ * `state` back to `redirect_uri` so the callback can verify it.
+ */
+export function buildOAuthAuthUrl(
+  provider: "google" | "github" | "microsoft",
+  callbackUrl: string,
+  state: string,
+): string {
+  return `${getApiUrl()}/auth/${provider}?redirect_uri=${encodeURIComponent(callbackUrl)}&state=${
+    encodeURIComponent(state)
+  }`;
+}
+
 async function loginWithOAuth(provider: "google" | "github" | "microsoft"): Promise<string | null> {
   console.log();
 
@@ -116,16 +133,22 @@ async function loginWithOAuth(provider: "google" | "github" | "microsoft"): Prom
 
   console.log("  " + dim("Starting authentication server..."));
 
+  // CSRF / session-fixation binding: generate a single-use CSPRNG state nonce,
+  // bind the loopback callback to it, and send it on the authorization URL.
+  // The callback accepts a token only when the returned state matches. The
+  // state value must never be logged.
+  const state = generateCallbackState();
+
   let server: Awaited<ReturnType<typeof startCallbackServer>>;
   try {
-    server = await startCallbackServer();
+    server = await startCallbackServer(undefined, { expectedState: state });
   } catch (e) {
     console.log("  " + error(`Failed to start server: ${e}`));
     return null;
   }
 
   const callbackUrl = getCallbackUrl(server.port);
-  const authUrl = `${getApiUrl()}/auth/${provider}?redirect_uri=${encodeURIComponent(callbackUrl)}`;
+  const authUrl = buildOAuthAuthUrl(provider, callbackUrl, state);
 
   console.log("  " + brand("Opening browser to log in..."));
   console.log();
