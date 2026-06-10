@@ -1,4 +1,5 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { DependencyHashCache } from "#veryfront/cache/dependency-graph.ts";
 
 export interface TransformOptions {
   dev?: boolean;
@@ -11,6 +12,8 @@ export interface TransformOptions {
   studioEmbed?: boolean;
   /** React version for transforms (from project config, defaults to DEFAULT_REACT_VERSION) */
   reactVersion?: string;
+  /** Internal per-render dependency hash cache. */
+  dependencyHashCache?: DependencyHashCache;
 }
 
 export interface TransformContext {
