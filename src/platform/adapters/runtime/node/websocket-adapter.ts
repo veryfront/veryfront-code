@@ -1,4 +1,8 @@
-import type { ServerAdapter, WebSocketUpgrade } from "../../base.ts";
+import {
+  createWebSocketUpgradeResponse,
+  type ServerAdapter,
+  type WebSocketUpgrade,
+} from "../../base.ts";
 import type { WSMessageData, WSWebSocket } from "./types.ts";
 import { createError, toError } from "#veryfront/errors";
 import { serverLogger } from "#veryfront/utils";
@@ -63,17 +67,9 @@ export class NodeServerAdapter implements ServerAdapter {
       ...(protocol ? { "Sec-WebSocket-Protocol": protocol } : {}),
     };
 
-    // Node.js (undici) doesn't allow status 101 in Response constructor.
-    // Create a minimal signal object — only checked for status === 101 upstream.
-    const response = {
-      status: 101,
-      statusText: "Switching Protocols",
-      headers: new Headers(headers),
-      body: null,
-      ok: false,
-    } as unknown as Response;
+    const response = createWebSocketUpgradeResponse({ headers });
 
-    return { socket: socket as unknown as WebSocket, response };
+    return { socket, response };
   }
 
   private generateAcceptKey(key: string): string {

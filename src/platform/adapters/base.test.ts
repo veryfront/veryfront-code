@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { createWebSocketUpgradeResponse, isWebSocketUpgradeResponse } from "./base.ts";
 import type {
   DirEntry,
   EnvironmentAdapter,
@@ -18,6 +19,22 @@ import type {
 } from "./base.ts";
 
 describe("base.ts type exports", () => {
+  describe("WebSocketUpgradeResponse", () => {
+    it("models upgrade responses without constructing a DOM Response", () => {
+      const response = createWebSocketUpgradeResponse({
+        headers: { upgrade: "websocket" },
+      });
+
+      assertEquals(response.status, 101);
+      assertEquals(response.statusText, "Switching Protocols");
+      assertEquals(response.body, null);
+      assertEquals(response.headers.get("upgrade"), "websocket");
+      assertEquals(response instanceof Response, false);
+      assertEquals(isWebSocketUpgradeResponse(response), true);
+      assertEquals(isWebSocketUpgradeResponse(new Response()), false);
+    });
+  });
+
   describe("RuntimeId", () => {
     it("should accept valid runtime identifiers", () => {
       const ids: RuntimeId[] = ["deno", "node", "bun", "cloudflare", "memory"];

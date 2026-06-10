@@ -15,7 +15,7 @@ export class BunServerAdapter implements ServerAdapter {
     const socket = new BunWebSocket();
     const response = new Response(null, { status: 101, statusText: "Switching Protocols" });
 
-    return { socket: socket as unknown as WebSocket, response };
+    return { socket, response };
   }
 }
 
@@ -43,5 +43,39 @@ export class BunWebSocket {
 
   close(_code?: number, _reason?: string): void {
     this.readyState = BunWebSocket.CLOSED;
+  }
+
+  addEventListener(type: string, listener: EventListener): void {
+    switch (type) {
+      case "open":
+        this.onopen = listener as (event: Event) => void;
+        return;
+      case "close":
+        this.onclose = listener as (event: Event) => void;
+        return;
+      case "error":
+        this.onerror = listener as (event: Event) => void;
+        return;
+      case "message":
+        this.onmessage = listener as (event: MessageEvent) => void;
+        return;
+    }
+  }
+
+  removeEventListener(type: string, _listener: EventListener): void {
+    switch (type) {
+      case "open":
+        this.onopen = null;
+        return;
+      case "close":
+        this.onclose = null;
+        return;
+      case "error":
+        this.onerror = null;
+        return;
+      case "message":
+        this.onmessage = null;
+        return;
+    }
   }
 }

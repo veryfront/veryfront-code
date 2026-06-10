@@ -1,12 +1,16 @@
 import { HMR_RATE_LIMIT_WINDOW_MS } from "#veryfront/utils";
+import type { WebSocketConnection } from "#veryfront/platform/adapters/base.ts";
 
 export class RateLimiter {
-  private readonly messageCounts = new Map<WebSocket, { count: number; resetTime: number }>();
+  private readonly messageCounts = new Map<
+    WebSocketConnection,
+    { count: number; resetTime: number }
+  >();
   private readonly windowMs = HMR_RATE_LIMIT_WINDOW_MS;
 
   constructor(private readonly maxMessages: number) {}
 
-  check(socket: WebSocket): boolean {
+  check(socket: WebSocketConnection): boolean {
     const now = Date.now();
     const record = this.messageCounts.get(socket);
 
@@ -20,7 +24,7 @@ export class RateLimiter {
     return true;
   }
 
-  cleanup(socket: WebSocket): void {
+  cleanup(socket: WebSocketConnection): void {
     this.messageCounts.delete(socket);
   }
 }

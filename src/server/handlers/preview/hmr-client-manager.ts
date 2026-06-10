@@ -1,11 +1,12 @@
 import { serverLogger } from "#veryfront/utils";
+import type { WebSocketConnection } from "#veryfront/platform/adapters/base.ts";
 
 const logger = serverLogger.component("hmr-handler");
 
 /** Client metadata for observability */
 export interface HMRClientInfo {
   id: string;
-  socket: WebSocket;
+  socket: WebSocketConnection;
   connectedAt: number;
   projectSlug?: string;
   userAgent?: string;
@@ -69,8 +70,8 @@ export function getClientDetails(): HMRClientDetail[] {
  * Get all open WebSocket connections, optionally filtered by projectSlug.
  * This replaces the old exported `clientSockets` Set that drifted out of sync.
  */
-export function getOpenSockets(projectSlug?: string): WebSocket[] {
-  const sockets: WebSocket[] = [];
+export function getOpenSockets(projectSlug?: string): WebSocketConnection[] {
+  const sockets: WebSocketConnection[] = [];
   for (const client of clientsMap.values()) {
     if (client.socket.readyState !== WebSocket.OPEN) continue;
     if (projectSlug && client.projectSlug !== projectSlug) continue;

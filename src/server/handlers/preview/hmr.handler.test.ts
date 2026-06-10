@@ -4,7 +4,11 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { NOT_SUPPORTED } from "#veryfront/errors";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import type { HandlerContext } from "../types.ts";
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import {
+  createWebSocketUpgradeResponse,
+  type RuntimeAdapter,
+  type WebSocketConnection,
+} from "#veryfront/platform/adapters/base.ts";
 import { HMRHandler } from "./hmr.handler.ts";
 
 const encoder = new TextEncoder();
@@ -86,6 +90,44 @@ function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
     cspUserHeader: null,
     ...overrides,
   } as unknown as HandlerContext;
+}
+
+function createMockSocket(): {
+  socket: WebSocketConnection;
+  sentMessages: string[];
+  emit(type: string, event: unknown): void;
+} {
+  const listeners = new Map<string, Set<EventListener>>();
+  const sentMessages: string[] = [];
+
+  const socket: WebSocketConnection = {
+    readyState: WebSocket.OPEN,
+    send: (message) => {
+      sentMessages.push(String(message));
+    },
+    close: () => {},
+    addEventListener: (type, listener) => {
+      let typeListeners = listeners.get(type);
+      if (!typeListeners) {
+        typeListeners = new Set();
+        listeners.set(type, typeListeners);
+      }
+      typeListeners.add(listener);
+    },
+    removeEventListener: (type, listener) => {
+      listeners.get(type)?.delete(listener);
+    },
+  };
+
+  return {
+    socket,
+    sentMessages,
+    emit: (type, event) => {
+      for (const listener of listeners.get(type) ?? []) {
+        listener(event as Event);
+      }
+    },
+  };
 }
 
 describe("server/handlers/preview/hmr.handler", () => {
@@ -381,6 +423,56 @@ describe("server/handlers/preview/hmr.handler", () => {
   });
 
   describe("handle - websocket upgrade", () => {
+    it("returns an explicit WebSocket upgrade signal from adapter upgrades", async () => {
+      const handler = new HMRHandler();
+      const mock = createMockSocket();
+      const req = new Request("http://localhost/_ws", {
+        headers: { upgrade: "websocket" },
+      });
+      const upgradeResponse = createWebSocketUpgradeResponse();
+      const ctx = makeCtx({
+        isLocalProject: true,
+        adapter: createMockAdapter({
+          upgradeWebSocket: () => ({
+            socket: mock.socket,
+            response: upgradeResponse,
+          }),
+        }),
+      });
+
+      const result = await handler.handle(req, ctx);
+
+      assertEquals(result.continue, false);
+      assertEquals(Object.is(result.response, upgradeResponse), true);
+      assertEquals(result.response instanceof Response, false);
+      assertEquals(result.response!.status, 101);
+    });
+
+    it("preserves data from structurally compatible message events", async () => {
+      const handler = new HMRHandler();
+      const mock = createMockSocket();
+      const req = new Request("http://localhost/_ws", {
+        headers: { upgrade: "websocket" },
+      });
+      const ctx = makeCtx({
+        isLocalProject: true,
+        adapter: createMockAdapter({
+          upgradeWebSocket: () => ({
+            socket: mock.socket,
+            response: createWebSocketUpgradeResponse(),
+          }),
+        }),
+      });
+
+      await handler.handle(req, ctx);
+      mock.emit("message", { data: JSON.stringify({ type: "ping" }) });
+
+      assertEquals(mock.sentMessages, [
+        JSON.stringify({ type: "connected" }),
+        JSON.stringify({ type: "pong" }),
+      ]);
+    });
+
     it("returns 501 when adapter.server is missing", async () => {
       const handler = new HMRHandler();
       const req = new Request("http://localhost/_ws", {

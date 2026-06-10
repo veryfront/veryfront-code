@@ -21,7 +21,7 @@ export class CloudflareServerAdapter implements ServerAdapter {
     };
 
     return {
-      socket: server as unknown as WebSocket,
+      socket: server,
       response: new Response(null, responseInit),
     };
   }
