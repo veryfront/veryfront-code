@@ -164,11 +164,8 @@ export class Renderer {
       });
     })();
 
-    try {
-      await this.initializationPromise;
-    } finally {
-      this.initializationPromise = null;
-    }
+    await this.initializationPromise;
+    this.initializationPromise = null;
   }
 
   renderPage(slug: string, ctx: RenderContext, options?: RenderOptions): Promise<RenderResult> {
@@ -433,6 +430,7 @@ export class Renderer {
   async destroy(): Promise<void> {
     await this.cache.destroy();
     this.initialized = false;
+    this.initializationPromise = null;
     logger.debug("Destroyed");
   }
 
@@ -536,6 +534,8 @@ export {
 };
 
 let renderer: Renderer | null = null;
+let rendererInitializationPromise: Promise<Renderer> | null = null;
+let rendererGeneration = 0;
 
 export function getRenderer(): Renderer {
   if (!renderer) {
@@ -548,10 +548,26 @@ export function getRenderer(): Renderer {
 
 export async function initializeRenderer(options?: RendererOptions): Promise<Renderer> {
   if (renderer) return renderer;
+  if (rendererInitializationPromise) return rendererInitializationPromise;
 
-  renderer = new Renderer(options);
-  await renderer.initialize(options?.shared);
-  return renderer;
+  const nextRenderer = new Renderer(options);
+  const generation = rendererGeneration;
+  rendererInitializationPromise = (async () => {
+    try {
+      await nextRenderer.initialize(options?.shared);
+      if (generation !== rendererGeneration) {
+        await nextRenderer.destroy();
+        throw INITIALIZATION_ERROR.create({
+          detail: "Renderer initialization was cancelled before it completed.",
+        });
+      }
+      renderer = nextRenderer;
+      return nextRenderer;
+    } finally {
+      rendererInitializationPromise = null;
+    }
+  })();
+  return rendererInitializationPromise;
 }
 
 export function isRendererInitialized(): boolean {
@@ -559,10 +575,13 @@ export function isRendererInitialized(): boolean {
 }
 
 export async function destroyRenderer(): Promise<void> {
-  if (!renderer) return;
-
-  await renderer.destroy();
+  rendererGeneration++;
+  rendererInitializationPromise = null;
+  const currentRenderer = renderer;
   renderer = null;
+  if (!currentRenderer) return;
+
+  await currentRenderer.destroy();
 }
 
 export async function clearRendererCacheForProject(projectId: string): Promise<void> {

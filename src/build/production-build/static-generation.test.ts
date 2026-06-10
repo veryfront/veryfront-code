@@ -248,6 +248,28 @@ describe(
         assertEquals(stats.totalSize > 0, true);
       });
 
+      it("records generated Pages Router paths in SSG stats", async () => {
+        const stats = await buildPagesRoutes(
+          [
+            { slug: "index", path: "/", file: "pages/index.mdx" },
+            { slug: "about", path: "/about", file: "pages/about.mdx" },
+          ],
+          {
+            adapter: createMockAdapter(),
+            projectDir: "/tmp/project",
+            outputDir: "/tmp/output",
+            renderer: createMockRenderer(),
+            config: createMockConfig(),
+            enablePrefetch: false,
+            chunkManifest: null,
+            dryRun: true,
+          },
+        );
+
+        assertEquals(stats.pages, 2);
+        assertEquals(stats.ssgPaths, ["/", "/about"]);
+      });
+
       it("escapes route slug before embedding it in the client bootstrap script", async () => {
         const adapter = createMemoryAdapter();
         const slug = `bad";globalThis.__xss=1;//`;

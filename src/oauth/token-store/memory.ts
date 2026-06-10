@@ -17,6 +17,9 @@ const STATE_EXPIRY_MS = 10 * 60 * 1_000;
  */
 const DEFAULT_MAX_TOKEN_ENTRIES = 10_000;
 
+/** Default cap on in-flight OAuth state values. */
+const DEFAULT_MAX_STATE_ENTRIES = 10_000;
+
 /** Options for {@link MemoryTokenStore}. */
 export interface MemoryTokenStoreOptions {
   /**
@@ -25,6 +28,11 @@ export interface MemoryTokenStoreOptions {
    * {@link DEFAULT_MAX_TOKEN_ENTRIES}.
    */
   maxEntries?: number;
+  /**
+   * Maximum number of in-flight OAuth state entries to retain before oldest
+   * entries are evicted. Defaults to {@link DEFAULT_MAX_STATE_ENTRIES}.
+   */
+  maxStateEntries?: number;
 }
 
 /**
@@ -43,11 +51,13 @@ export interface MemoryTokenStoreOptions {
 export class MemoryTokenStore implements TokenStore {
   private tokens: LRUCacheAdapter;
   private states = new Map<string, StoredOAuthState>();
+  private maxStateEntries: number;
   private projectId: string;
   private warnedProductionUse = false;
 
   constructor(projectId = "default", options: MemoryTokenStoreOptions = {}) {
     this.projectId = projectId;
+    this.maxStateEntries = Math.max(1, options.maxStateEntries ?? DEFAULT_MAX_STATE_ENTRIES);
     this.tokens = new LRUCacheAdapter({
       maxEntries: options.maxEntries ?? DEFAULT_MAX_TOKEN_ENTRIES,
     });
@@ -91,8 +101,9 @@ export class MemoryTokenStore implements TokenStore {
   }
 
   setState(state: string, meta: StoredOAuthState): Promise<void> {
-    this.states.set(state, meta);
     this.cleanupExpiredStates();
+    this.states.set(state, meta);
+    this.evictOldestStates();
     return Promise.resolve();
   }
 
@@ -116,6 +127,14 @@ export class MemoryTokenStore implements TokenStore {
       if (now - meta.createdAt > STATE_EXPIRY_MS) {
         this.states.delete(state);
       }
+    }
+  }
+
+  private evictOldestStates(): void {
+    while (this.states.size > this.maxStateEntries) {
+      const oldestState = this.states.keys().next().value;
+      if (oldestState === undefined) return;
+      this.states.delete(oldestState);
     }
   }
 

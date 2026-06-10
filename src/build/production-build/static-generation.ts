@@ -238,6 +238,7 @@ ${clientStyles}
       if (dryRun) {
         stats.pages++;
         stats.totalSize += getByteLength(enhancedHtml);
+        stats.ssgPaths.push(route.path);
         logger.debug(`Built page: ${route.slug}`);
         continue;
       }
@@ -246,6 +247,7 @@ ${clientStyles}
 
       stats.pages++;
       stats.totalSize += getByteLength(enhancedHtml);
+      stats.ssgPaths.push(route.path);
 
       const pageData = {
         slug: route.slug,
