@@ -25,7 +25,8 @@ export function handleBatchModuleEndpoint(
         adapter: ctx.adapter,
         projectSlug: ctx.projectSlug,
         projectId: ctx.projectId,
-        branch: ctx.parsedDomain?.branch ?? null,
+        branch: ctx.requestContext?.branch ?? ctx.parsedDomain?.branch ?? null,
+        releaseId: ctx.releaseId ?? null,
         dev: !!ctx.isLocalProject,
         allowedImportDirs: ctx.config?.security?.allowedImportDirs,
       });

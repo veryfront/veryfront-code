@@ -233,6 +233,37 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(statCalls, afterFirstMiss);
   });
 
+  it("scopes missing project module lookups by project identity", async () => {
+    clearSourceMissCache("module-server");
+    const { serveModule } = await import("./module-server.ts");
+    const request = new Request("http://localhost:3000/_vf_modules/components/Missing.js");
+
+    const missingAdapter = createMockAdapter();
+    const firstResponse = await serveModule(request, {
+      projectId: "fallback-project",
+      projectUUID: "project-a",
+      projectSlug: "project-a",
+      projectDir: "/shared-project-dir",
+      adapter: missingAdapter,
+    });
+    assertEquals(firstResponse.status, 404);
+
+    const presentAdapter = createMockAdapter();
+    presentAdapter.fs.files.set(
+      "/shared-project-dir/components/Missing.tsx",
+      "export const value = 1;",
+    );
+    const secondResponse = await serveModule(request, {
+      projectId: "fallback-project",
+      projectUUID: "project-b",
+      projectSlug: "project-b",
+      projectDir: "/shared-project-dir",
+      adapter: presentAdapter,
+    });
+
+    assertEquals(secondResponse.status, 200);
+  });
+
   it("should serve dnt shims as JavaScript content type", async () => {
     const response = await serve(
       new Request("http://localhost:3000/_vf_modules/_veryfront/_dnt.shims.js"),

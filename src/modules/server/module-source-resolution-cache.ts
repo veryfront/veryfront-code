@@ -20,12 +20,20 @@ registerLRUCache("module-batch-source-miss-cache", sourceMissCaches["module-batc
 export function buildSourceMissCacheKey(options: {
   resolver: ModuleSourceResolver;
   projectDir: string;
+  projectId?: string;
+  projectSlug?: string | null;
+  branch?: string | null;
+  releaseId?: string | null;
   basePath: string;
   reactVersion?: string;
 }): string {
   return [
     options.resolver,
     options.projectDir,
+    options.projectId ?? "",
+    options.projectSlug ?? "",
+    options.branch ?? "",
+    options.releaseId ?? "",
     options.reactVersion ?? "",
     options.basePath,
   ].join("\0");

@@ -107,6 +107,15 @@ const SNIPPET_MODULE_PREFIX = /^\/_vf_modules\/_snippets\/([a-f0-9]+)\.js/;
 const CROSS_PROJECT_VERSIONED_PREFIX =
   /^\/_vf_modules\/_cross\/([a-z0-9-]+)@([\d^~x][\d.x^~-]*)\/\@\/(.+)$/;
 const CROSS_PROJECT_LATEST_PREFIX = /^\/_vf_modules\/_cross\/([a-z0-9-]+)\/\@\/(.+)$/;
+
+interface SourceLookupContext {
+  projectId?: string;
+  projectSlug?: string | null;
+  branch?: string | null;
+  releaseId?: string | null;
+  reactVersion?: string;
+}
+
 export interface ModuleServerOptions {
   /** Project identifier (directory path, legacy naming) */
   projectId: string;
@@ -239,6 +248,10 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
                 secureFs,
                 projectDir,
                 currentModulePath: `_snippets/${hash}.js`,
+                projectId: effectiveProjectId,
+                projectSlug: snippetProjectSlug,
+                branch: snippetBranch,
+                releaseId: options.releaseId,
                 reactVersion,
               }),
             });
@@ -327,6 +340,8 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
                 projectDir,
                 currentModulePath: crossPath,
                 crossProjectRef: projectRef,
+                projectId: effectiveProjectId,
+                releaseId: options.releaseId,
                 reactVersion,
               }),
             });
@@ -367,7 +382,13 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           secureFs,
           projectDir,
           filePathWithoutExt,
-          reactVersion,
+          {
+            projectId: effectiveProjectId,
+            projectSlug,
+            branch,
+            releaseId: options.releaseId,
+            reactVersion,
+          },
         );
         if (!findResult) {
           logger.warn("Module not found", {
@@ -440,6 +461,10 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
                 secureFs,
                 projectDir,
                 currentModulePath: modulePath,
+                projectId: effectiveProjectId,
+                projectSlug,
+                branch,
+                releaseId: options.releaseId,
                 reactVersion,
               }),
             });
@@ -500,6 +525,10 @@ function createSSRTargetCacheBusterResolver(options: {
   projectDir: string;
   currentModulePath: string;
   crossProjectRef?: string;
+  projectId?: string;
+  projectSlug?: string | null;
+  branch?: string | null;
+  releaseId?: string | null;
   reactVersion?: string;
 }): (target: SSRImportRewriteTarget) => Promise<string | undefined> {
   const versions = new Map<string, Promise<string | undefined>>();
@@ -519,7 +548,13 @@ function createSSRTargetCacheBusterResolver(options: {
           options.secureFs,
           options.projectDir,
           stripSSRModuleJsExtension(targetPath),
-          options.reactVersion,
+          {
+            projectId: options.projectId,
+            projectSlug: options.projectSlug,
+            branch: options.branch,
+            releaseId: options.releaseId,
+            reactVersion: options.reactVersion,
+          },
         );
         if (!findResult) return undefined;
 
@@ -614,8 +649,9 @@ async function findSourceFile(
   secureFs: ReturnType<typeof createSecureFs>,
   projectDir: string,
   basePath: string,
-  reactVersion?: string,
+  context: SourceLookupContext,
 ): Promise<FindSourceFileResult | null> {
+  const { reactVersion } = context;
   // Extensions including .src for compiled binary embedded sources
   const extensions = [
     ".json",
@@ -650,6 +686,10 @@ async function findSourceFile(
   const missCacheKey = buildSourceMissCacheKey({
     resolver: "module-server",
     projectDir,
+    projectId: context.projectId,
+    projectSlug: context.projectSlug,
+    branch: context.branch,
+    releaseId: context.releaseId,
     basePath: basePathWithoutExt,
     reactVersion,
   });

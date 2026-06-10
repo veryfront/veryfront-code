@@ -123,6 +123,41 @@ describe(
         assertEquals(statCalls, afterFirstMiss);
       });
 
+      it("scopes missing module lookups by project identity", async () => {
+        clearBatchCache();
+
+        const missingAdapter = createMockAdapter();
+        const firstResponse = await handleModuleBatch(
+          createBatchRequest("components/Missing.js"),
+          {
+            projectDir: "/shared-project-dir",
+            adapter: missingAdapter,
+            projectId: "project-a",
+            projectSlug: "project-a",
+            dev: true,
+          },
+        );
+        assertEquals(firstResponse.status, 404);
+
+        const presentAdapter = createMockAdapter();
+        presentAdapter.fs.files.set(
+          "/shared-project-dir/components/Missing.tsx",
+          "export const value = 1;",
+        );
+        const secondResponse = await handleModuleBatch(
+          createBatchRequest("components/Missing.js"),
+          {
+            projectDir: "/shared-project-dir",
+            adapter: presentAdapter,
+            projectId: "project-b",
+            projectSlug: "project-b",
+            dev: true,
+          },
+        );
+
+        assertEquals(secondResponse.status, 200);
+      });
+
       it("should successfully batch existing modules", async () => {
         const adapter = createMockAdapter();
         adapter.fs.files.set(

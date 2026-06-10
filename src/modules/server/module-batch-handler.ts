@@ -126,6 +126,7 @@ export interface BatchHandlerOptions {
   projectSlug?: string;
   projectId?: string;
   branch?: string | null;
+  releaseId?: string | null;
   dev?: boolean;
   /**
    * Restrict module imports to specific directories (opt-in security).
@@ -180,6 +181,7 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
         projectSlug,
         projectId,
         branch,
+        releaseId,
         dev = false,
         allowedImportDirs,
         reactVersion,
@@ -228,6 +230,7 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
               projectSlug,
               branch,
               projectId,
+              releaseId,
               reactVersion,
             });
 
@@ -326,6 +329,7 @@ async function loadAndTransformModule(
     projectSlug?: string;
     branch?: string | null;
     projectId?: string;
+    releaseId?: string | null;
     reactVersion?: string;
   },
 ): Promise<string | null> {
@@ -333,6 +337,10 @@ async function loadAndTransformModule(
   const missCacheKey = buildSourceMissCacheKey({
     resolver: "module-batch",
     projectDir,
+    projectId: options.projectId,
+    projectSlug: options.projectSlug,
+    branch: options.branch,
+    releaseId: options.releaseId,
     basePath,
     reactVersion: options.reactVersion,
   });
