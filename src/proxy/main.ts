@@ -145,8 +145,7 @@ if (Object.keys(proxyHandler.localProjects).length > 0) {
  * Handle WebSocket upgrade requests.
  * Bridges browser WebSocket to server HMR WebSocket endpoint.
  */
-function handleWebSocketUpgrade(req: Request): Response {
-  const url = new URL(req.url);
+function handleWebSocketUpgrade(req: Request, url: URL): Response {
   const host = req.headers.get("host") || "";
 
   const parsed = parseProjectDomain(host);
@@ -277,9 +276,8 @@ function handleWebSocketUpgrade(req: Request): Response {
   return response;
 }
 
-function forwardToServer(req: Request): Promise<Response> {
+function forwardToServer(req: Request, url: URL): Promise<Response> {
   const startTime = performance.now();
-  const url = new URL(req.url);
   const requestId = crypto.randomUUID();
   const host = req.headers.get("host") || "";
 
@@ -288,7 +286,7 @@ function forwardToServer(req: Request): Promise<Response> {
 
   const execute = async (): Promise<Response> => {
     try {
-      const ctx = await proxyHandler.processRequest(req);
+      const ctx = await proxyHandler.processRequest(req, { url });
 
       return runWithProxyRequestContext(
         {
@@ -496,10 +494,8 @@ async function handleStats(): Promise<Response> {
  * Proxy API requests directly to Veryfront API (BFF pattern).
  * Routes: /_vf/api/* -> api.veryfront.com/*
  */
-async function handleApiProxy(req: Request): Promise<Response> {
-  const url = new URL(req.url);
-
-  const token = await proxyHandler.getTokenForApi(req);
+async function handleApiProxy(req: Request, url: URL): Promise<Response> {
+  const token = await proxyHandler.getTokenForApi(req, { url });
   if (!token) return jsonErrorResponse(401, { error: "No authentication token" });
 
   const apiPath = url.pathname.replace(/^\/_vf\/api/, "");
@@ -551,7 +547,7 @@ function router(req: Request): Promise<Response> {
   const url = new URL(req.url);
 
   if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
-    return Promise.resolve(handleWebSocketUpgrade(req));
+    return Promise.resolve(handleWebSocketUpgrade(req, url));
   }
 
   switch (url.pathname) {
@@ -566,9 +562,9 @@ function router(req: Request): Promise<Response> {
       );
   }
 
-  if (url.pathname.startsWith("/_vf/api/")) return handleApiProxy(req);
+  if (url.pathname.startsWith("/_vf/api/")) return handleApiProxy(req, url);
 
-  return forwardToServer(req);
+  return forwardToServer(req, url);
 }
 
 // Create server before signal registration so early SIGTERM/SIGINT can close it safely.

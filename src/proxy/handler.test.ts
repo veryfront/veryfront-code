@@ -88,8 +88,8 @@ function createMockAuthProvider(options: MockAuthOptions = {}): AuthProvider {
     async verify(token: string, opts): Promise<TokenPayload> {
       const parts = token.split(".");
       if (parts.length !== 3) throw new Error("Malformed token");
-      const header = JSON.parse(base64urlDecode(parts[0])) as { alg?: string };
-      const body = JSON.parse(base64urlDecode(parts[1])) as TokenPayload;
+      const header = JSON.parse(base64urlDecode(parts[0]!)) as { alg?: string };
+      const body = JSON.parse(base64urlDecode(parts[1]!)) as TokenPayload;
       const alg = header.alg ?? "";
       const allowed = opts?.algorithms ?? ["HS256"];
       if (!allowed.includes(alg)) throw new Error(`Unexpected alg: ${alg}`);
@@ -124,7 +124,7 @@ function createMockAuthProvider(options: MockAuthOptions = {}): AuthProvider {
       const parts = token.split(".");
       if (parts.length !== 3) return undefined;
       try {
-        return JSON.parse(base64urlDecode(parts[0])) as TokenHeader;
+        return JSON.parse(base64urlDecode(parts[0]!)) as TokenHeader;
       } catch {
         return undefined;
       }
@@ -220,6 +220,45 @@ afterEach(() => {
 });
 
 describe("Proxy Handler", () => {
+  it("uses a pre-parsed request URL when provided", async () => {
+    const handler = createProxyHandler({
+      config: {
+        apiBaseUrl: "http://127.0.0.1:9",
+        apiClientId: "",
+        apiClientSecret: "",
+        previewApiClientId: "",
+        previewApiClientSecret: "",
+      },
+    });
+    const req = new Request("http://test-project.preview.veryfront.com/blog", {
+      headers: { host: "test-project.preview.veryfront.com" },
+    });
+    const url = new URL(req.url);
+    const originalUrl = globalThis.URL;
+
+    try {
+      Object.defineProperty(globalThis, "URL", {
+        configurable: true,
+        value: class URLShouldNotBeCalled {
+          constructor() {
+            throw new Error("processRequest reparsed req.url");
+          }
+        },
+      });
+
+      const ctx = await handler.processRequest(req, { url });
+
+      assertEquals(ctx.host, "test-project.preview.veryfront.com");
+      assertEquals(ctx.error?.status, 502);
+    } finally {
+      Object.defineProperty(globalThis, "URL", {
+        configurable: true,
+        value: originalUrl,
+      });
+      await handler.close();
+    }
+  });
+
   describe("processRequest with custom domains", () => {
     it("resolves project slug for custom domain via domain lookup", async () => {
       const { server, port } = createMockServer((req: Request) => {
