@@ -515,25 +515,7 @@ async function handleRenderSSR(
 // Message Handler
 // ---------------------------------------------------------------------------
 
-self.onmessage = async (
-  event: MessageEvent<WorkerRequest | { type: "ping"; id: string } | { type: "clear-cache" }>,
-) => {
-  const msg = event.data;
-
-  // Health check
-  if (msg.type === "ping") {
-    self.postMessage({ type: "pong", id: (msg as { id: string }).id });
-    return;
-  }
-
-  // Module cache invalidation (for dev mode hot reload)
-  if (msg.type === "clear-cache") {
-    clearModuleCache();
-    return;
-  }
-
-  const request = msg as WorkerRequest;
-
+async function processWorkerRequest(request: WorkerRequest): Promise<void> {
   try {
     // Data fetcher returns a different response shape than HTTP handlers
     if (request.type === "fetch-data") {
@@ -590,4 +572,33 @@ self.onmessage = async (
     };
     self.postMessage(errorResponse);
   }
+}
+
+let requestQueue: Promise<void> = Promise.resolve();
+
+self.onmessage = (
+  event: MessageEvent<WorkerRequest | { type: "ping"; id: string } | { type: "clear-cache" }>,
+) => {
+  const msg = event.data;
+
+  // Health check
+  if (msg.type === "ping") {
+    self.postMessage({ type: "pong", id: (msg as { id: string }).id });
+    return;
+  }
+
+  // Module cache invalidation (for dev mode hot reload)
+  if (msg.type === "clear-cache") {
+    clearModuleCache();
+    return;
+  }
+
+  const request = msg as WorkerRequest;
+  // User code runs in the worker process and may read process-global state such
+  // as Deno.env. Keep requests non-overlapping so per-request env overlays
+  // cannot bleed across async handlers in the same pooled worker.
+  requestQueue = requestQueue.then(
+    () => processWorkerRequest(request),
+    () => processWorkerRequest(request),
+  );
 };

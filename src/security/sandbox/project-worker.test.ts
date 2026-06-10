@@ -281,6 +281,97 @@ testSuite("ProjectWorker - real worker request isolation", () => {
     }
   });
 
+  it("does not leak overlapping projectEnv overlays between concurrent requests", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const modulePath = await Deno.makeTempFile({ dir: projectDir, suffix: ".mjs" });
+    const requestAKey = "VERYFRONT_TEST_REQUEST_A_SECRET";
+    const requestBKey = "VERYFRONT_TEST_REQUEST_B_SECRET";
+
+    await Deno.writeTextFile(
+      modulePath,
+      `
+        const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+        export async function GET(request) {
+          const url = new URL(request.url);
+          if (url.searchParams.get("request") === "a") {
+            await sleep(100);
+          }
+
+          return Response.json({
+            request: url.searchParams.get("request"),
+            requestA: Deno.env.get(${JSON.stringify(requestAKey)}) ?? null,
+            requestB: Deno.env.get(${JSON.stringify(requestBKey)}) ?? null,
+          });
+        }
+      `,
+    );
+
+    const worker = new ProjectWorker({
+      projectId: "test-concurrent-env-overlay-scope",
+      permissions: buildWorkerPermissions([projectDir], {
+        projectEnvKeys: [requestAKey, requestBKey],
+      }),
+      requestTimeoutMs: 10_000,
+    });
+
+    worker.start();
+    try {
+      const first = worker.execute({
+        type: "execute-app-route",
+        id: "request-a",
+        modulePath,
+        method: "GET",
+        request: {
+          url: "http://localhost/api/env?request=a",
+          method: "GET",
+          headers: [],
+          body: null,
+        },
+        params: {},
+        projectDir,
+        projectEnv: { [requestAKey]: "tenant-a" },
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      const second = await worker.execute({
+        type: "execute-app-route",
+        id: "request-b",
+        modulePath,
+        method: "GET",
+        request: {
+          url: "http://localhost/api/env?request=b",
+          method: "GET",
+          headers: [],
+          body: null,
+        },
+        params: {},
+        projectDir,
+        projectEnv: { [requestBKey]: "tenant-b" },
+      });
+
+      const firstResponse = await first;
+
+      assertEquals(second.type, "result");
+      if (second.type !== "result") throw new Error("expected result response");
+      assertEquals(
+        JSON.parse(new TextDecoder().decode(second.response.body ?? new Uint8Array())),
+        { request: "b", requestA: null, requestB: "tenant-b" },
+      );
+
+      assertEquals(firstResponse.type, "result");
+      if (firstResponse.type !== "result") throw new Error("expected result response");
+      assertEquals(
+        JSON.parse(new TextDecoder().decode(firstResponse.response.body ?? new Uint8Array())),
+        { request: "a", requestA: "tenant-a", requestB: null },
+      );
+    } finally {
+      worker.terminate();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   it("denies host env secrets while allowing project env keys", async () => {
     const projectDir = await Deno.makeTempDir();
     const modulePath = await Deno.makeTempFile({ dir: projectDir, suffix: ".mjs" });
