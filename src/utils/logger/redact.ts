@@ -60,6 +60,9 @@ const SENSITIVE_KEY_PATTERNS = [
   "csrf",
 ] as const;
 
+const SENSITIVE_KEY_CACHE_MAX_SIZE = 512;
+const sensitiveKeyCache = new Map<string, boolean>();
+
 /** Stop traversing past this depth to keep the pass cheap and stack-safe. */
 const MAX_DEPTH = 16;
 
@@ -72,8 +75,19 @@ const MAX_DEPTH = 16;
  * normalizes to `author`, which contains none of the patterns.
  */
 export function isSensitiveKey(key: string): boolean {
+  const cached = sensitiveKeyCache.get(key);
+  if (cached !== undefined) return cached;
+
   const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, "");
-  return SENSITIVE_KEY_PATTERNS.some((pattern) => normalized.includes(pattern));
+  const sensitive = SENSITIVE_KEY_PATTERNS.some((pattern) => normalized.includes(pattern));
+
+  if (sensitiveKeyCache.size >= SENSITIVE_KEY_CACHE_MAX_SIZE) {
+    const oldestKey = sensitiveKeyCache.keys().next().value as string | undefined;
+    if (oldestKey !== undefined) sensitiveKeyCache.delete(oldestKey);
+  }
+  sensitiveKeyCache.set(key, sensitive);
+
+  return sensitive;
 }
 
 /**
