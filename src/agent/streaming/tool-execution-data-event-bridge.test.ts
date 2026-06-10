@@ -93,4 +93,51 @@ describe("createToolExecutionDataEventBridgeStream", () => {
     controller.close();
     await reader.cancel();
   });
+
+  it("cancel resolves cleanly when the base reader cancel rejects (#2334)", async () => {
+    // Mirrors the production crash: the upstream agent runtime's stream cancel
+    // aborts an in-flight signal, and the rejection propagates back through the
+    // base reader's cancel. The bridge must absorb it so cancellation does not
+    // escape as an unhandled rejection (fatal under Deno).
+    const stream = createToolExecutionDataEventBridgeStream({
+      baseStream: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('data: {"type":"message-start"}\n\n'));
+        },
+        cancel() {
+          throw new DOMException("The signal has been aborted", "AbortError");
+        },
+      }),
+      installPublisher() {},
+    });
+
+    const reader = stream.getReader();
+    await reader.read();
+
+    // Must not reject — before the fix this surfaced the base reader's
+    // AbortError to the (often un-awaiting) consumer.
+    await reader.cancel(new DOMException("client disconnected", "AbortError"));
+  });
+
+  it("cancel still forwards the reason to the base reader on the happy path", async () => {
+    let cancelledWith: unknown = "unset";
+    const stream = createToolExecutionDataEventBridgeStream({
+      baseStream: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('data: {"type":"message-start"}\n\n'));
+        },
+        cancel(reason) {
+          cancelledWith = reason;
+        },
+      }),
+      installPublisher() {},
+    });
+
+    const reader = stream.getReader();
+    await reader.read();
+    const reason = new DOMException("client disconnected", "AbortError");
+    await reader.cancel(reason);
+
+    assertEquals(cancelledWith, reason);
+  });
 });

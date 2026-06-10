@@ -394,6 +394,14 @@ export class AgentRuntime {
     };
     const chain = new MiddlewareChain(this.config.middleware);
 
+    // Hold the in-flight agent-loop promise so stream cancellation can detach a
+    // no-op rejection handler. When the client cancels, we abort the shared
+    // signal; the loop (model fetch / tool execution) then rejects with an
+    // AbortError. The `start` body awaits it, but cancellation can land after
+    // that await settles, leaving the rejection without a consumer — fatal as
+    // an unhandled rejection under Deno (#2334).
+    let inFlight: Promise<AgentResponse> | undefined;
+
     return new ReadableStream<Uint8Array>({
       start: async (controller) => {
         try {
@@ -415,7 +423,7 @@ export class AgentRuntime {
               model: effectiveModel,
             },
           });
-          const response = await chain.execute(
+          inFlight = chain.execute(
             agentContext,
             () =>
               this.executeAgentLoopStreaming(
@@ -436,6 +444,7 @@ export class AgentRuntime {
                 requestedModel,
               ),
           );
+          const response = await inFlight;
           throwIfAborted(streamAbortSignal);
           callbacks?.onFinish?.(response);
           throwIfAborted(streamAbortSignal);
@@ -460,7 +469,18 @@ export class AgentRuntime {
         }
       },
       cancel(reason) {
-        streamAbortController.abort(reason);
+        // The client disconnected (e.g. the Chat Stop button). Treat this as a
+        // clean stop: detach a no-op handler from the in-flight loop so the
+        // AbortError it throws when we abort the shared signal cannot surface as
+        // an unhandled rejection, then abort. Guard the abort itself so a
+        // synchronous signal-abort rejection can never escape here (#2334).
+        inFlight?.catch(() => {});
+        try {
+          streamAbortController.abort(reason);
+        } catch {
+          // Aborting an already-aborted controller, or a synchronous reject
+          // from a signal consumer, is a no-op for cancellation purposes.
+        }
       },
     });
   }
