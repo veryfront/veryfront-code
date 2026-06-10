@@ -29,10 +29,18 @@ import type {
   WorkerStreamChunk,
   WorkerStreamEnd,
 } from "./worker-types.ts";
+import { installWorkerEgressGuard } from "./worker-egress-guard.ts";
 import { isAbsolute, relative, resolve as resolvePath, sep as PATH_SEP } from "node:path";
 
 // Module-level singletons to avoid per-call allocation churn
 const encoder = new TextEncoder();
+const allowInternalEgress = (() => {
+  try {
+    return new URL(import.meta.url).searchParams.get("allowInternalEgress") === "1";
+  } catch {
+    return false;
+  }
+})();
 
 /** True when `child` is the same as, or nested under, `root`. Cross-platform. */
 function isContained(root: string, child: string): boolean {
@@ -517,6 +525,8 @@ async function handleRenderSSR(
 
 async function processWorkerRequest(request: WorkerRequest): Promise<void> {
   try {
+    installWorkerEgressGuard({ allowInternalEgress });
+
     // Data fetcher returns a different response shape than HTTP handlers
     if (request.type === "fetch-data") {
       const dataResult = await handleFetchData(request);
