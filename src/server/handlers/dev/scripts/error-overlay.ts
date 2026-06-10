@@ -12,6 +12,7 @@ export function getErrorOverlay(): string {
 // Veryfront Error Overlay
 (function() {
   let overlayElement = null;
+  let entriesElement = null;
 
   window.addEventListener('error', (event) => {
     showError({
@@ -35,18 +36,35 @@ export function getErrorOverlay(): string {
       createOverlay();
     }
 
-    const errorHtml = \`
-      <div style="margin-bottom: 20px;">
-        <div style="color: #ff5555; font-size: 18px; font-weight: bold; margin-bottom: 10px;">
-          \${escapeHtml(error.message)}
-        </div>
-        \${error.filename ? \`<div style="color: #8b8b8b; margin-bottom: 5px;">\${escapeHtml(error.filename)}:\${error.lineno}:\${error.colno}</div>\` : ''}
-        \${error.stack ? \`<pre style="color: #cccccc; font-size: 12px; overflow-x: auto;">\${escapeHtml(error.stack)}</pre>\` : ''}
-      </div>
-    \`;
-
-    overlayElement.innerHTML = errorHtml + overlayElement.innerHTML;
+    const errorEntry = createErrorEntry(error);
+    entriesElement.insertBefore(errorEntry, entriesElement.firstChild);
     overlayElement.style.display = 'block';
+  }
+
+  function createErrorEntry(error) {
+    const entry = document.createElement('div');
+    entry.style.cssText = 'margin-bottom: 20px;';
+
+    const message = document.createElement('div');
+    message.style.cssText = 'color: #ff5555; font-size: 18px; font-weight: bold; margin-bottom: 10px;';
+    message.textContent = String(error.message || 'Unknown error');
+    entry.appendChild(message);
+
+    if (error.filename) {
+      const location = document.createElement('div');
+      location.style.cssText = 'color: #8b8b8b; margin-bottom: 5px;';
+      location.textContent = String(error.filename) + ':' + error.lineno + ':' + error.colno;
+      entry.appendChild(location);
+    }
+
+    if (error.stack) {
+      const stack = document.createElement('pre');
+      stack.style.cssText = 'color: #cccccc; font-size: 12px; overflow-x: auto;';
+      stack.textContent = String(error.stack);
+      entry.appendChild(stack);
+    }
+
+    return entry;
   }
 
   function createOverlay() {
@@ -83,17 +101,13 @@ export function getErrorOverlay(): string {
     \`;
     closeButton.onclick = () => {
       overlayElement.style.display = 'none';
-      overlayElement.innerHTML = '';
+      entriesElement.replaceChildren();
     };
 
+    entriesElement = document.createElement('div');
     overlayElement.appendChild(closeButton);
+    overlayElement.appendChild(entriesElement);
     document.body.appendChild(overlayElement);
-  }
-
-  function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
   }
 })();
     `.trim();
