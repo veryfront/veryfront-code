@@ -11,6 +11,8 @@ import type { CacheBackend } from "../types.ts";
 import { buildBatchResults } from "../batch-results.ts";
 
 const logger = baseLogger.component("redis-cache-backend");
+const REDIS_PATTERN_DELETE_SCAN_COUNT = 100;
+const REDIS_PATTERN_DELETE_BATCH_SIZE = 1000;
 
 // Re-export for use by factory
 export { isRedisConfigured };
@@ -123,18 +125,35 @@ export class RedisCacheBackend implements CacheBackend {
     if (!this.client) return 0;
 
     try {
+      const client = this.client;
       const fullPattern = this.prefixKey(pattern);
       let cursor = 0;
       const keysToDelete: string[] = [];
+      let deletedCount = 0;
+
+      const flushDeleteBatch = async (): Promise<void> => {
+        if (!keysToDelete.length) return;
+        deletedCount += await client.del(keysToDelete.splice(0, keysToDelete.length));
+      };
 
       do {
-        const result = await this.client.scan(cursor, { MATCH: fullPattern, COUNT: 100 });
+        const result = await client.scan(cursor, {
+          MATCH: fullPattern,
+          COUNT: REDIS_PATTERN_DELETE_SCAN_COUNT,
+        });
         cursor = result.cursor;
-        if (result.keys.length) keysToDelete.push(...result.keys);
+        if (result.keys.length) {
+          keysToDelete.push(...result.keys);
+        }
+
+        while (keysToDelete.length >= REDIS_PATTERN_DELETE_BATCH_SIZE) {
+          const batch = keysToDelete.splice(0, REDIS_PATTERN_DELETE_BATCH_SIZE);
+          deletedCount += await client.del(batch);
+        }
       } while (cursor !== 0);
 
-      if (!keysToDelete.length) return 0;
-      return await this.client.del(keysToDelete);
+      await flushDeleteBatch();
+      return deletedCount;
     } catch (error) {
       logger.debug("DelByPattern failed", { pattern, error });
       return 0;
