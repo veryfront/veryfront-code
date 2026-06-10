@@ -25,16 +25,14 @@ import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache
 import { join } from "#veryfront/compat/path/index.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import {
-  getModulePathCache,
   invalidateMdxEsmModule,
   lookupMdxEsmCache,
-  saveModulePathCache,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
-import { buildMdxEsmPathCacheKey } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
 import {
   resolveModuleDependencies,
   rewriteResolvedDependencyImports,
 } from "./dependency-resolver.ts";
+import { persistTransformedModule } from "./module-persistence.ts";
 
 const logger = rendererLogger.component("module-loader");
 
@@ -42,28 +40,8 @@ const logger = rendererLogger.component("module-loader");
 export { createEsmCache, createModuleCache, generateHash } from "./cache.ts";
 export { fetchEsmModule, rewriteEsmPaths } from "./esm-rewriter.ts";
 
-/** Maximum number of directories to track to prevent memory leaks */
-const MAX_CREATED_DIRS = 5_000;
-
-/** Cache for created directories to avoid repeated mkdir calls (LRU-style) */
-const createdDirs = new Set<string>();
-
 /** TTL for cached transforms (uses centralized config) */
 const TRANSFORM_CACHE_TTL_SECONDS = TRANSFORM_DISTRIBUTED_TTL_SEC;
-
-/** Prune oldest entries when cache exceeds limit */
-function pruneCreatedDirs(): void {
-  if (createdDirs.size <= MAX_CREATED_DIRS) return;
-
-  const toDelete = createdDirs.size - MAX_CREATED_DIRS;
-  let deleted = 0;
-
-  for (const dir of createdDirs) {
-    if (deleted >= toDelete) break;
-    createdDirs.delete(dir);
-    deleted++;
-  }
-}
 
 function getModuleCacheKey(
   filePath: string,
@@ -79,19 +57,6 @@ function getModuleCacheKey(
 function decodeFileContent(fileContent: string | Uint8Array): string {
   if (typeof fileContent === "string") return fileContent;
   return new TextDecoder().decode(fileContent);
-}
-
-async function ensureDir(adapter: RuntimeAdapter, dir: string): Promise<void> {
-  if (createdDirs.has(dir)) return;
-
-  try {
-    await adapter.fs.mkdir(dir, { recursive: true });
-  } catch (_) {
-    /* expected: directory might already exist */
-  } finally {
-    createdDirs.add(dir);
-    pruneCreatedDirs();
-  }
 }
 
 /**
@@ -333,48 +298,17 @@ export async function transformModuleWithDeps(
     }
   }
 
-  const transformedHash = hashCodeHex(transformedCode).slice(0, 8);
-
-  const relativePath = filePath.startsWith(projectDir)
-    ? filePath.slice(projectDir.length).replace(/^\/+/, "")
-    : filePath.replace(/^\/+/, "");
-
-  const jsPath = relativePath.replace(/\.(tsx?|jsx|mdx)$/, `.${transformedHash}.js`);
-  const tempFilePath = join(tmpDir, jsPath);
-
-  const tempDir = tempFilePath.substring(0, tempFilePath.lastIndexOf("/"));
-  await ensureDir(localAdapter, tempDir);
-
-  try {
-    await localAdapter.fs.writeFile(tempFilePath, transformedCode);
-  } catch (error) {
-    logger.error("Failed to write module:", {
-      filePath,
-      tempFilePath,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    throw error;
-  }
-
-  if (contentSourceId) {
-    const normalizedPath = `_vf_modules/${relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js")}`;
-    const mdxCacheKey = buildMdxEsmPathCacheKey(normalizedPath, config.reactVersion);
-    const cache = await getModulePathCache(tmpDir);
-    cache.set(mdxCacheKey, tempFilePath);
-
-    saveModulePathCache(tmpDir).catch((err) => {
-      logger.debug("Failed to save module cache", { error: String(err) });
-    });
-
-    logger.debug("Registered module in MDX-ESM cache", {
-      file: filePath.slice(-40),
-      mdxCacheKey,
-      tempFilePath: tempFilePath.slice(-60),
-    });
-  }
-
-  moduleCache.set(cacheKey, tempFilePath);
-  return tempFilePath;
+  return await persistTransformedModule({
+    filePath,
+    projectDir,
+    tmpDir,
+    transformedCode,
+    localAdapter,
+    moduleCache,
+    cacheKey,
+    contentSourceId,
+    reactVersion: config.reactVersion,
+  });
 }
 
 export interface ModuleLoaderConfig {
