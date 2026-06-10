@@ -535,6 +535,7 @@ export {
 
 let renderer: Renderer | null = null;
 let rendererInitializationPromise: Promise<Renderer> | null = null;
+let rendererGeneration = 0;
 
 export function getRenderer(): Renderer {
   if (!renderer) {
@@ -550,9 +551,16 @@ export async function initializeRenderer(options?: RendererOptions): Promise<Ren
   if (rendererInitializationPromise) return rendererInitializationPromise;
 
   const nextRenderer = new Renderer(options);
+  const generation = rendererGeneration;
   rendererInitializationPromise = (async () => {
     try {
       await nextRenderer.initialize(options?.shared);
+      if (generation !== rendererGeneration) {
+        await nextRenderer.destroy();
+        throw INITIALIZATION_ERROR.create({
+          detail: "Renderer initialization was cancelled before it completed.",
+        });
+      }
       renderer = nextRenderer;
       return nextRenderer;
     } finally {
@@ -567,11 +575,13 @@ export function isRendererInitialized(): boolean {
 }
 
 export async function destroyRenderer(): Promise<void> {
+  rendererGeneration++;
   rendererInitializationPromise = null;
-  if (!renderer) return;
-
-  await renderer.destroy();
+  const currentRenderer = renderer;
   renderer = null;
+  if (!currentRenderer) return;
+
+  await currentRenderer.destroy();
 }
 
 export async function clearRendererCacheForProject(projectId: string): Promise<void> {

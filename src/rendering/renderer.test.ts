@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { destroyRenderer, initializeRenderer, Renderer } from "./renderer.ts";
+import { destroyRenderer, getRenderer, initializeRenderer, Renderer } from "./renderer.ts";
 
 function getEnv(name: string): string | undefined {
   // deno-lint-ignore no-explicit-any
@@ -212,6 +212,47 @@ describe("rendering/renderer singleton initialization", () => {
       const [firstRenderer, secondRenderer] = await Promise.all([first, second]);
       assertEquals(firstRenderer, secondRenderer);
       assertEquals(initializeCalls, 1);
+    } finally {
+      Renderer.prototype.initialize = originalInitialize;
+      Renderer.prototype.destroy = originalDestroy;
+      await destroyRenderer();
+    }
+  });
+
+  it("does not publish a renderer after destroy runs during initialization", async () => {
+    await destroyRenderer();
+
+    const originalInitialize = Renderer.prototype.initialize;
+    const originalDestroy = Renderer.prototype.destroy;
+    let destroyCalls = 0;
+    let resolveStarted!: () => void;
+    let resolveInitialize!: () => void;
+    const started = new Promise<void>((resolve) => {
+      resolveStarted = resolve;
+    });
+    const initializeDone = new Promise<void>((resolve) => {
+      resolveInitialize = resolve;
+    });
+
+    Renderer.prototype.initialize = function () {
+      resolveStarted();
+      return initializeDone;
+    };
+    Renderer.prototype.destroy = () => {
+      destroyCalls++;
+      return Promise.resolve();
+    };
+
+    try {
+      const pendingInitialize = initializeRenderer();
+      await started;
+
+      await destroyRenderer();
+      resolveInitialize();
+
+      await assertRejects(() => pendingInitialize, Error, "cancelled");
+      assertThrows(() => getRenderer());
+      assertEquals(destroyCalls, 1);
     } finally {
       Renderer.prototype.initialize = originalInitialize;
       Renderer.prototype.destroy = originalDestroy;
