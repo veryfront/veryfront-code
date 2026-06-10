@@ -209,7 +209,7 @@ Deno.test("MemoryCacheBackend setBatch evicts when at capacity", async () => {
   assertEquals(cache.size, 2);
 });
 
-Deno.test("MemoryCacheBackend delByPattern uses regex cache", async () => {
+Deno.test("MemoryCacheBackend delByPattern uses compiled glob cache", async () => {
   const { MemoryCacheBackend } = await importBackend();
 
   const cache = new MemoryCacheBackend(20);
@@ -217,13 +217,13 @@ Deno.test("MemoryCacheBackend delByPattern uses regex cache", async () => {
   await cache.set("prefix:b", "2");
   await cache.set("other:c", "3");
 
-  // First call creates regex
+  // First call creates compiled glob
   assertEquals(await cache.delByPattern("prefix:*"), 2);
 
   // Add more matching entries
   await cache.set("prefix:d", "4");
 
-  // Second call reuses cached regex
+  // Second call reuses cached compiled glob
   assertEquals(await cache.delByPattern("prefix:*"), 1);
 });
 
@@ -237,6 +237,45 @@ Deno.test("MemoryCacheBackend delByPattern with ? wildcard", async () => {
 
   assertEquals(await cache.delByPattern("key-?"), 2);
   assertEquals(await cache.get("key-ab"), "3");
+});
+
+Deno.test("MemoryCacheBackend delByPattern treats regex syntax as literals", async () => {
+  const { MemoryCacheBackend } = await importBackend();
+
+  const cache = new MemoryCacheBackend(10);
+  await cache.set("file.(js)", "1");
+  await cache.set("fileXjs", "2");
+
+  assertEquals(await cache.delByPattern("file.(*)"), 1);
+  assertEquals(await cache.get("file.(js)"), null);
+  assertEquals(await cache.get("fileXjs"), "2");
+});
+
+Deno.test("MemoryCacheBackend delByPattern rejects excessive wildcards", async () => {
+  const { MemoryCacheBackend } = await importBackend();
+
+  const cache = new MemoryCacheBackend(10);
+  await cache.set("keep:a", "1");
+  await cache.set("keep:b", "2");
+
+  const deleted = await cache.delByPattern("*".repeat(65));
+
+  assertEquals(deleted, 0);
+  assertEquals(await cache.get("keep:a"), "1");
+  assertEquals(await cache.get("keep:b"), "2");
+});
+
+Deno.test("MemoryCacheBackend delByPattern rejects backtracking-shaped glob misses", async () => {
+  const { MemoryCacheBackend } = await importBackend();
+
+  const cache = new MemoryCacheBackend(10);
+  const longKey = "a".repeat(1000);
+  await cache.set(longKey, "1");
+
+  const deleted = await cache.delByPattern(`${"a*".repeat(20)}b`);
+
+  assertEquals(deleted, 0);
+  assertEquals(await cache.get(longKey), "1");
 });
 
 Deno.test("MemoryCacheBackend set overwrites existing entry without eviction", async () => {

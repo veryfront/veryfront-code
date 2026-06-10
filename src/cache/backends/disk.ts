@@ -2,9 +2,10 @@ import { join } from "#veryfront/compat/path/index.ts";
 import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
 import { logger } from "#veryfront/utils";
 import type { CacheBackend } from "../types.ts";
+import { type CacheGlob, compileCacheGlob } from "./glob.ts";
 
 const CACHE_SUBDIR = "veryfront-files";
-const MAX_REGEX_CACHE_SIZE = 100;
+const MAX_GLOB_CACHE_SIZE = 100;
 const fsPromises = import("node:fs/promises");
 
 interface DiskCacheEnvelope {
@@ -30,7 +31,7 @@ function hashKey(input: string): string {
 export class DiskCacheBackend implements CacheBackend {
   readonly type = "disk" as const;
   private dir: string;
-  private regexCache = new Map<string, RegExp>();
+  private globCache = new Map<string, CacheGlob>();
 
   constructor(baseDir?: string, keyPrefix?: string) {
     const base = join(baseDir ?? getCacheBaseDir(), CACHE_SUBDIR);
@@ -118,15 +119,15 @@ export class DiskCacheBackend implements CacheBackend {
   }
 
   async delByPattern(pattern: string): Promise<number> {
-    let regex = this.regexCache.get(pattern);
-    if (!regex) {
-      const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&");
-      regex = new RegExp(`^${escaped.replace(/\*/g, ".*").replace(/\?/g, ".")}$`);
-      if (this.regexCache.size >= MAX_REGEX_CACHE_SIZE) {
-        const firstKey = this.regexCache.keys().next().value as string | undefined;
-        if (firstKey) this.regexCache.delete(firstKey);
+    let glob = this.globCache.get(pattern);
+    if (!glob) {
+      glob = compileCacheGlob(pattern) ?? undefined;
+      if (!glob) return 0;
+      if (this.globCache.size >= MAX_GLOB_CACHE_SIZE) {
+        const firstKey = this.globCache.keys().next().value as string | undefined;
+        if (firstKey) this.globCache.delete(firstKey);
       }
-      this.regexCache.set(pattern, regex);
+      this.globCache.set(pattern, glob);
     }
     let deleted = 0;
     try {
@@ -138,7 +139,7 @@ export class DiskCacheBackend implements CacheBackend {
           const filePath = join(this.dir, file);
           const raw = await readFile(filePath, "utf-8");
           const envelope: DiskCacheEnvelope = JSON.parse(raw);
-          if (regex.test(envelope.key)) {
+          if (glob.test(envelope.key)) {
             await unlink(filePath);
             deleted++;
           }

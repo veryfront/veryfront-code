@@ -207,6 +207,25 @@ Deno.test("DiskCacheBackend", async (t) => {
     assertEquals(await backend.get("keep:this"), "value");
   });
 
+  await t.step("delByPattern rejects excessive wildcards", async () => {
+    const backend = makeBackend();
+    await backend.set("keep:a", "1");
+    await backend.set("keep:b", "2");
+    const deleted = await backend.delByPattern("*".repeat(65));
+    assertEquals(deleted, 0);
+    assertEquals(await backend.get("keep:a"), "1");
+    assertEquals(await backend.get("keep:b"), "2");
+  });
+
+  await t.step("delByPattern rejects backtracking-shaped glob misses", async () => {
+    const backend = makeBackend();
+    const longKey = "a".repeat(1000);
+    await backend.set(longKey, "1");
+    const deleted = await backend.delByPattern(`${"a*".repeat(20)}b`);
+    assertEquals(deleted, 0);
+    assertEquals(await backend.get(longKey), "1");
+  });
+
   await t.step("delByPattern on empty directory returns 0", async () => {
     const emptyDir = join(Deno.makeTempDirSync(), "empty-cache");
     const backend = new DiskCacheBackend(emptyDir);

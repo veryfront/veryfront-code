@@ -4,14 +4,15 @@ import {
 } from "#veryfront/utils/constants/cache.ts";
 import type { CacheBackend } from "../types.ts";
 import { buildBatchResults } from "../batch-results.ts";
+import { type CacheGlob, compileCacheGlob } from "./glob.ts";
 
 const DEFAULT_TTL_SECONDS = 300;
-const MAX_REGEX_CACHE_SIZE = 100;
+const MAX_GLOB_CACHE_SIZE = 100;
 
 export class MemoryCacheBackend implements CacheBackend {
   readonly type = "memory" as const;
   private store = new Map<string, { value: string; expiresAt: number; sizeBytes: number }>();
-  private regexCache = new Map<string, RegExp>();
+  private globCache = new Map<string, CacheGlob>();
   private maxEntries: number;
   private readonly maxSizeBytes: number;
   private currentSizeBytes = 0;
@@ -135,22 +136,22 @@ export class MemoryCacheBackend implements CacheBackend {
   }
 
   delByPattern(pattern: string): Promise<number> {
-    let regex = this.regexCache.get(pattern);
-    if (!regex) {
-      const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&");
-      regex = new RegExp(`^${escaped.replace(/\*/g, ".*").replace(/\?/g, ".")}$`);
+    let glob = this.globCache.get(pattern);
+    if (!glob) {
+      glob = compileCacheGlob(pattern) ?? undefined;
+      if (!glob) return Promise.resolve(0);
 
-      if (this.regexCache.size >= MAX_REGEX_CACHE_SIZE) {
-        const firstKey = this.regexCache.keys().next().value as string | undefined;
-        if (firstKey) this.regexCache.delete(firstKey);
+      if (this.globCache.size >= MAX_GLOB_CACHE_SIZE) {
+        const firstKey = this.globCache.keys().next().value as string | undefined;
+        if (firstKey) this.globCache.delete(firstKey);
       }
 
-      this.regexCache.set(pattern, regex);
+      this.globCache.set(pattern, glob);
     }
 
     let deleted = 0;
     for (const key of this.store.keys()) {
-      if (!regex.test(key)) continue;
+      if (!glob.test(key)) continue;
       const entry = this.store.get(key);
       if (entry) this.currentSizeBytes -= entry.sizeBytes;
       this.store.delete(key);
@@ -162,7 +163,7 @@ export class MemoryCacheBackend implements CacheBackend {
 
   clear(): void {
     this.store.clear();
-    this.regexCache.clear();
+    this.globCache.clear();
     this.currentSizeBytes = 0;
   }
 
