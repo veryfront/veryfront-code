@@ -1657,6 +1657,7 @@ export const connectors: IntegrationConfig[] = [
       "scopes": [
         "https://www.googleapis.com/auth/documents.readonly",
         "https://www.googleapis.com/auth/documents",
+        "https://www.googleapis.com/auth/docs",
         "https://www.googleapis.com/auth/drive.readonly",
       ],
       "requiredApis": [{
@@ -1837,10 +1838,7 @@ export const connectors: IntegrationConfig[] = [
       "provider": "google",
       "authorizationUrl": "https://accounts.google.com/o/oauth2/v2/auth",
       "tokenUrl": "https://oauth2.googleapis.com/token",
-      "scopes": [
-        "https://www.googleapis.com/auth/drive.readonly",
-        "https://www.googleapis.com/auth/drive.file",
-      ],
+      "scopes": ["https://www.googleapis.com/auth/drive"],
       "requiredApis": [{
         "name": "Google Drive API",
         "enableUrl": "https://console.cloud.google.com/apis/library/drive.googleapis.com",

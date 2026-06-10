@@ -9,8 +9,7 @@
     "authorizationUrl": "https://accounts.google.com/o/oauth2/v2/auth",
     "tokenUrl": "https://oauth2.googleapis.com/token",
     "scopes": [
-      "https://www.googleapis.com/auth/drive.readonly",
-      "https://www.googleapis.com/auth/drive.file"
+      "https://www.googleapis.com/auth/drive"
     ],
     "callbackPath": "/api/auth/drive/callback",
     "requiredApis": [
@@ -313,7 +312,7 @@
       },
       {
         "title": "Configure OAuth Consent Screen",
-        "description": "Go to APIs & Services > OAuth consent screen. Set up your app name, user support email, and developer contact. Add scopes: drive.readonly and drive.file",
+        "description": "Go to APIs & Services > OAuth consent screen. Set up your app name, user support email, and developer contact. Add scope: drive (full access)",
         "url": "https://console.cloud.google.com/apis/credentials/consent"
       },
       {
@@ -333,7 +332,7 @@
     "notes": [
       "The same Google OAuth credentials work for all Google services (Gmail, Calendar, Sheets, Drive)",
       "In production, make sure to add your production callback URL to authorized redirect URIs",
-      "The drive.file scope only grants access to files created by your app, use drive for full access",
+      "The drive scope grants full access to all files; tools like update_file and delete_file require it for files not created by this app",
       "You may need to verify your app if you plan to distribute it publicly"
     ]
   }
