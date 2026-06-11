@@ -138,6 +138,19 @@ describe("normalizeNpmPackageMetadata", () => {
 });
 
 describe("npm supply-chain policy", () => {
+	it("keeps browser-safe export patches aligned to public exports", async () => {
+		const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
+		const exports = denoConfig.exports as Record<string, string>;
+
+		for (const exportPath of BROWSER_SAFE_EXPORTS) {
+			assertEquals(
+				typeof exports[exportPath],
+				"string",
+				`${exportPath} must exist in deno.json exports before the npm build patches it`,
+			);
+		}
+	});
+
 	it("lazy-loads auto-enabled sandbox shell dependencies for npm CLI startup", async () => {
 		const source = await Deno.readTextFile("extensions/ext-sandbox-shell-tools/src/index.ts");
 
