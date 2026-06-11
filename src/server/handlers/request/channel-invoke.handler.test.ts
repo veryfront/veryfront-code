@@ -6,6 +6,7 @@ import type { HandlerContext } from "#veryfront/types";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import type { ChannelInvokeRequest } from "../../../channels/invoke.ts";
 import { ChannelInvokeHandler } from "./channel-invoke.handler.ts";
+import { __resetServerShuttingDownForTests, markServerShuttingDown } from "../../shutdown-state.ts";
 
 const encoder = new TextEncoder();
 
@@ -228,5 +229,50 @@ describe("server/handlers/request/channel-invoke.handler", () => {
     assertExists(result.response);
     assertEquals(result.response.status, 400);
     assertEquals(await result.response.json(), { error: "Invalid channel invoke request" });
+  });
+
+  it("rejects new invoke requests with 503 while the runtime is shutting down", async () => {
+    let discoveryCalls = 0;
+    const handler = new ChannelInvokeHandler({
+      ensureProjectDiscovery: async () => {
+        discoveryCalls += 1;
+      },
+      getAgent: () => createAgent(async () => createAgentResponse()),
+      getAllAgentIds: () => ["agent-1"],
+    });
+
+    const payload = createPayload();
+    const body = JSON.stringify(payload);
+    const { jws, publicKeyPem } = await createDispatchSignature(body);
+
+    markServerShuttingDown();
+    try {
+      const result = await handler.handle(
+        new Request("https://example.com/channels/invoke", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-dispatch-jws": jws,
+          },
+          body,
+        }),
+        createCtx(publicKeyPem),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 503);
+      assertEquals(result.response.headers.get("connection"), "close");
+      assertEquals(
+        result.response.headers.get("x-veryfront-runtime-owner-invoke-url"),
+        null,
+      );
+      const responseBody = await result.response.json();
+      assertEquals(responseBody.code, "RUNTIME_SHUTTING_DOWN");
+      assertEquals(typeof responseBody.message, "string");
+      // Rejection must happen before any dispatch verification / agent work.
+      assertEquals(discoveryCalls, 0);
+    } finally {
+      __resetServerShuttingDownForTests();
+    }
   });
 });
