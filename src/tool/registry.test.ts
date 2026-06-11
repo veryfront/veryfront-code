@@ -1,10 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd";
-import { assertEquals } from "#veryfront/testing/assert";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { tool } from "./factory.ts";
 import { toolRegistry, toolToProviderDefinition } from "./registry.ts";
 import type { Tool } from "./types.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
 
 describe("tool registry", () => {
   afterEach(() => {
@@ -86,5 +87,135 @@ describe("tool registry", () => {
         },
       },
     ]);
+  });
+
+  describe("collision detection", () => {
+    it("re-registering the same definition (same object reference) is a no-op", () => {
+      const myTool = tool({
+        id: "my-tool",
+        description: "does something",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: async () => null,
+      });
+
+      toolRegistry.register("my-tool", myTool);
+      // Second call with the exact same object — must not throw
+      toolRegistry.register("my-tool", myTool);
+
+      assertEquals(toolRegistry.has("my-tool"), true);
+    });
+
+    it("re-registering an equivalent definition (same id + description) replaces it with the latest", () => {
+      const schema = defineSchema((v) => v.object({}))();
+      const first = tool({
+        id: "dup-tool",
+        description: "shared description",
+        inputSchema: schema,
+        execute: async () => null,
+      });
+      const second = tool({
+        id: "dup-tool",
+        description: "shared description",
+        inputSchema: schema,
+        execute: async () => null,
+      });
+
+      toolRegistry.register("dup-tool", first);
+      // Different object but same id + description — equivalent, so the
+      // latest definition wins (HMR must pick up an edited execute/schema).
+      toolRegistry.register("dup-tool", second);
+
+      assertEquals(toolRegistry.get("dup-tool") === second, true);
+    });
+
+    it("registering a conflicting definition under an existing ID throws a VeryfrontError with slug tool-id-conflict", () => {
+      const original = tool({
+        id: "conflict-tool",
+        description: "original description",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: async () => null,
+      });
+      const conflicting = tool({
+        id: "conflict-tool",
+        description: "DIFFERENT description",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: async () => null,
+      });
+
+      toolRegistry.register("conflict-tool", original);
+
+      assertThrows(
+        () => toolRegistry.register("conflict-tool", conflicting),
+        VeryfrontError,
+        "conflict-tool",
+      );
+
+      // Original definition must remain intact
+      assertEquals(toolRegistry.get("conflict-tool")?.description, "original description");
+    });
+
+    it("allows a project tool to shadow a shared/framework tool with the same ID", () => {
+      const sharedTool = tool({
+        id: "shadowed-tool",
+        description: "framework version",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: async () => null,
+      });
+      const projectTool = tool({
+        id: "shadowed-tool",
+        description: "project version",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: async () => null,
+      });
+
+      toolRegistry.registerShared("shadowed-tool", sharedTool);
+      // Project-scoped registration with a different definition must NOT
+      // conflict with the shared entry — projects shadow shared tools.
+      toolRegistry.register("shadowed-tool", projectTool);
+
+      assertEquals(toolRegistry.get("shadowed-tool")?.description, "project version");
+    });
+
+    it("two agents created concurrently with the same-named but different tools — second registration throws", async () => {
+      const schema = defineSchema((v) => v.object({}))();
+
+      const toolA: Tool = {
+        id: "shared-name",
+        type: "function",
+        description: "Agent A version",
+        inputSchema: schema,
+        execute: async () => "A",
+      };
+      const toolB: Tool = {
+        id: "shared-name",
+        type: "function",
+        description: "Agent B version",
+        inputSchema: schema,
+        execute: async () => "B",
+      };
+
+      let errorFromB: unknown;
+
+      await Promise.all([
+        Promise.resolve().then(() => toolRegistry.register("shared-name", toolA)),
+        Promise.resolve().then(() => {
+          try {
+            toolRegistry.register("shared-name", toolB);
+          } catch (e) {
+            errorFromB = e;
+          }
+        }),
+      ]);
+
+      // One registration succeeded; the conflicting one threw
+      const winner = toolRegistry.get("shared-name");
+      assertEquals(
+        winner?.description === "Agent A version" || winner?.description === "Agent B version",
+        true,
+      );
+      // The losing registration must have thrown a VeryfrontError
+      assertEquals(errorFromB instanceof VeryfrontError, true);
+      assertEquals((errorFromB as VeryfrontError).slug, "tool-id-conflict");
+    });
   });
 });

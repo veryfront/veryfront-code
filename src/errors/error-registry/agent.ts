@@ -48,6 +48,14 @@ export const COST_LIMIT_EXCEEDED = defineError({
   suggestion: "Wait for the budget period to reset or increase the limit",
 });
 
+export const TOOL_ID_CONFLICT = defineError({
+  slug: "tool-id-conflict",
+  category: "AGENT",
+  status: 409,
+  title: "Tool ID conflict",
+  suggestion: "Use a unique tool ID or rename one of the conflicting tools",
+});
+
 /** Registry fragment for AGENT errors (slug → definition). */
 export const AGENT_REGISTRY = {
   "agent-error": AGENT_ERROR,
@@ -56,4 +64,5 @@ export const AGENT_REGISTRY = {
   "agent-intent-error": AGENT_INTENT_ERROR,
   "orchestration-error": ORCHESTRATION_ERROR,
   "cost-limit-exceeded": COST_LIMIT_EXCEEDED,
+  "tool-id-conflict": TOOL_ID_CONFLICT,
 } as const;

@@ -18,6 +18,11 @@ export class ScopedRegistryFacade<T> {
     return this.manager.get(id);
   }
 
+  /** Get item from the current scope only, without shared-registry fallback. */
+  getOwn(id: string): T | undefined {
+    return this.manager.getOwn(id);
+  }
+
   has(id: string): boolean {
     return this.manager.has(id);
   }
