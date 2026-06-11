@@ -6,6 +6,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { EXPERIMENTAL_INTEGRATIONS_ENV } from "../../../src/integrations/feature-flags.ts";
+import { ALL_INTEGRATION_NAMES } from "../../../src/integrations/schema.ts";
 import {
   getAllIntegrations,
   getIntegrationSelectOptions,
@@ -71,7 +72,26 @@ describe("catalog", () => {
         "Marketing",
         "Design",
         "AI Providers",
+        "AI Infrastructure",
+        "Search & Web Data",
+        "Observability",
+        "Data & Analytics",
+        "Scheduling & Meetings",
+        "HR & Recruiting",
       ]);
+    });
+
+    it("only references registered integration names", () => {
+      const registered = new Set<string>(ALL_INTEGRATION_NAMES);
+      for (const category of INTEGRATION_CATEGORIES) {
+        for (const integration of category.integrations) {
+          assertEquals(
+            registered.has(integration.id),
+            true,
+            `${category.name}: "${integration.id}" is not in integrationNames`,
+          );
+        }
+      }
     });
 
     it("each category has integrations with required properties", () => {

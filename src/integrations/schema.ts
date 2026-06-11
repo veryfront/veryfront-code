@@ -142,6 +142,13 @@ export const getIntegrationNameSchema = defineSchema((v) => v.enum(integrationNa
 /** Zod schema for integration name. */
 export const IntegrationNameSchema = lazySchema(getIntegrationNameSchema);
 
+/**
+ * Every registered integration name. The single source of truth for catalog
+ * surfaces (CLI validation, MCP listings) — derive from this instead of
+ * maintaining parallel name lists.
+ */
+export const ALL_INTEGRATION_NAMES = integrationNames;
+
 export const getEnvVarSchema = defineSchema((v) =>
   v.object({
     name: v.string(),
