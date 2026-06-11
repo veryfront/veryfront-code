@@ -269,6 +269,30 @@ export const connectors: IntegrationConfig[] = [
       "icon": "plus",
     }],
     "suggestedWith": ["shopify", "stripe", "slack"],
+    "setupGuide": {
+      "title": "ActiveCampaign API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Find your account subdomain",
+        "description":
+          "Log in to ActiveCampaign and open My Settings → Developer. Your API URL looks like https://youraccount.api-us1.com — the 'youraccount' part is the value to pass as the 'account' parameter on every tool call. ActiveCampaign offers free developer sandbox accounts via its developer program.",
+      }, {
+        "step": 2,
+        "title": "Copy your API key",
+        "description":
+          "On the same Developer page, copy the API Key and add it to your .env as ACTIVECAMPAIGN_API_KEY.",
+      }, {
+        "step": 3,
+        "title": "Verify access",
+        "description": "Run the List Contacts tool with your account subdomain.",
+      }],
+      "notes": [
+        "The API key is sent in the Api-Token header; each user in the account has their own key with that user's permissions",
+        "Every tool requires the 'account' parameter (your API URL subdomain) because the base URL is account-specific (https://{account}.api-us1.com)",
+        "Deal values are expressed in cents",
+      ],
+      "documentation": "https://developers.activecampaign.com/reference/overview",
+    },
   },
   {
     "name": "airtable",
@@ -896,6 +920,36 @@ export const connectors: IntegrationConfig[] = [
       "icon": "list",
     }],
     "suggestedWith": ["shopify", "supabase", "github"],
+    "setupGuide": {
+      "title": "Algolia API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create an Algolia application",
+        "description":
+          "Sign up at https://dashboard.algolia.com (the free Build plan works for testing) and create or select an application.",
+      }, {
+        "step": 2,
+        "title": "Copy your credentials",
+        "description":
+          "In Settings → API Keys (https://dashboard.algolia.com/account/api-keys/all), copy the Application ID into ALGOLIA_APP_ID and an API key into ALGOLIA_API_KEY. Use the Search API key for read-only use, or create a scoped key with search, browse, and addObject ACLs for writes — avoid the Admin API key.",
+      }, {
+        "step": 3,
+        "title": "Note your host",
+        "description":
+          "Tools take a 'host' parameter: pass \"<ALGOLIA_APP_ID>-dsn.algolia.net\" (your application ID followed by -dsn.algolia.net).",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run the List Indices tool. A 403 usually means the API key lacks the required ACL or the host does not match your application ID.",
+      }],
+      "notes": [
+        "Algolia authenticates with two headers: X-Algolia-API-Key and X-Algolia-Application-Id — both env vars are required",
+        "Browse requires an API key with the 'browse' ACL; Save Objects requires 'addObject'",
+        "The Search API key is safe to expose in frontends, but scoped/write keys must stay server-side",
+      ],
+      "documentation": "https://www.algolia.com/doc/rest-api/search/",
+    },
   },
   {
     "name": "amplitude",
@@ -1130,6 +1184,36 @@ export const connectors: IntegrationConfig[] = [
       "icon": "chart",
     }],
     "suggestedWith": ["mixpanel", "posthog", "slack"],
+    "setupGuide": {
+      "title": "Amplitude API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Find your project credentials",
+        "description":
+          "In Amplitude, go to Settings → Organization settings → Projects, pick your project, and copy the API Key and Secret Key. Free Starter plans include Dashboard REST API access for testing.",
+      }, {
+        "step": 2,
+        "title": "Store the keys",
+        "description":
+          "Add them to your .env file as AMPLITUDE_API_KEY=... and AMPLITUDE_SECRET_KEY=... — both are required because the analytics APIs use HTTP basic auth (api_key:secret_key).",
+      }, {
+        "step": 3,
+        "title": "Check your data residency",
+        "description":
+          "If your org uses EU data residency, pass host=analytics.eu.amplitude.com on query tools and ingestHost=api.eu.amplitude.com on Track Event. US orgs can keep the defaults.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run the List Events tool. A 401 means the key pair is wrong; a 403 can mean the keys belong to a different project or region.",
+      }],
+      "notes": [
+        "Keys are per-project — use a test project's keys when experimenting, since Track Event writes real analytics data",
+        "The HTTP V2 ingestion API authenticates with the project API key inside the request body, so Track Event asks for api_key as a body field (same value as AMPLITUDE_API_KEY; the secret key is never sent)",
+        "Dashboard REST API endpoints are rate limited per project — keep date ranges modest",
+      ],
+      "documentation": "https://amplitude.com/docs/apis/analytics/dashboard-rest",
+    },
   },
   {
     "name": "anthropic",
@@ -1365,6 +1449,57 @@ export const connectors: IntegrationConfig[] = [
         },
       },
     }],
+    "setupGuide": {
+      "title": "Anthropic Admin API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Access Anthropic Console",
+        "description":
+          "Go to https://console.anthropic.com and sign in to your organization account",
+      }, {
+        "step": 2,
+        "title": "Navigate to Organization Settings",
+        "description":
+          "Click on your organization name in the top-right corner, then select 'Organization Settings'",
+      }, {
+        "step": 3,
+        "title": "Go to API Keys",
+        "description": "In the left sidebar, click on 'API Keys' under the Organization section",
+      }, {
+        "step": 4,
+        "title": "Create Admin API Key",
+        "description":
+          "Click 'Create API Key' and select 'Admin' as the key type. Admin keys have full access to organization management features including workspaces, usage data, members, and API key management",
+      }, {
+        "step": 5,
+        "title": "Name Your Key",
+        "description":
+          "Give your key a descriptive name (e.g., 'Veryfront Admin Integration') to identify its purpose",
+      }, {
+        "step": 6,
+        "title": "Copy and Secure Your Key",
+        "description":
+          "Copy the API key immediately after creation. This is the only time you'll be able to see the full key. Store it securely - you'll need it for the ANTHROPIC_ADMIN_API_KEY environment variable",
+      }, {
+        "step": 7,
+        "title": "Set Environment Variable",
+        "description":
+          "Add the API key to your .env file: ANTHROPIC_ADMIN_API_KEY=sk-ant-admin-***",
+      }, {
+        "step": 8,
+        "title": "Verify Access",
+        "description":
+          "Test the integration by calling the get-organization tool to confirm your admin key has the correct permissions",
+      }],
+      "notes": [
+        "Admin API keys have full access to organization management features. Keep them secure and never commit them to version control",
+        "The Admin API authenticates with the x-api-key header and requires the anthropic-version header on every request (tools default it to 2023-06-01)",
+        "Admin API keys are only available on organization accounts; individual accounts cannot use the Admin API",
+        "You can revoke API keys at any time from the Anthropic Console",
+        "Rate limits apply to all API endpoints. See https://docs.anthropic.com/en/api/rate-limits for details",
+      ],
+      "documentation": "https://docs.anthropic.com/en/api/admin-api",
+    },
   },
   {
     "name": "apify",
@@ -1580,6 +1715,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "list",
     }],
     "suggestedWith": ["tavily", "firecrawl", "openai"],
+    "setupGuide": {
+      "title": "Apify API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create an Apify account",
+        "description":
+          "Sign up at https://console.apify.com — the free plan includes monthly platform credits, enough for testing small actor runs.",
+      }, {
+        "step": 2,
+        "title": "Copy your API token",
+        "description":
+          "In the Apify Console go to Settings → API & Integrations (https://console.apify.com/settings/integrations) and copy your personal API token (apify_api_...).",
+      }, {
+        "step": 3,
+        "title": "Store the token",
+        "description": "Add it to your .env file as APIFY_TOKEN=apify_api_...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run the List Actors tool. To run a store actor you have not used before, reference it as username~actorname (e.g. apify~web-scraper) — each actor's input schema is on its store page.",
+      }],
+      "notes": [
+        "Actor runs consume platform credits based on compute, memory, and storage — check the actor's pricing on the Apify Store",
+        "Run Actor (Sync) waits up to 300 seconds; for longer scrapes start the run asynchronously in the Apify Console and fetch results with Get Dataset Items",
+        "Responses are wrapped in a 'data' property; dataset item responses are plain arrays",
+      ],
+      "documentation": "https://docs.apify.com/api/v2",
+    },
   },
   {
     "name": "apollo",
@@ -1811,6 +1975,34 @@ export const connectors: IntegrationConfig[] = [
       "icon": "sparkles",
     }],
     "suggestedWith": ["hubspot", "salesforce", "gmail"],
+    "setupGuide": {
+      "title": "Apollo.io API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create an API key",
+        "description":
+          "In Apollo, go to Settings → Integrations → API (https://app.apollo.io/#/settings/integrations/api) and click Create new key. Select the endpoints the key may access, or toggle 'Set as master key' for full access (some endpoints, like listing users, require a master key).",
+      }, {
+        "step": 2,
+        "title": "Check your plan's API access",
+        "description":
+          "API access and hourly/daily rate limits depend on your Apollo plan; free accounts have limited API quotas. Search endpoints are free to call, but enrichment and organization search consume Apollo credits.",
+      }, {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add APOLLO_API_KEY to your .env.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the Search People tool with a simple keyword query.",
+      }],
+      "notes": [
+        "The API key is sent in the X-Api-Key header; since September 2024 Apollo no longer accepts keys in query or body parameters",
+        "Enrich Person, Enrich Organization, and Search Organizations consume Apollo credits",
+        "Email addresses in search results may be locked unless your plan/credits allow revealing them",
+      ],
+      "documentation": "https://docs.apollo.io/reference/authentication",
+    },
   },
   {
     "name": "asana",
@@ -2580,6 +2772,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "search",
     }],
     "suggestedWith": ["slack", "calendar", "notion"],
+    "setupGuide": {
+      "title": "Ashby API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Sign in to Ashby",
+        "description":
+          "Go to https://app.ashbyhq.com and sign in as an organization admin. Ashby is a paid product — use your company workspace or request a sandbox from Ashby support.",
+      }, {
+        "step": 2,
+        "title": "Create an API key",
+        "description":
+          "Open Admin → API → API Keys and create a key. Grant read permissions for Candidates, Jobs, and Applications (plus candidate write if you will use Create Candidate).",
+      }, {
+        "step": 3,
+        "title": "Set environment variables",
+        "description":
+          "Add ASHBY_API_KEY=<your key> to your .env. Leave ASHBY_API_PASSWORD unset or empty — Ashby uses the key as the Basic auth username with a blank password.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Jobs to confirm the key works.",
+      }],
+      "notes": [
+        "All Ashby endpoints are POST-based RPC calls (e.g. candidate.list) with JSON bodies; list/info/search calls do not modify data",
+        "Authentication is HTTP Basic with the API key as username and an empty password",
+        "Responses are wrapped as {success, results, moreDataAvailable, nextCursor}; tools unwrap 'results'",
+      ],
+      "documentation": "https://developers.ashbyhq.com/reference",
+    },
   },
   {
     "name": "assemblyai",
@@ -2718,6 +2939,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "list",
     }],
     "suggestedWith": ["deepgram", "elevenlabs", "openai"],
+    "setupGuide": {
+      "title": "AssemblyAI API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create an AssemblyAI account",
+        "description":
+          "Go to https://www.assemblyai.com/app and sign up. New accounts include free transcription credits for testing.",
+      }, {
+        "step": 2,
+        "title": "Copy your API key",
+        "description":
+          "Your API key is shown on the dashboard home page after signing in. You can rotate it from account settings if needed.",
+      }, {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Add the key to your .env file as ASSEMBLYAI_API_KEY=...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run the List Transcripts tool to confirm the key works, then submit a sample file such as https://assembly.ai/wildfires.mp3",
+      }],
+      "notes": [
+        "Authentication sends the raw API key in the Authorization header — no Bearer prefix",
+        "Transcription is asynchronous: Submit Transcript returns an id with status 'queued'; poll Get Transcript until status is 'completed'",
+        "Transcription is billed per hour of audio once free credits are exhausted; EU data residency uses api.eu.assemblyai.com instead",
+      ],
+      "documentation": "https://www.assemblyai.com/docs/api-reference/overview",
+    },
   },
   {
     "name": "attio",
@@ -2923,6 +3173,36 @@ export const connectors: IntegrationConfig[] = [
       "icon": "plus",
     }],
     "suggestedWith": ["slack", "gmail", "notion"],
+    "setupGuide": {
+      "title": "Attio OAuth Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create an Attio app",
+        "description":
+          "Go to the Attio developer dashboard at https://build.attio.com/ and create a new app. Any Attio workspace (including the free plan) can be used for development.",
+      }, {
+        "step": 2,
+        "title": "Configure OAuth",
+        "description":
+          "In the app's OAuth settings, add the redirect URI <your-app-url>/api/auth/attio/callback and select the scopes object_configuration:read, record_permission:read-write, and list_configuration:read.",
+      }, {
+        "step": 3,
+        "title": "Set credentials",
+        "description":
+          "Copy the client ID and client secret from the app settings into your .env as ATTIO_CLIENT_ID and ATTIO_CLIENT_SECRET.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Complete the OAuth flow, then run the List Objects tool followed by Query Records on the people object.",
+      }],
+      "notes": [
+        "Attio access tokens expire; refresh tokens are exchanged at https://app.attio.com/oauth/token with grant_type=refresh_token",
+        "Client credentials are sent in the POST body (application/x-www-form-urlencoded) at the token endpoint",
+        "Record values use Attio's attribute-value format: values are arrays of { value } entries keyed by attribute slug",
+      ],
+      "documentation": "https://docs.attio.com/rest-api/tutorials/connect-an-app-through-oauth",
+    },
   },
   {
     "name": "aws",
@@ -2993,6 +3273,13 @@ export const connectors: IntegrationConfig[] = [
       "@aws-sdk/client-ec2": "^3.600.0",
       "@aws-sdk/client-lambda": "^3.600.0",
       "@aws-sdk/credential-providers": "^3.600.0",
+    },
+    "setupGuide": {
+      "steps": [{
+        "title": "Setup guide",
+        "description":
+          '# AWS Integration Setup Guide\n\n## Step 1: Create an IAM User\n\n1. Log in to the [AWS Console](https://console.aws.amazon.com/)\n2. Navigate to **IAM** (Identity and Access Management)\n3. Click on **Users** in the left sidebar\n4. Click **Add users**\n5. Enter a username (e.g., `veryfront-integration`)\n6. Select **Access key - Programmatic access**\n7. Click **Next: Permissions**\n\n## Step 2: Attach Permissions\n\nYou can either:\n\n### Option A: Create a Custom Policy (Recommended)\n\n1. Click **Attach existing policies directly**\n2. Click **Create policy**\n3. Choose the **JSON** tab\n4. Paste the following policy:\n\n```json\n{\n  "Version": "2012-10-17",\n  "Statement": [\n    {\n      "Effect": "Allow",\n      "Action": [\n        "s3:ListAllMyBuckets",\n        "s3:ListBucket",\n        "s3:GetObject",\n        "ec2:DescribeInstances",\n        "lambda:ListFunctions"\n      ],\n      "Resource": "*"\n    }\n  ]\n}\n```\n\n5. Click **Review policy**\n6. Name it `VeryfrontAWSIntegration`\n7. Click **Create policy**\n8. Go back to the user creation tab and refresh the policy list\n9. Search for and select `VeryfrontAWSIntegration`\n\n### Option B: Use AWS Managed Policies\n\nAttach these managed policies:\n- `AmazonS3ReadOnlyAccess`\n- `AmazonEC2ReadOnlyAccess`\n- `AWSLambdaReadOnlyAccess`\n\n**Note:** Option B provides broader read access than Option A.\n\n## Step 3: Complete User Creation\n\n1. Click **Next: Tags** (optional)\n2. Click **Next: Review**\n3. Click **Create user**\n4. **Important:** Save your credentials:\n   - **Access Key ID**\n   - **Secret Access Key**\n   \n   ⚠️ This is the only time you\'ll be able to see the Secret Access Key!\n\n## Step 4: Configure Environment Variables\n\n1. Copy the `.env.example` file to `.env.local`\n2. Add your AWS credentials:\n\n```env\nAWS_ACCESS_KEY_ID=your_access_key_id_here\nAWS_SECRET_ACCESS_KEY=your_secret_access_key_here\nAWS_REGION=us-east-1\n```\n\n3. Replace `your_access_key_id_here` and `your_secret_access_key_here` with your actual credentials\n4. Update `AWS_REGION` to your preferred region (e.g., `us-west-2`, `eu-west-1`)\n\n## Step 5: Install Dependencies\n\nRun the following command to install required AWS SDK packages:\n\n```bash\nnpm install @aws-sdk/client-s3 @aws-sdk/client-ec2 @aws-sdk/client-lambda @aws-sdk/credential-providers\n```\n\n## Step 6: Test Your Integration\n\nYou can test your integration by using any of the available tools:\n\n- `list-s3-buckets` - List all your S3 buckets\n- `list-s3-objects` - List objects in a specific bucket\n- `get-s3-object` - Retrieve an object from S3\n- `list-ec2-instances` - List your EC2 instances\n- `list-lambda-functions` - List your Lambda functions\n\n## Security Best Practices\n\n1. **Never commit your `.env.local` file** - It\'s already in `.gitignore`\n2. **Use the principle of least privilege** - Only grant permissions needed\n3. **Rotate credentials regularly** - Update your access keys periodically\n4. **Use different credentials for different environments** - Dev, staging, and production\n5. **Consider using AWS IAM Roles** - For production environments, use IAM roles with EC2/ECS/Lambda\n\n## Troubleshooting\n\n### "Access Denied" Errors\n\n- Verify your IAM user has the correct permissions\n- Check that the region in your `.env.local` matches where your resources are located\n\n### "Invalid Access Key" Errors\n\n- Double-check your `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`\n- Ensure there are no extra spaces or newlines in your credentials\n- Verify the IAM user is active and the access key hasn\'t been deleted\n\n### Region Issues\n\n- Some resources are region-specific (EC2, Lambda)\n- S3 bucket listing is global, but object access respects bucket regions\n- Update `AWS_REGION` to match where your resources are located\n\n## Additional Resources\n\n- [AWS IAM User Guide](https://docs.aws.amazon.com/IAM/latest/UserGuide/)\n- [AWS SDK for JavaScript v3](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/)\n- [AWS Security Best Practices](https://aws.amazon.com/security/best-practices/)',
+      }],
     },
   },
   {
@@ -3129,6 +3416,34 @@ export const connectors: IntegrationConfig[] = [
       "icon": "list",
     }],
     "suggestedWith": ["sentry", "datadog", "cloudflare"],
+    "setupGuide": {
+      "title": "Axiom API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Sign up for Axiom",
+        "description":
+          "Create a free account at https://app.axiom.co — the free plan includes API access. Create a dataset and send a few test events so queries return data.",
+      }, {
+        "step": 2,
+        "title": "Create an API token",
+        "description":
+          "Go to Settings → API tokens (https://app.axiom.co/settings/api-tokens) and create a token. Grant query permission on the datasets you want to read, and ingest permission if you will use Ingest Events.",
+      }, {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the token to your .env as AXIOM_TOKEN=...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Datasets, then Run APL Query with ['<dataset>'] | limit 10.",
+      }],
+      "notes": [
+        "Requests authenticate with 'Authorization: Bearer <token>' against https://api.axiom.co",
+        "APL queries POST to /v1/query/_apl; startTime/endTime accept RFC3339 timestamps or relative expressions like now-1d",
+        "API tokens have granular dataset permissions — a query-only token cannot ingest; personal access tokens additionally require an org ID header and are not used here",
+      ],
+      "documentation": "https://axiom.co/docs/restapi/introduction",
+    },
   },
   {
     "name": "basecamp",
@@ -3412,6 +3727,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "plus",
     }],
     "suggestedWith": ["slack", "github", "harvest"],
+    "setupGuide": {
+      "title": "Basecamp OAuth Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a Basecamp account",
+        "description":
+          "Sign up at https://basecamp.com (a free trial works for testing). Note your account ID — it's the number in the app URL, e.g. https://3.basecamp.com/5899981.",
+      }, {
+        "step": 2,
+        "title": "Register an app on 37signals Launchpad",
+        "description":
+          "Go to https://launchpad.37signals.com/integrations and register a new app. Check 'Basecamp 4' as the product and set your redirect URI to your app's /api/auth/basecamp/callback URL.",
+      }, {
+        "step": 3,
+        "title": "Set environment variables",
+        "description":
+          "Copy the Client ID and Client Secret into your .env as BASECAMP_CLIENT_ID and BASECAMP_CLIENT_SECRET.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Complete the OAuth flow, then run List Projects with your account ID.",
+      }],
+      "notes": [
+        "Every API URL includes the account ID: https://3.basecampapi.com/{accountId}/... — tools take it as a required accountId parameter",
+        "Basecamp OAuth has no scopes; tokens carry the user's full access. Access tokens expire after two weeks and are renewed with the refresh token",
+        "Basecamp requires a User-Agent identifying your app with contact info, and rate-limits to ~50 requests per 10 seconds",
+      ],
+      "documentation": "https://github.com/basecamp/bc3-api",
+    },
   },
   {
     "name": "betterstack",
@@ -3581,6 +3925,30 @@ export const connectors: IntegrationConfig[] = [
       "icon": "doc",
     }],
     "suggestedWith": ["pagerduty", "sentry", "slack"],
+    "setupGuide": {
+      "title": "Better Stack Uptime API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Sign up for Better Stack",
+        "description":
+          "Create a free account at https://betterstack.com and add at least one uptime monitor or heartbeat so the API returns data.",
+      }, {
+        "step": 2,
+        "title": "Create an API token",
+        "description":
+          "In Better Stack go to API tokens. Use a global API token, or create a team-scoped token in the 'Uptime API tokens' section.",
+      }, {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the token to your .env as BETTERSTACK_API_TOKEN=...",
+      }, { "step": 4, "title": "Verify access", "description": "Run List Monitors." }],
+      "notes": [
+        "This connector covers the Uptime API (uptime.betterstack.com) only — the Telemetry/Logs API uses a different token and host and is not included",
+        "Responses follow JSON:API: items are under data[] with attributes, pagination links under pagination",
+        "Incidents use the newer /api/v3 path; monitors and heartbeats use /api/v2",
+      ],
+      "documentation": "https://betterstack.com/docs/uptime/api/getting-started-with-uptime-api/",
+    },
   },
   {
     "name": "bitbucket",
@@ -4171,6 +4539,36 @@ export const connectors: IntegrationConfig[] = [
       "icon": "search",
     }],
     "suggestedWith": ["slack", "gmail", "drive"],
+    "setupGuide": {
+      "title": "Box OAuth Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a Box app",
+        "description":
+          "Sign in at https://app.box.com/developers/console (a free Individual Box account works) and create a Custom App with 'User Authentication (OAuth 2.0)'.",
+      }, {
+        "step": 2,
+        "title": "Configure the redirect URI and scopes",
+        "description":
+          "In the app's Configuration tab, add your redirect URI ending in /api/auth/box/callback and enable the 'Read and write all files and folders' application scope.",
+      }, {
+        "step": 3,
+        "title": "Copy credentials",
+        "description":
+          "Copy the Client ID and Client Secret from the Configuration tab into BOX_CLIENT_ID and BOX_CLIENT_SECRET.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Connect your Box account and run the List Folder Items tool against folder 0.",
+      }],
+      "notes": [
+        "Authorization codes are only valid for 30 seconds; the client is authenticated with client_id/client_secret in the token request body",
+        "Refresh tokens are issued; access tokens are short-lived and refreshed automatically",
+        "File upload is not included: Box uploads go to upload.box.com and require multipart/form-data with a file part, which this connector's JSON endpoint executor does not support yet",
+      ],
+      "documentation": "https://developer.box.com/reference/",
+    },
   },
   {
     "name": "brevo",
@@ -4381,6 +4779,38 @@ export const connectors: IntegrationConfig[] = [
       "icon": "search",
     }],
     "suggestedWith": ["klaviyo", "shopify", "sheets"],
+    "setupGuide": {
+      "title": "Brevo API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Sign in to Brevo",
+        "description":
+          "Go to https://app.brevo.com and sign in. The free plan is sufficient for testing (includes a daily transactional email allowance).",
+      }, {
+        "step": 2,
+        "title": "Create an API key",
+        "description":
+          "Open Settings → SMTP & API → API Keys (https://app.brevo.com/settings/keys/api) and generate a new v3 API key.",
+      }, {
+        "step": 3,
+        "title": "Verify a sender",
+        "description":
+          "Under Senders, Domains & Dedicated IPs, add and verify the sender address you will use in Send Email.",
+      }, {
+        "step": 4,
+        "title": "Set the environment variable",
+        "description": "Add the key to your .env as BREVO_API_KEY=xkeysib-...",
+      }, {
+        "step": 5,
+        "title": "Verify access",
+        "description": "Run List Lists to confirm the key works.",
+      }],
+      "notes": [
+        "Brevo authenticates with an 'api-key' header — not an Authorization Bearer token",
+        "Get Contact accepts either an email address or the numeric contact ID in the path",
+      ],
+      "documentation": "https://developers.brevo.com/reference",
+    },
   },
   {
     "name": "browserbase",
@@ -4536,6 +4966,36 @@ export const connectors: IntegrationConfig[] = [
       "icon": "plus",
     }],
     "suggestedWith": ["openai", "anthropic", "firecrawl"],
+    "setupGuide": {
+      "title": "Browserbase API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a Browserbase account",
+        "description":
+          "Sign up at https://www.browserbase.com — the free plan includes browser hours for testing.",
+      }, {
+        "step": 2,
+        "title": "Copy your API key and project ID",
+        "description":
+          "In the dashboard, open Settings to find your API key (bb_...) and your default project ID. Each key belongs to a project.",
+      }, {
+        "step": 3,
+        "title": "Store the key",
+        "description":
+          "Add it to your .env file as BROWSERBASE_API_KEY=bb_... — requests authenticate with the X-BB-API-Key header.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run the List Projects tool, then List Sessions. Create Session can omit projectId — it is inferred from the API key.",
+      }],
+      "notes": [
+        "Sessions are billed by browser minutes — release sessions you are done with via the Release Session tool",
+        "Driving the browser (navigation, clicks) happens over the session's CDP connectUrl with Playwright/Puppeteer/Stagehand, not through this REST API",
+        "keepAlive sessions are only available on paid plans",
+      ],
+      "documentation": "https://docs.browserbase.com/reference/api/create-a-session",
+    },
   },
   {
     "name": "buildkite",
@@ -4764,6 +5224,34 @@ export const connectors: IntegrationConfig[] = [
       "icon": "play",
     }],
     "suggestedWith": ["github", "slack", "sentry"],
+    "setupGuide": {
+      "title": "Buildkite API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Sign in to Buildkite",
+        "description":
+          "Use an existing organization or create one at https://buildkite.com — free plans include API access. You need at least one pipeline to query builds.",
+      }, {
+        "step": 2,
+        "title": "Create an API access token",
+        "description":
+          "Go to https://buildkite.com/user/api-access-tokens, create a token scoped to your organization, and enable the read_pipelines, read_builds, and read_organizations REST scopes. Add write_builds if you want to trigger builds.",
+      }, {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the token to your .env as BUILDKITE_API_TOKEN=...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Organizations, then List Pipelines with your organization slug.",
+      }],
+      "notes": [
+        "Requests authenticate with 'Authorization: Bearer <token>' against https://api.buildkite.com/v2",
+        "API tokens are scoped per organization and per REST scope — missing scopes return 403",
+        "Pagination uses page and per_page query parameters (max 100 per page)",
+      ],
+      "documentation": "https://buildkite.com/docs/apis/rest-api",
+    },
   },
   {
     "name": "calendar",
@@ -5297,6 +5785,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "link",
     }],
     "suggestedWith": ["calendar", "gmail", "slack"],
+    "setupGuide": {
+      "title": "Calendly OAuth Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a Calendly developer account",
+        "description":
+          "Go to https://developer.calendly.com, sign in with your Calendly account, and create a developer account if you don't have one.",
+      }, {
+        "step": 2,
+        "title": "Create an OAuth app",
+        "description":
+          "Create a new OAuth application, choose the environment (sandbox or production), and set the redirect URI to your callback (e.g. https://your-app.example.com/api/auth/calendly/callback).",
+      }, {
+        "step": 3,
+        "title": "Set environment variables",
+        "description":
+          "Copy the Client ID and Client Secret into your .env as CALENDLY_CLIENT_ID and CALENDLY_CLIENT_SECRET.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Connect your Calendly account and run the Get Current User tool — note the returned user and organization URIs, which the list tools take as parameters.",
+      }],
+      "notes": [
+        "Calendly OAuth does not use granular scopes — an access token can access everything the user can",
+        "A free Calendly account works for testing; event cancellation requires the connected user to own the event",
+      ],
+      "documentation": "https://developer.calendly.com/api-docs",
+    },
   },
   {
     "name": "checkly",
@@ -5462,6 +5979,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "search",
     }],
     "suggestedWith": ["github", "pagerduty", "slack"],
+    "setupGuide": {
+      "title": "Checkly API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Sign up for Checkly",
+        "description":
+          "Create a free account at https://app.checklyhq.com (the free Hobby plan includes API access) and create at least one check.",
+      }, {
+        "step": 2,
+        "title": "Create an API key",
+        "description":
+          "Go to User Settings → API keys (https://app.checklyhq.com/settings/user/api-keys), create a key, and add it to your .env as CHECKLY_API_KEY.",
+      }, {
+        "step": 3,
+        "title": "Copy your account ID",
+        "description":
+          "Find the account ID under Account Settings → General and add it as CHECKLY_ACCOUNT_ID.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Checks, then List Check Statuses.",
+      }],
+      "notes": [
+        "Every request needs both 'Authorization: Bearer <api key>' and the 'X-Checkly-Account: <account id>' header",
+        "Raw check results are kept for 30 days, and a results query window (from/to) may span at most 6 hours",
+        "Check results use the newer /v2 path; checks and statuses use /v1",
+      ],
+      "documentation": "https://developers.checklyhq.com/reference",
+    },
   },
   {
     "name": "circleci",
@@ -5684,6 +6230,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "alert",
     }],
     "suggestedWith": ["github", "slack", "bitbucket"],
+    "setupGuide": {
+      "title": "CircleCI API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Sign in to CircleCI",
+        "description":
+          "Go to https://app.circleci.com and sign in (the free plan with a connected GitHub repo is sufficient for testing).",
+      }, {
+        "step": 2,
+        "title": "Create a personal API token",
+        "description":
+          "Open User Settings > Personal API Tokens (https://app.circleci.com/settings/user/tokens) and create a token.",
+      }, {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the token to your .env as CIRCLECI_TOKEN=...",
+      }, {
+        "step": 4,
+        "title": "Find your project slug",
+        "description":
+          "Slugs look like gh/your-org/your-repo (or circleci/<org-id>/<project-id> for GitLab and GitHub App projects). Run List Pipelines with it to verify access.",
+      }],
+      "notes": [
+        "CircleCI authenticates with a 'Circle-Token' header",
+        "Project slugs contain slashes (vcs/org/repo) and are passed verbatim in the URL path",
+        "Personal tokens act with your user's permissions across all your organizations",
+      ],
+      "documentation": "https://circleci.com/docs/api/v2/index.html",
+    },
   },
   {
     "name": "clickhouse",
@@ -5824,6 +6399,36 @@ export const connectors: IntegrationConfig[] = [
       "icon": "search",
     }],
     "suggestedWith": ["datadog", "slack", "sheets"],
+    "setupGuide": {
+      "title": "ClickHouse Cloud API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Sign in to ClickHouse Cloud",
+        "description":
+          "Go to https://console.clickhouse.cloud and sign in (a free trial organization with one service is enough for testing).",
+      }, {
+        "step": 2,
+        "title": "Create an API key",
+        "description":
+          "In the console, open the API Keys tab in the left menu, click New API Key, choose permissions (developer for read-only is sufficient for these tools), and set an expiration.",
+      }, {
+        "step": 3,
+        "title": "Copy the key ID and secret",
+        "description":
+          "Copy the Key ID and Key Secret immediately — they are not shown again. Add them to your .env as CLICKHOUSE_KEY_ID and CLICKHOUSE_KEY_SECRET.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run List Organizations, then List Services with the organization ID it returns.",
+      }],
+      "notes": [
+        "Authentication is HTTP Basic: the key ID is the username and the key secret is the password",
+        "This connector targets the ClickHouse Cloud management API (api.clickhouse.cloud), not the SQL interface of your ClickHouse database",
+        "API responses wrap payloads in a top-level 'result' field",
+      ],
+      "documentation": "https://clickhouse.com/docs/cloud/manage/api/api-overview",
+    },
   },
   {
     "name": "clickup",
@@ -6053,6 +6658,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "plus",
     }],
     "suggestedWith": ["slack", "github", "calendar"],
+    "setupGuide": {
+      "title": "ClickUp OAuth Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a ClickUp OAuth app",
+        "description":
+          "Sign in to ClickUp (a Free Forever workspace works), open your avatar menu → Settings → ClickUp API, and click Create an App.",
+      }, {
+        "step": 2,
+        "title": "Set the redirect URL",
+        "description":
+          "Set the app's redirect URL to your app URL ending in /api/auth/clickup/callback.",
+      }, {
+        "step": 3,
+        "title": "Copy credentials",
+        "description":
+          "Copy the generated Client ID and Client Secret into CLICKUP_CLIENT_ID and CLICKUP_CLIENT_SECRET.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Connect your ClickUp account and run the List Workspaces tool.",
+      }],
+      "notes": [
+        "ClickUp OAuth has no scopes; users pick which Workspaces to authorize during the consent screen",
+        "OAuth access tokens currently do not expire and no refresh tokens are issued",
+        "OAuth access tokens are sent as Authorization: Bearer <token>; only personal pk_ tokens use the bare-token header",
+      ],
+      "documentation": "https://developer.clickup.com/reference",
+    },
   },
   {
     "name": "close",
@@ -6293,6 +6927,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "plus",
     }],
     "suggestedWith": ["gmail", "slack", "calendly"],
+    "setupGuide": {
+      "title": "Close API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a Close account",
+        "description":
+          "Sign up at https://www.close.com/ — a 14-day free trial works for testing the API.",
+      }, {
+        "step": 2,
+        "title": "Create an API key",
+        "description":
+          "In Close, go to Settings → Developer → API Keys (https://app.close.com/settings/developer/api-keys/) and create a new API key. Keys are scoped to your organization and inherit your user's permissions.",
+      }, {
+        "step": 3,
+        "title": "Set environment variables",
+        "description":
+          "Add CLOSE_API_KEY to your .env. Set CLOSE_API_PASSWORD to an empty string (or leave it unset) — Close uses HTTP Basic auth with the API key as the username and a blank password.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Leads tool with no query.",
+      }],
+      "notes": [
+        "Close recommends API keys (HTTP Basic, key as username, empty password) for server-side integrations; OAuth is reserved for user-facing public apps",
+        "Lead, opportunity, and contact endpoints use trailing slashes (e.g. /api/v1/lead/)",
+        "Monetary values like opportunity value are expressed in cents",
+      ],
+      "documentation": "https://developer.close.com/",
+    },
   },
   {
     "name": "cloudflare",
@@ -6544,6 +7207,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "plus",
     }],
     "suggestedWith": ["github", "datadog", "aws"],
+    "setupGuide": {
+      "title": "Cloudflare API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Sign in to Cloudflare",
+        "description":
+          "Go to https://dash.cloudflare.com and sign in. A free account with at least one zone added is sufficient for testing.",
+      }, {
+        "step": 2,
+        "title": "Create an API token",
+        "description":
+          "Open My Profile > API Tokens (https://dash.cloudflare.com/profile/api-tokens) and create a token. The 'Edit zone DNS' template covers the DNS tools; add Zone:Read and Account:Read permissions for listing.",
+      }, {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description":
+          "Add the token to your .env as CLOUDFLARE_API_TOKEN=... (use a scoped API token, not the legacy Global API Key).",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the Verify Token tool, then List Zones.",
+      }],
+      "notes": [
+        "Cloudflare authenticates with 'Authorization: Bearer <token>'",
+        "Account-scoped endpoints need an account ID — use List Accounts to find yours",
+        "Tokens can be scoped per zone; if List Zones returns nothing, widen the token's zone resources",
+      ],
+      "documentation": "https://developers.cloudflare.com/api/",
+    },
   },
   {
     "name": "coda",
@@ -6764,6 +7456,34 @@ export const connectors: IntegrationConfig[] = [
       "icon": "plus",
     }],
     "suggestedWith": ["notion", "slack", "airtable"],
+    "setupGuide": {
+      "title": "Coda API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Sign in to Coda",
+        "description":
+          "Go to https://coda.io and sign in. A free account is sufficient for testing — create a throwaway doc to experiment with.",
+      }, {
+        "step": 2,
+        "title": "Generate an API token",
+        "description":
+          "Open Account Settings (https://coda.io/account), scroll to the API settings section, and click 'Generate API token'. You can optionally restrict the token to specific docs or read-only access.",
+      }, {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the token to your .env as CODA_API_TOKEN=...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Docs tool to confirm the token works.",
+      }],
+      "notes": [
+        "Coda authenticates with 'Authorization: Bearer <token>'",
+        "Doc IDs are the part after /d/ in a doc's URL (strip any name prefix before the underscore)",
+        "Restricted tokens only see the docs they were granted",
+      ],
+      "documentation": "https://coda.io/developers/apis/v1",
+    },
   },
   {
     "name": "cohere",
@@ -6933,6 +7653,34 @@ export const connectors: IntegrationConfig[] = [
       "icon": "sparkles",
     }],
     "suggestedWith": ["openai", "anthropic", "gemini"],
+    "setupGuide": {
+      "title": "Cohere API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a Cohere account",
+        "description":
+          "Go to https://dashboard.cohere.com and sign up or sign in. New accounts get a free trial key that works for evaluation without billing.",
+      }, {
+        "step": 2,
+        "title": "Create an API key",
+        "description":
+          "Open https://dashboard.cohere.com/api-keys. Use the trial key for testing, or click 'New Production Key' for production use (requires billing details).",
+      }, {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Copy the key and add it to your .env file as COHERE_API_KEY=...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run the List Models tool to confirm the key works. A 401 means the key is wrong or revoked.",
+      }],
+      "notes": [
+        "Trial keys are free but heavily rate limited — switch to a production key for real workloads",
+        "Chat, Embed, and Rerank calls are billed per token/search unit on production keys",
+      ],
+      "documentation": "https://docs.cohere.com/reference/about",
+    },
   },
   {
     "name": "confluence",
@@ -7473,6 +8221,34 @@ export const connectors: IntegrationConfig[] = [
       "icon": "search",
     }],
     "suggestedWith": ["sentry", "slack", "github"],
+    "setupGuide": {
+      "title": "Datadog API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Find your Datadog site",
+        "description":
+          "Check the URL you use to access Datadog (e.g. app.datadoghq.com → site datadoghq.com, app.datadoghq.eu → datadoghq.eu). Tools take a 'site' parameter that defaults to datadoghq.com.",
+      }, {
+        "step": 2,
+        "title": "Create an API key",
+        "description":
+          "In Organization Settings → API Keys (https://app.datadoghq.com/organization-settings/api-keys), create a key and add it to your .env as DD_API_KEY.",
+      }, {
+        "step": 3,
+        "title": "Create an application key",
+        "description":
+          "In Organization Settings → Application Keys, create a key and add it as DD_APP_KEY. Application keys inherit the permissions of the user who created them; read access to monitors, dashboards, metrics, and logs is required.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the Validate API Key tool, then List Monitors.",
+      }],
+      "notes": [
+        "Datadog authenticates with two headers: DD-API-KEY and DD-APPLICATION-KEY — both env vars are required",
+        "If your org is not on datadoghq.com, pass your site (e.g. datadoghq.eu) as the 'site' parameter on each tool call",
+      ],
+      "documentation": "https://docs.datadoghq.com/api/latest/",
+    },
   },
   {
     "name": "deepgram",
@@ -7608,6 +8384,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "chart",
     }],
     "suggestedWith": ["assemblyai", "elevenlabs", "openai"],
+    "setupGuide": {
+      "title": "Deepgram API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a Deepgram account",
+        "description":
+          "Go to https://console.deepgram.com and sign up. New accounts receive free credits to test transcription without a credit card.",
+      }, {
+        "step": 2,
+        "title": "Create an API key",
+        "description":
+          "In the console, open your project, go to Settings → API Keys, and create a new key. Choose the Member role (or narrower) for day-to-day transcription.",
+      }, {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Copy the key and add it to your .env file as DEEPGRAM_API_KEY=...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run the List Projects tool to confirm the key works, then transcribe a sample file such as https://dpgr.am/spacewalk.wav",
+      }],
+      "notes": [
+        "Authentication uses the Authorization header with the Token prefix (Authorization: Token <key>), not Bearer",
+        "Transcription is billed per minute of audio and draws down project credits",
+        "The Transcribe URL tool only handles remote files — uploading raw audio bytes is not supported by this connector",
+      ],
+      "documentation": "https://developers.deepgram.com/reference/deepgram-api-overview",
+    },
   },
   {
     "name": "dialpad",
@@ -7810,6 +8615,34 @@ export const connectors: IntegrationConfig[] = [
       "icon": "send",
     }],
     "suggestedWith": ["hubspot", "slack", "twilio"],
+    "setupGuide": {
+      "title": "Dialpad OAuth Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Request an OAuth app",
+        "description":
+          "Dialpad OAuth clients are issued by Dialpad: contact api@dialpad.com (or your Dialpad account manager) to register an OAuth app with your redirect URI <your-app-url>/api/auth/dialpad/callback and the scopes you need (request offline_access for refresh tokens). See https://developers.dialpad.com/docs/oauth.",
+      }, {
+        "step": 2,
+        "title": "Use the sandbox for testing",
+        "description":
+          "Dialpad provides a free developer sandbox at https://sandbox.dialpad.com (see https://developers.dialpad.com/docs/sandbox). Sandbox OAuth uses https://sandbox.dialpad.com/oauth2/authorize and /oauth2/token.",
+      }, {
+        "step": 3,
+        "title": "Set credentials",
+        "description": "Add DIALPAD_CLIENT_ID and DIALPAD_CLIENT_SECRET to your .env.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Complete the OAuth flow, then run the List Contacts tool.",
+      }],
+      "notes": [
+        "Refresh tokens are only issued when the offline_access scope is requested and approved for your app",
+        "Scopes must be approved by Dialpad when the OAuth app is registered",
+        "This connector targets production (dialpad.com); point your OAuth app at the sandbox host for sandbox testing",
+      ],
+      "documentation": "https://developers.dialpad.com/docs/oauth",
+    },
   },
   {
     "name": "digitalocean",
@@ -8007,6 +8840,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "plus",
     }],
     "suggestedWith": ["github", "datadog", "slack"],
+    "setupGuide": {
+      "title": "DigitalOcean OAuth Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Get a DigitalOcean account",
+        "description":
+          "Sign up at https://www.digitalocean.com — new accounts get trial credit you can use for testing.",
+      }, {
+        "step": 2,
+        "title": "Register an OAuth application",
+        "description":
+          "Go to API > OAuth Applications (https://cloud.digitalocean.com/account/api/applications), register an app, and set the callback URL to your app's /api/auth/digitalocean/callback URL.",
+      }, {
+        "step": 3,
+        "title": "Set environment variables",
+        "description":
+          "Copy the Client ID and Client Secret into your .env as DIGITALOCEAN_CLIENT_ID and DIGITALOCEAN_CLIENT_SECRET.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Complete the OAuth flow, then run Get Account and List Droplets.",
+      }],
+      "notes": [
+        "Scopes are space-separated 'read write'; request only 'read' if you don't need mutations",
+        "Access tokens expire after 30 days; refresh tokens are single-use and rotate on each refresh",
+        "Creating Droplets provisions billable infrastructure — confirm sizes and regions before running write tools",
+      ],
+      "documentation": "https://docs.digitalocean.com/reference/api/",
+    },
   },
   {
     "name": "docs-google",
@@ -8191,6 +9053,13 @@ export const connectors: IntegrationConfig[] = [
       "icon": "edit",
     }],
     "suggestedWith": ["gmail", "calendar", "drive", "sheets"],
+    "setupGuide": {
+      "steps": [{
+        "title": "Setup guide",
+        "description":
+          "# Google Docs Integration Setup\n\n## Prerequisites\n- A Google Cloud Platform account\n- A Google Cloud project\n\n## Step 1: Create OAuth 2.0 Credentials\n\n1. Go to the [Google Cloud Console](https://console.cloud.google.com/)\n2. Select or create a project\n3. Navigate to **APIs & Services** > **Credentials**\n4. Click **Create Credentials** > **OAuth client ID**\n5. Select **Web application** as the application type\n6. Add your authorized redirect URIs:\n   - For development: `http://localhost:3000/api/auth/docs-google/callback`\n   - For production: `https://yourdomain.com/api/auth/docs-google/callback`\n7. Click **Create** and copy your Client ID and Client Secret\n\n## Step 2: Enable Required APIs\n\nEnable the following APIs in your Google Cloud project:\n\n1. [Google Docs API](https://console.cloud.google.com/apis/library/docs.googleapis.com)\n2. [Google Drive API](https://console.cloud.google.com/apis/library/drive.googleapis.com)\n\n## Step 3: Configure Environment Variables\n\nAdd the following to your `.env` file:\n\n```bash\nGOOGLE_CLIENT_ID=your_client_id_here\nGOOGLE_CLIENT_SECRET=your_client_secret_here\n```\n\n## Step 4: Test the Integration\n\n1. Start your development server\n2. Navigate to `/api/auth/docs-google` to initiate OAuth flow\n3. Grant permissions when prompted\n4. You should be redirected back to your application\n\n## OAuth Scopes\n\nThis integration requests the following scopes:\n\n- `https://www.googleapis.com/auth/documents.readonly` - Read access to Google Docs\n- `https://www.googleapis.com/auth/documents` - Full access to create and edit Google Docs\n- `https://www.googleapis.com/auth/docs` - Manage Google Docs files in Drive (create, edit, delete)\n- `https://www.googleapis.com/auth/drive.readonly` - Read access to list documents from Drive\n\n## Security Notes\n\n- Keep your Client Secret secure and never commit it to version control\n- Use environment variables for all sensitive credentials\n- Consider implementing proper user session management in production\n- The default implementation uses an in-memory token store - replace with a persistent store for production use\n\n## Available AI Tools\n\nOnce configured, you can use these AI tools:\n\n- **list-documents** - List recent Google Docs from your Drive\n- **get-document** - Retrieve document content and structure\n- **create-document** - Create new documents with formatted content\n- **update-document** - Modify existing documents with batch updates\n- **search-documents** - Search for documents by name or content\n\n## Need Help?\n\nRefer to the [Google Docs API documentation](https://developers.google.com/docs/api) for detailed information about API capabilities and limits.",
+      }],
+    },
   },
   {
     "name": "drive",
@@ -8493,6 +9362,42 @@ export const connectors: IntegrationConfig[] = [
       "icon": "upload",
     }],
     "suggestedWith": ["gmail", "calendar", "sheets"],
+    "setupGuide": {
+      "title": "Google Drive Integration Setup",
+      "steps": [{
+        "title": "Create a Google Cloud Project",
+        "description": "Go to the Google Cloud Console and create a new project",
+        "url": "https://console.cloud.google.com/projectcreate",
+      }, {
+        "title": "Enable the Google Drive API",
+        "description": "Navigate to APIs & Services > Library and enable the Google Drive API",
+        "url": "https://console.cloud.google.com/apis/library/drive.googleapis.com",
+      }, {
+        "title": "Configure OAuth Consent Screen",
+        "description":
+          "Go to APIs & Services > OAuth consent screen. Set up your app name, user support email, and developer contact. Add scope: drive (full access)",
+        "url": "https://console.cloud.google.com/apis/credentials/consent",
+      }, {
+        "title": "Create OAuth 2.0 Client ID",
+        "description":
+          "Go to APIs & Services > Credentials. Click 'Create Credentials' > 'OAuth client ID'. Choose 'Web application'. Add authorized redirect URI: http://localhost:3000/api/auth/drive/callback (adjust port/domain for production)",
+        "url": "https://console.cloud.google.com/apis/credentials",
+      }, {
+        "title": "Copy Credentials to .env",
+        "description":
+          "Copy the Client ID and Client Secret to your .env file as GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET",
+      }, {
+        "title": "Test the Integration",
+        "description":
+          "Start your application and navigate to /api/auth/drive to initiate the OAuth flow",
+      }],
+      "notes": [
+        "The same Google OAuth credentials work for all Google services (Gmail, Calendar, Sheets, Drive)",
+        "In production, make sure to add your production callback URL to authorized redirect URIs",
+        "The drive scope grants full access to all files; tools like update_file and delete_file require it for files not created by this app",
+        "You may need to verify your app if you plan to distribute it publicly",
+      ],
+    },
   },
   {
     "name": "elevenlabs",
@@ -8639,6 +9544,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "chart",
     }],
     "suggestedWith": ["openai", "deepgram", "assemblyai"],
+    "setupGuide": {
+      "title": "ElevenLabs API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create an ElevenLabs account",
+        "description":
+          "Go to https://elevenlabs.io and sign up or sign in. The free tier includes a monthly character allowance suitable for testing.",
+      }, {
+        "step": 2,
+        "title": "Create an API key",
+        "description":
+          "Open https://elevenlabs.io/app/settings/api-keys and click 'Create API Key'. You can restrict the key to specific permissions (e.g. text-to-speech, voices read).",
+      }, {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Copy the key and add it to your .env file as ELEVENLABS_API_KEY=...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run the Get Subscription tool to confirm the key works and see your character quota.",
+      }],
+      "notes": [
+        "Authentication uses the xi-api-key header, not Authorization",
+        "Text to Speech returns raw binary audio (application/octet-stream), not JSON — treat the response as a file",
+        "Speech synthesis consumes characters from your plan quota; overages depend on your subscription tier",
+      ],
+      "documentation": "https://elevenlabs.io/docs/api-reference/introduction",
+    },
   },
   {
     "name": "exa",
@@ -8786,6 +9720,34 @@ export const connectors: IntegrationConfig[] = [
       "icon": "link",
     }],
     "suggestedWith": ["openai", "anthropic", "notion"],
+    "setupGuide": {
+      "title": "Exa API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create an Exa account",
+        "description":
+          "Go to https://dashboard.exa.ai and sign up — new accounts include free credits for testing.",
+      }, {
+        "step": 2,
+        "title": "Create an API key",
+        "description":
+          "Open https://dashboard.exa.ai/api-keys and create a key with a descriptive name (e.g. 'Veryfront Integration').",
+      }, {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Add it to your .env file as EXA_API_KEY=...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run the Search tool with a simple query. A 401 means the key is invalid; a 402 means you are out of credits.",
+      }],
+      "notes": [
+        "All endpoints are billed per request from your credit balance; Answer also incurs LLM generation cost",
+        "Deep search types cost more than fast/instant — use type 'auto' unless you need depth",
+      ],
+      "documentation": "https://docs.exa.ai",
+    },
   },
   {
     "name": "fal",
@@ -9003,6 +9965,37 @@ export const connectors: IntegrationConfig[] = [
       "icon": "clock",
     }],
     "suggestedWith": ["openai", "anthropic", "gemini"],
+    "setupGuide": {
+      "title": "fal API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a fal account",
+        "description":
+          "Sign up at https://fal.ai — new accounts get free credits to try models before adding billing.",
+      }, {
+        "step": 2,
+        "title": "Create an API key",
+        "description":
+          "Open https://fal.ai/dashboard/keys, create a key, and copy it immediately — it is only shown once.",
+      }, {
+        "step": 3,
+        "title": "Store the key",
+        "description":
+          "Add it to your .env file as FAL_KEY=... — requests authenticate with the header 'Authorization: Key <FAL_KEY>'.",
+      }, {
+        "step": 4,
+        "title": "Pick a model and verify",
+        "description":
+          "Browse https://fal.ai/models and copy a model endpoint ID (e.g. fal-ai/flux/schnell). Pass its segments as app_owner=fal-ai, app_id=flux, app_variant=schnell to the Run Model tool with a small input payload.",
+      }],
+      "notes": [
+        "Each model has its own input schema — check the model's API tab on fal.ai/models for required fields",
+        "Use the queue tools (submit → status → result) for slow models like video generation; synchronous fal.run requests can time out",
+        "Queue status/result/cancel URLs use the base app ID without the variant segment (fal returns ready-made status_url and response_url in the submit response)",
+        "Model runs are billed per inference — check the model page for pricing",
+      ],
+      "documentation": "https://fal.ai/docs",
+    },
   },
   {
     "name": "fathom",
@@ -9169,6 +10162,34 @@ export const connectors: IntegrationConfig[] = [
       "icon": "doc",
     }],
     "suggestedWith": ["calendar", "slack", "notion"],
+    "setupGuide": {
+      "title": "Fathom API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Sign in to Fathom",
+        "description":
+          "Go to https://fathom.video and sign in. This is the Fathom AI meeting notetaker (not Fathom Analytics). Record at least one test meeting so data exists.",
+      }, {
+        "step": 2,
+        "title": "Generate an API key",
+        "description":
+          "Open Fathom Settings → API and generate an API key. API access may require a paid team plan.",
+      }, {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the key to your .env as FATHOM_API_KEY=...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Teams or List Meetings to confirm the key works.",
+      }],
+      "notes": [
+        "Fathom authenticates with an 'X-Api-Key' request header",
+        "Rate limit is 60 requests per 60-second window",
+        "Transcript and summary endpoints can also deliver asynchronously to a destination_url; these tools fetch the data directly",
+      ],
+      "documentation": "https://developers.fathom.ai",
+    },
   },
   {
     "name": "figma",
@@ -9476,6 +10497,34 @@ export const connectors: IntegrationConfig[] = [
       "icon": "globe",
     }],
     "suggestedWith": ["openai", "notion", "airtable"],
+    "setupGuide": {
+      "title": "Firecrawl API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a Firecrawl account",
+        "description":
+          "Go to https://www.firecrawl.dev and sign up — the free plan includes one-time credits for testing.",
+      }, {
+        "step": 2,
+        "title": "Get your API key",
+        "description":
+          "Open https://www.firecrawl.dev/app/api-keys and copy your key (or create a new one per project).",
+      }, {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Add it to your .env file as FIRECRAWL_API_KEY=fc-...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run the Scrape Page tool on a public URL. A 401 means the key is invalid; a 402 means you are out of credits.",
+      }],
+      "notes": [
+        "All endpoints consume credits per page; crawls multiply cost by the number of pages — set a small 'limit' first",
+        "Start Crawl is asynchronous: poll Get Crawl Status with the returned job ID until status is 'completed'",
+      ],
+      "documentation": "https://docs.firecrawl.dev/api-reference/introduction",
+    },
   },
   {
     "name": "fireflies",
@@ -9666,6 +10715,34 @@ export const connectors: IntegrationConfig[] = [
       "icon": "doc",
     }],
     "suggestedWith": ["calendar", "slack", "notion"],
+    "setupGuide": {
+      "title": "Fireflies API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Sign in to Fireflies",
+        "description":
+          "Go to https://app.fireflies.ai and sign in. Free accounts can use the API; record at least one test meeting so transcripts exist.",
+      }, {
+        "step": 2,
+        "title": "Get your API key",
+        "description":
+          "Open Integrations → Fireflies API (https://app.fireflies.ai/integrations/custom/fireflies) and copy your API key.",
+      }, {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the key to your .env as FIREFLIES_API_KEY=...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Users — it should return at least your own account.",
+      }],
+      "notes": [
+        "All requests are GraphQL POSTs to https://api.fireflies.ai/graphql with 'Authorization: Bearer <key>'",
+        "transcripts is capped at 50 results per query; paginate with skip",
+        "Business/Enterprise plans unlock some fields (e.g. full AI summaries) that may be null on lower tiers",
+      ],
+      "documentation": "https://docs.fireflies.ai",
+    },
   },
   {
     "name": "fireworks-ai",
@@ -9796,6 +10873,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "sparkles",
     }],
     "suggestedWith": ["openai", "anthropic", "mistral"],
+    "setupGuide": {
+      "title": "Fireworks AI API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a Fireworks AI account",
+        "description":
+          "Go to https://app.fireworks.ai and sign up or sign in. New accounts include free credits for testing serverless models.",
+      }, {
+        "step": 2,
+        "title": "Create an API key",
+        "description":
+          "Open the API Keys page under account settings (https://app.fireworks.ai/settings/users/api-keys) and create a new key.",
+      }, {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Copy the key and add it to your .env file as FIREWORKS_API_KEY=...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run the List Models tool to confirm the key works. A 401 means the key is wrong or revoked.",
+      }],
+      "notes": [
+        "The inference API is OpenAI-compatible under https://api.fireworks.ai/inference/v1",
+        "Serverless model IDs use the accounts/fireworks/models/<name> format",
+        "Inference is billed per token once free credits are exhausted",
+      ],
+      "documentation": "https://docs.fireworks.ai/api-reference/introduction",
+    },
   },
   {
     "name": "fly-io",
@@ -10003,6 +11109,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "pause",
     }],
     "suggestedWith": ["github", "slack", "sentry"],
+    "setupGuide": {
+      "title": "Fly.io Machines API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Sign up for Fly.io",
+        "description":
+          "Go to https://fly.io and create an account (the pay-as-you-go plan with a small test app is sufficient; new accounts include trial credit).",
+      }, {
+        "step": 2,
+        "title": "Create an access token",
+        "description":
+          "Run 'fly tokens create org -o <org-slug>' with flyctl, or create a token in the dashboard under Account > Access Tokens (https://fly.io/dashboard/personal/tokens). Org tokens are preferred over personal auth tokens.",
+      }, {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the token to your .env as FLY_API_TOKEN=...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run List Apps with your org slug (use 'personal' for the default personal organization), then List Machines on one of the apps.",
+      }],
+      "notes": [
+        "The public Machines API endpoint is https://api.machines.dev; tokens are sent as 'Authorization: Bearer <token>'",
+        "org_slug is required when listing apps",
+        "Tokens created with 'fly tokens create' may include a 'FlyV1 ' prefix in CLI output — store only the token value; the API accepts it after Bearer either way",
+      ],
+      "documentation": "https://fly.io/docs/machines/api/",
+    },
   },
   {
     "name": "folk",
@@ -10210,6 +11345,34 @@ export const connectors: IntegrationConfig[] = [
       "icon": "plus",
     }],
     "suggestedWith": ["gmail", "notion", "slack"],
+    "setupGuide": {
+      "title": "folk API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a folk workspace",
+        "description":
+          "Sign up at https://www.folk.app/ — the free plan is enough to test the API.",
+      }, {
+        "step": 2,
+        "title": "Generate an API key",
+        "description":
+          "In folk, open workspace settings → API (https://app.folk.app/apps/contacts/network/settings/api-keys) and generate a new API key (keys start with 'FOLK').",
+      }, {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add FOLK_API_KEY to your .env.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Groups tool, then List People.",
+      }],
+      "notes": [
+        "The API key is sent as Authorization: Bearer <key>",
+        "List endpoints return { data: { items, pagination } } and paginate with limit/cursor; pass pagination.nextLink's cursor to continue",
+        "Rate limit headers (X-RateLimit-*) are returned on every response",
+      ],
+      "documentation": "https://developer.folk.app/",
+    },
   },
   {
     "name": "freshdesk",
@@ -10461,6 +11624,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "plus",
     }],
     "suggestedWith": ["slack", "gmail", "jira"],
+    "setupGuide": {
+      "title": "Freshdesk API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a Freshdesk account",
+        "description":
+          "Sign up at https://www.freshdesk.com/ — the free plan or a trial works for testing. Note your subdomain (yourcompany in yourcompany.freshdesk.com).",
+      }, {
+        "step": 2,
+        "title": "Find your API key",
+        "description":
+          "In Freshdesk, click your profile picture → Profile Settings, then reveal 'Your API Key' on the right side.",
+      }, {
+        "step": 3,
+        "title": "Set environment variables",
+        "description":
+          "Add FRESHDESK_API_KEY to your .env. Leave FRESHDESK_API_PASSWORD unset (it defaults to 'X') — Freshdesk uses HTTP Basic auth with the API key as the username and a dummy password.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Tickets tool with your subdomain as the domain parameter.",
+      }],
+      "notes": [
+        "Freshdesk does not use OAuth for its REST API; HTTP Basic with the personal API key is the official method",
+        "The API key inherits the permissions of the agent it belongs to",
+        "All endpoints are per-account: https://<domain>.freshdesk.com/api/v2, HTTPS only",
+      ],
+      "documentation": "https://developers.freshdesk.com/api/",
+    },
   },
   {
     "name": "gemini",
@@ -10643,6 +11835,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "sparkles",
     }],
     "suggestedWith": ["openai", "anthropic", "slack"],
+    "setupGuide": {
+      "title": "Google Gemini API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Sign in to Google AI Studio",
+        "description":
+          "Go to https://aistudio.google.com and sign in with a Google account. The free tier works for testing without billing.",
+      }, {
+        "step": 2,
+        "title": "Create an API key",
+        "description":
+          "Open https://aistudio.google.com/app/apikey and click 'Create API key'. Choose an existing Google Cloud project or let AI Studio create one for you.",
+      }, {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Copy the key and add it to your .env file as GEMINI_API_KEY=AIza...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run the List Models tool to confirm the key works. A 400 with API_KEY_INVALID means the key is wrong or restricted.",
+      }],
+      "notes": [
+        "This connector uses the Gemini Developer API key (x-goog-api-key header), not Google OAuth — do not use Google Cloud OAuth credentials here",
+        "Free-tier keys are rate limited; attach a billing-enabled Google Cloud project for higher limits",
+        "Generation and embedding calls are billed per token on paid tiers",
+      ],
+      "documentation": "https://ai.google.dev/api",
+    },
   },
   {
     "name": "github",
@@ -12639,6 +13860,34 @@ export const connectors: IntegrationConfig[] = [
       "icon": "doc",
     }],
     "suggestedWith": ["salesforce", "hubspot", "slack"],
+    "setupGuide": {
+      "title": "Gong API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Get API access",
+        "description":
+          "Sign in to Gong as a technical administrator. API access requires a Gong subscription; ask your admin if you don't see the API settings.",
+      }, {
+        "step": 2,
+        "title": "Create an access key",
+        "description":
+          "In the Gong admin center go to Ecosystem → API (https://app.gong.io/company/api) and click 'Create' to generate an Access Key and Access Key Secret.",
+      }, {
+        "step": 3,
+        "title": "Set environment variables",
+        "description": "Add GONG_ACCESS_KEY and GONG_ACCESS_KEY_SECRET to your .env.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Users to confirm the credentials work.",
+      }],
+      "notes": [
+        "Authentication is HTTP Basic: base64(accessKey:accessKeySecret) in the Authorization header",
+        "Default rate limits are 3 calls/second and 10,000 calls/day; a 429 response includes a Retry-After header",
+        "List Calls requires fromDateTime and toDateTime and caps the window at 90 days per request",
+      ],
+      "documentation": "https://gong.app.gong.io/settings/api/documentation",
+    },
   },
   {
     "name": "google-analytics",
@@ -12818,6 +14067,40 @@ export const connectors: IntegrationConfig[] = [
       "icon": "pulse",
     }],
     "suggestedWith": ["sheets", "slack", "posthog"],
+    "setupGuide": {
+      "title": "Google Analytics Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create or reuse a Google Cloud project",
+        "description":
+          "Go to https://console.cloud.google.com and select or create the project that holds your OAuth credentials.",
+      }, {
+        "step": 2,
+        "title": "Enable the Analytics APIs",
+        "description":
+          "Enable both the Google Analytics Data API and the Google Analytics Admin API in the API Library.",
+      }, {
+        "step": 3,
+        "title": "Configure OAuth credentials",
+        "description":
+          "Under APIs & Services → Credentials, create (or reuse) an OAuth 2.0 Client ID of type Web application and add your callback URL (e.g. https://your-app.example.com/api/auth/google-analytics/callback) to the authorized redirect URIs.",
+      }, {
+        "step": 4,
+        "title": "Set environment variables",
+        "description":
+          "Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to your .env. These are shared with the other Google connectors (Calendar, Gmail, Drive, Sheets).",
+      }, {
+        "step": 5,
+        "title": "Verify access",
+        "description":
+          'Connect your Google account, run List Account Summaries to find a property ID, then run a report with metrics [{"name":"activeUsers"}] and dateRanges [{"startDate":"7daysAgo","endDate":"today"}].',
+      }],
+      "notes": [
+        "This connector is read-only (analytics.readonly scope) and targets GA4 properties; Universal Analytics is sunset",
+        "Property IDs are numeric (e.g. 123456789) — not the G-XXXX measurement ID",
+      ],
+      "documentation": "https://developers.google.com/analytics/devguides/reporting/data/v1",
+    },
   },
   {
     "name": "google-chat",
@@ -13037,6 +14320,41 @@ export const connectors: IntegrationConfig[] = [
       "icon": "send",
     }],
     "suggestedWith": ["gmail", "calendar", "drive"],
+    "setupGuide": {
+      "title": "Google Chat API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a Google Cloud project",
+        "description":
+          "Go to https://console.cloud.google.com/ and create (or select) a project. Any Google Workspace account can be used for testing; Chat API requires a Workspace account (consumer @gmail.com accounts cannot use Google Chat spaces).",
+      }, {
+        "step": 2,
+        "title": "Enable the Google Chat API",
+        "description":
+          "Enable the API at https://console.cloud.google.com/apis/library/chat.googleapis.com.",
+      }, {
+        "step": 3,
+        "title": "Configure the OAuth consent screen and Chat app",
+        "description":
+          "Under APIs & Services → OAuth consent screen, configure the app and add the scopes chat.spaces.readonly and chat.messages. The Chat API also requires a Chat app configuration: visit https://console.cloud.google.com/apis/api/chat.googleapis.com/hangouts-chat and set an app name, avatar, and description.",
+      }, {
+        "step": 4,
+        "title": "Create OAuth credentials",
+        "description":
+          "Under APIs & Services → Credentials, create an OAuth client ID (Web application) with redirect URI <your-app-url>/api/auth/google-chat/callback. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in your .env.",
+      }, {
+        "step": 5,
+        "title": "Verify access",
+        "description":
+          "Run the List Spaces tool, then List Messages on one of the returned spaces.",
+      }],
+      "notes": [
+        "Google Chat user authentication requires a Google Workspace account — consumer Gmail accounts will get 403s",
+        "Space and message IDs are resource-name segments: spaces/{spaceId} and spaces/{spaceId}/messages/{messageId}",
+        "The chat.messages scope covers listing, reading, and sending messages; chat.spaces.readonly covers space discovery",
+      ],
+      "documentation": "https://developers.google.com/workspace/chat/api/reference/rest",
+    },
   },
   {
     "name": "grafana-cloud",
@@ -13273,6 +14591,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "list",
     }],
     "suggestedWith": ["datadog", "pagerduty", "sentry"],
+    "setupGuide": {
+      "title": "Grafana Cloud API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Find your stack slug",
+        "description":
+          "Your Grafana Cloud stack URL looks like https://<stack>.grafana.net — the subdomain is the 'stack' parameter every tool requires. Free Grafana Cloud accounts include one stack.",
+      }, {
+        "step": 2,
+        "title": "Create a service account",
+        "description":
+          "In your stack, go to Administration → Users and access → Service accounts, and create a service account with the Viewer role (Editor if you want to create annotations).",
+      }, {
+        "step": 3,
+        "title": "Generate a token",
+        "description":
+          "Add a token to the service account and copy it to your .env as GRAFANA_CLOUD_TOKEN.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run Search Dashboards with your stack slug.",
+      }],
+      "notes": [
+        "Tokens are scoped to a single stack; pass that stack's slug as the 'stack' parameter on every call",
+        "Service account tokens are sent as 'Authorization: Bearer <token>'",
+        "These tools call the Grafana instance HTTP API (dashboards, folders, annotations, data sources) — not the Cloud portal API or hosted Loki/Prometheus endpoints",
+      ],
+      "documentation": "https://grafana.com/docs/grafana/latest/developers/http_api/",
+    },
   },
   {
     "name": "groq",
@@ -13384,6 +14731,36 @@ export const connectors: IntegrationConfig[] = [
       "icon": "sparkles",
     }],
     "suggestedWith": ["openai", "anthropic", "mistral"],
+    "setupGuide": {
+      "title": "Groq API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a Groq account",
+        "description":
+          "Go to https://console.groq.com and sign up or sign in. The free tier works for testing without billing.",
+      }, {
+        "step": 2,
+        "title": "Create an API key",
+        "description":
+          "Open https://console.groq.com/keys, click 'Create API Key', and give it a descriptive name (e.g. 'Veryfront Integration').",
+      }, {
+        "step": 3,
+        "title": "Store the key",
+        "description":
+          "Copy the key immediately — it is only shown once. Add it to your .env file as GROQ_API_KEY=gsk_...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run the List Models tool to confirm the key works. A 401 means the key is wrong or revoked.",
+      }],
+      "notes": [
+        "The API is OpenAI-compatible — requests use the /openai/v1 path prefix",
+        "Free-tier keys are rate limited per model; upgrade to a paid tier for higher limits",
+        "Chat completions are billed per token on paid tiers",
+      ],
+      "documentation": "https://console.groq.com/docs/api-reference",
+    },
   },
   {
     "name": "gusto",
@@ -13628,6 +15005,37 @@ export const connectors: IntegrationConfig[] = [
       "icon": "currency",
     }],
     "suggestedWith": ["sheets", "slack", "calendar"],
+    "setupGuide": {
+      "title": "Gusto OAuth Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a developer application",
+        "description":
+          "Sign up at https://dev.gusto.com and create an application. New apps start in the demo environment (api.gusto-demo.com) where you can create a free test company.",
+      }, {
+        "step": 2,
+        "title": "Set the redirect URI",
+        "description":
+          "Add your deployment's /api/auth/gusto/callback URL to the application's redirect URIs.",
+      }, {
+        "step": 3,
+        "title": "Set environment variables",
+        "description":
+          "Copy the application's client_id and secret into GUSTO_CLIENT_ID and GUSTO_CLIENT_SECRET in your .env.",
+      }, {
+        "step": 4,
+        "title": "Connect and verify",
+        "description":
+          "Complete the OAuth consent flow with a company admin account, then run Get Token Info to discover the company UUID and confirm access.",
+      }],
+      "notes": [
+        "Scopes/permissions are configured on the application in the Developer Portal, not passed in the authorize URL",
+        "Access tokens expire after 2 hours; refresh tokens are single-use and rotate on every refresh",
+        "Production access (api.gusto.com) requires Gusto's app approval; until then use the demo environment",
+        "Tools pin X-Gusto-API-Version: 2024-04-01; raise the default to adopt newer versions",
+      ],
+      "documentation": "https://docs.gusto.com/app-integrations/docs/introduction",
+    },
   },
   {
     "name": "harvest",
@@ -15215,6 +16623,34 @@ export const connectors: IntegrationConfig[] = [
       "icon": "history",
     }],
     "suggestedWith": ["github", "slack", "sentry"],
+    "setupGuide": {
+      "title": "Heroku Platform API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Sign in to Heroku",
+        "description":
+          "Go to https://dashboard.heroku.com and sign in (an Eco/Basic app is enough for testing; SSO-federated users must use a separate non-federated account for API tokens).",
+      }, {
+        "step": 2,
+        "title": "Create an API token",
+        "description":
+          "With the Heroku CLI, run 'heroku authorizations:create -d \"veryfront token\"' for a non-expiring OAuth token, or 'heroku auth:token' for a token valid up to one year.",
+      }, {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the token to your .env as HEROKU_API_KEY=...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Apps, then List Dynos with one of your app names.",
+      }],
+      "notes": [
+        "Every request must send 'Accept: application/vnd.heroku+json; version=3' — tools include this header by default",
+        "Restarting dynos uses the DELETE method (DELETE /apps/{app}/dynos restarts all dynos; it does not delete the app)",
+        "List endpoints paginate with Range/Next-Range headers (max 1000 items per page) and return 206 Partial Content when truncated",
+      ],
+      "documentation": "https://devcenter.heroku.com/articles/platform-api-reference",
+    },
   },
   {
     "name": "hubspot",
@@ -16049,6 +17485,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "sparkles",
     }],
     "suggestedWith": ["openai", "replicate", "together-ai"],
+    "setupGuide": {
+      "title": "Hugging Face API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a Hugging Face account",
+        "description":
+          "Go to https://huggingface.co and sign up or sign in. Hub API access and a generous Inference Providers free tier are available without billing.",
+      }, {
+        "step": 2,
+        "title": "Create an access token",
+        "description":
+          "Open https://huggingface.co/settings/tokens and create a fine-grained token. Enable 'Make calls to Inference Providers' if you want to use the chat completion tool; read access covers the Hub search tools.",
+      }, {
+        "step": 3,
+        "title": "Store the token",
+        "description": "Copy the token and add it to your .env file as HF_TOKEN=hf_...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run the Who Am I tool to confirm the token works and shows the expected permissions.",
+      }],
+      "notes": [
+        "Hub search endpoints work with read-scoped tokens; chat completions require the Inference Providers permission",
+        "Inference Providers usage beyond the free tier is billed at provider rates with no markup; PRO accounts include monthly credits",
+        "Some gated models (e.g. meta-llama) require accepting their license on the Hub before access",
+      ],
+      "documentation": "https://huggingface.co/docs/hub/api",
+    },
   },
   {
     "name": "intercom",
@@ -16265,6 +17730,36 @@ export const connectors: IntegrationConfig[] = [
       "icon": "search",
     }],
     "suggestedWith": ["slack", "hubspot", "gmail"],
+    "setupGuide": {
+      "title": "Intercom OAuth Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create an Intercom app",
+        "description":
+          "Sign in to Intercom and open the Developer Hub (https://developers.intercom.com/ → Your apps). Create a new app — use a development workspace for testing.",
+      }, {
+        "step": 2,
+        "title": "Enable OAuth and set the redirect URL",
+        "description":
+          "In the app's Authentication page, click Edit, enable 'Use OAuth', and add your redirect URL ending in /api/auth/intercom/callback.",
+      }, {
+        "step": 3,
+        "title": "Select permissions",
+        "description":
+          "On the same Authentication page, tick the permissions the tools need: read/write contacts, read/list conversations, reply to conversations, and read articles. Permissions are configured here, not via OAuth scopes.",
+      }, {
+        "step": 4,
+        "title": "Copy credentials and verify",
+        "description":
+          "Copy the Client ID and Client Secret from Basic information into INTERCOM_CLIENT_ID and INTERCOM_CLIENT_SECRET, connect your workspace, and run the List Contacts tool.",
+      }],
+      "notes": [
+        "Intercom access tokens are long-lived: they do not expire and no refresh tokens are issued; reauthorize to rotate",
+        "Permissions are configured on the app in the Developer Hub; the authorize URL carries no scope parameter",
+        "Requests default to the API version pinned on your app; you can override per-request with the Intercom-Version header",
+      ],
+      "documentation": "https://developers.intercom.com/docs/references/rest-api/",
+    },
   },
   {
     "name": "jira",
@@ -16995,6 +18490,34 @@ export const connectors: IntegrationConfig[] = [
       "icon": "list",
     }],
     "suggestedWith": ["sheets", "slack", "airtable"],
+    "setupGuide": {
+      "title": "Jotform API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Sign in to Jotform",
+        "description":
+          "Go to https://www.jotform.com and sign in. The free Starter plan is sufficient for testing.",
+      }, {
+        "step": 2,
+        "title": "Create an API key",
+        "description":
+          "Open Settings → API (https://www.jotform.com/myaccount/api) and click 'Create New Key'. Set permissions to 'Full Access' for read tools to work across forms.",
+      }, {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the key to your .env as JOTFORM_API_KEY=...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run Get User, then List Forms to confirm the key works.",
+      }],
+      "notes": [
+        "Jotform authenticates with an 'APIKEY' request header",
+        "EU-hosted accounts must use https://eu-api.jotform.com and HIPAA accounts https://hipaa-api.jotform.com instead of api.jotform.com",
+        "Responses are wrapped in {responseCode, message, content}; tools unwrap 'content'",
+      ],
+      "documentation": "https://api.jotform.com/docs/",
+    },
   },
   {
     "name": "klaviyo",
@@ -17225,6 +18748,33 @@ export const connectors: IntegrationConfig[] = [
       "icon": "search",
     }],
     "suggestedWith": ["shopify", "stripe", "sheets"],
+    "setupGuide": {
+      "title": "Klaviyo API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Sign in to Klaviyo",
+        "description":
+          "Go to https://www.klaviyo.com and sign in. A free account is sufficient for testing.",
+      }, {
+        "step": 2,
+        "title": "Create a private API key",
+        "description":
+          "Open Settings → Account → API Keys (https://www.klaviyo.com/settings/account/api-keys) and create a private key. Grant it read/write access to Profiles, Lists, Segments, Metrics, and Events.",
+      }, {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the key to your .env as KLAVIYO_API_KEY=pk_...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Lists tool to confirm the key works.",
+      }],
+      "notes": [
+        "Klaviyo authenticates with 'Authorization: Klaviyo-API-Key <key>' — not a Bearer token",
+        "Every request requires a 'revision' header; tools default it to 2026-04-15",
+      ],
+      "documentation": "https://developers.klaviyo.com/en/reference/api_overview",
+    },
   },
   {
     "name": "langfuse",
@@ -17466,6 +19016,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "star",
     }],
     "suggestedWith": ["openai", "anthropic", "gemini"],
+    "setupGuide": {
+      "title": "Langfuse API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a Langfuse account",
+        "description":
+          "Sign up at https://cloud.langfuse.com (EU) or https://us.cloud.langfuse.com (US) — the free Hobby plan is enough for testing. Self-hosting is also supported.",
+      }, {
+        "step": 2,
+        "title": "Create project API keys",
+        "description":
+          "In your Langfuse project, open Settings → API Keys and create a key pair. You get a public key (pk-lf-...) and a secret key (sk-lf-...).",
+      }, {
+        "step": 3,
+        "title": "Store the keys",
+        "description":
+          "Add LANGFUSE_PUBLIC_KEY=pk-lf-... and LANGFUSE_SECRET_KEY=sk-lf-... to your .env file. The API uses HTTP Basic auth with the public key as username and secret key as password.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run the List Traces tool. If your project is in the US region, pass host us.cloud.langfuse.com; EU projects use the default cloud.langfuse.com.",
+      }],
+      "notes": [
+        "API keys are project-scoped — create separate keys per project/environment",
+        "All tools take a 'host' parameter (default cloud.langfuse.com for EU); US cloud is us.cloud.langfuse.com and self-hosted deployments use their own domain",
+      ],
+      "documentation": "https://api.reference.langfuse.com",
+    },
   },
   {
     "name": "langsmith",
@@ -17651,6 +19230,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "list",
     }],
     "suggestedWith": ["openai", "anthropic", "datadog"],
+    "setupGuide": {
+      "title": "LangSmith API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a LangSmith account",
+        "description":
+          "Sign up at https://smith.langchain.com — the free Developer plan includes traces for testing.",
+      }, {
+        "step": 2,
+        "title": "Create an API key",
+        "description":
+          "In LangSmith go to Settings → API Keys and create a key (Personal Access Token or Service Key). Copy it immediately — it is only shown once.",
+      }, {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Add it to your .env file as LANGSMITH_API_KEY=lsv2_...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run the List Projects tool. If you belong to multiple workspaces, make sure the key was created in the workspace you want to query.",
+      }],
+      "notes": [
+        "API keys are workspace-scoped; data from other workspaces is not visible to the key",
+        "EU-region organizations use https://eu.api.smith.langchain.com — these tools target the default US endpoint",
+        "Query Runs filter expressions are documented at https://docs.langchain.com/langsmith/trace-query-syntax",
+      ],
+      "documentation": "https://api.smith.langchain.com/redoc",
+    },
   },
   {
     "name": "launchdarkly",
@@ -17867,6 +19475,34 @@ export const connectors: IntegrationConfig[] = [
       "icon": "search",
     }],
     "suggestedWith": ["github", "datadog", "segment"],
+    "setupGuide": {
+      "title": "LaunchDarkly API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Sign in to LaunchDarkly",
+        "description":
+          "Use an existing account or start a trial at https://app.launchdarkly.com. A project with a couple of test flags is enough to exercise all tools.",
+      }, {
+        "step": 2,
+        "title": "Create an access token",
+        "description":
+          "Go to Organization settings → Authorization (https://app.launchdarkly.com/settings/authorization) and create a personal or service access token. A Reader role token is enough for the read tools; toggling flags needs Writer access to the relevant projects.",
+      }, {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the token to your .env as LAUNCHDARKLY_API_TOKEN=...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Projects, then List Feature Flags with a project key.",
+      }],
+      "notes": [
+        "The Authorization header contains the raw token with no Bearer prefix",
+        "Toggle Feature Flag uses LaunchDarkly's semantic patch format: Content-Type 'application/json; domain-model=launchdarkly.semanticpatch' with an instructions array",
+        "EU and Federal instances use different hosts (app.eu.launchdarkly.com, app.launchdarkly.us); these tools target the commercial instance at app.launchdarkly.com",
+      ],
+      "documentation": "https://launchdarkly.com/docs/api",
+    },
   },
   {
     "name": "lever",
@@ -18065,6 +19701,40 @@ export const connectors: IntegrationConfig[] = [
       "icon": "briefcase",
     }],
     "suggestedWith": ["slack", "calendar", "notion"],
+    "setupGuide": {
+      "title": "Lever OAuth Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Register an OAuth app with Lever",
+        "description":
+          "Lever OAuth apps are issued through the Lever partner process — request credentials at https://hire.lever.co/developer/oauth (or via partner support). For quick internal testing, Lever also offers API keys, but this connector uses OAuth.",
+      }, {
+        "step": 2,
+        "title": "Use a sandbox environment",
+        "description":
+          "Ask Lever for a sandbox account to test against before touching production hiring data.",
+      }, {
+        "step": 3,
+        "title": "Set the redirect URI",
+        "description":
+          "Register your deployment's /api/auth/lever/callback URL as an allowed redirect URI.",
+      }, {
+        "step": 4,
+        "title": "Set environment variables",
+        "description": "Add LEVER_CLIENT_ID and LEVER_CLIENT_SECRET to your .env.",
+      }, {
+        "step": 5,
+        "title": "Connect and verify",
+        "description":
+          "Complete the OAuth consent flow as a Lever Super Admin, then run List Stages to confirm access.",
+      }],
+      "notes": [
+        "The authorize request must include audience=https://api.lever.co/v1/ — the connector sends it automatically",
+        "offline_access (with prompt=consent) is required to receive a refresh token",
+        "Scopes are granular per resource; add more (e.g. users:read:admin) if you extend the tools",
+      ],
+      "documentation": "https://hire.lever.co/developer/documentation",
+    },
   },
   {
     "name": "linear",
@@ -18751,6 +20421,36 @@ export const connectors: IntegrationConfig[] = [
       "icon": "plus",
     }],
     "suggestedWith": ["hubspot", "gmail", "slack"],
+    "setupGuide": {
+      "title": "Mailchimp OAuth Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Register a Mailchimp app",
+        "description":
+          "Sign in to Mailchimp (the free plan works for testing) and go to Account → Extras → Registered apps (https://admin.mailchimp.com/account/oauth2/). Click Register An App.",
+      }, {
+        "step": 2,
+        "title": "Set the redirect URI",
+        "description":
+          "Set the app's Redirect URI to your app URL ending in /api/auth/mailchimp/callback.",
+      }, {
+        "step": 3,
+        "title": "Copy credentials",
+        "description":
+          "Copy the Client ID and Client Secret into MAILCHIMP_CLIENT_ID and MAILCHIMP_CLIENT_SECRET.",
+      }, {
+        "step": 4,
+        "title": "Find your data center and verify",
+        "description":
+          "Note the usXX prefix in your Mailchimp admin URL (e.g. us21.admin.mailchimp.com → us21). Connect your account and run List Audiences with that dc value.",
+      }],
+      "notes": [
+        "Mailchimp access tokens do not expire and no refresh tokens are issued; reauthorize to rotate",
+        "The OAuth flow uses no scopes; the token grants the user's account access",
+        "The API host is data-center-specific (usXX.api.mailchimp.com). The dc is NOT in the token response — Mailchimp returns it from GET https://login.mailchimp.com/oauth2/metadata. Tools therefore take dc as a required parameter (the usXX prefix in your admin URL); the tradeoff is the agent must supply it on every call",
+      ],
+      "documentation": "https://mailchimp.com/developer/marketing/api/",
+    },
   },
   {
     "name": "metabase",
@@ -18936,6 +20636,34 @@ export const connectors: IntegrationConfig[] = [
       "icon": "list",
     }],
     "suggestedWith": ["snowflake", "posthog", "slack"],
+    "setupGuide": {
+      "title": "Metabase API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Locate your Metabase instance",
+        "description":
+          "Note your instance hostname, e.g. acme.metabaseapp.com (Metabase Cloud) or your self-hosted domain. Every tool takes it as the required 'host' parameter. For local testing you can run Metabase with 'docker run -p 3000:3000 metabase/metabase'.",
+      }, {
+        "step": 2,
+        "title": "Create an API key",
+        "description":
+          "As an admin, go to Admin settings > Authentication > API keys, create a key, and assign it to a group whose permissions cover the databases and collections you need. Copy the key (shown once, prefixed mb_).",
+      }, {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the key to your .env as METABASE_API_KEY=mb_...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Databases with your hostname as the host parameter.",
+      }],
+      "notes": [
+        "Metabase authenticates with an 'x-api-key' header",
+        "Metabase is self-hosted or tenant-hosted, so tools require a 'host' parameter (hostname only, HTTPS is assumed) on every call",
+        "The API key inherits the permissions of the group it is assigned to",
+      ],
+      "documentation": "https://www.metabase.com/docs/latest/api",
+    },
   },
   {
     "name": "mistral",
@@ -19061,6 +20789,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "sparkles",
     }],
     "suggestedWith": ["openai", "anthropic", "notion"],
+    "setupGuide": {
+      "title": "Mistral AI API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a Mistral account",
+        "description":
+          "Go to https://console.mistral.ai and sign up or sign in to La Plateforme. Activate a workspace and add billing under Billing, or use the free Experiment tier where available.",
+      }, {
+        "step": 2,
+        "title": "Create an API key",
+        "description":
+          "Open https://console.mistral.ai/api-keys, click 'Create new key', and give it a descriptive name (e.g. 'Veryfront Integration').",
+      }, {
+        "step": 3,
+        "title": "Store the key",
+        "description":
+          "Copy the key immediately — it is only shown once. Add it to your .env file as MISTRAL_API_KEY=...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run the List Models tool to confirm the key works. A 401 means the key is invalid or the workspace is not activated.",
+      }],
+      "notes": [
+        "API usage is billed per token — chat completion and embedding tools cost money on paid tiers",
+        "Keys are workspace-scoped; rotate them from the console at any time",
+      ],
+      "documentation": "https://docs.mistral.ai/api/",
+    },
   },
   {
     "name": "mixpanel",
@@ -19354,6 +21111,13 @@ export const connectors: IntegrationConfig[] = [
       "icon": "users",
     }],
     "suggestedWith": ["slack", "analytics", "monitoring"],
+    "setupGuide": {
+      "steps": [{
+        "title": "Setup guide",
+        "description":
+          "# Mixpanel Integration Setup\n\n## Step 1: Create a Service Account\n1. Log in to Mixpanel and open Organization Settings > Service Accounts (https://mixpanel.com/settings/org#serviceaccounts)\n2. Create a service account with access to your project (Analyst role or higher is sufficient for queries)\n3. Copy the service account **username** and **secret** shown at creation time\n4. Add them to your .env file as `MIXPANEL_SERVICE_ACCOUNT_USERNAME` and `MIXPANEL_SERVICE_ACCOUNT_SECRET`\n\n## Step 2: Get Your Project ID\n1. In Mixpanel project settings URL, your Project ID is the number in the URL\n2. Format: https://mixpanel.com/project/YOUR_PROJECT_ID/settings\n3. Copy this ID and add it as `MIXPANEL_PROJECT_ID` in your .env file — query tools require it as the project_id parameter\n\n## Step 3: (Optional) Get Your Project Token\n1. Under Project Settings, find your **Project Token**\n2. Add it as `MIXPANEL_PROJECT_TOKEN` — it is only needed for local event-tracking (ingestion), not for queries\n\n## Step 4: Set Up Environment Variables\nAdd these to your `.env` file:\n```\nMIXPANEL_SERVICE_ACCOUNT_USERNAME=your_service_account_username\nMIXPANEL_SERVICE_ACCOUNT_SECRET=your_service_account_secret\nMIXPANEL_PROJECT_ID=your_project_id_here\nMIXPANEL_PROJECT_TOKEN=your_project_token_here\n```\n\n## Step 5: Test the Integration\nRun the List Cohorts or List Funnels tool with your project_id to verify the service account works.\n\n## Important Notes\n- Service accounts authenticate via HTTP Basic auth (username + secret) and are Mixpanel's recommended method for the Query and Export APIs\n- Every query tool requires the `project_id` parameter when authenticating with a service account\n- If your project stores data in the EU or India, pass the matching host parameter (eu.mixpanel.com / data-eu.mixpanel.com, or in.mixpanel.com / data-in.mixpanel.com)\n- **Project Token** is used only for tracking events (ingestion)\n- Keep credentials secure and never commit them to version control\n\n## Useful Resources\n- [Mixpanel API Documentation](https://developer.mixpanel.com/reference/overview)\n- [Service Accounts](https://developer.mixpanel.com/reference/service-accounts)\n- [Query API Guide](https://developer.mixpanel.com/reference/query-api)",
+      }],
+    },
   },
   {
     "name": "monday",
@@ -19564,6 +21328,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "plus",
     }],
     "suggestedWith": ["slack", "gmail", "notion"],
+    "setupGuide": {
+      "title": "monday.com OAuth Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a monday.com app",
+        "description":
+          "Sign in to monday.com (a free trial account works) and open the Developer Center via your avatar → Developers, or https://monday.com/developers/apps. Click Create App.",
+      }, {
+        "step": 2,
+        "title": "Configure OAuth scopes and redirect URI",
+        "description":
+          "In the app's OAuth section, enable the boards:read and boards:write scopes and add your redirect URI ending in /api/auth/monday/callback.",
+      }, {
+        "step": 3,
+        "title": "Copy credentials",
+        "description":
+          "Copy the Client ID and Client Secret from the app's Basic Information page into MONDAY_CLIENT_ID and MONDAY_CLIENT_SECRET.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Connect your monday.com account and run the List Boards tool.",
+      }],
+      "notes": [
+        "monday.com OAuth access tokens do not expire and there are no refresh tokens; tokens stay valid until the user uninstalls the app",
+        "The API is GraphQL-only at https://api.monday.com/v2; OAuth tokens are sent as Authorization: Bearer <token>",
+        "Column values in mutations are passed as a JSON-encoded string",
+      ],
+      "documentation": "https://developer.monday.com/api-reference/docs/basics",
+    },
   },
   {
     "name": "mongodb-atlas",
@@ -19789,6 +21582,40 @@ export const connectors: IntegrationConfig[] = [
       "icon": "alert",
     }],
     "suggestedWith": ["aws", "datadog", "slack"],
+    "setupGuide": {
+      "title": "MongoDB Atlas API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Sign in to Atlas",
+        "description":
+          "Go to https://cloud.mongodb.com and sign in (a free M0 cluster is enough for testing).",
+      }, {
+        "step": 2,
+        "title": "Create a service account",
+        "description":
+          "In Organization Access Manager > Applications > Service Accounts, create a service account with at least Organization Read Only (or Project Read Only on specific projects). Copy the client ID and client secret — the secret is shown only once.",
+      }, {
+        "step": 3,
+        "title": "Add your IP to the API access list",
+        "description":
+          "Service account access tokens can only be USED from IPs on the service account's API access list. Add your machine's IP (or 0.0.0.0/0 for testing only).",
+      }, {
+        "step": 4,
+        "title": "Set environment variables",
+        "description":
+          "Add MONGODB_ATLAS_CLIENT_ID and MONGODB_ATLAS_CLIENT_SECRET to your .env. Tokens are minted automatically from https://cloud.mongodb.com/api/oauth/token via the OAuth2 client_credentials grant (credentials sent via HTTP Basic).",
+      }, {
+        "step": 5,
+        "title": "Verify access",
+        "description": "Run List Projects, then List Clusters with a project's ID.",
+      }],
+      "notes": [
+        "Legacy Atlas programmatic API keys use HTTP Digest auth, which this connector does NOT support — use a service account (OAuth2 client_credentials) instead; MongoDB recommends service accounts over API keys",
+        "Every request must send a versioned Accept header; tools default to application/vnd.atlas.2025-03-12+json (the latest stable resource version). Atlas returns 406 if the header is missing or names a nonexistent version",
+        "Access tokens expire after 1 hour and are refreshed by re-running the client_credentials grant",
+      ],
+      "documentation": "https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2/",
+    },
   },
   {
     "name": "neon",
@@ -20240,6 +22067,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "inbox",
     }],
     "suggestedWith": ["github", "slack", "sentry"],
+    "setupGuide": {
+      "title": "Netlify API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Sign in to Netlify",
+        "description":
+          "Go to https://app.netlify.com and sign in (the free Starter plan with one deployed site is sufficient for testing).",
+      }, {
+        "step": 2,
+        "title": "Create a personal access token",
+        "description":
+          "Open User settings > Applications > Personal access tokens (https://app.netlify.com/user/applications#personal-access-tokens), select New access token, name it, and set an expiration.",
+      }, {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the token to your .env as NETLIFY_AUTH_TOKEN=...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run List Sites. Site IDs accept either the UUID or the site's domain (e.g. my-site.netlify.app).",
+      }],
+      "notes": [
+        "Tokens are sent as 'Authorization: Bearer <token>'",
+        "List endpoints paginate with page/per_page (max 100) and return next/prev links in the Link response header",
+        "Triggering builds is rate limited (3 per minute, 100 per day)",
+      ],
+      "documentation": "https://docs.netlify.com/api/get-started/",
+    },
   },
   {
     "name": "new-relic",
@@ -20389,6 +22245,36 @@ export const connectors: IntegrationConfig[] = [
       "icon": "alert",
     }],
     "suggestedWith": ["pagerduty", "datadog", "github"],
+    "setupGuide": {
+      "title": "New Relic NerdGraph Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Sign up for New Relic",
+        "description":
+          "Free accounts at https://newrelic.com include full API access. Note your account ID from the account picker or the URL — NRQL and issue tools need it.",
+      }, {
+        "step": 2,
+        "title": "Create a user API key",
+        "description":
+          "Go to https://one.newrelic.com/api-keys and create a key of type 'User' (it starts with NRAK-). User keys are required for NerdGraph.",
+      }, {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the key to your .env as NEW_RELIC_API_KEY=NRAK-...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run Search Entities with a query like \"domain = 'APM'\", or Run NRQL Query with your account ID.",
+      }],
+      "notes": [
+        "All tools are GraphQL calls to https://api.newrelic.com/graphql with the key in the 'API-Key' header",
+        "EU-region accounts use api.eu.newrelic.com; these tools target the US endpoint",
+        "NRQL and issue tools take your numeric account ID as a parameter — find it under Administration → Access management → Accounts",
+      ],
+      "documentation":
+        "https://docs.newrelic.com/docs/apis/nerdgraph/get-started/introduction-new-relic-nerdgraph/",
+    },
   },
   {
     "name": "notion",
@@ -21144,6 +23030,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "sparkles",
     }],
     "suggestedWith": ["anthropic", "slack", "notion"],
+    "setupGuide": {
+      "title": "OpenAI API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create an OpenAI account",
+        "description":
+          "Go to https://platform.openai.com and sign up or sign in. New accounts may need to add billing details under Settings → Billing before API calls succeed.",
+      }, {
+        "step": 2,
+        "title": "Create an API key",
+        "description":
+          "Open https://platform.openai.com/api-keys, click 'Create new secret key', give it a descriptive name (e.g. 'Veryfront Integration'), and select the project it belongs to.",
+      }, {
+        "step": 3,
+        "title": "Copy and store the key",
+        "description":
+          "Copy the key immediately — it is only shown once. Add it to your .env file as OPENAI_API_KEY=sk-...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run the List Models tool to confirm the key works. If you get a 401, check the key; if a 429, check your billing/quota.",
+      }],
+      "notes": [
+        "Use project-scoped API keys to limit blast radius; you can revoke keys at any time from the dashboard",
+        "API usage is billed per token — set usage limits under Settings → Limits",
+      ],
+      "documentation": "https://platform.openai.com/docs/api-reference",
+    },
   },
   {
     "name": "openrouter",
@@ -21253,6 +23168,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "sparkles",
     }],
     "suggestedWith": ["openai", "anthropic", "gemini"],
+    "setupGuide": {
+      "title": "OpenRouter API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create an OpenRouter account",
+        "description":
+          "Go to https://openrouter.ai and sign up or sign in. Some models offer free variants for testing; paid models require purchasing credits under Settings → Credits.",
+      }, {
+        "step": 2,
+        "title": "Create an API key",
+        "description":
+          "Open https://openrouter.ai/settings/keys, click 'Create Key', and optionally set a credit limit for the key.",
+      }, {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Copy the key and add it to your .env file as OPENROUTER_API_KEY=sk-or-...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run the List Models tool to confirm the key works, then try a chat completion with a model like openai/gpt-4o-mini.",
+      }],
+      "notes": [
+        "Model IDs are namespaced as vendor/model, e.g. anthropic/claude-sonnet-4",
+        "Chat completions consume prepaid credits; use the Get Generation tool to inspect the exact cost of a request",
+        "The Get Credits endpoint requires a management key per OpenRouter's docs — a regular inference key may be rejected there",
+      ],
+      "documentation": "https://openrouter.ai/docs/api/reference/overview",
+    },
   },
   {
     "name": "outlook",
@@ -23547,6 +25491,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "user",
     }],
     "suggestedWith": ["datadog", "sentry", "slack"],
+    "setupGuide": {
+      "title": "PagerDuty OAuth Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Get a PagerDuty account",
+        "description":
+          "Sign up at https://www.pagerduty.com — a free trial or developer account is sufficient for testing.",
+      }, {
+        "step": 2,
+        "title": "Register an app",
+        "description":
+          "In PagerDuty go to Integrations > App Registration (https://app.pagerduty.com/developer/applications), create an app, and add Scoped OAuth functionality. Select the scopes incidents.read, incidents.write, services.read, oncalls.read, and users.read.",
+      }, {
+        "step": 3,
+        "title": "Configure the redirect URI",
+        "description":
+          "Set the redirect URI to your app's /api/auth/pagerduty/callback URL, then copy the Client ID and Client Secret into your .env as PAGERDUTY_CLIENT_ID and PAGERDUTY_CLIENT_SECRET.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Complete the OAuth flow, then run List Services and List Incidents.",
+      }],
+      "notes": [
+        "OAuth endpoints live on identity.pagerduty.com; the REST API lives on api.pagerduty.com",
+        "Creating or updating incidents requires a From header containing the email of a valid PagerDuty user — the tools expose it as a required parameter",
+        "Scoped OAuth tokens expire and are renewed with the refresh token",
+      ],
+      "documentation": "https://developer.pagerduty.com/api-reference/",
+    },
   },
   {
     "name": "paypal",
@@ -23735,6 +25708,34 @@ export const connectors: IntegrationConfig[] = [
       "icon": "currency",
     }],
     "suggestedWith": ["stripe", "sheets", "slack"],
+    "setupGuide": {
+      "title": "PayPal REST API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a REST app",
+        "description":
+          "Go to https://developer.paypal.com/dashboard/applications/live (or /sandbox for testing) and create an app. Copy the Client ID and Secret.",
+      }, {
+        "step": 2,
+        "title": "Enable required features",
+        "description":
+          "In the app settings, enable 'Transaction Search' (required for List Transactions/Balances) and 'Invoicing'. Newly enabled features can take a few minutes to propagate.",
+      }, {
+        "step": 3,
+        "title": "Set environment variables",
+        "description": "Add PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET to your .env.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run List Balances. Access tokens are minted automatically via the OAuth2 client_credentials grant — no user login is involved.",
+      }],
+      "notes": [
+        "This connector targets the live API (api-m.paypal.com). For sandbox testing, point a copy of the connector at api-m.sandbox.paypal.com with sandbox app credentials.",
+        "Transaction data can lag up to a few hours behind real-time; the reporting window per request is limited to 31 days.",
+      ],
+      "documentation": "https://developer.paypal.com/api/rest/",
+    },
   },
   {
     "name": "perplexity",
@@ -23865,6 +25866,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "list",
     }],
     "suggestedWith": ["openai", "anthropic", "slack"],
+    "setupGuide": {
+      "title": "Perplexity API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a Perplexity account",
+        "description":
+          "Go to https://www.perplexity.ai and sign up or sign in, then open the API section of your account settings.",
+      }, {
+        "step": 2,
+        "title": "Add billing",
+        "description":
+          "Add a payment method and credits in the API portal — API calls require a positive credit balance (Pro subscribers receive monthly API credits).",
+      }, {
+        "step": 3,
+        "title": "Generate an API key",
+        "description":
+          "In https://www.perplexity.ai/account/api/keys, click 'Generate' and copy the key. Add it to your .env file as PERPLEXITY_API_KEY=pplx-...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run the Search Web tool with a simple query. A 401 means the key is invalid; a 402 means you are out of credits.",
+      }],
+      "notes": [
+        "Sonar chat completions and agent responses are billed per token plus per-request search fees — they cost money on every call",
+        "The Search API is billed per request and returns ranked results without LLM generation",
+      ],
+      "documentation": "https://docs.perplexity.ai",
+    },
   },
   {
     "name": "persona",
@@ -24199,6 +26229,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "search",
     }],
     "suggestedWith": ["openai", "anthropic", "supabase"],
+    "setupGuide": {
+      "title": "Pinecone API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a Pinecone account",
+        "description":
+          "Sign up at https://app.pinecone.io — the free Starter plan includes serverless indexes for testing.",
+      }, {
+        "step": 2,
+        "title": "Create an API key",
+        "description":
+          "In the Pinecone console, select your project, open API Keys, and create a key (pcsk_...). Copy it immediately.",
+      }, {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Add it to your .env file as PINECONE_API_KEY=pcsk_...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run the List Indexes tool. To read or write vectors, first run Describe Index and use the returned 'host' value as the indexHost parameter for Query Vectors / Upsert Vectors.",
+      }],
+      "notes": [
+        "Pinecone is two-step: control-plane tools (list/describe/create index) hit api.pinecone.io, while query/upsert hit the per-index host returned by Describe Index",
+        "All requests send the X-Pinecone-API-Version header (default 2025-01)",
+        "Embeddings must be generated separately (e.g. with OpenAI) — vectors you query or upsert must match the index dimension",
+      ],
+      "documentation": "https://docs.pinecone.io/reference/api/introduction",
+    },
   },
   {
     "name": "pipedrive",
@@ -24455,6 +26514,36 @@ export const connectors: IntegrationConfig[] = [
       "icon": "plus",
     }],
     "suggestedWith": ["gmail", "calendly", "slack"],
+    "setupGuide": {
+      "title": "Pipedrive OAuth Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a Pipedrive developer sandbox",
+        "description":
+          "Request a free developer sandbox account at https://developers.pipedrive.com/start-here — apps can only be created from a sandbox or company account with admin rights.",
+      }, {
+        "step": 2,
+        "title": "Create an app in the Developer Hub",
+        "description":
+          "In Pipedrive, open Tools and apps → Developer Hub (or https://app.pipedrive.com/developer-hub) and create an app. A private/unlisted app is fine for internal use.",
+      }, {
+        "step": 3,
+        "title": "Set the callback URL and scopes",
+        "description":
+          "Set the OAuth callback URL to your app URL ending in /api/auth/pipedrive/callback and enable the deals:full, contacts:full, and search:read scopes (base is always included).",
+      }, {
+        "step": 4,
+        "title": "Copy credentials and verify",
+        "description":
+          "Copy the Client ID and Client Secret from the app's OAuth & access scopes page into PIPEDRIVE_CLIENT_ID and PIPEDRIVE_CLIENT_SECRET, connect your account, and run the List Deals tool.",
+      }],
+      "notes": [
+        "The token endpoint authenticates the client with HTTP Basic (base64 of client_id:client_secret)",
+        "Access tokens expire after about 60 minutes; refresh tokens are issued and expire if unused for 60 days",
+        "API calls go to the company-specific host returned as api_domain in the token response (e.g. https://yourcompany.pipedrive.com); tool URLs template it via {{oauth.raw.api_domain}}",
+      ],
+      "documentation": "https://developers.pipedrive.com/docs/api/v1",
+    },
   },
   {
     "name": "planetscale",
@@ -24710,6 +26799,39 @@ export const connectors: IntegrationConfig[] = [
       "icon": "alert",
     }],
     "suggestedWith": ["github", "slack", "sentry"],
+    "setupGuide": {
+      "title": "PlanetScale API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Sign in to PlanetScale",
+        "description": "Go to https://app.planetscale.com and sign in to your organization.",
+      }, {
+        "step": 2,
+        "title": "Create a service token",
+        "description":
+          "Open your organization's Settings > Service tokens > New service token, name it, and copy both the token ID and the token secret immediately.",
+      }, {
+        "step": 3,
+        "title": "Grant permissions",
+        "description":
+          "On the token's page, grant organization-level read access (e.g. read_databases) and database-level permissions (e.g. read_branch, read_deploy_request) for the databases you want to inspect.",
+      }, {
+        "step": 4,
+        "title": "Set the environment variable",
+        "description":
+          "IMPORTANT: PlanetScale auth uses a composite value. Set PLANETSCALE_SERVICE_TOKEN to the token ID and token joined by a colon, e.g. PLANETSCALE_SERVICE_TOKEN=abc123xyz:pscale_tkn_... The connector sends this verbatim as the Authorization header.",
+      }, {
+        "step": 5,
+        "title": "Verify access",
+        "description": "Run List Organizations, then List Databases with your organization name.",
+      }],
+      "notes": [
+        "PlanetScale's Authorization header is '<TOKEN_ID>:<TOKEN>' with no Bearer prefix — the env var must contain both parts joined by a colon",
+        "Service token permissions are granular; missing database-level grants return 404s rather than 403s",
+        "List responses wrap items in a 'data' array with current_page/next_page pagination",
+      ],
+      "documentation": "https://planetscale.com/docs/api",
+    },
   },
   {
     "name": "posthog",
@@ -25137,6 +27259,34 @@ export const connectors: IntegrationConfig[] = [
       "icon": "list",
     }],
     "suggestedWith": ["jira", "slack", "zendesk"],
+    "setupGuide": {
+      "title": "Productboard OAuth Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Get a Productboard workspace",
+        "description":
+          "Sign up at https://www.productboard.com (a free trial workspace works for testing). Public API access requires a plan with API access enabled.",
+      }, {
+        "step": 2,
+        "title": "Register an OAuth2 application",
+        "description":
+          "Follow the developer documentation at https://developer.productboard.com/reference/oauth-authorization-code to register your OAuth2 client and obtain a client ID and secret. Set the redirect URI to your app's /api/auth/productboard/callback URL.",
+      }, {
+        "step": 3,
+        "title": "Set environment variables",
+        "description": "Add PRODUCTBOARD_CLIENT_ID and PRODUCTBOARD_CLIENT_SECRET to your .env.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Complete the OAuth flow, then run List Entities with type=feature.",
+      }],
+      "notes": [
+        "Tools target the Productboard REST API v2 (https://api.productboard.com/v2), which does not require the X-Version header used by the legacy v1 API",
+        "Access tokens expire after 24 hours; refresh tokens expire 180 days after issue or 60 minutes after use",
+        "Features, components, and initiatives are all 'entities' in v2 — filter with the type parameter",
+      ],
+      "documentation": "https://developer.productboard.com/",
+    },
   },
   {
     "name": "qdrant",
@@ -25321,6 +27471,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "search",
     }],
     "suggestedWith": ["openai", "anthropic", "mistral"],
+    "setupGuide": {
+      "title": "Qdrant Cloud Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a Qdrant Cloud account",
+        "description":
+          "Sign up at https://cloud.qdrant.io — the free tier includes a 1GB cluster, enough for testing. Self-hosted Qdrant works too (run it with an api-key configured).",
+      }, {
+        "step": 2,
+        "title": "Create a cluster and API key",
+        "description":
+          "Create a cluster, then open its API Keys tab and create a database API key. Copy it immediately — it is only shown once.",
+      }, {
+        "step": 3,
+        "title": "Store the key and note your endpoint",
+        "description":
+          "Add QDRANT_API_KEY=... to your .env file. Copy the cluster endpoint hostname from Cluster details — tools take it as the clusterHost parameter without scheme or port (e.g. xyz-example.eu-central-1-0.aws.cloud.qdrant.io); requests go to port 6333.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Collections tool with your clusterHost.",
+      }],
+      "notes": [
+        "The API key is sent in the api-key header; Qdrant Cloud also accepts Authorization: Bearer",
+        "Every tool needs the clusterHost parameter (hostname only; requests target HTTPS port 6333) — there is no global Qdrant API host",
+        "Vectors must match the collection's configured vector size; generate embeddings separately (e.g. with OpenAI or Mistral)",
+      ],
+      "documentation": "https://api.qdrant.tech/api-reference",
+    },
   },
   {
     "name": "quickbooks",
@@ -25625,6 +27804,44 @@ export const connectors: IntegrationConfig[] = [
       "icon": "plus",
     }],
     "suggestedWith": ["stripe", "gmail", "hubspot"],
+    "setupGuide": {
+      "title": "QuickBooks Online OAuth Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create an Intuit developer account",
+        "description":
+          "Sign up at https://developer.intuit.com/ — creating an app automatically provisions a QuickBooks Online sandbox company with sample data for testing.",
+      }, {
+        "step": 2,
+        "title": "Create an app",
+        "description":
+          "In the developer dashboard (https://developer.intuit.com/app/developer/dashboard), create an app for the QuickBooks Online and Payments platform with the com.intuit.quickbooks.accounting scope, and add your /api/auth/quickbooks/callback URL as a redirect URI.",
+      }, {
+        "step": 3,
+        "title": "Copy credentials",
+        "description":
+          "From the app's Keys & credentials page, copy the Client ID and Client Secret (Development keys work against the sandbox host; Production keys require app review). Set QUICKBOOKS_CLIENT_ID and QUICKBOOKS_CLIENT_SECRET in your .env.",
+      }, {
+        "step": 4,
+        "title": "Note your realm ID",
+        "description":
+          "The OAuth callback includes a realmId query parameter identifying the connected company — save it; every QuickBooks tool requires it as the realmId parameter. You can also find it under the gear icon → Additional Info in QuickBooks Online.",
+      }, {
+        "step": 5,
+        "title": "Verify access",
+        "description":
+          "Run the List Invoices tool with your realmId (set host to sandbox-quickbooks.api.intuit.com for a sandbox company).",
+      }],
+      "notes": [
+        "The token endpoint authenticates with HTTP Basic (client_id:client_secret base64-encoded)",
+        "Access tokens last 60 minutes; refresh tokens roll and remain valid for up to 100 days",
+        "The company realm ID arrives as a query parameter on the OAuth callback, not in the token response — it must be saved and passed to every tool",
+        "QuickBooks responds with XML unless the Accept: application/json header is sent (the tools set it by default)",
+        "Sandbox companies use the sandbox-quickbooks.api.intuit.com host",
+      ],
+      "documentation":
+        "https://developer.intuit.com/app/developer/qbo/docs/develop/authentication-and-authorization/oauth-2.0",
+    },
   },
   {
     "name": "railway",
@@ -25798,6 +28015,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "refresh",
     }],
     "suggestedWith": ["github", "slack", "sentry"],
+    "setupGuide": {
+      "title": "Railway Public API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Sign in to Railway",
+        "description":
+          "Go to https://railway.com and sign in (the trial/Hobby plan with one deployed project is sufficient for testing).",
+      }, {
+        "step": 2,
+        "title": "Create an API token",
+        "description":
+          "Open Account Settings > Tokens (https://railway.com/account/tokens) and create an account token, or select a workspace to create a workspace-scoped token.",
+      }, {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the token to your .env as RAILWAY_TOKEN=...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run List Projects, then use a project ID with Get Project to discover its service and environment IDs.",
+      }],
+      "notes": [
+        "The API is GraphQL-only at https://backboard.railway.com/graphql/v2; account and workspace tokens are sent as 'Authorization: Bearer <token>'",
+        "Project tokens use a different header (Project-Access-Token) and are not supported by this connector — use an account or workspace token",
+        "Results use Relay-style connections; each item is wrapped in an edge with a node field",
+      ],
+      "documentation": "https://docs.railway.com/guides/public-api",
+    },
   },
   {
     "name": "razorpay",
@@ -26038,6 +28284,34 @@ export const connectors: IntegrationConfig[] = [
       "icon": "currency",
     }],
     "suggestedWith": ["stripe", "paypal", "sheets"],
+    "setupGuide": {
+      "title": "Razorpay API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Sign in to the Razorpay Dashboard",
+        "description":
+          "Go to https://dashboard.razorpay.com. Switch to Test Mode to experiment safely — test keys are prefixed rzp_test_.",
+      }, {
+        "step": 2,
+        "title": "Generate API keys",
+        "description":
+          "Open Account & Settings → API Keys and generate a key pair. The Key Secret is shown only once — store it immediately.",
+      }, {
+        "step": 3,
+        "title": "Set environment variables",
+        "description": "Add RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET to your .env.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run List Payments (Test Mode returns test transactions). Switch to Live Mode keys for production data.",
+      }],
+      "notes": [
+        "Authentication is HTTP Basic: base64(KEY_ID:KEY_SECRET) in the Authorization header",
+        "Timestamps in from/to filters are Unix epoch seconds; amounts are in the smallest currency unit (paise for INR)",
+      ],
+      "documentation": "https://razorpay.com/docs/api/",
+    },
   },
   {
     "name": "redis-cloud",
@@ -26179,6 +28453,36 @@ export const connectors: IntegrationConfig[] = [
       "icon": "search",
     }],
     "suggestedWith": ["digitalocean", "cloudflare", "datadog"],
+    "setupGuide": {
+      "title": "Redis Cloud API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Enable the API",
+        "description":
+          "Sign in to Redis Cloud (https://cloud.redis.io) as an account owner and go to Access Management → API Keys. Free accounts can sign up and create an Essentials subscription to test with. Enable the API if prompted.",
+      }, {
+        "step": 2,
+        "title": "Copy the account key",
+        "description":
+          "The account key identifies your account and is shown on the API Keys page. Add it to your .env as REDIS_CLOUD_API_KEY.",
+      }, {
+        "step": 3,
+        "title": "Create a user secret key",
+        "description":
+          "On the same page, add a new API user key. The secret is shown only once — copy it and add it as REDIS_CLOUD_SECRET_KEY.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run List Subscriptions (Pro) or List Essentials Subscriptions (fixed plans).",
+      }],
+      "notes": [
+        "Requests authenticate with two headers: x-api-key (account key) and x-api-secret-key (user secret key) — both env vars are required",
+        "Pro and Essentials subscriptions live under different paths: /v1/subscriptions vs /v1/fixed/subscriptions",
+        "The API is rate limited to 400 requests per minute per account key",
+      ],
+      "documentation": "https://redis.io/docs/latest/operate/rc/api/",
+    },
   },
   {
     "name": "render",
@@ -26371,6 +28675,34 @@ export const connectors: IntegrationConfig[] = [
       "icon": "refresh",
     }],
     "suggestedWith": ["github", "slack", "sentry"],
+    "setupGuide": {
+      "title": "Render API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Sign in to Render",
+        "description":
+          "Go to https://dashboard.render.com and sign in (the free tier with one web service is sufficient for testing).",
+      }, {
+        "step": 2,
+        "title": "Create an API key",
+        "description":
+          "Open Account Settings > API Keys (https://dashboard.render.com/settings#api-keys) and create a key.",
+      }, {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the key to your .env as RENDER_API_KEY=...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Services and note the srv-... IDs for use with the other tools.",
+      }],
+      "notes": [
+        "Keys are sent as 'Authorization: Bearer <key>'",
+        "List responses are arrays of wrapper objects ({ service, cursor } / { deploy, cursor }); pass the last cursor back to paginate",
+        "API keys grant the full permissions of your user account — store them securely",
+      ],
+      "documentation": "https://api-docs.render.com/reference/introduction",
+    },
   },
   {
     "name": "replicate",
@@ -26521,6 +28853,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "sparkles",
     }],
     "suggestedWith": ["openai", "huggingface", "together-ai"],
+    "setupGuide": {
+      "title": "Replicate API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a Replicate account",
+        "description":
+          "Go to https://replicate.com and sign up (GitHub sign-in supported). New accounts get a small amount of free usage before billing is required.",
+      }, {
+        "step": 2,
+        "title": "Create an API token",
+        "description":
+          "Open https://replicate.com/account/api-tokens, give the token a descriptive name (e.g. 'Veryfront Integration'), and create it.",
+      }, {
+        "step": 3,
+        "title": "Store the token",
+        "description": "Copy the token and add it to your .env file as REPLICATE_API_TOKEN=r8_...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run the List Models tool to confirm the token works. A 401 means the token is wrong or revoked.",
+      }],
+      "notes": [
+        "Predictions are billed per second of compute — costs vary widely by model and hardware",
+        "Create Prediction sends Prefer: wait=60 to return synchronously when possible; long-running models still return status 'starting' or 'processing' — poll with Get Prediction",
+        "Use the version ID from Get Model's latest_version.id field when creating predictions",
+      ],
+      "documentation": "https://replicate.com/docs/reference/http",
+    },
   },
   {
     "name": "resend",
@@ -26676,6 +29037,39 @@ export const connectors: IntegrationConfig[] = [
       "icon": "check",
     }],
     "suggestedWith": ["stripe", "supabase", "neon"],
+    "setupGuide": {
+      "title": "Resend API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Sign in to Resend",
+        "description":
+          "Go to https://resend.com and sign in. The free tier is sufficient for testing.",
+      }, {
+        "step": 2,
+        "title": "Verify a domain (or use onboarding sender)",
+        "description":
+          "Add and verify a sending domain under https://resend.com/domains. For quick tests you can send from onboarding@resend.dev to your own account email.",
+      }, {
+        "step": 3,
+        "title": "Create an API key",
+        "description":
+          "Open https://resend.com/api-keys and create a key with Full Access (Sending Access alone cannot read domains/audiences).",
+      }, {
+        "step": 4,
+        "title": "Set the environment variable",
+        "description": "Add the key to your .env as RESEND_API_KEY=re_...",
+      }, {
+        "step": 5,
+        "title": "Verify access",
+        "description":
+          "Run List Domains to confirm the key works, then send a test email to yourself.",
+      }],
+      "notes": [
+        "Resend authenticates with 'Authorization: Bearer re_...'",
+        "Audiences and contacts power Broadcasts; transactional sending only requires a verified domain",
+      ],
+      "documentation": "https://resend.com/docs/api-reference/introduction",
+    },
   },
   {
     "name": "salesflare",
@@ -26883,6 +29277,29 @@ export const connectors: IntegrationConfig[] = [
       "icon": "plus",
     }],
     "suggestedWith": ["gmail", "slack", "stripe"],
+    "setupGuide": {
+      "title": "Salesflare API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a Salesflare account",
+        "description":
+          "Sign up at https://salesflare.com/ — the free trial is sufficient to test the API.",
+      }, {
+        "step": 2,
+        "title": "Create an API key",
+        "description": "In Salesflare, go to Settings → API Keys and create a new key.",
+      }, {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add SALESFLARE_API_KEY to your .env.",
+      }, { "step": 4, "title": "Verify access", "description": "Run the List Contacts tool." }],
+      "notes": [
+        "The API key is sent as Authorization: Bearer <key>; Salesflare does not support OAuth",
+        "List endpoints return a JSON array and paginate with limit/offset query parameters",
+        "Full endpoint reference lives in the interactive docs at https://api.salesflare.com/docs",
+      ],
+      "documentation": "https://api.salesflare.com/docs",
+    },
   },
   {
     "name": "salesforce",
@@ -27591,6 +30008,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "settings",
     }],
     "suggestedWith": ["mixpanel", "google-analytics", "hubspot"],
+    "setupGuide": {
+      "title": "Segment Public API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Sign in to Segment",
+        "description":
+          "Go to https://app.segment.com and sign in. A free workspace is sufficient for testing.",
+      }, {
+        "step": 2,
+        "title": "Create a Public API token",
+        "description":
+          "Open Workspace Settings > Access Management > Tokens and click Create Token. Choose the Public API token type (not the legacy Config API) and grant Workspace Member or Owner scope as needed. Copy the token — it is shown only once.",
+      }, {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the token to your .env as SEGMENT_PUBLIC_API_TOKEN=...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run List Sources. EU-hosted workspaces must pass host=eu1.api.segmentapis.com on each call.",
+      }],
+      "notes": [
+        "The Public API authenticates with 'Authorization: Bearer <token>'",
+        "US workspaces use api.segmentapis.com (the default); EU workspaces use eu1.api.segmentapis.com via the host parameter",
+        "Creating sources/destinations needs a catalog metadataId from the /catalog endpoints",
+      ],
+      "documentation": "https://docs.segmentapis.com/",
+    },
   },
   {
     "name": "sendgrid",
@@ -27778,6 +30224,40 @@ export const connectors: IntegrationConfig[] = [
       "icon": "chart",
     }],
     "suggestedWith": ["klaviyo", "hubspot", "sheets"],
+    "setupGuide": {
+      "title": "SendGrid API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Sign in to SendGrid",
+        "description":
+          "Go to https://app.sendgrid.com and sign in. A free tier account is sufficient for testing.",
+      }, {
+        "step": 2,
+        "title": "Verify a sender",
+        "description":
+          "Under Settings → Sender Authentication, verify a single sender address or authenticate your domain. Mail Send rejects unverified 'from' addresses.",
+      }, {
+        "step": 3,
+        "title": "Create an API key",
+        "description":
+          "Open Settings → API Keys (https://app.sendgrid.com/settings/api_keys) and create a key with Full Access, or Restricted Access including Mail Send, Marketing, Template Engine, and Stats.",
+      }, {
+        "step": 4,
+        "title": "Set the environment variable",
+        "description": "Add the key to your .env as SENDGRID_API_KEY=SG....",
+      }, {
+        "step": 5,
+        "title": "Verify access",
+        "description":
+          "Run List Templates to confirm the key works, then send a test email to yourself.",
+      }],
+      "notes": [
+        "SendGrid authenticates with 'Authorization: Bearer SG.xxx'",
+        "Mail Send returns HTTP 202 with an empty body on success",
+        "Upsert Contacts is asynchronous — changes can take a few minutes to appear in List Contacts",
+      ],
+      "documentation": "https://www.twilio.com/docs/sendgrid/api-reference",
+    },
   },
   {
     "name": "sentry",
@@ -29426,6 +31906,34 @@ export const connectors: IntegrationConfig[] = [
       "icon": "plus",
     }],
     "suggestedWith": ["github", "slack", "sentry"],
+    "setupGuide": {
+      "title": "Shortcut API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Sign in to Shortcut",
+        "description":
+          "Go to https://app.shortcut.com and sign in. A free trial workspace is sufficient for testing.",
+      }, {
+        "step": 2,
+        "title": "Generate an API token",
+        "description":
+          "Open Settings > Account > API Tokens (https://app.shortcut.com/settings/account/api-tokens), name the token, and generate it. Tokens are scoped to the workspace you create them in.",
+      }, {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the token to your .env as SHORTCUT_API_TOKEN=...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Workflows, then Search Stories with a simple query.",
+      }],
+      "notes": [
+        "Shortcut authenticates with a 'Shortcut-Token' header, not Authorization",
+        "Creating stories needs a workflow_state_id — call List Workflows first",
+        "Rate limit is 200 requests per minute",
+      ],
+      "documentation": "https://developer.shortcut.com/api/rest/v3",
+    },
   },
   {
     "name": "slack",
@@ -29803,6 +32311,39 @@ export const connectors: IntegrationConfig[] = [
       "icon": "lightning",
     }],
     "suggestedWith": ["github", "slack", "notion"],
+    "setupGuide": {
+      "steps": [{
+        "title": "Locate Your Account Identifier",
+        "description":
+          "Find your Snowflake account identifier in the Snowflake web interface URL (e.g., xy12345.us-east-1 from https://xy12345.us-east-1.snowflakecomputing.com)",
+        "docsUrl": "https://docs.snowflake.com/en/user-guide/admin-account-identifier",
+      }, {
+        "title": "Create or Use Existing User",
+        "description":
+          "Use an existing Snowflake user or create a new one with appropriate permissions. The user needs USAGE privileges on the warehouse and database, and SELECT privileges on tables.",
+        "docsUrl": "https://docs.snowflake.com/en/user-guide/admin-user-management",
+      }, {
+        "title": "Generate a Programmatic Access Token",
+        "description":
+          "In Snowsight, open your user profile > Settings > Authentication and generate a programmatic access token (PAT), or run ALTER USER ... ADD PROGRAMMATIC ACCESS TOKEN. The SQL API does not accept username/password basic auth; the PAT is sent as a Bearer token.",
+        "docsUrl": "https://docs.snowflake.com/en/user-guide/programmatic-access-tokens",
+      }, {
+        "title": "Configure Warehouse",
+        "description":
+          "Ensure you have a warehouse created and running. The default warehouse is typically named COMPUTE_WH.",
+        "docsUrl": "https://docs.snowflake.com/en/user-guide/warehouses",
+      }, {
+        "title": "Set Environment Variables",
+        "description":
+          "Add the following environment variables to your .env file with your Snowflake credentials",
+        "code":
+          "SNOWFLAKE_PAT=your_programmatic_access_token\nSNOWFLAKE_ACCOUNT=xy12345.us-east-1\nSNOWFLAKE_USERNAME=your_username\nSNOWFLAKE_PASSWORD=your_password\nSNOWFLAKE_WAREHOUSE=COMPUTE_WH\nSNOWFLAKE_DATABASE=your_database\nSNOWFLAKE_SCHEMA=PUBLIC",
+      }, {
+        "title": "Test Connection",
+        "description": "Test your connection by listing databases or running a simple query",
+        "code": "SELECT CURRENT_VERSION()",
+      }],
+    },
   },
   {
     "name": "snyk",
@@ -30001,6 +32542,36 @@ export const connectors: IntegrationConfig[] = [
       "icon": "list",
     }],
     "suggestedWith": ["github", "gitlab", "circleci"],
+    "setupGuide": {
+      "title": "Snyk API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Sign up for Snyk",
+        "description":
+          "Create a free account at https://app.snyk.io and import at least one repository so projects and issues exist to query.",
+      }, {
+        "step": 2,
+        "title": "Get your API token",
+        "description":
+          "Go to Account Settings (https://app.snyk.io/account) and copy your personal API token, or create a service account token for shared use. Free plans include API access via the personal token.",
+      }, {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the token to your .env as SNYK_TOKEN=...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run List Organizations, then List Projects with one of the returned org IDs.",
+      }],
+      "notes": [
+        "Authentication uses 'Authorization: token <SNYK_TOKEN>' — the prefix is 'token', not 'Bearer'",
+        "Every REST API request requires a date-based ?version= query parameter; tools default to 2024-10-15",
+        "If your account is in a regional environment (e.g. US-02 at api.us.snyk.io), API hosts differ — these tools target the default https://api.snyk.io",
+        "Responses follow the JSON:API format: items are under data[] with attributes, pagination under links",
+      ],
+      "documentation": "https://docs.snyk.io/snyk-api",
+    },
   },
   {
     "name": "square",
@@ -30270,6 +32841,36 @@ export const connectors: IntegrationConfig[] = [
       "icon": "cart",
     }],
     "suggestedWith": ["stripe", "paypal", "sheets"],
+    "setupGuide": {
+      "title": "Square OAuth Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a Square application",
+        "description":
+          "Go to the Developer Console at https://developer.squareup.com/apps and create an application. Use the Production tab for live data; the Sandbox tab (connect.squareupsandbox.com) provides a test seller account.",
+      }, {
+        "step": 2,
+        "title": "Configure the redirect URL",
+        "description":
+          "In the app's OAuth settings, set the Production Redirect URL to your deployment's /api/auth/square/callback URL.",
+      }, {
+        "step": 3,
+        "title": "Copy credentials",
+        "description":
+          "Copy the Application ID and OAuth Application Secret from the OAuth page into SQUARE_CLIENT_ID and SQUARE_CLIENT_SECRET in your .env.",
+      }, {
+        "step": 4,
+        "title": "Connect and verify",
+        "description":
+          "Complete the OAuth consent flow, then run List Locations to confirm access.",
+      }],
+      "notes": [
+        "This connector uses the confidential code flow; Square's token endpoint takes client_id and client_secret in the JSON request body",
+        "Every request sends a Square-Version header (tools default to 2026-05-20); update the default to adopt newer API versions",
+        "Refresh tokens from the code flow do not expire, but sellers can revoke access at any time",
+      ],
+      "documentation": "https://developer.squareup.com/docs",
+    },
   },
   {
     "name": "stability-ai",
@@ -30408,6 +33009,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "wallet",
     }],
     "suggestedWith": ["openai", "gemini", "tavily"],
+    "setupGuide": {
+      "title": "Stability AI API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a Stability AI account",
+        "description":
+          "Sign up at https://platform.stability.ai — new accounts receive 25 free credits, enough to test image generation.",
+      }, {
+        "step": 2,
+        "title": "Create an API key",
+        "description":
+          "Open https://platform.stability.ai/account/keys and copy your API key (starts with sk-). Create a dedicated key per application if you prefer.",
+      }, {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Add it to your .env file as STABILITY_API_KEY=sk-...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run the Get Balance tool to confirm the key works, then List Engines and try Text to Image with a simple prompt.",
+      }],
+      "notes": [
+        "Image generation is billed in credits per image — buy credits at https://platform.stability.ai/account/credits",
+        "Text to Image defaults the Accept header to application/json so images return as base64 artifacts (each with its seed and finishReason)",
+        "The newer v2beta Stable Image endpoints require multipart/form-data uploads and are not exposed here; tools use the JSON v1 generation API (SDXL)",
+      ],
+      "documentation": "https://platform.stability.ai/docs/api-reference",
+    },
   },
   {
     "name": "stripe",
@@ -31049,6 +33679,34 @@ export const connectors: IntegrationConfig[] = [
       "icon": "document",
     }],
     "suggestedWith": ["openai", "anthropic", "slack"],
+    "setupGuide": {
+      "title": "Tavily API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a Tavily account",
+        "description":
+          "Go to https://app.tavily.com and sign up — the free plan includes monthly API credits, enough for testing.",
+      }, {
+        "step": 2,
+        "title": "Copy your API key",
+        "description":
+          "Your default API key is shown on the dashboard home (https://app.tavily.com/home); create additional keys per project if needed.",
+      }, {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Add it to your .env file as TAVILY_API_KEY=tvly-...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run the Search tool with a simple query. A 401 means the key is invalid; a 432 means you exceeded your plan limit.",
+      }],
+      "notes": [
+        "All endpoints consume API credits per request; advanced search/extract depth costs more than basic",
+        "Crawl runs synchronously and can take a while on large sites — keep max_depth and limit small",
+      ],
+      "documentation": "https://docs.tavily.com",
+    },
   },
   {
     "name": "teams",
@@ -31486,6 +34144,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "plus",
     }],
     "suggestedWith": ["calendar", "notion", "slack"],
+    "setupGuide": {
+      "title": "Todoist OAuth Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a Todoist app",
+        "description":
+          "Go to the Todoist App Management console at https://developer.todoist.com/appconsole.html and create a new app.",
+      }, {
+        "step": 2,
+        "title": "Configure the OAuth redirect",
+        "description":
+          "Set the OAuth redirect URL to your callback (e.g. https://your-app.example.com/api/auth/todoist/callback).",
+      }, {
+        "step": 3,
+        "title": "Set environment variables",
+        "description":
+          "Copy the Client ID and Client Secret into your .env as TODOIST_CLIENT_ID and TODOIST_CLIENT_SECRET.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Connect your Todoist account and run the List Projects tool. A free Todoist account is sufficient for testing.",
+      }],
+      "notes": [
+        "Todoist scopes are comma-separated in the authorize URL (e.g. data:read_write). The data:read_write scope covers all tools in this connector.",
+        "This connector uses the unified Todoist API v1 (api.todoist.com/api/v1); the older REST v2 API is deprecated.",
+      ],
+      "documentation": "https://developer.todoist.com/api/v1/",
+    },
   },
   {
     "name": "together-ai",
@@ -31609,6 +34296,34 @@ export const connectors: IntegrationConfig[] = [
       "icon": "sparkles",
     }],
     "suggestedWith": ["openai", "anthropic", "mistral"],
+    "setupGuide": {
+      "title": "Together AI API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a Together AI account",
+        "description":
+          "Go to https://api.together.ai and sign up or sign in. New accounts include trial credits for testing.",
+      }, {
+        "step": 2,
+        "title": "Create an API key",
+        "description":
+          "Open Settings → API Keys at https://api.together.ai/settings/api-keys and create a new key.",
+      }, {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Copy the key and add it to your .env file as TOGETHER_API_KEY=...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run the List Models tool to confirm the key works. A 401 means the key is wrong or revoked.",
+      }],
+      "notes": [
+        "The official base URL is https://api.together.ai/v1 (the legacy api.together.xyz host also resolves)",
+        "Inference is billed per token (text) or per image step — check model pricing in the dashboard before large jobs",
+      ],
+      "documentation": "https://docs.together.ai/reference/models-1",
+    },
   },
   {
     "name": "trello",
@@ -31879,6 +34594,46 @@ export const connectors: IntegrationConfig[] = [
       "icon": "message",
     }],
     "suggestedWith": ["slack", "gmail", "calendar"],
+    "setupGuide": {
+      "title": "Setting up Twilio Integration",
+      "steps": [{
+        "title": "Create a Twilio Account",
+        "description": "Sign up for a free Twilio account at https://www.twilio.com/try-twilio",
+        "url": "https://www.twilio.com/try-twilio",
+      }, {
+        "title": "Get Your Account SID and Auth Token",
+        "description":
+          "Navigate to the Twilio Console Dashboard. Your Account SID and Auth Token are displayed on the main dashboard page. Click the eye icon to reveal your Auth Token.",
+        "url": "https://console.twilio.com/",
+      }, {
+        "title": "Get a Phone Number",
+        "description":
+          "Go to Phone Numbers > Manage > Buy a number. Select a phone number with SMS and Voice capabilities. Trial accounts come with one free phone number.",
+        "url": "https://console.twilio.com/us1/develop/phone-numbers/manage/search",
+      }, {
+        "title": "Set Up WhatsApp (Optional)",
+        "description":
+          "To send WhatsApp messages, join the Twilio Sandbox for WhatsApp. Go to Messaging > Try it out > Send a WhatsApp message. Follow the instructions to connect your WhatsApp to the sandbox.",
+        "url": "https://console.twilio.com/us1/develop/sms/try-it-out/whatsapp-learn",
+      }, {
+        "title": "Add Environment Variables",
+        "description":
+          "Add your Twilio credentials to your .env file:\n- TWILIO_ACCOUNT_SID=ACxxxxx\n- TWILIO_AUTH_TOKEN=your_auth_token\n- TWILIO_PHONE_NUMBER=+1234567890",
+      }, {
+        "title": "Test the Integration",
+        "description":
+          "Try sending a test SMS using the send-sms tool. For trial accounts, you can only send messages to verified phone numbers. Add your phone number at Phone Numbers > Manage > Verified Caller IDs.",
+        "url": "https://console.twilio.com/us1/develop/phone-numbers/manage/verified",
+      }],
+      "notes": [
+        "Twilio authenticates with HTTP Basic auth: Account SID as the username and Auth Token as the password",
+        "Trial accounts have limitations: you can only send messages to verified phone numbers",
+        "All trial messages will be prefixed with 'Sent from your Twilio trial account'",
+        "WhatsApp messages require recipients to first opt-in by messaging your sandbox number",
+        "Phone numbers must be in E.164 format: +[country code][number] (e.g., +14155552671)",
+        "Upgrade your account to remove trial restrictions and enable production features",
+      ],
+    },
   },
   {
     "name": "typeform",
@@ -32070,6 +34825,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "list",
     }],
     "suggestedWith": ["sheets", "slack", "hubspot"],
+    "setupGuide": {
+      "title": "Typeform OAuth Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a Typeform developer app",
+        "description":
+          "Sign in at https://admin.typeform.com, open your account settings, and register an OAuth application (free accounts can create apps for testing).",
+      }, {
+        "step": 2,
+        "title": "Set the redirect URI",
+        "description":
+          "Add your deployment's /api/auth/typeform/callback URL as the app's redirect URI.",
+      }, {
+        "step": 3,
+        "title": "Set environment variables",
+        "description":
+          "Copy the Client ID and Client Secret into TYPEFORM_CLIENT_ID and TYPEFORM_CLIENT_SECRET in your .env.",
+      }, {
+        "step": 4,
+        "title": "Connect and verify",
+        "description":
+          "Complete the OAuth consent flow, then run Get Me and List Forms to confirm access.",
+      }],
+      "notes": [
+        "The 'offline' scope is required to receive a refresh token; without it access expires and the user must reauthorize",
+        "Token requests send client_id and client_secret as URL-encoded form fields in the POST body",
+      ],
+      "documentation": "https://www.typeform.com/developers/",
+    },
   },
   {
     "name": "vercel",
@@ -32322,6 +35106,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "alert",
     }],
     "suggestedWith": ["github", "slack", "sentry"],
+    "setupGuide": {
+      "title": "Vercel API Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Sign in to Vercel",
+        "description":
+          "Go to https://vercel.com and sign in (the free Hobby plan is sufficient for testing).",
+      }, {
+        "step": 2,
+        "title": "Create an access token",
+        "description":
+          "Open Account Settings > Tokens (https://vercel.com/account/settings/tokens), create a token, choose its scope (personal account or a team), and copy it.",
+      }, {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the token to your .env as VERCEL_TOKEN=...",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run List Projects. For team resources, pass the team's ID via the teamId parameter (find it in Team Settings).",
+      }],
+      "notes": [
+        "Tokens are sent as 'Authorization: Bearer <token>'",
+        "To access resources owned by a team, every call must include teamId (or slug) as a query parameter",
+        "Endpoint versions differ per route (v10 projects, v7 deployments list, v13 deployment detail) — this is normal for the Vercel API",
+      ],
+      "documentation": "https://vercel.com/docs/rest-api",
+    },
   },
   {
     "name": "weaviate",
@@ -32517,6 +35330,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "search",
     }],
     "suggestedWith": ["openai", "anthropic", "gemini"],
+    "setupGuide": {
+      "title": "Weaviate Cloud Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a Weaviate Cloud account",
+        "description":
+          "Sign up at https://console.weaviate.cloud — free 14-day sandbox clusters are available for testing. Self-hosted Weaviate with API-key auth enabled works too.",
+      }, {
+        "step": 2,
+        "title": "Create a cluster and grab credentials",
+        "description":
+          "Create a cluster, then open Cluster details to copy the REST endpoint URL and an API key (use a read-write key for object creation). The key is only displayed once.",
+      }, {
+        "step": 3,
+        "title": "Store the key and note your host",
+        "description":
+          "Add WEAVIATE_API_KEY=... to your .env file. Tools take the cluster host (without https://) as the clusterHost parameter, e.g. my-cluster-abc123.weaviate.cloud.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the Get Schema tool with your clusterHost.",
+      }],
+      "notes": [
+        "Every tool needs the clusterHost parameter — there is no global Weaviate API host",
+        "nearText GraphQL queries require a vectorizer module configured on the collection (and possibly a model-provider API key set on the cluster)",
+        "Admin keys can read and write; read-only keys will get 403 on Create Object",
+      ],
+      "documentation": "https://docs.weaviate.io/weaviate/api/rest",
+    },
   },
   {
     "name": "webex",
@@ -32699,6 +35541,35 @@ export const connectors: IntegrationConfig[] = [
       "icon": "plus",
     }],
     "suggestedWith": ["calendar", "outlook", "gmail"],
+    "setupGuide": {
+      "title": "Webex Integration Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a Webex integration",
+        "description":
+          "Sign in at https://developer.webex.com/ (a free Webex account works) and go to My Apps → Create a New App → Create an Integration.",
+      }, {
+        "step": 2,
+        "title": "Set the redirect URI and scopes",
+        "description":
+          "Set the Redirect URI to your app URL ending in /api/auth/webex/callback and select the scopes spark:messages_read, spark:messages_write, spark:rooms_read, and spark:people_read.",
+      }, {
+        "step": 3,
+        "title": "Copy credentials",
+        "description":
+          "Copy the integration's Client ID and Client Secret into WEBEX_CLIENT_ID and WEBEX_CLIENT_SECRET (the secret is shown only once).",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Connect your Webex account and run the Get My Details tool.",
+      }],
+      "notes": [
+        "The token endpoint takes client_id and client_secret in the POST body",
+        "Access tokens last 14 days; refresh tokens last 90 days and their lifetime renews on each refresh",
+        "Webex automatically adds the spark:kms scope so the integration can read encrypted message content",
+      ],
+      "documentation": "https://developer.webex.com/docs/api/getting-started",
+    },
   },
   {
     "name": "xero",
@@ -32970,6 +35841,38 @@ export const connectors: IntegrationConfig[] = [
       "icon": "plus",
     }],
     "suggestedWith": ["stripe", "hubspot", "gmail"],
+    "setupGuide": {
+      "title": "Xero OAuth Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a Xero account",
+        "description":
+          "Sign up at https://www.xero.com/ — every Xero login includes the free Demo Company, which is ideal for testing API calls without touching real books.",
+      }, {
+        "step": 2,
+        "title": "Create an app in the Xero developer portal",
+        "description":
+          "Go to https://developer.xero.com/app/manage and create a new app (Web app type). Set the redirect URI to your app's /api/auth/xero/callback URL.",
+      }, {
+        "step": 3,
+        "title": "Copy credentials",
+        "description":
+          "Copy the Client ID and generate a Client Secret from the app's Configuration page. Set XERO_CLIENT_ID and XERO_CLIENT_SECRET in your .env.",
+      }, {
+        "step": 4,
+        "title": "Connect and discover your tenant",
+        "description":
+          "Complete the OAuth flow, then run the List Connections tool. Copy the tenantId from the response — every other Xero tool requires it as the tenant_id parameter (sent as the xero-tenant-id header).",
+      }],
+      "notes": [
+        "The offline_access scope is required — without it Xero issues no refresh token and access expires after 30 minutes",
+        "Refresh tokens are single-use and expire after 60 days of inactivity",
+        "The token endpoint authenticates with HTTP Basic (client_id:client_secret base64-encoded)",
+        "Every Accounting API call must include the xero-tenant-id header; use List Connections to find it",
+        "Uncertified apps are limited to 25 connected organisations",
+      ],
+      "documentation": "https://developer.xero.com/documentation/guides/oauth2/auth-flow/",
+    },
   },
   {
     "name": "zendesk",
@@ -33393,6 +36296,36 @@ export const connectors: IntegrationConfig[] = [
       "icon": "plus",
     }],
     "suggestedWith": ["calendar", "slack", "gmail"],
+    "setupGuide": {
+      "title": "Zoom OAuth Setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a Zoom app",
+        "description":
+          "Sign in at https://marketplace.zoom.us/ (a free Zoom account works) and choose Develop → Build App → General App (user-managed).",
+      }, {
+        "step": 2,
+        "title": "Configure the redirect URL",
+        "description":
+          "In the app's OAuth settings, set the OAuth Redirect URL to your app URL ending in /api/auth/zoom/callback and add it to the allow list.",
+      }, {
+        "step": 3,
+        "title": "Add scopes",
+        "description":
+          "Under Scopes, add the granular scopes user:read:user, meeting:read:meeting, meeting:read:list_meetings, meeting:write:meeting, and cloud_recording:read:list_user_recordings.",
+      }, {
+        "step": 4,
+        "title": "Copy credentials and verify",
+        "description":
+          "Copy the Client ID and Client Secret into ZOOM_CLIENT_ID and ZOOM_CLIENT_SECRET, connect your account, and run the Get My Profile tool.",
+      }],
+      "notes": [
+        "The token endpoint authenticates the client with HTTP Basic (base64 of client_id:client_secret)",
+        "Access tokens expire after 1 hour; refresh tokens are issued and expire after 90 days",
+        "Apps created since 2024 use granular scopes (e.g. meeting:read:list_meetings) instead of classic scopes like meeting:read",
+      ],
+      "documentation": "https://developers.zoom.us/docs/api/",
+    },
   },
 ];
 
