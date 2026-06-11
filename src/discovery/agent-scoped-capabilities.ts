@@ -266,6 +266,7 @@ export async function registerAgentColocatedSkills(
         });
       }
       registerSkill(skill.id, skill);
+      input.result?.skills.set(skill.id, skill);
       registeredIds.push(skill.id);
     } catch (error) {
       input.result?.errors.push({

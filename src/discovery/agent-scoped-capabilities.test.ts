@@ -213,3 +213,53 @@ Deno.test("agent ids that sanitize to the same namespace report a collision erro
     await Deno.remove(root, { recursive: true });
   }
 });
+
+// ── Full-pipeline regression (review finding: discoverAll wiped colocated skills) ──
+
+import { discoverAll } from "./index.ts";
+
+Deno.test("discoverAll preserves directory-agent colocated skills through the skill-registry clear", async () => {
+  const root = await Deno.makeTempDir();
+  skillRegistry.clearAll();
+  try {
+    await writeFixtureProject(root);
+    // A global skill whose id shadows researcher's "cite" short name —
+    // discovered through the real pipeline (skills before agents), so the
+    // shadow diagnostic must fire without manual pre-registration.
+    await Deno.mkdir(`${root}/skills/cite`, { recursive: true });
+    await Deno.writeTextFile(
+      `${root}/skills/cite/SKILL.md`,
+      `---\nname: cite\ndescription: Global cite skill\n---\nGlobal citing.\n`,
+    );
+
+    const result = await discoverAll({ baseDir: root });
+
+    // Colocated skills survive the registry clear and surface in the result.
+    assertEquals(skillRegistry.get("researcher")?.ownerAgentId, "researcher");
+    assertEquals(skillRegistry.get("researcher--cite")?.ownerAgentId, "researcher");
+    assertEquals(result.skills.has("researcher"), true);
+    assertEquals(result.skills.has("researcher--cite"), true);
+    assertEquals(result.skills.has("cite"), true);
+
+    // The agent sees its own skills plus the unowned global one.
+    assertEquals(
+      [...skillRegistry.resolveForAgent(true, { agentId: "researcher" }).keys()].sort(),
+      ["cite", "researcher", "researcher--cite"],
+    );
+    // Other agents see only the global skill.
+    assertEquals(
+      [...skillRegistry.resolveForAgent(true, { agentId: "lead" }).keys()],
+      ["cite"],
+    );
+
+    // Shadow diagnostic fires through the natural pipeline ordering.
+    const shadowing = result.errors.filter((entry) =>
+      String(entry.error).includes('shadows the global skill id "cite"')
+    );
+    assertEquals(shadowing.length, 1);
+  } finally {
+    skillRegistry.clearAll();
+    cleanupAgents(["lead", "researcher"]);
+    await Deno.remove(root, { recursive: true });
+  }
+});
