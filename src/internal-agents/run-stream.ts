@@ -22,7 +22,7 @@ import {
   SandboxShellToolsProviderName,
 } from "#veryfront/extensions/sandbox/index.ts";
 import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
-import { type Tool, toolRegistry } from "#veryfront/tool";
+import { isToolVisibleTo, type Tool, toolRegistry } from "#veryfront/tool";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import {
@@ -130,7 +130,7 @@ function createInjectedStudioTool(
   };
 }
 
-function buildMergedTools(
+export function buildMergedTools(
   agent: Agent,
   input: RuntimeRunAgentInput,
   sessionManager: AgentRunSessionManager,
@@ -171,8 +171,13 @@ function buildMergedTools(
 
   if (agent.config.tools === true) {
     const merged: Record<string, Tool | boolean> = {};
-    for (const [toolId] of toolRegistry.getAll()) {
+    for (const [toolId, registryTool] of toolRegistry.getAll()) {
       if (!agent.config.skills && SKILL_TOOL_IDS.has(toolId)) {
+        continue;
+      }
+      // Owner-aware: another agent's owned tool never enters this agent's
+      // model tool definitions.
+      if (!isToolVisibleTo(registryTool, { agentId: agent.id })) {
         continue;
       }
       merged[toolId] = true;
@@ -186,12 +191,20 @@ function buildMergedTools(
   const merged: Record<string, Tool | boolean> = {};
   for (const [toolName, entry] of Object.entries(agent.config.tools)) {
     if (entry === true) {
+      // Registry lookups are owner-aware: another agent's owned tool behaves
+      // as if it does not exist for this agent.
+      const visibleRegistryTool = (() => {
+        const registryTool = toolRegistry.get(toolName);
+        return registryTool && isToolVisibleTo(registryTool, { agentId: agent.id })
+          ? registryTool
+          : undefined;
+      })();
       const serverResolvedProjectTool = serverResolvedProjectToolNames.has(toolName)
-        ? toolRegistry.get(toolName)
+        ? visibleRegistryTool
         : undefined;
       if (
         serverResolvedProjectTool ||
-        toolRegistry.get(toolName) ||
+        visibleRegistryTool ||
         availableLocalTools?.[toolName] ||
         availableForwardedToolNames?.includes(toolName) ||
         sourceAllowedRemoteToolNames.includes(toolName)

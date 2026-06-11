@@ -594,9 +594,16 @@ function getProjectSteering(
   return projectSteering;
 }
 
-function getDiscoveredHostTools(): HostToolSet {
+export function getDiscoveredHostTools(): HostToolSet {
+  // Agent-owned tools never enter the project-level host tool spread: this
+  // set is built without a per-run agent identity, so the rule matches MCP
+  // tools/list (project-level callers see only unowned tools). Per-agent
+  // owned-tool visibility in the hosted runtime arrives with the owner-aware
+  // catalog (see .omx/research/hosted-catalog-spike.md).
   return Object.fromEntries(
-    [...toolRegistry.getAll()].sort(([left], [right]) => left.localeCompare(right)),
+    [...toolRegistry.getAll()]
+      .filter(([, registryTool]) => registryTool.ownerAgentId === undefined)
+      .sort(([left], [right]) => left.localeCompare(right)),
   );
 }
 
