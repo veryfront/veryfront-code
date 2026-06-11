@@ -33,6 +33,25 @@ const AGENT_TOOLS_SUBDIR = "tools";
 const AGENT_SKILLS_SUBDIR = "skills";
 /** Separator between the agent namespace and the capability short name. */
 export const AGENT_CAPABILITY_NAMESPACE_SEPARATOR = "__";
+/** Provider tool-call names allow only this charset, max 64 chars. */
+const PROVIDER_TOOL_NAME_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
+
+/** Whether a namespaced tool name is valid for provider tool calls. */
+export function isProviderSafeToolName(name: string): boolean {
+  return PROVIDER_TOOL_NAME_REGEX.test(name);
+}
+
+const SAFE_PATH_SEGMENT_REGEX = /^[A-Za-z0-9._-]+$/;
+
+/**
+ * Whether a directory/file entry name is a safe single path segment — used
+ * before joining it into a filesystem path. Rejects `.` and `..` (which match
+ * the permissive name regex) as defense-in-depth against path traversal, even
+ * though POSIX `readdir` does not normally yield them.
+ */
+export function isSafePathSegment(name: string): boolean {
+  return name !== "." && name !== ".." && SAFE_PATH_SEGMENT_REGEX.test(name);
+}
 
 /** Sanitizes an agent id into a provider-safe namespace segment. */
 export function sanitizeCapabilityNamespace(agentId: string): string {
@@ -116,6 +135,16 @@ export async function loadAgentColocatedTools(
           continue;
         }
         const namespaced = namespaceAgentCapability(input.agentId, shortName);
+        if (!isProviderSafeToolName(namespaced)) {
+          input.result?.errors.push({
+            file,
+            error: ensureError(
+              `Colocated tool "${shortName}" for agent "${input.agentId}" produces an ` +
+                `invalid tool name "${namespaced}" (must match [A-Za-z0-9_-], max 64 chars).`,
+            ),
+          });
+          continue;
+        }
         if (!tools[namespaced]) {
           tools[namespaced] = { ...tool, id: namespaced };
         }
@@ -187,7 +216,7 @@ export async function registerAgentColocatedSkills(
     a.name.localeCompare(b.name)
   );
   for (const entry of entries) {
-    if (!entry.isDirectory) {
+    if (!entry.isDirectory || !isSafePathSegment(entry.name)) {
       continue;
     }
     candidates.push({

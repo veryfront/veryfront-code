@@ -17,9 +17,8 @@ export type RuntimeAgentMarkdownAgentMeta = {
 
 const markdownMetaByAgent = new WeakMap<Agent, RuntimeAgentMarkdownAgentMeta>();
 
-/** Input payload for create runtime agent from markdown. */
-export type CreateRuntimeAgentFromMarkdownDefinitionInput = {
-  definition: RuntimeAgentMarkdownDefinition;
+/** Options for create runtime agent from markdown (colocated capabilities). */
+export type CreateRuntimeAgentFromMarkdownOptions = {
   rootPath?: string;
   /**
    * Explicit colocated skill registry ids resolved at discovery. Takes
@@ -60,17 +59,19 @@ function mergeAgentTools(
 
 /** Definition for create runtime agent from markdown. */
 export function createRuntimeAgentFromMarkdownDefinition(
-  input: RuntimeAgentMarkdownDefinition | CreateRuntimeAgentFromMarkdownDefinitionInput,
+  definition: RuntimeAgentMarkdownDefinition,
+  options: CreateRuntimeAgentFromMarkdownOptions = {},
 ): Agent {
-  const { definition, rootPath, resolvedSkillIds, tools } = "definition" in input
-    ? input
-    : { definition: input, rootPath: undefined, resolvedSkillIds: undefined, tools: undefined };
+  const { rootPath, resolvedSkillIds, tools } = options;
 
   const delegateTools = definition.delegates && definition.delegates.length > 0
     ? buildAgentDelegateTools({ delegates: definition.delegates, selfId: definition.id })
     : undefined;
   const skillsConfig = resolveSkillsConfig(definition, resolvedSkillIds);
-  const mergedTools = mergeAgentTools(tools, delegateTools);
+  // Colocated tools take precedence over delegate tools on key collision (the
+  // agent owns its colocated tools); in practice keys never overlap because
+  // colocated use `{id}__name` and delegates use `agent_{id}`.
+  const mergedTools = mergeAgentTools(delegateTools, tools);
 
   const runtimeAgent = agent({
     id: definition.id,

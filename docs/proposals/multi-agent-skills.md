@@ -91,11 +91,14 @@ registry-wide `true`, so one agent never sees another's skills.
    `agents/{id}/AGENT.md` + flat `agents/{id}.md`; records the agent's root dir.
 3. **Colocated capabilities** (`agent-scoped-capabilities.ts`): load `tools/*.ts` as a
    namespaced Tool record; register `SKILL.md` / `skills/**` as `Skill` objects.
-4. **Per-agent skill catalog** (`agent-scoped-skill-catalog.ts`): `RuntimeSkillDefinition[]`
-   loader for the hosted runtime path.
-5. **Wire into the runtime agent** (`agent-markdown-adapter.ts`): resolved skill ids →
+4. **Wire into the runtime agent** (`agent-markdown-adapter.ts`): resolved skill ids →
    `config.skills`; colocated + delegate tools → `config.tools`.
-6. **Delegation** (`agent-delegation.ts`): opt-in `agent_{id}` tools gated on `delegates`.
+5. **Delegation** (`agent-delegation.ts`): opt-in `agent_{id}` tools gated on `delegates`.
+
+> Note: the hosted (cloud) runtime resolves skills via a separate
+> `RuntimeSkillDefinition` catalog. Feeding colocated skills into that path is a
+> follow-up; it is intentionally **not** included here to avoid shipping an
+> unwired loader. The factory/local path above is fully wired.
 
 ## Back-compat / "without orchestration"
 

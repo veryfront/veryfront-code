@@ -88,3 +88,89 @@ Deno.test("discoverRuntimeAgentMarkdownDefinitions ignores directories without A
     Deno.removeSync(dir, { recursive: true });
   }
 });
+
+Deno.test("flat agents keep their declared skills selector (global-registry back-compat)", async () => {
+  const dir = Deno.makeTempDirSync();
+  try {
+    write(resolve(dir, "mad-flat.md"), "---\nname: Flat\nskills: true\n---\nUse global skills.");
+
+    const result = emptyResult();
+    await discoverRuntimeAgentMarkdownDefinitions(dir, result, context);
+
+    const flat = result.agents.get("mad-flat");
+    assertEquals(getRuntimeAgentMarkdownRootPath(flat!), null);
+    // No colocated resolution -> `skills: true` passes through to the global registry.
+    assertEquals(flat!.config.skills, true);
+    assertEquals(result.errors, []);
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
+Deno.test("invalid colocated SKILL.md is recorded as an error but the agent still registers", async () => {
+  const dir = Deno.makeTempDirSync();
+  try {
+    const agentDir = resolve(dir, "mad-badskill");
+    Deno.mkdirSync(agentDir, { recursive: true });
+    write(resolve(agentDir, "AGENT.md"), "---\nname: Bad\nskills: true\n---\nResearch.");
+    // Uppercase name + missing description -> validateSkillMetadata throws.
+    write(resolve(agentDir, "SKILL.md"), "---\nname: NotValid\n---\nOwn.");
+
+    const result = emptyResult();
+    await discoverRuntimeAgentMarkdownDefinitions(dir, result, context);
+
+    assertEquals(result.agents.has("mad-badskill"), true);
+    assertEquals(result.errors.length, 1);
+    // The bad skill did not register, so the agent has no resolved skill ids.
+    assertEquals(result.agents.get("mad-badskill")!.config.skills, undefined);
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
+Deno.test("duplicate agent id (flat + directory) is recorded as an error", async () => {
+  const dir = Deno.makeTempDirSync();
+  try {
+    write(resolve(dir, "mad-dup.md"), "---\nname: DupFlat\n---\nFlat.");
+    const agentDir = resolve(dir, "mad-dup");
+    Deno.mkdirSync(agentDir, { recursive: true });
+    write(resolve(agentDir, "AGENT.md"), "---\nname: DupDir\n---\nDirectory.");
+
+    const result = emptyResult();
+    await discoverRuntimeAgentMarkdownDefinitions(dir, result, context);
+
+    assertEquals([...result.agents.keys()], ["mad-dup"]);
+    assertEquals(result.errors.length, 1);
+    assertEquals(result.errors[0].error.message.includes("Duplicate agent id"), true);
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
+Deno.test("agents whose ids sanitize to the same namespace are reported, not silently merged", async () => {
+  const dir = Deno.makeTempDirSync();
+  try {
+    for (const id of ["mad.ns", "mad_ns"]) {
+      const agentDir = resolve(dir, id);
+      Deno.mkdirSync(resolve(agentDir, "tools"), { recursive: true });
+      write(resolve(agentDir, "AGENT.md"), `---\nname: ${id}\ntools: true\n---\nWork.`);
+      write(
+        resolve(agentDir, "tools", "fetch.ts"),
+        'export const fetch = { id: "fetch", type: "function", description: "f",' +
+          ' inputSchema: { type: "object", properties: {} }, execute: async () => ({}) };\n',
+      );
+    }
+
+    const result = emptyResult();
+    await discoverRuntimeAgentMarkdownDefinitions(dir, result, context);
+
+    // Both agents still register (distinct ids), but the namespace clash is reported.
+    assertEquals([...result.agents.keys()].sort(), ["mad.ns", "mad_ns"]);
+    const clash = result.errors.find((e) =>
+      e.error.message.includes("sanitized capability namespace")
+    );
+    assertEquals(clash !== undefined, true);
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});

@@ -2,13 +2,14 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { resolve } from "node:path";
 import {
+  isSafePathSegment,
   loadAgentColocatedTools,
   namespaceAgentCapability,
   registerAgentColocatedSkills,
   sanitizeCapabilityNamespace,
 } from "./agent-scoped-capabilities.ts";
 import { getSkill } from "#veryfront/skill/registry.ts";
-import type { FileDiscoveryContext } from "./types.ts";
+import type { DiscoveryResult, FileDiscoveryContext } from "./types.ts";
 
 const context: FileDiscoveryContext = { platform: "node" };
 
@@ -25,6 +26,15 @@ function toolModule(id: string): string {
     `  execute: async () => ({ ok: true }),\n` +
     `};\n`;
 }
+
+Deno.test("isSafePathSegment rejects traversal segments before path joining", () => {
+  assertEquals(isSafePathSegment("cite"), true);
+  assertEquals(isSafePathSegment("my.skill_v2"), true);
+  assertEquals(isSafePathSegment("."), false);
+  assertEquals(isSafePathSegment(".."), false);
+  assertEquals(isSafePathSegment("a/b"), false);
+  assertEquals(isSafePathSegment(""), false);
+});
 
 Deno.test("namespace helpers sanitize agent ids for provider-safe tool names", () => {
   assertEquals(sanitizeCapabilityNamespace("team.lead-1"), "team_lead-1");
@@ -49,6 +59,34 @@ Deno.test("loadAgentColocatedTools namespaces tools and honors the selector", as
       context,
     });
     assertEquals(Object.keys(selected), ["researcher__rank"]);
+  } finally {
+    Deno.removeSync(rootPath, { recursive: true });
+  }
+});
+
+Deno.test("loadAgentColocatedTools skips tools whose namespaced name is not provider-safe", async () => {
+  const rootPath = Deno.makeTempDirSync();
+  try {
+    Deno.mkdirSync(resolve(rootPath, "tools"), { recursive: true });
+    // Explicit tool id contains ':' -> namespaced name violates the provider charset.
+    Deno.writeTextFileSync(resolve(rootPath, "tools", "bad.ts"), toolModule("fetch:v2"));
+    Deno.writeTextFileSync(resolve(rootPath, "tools", "ok.ts"), toolModule("rank"));
+
+    const result: DiscoveryResult = {
+      tools: new Map(),
+      agents: new Map(),
+      skills: new Map(),
+      resources: new Map(),
+      prompts: new Map(),
+      workflows: new Map(),
+      tasks: new Map(),
+      errors: [],
+    };
+    const tools = await loadAgentColocatedTools({ agentId: "r", rootPath, context, result });
+
+    assertEquals(Object.keys(tools), ["r__rank"]);
+    assertEquals(result.errors.length, 1);
+    assertEquals(result.errors[0].error.message.includes("invalid tool name"), true);
   } finally {
     Deno.removeSync(rootPath, { recursive: true });
   }
