@@ -1,4 +1,9 @@
-import { computeHash, rendererLogger as logger, TSX_LAYOUT_MAX_ENTRIES } from "#veryfront/utils";
+import {
+  computeHash,
+  rendererLogger as logger,
+  TSX_LAYOUT_MAX_ENTRIES,
+  TSX_LAYOUT_PER_PROJECT_MAX_ENTRIES,
+} from "#veryfront/utils";
 import * as BundledReact from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { LayoutItem, MdxBundle, MDXComponents, MDXModule } from "#veryfront/types";
@@ -59,6 +64,10 @@ class InMemoryLayoutComponentCache implements LayoutComponentCache {
     this.entries.set(key, value);
   }
 
+  get size(): number {
+    return this.entries.size;
+  }
+
   delete(key: string): void {
     this.entries.delete(key);
   }
@@ -77,10 +86,90 @@ class InMemoryLayoutComponentCache implements LayoutComponentCache {
   }
 }
 
+/**
+ * Per-project layout component cache.
+ *
+ * Wraps a Map of per-project LRU sub-caches so that one noisy project cannot
+ * evict another project's cached layouts. Two limits apply:
+ *
+ * 1. **Per-project cap** (`perProjectMaxEntries`): each project's sub-cache is
+ *    bounded independently. Configurable via `TSX_LAYOUT_PER_PROJECT_MAX_ENTRIES`.
+ * 2. **Global project-count cap** (`maxProjects`): the number of distinct
+ *    projects that can have a sub-cache is bounded. When the cap is reached the
+ *    project whose sub-cache has the fewest entries (i.e. least active) is
+ *    evicted first to make room. This keeps total memory bounded even when many
+ *    projects exist. Defaults to `floor(maxEntries / perProjectMaxEntries)`.
+ *
+ * Cache keys are expected to start with `layout:{projectId}:` (the format
+ * produced by `buildLayoutComponentCacheKey`). The projectId is extracted from
+ * the key so no extra argument is needed for `get`/`set`.
+ */
+class PerProjectLayoutComponentCache implements LayoutComponentCache {
+  private readonly projects = new Map<string, InMemoryLayoutComponentCache>();
+
+  constructor(
+    private readonly perProjectMaxEntries: number,
+    private readonly maxProjects: number,
+  ) {}
+
+  /** Extract projectId from a `layout:{projectId}:…` cache key. */
+  private projectIdFromKey(key: string): string {
+    const second = key.indexOf(":", key.indexOf(":") + 1);
+    return second === -1 ? key : key.slice(key.indexOf(":") + 1, second);
+  }
+
+  private getOrCreateBucket(projectId: string): InMemoryLayoutComponentCache {
+    let bucket = this.projects.get(projectId);
+    if (bucket) return bucket;
+
+    // Evict the least-active project when the project-count cap is reached.
+    if (this.projects.size >= this.maxProjects) {
+      let smallestId: string | undefined;
+      let smallestSize = Infinity;
+      for (const [id, b] of this.projects) {
+        if (b.size < smallestSize) {
+          smallestSize = b.size;
+          smallestId = id;
+        }
+      }
+      if (smallestId !== undefined) this.projects.delete(smallestId);
+    }
+
+    bucket = new InMemoryLayoutComponentCache(this.perProjectMaxEntries);
+    this.projects.set(projectId, bucket);
+    return bucket;
+  }
+
+  get(key: string): BundledReact.ComponentType | undefined {
+    const projectId = this.projectIdFromKey(key);
+    return this.projects.get(projectId)?.get(key);
+  }
+
+  set(key: string, value: BundledReact.ComponentType): void {
+    const projectId = this.projectIdFromKey(key);
+    this.getOrCreateBucket(projectId).set(key, value);
+  }
+
+  delete(key: string): void {
+    const projectId = this.projectIdFromKey(key);
+    this.projects.get(projectId)?.delete(key);
+  }
+
+  clear(): void {
+    this.projects.clear();
+  }
+
+  clearForProject(projectId: string): void {
+    this.projects.delete(projectId);
+  }
+}
+
 export function createLayoutComponentCache(
   maxEntries = TSX_LAYOUT_MAX_ENTRIES,
+  perProjectMaxEntries = TSX_LAYOUT_PER_PROJECT_MAX_ENTRIES,
 ): LayoutComponentCache {
-  return new InMemoryLayoutComponentCache(maxEntries);
+  const maxProjects = Math.max(1, Math.floor(maxEntries / perProjectMaxEntries));
+  return new PerProjectLayoutComponentCache(perProjectMaxEntries, maxProjects);
 }
 
 export function shouldUnwrapAppRouterDocumentLayout(

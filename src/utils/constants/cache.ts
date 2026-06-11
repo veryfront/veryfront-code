@@ -57,6 +57,18 @@ export const RENDERER_CORE_TTL_MS = 5 * MS_PER_MINUTE;
 export const TSX_LAYOUT_MAX_ENTRIES = getEnvNumber("TSX_LAYOUT_MAX_ENTRIES", 100);
 export const TSX_LAYOUT_TTL_MS = 10 * MS_PER_MINUTE;
 
+/**
+ * Per-project cap for the TSX layout component cache.
+ * Prevents a single noisy tenant from evicting every other project's
+ * cached layouts. Defaults to ceil(TSX_LAYOUT_MAX_ENTRIES / 10) so no
+ * one project consumes more than ~10 % of the global budget.
+ * Set via TSX_LAYOUT_PER_PROJECT_MAX_ENTRIES env var.
+ */
+export const TSX_LAYOUT_PER_PROJECT_MAX_ENTRIES = getEnvNumber(
+  "TSX_LAYOUT_PER_PROJECT_MAX_ENTRIES",
+  Math.ceil(TSX_LAYOUT_MAX_ENTRIES / 10),
+);
+
 export const DATA_FETCHING_MAX_ENTRIES = getEnvNumber("DATA_FETCHING_MAX_ENTRIES", 500);
 export const DATA_FETCHING_TTL_MS = 10 * MS_PER_MINUTE;
 
