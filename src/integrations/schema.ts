@@ -57,6 +57,9 @@ const integrationNames = [
   "todoist",
   "calendly",
   "google-analytics",
+  "klaviyo",
+  "datadog",
+  "paypal",
 ] as const;
 
 export const getIntegrationNameSchema = defineSchema((v) => v.enum(integrationNames));
@@ -92,10 +95,16 @@ export const OAuthFieldSchema = lazySchema(getOAuthFieldSchema);
 
 export const getOAuthConfigSchema = defineSchema((v) =>
   v.object({
-    type: v.enum(["oauth2", "oauth1", "api-key"]),
+    type: v.enum(["oauth2", "oauth1", "api-key", "basic"]),
     provider: v.string().optional(),
     authorizationUrl: v.string().optional(),
     tokenUrl: v.string().optional(),
+    /**
+     * OAuth2 grant type. Defaults to the authorization-code user flow;
+     * machine-to-machine connectors set "client_credentials" (no user redirect,
+     * tokens minted from <NAME>_CLIENT_ID / <NAME>_CLIENT_SECRET project env vars).
+     */
+    grantType: v.enum(["authorization_code", "client_credentials"]).optional(),
     scopes: v.array(v.string()).optional(),
     optionalScopes: v.array(v.string()).optional(),
     callbackPath: v.string().optional(),
@@ -115,6 +124,15 @@ export const getOAuthConfigSchema = defineSchema((v) =>
     keyName: v.string().optional(),
     headerName: v.string().optional(),
     headerPrefix: v.string().optional(),
+    /**
+     * api-key: extra secret headers beyond the primary key, mapped from header
+     * name to the project env var holding the value (e.g. Datadog's
+     * DD-APPLICATION-KEY → DD_APP_KEY).
+     */
+    additionalHeaders: v.record(v.string(), v.string()).optional(),
+    /** basic: project env vars holding the HTTP Basic username and password. */
+    usernameKey: v.string().optional(),
+    passwordKey: v.string().optional(),
     tokenName: v.string().optional(),
     docsUrl: v.string().optional(),
   })
