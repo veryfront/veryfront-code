@@ -22,7 +22,11 @@ const SCAN_ROOTS = [
 
 // Lower this when you remove sanitizer opt-outs. Never raise it without a very
 // good reason — a new opt-out means a leak is being suppressed rather than fixed.
-export const SANITIZER_OPT_OUT_BASELINE = 420;
+// 420 -> 428: colocated-tool discovery tests transpile tool modules via
+// importModule/esbuild, which keeps a warm child process alive across tests (the
+// same reason src/discovery/transpiler.test.ts opts out). The leak is owned by
+// esbuild, not the test, so it is suppressed rather than fixable here.
+export const SANITIZER_OPT_OUT_BASELINE = 428;
 
 const OPT_OUT_PATTERN = /sanitize(?:Resources|Ops|Exit)\s*:\s*false/g;
 
