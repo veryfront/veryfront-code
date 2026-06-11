@@ -22,6 +22,23 @@ describe("rendering/layouts/utils/component-loader", () => {
       const cache = createLayoutComponentCache(10);
       assertEquals(typeof cache.get, "function");
     });
+
+    it("should clamp the per-project bucket to a small custom maxEntries", () => {
+      function C() {
+        return null;
+      }
+      // maxEntries=2 with the env-derived per-project default (larger than 2):
+      // a single project's bucket must still respect the total budget of 2.
+      const cache = createLayoutComponentCache(2);
+      cache.set("layout:proj:/a:h1:c", C);
+      cache.set("layout:proj:/b:h2:c", C);
+      cache.set("layout:proj:/c:h3:c", C);
+
+      // Oldest entry evicted at the requested cap, not the per-project default
+      assertEquals(cache.get("layout:proj:/a:h1:c"), undefined);
+      assertEquals(cache.get("layout:proj:/b:h2:c"), C);
+      assertEquals(cache.get("layout:proj:/c:h3:c"), C);
+    });
   });
 
   describe("InMemoryLayoutComponentCache (via factory)", () => {

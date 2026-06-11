@@ -168,8 +168,12 @@ export function createLayoutComponentCache(
   maxEntries = TSX_LAYOUT_MAX_ENTRIES,
   perProjectMaxEntries = TSX_LAYOUT_PER_PROJECT_MAX_ENTRIES,
 ): LayoutComponentCache {
-  const maxProjects = Math.max(1, Math.floor(maxEntries / perProjectMaxEntries));
-  return new PerProjectLayoutComponentCache(perProjectMaxEntries, maxProjects);
+  // A single bucket may never exceed the caller's total budget: with a small
+  // custom maxEntries (e.g. tests passing 2), the env-derived per-project
+  // default would otherwise let one project hold more than the whole cache.
+  const perProject = Math.max(1, Math.min(perProjectMaxEntries, maxEntries));
+  const maxProjects = Math.max(1, Math.floor(maxEntries / perProject));
+  return new PerProjectLayoutComponentCache(perProject, maxProjects);
 }
 
 export function shouldUnwrapAppRouterDocumentLayout(
