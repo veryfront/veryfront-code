@@ -328,6 +328,19 @@ export const getIntegrationToolSchema = defineSchema((v) =>
 /** Zod schema for integration tool. */
 export const IntegrationToolSchema = lazySchema(getIntegrationToolSchema);
 
+export const getIntegrationSetupGuideSchema = defineSchema((v) =>
+  v.object({
+    title: v.string().optional(),
+    steps: v.array(
+      v.object({ step: v.number().optional(), title: v.string(), description: v.string() }),
+    ),
+    notes: v.array(v.string()).optional(),
+    documentation: v.string().optional(),
+  })
+);
+/** Setup steps shown when an integration's credentials are missing. */
+export const IntegrationSetupGuideSchema = lazySchema(getIntegrationSetupGuideSchema);
+
 export const getIntegrationPromptSchema = defineSchema((v) =>
   v.object({
     id: v.string(),
@@ -361,6 +374,7 @@ export const getIntegrationConfigSchema = defineSchema((v) =>
     suggestedWith: v.array(v.string()).optional(),
     dependencies: v.record(v.string(), v.string()).optional(),
     category: v.string().optional(),
+    setupGuide: getIntegrationSetupGuideSchema().optional(),
   })
 );
 /** Zod schema for integration config. */

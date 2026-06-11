@@ -46,8 +46,11 @@ for await (const entry of Deno.readDir(integrationsDir)) {
     }
     delete json.internal;
     delete json.version;
+    // Keep setup guides in the runtime catalog — they power the
+    // missing-credentials UX in chat (how a user obtains each key).
+    const setupGuide = json.setupGuide ?? json.SETUP_GUIDE;
+    json.setupGuide = typeof setupGuide === "object" && setupGuide !== null ? setupGuide : undefined;
     delete json.SETUP_GUIDE;
-    delete json.setupGuide;
 
     const result = IntegrationConfigSchema.safeParse(json);
 
