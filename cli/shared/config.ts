@@ -10,10 +10,33 @@ import type { InferSchema } from "veryfront/extensions/schema";
 import { join } from "veryfront/platform/path";
 import { createFileSystem, cwd, getEnv } from "veryfront/platform";
 import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
-import { cliLogger } from "#cli/utils";
+import { cliLogger, VERSION } from "#cli/utils";
 import { readToken } from "../auth/token-store.ts";
 import { ensureAuthenticated } from "../auth/login.ts";
 import { DEFAULT_API_URL } from "./constants.ts";
+import { isRetryableConnectionError } from "../../src/proxy/retry.ts";
+
+// Delays for exponential backoff with jitter: attempt 1 = ~300ms, 2 = ~1s, 3 = ~3s
+const API_RETRY_DELAYS_MS = [300, 1000, 3000] as const;
+const API_MAX_RETRIES = 3;
+
+/** Returns true for HTTP status codes that indicate a transient gateway failure. */
+function isTransientStatus(status: number): boolean {
+  return status === 502 || status === 503 || status === 504;
+}
+
+/** Returns true when the connection error is a refused connection (request never reached server). */
+function isConnectionRefused(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const msg = error.message.toLowerCase();
+  return msg.includes("connection refused") || msg.includes("os error 111");
+}
+
+/** Sleep for `ms` milliseconds plus a random jitter up to 20% of `ms`. */
+function sleepWithJitter(ms: number): Promise<void> {
+  const jitter = Math.floor(ms * 0.2 * Math.random());
+  return new Promise<void>((resolve) => setTimeout(resolve, ms + jitter));
+}
 
 export const getVeryfrontConfigSchema = defineSchema((v) =>
   v.object({
@@ -196,24 +219,18 @@ export type ApiError = InferSchema<ReturnType<typeof getApiErrorSchema>>;
 export function createApiClient(config: ResolvedConfig): ApiClient {
   const { apiUrl, apiToken } = config;
 
-  async function request<T>(
+  async function requestOnce<T>(
     method: string,
-    path: string,
+    url: string,
     body?: unknown,
-    params?: Record<string, string>,
   ): Promise<T> {
-    const url = new URL(`${apiUrl}${path}`);
-
-    for (const [key, value] of Object.entries(params ?? {})) {
-      url.searchParams.set(key, value);
-    }
-
-    const response = await fetch(url.toString(), {
+    const response = await fetch(url, {
       method,
       headers: {
         Authorization: `Bearer ${apiToken}`,
         "Content-Type": "application/json",
         Accept: "application/json",
+        "x-veryfront-client-version": VERSION,
       },
       body: body ? JSON.stringify(body) : undefined,
     });
@@ -230,12 +247,67 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
         // Keep default error message if JSON parsing fails
       }
 
-      throw new Error(errorMessage);
+      const err = new Error(errorMessage) as Error & { status: number };
+      err.status = response.status;
+      throw err;
     }
 
     if (response.status === 204) return undefined as T;
 
     return response.json() as Promise<T>;
+  }
+
+  /** Returns true for request methods that are safe to retry on any transient failure. */
+  function isIdempotent(method: string): boolean {
+    return method === "GET" || method === "HEAD";
+  }
+
+  async function request<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    params?: Record<string, string>,
+  ): Promise<T> {
+    const url = new URL(`${apiUrl}${path}`);
+
+    for (const [key, value] of Object.entries(params ?? {})) {
+      url.searchParams.set(key, value);
+    }
+
+    const urlStr = url.toString();
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt < API_MAX_RETRIES; attempt++) {
+      try {
+        return await requestOnce<T>(method, urlStr, body);
+      } catch (error) {
+        lastError = error;
+
+        const status = (error as { status?: number }).status;
+        const isTransient = status !== undefined
+          ? isTransientStatus(status)
+          : isRetryableConnectionError(error);
+        const isRefused = isConnectionRefused(error);
+
+        // Idempotent: retry on transient HTTP status or any retryable connection error.
+        // Non-idempotent: retry only on connection-refused (request never reached server).
+        const shouldRetry = isIdempotent(method)
+          ? (isTransient || isRetryableConnectionError(error))
+          : isRefused;
+
+        if (!shouldRetry || attempt >= API_MAX_RETRIES - 1) {
+          throw error;
+        }
+
+        await sleepWithJitter(API_RETRY_DELAYS_MS[attempt as 0 | 1 | 2]);
+        cliLogger.debug(
+          `API request ${method} ${path} failed (attempt ${attempt + 1}), retrying...`,
+          error,
+        );
+      }
+    }
+
+    throw lastError;
   }
 
   return {
