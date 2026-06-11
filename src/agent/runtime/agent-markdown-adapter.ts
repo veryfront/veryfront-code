@@ -1,5 +1,6 @@
 import { agent } from "../factory.ts";
 import type { Agent } from "../types.ts";
+import type { Tool } from "#veryfront/tool";
 import type { RuntimeAgentMarkdownDefinition } from "./agent-definition.ts";
 import { buildAgentDelegateTools } from "./agent-delegation.ts";
 
@@ -20,19 +21,56 @@ const markdownMetaByAgent = new WeakMap<Agent, RuntimeAgentMarkdownAgentMeta>();
 export type CreateRuntimeAgentFromMarkdownDefinitionInput = {
   definition: RuntimeAgentMarkdownDefinition;
   rootPath?: string;
+  /**
+   * Explicit colocated skill registry ids resolved at discovery. Takes
+   * precedence over `definition.skills` so a colocated agent only sees its own
+   * skills (never the registry-wide `true`, which would leak other agents').
+   */
+  resolvedSkillIds?: string[];
+  /** Colocated tool objects (namespaced) to merge into the agent's tools. */
+  tools?: Record<string, Tool>;
 };
+
+function resolveSkillsConfig(
+  definition: RuntimeAgentMarkdownDefinition,
+  resolvedSkillIds: string[] | undefined,
+): true | string[] | undefined {
+  if (resolvedSkillIds && resolvedSkillIds.length > 0) {
+    return resolvedSkillIds;
+  }
+  // A colocated agent whose skills resolved to nothing must not fall back to
+  // the registry-wide `true`, which would surface other agents' skills.
+  if (resolvedSkillIds) {
+    return undefined;
+  }
+  return definition.skills;
+}
+
+function mergeAgentTools(
+  ...sources: Array<Record<string, Tool> | undefined>
+): Record<string, Tool> | undefined {
+  const merged: Record<string, Tool> = {};
+  for (const source of sources) {
+    for (const [name, tool] of Object.entries(source ?? {})) {
+      merged[name] = tool;
+    }
+  }
+  return Object.keys(merged).length > 0 ? merged : undefined;
+}
 
 /** Definition for create runtime agent from markdown. */
 export function createRuntimeAgentFromMarkdownDefinition(
   input: RuntimeAgentMarkdownDefinition | CreateRuntimeAgentFromMarkdownDefinitionInput,
 ): Agent {
-  const { definition, rootPath } = "definition" in input
+  const { definition, rootPath, resolvedSkillIds, tools } = "definition" in input
     ? input
-    : { definition: input, rootPath: undefined };
+    : { definition: input, rootPath: undefined, resolvedSkillIds: undefined, tools: undefined };
 
   const delegateTools = definition.delegates && definition.delegates.length > 0
     ? buildAgentDelegateTools({ delegates: definition.delegates, selfId: definition.id })
     : undefined;
+  const skillsConfig = resolveSkillsConfig(definition, resolvedSkillIds);
+  const mergedTools = mergeAgentTools(tools, delegateTools);
 
   const runtimeAgent = agent({
     id: definition.id,
@@ -43,8 +81,8 @@ export function createRuntimeAgentFromMarkdownDefinition(
     ...(definition.temperature === undefined ? {} : { temperature: definition.temperature }),
     ...(definition.maxSteps === undefined ? {} : { maxSteps: definition.maxSteps }),
     ...(definition.providerTools ? { providerTools: definition.providerTools } : {}),
-    ...(definition.skills === undefined ? {} : { skills: definition.skills }),
-    ...(delegateTools ? { tools: delegateTools } : {}),
+    ...(skillsConfig === undefined ? {} : { skills: skillsConfig }),
+    ...(mergedTools ? { tools: mergedTools } : {}),
   });
 
   markdownMetaByAgent.set(runtimeAgent, {

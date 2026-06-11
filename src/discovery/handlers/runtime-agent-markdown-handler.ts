@@ -12,6 +12,11 @@ import {
   listDiscoveryDirectoryEntries,
   readDiscoveryTextFile,
 } from "../file-discovery.ts";
+import {
+  loadAgentColocatedTools,
+  registerAgentColocatedSkills,
+} from "../agent-scoped-capabilities.ts";
+import type { Tool } from "#veryfront/tool";
 
 const MARKDOWN_AGENT_FILE_PATTERN = /^[A-Za-z0-9._-]+\.md$/;
 const DIRECTORY_AGENT_FILENAME = "AGENT.md";
@@ -55,19 +60,55 @@ async function getDirectoryAgentCandidate(
   return { id: entryName, file: agentFile, rootPath };
 }
 
-function registerMarkdownAgent(
+async function resolveColocatedCapabilities(
+  definition: RuntimeAgentMarkdownDefinition,
+  rootPath: string | undefined,
+  result: DiscoveryResult,
+  context: FileDiscoveryContext,
+): Promise<{ resolvedSkillIds?: string[]; tools?: Record<string, Tool> }> {
+  if (!rootPath) {
+    return {};
+  }
+
+  const resolvedSkillIds = await registerAgentColocatedSkills({
+    agentId: definition.id,
+    rootPath,
+    selector: definition.skills,
+    context,
+    result,
+  });
+  const tools = await loadAgentColocatedTools({
+    agentId: definition.id,
+    rootPath,
+    selector: definition.tools,
+    context,
+    result,
+  });
+
+  return {
+    ...(resolvedSkillIds.length > 0 ? { resolvedSkillIds } : {}),
+    ...(Object.keys(tools).length > 0 ? { tools } : {}),
+  };
+}
+
+async function registerMarkdownAgent(
   definition: RuntimeAgentMarkdownDefinition,
   file: string,
   rootPath: string | undefined,
   result: DiscoveryResult,
-): void {
+  context: FileDiscoveryContext,
+): Promise<void> {
   if (result.agents.has(definition.id)) {
     return;
   }
 
+  const capabilities = await resolveColocatedCapabilities(definition, rootPath, result, context);
+
   const runtimeAgent = createRuntimeAgentFromMarkdownDefinition({
     definition,
     ...(rootPath ? { rootPath } : {}),
+    ...(capabilities.resolvedSkillIds ? { resolvedSkillIds: capabilities.resolvedSkillIds } : {}),
+    ...(capabilities.tools ? { tools: capabilities.tools } : {}),
   });
   if (runtimeAgent.id !== definition.id) {
     agentRegistry.delete(runtimeAgent.id);
@@ -87,7 +128,7 @@ async function discoverMarkdownAgentCandidate(
       id: candidate.id,
       content: await readDiscoveryTextFile(candidate.file, context),
     });
-    registerMarkdownAgent(definition, candidate.file, candidate.rootPath, result);
+    await registerMarkdownAgent(definition, candidate.file, candidate.rootPath, result, context);
   } catch (error) {
     result.errors.push({ file: candidate.file, error: ensureError(error) });
   }

@@ -31,9 +31,21 @@ Deno.test("discoverRuntimeAgentMarkdownDefinitions discovers flat and directory 
 
     const agentDir = resolve(dir, "mad-researcher");
     Deno.mkdirSync(resolve(agentDir, "skills", "cite"), { recursive: true });
-    write(resolve(agentDir, "AGENT.md"), "---\nname: Researcher\nskills: true\n---\nResearch.");
-    write(resolve(agentDir, "SKILL.md"), "---\nname: Researcher\n---\nOwn skill.");
-    write(resolve(agentDir, "skills", "cite", "SKILL.md"), "---\nname: Cite\n---\nCite.");
+    Deno.mkdirSync(resolve(agentDir, "tools"), { recursive: true });
+    write(
+      resolve(agentDir, "AGENT.md"),
+      "---\nname: Researcher\nskills: true\ntools: true\n---\nResearch.",
+    );
+    write(resolve(agentDir, "SKILL.md"), "---\nname: mad-researcher\ndescription: own\n---\nOwn.");
+    write(
+      resolve(agentDir, "skills", "cite", "SKILL.md"),
+      "---\nname: mad-cite\ndescription: cite\n---\nCite.",
+    );
+    write(
+      resolve(agentDir, "tools", "fetch.ts"),
+      'export const fetch = { id: "fetch", type: "function", description: "f",' +
+        ' inputSchema: { type: "object", properties: {} }, execute: async () => ({}) };\n',
+    );
     // Non-agent markdown inside the agent dir must be ignored.
     write(resolve(agentDir, "notes.md"), "# scratch notes");
 
@@ -45,6 +57,13 @@ Deno.test("discoverRuntimeAgentMarkdownDefinitions discovers flat and directory 
 
     const researcher = result.agents.get("mad-researcher");
     assertEquals(getRuntimeAgentMarkdownRootPath(researcher!), agentDir);
+    // Colocated skills resolve to namespaced ids (own skill = agent id).
+    assertEquals(researcher!.config.skills, ["mad-researcher", "mad-researcher__cite"]);
+    // Colocated tools are namespaced and attached to the agent config.
+    const toolNames = Object.keys(
+      (researcher!.config.tools as Record<string, unknown>) ?? {},
+    );
+    assertEquals(toolNames.includes("mad-researcher__fetch"), true);
 
     const lead = result.agents.get("mad-lead");
     assertEquals(getRuntimeAgentMarkdownRootPath(lead!), null);
