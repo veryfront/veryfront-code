@@ -9,7 +9,6 @@ type FakeEntry = { name: string; isFile: boolean; isDirectory: boolean };
 function fakeFsAdapter(tree: Record<string, FakeEntry[]>, files: Set<string>): FileSystemAdapter {
   return {
     exists: (path: string) => Promise.resolve(path in tree || files.has(path)),
-    // deno-lint-ignore require-yield
     readDir: async function* (path: string) {
       for (const entry of tree[path] ?? []) {
         yield entry;
