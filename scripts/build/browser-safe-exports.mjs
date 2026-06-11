@@ -4,13 +4,8 @@ export const BROWSER_SAFE_EXPORTS = [
   "./context",
   "./fonts",
   "./chat",
-  "./chat/ag-ui",
-  "./chat/protocol",
   "./chat/types",
-  "./chat/conversation",
   "./chat/message-prep",
-  "./chat/final-step-fallback",
-  "./chat/provider-errors",
   "./markdown",
   "./mdx",
   "./agent/identity",
@@ -23,6 +18,12 @@ export const BROWSER_SAFE_DNT_TIMER_MODULES = [
 ];
 
 export const BROWSER_SAFE_CLIENT_MODULES = [
+  // Demoted from public exports in #2350 but still browser-consumed via the
+  // ./chat barrel, so they keep the polyfill-stripping treatment by path.
+  "src/chat/ag-ui.js",
+  "src/chat/protocol.js",
+  "src/chat/conversation.js",
+  "src/chat/provider-errors.js",
   "src/agent/react/use-voice-input.js",
   "src/react/components/chat/chat/components/code-block.js",
   "src/react/components/chat/chat/components/inline-citation.js",
