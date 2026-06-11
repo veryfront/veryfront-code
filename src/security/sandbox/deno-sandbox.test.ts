@@ -3,6 +3,8 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import {
+  BUN_SANDBOX_ALLOW_UNSAFE_ENV,
+  isBunSandboxAllowedUnsafe,
   isNodeSandboxAllowedUnsafe,
   NODE_SANDBOX_ALLOW_UNSAFE_ENV,
   runInWorker,
@@ -80,6 +82,40 @@ describe("deno-sandbox Node opt-in guard (SEC-008)", () => {
 
   it("allows execution only on the literal string '1'", () => {
     assertEquals(isNodeSandboxAllowedUnsafe("1"), true);
+  });
+});
+
+// SEC-008: Bun Workers have no permission isolation. The opt-in decision helper
+// must be strict — only the literal "1" enables unsafe mode. Unit-testing the
+// pure helper means coverage works under any runtime.
+describe("deno-sandbox Bun opt-in guard (SEC-008)", () => {
+  it("exposes the documented env var name", () => {
+    assertEquals(BUN_SANDBOX_ALLOW_UNSAFE_ENV, "VERYFRONT_BUN_SANDBOX_ALLOW_UNSAFE");
+  });
+
+  it("blocks when env var is undefined", () => {
+    assertEquals(isBunSandboxAllowedUnsafe(undefined), false);
+  });
+
+  it("blocks when env var is empty", () => {
+    assertEquals(isBunSandboxAllowedUnsafe(""), false);
+  });
+
+  it("blocks when env var is '0'", () => {
+    assertEquals(isBunSandboxAllowedUnsafe("0"), false);
+  });
+
+  it("blocks when env var is loose truthy (rejects 'true', 'yes', etc.)", () => {
+    assertEquals(isBunSandboxAllowedUnsafe("true"), false);
+    assertEquals(isBunSandboxAllowedUnsafe("TRUE"), false);
+    assertEquals(isBunSandboxAllowedUnsafe("yes"), false);
+    assertEquals(isBunSandboxAllowedUnsafe("on"), false);
+    assertEquals(isBunSandboxAllowedUnsafe("1 "), false);
+    assertEquals(isBunSandboxAllowedUnsafe(" 1"), false);
+  });
+
+  it("allows execution only on the literal string '1'", () => {
+    assertEquals(isBunSandboxAllowedUnsafe("1"), true);
   });
 });
 
