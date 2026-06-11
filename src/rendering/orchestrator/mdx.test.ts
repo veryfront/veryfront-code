@@ -90,6 +90,42 @@ describe("rendering/orchestrator/MDXCompiler singleflight", () => {
       // setCachedBundle called once proves compileAndCache ran once
       assertEquals(setCacheCount, 1);
     });
+
+    it("does not coalesce identical content compiled from different file paths", async () => {
+      let setCacheCount = 0;
+      let resolveCompile!: (r: MDXCompilationResult) => void;
+      const compileGate = new Promise<MDXCompilationResult>((resolve) => {
+        resolveCompile = resolve;
+      });
+
+      const { register: registerContract } = await import(
+        "#veryfront/extensions/contracts.ts"
+      );
+      registerContract("ContentProcessor", {
+        compileMdx: (_opts: Record<string, unknown>) => compileGate,
+      });
+
+      const adapter = makeMissAdapter(() => {
+        setCacheCount++;
+      });
+
+      const compiler = new MDXCompiler({
+        projectDir: "/project",
+        mode: "production",
+        mdxCacheAdapter: adapter,
+      });
+
+      // Same source in two locations: relative imports resolve differently,
+      // so the compiles must NOT share an in-flight promise.
+      const content = "# Same Source";
+      const p1 = compiler.compileMDX(content, {}, "docs/a/page.mdx");
+      const p2 = compiler.compileMDX(content, {}, "docs/b/page.mdx");
+
+      resolveCompile(makeResult());
+      await Promise.all([p1, p2]);
+
+      assertEquals(setCacheCount, 2);
+    });
   });
 
   describe("after a failed compile, a retry recompiles", () => {

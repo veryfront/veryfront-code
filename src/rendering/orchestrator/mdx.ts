@@ -47,8 +47,14 @@ export class MDXCompiler {
 
         if (cachedBundle) return cachedBundle;
 
+        // Key includes projectDir and filePath because relative imports are
+        // resolved against the file's location: identical source in two
+        // places can compile to different modules, so only compiles of the
+        // same file may share an in-flight promise.
         const contentHash = await this.config.mdxCacheAdapter.computeHash(content);
-        const flightKey = `mdx:${this.config.mode}:${contentHash}`;
+        const flightKey = `mdx:${this.config.projectDir}:${this.config.mode}:${contentHash}:${
+          filePath ?? "inline"
+        }`;
 
         return compileFlight.do(
           flightKey,
