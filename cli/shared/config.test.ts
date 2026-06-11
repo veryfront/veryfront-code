@@ -6,7 +6,8 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { resolveConfig, resolveConfigWithAuth } from "./config.ts";
+import { createApiClient, resolveConfig, resolveConfigWithAuth } from "./config.ts";
+import type { ResolvedConfig } from "./config.ts";
 import type { EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { join } from "veryfront/platform/path";
 
@@ -198,5 +199,213 @@ describe("resolveConfigWithAuth", () => {
         Deno.env.set("TENANT_PROJECT_ID", previousTenantProjectId);
       }
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// createApiClient tests
+// ---------------------------------------------------------------------------
+
+function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
+  return {
+    apiUrl: "https://api.veryfront.com",
+    apiToken: "test-token",
+    projectSlug: "test-project",
+    ...overrides,
+  };
+}
+
+describe("createApiClient", () => {
+  describe("x-veryfront-client-version header", () => {
+    it("sends x-veryfront-client-version on GET requests", async () => {
+      let capturedHeaders: Headers | undefined;
+
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = ((_input: unknown, init?: RequestInit) => {
+        capturedHeaders = new Headers(init?.headers as HeadersInit);
+        return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+      }) as typeof fetch;
+
+      try {
+        const client = createApiClient(makeConfig());
+        await client.get("/test");
+        const version = capturedHeaders?.get("x-veryfront-client-version");
+        assertEquals(typeof version, "string");
+        assertEquals(version!.length > 0, true);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("sends x-veryfront-client-version on POST requests", async () => {
+      let capturedHeaders: Headers | undefined;
+
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = ((_input: unknown, init?: RequestInit) => {
+        capturedHeaders = new Headers(init?.headers as HeadersInit);
+        return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+      }) as typeof fetch;
+
+      try {
+        const client = createApiClient(makeConfig());
+        await client.post("/test", { foo: "bar" });
+        const version = capturedHeaders?.get("x-veryfront-client-version");
+        assertEquals(typeof version, "string");
+        assertEquals(version!.length > 0, true);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+  });
+
+  describe("retry on transient failures for idempotent requests", () => {
+    it("retries GET on 502 and succeeds on second attempt", async () => {
+      let callCount = 0;
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = ((_input: unknown, _init?: RequestInit) => {
+        callCount++;
+        if (callCount === 1) {
+          return Promise.resolve(new Response("bad gateway", { status: 502 }));
+        }
+        return Promise.resolve(new Response(JSON.stringify({ data: "ok" }), { status: 200 }));
+      }) as typeof fetch;
+
+      try {
+        const client = createApiClient(makeConfig());
+        const result = await client.get<{ data: string }>("/test");
+        assertEquals(result.data, "ok");
+        assertEquals(callCount, 2);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("retries GET on 503 and succeeds on second attempt", async () => {
+      let callCount = 0;
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = ((_input: unknown, _init?: RequestInit) => {
+        callCount++;
+        if (callCount === 1) {
+          return Promise.resolve(new Response("service unavailable", { status: 503 }));
+        }
+        return Promise.resolve(new Response(JSON.stringify({ data: "ok" }), { status: 200 }));
+      }) as typeof fetch;
+
+      try {
+        const client = createApiClient(makeConfig());
+        const result = await client.get<{ data: string }>("/test");
+        assertEquals(result.data, "ok");
+        assertEquals(callCount, 2);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("retries GET on connection error and succeeds on second attempt", async () => {
+      let callCount = 0;
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = ((_input: unknown, _init?: RequestInit) => {
+        callCount++;
+        if (callCount === 1) {
+          return Promise.reject(new Error("connection reset by peer"));
+        }
+        return Promise.resolve(new Response(JSON.stringify({ data: "ok" }), { status: 200 }));
+      }) as typeof fetch;
+
+      try {
+        const client = createApiClient(makeConfig());
+        const result = await client.get<{ data: string }>("/test");
+        assertEquals(result.data, "ok");
+        assertEquals(callCount, 2);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("exhausts retries and throws after 3 consecutive 502 responses", async () => {
+      let callCount = 0;
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = ((_input: unknown, _init?: RequestInit) => {
+        callCount++;
+        return Promise.resolve(new Response("bad gateway", { status: 502 }));
+      }) as typeof fetch;
+
+      try {
+        const client = createApiClient(makeConfig());
+        await assertRejects(
+          () => client.get("/test"),
+          Error,
+          "502",
+        );
+        assertEquals(callCount, 3);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+  });
+
+  describe("retry behavior for non-idempotent requests", () => {
+    it("does NOT retry POST on 502", async () => {
+      let callCount = 0;
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = ((_input: unknown, _init?: RequestInit) => {
+        callCount++;
+        return Promise.resolve(new Response("bad gateway", { status: 502 }));
+      }) as typeof fetch;
+
+      try {
+        const client = createApiClient(makeConfig());
+        await assertRejects(
+          () => client.post("/test", {}),
+          Error,
+          "502",
+        );
+        assertEquals(callCount, 1);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("retries POST on connection-refused error (request never reached server)", async () => {
+      let callCount = 0;
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = ((_input: unknown, _init?: RequestInit) => {
+        callCount++;
+        if (callCount === 1) {
+          return Promise.reject(new Error("connection refused (os error 111)"));
+        }
+        return Promise.resolve(new Response(JSON.stringify({ created: true }), { status: 200 }));
+      }) as typeof fetch;
+
+      try {
+        const client = createApiClient(makeConfig());
+        const result = await client.post<{ created: boolean }>("/test", {});
+        assertEquals(result.created, true);
+        assertEquals(callCount, 2);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("does NOT retry POST on connection-reset (request may have reached server)", async () => {
+      let callCount = 0;
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = ((_input: unknown, _init?: RequestInit) => {
+        callCount++;
+        return Promise.reject(new Error("connection reset by peer"));
+      }) as typeof fetch;
+
+      try {
+        const client = createApiClient(makeConfig());
+        await assertRejects(
+          () => client.post("/test", {}),
+          Error,
+          "connection reset",
+        );
+        assertEquals(callCount, 1);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
   });
 });
