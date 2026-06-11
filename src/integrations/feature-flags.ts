@@ -77,6 +77,10 @@ export const DECLARED_INTEGRATION_NAMES = [
   "anthropic",
   "aws",
   "hubspot",
+  "openai",
+  "todoist",
+  "calendly",
+  "google-analytics",
 ] as const;
 
 const supportedIntegrations = new Set<string>(SUPPORTED_INTEGRATION_NAMES);

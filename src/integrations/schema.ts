@@ -53,6 +53,10 @@ const integrationNames = [
   "twilio",
   "anthropic",
   "aws",
+  "openai",
+  "todoist",
+  "calendly",
+  "google-analytics",
 ] as const;
 
 export const getIntegrationNameSchema = defineSchema((v) => v.enum(integrationNames));
