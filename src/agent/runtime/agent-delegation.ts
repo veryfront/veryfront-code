@@ -3,6 +3,7 @@ import type { Agent } from "../types.ts";
 import { agentAsTool, getAgent } from "../composition/index.ts";
 import { getAgentToolInputSchema } from "../schemas/index.ts";
 import { AGENT_DELEGATE_TOOL_PREFIX, isProviderSafeDelegateId } from "./agent-delegation-names.ts";
+import { markRuntimeLocalTool } from "./local-tool.ts";
 
 export { AGENT_DELEGATE_TOOL_PREFIX, isProviderSafeDelegateId };
 
@@ -23,7 +24,7 @@ function createLazyDelegateTool(
   delegateId: string,
   resolveAgent: DelegateAgentResolver,
 ): Tool {
-  return {
+  return markRuntimeLocalTool({
     id: `${AGENT_DELEGATE_TOOL_PREFIX}${delegateId}`,
     type: "function",
     description: `Delegate a self-contained subtask to the "${delegateId}" specialist agent, ` +
@@ -41,7 +42,7 @@ function createLazyDelegateTool(
 
       return agentAsTool(target, `Delegate to ${delegateId}`).execute(input, context);
     },
-  };
+  });
 }
 
 /**

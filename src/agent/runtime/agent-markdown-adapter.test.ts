@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
+import { toolRegistry } from "#veryfront/tool";
 import { createRuntimeAgentFromMarkdownDefinition } from "./agent-markdown-adapter.ts";
 
 Deno.test("createRuntimeAgentFromMarkdownDefinition preserves provider-native tools", () => {
@@ -16,6 +17,8 @@ Deno.test("createRuntimeAgentFromMarkdownDefinition preserves provider-native to
 });
 
 Deno.test("createRuntimeAgentFromMarkdownDefinition binds delegate tools from delegates", () => {
+  toolRegistry.clearAll();
+
   const runtimeAgent = createRuntimeAgentFromMarkdownDefinition({
     id: "lead-delegation-test",
     name: "Lead",
@@ -29,6 +32,8 @@ Deno.test("createRuntimeAgentFromMarkdownDefinition binds delegate tools from de
     Object.keys(tools ?? {}).sort(),
     ["agent_researcher", "agent_writer"],
   );
+  assertEquals(toolRegistry.has("agent_researcher"), false);
+  assertEquals(toolRegistry.has("agent_writer"), false);
 });
 
 Deno.test("createRuntimeAgentFromMarkdownDefinition binds no tools without delegates", () => {
