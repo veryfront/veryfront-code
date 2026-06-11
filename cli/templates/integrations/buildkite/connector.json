@@ -1,0 +1,293 @@
+{
+  "name": "buildkite",
+  "displayName": "Buildkite",
+  "icon": "buildkite.svg",
+  "description": "Read Buildkite organizations, pipelines, and builds, and trigger new builds",
+  "auth": {
+    "type": "api-key",
+    "keyName": "BUILDKITE_API_TOKEN",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://buildkite.com/docs/apis/rest-api",
+    "requiredApis": [
+      {
+        "name": "Buildkite API Access Tokens",
+        "enableUrl": "https://buildkite.com/user/api-access-tokens"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "BUILDKITE_API_TOKEN",
+      "description": "Buildkite API access token with read_pipelines and read_builds scopes (write_builds to trigger builds)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://buildkite.com/docs/apis/managing-api-tokens"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_organizations",
+      "name": "List Organizations",
+      "description": "List Buildkite organizations the token can access",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.buildkite.com/v2/organizations"
+      }
+    },
+    {
+      "id": "list_pipelines",
+      "name": "List Pipelines",
+      "description": "List pipelines in an organization",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.buildkite.com/v2/organizations/{orgSlug}/pipelines",
+        "params": {
+          "orgSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Organization slug (from List Organizations)",
+            "required": true
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (starts at 1)"
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Pipelines per page (max 100)",
+            "default": 30
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["pipelines"],
+            "collectionName": "pipelines",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "slug" },
+              { "name": "repository" },
+              { "name": "web_url" }
+            ],
+            "omitted": "pipeline step definitions and provider webhook settings"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_pipeline",
+      "name": "Get Pipeline",
+      "description": "Get a pipeline's configuration and build stats",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.buildkite.com/v2/organizations/{orgSlug}/pipelines/{pipelineSlug}",
+        "params": {
+          "orgSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Organization slug",
+            "required": true
+          },
+          "pipelineSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Pipeline slug (from List Pipelines)",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_builds",
+      "name": "List Builds",
+      "description": "List builds for a pipeline, optionally filtered by branch or state",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.buildkite.com/v2/organizations/{orgSlug}/pipelines/{pipelineSlug}/builds",
+        "params": {
+          "orgSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Organization slug",
+            "required": true
+          },
+          "pipelineSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Pipeline slug",
+            "required": true
+          },
+          "branch": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter builds by branch name"
+          },
+          "state": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by state, e.g. running, passed, failed, canceled"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (starts at 1)"
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Builds per page (max 100)",
+            "default": 30
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["builds"],
+            "collectionName": "builds",
+            "itemFields": [
+              { "name": "number" },
+              { "name": "state" },
+              { "name": "branch" },
+              { "name": "message" },
+              { "name": "commit" },
+              { "name": "web_url" }
+            ],
+            "omitted": "job lists, agent metadata, and environment payloads"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_build",
+      "name": "Get Build",
+      "description": "Get a build including its jobs and their states",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.buildkite.com/v2/organizations/{orgSlug}/pipelines/{pipelineSlug}/builds/{buildNumber}",
+        "params": {
+          "orgSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Organization slug",
+            "required": true
+          },
+          "pipelineSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Pipeline slug",
+            "required": true
+          },
+          "buildNumber": {
+            "type": "string",
+            "in": "path",
+            "description": "Build number (from List Builds)",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_build",
+      "name": "Create Build",
+      "description": "Trigger a new build on a pipeline",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.buildkite.com/v2/organizations/{orgSlug}/pipelines/{pipelineSlug}/builds",
+        "params": {
+          "orgSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Organization slug",
+            "required": true
+          },
+          "pipelineSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Pipeline slug",
+            "required": true
+          }
+        },
+        "body": {
+          "commit": {
+            "type": "string",
+            "description": "Commit SHA to build, or HEAD for the latest commit",
+            "required": true,
+            "default": "HEAD"
+          },
+          "branch": {
+            "type": "string",
+            "description": "Branch to build",
+            "required": true
+          },
+          "message": {
+            "type": "string",
+            "description": "Build message shown in the Buildkite UI"
+          },
+          "env": {
+            "type": "object",
+            "description": "Environment variables for the build, e.g. {\"DEPLOY\":\"true\"}"
+          },
+          "meta_data": {
+            "type": "object",
+            "description": "Build meta-data key/value pairs"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "failed_builds",
+      "title": "Failed builds",
+      "prompt": "List the failed Buildkite builds on my main pipeline from today and summarize the commit messages.",
+      "category": "devops",
+      "icon": "alert"
+    },
+    {
+      "id": "trigger_build",
+      "title": "Trigger a build",
+      "prompt": "Trigger a new Buildkite build of HEAD on the main branch of my pipeline.",
+      "category": "devops",
+      "icon": "play"
+    }
+  ],
+  "suggestedWith": ["github", "slack", "sentry"],
+  "SETUP_GUIDE": {
+    "title": "Buildkite API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Sign in to Buildkite",
+        "description": "Use an existing organization or create one at https://buildkite.com — free plans include API access. You need at least one pipeline to query builds."
+      },
+      {
+        "step": 2,
+        "title": "Create an API access token",
+        "description": "Go to https://buildkite.com/user/api-access-tokens, create a token scoped to your organization, and enable the read_pipelines, read_builds, and read_organizations REST scopes. Add write_builds if you want to trigger builds."
+      },
+      {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the token to your .env as BUILDKITE_API_TOKEN=..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Organizations, then List Pipelines with your organization slug."
+      }
+    ],
+    "notes": [
+      "Requests authenticate with 'Authorization: Bearer <token>' against https://api.buildkite.com/v2",
+      "API tokens are scoped per organization and per REST scope — missing scopes return 403",
+      "Pagination uses page and per_page query parameters (max 100 per page)"
+    ],
+    "documentation": "https://buildkite.com/docs/apis/rest-api"
+  }
+}

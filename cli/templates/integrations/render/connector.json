@@ -1,0 +1,269 @@
+{
+  "name": "render",
+  "displayName": "Render",
+  "icon": "render.svg",
+  "description": "Inspect Render services, deploys, and environment variables",
+  "auth": {
+    "type": "api-key",
+    "keyName": "RENDER_API_KEY",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://api-docs.render.com/reference/introduction",
+    "requiredApis": [
+      {
+        "name": "Render API Keys",
+        "enableUrl": "https://dashboard.render.com/settings#api-keys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "RENDER_API_KEY",
+      "description": "Render API key (Account Settings > API Keys)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://render.com/docs/api"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_services",
+      "name": "List Services",
+      "description": "List services owned by the authenticated user or team",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.render.com/v1/services",
+        "params": {
+          "name": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter services by name"
+          },
+          "type": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by service type: static_site, web_service, private_service, background_worker, cron_job"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum services to return (1-100)",
+            "default": 20
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "services"
+            ],
+            "collectionName": "services",
+            "itemFields": [
+              {
+                "name": "service",
+                "kind": "object"
+              },
+              {
+                "name": "cursor"
+              }
+            ],
+            "omitted": "service details and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "cursor"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_service",
+      "name": "Get Service",
+      "description": "Get a service by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.render.com/v1/services/{serviceId}",
+        "params": {
+          "serviceId": {
+            "type": "string",
+            "in": "path",
+            "description": "Service ID, e.g. srv-xxxxxxxxxxxxxxxxxxxx",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_deploys",
+      "name": "List Deploys",
+      "description": "List deploys for a service",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.render.com/v1/services/{serviceId}/deploys",
+        "params": {
+          "serviceId": {
+            "type": "string",
+            "in": "path",
+            "description": "Service ID",
+            "required": true
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum deploys to return (1-100)",
+            "default": 20
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "deploys"
+            ],
+            "collectionName": "deploys",
+            "itemFields": [
+              {
+                "name": "deploy",
+                "kind": "object"
+              },
+              {
+                "name": "cursor"
+              }
+            ],
+            "omitted": "commit details and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "cursor"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "trigger_deploy",
+      "name": "Trigger Deploy",
+      "description": "Trigger a new deploy for a service",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.render.com/v1/services/{serviceId}/deploys",
+        "params": {
+          "serviceId": {
+            "type": "string",
+            "in": "path",
+            "description": "Service ID",
+            "required": true
+          }
+        },
+        "body": {
+          "clearCache": {
+            "type": "string",
+            "description": "Build cache behavior: 'clear' or 'do_not_clear'",
+            "default": "do_not_clear"
+          },
+          "commitId": {
+            "type": "string",
+            "description": "SHA of a specific git commit to deploy (defaults to the latest commit on the connected branch)"
+          },
+          "imageUrl": {
+            "type": "string",
+            "description": "Image URL to deploy for an image-backed service (host/repository/name must match the service configuration)"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_env_vars",
+      "name": "List Environment Variables",
+      "description": "List all environment variables for a service",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.render.com/v1/services/{serviceId}/env-vars",
+        "params": {
+          "serviceId": {
+            "type": "string",
+            "in": "path",
+            "description": "Service ID",
+            "required": true
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum env vars to return (1-100)",
+            "default": 50
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "deploy_status",
+      "title": "Latest deploy status",
+      "prompt": "List the most recent Render deploys for my service and summarize their statuses.",
+      "category": "devops",
+      "icon": "list"
+    },
+    {
+      "id": "redeploy",
+      "title": "Redeploy a service",
+      "prompt": "Trigger a new deploy of my Render service with a cleared build cache.",
+      "category": "devops",
+      "icon": "refresh"
+    }
+  ],
+  "suggestedWith": [
+    "github",
+    "slack",
+    "sentry"
+  ],
+  "SETUP_GUIDE": {
+    "title": "Render API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Sign in to Render",
+        "description": "Go to https://dashboard.render.com and sign in (the free tier with one web service is sufficient for testing)."
+      },
+      {
+        "step": 2,
+        "title": "Create an API key",
+        "description": "Open Account Settings > API Keys (https://dashboard.render.com/settings#api-keys) and create a key."
+      },
+      {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the key to your .env as RENDER_API_KEY=..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Services and note the srv-... IDs for use with the other tools."
+      }
+    ],
+    "notes": [
+      "Keys are sent as 'Authorization: Bearer <key>'",
+      "List responses are arrays of wrapper objects ({ service, cursor } / { deploy, cursor }); pass the last cursor back to paginate",
+      "API keys grant the full permissions of your user account — store them securely"
+    ],
+    "documentation": "https://api-docs.render.com/reference/introduction"
+  }
+}

@@ -1,0 +1,235 @@
+{
+  "name": "langsmith",
+  "displayName": "LangSmith",
+  "icon": "langsmith.svg",
+  "description": "Query LangSmith tracing projects, runs, datasets, and examples for LLM observability",
+  "auth": {
+    "type": "api-key",
+    "keyName": "LANGSMITH_API_KEY",
+    "headerName": "x-api-key",
+    "docsUrl": "https://docs.langchain.com/langsmith/create-account-api-key",
+    "requiredApis": [
+      {
+        "name": "LangSmith API Keys",
+        "enableUrl": "https://smith.langchain.com/settings"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "LANGSMITH_API_KEY",
+      "description": "LangSmith API key (starts with lsv2_)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.langchain.com/langsmith/create-account-api-key"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_projects",
+      "name": "List Projects",
+      "description": "List tracing projects (tracer sessions) in your LangSmith workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.smith.langchain.com/api/v1/sessions",
+        "params": {
+          "name_contains": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter projects by name substring"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum projects to return (max 100)",
+            "default": 25
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of projects to skip for pagination",
+            "default": 0
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["sessions"],
+            "collectionName": "projects",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "start_time" },
+              { "name": "last_run_start_time" },
+              { "name": "run_count" }
+            ],
+            "omitted": "feedback statistics and provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "query_runs",
+      "name": "Query Runs",
+      "description": "Query traced runs with filters (project, trace filter expressions, root runs only)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.smith.langchain.com/api/v1/runs/query",
+        "body": {
+          "session": {
+            "type": "array",
+            "description": "Project (tracer session) UUIDs to query, e.g. [\"<project-uuid>\"]",
+            "required": true
+          },
+          "is_root": {
+            "type": "boolean",
+            "description": "Only return root runs (top-level traces)",
+            "default": true
+          },
+          "filter": {
+            "type": "string",
+            "description": "LangSmith filter expression, e.g. eq(status, \"error\") or gt(latency, \"5s\")"
+          },
+          "limit": {
+            "type": "number",
+            "description": "Maximum runs to return (max 100)",
+            "default": 25
+          },
+          "select": {
+            "type": "array",
+            "description": "Fields to include, e.g. [\"id\", \"name\", \"status\", \"latency\", \"inputs\", \"outputs\"]"
+          }
+        },
+        "response": {
+          "transform": "runs"
+        }
+      }
+    },
+    {
+      "id": "get_run",
+      "name": "Get Run",
+      "description": "Get full details of a single run, including inputs, outputs, and errors",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.smith.langchain.com/api/v1/runs/{run_id}",
+        "params": {
+          "run_id": {
+            "type": "string",
+            "in": "path",
+            "description": "Run UUID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_datasets",
+      "name": "List Datasets",
+      "description": "List evaluation datasets in your LangSmith workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.smith.langchain.com/api/v1/datasets",
+        "params": {
+          "name_contains": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter datasets by name substring"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum datasets to return (max 100)",
+            "default": 25
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of datasets to skip for pagination",
+            "default": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "list_examples",
+      "name": "List Examples",
+      "description": "List examples in a LangSmith dataset",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.smith.langchain.com/api/v1/examples",
+        "params": {
+          "dataset": {
+            "type": "string",
+            "in": "query",
+            "description": "Dataset UUID to list examples from",
+            "required": true
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum examples to return (max 100)",
+            "default": 25
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of examples to skip for pagination",
+            "default": 0
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "recent_errors",
+      "title": "Find failing traces",
+      "prompt": "Query my LangSmith projects for recent runs with errors and summarize what went wrong.",
+      "category": "observability",
+      "icon": "alert"
+    },
+    {
+      "id": "project_overview",
+      "title": "Project overview",
+      "prompt": "List my LangSmith tracing projects with their run counts and last activity.",
+      "category": "observability",
+      "icon": "list"
+    }
+  ],
+  "suggestedWith": ["openai", "anthropic", "datadog"],
+  "SETUP_GUIDE": {
+    "title": "LangSmith API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a LangSmith account",
+        "description": "Sign up at https://smith.langchain.com — the free Developer plan includes traces for testing."
+      },
+      {
+        "step": 2,
+        "title": "Create an API key",
+        "description": "In LangSmith go to Settings → API Keys and create a key (Personal Access Token or Service Key). Copy it immediately — it is only shown once."
+      },
+      {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Add it to your .env file as LANGSMITH_API_KEY=lsv2_..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Projects tool. If you belong to multiple workspaces, make sure the key was created in the workspace you want to query."
+      }
+    ],
+    "notes": [
+      "API keys are workspace-scoped; data from other workspaces is not visible to the key",
+      "EU-region organizations use https://eu.api.smith.langchain.com — these tools target the default US endpoint",
+      "Query Runs filter expressions are documented at https://docs.langchain.com/langsmith/trace-query-syntax"
+    ],
+    "documentation": "https://api.smith.langchain.com/redoc"
+  }
+}

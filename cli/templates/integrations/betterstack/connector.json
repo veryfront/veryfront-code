@@ -1,0 +1,236 @@
+{
+  "name": "betterstack",
+  "displayName": "Better Stack",
+  "icon": "betterstack.svg",
+  "description": "Read Better Stack Uptime monitors, incidents, and heartbeats",
+  "auth": {
+    "type": "api-key",
+    "keyName": "BETTERSTACK_API_TOKEN",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://betterstack.com/docs/uptime/api/getting-started-with-uptime-api/",
+    "requiredApis": [
+      {
+        "name": "Better Stack API Tokens",
+        "enableUrl": "https://betterstack.com/docs/uptime/api/getting-started-with-uptime-api/"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "BETTERSTACK_API_TOKEN",
+      "description": "Better Stack Uptime API token (global token or team-scoped Uptime token)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://betterstack.com/docs/uptime/api/getting-started-with-uptime-api/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_monitors",
+      "name": "List Monitors",
+      "description": "List uptime monitors, optionally filtered by URL or name",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://uptime.betterstack.com/api/v2/monitors",
+        "params": {
+          "url": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter monitors by monitored URL"
+          },
+          "pronounceable_name": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter monitors by their pronounceable name"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (starts at 1)"
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Monitors per page (max 250)",
+            "default": 50
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "monitors",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "type" },
+              { "name": "attributes", "kind": "object" }
+            ],
+            "omitted": "regional check configuration and notification settings",
+            "outputFields": [{ "name": "pagination", "kind": "object" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_monitor",
+      "name": "Get Monitor",
+      "description": "Get a monitor's configuration and current status",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://uptime.betterstack.com/api/v2/monitors/{monitorId}",
+        "params": {
+          "monitorId": {
+            "type": "string",
+            "in": "path",
+            "description": "Monitor ID (from List Monitors)",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "get_monitor_sla",
+      "name": "Get Monitor Availability",
+      "description": "Get a monitor's availability (SLA) summary for a time range",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://uptime.betterstack.com/api/v2/monitors/{monitorId}/sla",
+        "params": {
+          "monitorId": {
+            "type": "string",
+            "in": "path",
+            "description": "Monitor ID",
+            "required": true
+          },
+          "from": {
+            "type": "string",
+            "in": "query",
+            "description": "Start date (YYYY-MM-DD)"
+          },
+          "to": {
+            "type": "string",
+            "in": "query",
+            "description": "End date (YYYY-MM-DD)"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "list_incidents",
+      "name": "List Incidents",
+      "description": "List incidents, optionally limited to a date range or unresolved only",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://uptime.betterstack.com/api/v3/incidents",
+        "params": {
+          "from": {
+            "type": "string",
+            "in": "query",
+            "description": "Only incidents starting on or after this date (YYYY-MM-DD)"
+          },
+          "to": {
+            "type": "string",
+            "in": "query",
+            "description": "Only incidents starting on or before this date (YYYY-MM-DD)"
+          },
+          "resolved": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Set false to list only active (unresolved) incidents"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (starts at 1)"
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Incidents per page (max 250)",
+            "default": 50
+          }
+        }
+      }
+    },
+    {
+      "id": "list_heartbeats",
+      "name": "List Heartbeats",
+      "description": "List heartbeat (cron/job) monitors and their status",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://uptime.betterstack.com/api/v2/heartbeats",
+        "params": {
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (starts at 1)"
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Heartbeats per page (max 250)",
+            "default": 50
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "whats_down",
+      "title": "What's down?",
+      "prompt": "List my Better Stack monitors and flag any that are not in the 'up' status, plus any unresolved incidents.",
+      "category": "observability",
+      "icon": "alert"
+    },
+    {
+      "id": "uptime_report",
+      "title": "Uptime report",
+      "prompt": "Get the availability summary for my main Better Stack monitor over the last 30 days.",
+      "category": "observability",
+      "icon": "doc"
+    }
+  ],
+  "suggestedWith": ["pagerduty", "sentry", "slack"],
+  "SETUP_GUIDE": {
+    "title": "Better Stack Uptime API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Sign up for Better Stack",
+        "description": "Create a free account at https://betterstack.com and add at least one uptime monitor or heartbeat so the API returns data."
+      },
+      {
+        "step": 2,
+        "title": "Create an API token",
+        "description": "In Better Stack go to API tokens. Use a global API token, or create a team-scoped token in the 'Uptime API tokens' section."
+      },
+      {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the token to your .env as BETTERSTACK_API_TOKEN=..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Monitors."
+      }
+    ],
+    "notes": [
+      "This connector covers the Uptime API (uptime.betterstack.com) only — the Telemetry/Logs API uses a different token and host and is not included",
+      "Responses follow JSON:API: items are under data[] with attributes, pagination links under pagination",
+      "Incidents use the newer /api/v3 path; monitors and heartbeats use /api/v2"
+    ],
+    "documentation": "https://betterstack.com/docs/uptime/api/getting-started-with-uptime-api/"
+  }
+}

@@ -1,0 +1,238 @@
+{
+  "name": "weaviate",
+  "displayName": "Weaviate",
+  "icon": "weaviate.svg",
+  "description": "Browse Weaviate schema, run GraphQL queries, and read or create objects in a Weaviate cluster",
+  "auth": {
+    "type": "api-key",
+    "keyName": "WEAVIATE_API_KEY",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://docs.weaviate.io/cloud/manage-clusters/connect",
+    "requiredApis": [
+      {
+        "name": "Weaviate Cloud API Keys",
+        "enableUrl": "https://console.weaviate.cloud"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "WEAVIATE_API_KEY",
+      "description": "Weaviate cluster API key (sent as Authorization: Bearer)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.weaviate.io/cloud/manage-clusters/connect"
+    }
+  ],
+  "tools": [
+    {
+      "id": "get_schema",
+      "name": "Get Schema",
+      "description": "List all collections (classes) and their property definitions",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{clusterHost}/v1/schema",
+        "params": {
+          "clusterHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Weaviate cluster REST endpoint host, e.g. my-cluster-abc123.weaviate.cloud",
+            "required": true
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["classes"],
+            "collectionName": "classes",
+            "itemFields": [
+              { "name": "class" },
+              { "name": "description", "maxLength": 200 },
+              { "name": "vectorizer" }
+            ],
+            "omitted": "property definitions, module configs, and provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "graphql_query",
+      "name": "Run GraphQL Query",
+      "description": "Run a GraphQL query against the cluster (Get, Aggregate, Explore — including nearText/nearVector search)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{clusterHost}/v1/graphql",
+        "params": {
+          "clusterHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Weaviate cluster REST endpoint host, e.g. my-cluster-abc123.weaviate.cloud",
+            "required": true
+          }
+        },
+        "body": {
+          "query": {
+            "type": "string",
+            "description": "GraphQL query, e.g. { Get { Article(limit: 5) { title url } } }",
+            "required": true
+          },
+          "variables": {
+            "type": "object",
+            "description": "GraphQL variables object"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_objects",
+      "name": "List Objects",
+      "description": "List objects, optionally filtered to one collection (class)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{clusterHost}/v1/objects",
+        "params": {
+          "clusterHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Weaviate cluster REST endpoint host, e.g. my-cluster-abc123.weaviate.cloud",
+            "required": true
+          },
+          "class": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return objects of this collection (class), e.g. Article"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum objects to return",
+            "default": 25
+          },
+          "include": {
+            "type": "string",
+            "in": "query",
+            "description": "Extra properties to include, e.g. vector or classification"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_object",
+      "name": "Get Object",
+      "description": "Get a single object by collection (class) and ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{clusterHost}/v1/objects/{className}/{id}",
+        "params": {
+          "clusterHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Weaviate cluster REST endpoint host, e.g. my-cluster-abc123.weaviate.cloud",
+            "required": true
+          },
+          "className": {
+            "type": "string",
+            "in": "path",
+            "description": "Collection (class) name, e.g. Article",
+            "required": true
+          },
+          "id": {
+            "type": "string",
+            "in": "path",
+            "description": "Object UUID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_object",
+      "name": "Create Object",
+      "description": "Create a new object in a collection (class)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{clusterHost}/v1/objects",
+        "params": {
+          "clusterHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Weaviate cluster REST endpoint host, e.g. my-cluster-abc123.weaviate.cloud",
+            "required": true
+          }
+        },
+        "body": {
+          "class": {
+            "type": "string",
+            "description": "Collection (class) name the object belongs to, e.g. Article",
+            "required": true
+          },
+          "properties": {
+            "type": "object",
+            "description": "Object properties matching the collection schema, e.g. {\"title\":\"Hello\",\"url\":\"https://...\"}",
+            "required": true
+          },
+          "id": {
+            "type": "string",
+            "description": "Optional UUID for the object (generated if omitted)"
+          },
+          "vector": {
+            "type": "array",
+            "description": "Optional vector values (omit when the collection has a vectorizer configured)"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "schema_overview",
+      "title": "Explore my schema",
+      "prompt": "Get my Weaviate schema and summarize the collections, their properties, and vectorizers.",
+      "category": "data",
+      "icon": "database"
+    },
+    {
+      "id": "semantic_search",
+      "title": "Semantic search",
+      "prompt": "Run a Weaviate GraphQL nearText query against a collection I specify and summarize the top results.",
+      "category": "data",
+      "icon": "search"
+    }
+  ],
+  "suggestedWith": ["openai", "anthropic", "gemini"],
+  "SETUP_GUIDE": {
+    "title": "Weaviate Cloud Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Weaviate Cloud account",
+        "description": "Sign up at https://console.weaviate.cloud — free 14-day sandbox clusters are available for testing. Self-hosted Weaviate with API-key auth enabled works too."
+      },
+      {
+        "step": 2,
+        "title": "Create a cluster and grab credentials",
+        "description": "Create a cluster, then open Cluster details to copy the REST endpoint URL and an API key (use a read-write key for object creation). The key is only displayed once."
+      },
+      {
+        "step": 3,
+        "title": "Store the key and note your host",
+        "description": "Add WEAVIATE_API_KEY=... to your .env file. Tools take the cluster host (without https://) as the clusterHost parameter, e.g. my-cluster-abc123.weaviate.cloud."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the Get Schema tool with your clusterHost."
+      }
+    ],
+    "notes": [
+      "Every tool needs the clusterHost parameter — there is no global Weaviate API host",
+      "nearText GraphQL queries require a vectorizer module configured on the collection (and possibly a model-provider API key set on the cluster)",
+      "Admin keys can read and write; read-only keys will get 403 on Create Object"
+    ],
+    "documentation": "https://docs.weaviate.io/weaviate/api/rest"
+  }
+}

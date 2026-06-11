@@ -1,0 +1,300 @@
+{
+  "name": "vercel",
+  "displayName": "Vercel",
+  "icon": "vercel.svg",
+  "description": "Inspect Vercel projects, deployments, and environment variables",
+  "auth": {
+    "type": "api-key",
+    "keyName": "VERCEL_TOKEN",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://vercel.com/docs/rest-api",
+    "requiredApis": [
+      {
+        "name": "Vercel Account Tokens",
+        "enableUrl": "https://vercel.com/account/settings/tokens"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "VERCEL_TOKEN",
+      "description": "Vercel access token (Account Settings > Tokens)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://vercel.com/docs/rest-api/authentication/create-an-auth-token"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_projects",
+      "name": "List Projects",
+      "description": "List projects of the authenticated user or team",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.vercel.com/v10/projects",
+        "params": {
+          "search": {
+            "type": "string",
+            "in": "query",
+            "description": "Search projects by name"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum projects to return",
+            "default": 20
+          },
+          "from": {
+            "type": "string",
+            "in": "query",
+            "description": "Continuation token (pagination.next from a previous response)"
+          },
+          "teamId": {
+            "type": "string",
+            "in": "query",
+            "description": "Team ID to perform the request on behalf of (omit for personal account)"
+          },
+          "slug": {
+            "type": "string",
+            "in": "query",
+            "description": "Team slug, alternative to teamId"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["projects"],
+            "collectionName": "projects",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "framework" },
+              { "name": "nodeVersion" },
+              { "name": "createdAt" },
+              { "name": "updatedAt" }
+            ],
+            "omitted": "build settings, latest deployment payloads, and provider-specific fields",
+            "outputFields": [{ "name": "pagination", "kind": "object" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_project",
+      "name": "Get Project",
+      "description": "Get a project by ID or name",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.vercel.com/v9/projects/{idOrName}",
+        "params": {
+          "idOrName": {
+            "type": "string",
+            "in": "path",
+            "description": "Project ID (prj_...) or project name",
+            "required": true
+          },
+          "teamId": {
+            "type": "string",
+            "in": "query",
+            "description": "Team ID to perform the request on behalf of"
+          },
+          "slug": {
+            "type": "string",
+            "in": "query",
+            "description": "Team slug, alternative to teamId"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_deployments",
+      "name": "List Deployments",
+      "description": "List deployments under the authenticated user or team",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.vercel.com/v7/deployments",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter deployments by project ID or name"
+          },
+          "app": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by deployment name"
+          },
+          "state": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by state: BUILDING, ERROR, INITIALIZING, QUEUED, READY, CANCELED, BLOCKED"
+          },
+          "target": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by environment, e.g. production"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum deployments to return",
+            "default": 20
+          },
+          "since": {
+            "type": "number",
+            "in": "query",
+            "description": "Only deployments created after this JavaScript timestamp (ms)"
+          },
+          "until": {
+            "type": "number",
+            "in": "query",
+            "description": "Only deployments created before this JavaScript timestamp (ms)"
+          },
+          "teamId": {
+            "type": "string",
+            "in": "query",
+            "description": "Team ID to perform the request on behalf of"
+          },
+          "slug": {
+            "type": "string",
+            "in": "query",
+            "description": "Team slug, alternative to teamId"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["deployments"],
+            "collectionName": "deployments",
+            "itemFields": [
+              { "name": "uid" },
+              { "name": "name" },
+              { "name": "url" },
+              { "name": "state" },
+              { "name": "target" },
+              { "name": "createdAt" },
+              { "name": "creator", "kind": "contact" }
+            ],
+            "omitted": "git metadata, checks, and provider-specific payload fields",
+            "outputFields": [{ "name": "pagination", "kind": "object" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_deployment",
+      "name": "Get Deployment",
+      "description": "Get a deployment by ID or hostname URL",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.vercel.com/v13/deployments/{idOrUrl}",
+        "params": {
+          "idOrUrl": {
+            "type": "string",
+            "in": "path",
+            "description": "Deployment ID (dpl_...) or hostname, e.g. my-app-abc123.vercel.app",
+            "required": true
+          },
+          "teamId": {
+            "type": "string",
+            "in": "query",
+            "description": "Team ID to perform the request on behalf of"
+          },
+          "slug": {
+            "type": "string",
+            "in": "query",
+            "description": "Team slug, alternative to teamId"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_env_vars",
+      "name": "List Environment Variables",
+      "description": "List the environment variables of a project (values stay encrypted unless decrypt is set)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.vercel.com/v10/projects/{idOrName}/env",
+        "params": {
+          "idOrName": {
+            "type": "string",
+            "in": "path",
+            "description": "Project ID or name",
+            "required": true
+          },
+          "gitBranch": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter to variables for a preview git branch"
+          },
+          "decrypt": {
+            "type": "string",
+            "in": "query",
+            "description": "Set to 'true' to decrypt variable values in the response"
+          },
+          "teamId": {
+            "type": "string",
+            "in": "query",
+            "description": "Team ID to perform the request on behalf of"
+          },
+          "slug": {
+            "type": "string",
+            "in": "query",
+            "description": "Team slug, alternative to teamId"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "deployment_status",
+      "title": "Latest deployments",
+      "prompt": "List my most recent Vercel deployments with their state and target environment.",
+      "category": "devops",
+      "icon": "list"
+    },
+    {
+      "id": "failed_deployments",
+      "title": "Find failed deployments",
+      "prompt": "Find my Vercel deployments in ERROR state from the last day and tell me which projects are affected.",
+      "category": "devops",
+      "icon": "alert"
+    }
+  ],
+  "suggestedWith": ["github", "slack", "sentry"],
+  "SETUP_GUIDE": {
+    "title": "Vercel API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Sign in to Vercel",
+        "description": "Go to https://vercel.com and sign in (the free Hobby plan is sufficient for testing)."
+      },
+      {
+        "step": 2,
+        "title": "Create an access token",
+        "description": "Open Account Settings > Tokens (https://vercel.com/account/settings/tokens), create a token, choose its scope (personal account or a team), and copy it."
+      },
+      {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the token to your .env as VERCEL_TOKEN=..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Projects. For team resources, pass the team's ID via the teamId parameter (find it in Team Settings)."
+      }
+    ],
+    "notes": [
+      "Tokens are sent as 'Authorization: Bearer <token>'",
+      "To access resources owned by a team, every call must include teamId (or slug) as a query parameter",
+      "Endpoint versions differ per route (v10 projects, v7 deployments list, v13 deployment detail) — this is normal for the Vercel API"
+    ],
+    "documentation": "https://vercel.com/docs/rest-api"
+  }
+}

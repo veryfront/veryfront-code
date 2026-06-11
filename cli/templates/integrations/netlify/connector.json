@@ -1,0 +1,372 @@
+{
+  "name": "netlify",
+  "displayName": "Netlify",
+  "icon": "netlify.svg",
+  "description": "Manage Netlify sites, deploys, builds, and form submissions",
+  "auth": {
+    "type": "api-key",
+    "keyName": "NETLIFY_AUTH_TOKEN",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://docs.netlify.com/api/get-started/",
+    "requiredApis": [
+      {
+        "name": "Netlify Personal Access Tokens",
+        "enableUrl": "https://app.netlify.com/user/applications#personal-access-tokens"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "NETLIFY_AUTH_TOKEN",
+      "description": "Netlify personal access token (User settings > Applications > Personal access tokens)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.netlify.com/api/get-started/#authentication"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_sites",
+      "name": "List Sites",
+      "description": "List all sites the authenticated user has access to",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.netlify.com/api/v1/sites",
+        "params": {
+          "name": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter sites by name"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Sites per page (max 100)",
+            "default": 50
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "sites"
+            ],
+            "collectionName": "sites",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "url"
+              },
+              {
+                "name": "ssl_url"
+              },
+              {
+                "name": "state"
+              },
+              {
+                "name": "created_at"
+              },
+              {
+                "name": "updated_at"
+              },
+              {
+                "name": "published_deploy",
+                "kind": "object"
+              }
+            ],
+            "omitted": "build settings, repo configuration, and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "page"
+              },
+              {
+                "name": "per_page"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_site",
+      "name": "Get Site",
+      "description": "Get a site by ID or custom domain",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.netlify.com/api/v1/sites/{siteId}",
+        "params": {
+          "siteId": {
+            "type": "string",
+            "in": "path",
+            "description": "Site ID (UUID) or site domain, e.g. my-site.netlify.app",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_deploys",
+      "name": "List Deploys",
+      "description": "List deploys for a site",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.netlify.com/api/v1/sites/{siteId}/deploys",
+        "params": {
+          "siteId": {
+            "type": "string",
+            "in": "path",
+            "description": "Site ID (UUID) or site domain",
+            "required": true
+          },
+          "state": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by deploy state, e.g. ready, error, building"
+          },
+          "branch": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by git branch"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Deploys per page (max 100)",
+            "default": 20
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "deploys"
+            ],
+            "collectionName": "deploys",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "state"
+              },
+              {
+                "name": "branch"
+              },
+              {
+                "name": "context"
+              },
+              {
+                "name": "deploy_url"
+              },
+              {
+                "name": "created_at"
+              },
+              {
+                "name": "published_at"
+              },
+              {
+                "name": "error_message",
+                "maxLength": 300
+              }
+            ],
+            "omitted": "file digests, commit metadata, and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "page"
+              },
+              {
+                "name": "per_page"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_deploy",
+      "name": "Get Deploy",
+      "description": "Get a deploy by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.netlify.com/api/v1/deploys/{deployId}",
+        "params": {
+          "deployId": {
+            "type": "string",
+            "in": "path",
+            "description": "Deploy ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "trigger_build",
+      "name": "Trigger Build",
+      "description": "Trigger a new build of a site from its linked repository",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.netlify.com/api/v1/sites/{siteId}/builds",
+        "params": {
+          "siteId": {
+            "type": "string",
+            "in": "path",
+            "description": "Site ID (UUID) or site domain",
+            "required": true
+          }
+        },
+        "body": {
+          "clear_cache": {
+            "type": "boolean",
+            "description": "Clear the build cache before building",
+            "default": false
+          }
+        }
+      }
+    },
+    {
+      "id": "list_form_submissions",
+      "name": "List Form Submissions",
+      "description": "List verified form submissions across all forms of a site",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.netlify.com/api/v1/sites/{siteId}/submissions",
+        "params": {
+          "siteId": {
+            "type": "string",
+            "in": "path",
+            "description": "Site ID (UUID) or site domain",
+            "required": true
+          },
+          "state": {
+            "type": "string",
+            "in": "query",
+            "description": "Set to 'spam' to list spam submissions instead of verified ones"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Submissions per page (max 100)",
+            "default": 50
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "submissions"
+            ],
+            "collectionName": "submissions",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "form_name"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "email"
+              },
+              {
+                "name": "summary",
+                "maxLength": 300
+              },
+              {
+                "name": "created_at"
+              }
+            ],
+            "omitted": "full submission body fields and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "page"
+              },
+              {
+                "name": "per_page"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "deploy_status",
+      "title": "Latest deploy status",
+      "prompt": "List the most recent Netlify deploys for my site and summarize their states, including any error messages.",
+      "category": "devops",
+      "icon": "list"
+    },
+    {
+      "id": "form_inbox",
+      "title": "Review form submissions",
+      "prompt": "Show the latest form submissions for my Netlify site and summarize who submitted what.",
+      "category": "devops",
+      "icon": "inbox"
+    }
+  ],
+  "suggestedWith": [
+    "github",
+    "slack",
+    "sentry"
+  ],
+  "SETUP_GUIDE": {
+    "title": "Netlify API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Sign in to Netlify",
+        "description": "Go to https://app.netlify.com and sign in (the free Starter plan with one deployed site is sufficient for testing)."
+      },
+      {
+        "step": 2,
+        "title": "Create a personal access token",
+        "description": "Open User settings > Applications > Personal access tokens (https://app.netlify.com/user/applications#personal-access-tokens), select New access token, name it, and set an expiration."
+      },
+      {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the token to your .env as NETLIFY_AUTH_TOKEN=..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Sites. Site IDs accept either the UUID or the site's domain (e.g. my-site.netlify.app)."
+      }
+    ],
+    "notes": [
+      "Tokens are sent as 'Authorization: Bearer <token>'",
+      "List endpoints paginate with page/per_page (max 100) and return next/prev links in the Link response header",
+      "Triggering builds is rate limited (3 per minute, 100 per day)"
+    ],
+    "documentation": "https://docs.netlify.com/api/get-started/"
+  }
+}

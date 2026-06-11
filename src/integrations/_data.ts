@@ -1367,6 +1367,221 @@ export const connectors: IntegrationConfig[] = [
     }],
   },
   {
+    "name": "apify",
+    "displayName": "Apify",
+    "icon": "apify.svg",
+    "description":
+      "Run Apify actors for web scraping and automation and fetch their dataset results",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Apify API Tokens",
+        "enableUrl": "https://console.apify.com/settings/integrations",
+      }],
+      "keyName": "APIFY_TOKEN",
+      "headerPrefix": "Bearer",
+      "docsUrl": "https://docs.apify.com/api/v2#authentication",
+    },
+    "envVars": [{
+      "name": "APIFY_TOKEN",
+      "description": "Apify API token (starts with apify_api_)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.apify.com/platform/integrations/api",
+    }],
+    "tools": [{
+      "id": "list_actors",
+      "name": "List Actors",
+      "description": "List actors in your Apify account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.apify.com/v2/actors",
+        "params": {
+          "my": {
+            "type": "boolean",
+            "in": "query",
+            "description":
+              "Only return actors owned by you (false includes actors you have access to)",
+            "default": true,
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum actors to return (max 1000)",
+            "default": 25,
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of actors to skip for pagination",
+            "default": 0,
+          },
+        },
+        "response": {
+          "transform": "data",
+          "historicalSummary": {
+            "collectionKeys": ["items"],
+            "collectionName": "actors",
+            "itemFields": [{ "name": "id" }, { "name": "name" }, { "name": "username" }, {
+              "name": "title",
+            }, { "name": "modifiedAt" }],
+            "outputFields": [{ "name": "total" }, { "name": "offset" }],
+            "omitted": "actor stats, version details, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "run_actor_sync",
+      "name": "Run Actor (Sync)",
+      "description":
+        "Run an actor, wait for it to finish (up to 300s), and return its dataset items (consumes platform credits)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/{actorId}/run-sync-get-dataset-items",
+        "params": {
+          "actorId": {
+            "type": "string",
+            "in": "path",
+            "description": "Actor ID or username~actorname, e.g. apify~web-scraper",
+            "required": true,
+          },
+          "timeout": {
+            "type": "number",
+            "in": "query",
+            "description": "Run timeout in seconds (overrides the actor default)",
+          },
+          "memory": {
+            "type": "number",
+            "in": "query",
+            "description": "Memory limit in megabytes (power of 2, e.g. 1024)",
+          },
+          "format": {
+            "type": "string",
+            "in": "query",
+            "description": "Result format: json, csv, xlsx, html, xml, or rss",
+            "default": "json",
+          },
+        },
+        "body": {
+          "input": {
+            "type": "object",
+            "description":
+              'Actor input JSON sent as the request body — see the actor\'s input schema, e.g. {"startUrls":[{"url":"https://example.com"}]}',
+            "required": true,
+          },
+        },
+        "bodyMode": "passthrough",
+      },
+    }, {
+      "id": "get_run",
+      "name": "Get Run",
+      "description": "Get the status and details of an actor run, including its defaultDatasetId",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.apify.com/v2/actor-runs/{runId}",
+        "params": {
+          "runId": {
+            "type": "string",
+            "in": "path",
+            "description": "Actor run ID",
+            "required": true,
+          },
+        },
+        "response": { "transform": "data" },
+      },
+    }, {
+      "id": "list_runs",
+      "name": "List Runs",
+      "description": "List recent actor runs in your account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.apify.com/v2/actor-runs",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum runs to return (max 1000)",
+            "default": 25,
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of runs to skip for pagination",
+            "default": 0,
+          },
+          "desc": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Sort newest first",
+            "default": true,
+          },
+        },
+        "response": { "transform": "data" },
+      },
+    }, {
+      "id": "get_dataset_items",
+      "name": "Get Dataset Items",
+      "description": "Fetch items from a dataset produced by an actor run",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.apify.com/v2/datasets/{datasetId}/items",
+        "params": {
+          "datasetId": {
+            "type": "string",
+            "in": "path",
+            "description": "Dataset ID (e.g. the run's defaultDatasetId)",
+            "required": true,
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum items to return",
+            "default": 100,
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of items to skip for pagination",
+            "default": 0,
+          },
+          "clean": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Return only non-empty items and skip hidden fields",
+            "default": true,
+          },
+          "format": {
+            "type": "string",
+            "in": "query",
+            "description": "Result format: json, csv, xlsx, html, xml, or rss",
+            "default": "json",
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "scrape_site",
+      "title": "Scrape a website",
+      "prompt":
+        "Run an Apify actor to scrape a website I specify and summarize the extracted data.",
+      "category": "automation",
+      "icon": "globe",
+    }, {
+      "id": "recent_runs",
+      "title": "Check recent runs",
+      "prompt":
+        "List my recent Apify actor runs with their statuses and fetch the dataset items of the latest successful one.",
+      "category": "automation",
+      "icon": "list",
+    }],
+    "suggestedWith": ["tavily", "firecrawl", "openai"],
+  },
+  {
     "name": "apollo",
     "displayName": "Apollo.io",
     "icon": "apollo.svg",
@@ -2367,6 +2582,144 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["slack", "calendar", "notion"],
   },
   {
+    "name": "assemblyai",
+    "displayName": "AssemblyAI",
+    "icon": "assemblyai.svg",
+    "description":
+      "Submit audio URLs for transcription and retrieve transcripts via the AssemblyAI API",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "AssemblyAI API Keys",
+        "enableUrl": "https://www.assemblyai.com/app",
+      }],
+      "keyName": "ASSEMBLYAI_API_KEY",
+      "docsUrl": "https://www.assemblyai.com/docs/api-reference/overview",
+    },
+    "envVars": [{
+      "name": "ASSEMBLYAI_API_KEY",
+      "description": "AssemblyAI API key from the dashboard",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://www.assemblyai.com/app",
+    }],
+    "tools": [{
+      "id": "submit_transcript",
+      "name": "Submit Transcript",
+      "description": "Submit an audio or video URL for transcription (processing is asynchronous)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.assemblyai.com/v2/transcript",
+        "body": {
+          "audio_url": {
+            "type": "string",
+            "description": "Publicly accessible URL of the audio or video file to transcribe",
+            "required": true,
+          },
+          "language_code": {
+            "type": "string",
+            "description": "Language of the audio, e.g. en_us or es",
+          },
+          "speaker_labels": { "type": "boolean", "description": "Enable speaker diarization" },
+        },
+      },
+    }, {
+      "id": "get_transcript",
+      "name": "Get Transcript",
+      "description": "Get the status and text of a transcript by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.assemblyai.com/v2/transcript/{transcript_id}",
+        "params": {
+          "transcript_id": {
+            "type": "string",
+            "in": "path",
+            "description": "ID of the transcript to fetch",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "list_transcripts",
+      "name": "List Transcripts",
+      "description": "List transcripts created by the account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.assemblyai.com/v2/transcript",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum transcripts to return (1-200)",
+            "default": 20,
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by status: queued, processing, completed, or error",
+          },
+          "created_on": {
+            "type": "string",
+            "in": "query",
+            "description": "Only transcripts created on this date (YYYY-MM-DD)",
+          },
+          "before_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Return transcripts created before this transcript ID (pagination)",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["transcripts"],
+            "collectionName": "transcripts",
+            "itemFields": [{ "name": "id" }, { "name": "status" }, { "name": "created" }, {
+              "name": "audio_url",
+              "maxLength": 120,
+            }],
+            "outputFields": [{ "name": "page_details", "kind": "object" }],
+            "omitted": "resource URLs, errors, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "delete_transcript",
+      "name": "Delete Transcript",
+      "description": "Permanently delete a transcript and its data",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "DELETE",
+        "url": "https://api.assemblyai.com/v2/transcript/{transcript_id}",
+        "params": {
+          "transcript_id": {
+            "type": "string",
+            "in": "path",
+            "description": "ID of the transcript to delete",
+            "required": true,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "transcribe_audio",
+      "title": "Transcribe an audio URL",
+      "prompt":
+        "Submit this audio file to AssemblyAI, wait for it to finish, and give me the transcript: <paste URL>",
+      "category": "ai",
+      "icon": "sparkles",
+    }, {
+      "id": "recent_transcripts",
+      "title": "Review recent transcripts",
+      "prompt": "List my recent AssemblyAI transcripts and summarize their statuses.",
+      "category": "ai",
+      "icon": "list",
+    }],
+    "suggestedWith": ["deepgram", "elevenlabs", "openai"],
+  },
+  {
     "name": "attio",
     "displayName": "Attio",
     "icon": "attio.svg",
@@ -2641,6 +2994,141 @@ export const connectors: IntegrationConfig[] = [
       "@aws-sdk/client-lambda": "^3.600.0",
       "@aws-sdk/credential-providers": "^3.600.0",
     },
+  },
+  {
+    "name": "axiom",
+    "displayName": "Axiom",
+    "icon": "axiom.svg",
+    "description": "Query Axiom datasets with APL and ingest events",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Axiom API Tokens",
+        "enableUrl": "https://app.axiom.co/settings/api-tokens",
+      }],
+      "keyName": "AXIOM_TOKEN",
+      "headerPrefix": "Bearer",
+      "docsUrl": "https://axiom.co/docs/reference/tokens",
+    },
+    "envVars": [{
+      "name": "AXIOM_TOKEN",
+      "description": "Axiom API token with query (and optionally ingest) permissions",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://axiom.co/docs/reference/tokens",
+    }],
+    "tools": [{
+      "id": "list_datasets",
+      "name": "List Datasets",
+      "description": "List datasets in the Axiom organization",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.axiom.co/v2/datasets",
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["datasets"],
+            "collectionName": "datasets",
+            "itemFields": [{ "name": "id" }, { "name": "name" }, { "name": "description" }, {
+              "name": "created",
+            }],
+            "omitted": "dataset ownership and retention metadata",
+          },
+        },
+      },
+    }, {
+      "id": "get_dataset",
+      "name": "Get Dataset",
+      "description": "Get a dataset's details",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.axiom.co/v2/datasets/{datasetId}",
+        "params": {
+          "datasetId": {
+            "type": "string",
+            "in": "path",
+            "description": "Dataset ID (from List Datasets)",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "query_apl",
+      "name": "Run APL Query",
+      "description": "Run an APL (Axiom Processing Language) query across datasets",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.axiom.co/v1/query/_apl",
+        "params": {
+          "format": {
+            "type": "string",
+            "in": "query",
+            "description": "Result format: tabular or legacy",
+            "default": "tabular",
+          },
+        },
+        "body": {
+          "apl": {
+            "type": "string",
+            "description": "APL query, e.g. ['my-dataset'] | where status == 500 | limit 50",
+            "required": true,
+          },
+          "startTime": {
+            "type": "string",
+            "description":
+              "Query window start — RFC3339 timestamp or relative expression like now-1h",
+          },
+          "endTime": {
+            "type": "string",
+            "description": "Query window end — RFC3339 timestamp or relative expression like now",
+          },
+        },
+      },
+    }, {
+      "id": "ingest_events",
+      "name": "Ingest Events",
+      "description": "Ingest a batch of JSON events into a dataset",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.axiom.co/v1/datasets/{datasetName}/ingest",
+        "params": {
+          "datasetName": {
+            "type": "string",
+            "in": "path",
+            "description": "Dataset to ingest into",
+            "required": true,
+          },
+        },
+        "body": {
+          "events": {
+            "type": "array",
+            "description":
+              'Array of JSON event objects to ingest, e.g. [{"level":"info","message":"deploy finished"}]',
+            "required": true,
+          },
+        },
+        "bodyMode": "passthrough",
+        "contentType": "application/json",
+      },
+    }],
+    "prompts": [{
+      "id": "recent_errors",
+      "title": "Recent errors",
+      "prompt":
+        "Run an Axiom APL query for error-level events in my main dataset over the last hour and summarize them.",
+      "category": "observability",
+      "icon": "search",
+    }, {
+      "id": "dataset_overview",
+      "title": "Dataset overview",
+      "prompt": "List my Axiom datasets and tell me what kind of data each one holds.",
+      "category": "observability",
+      "icon": "list",
+    }],
+    "suggestedWith": ["sentry", "datadog", "cloudflare"],
   },
   {
     "name": "basecamp",
@@ -2924,6 +3412,175 @@ export const connectors: IntegrationConfig[] = [
       "icon": "plus",
     }],
     "suggestedWith": ["slack", "github", "harvest"],
+  },
+  {
+    "name": "betterstack",
+    "displayName": "Better Stack",
+    "icon": "betterstack.svg",
+    "description": "Read Better Stack Uptime monitors, incidents, and heartbeats",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Better Stack API Tokens",
+        "enableUrl": "https://betterstack.com/docs/uptime/api/getting-started-with-uptime-api/",
+      }],
+      "keyName": "BETTERSTACK_API_TOKEN",
+      "headerPrefix": "Bearer",
+      "docsUrl": "https://betterstack.com/docs/uptime/api/getting-started-with-uptime-api/",
+    },
+    "envVars": [{
+      "name": "BETTERSTACK_API_TOKEN",
+      "description": "Better Stack Uptime API token (global token or team-scoped Uptime token)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://betterstack.com/docs/uptime/api/getting-started-with-uptime-api/",
+    }],
+    "tools": [{
+      "id": "list_monitors",
+      "name": "List Monitors",
+      "description": "List uptime monitors, optionally filtered by URL or name",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://uptime.betterstack.com/api/v2/monitors",
+        "params": {
+          "url": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter monitors by monitored URL",
+          },
+          "pronounceable_name": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter monitors by their pronounceable name",
+          },
+          "page": { "type": "number", "in": "query", "description": "Page number (starts at 1)" },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Monitors per page (max 250)",
+            "default": 50,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "monitors",
+            "itemFields": [{ "name": "id" }, { "name": "type" }, {
+              "name": "attributes",
+              "kind": "object",
+            }],
+            "outputFields": [{ "name": "pagination", "kind": "object" }],
+            "omitted": "regional check configuration and notification settings",
+          },
+        },
+      },
+    }, {
+      "id": "get_monitor",
+      "name": "Get Monitor",
+      "description": "Get a monitor's configuration and current status",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://uptime.betterstack.com/api/v2/monitors/{monitorId}",
+        "params": {
+          "monitorId": {
+            "type": "string",
+            "in": "path",
+            "description": "Monitor ID (from List Monitors)",
+            "required": true,
+          },
+        },
+        "response": { "transform": "data" },
+      },
+    }, {
+      "id": "get_monitor_sla",
+      "name": "Get Monitor Availability",
+      "description": "Get a monitor's availability (SLA) summary for a time range",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://uptime.betterstack.com/api/v2/monitors/{monitorId}/sla",
+        "params": {
+          "monitorId": {
+            "type": "string",
+            "in": "path",
+            "description": "Monitor ID",
+            "required": true,
+          },
+          "from": { "type": "string", "in": "query", "description": "Start date (YYYY-MM-DD)" },
+          "to": { "type": "string", "in": "query", "description": "End date (YYYY-MM-DD)" },
+        },
+        "response": { "transform": "data" },
+      },
+    }, {
+      "id": "list_incidents",
+      "name": "List Incidents",
+      "description": "List incidents, optionally limited to a date range or unresolved only",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://uptime.betterstack.com/api/v3/incidents",
+        "params": {
+          "from": {
+            "type": "string",
+            "in": "query",
+            "description": "Only incidents starting on or after this date (YYYY-MM-DD)",
+          },
+          "to": {
+            "type": "string",
+            "in": "query",
+            "description": "Only incidents starting on or before this date (YYYY-MM-DD)",
+          },
+          "resolved": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Set false to list only active (unresolved) incidents",
+          },
+          "page": { "type": "number", "in": "query", "description": "Page number (starts at 1)" },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Incidents per page (max 250)",
+            "default": 50,
+          },
+        },
+      },
+    }, {
+      "id": "list_heartbeats",
+      "name": "List Heartbeats",
+      "description": "List heartbeat (cron/job) monitors and their status",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://uptime.betterstack.com/api/v2/heartbeats",
+        "params": {
+          "page": { "type": "number", "in": "query", "description": "Page number (starts at 1)" },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Heartbeats per page (max 250)",
+            "default": 50,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "whats_down",
+      "title": "What's down?",
+      "prompt":
+        "List my Better Stack monitors and flag any that are not in the 'up' status, plus any unresolved incidents.",
+      "category": "observability",
+      "icon": "alert",
+    }, {
+      "id": "uptime_report",
+      "title": "Uptime report",
+      "prompt":
+        "Get the availability summary for my main Better Stack monitor over the last 30 days.",
+      "category": "observability",
+      "icon": "doc",
+    }],
+    "suggestedWith": ["pagerduty", "sentry", "slack"],
   },
   {
     "name": "bitbucket",
@@ -3272,6 +3929,250 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["github", "gitlab", "jira"],
   },
   {
+    "name": "box",
+    "displayName": "Box",
+    "icon": "box.svg",
+    "description": "Browse, search, and organize files and folders in Box cloud storage",
+    "auth": {
+      "type": "oauth2",
+      "provider": "box",
+      "authorizationUrl": "https://account.box.com/api/oauth2/authorize",
+      "tokenUrl": "https://api.box.com/oauth2/token",
+      "scopes": ["root_readwrite"],
+      "tokenAuthMethod": "request_body",
+      "requiredApis": [{
+        "name": "Box Developer Console",
+        "enableUrl": "https://app.box.com/developers/console",
+      }],
+      "docsUrl": "https://developer.box.com/guides/authentication/oauth2/",
+    },
+    "envVars": [{
+      "name": "BOX_CLIENT_ID",
+      "description": "Box OAuth Client ID (from your Custom App in the Developer Console)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.box.com/guides/authentication/oauth2/oauth2-setup/",
+    }, {
+      "name": "BOX_CLIENT_SECRET",
+      "description": "Box OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.box.com/guides/authentication/oauth2/oauth2-setup/",
+    }],
+    "tools": [{
+      "id": "list_folder_items",
+      "name": "List Folder Items",
+      "description": "List files and subfolders inside a Box folder (folder 0 is the root)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.box.com/2.0/folders/{folderId}/items",
+        "params": {
+          "folderId": {
+            "type": "string",
+            "in": "path",
+            "description": "Box folder ID ('0' is the root folder)",
+            "default": "0",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum items to return (max 1000)",
+            "default": 100,
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of items to skip for pagination",
+            "default": 0,
+          },
+          "fields": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Comma-separated attribute list to include, e.g. id,type,name,size,modified_at",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["entries"],
+            "collectionName": "items",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "type" },
+              { "name": "name" },
+              { "name": "size" },
+              { "name": "modified_at" },
+              { "name": "created_at" },
+            ],
+            "outputFields": [{ "name": "total_count" }, { "name": "offset" }, { "name": "limit" }],
+            "omitted": "file metadata, shared links, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_file",
+      "name": "Get File",
+      "description": "Get metadata about a Box file",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.box.com/2.0/files/{fileId}",
+        "params": {
+          "fileId": {
+            "type": "string",
+            "in": "path",
+            "description": "Box file ID",
+            "required": true,
+          },
+          "fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated attribute list to include",
+          },
+        },
+      },
+    }, {
+      "id": "get_folder",
+      "name": "Get Folder",
+      "description": "Get metadata about a Box folder",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.box.com/2.0/folders/{folderId}",
+        "params": {
+          "folderId": {
+            "type": "string",
+            "in": "path",
+            "description": "Box folder ID ('0' is the root folder)",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "search",
+      "name": "Search",
+      "description": "Search for files and folders across the Box account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.box.com/2.0/search",
+        "params": {
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "Search string to match against item names and content",
+            "required": true,
+          },
+          "type": {
+            "type": "string",
+            "in": "query",
+            "description": "Limit results to 'file', 'folder', or 'web_link'",
+          },
+          "ancestor_folder_ids": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated folder IDs to scope the search to",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum results to return (max 200)",
+            "default": 30,
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of results to skip for pagination",
+            "default": 0,
+          },
+        },
+      },
+    }, {
+      "id": "create_folder",
+      "name": "Create Folder",
+      "description": "Create a new folder inside a Box parent folder",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.box.com/2.0/folders",
+        "body": {
+          "name": { "type": "string", "description": "Name of the new folder", "required": true },
+          "parent": {
+            "type": "object",
+            "description": 'Parent folder reference, e.g. { "id": "0" } for the root folder',
+            "required": true,
+            "default": { "id": "0" },
+          },
+        },
+      },
+    }, {
+      "id": "list_file_comments",
+      "name": "List File Comments",
+      "description": "List comments on a Box file",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.box.com/2.0/files/{fileId}/comments",
+        "params": {
+          "fileId": {
+            "type": "string",
+            "in": "path",
+            "description": "Box file ID",
+            "required": true,
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum comments to return",
+            "default": 50,
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of comments to skip for pagination",
+            "default": 0,
+          },
+        },
+      },
+    }, {
+      "id": "add_comment",
+      "name": "Add Comment",
+      "description": "Add a comment to a Box file",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.box.com/2.0/comments",
+        "body": {
+          "item": {
+            "type": "object",
+            "description": 'Item to comment on, e.g. { "type": "file", "id": "12345" }',
+            "required": true,
+          },
+          "message": {
+            "type": "string",
+            "description": "Comment text (use @[userid:name] to mention users)",
+            "required": true,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "browse_root",
+      "title": "Browse my files",
+      "prompt": "List the files and folders in my Box root folder.",
+      "category": "files",
+      "icon": "list",
+    }, {
+      "id": "find_file",
+      "title": "Find a file",
+      "prompt": "Search my Box account for a file by name and show its details.",
+      "category": "files",
+      "icon": "search",
+    }],
+    "suggestedWith": ["slack", "gmail", "drive"],
+  },
+  {
     "name": "brevo",
     "displayName": "Brevo",
     "icon": "brevo.svg",
@@ -3480,6 +4381,389 @@ export const connectors: IntegrationConfig[] = [
       "icon": "search",
     }],
     "suggestedWith": ["klaviyo", "shopify", "sheets"],
+  },
+  {
+    "name": "browserbase",
+    "displayName": "Browserbase",
+    "icon": "browserbase.svg",
+    "description": "Create and manage headless browser sessions in the cloud with Browserbase",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Browserbase API Keys",
+        "enableUrl": "https://www.browserbase.com/settings",
+      }],
+      "keyName": "BROWSERBASE_API_KEY",
+      "headerName": "X-BB-API-Key",
+      "docsUrl": "https://docs.browserbase.com/reference/api/create-a-session",
+    },
+    "envVars": [{
+      "name": "BROWSERBASE_API_KEY",
+      "description": "Browserbase API key (starts with bb_)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.browserbase.com/introduction/getting-started",
+    }],
+    "tools": [{
+      "id": "list_sessions",
+      "name": "List Sessions",
+      "description": "List browser sessions, optionally filtered by status",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.browserbase.com/v1/sessions",
+        "params": {
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by status: PENDING, RUNNING, COMPLETED, ERROR, or TIMED_OUT",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["sessions"],
+            "collectionName": "sessions",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "status" },
+              { "name": "projectId" },
+              { "name": "createdAt" },
+              { "name": "expiresAt" },
+              { "name": "region" },
+            ],
+            "omitted": "connection URLs, browser settings, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "create_session",
+      "name": "Create Session",
+      "description": "Create a new cloud browser session (consumes plan browser minutes)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.browserbase.com/v1/sessions",
+        "body": {
+          "projectId": {
+            "type": "string",
+            "description": "Browserbase project ID (omit to infer from the API key)",
+          },
+          "browserSettings": {
+            "type": "object",
+            "description":
+              'Browser configuration, e.g. {"viewport":{"width":1280,"height":720},"blockAds":true}',
+          },
+          "region": {
+            "type": "string",
+            "description":
+              "Region to run the session in, e.g. us-west-2, us-east-1, eu-central-1, ap-southeast-1",
+          },
+          "timeout": {
+            "type": "number",
+            "description": "Session timeout in seconds before it is automatically ended",
+          },
+          "keepAlive": {
+            "type": "boolean",
+            "description": "Keep the session alive after disconnects (paid plans only)",
+          },
+        },
+      },
+    }, {
+      "id": "get_session",
+      "name": "Get Session",
+      "description": "Get a session's status, connection URL, and metadata",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.browserbase.com/v1/sessions/{sessionId}",
+        "params": {
+          "sessionId": {
+            "type": "string",
+            "in": "path",
+            "description": "Session ID",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "release_session",
+      "name": "Release Session",
+      "description": "Request release of a running session to stop billing for it",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.browserbase.com/v1/sessions/{sessionId}",
+        "params": {
+          "sessionId": {
+            "type": "string",
+            "in": "path",
+            "description": "Session ID to release",
+            "required": true,
+          },
+        },
+        "body": {
+          "status": {
+            "type": "string",
+            "description": "Set to REQUEST_RELEASE to end the session",
+            "required": true,
+            "default": "REQUEST_RELEASE",
+          },
+          "projectId": {
+            "type": "string",
+            "description": "Project ID the session belongs to (optional)",
+          },
+        },
+      },
+    }, {
+      "id": "list_projects",
+      "name": "List Projects",
+      "description": "List the Browserbase projects available to the API key",
+      "requiresWrite": false,
+      "endpoint": { "method": "GET", "url": "https://api.browserbase.com/v1/projects" },
+    }],
+    "prompts": [{
+      "id": "active_sessions",
+      "title": "Show running sessions",
+      "prompt":
+        "List my Browserbase sessions that are currently RUNNING and release any I no longer need.",
+      "category": "automation",
+      "icon": "browser",
+    }, {
+      "id": "new_session",
+      "title": "Start a browser session",
+      "prompt": "Create a new Browserbase session and give me its ID and connection details.",
+      "category": "automation",
+      "icon": "plus",
+    }],
+    "suggestedWith": ["openai", "anthropic", "firecrawl"],
+  },
+  {
+    "name": "buildkite",
+    "displayName": "Buildkite",
+    "icon": "buildkite.svg",
+    "description": "Read Buildkite organizations, pipelines, and builds, and trigger new builds",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Buildkite API Access Tokens",
+        "enableUrl": "https://buildkite.com/user/api-access-tokens",
+      }],
+      "keyName": "BUILDKITE_API_TOKEN",
+      "headerPrefix": "Bearer",
+      "docsUrl": "https://buildkite.com/docs/apis/rest-api",
+    },
+    "envVars": [{
+      "name": "BUILDKITE_API_TOKEN",
+      "description":
+        "Buildkite API access token with read_pipelines and read_builds scopes (write_builds to trigger builds)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://buildkite.com/docs/apis/managing-api-tokens",
+    }],
+    "tools": [{
+      "id": "list_organizations",
+      "name": "List Organizations",
+      "description": "List Buildkite organizations the token can access",
+      "requiresWrite": false,
+      "endpoint": { "method": "GET", "url": "https://api.buildkite.com/v2/organizations" },
+    }, {
+      "id": "list_pipelines",
+      "name": "List Pipelines",
+      "description": "List pipelines in an organization",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.buildkite.com/v2/organizations/{orgSlug}/pipelines",
+        "params": {
+          "orgSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Organization slug (from List Organizations)",
+            "required": true,
+          },
+          "page": { "type": "number", "in": "query", "description": "Page number (starts at 1)" },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Pipelines per page (max 100)",
+            "default": 30,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["pipelines"],
+            "collectionName": "pipelines",
+            "itemFields": [{ "name": "id" }, { "name": "name" }, { "name": "slug" }, {
+              "name": "repository",
+            }, { "name": "web_url" }],
+            "omitted": "pipeline step definitions and provider webhook settings",
+          },
+        },
+      },
+    }, {
+      "id": "get_pipeline",
+      "name": "Get Pipeline",
+      "description": "Get a pipeline's configuration and build stats",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.buildkite.com/v2/organizations/{orgSlug}/pipelines/{pipelineSlug}",
+        "params": {
+          "orgSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Organization slug",
+            "required": true,
+          },
+          "pipelineSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Pipeline slug (from List Pipelines)",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "list_builds",
+      "name": "List Builds",
+      "description": "List builds for a pipeline, optionally filtered by branch or state",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url":
+          "https://api.buildkite.com/v2/organizations/{orgSlug}/pipelines/{pipelineSlug}/builds",
+        "params": {
+          "orgSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Organization slug",
+            "required": true,
+          },
+          "pipelineSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Pipeline slug",
+            "required": true,
+          },
+          "branch": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter builds by branch name",
+          },
+          "state": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by state, e.g. running, passed, failed, canceled",
+          },
+          "page": { "type": "number", "in": "query", "description": "Page number (starts at 1)" },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Builds per page (max 100)",
+            "default": 30,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["builds"],
+            "collectionName": "builds",
+            "itemFields": [
+              { "name": "number" },
+              { "name": "state" },
+              { "name": "branch" },
+              { "name": "message" },
+              { "name": "commit" },
+              { "name": "web_url" },
+            ],
+            "omitted": "job lists, agent metadata, and environment payloads",
+          },
+        },
+      },
+    }, {
+      "id": "get_build",
+      "name": "Get Build",
+      "description": "Get a build including its jobs and their states",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url":
+          "https://api.buildkite.com/v2/organizations/{orgSlug}/pipelines/{pipelineSlug}/builds/{buildNumber}",
+        "params": {
+          "orgSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Organization slug",
+            "required": true,
+          },
+          "pipelineSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Pipeline slug",
+            "required": true,
+          },
+          "buildNumber": {
+            "type": "string",
+            "in": "path",
+            "description": "Build number (from List Builds)",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "create_build",
+      "name": "Create Build",
+      "description": "Trigger a new build on a pipeline",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url":
+          "https://api.buildkite.com/v2/organizations/{orgSlug}/pipelines/{pipelineSlug}/builds",
+        "params": {
+          "orgSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Organization slug",
+            "required": true,
+          },
+          "pipelineSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Pipeline slug",
+            "required": true,
+          },
+        },
+        "body": {
+          "commit": {
+            "type": "string",
+            "description": "Commit SHA to build, or HEAD for the latest commit",
+            "required": true,
+            "default": "HEAD",
+          },
+          "branch": { "type": "string", "description": "Branch to build", "required": true },
+          "message": { "type": "string", "description": "Build message shown in the Buildkite UI" },
+          "env": {
+            "type": "object",
+            "description": 'Environment variables for the build, e.g. {"DEPLOY":"true"}',
+          },
+          "meta_data": { "type": "object", "description": "Build meta-data key/value pairs" },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "failed_builds",
+      "title": "Failed builds",
+      "prompt":
+        "List the failed Buildkite builds on my main pipeline from today and summarize the commit messages.",
+      "category": "devops",
+      "icon": "alert",
+    }, {
+      "id": "trigger_build",
+      "title": "Trigger a build",
+      "prompt": "Trigger a new Buildkite build of HEAD on the main branch of my pipeline.",
+      "category": "devops",
+      "icon": "play",
+    }],
+    "suggestedWith": ["github", "slack", "sentry"],
   },
   {
     "name": "calendar",
@@ -4015,6 +5299,171 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["calendar", "gmail", "slack"],
   },
   {
+    "name": "checkly",
+    "displayName": "Checkly",
+    "icon": "checkly.svg",
+    "description": "Read Checkly checks, check results, and current statuses",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Checkly API Keys",
+        "enableUrl": "https://app.checklyhq.com/settings/user/api-keys",
+      }],
+      "keyName": "CHECKLY_API_KEY",
+      "headerPrefix": "Bearer",
+      "additionalHeaders": { "X-Checkly-Account": "CHECKLY_ACCOUNT_ID" },
+      "docsUrl": "https://developers.checklyhq.com/reference/authentication",
+    },
+    "envVars": [{
+      "name": "CHECKLY_API_KEY",
+      "description": "Checkly user API key",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developers.checklyhq.com/reference/authentication",
+    }, {
+      "name": "CHECKLY_ACCOUNT_ID",
+      "description": "Checkly account ID (sent as the X-Checkly-Account header)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developers.checklyhq.com/reference/authentication",
+    }],
+    "tools": [{
+      "id": "list_checks",
+      "name": "List Checks",
+      "description": "List API and browser checks in the account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.checklyhq.com/v1/checks",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Checks per page (max 100)",
+            "default": 50,
+          },
+          "page": { "type": "number", "in": "query", "description": "Page number (starts at 1)" },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["checks"],
+            "collectionName": "checks",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "checkType" },
+              { "name": "activated" },
+              { "name": "frequency" },
+              { "name": "tags", "kind": "string-array" },
+            ],
+            "omitted": "request/script definitions and alert channel settings",
+          },
+        },
+      },
+    }, {
+      "id": "get_check",
+      "name": "Get Check",
+      "description": "Get a check's full configuration",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.checklyhq.com/v1/checks/{checkId}",
+        "params": {
+          "checkId": {
+            "type": "string",
+            "in": "path",
+            "description": "Check ID (from List Checks)",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "list_check_results",
+      "name": "List Check Results",
+      "description":
+        "List raw results for a check within a time window (from/to must be at most 6 hours apart)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.checklyhq.com/v2/check-results/{checkId}",
+        "params": {
+          "checkId": {
+            "type": "string",
+            "in": "path",
+            "description": "Check ID",
+            "required": true,
+          },
+          "from": {
+            "type": "number",
+            "in": "query",
+            "description": "Window start as a UNIX timestamp (seconds)",
+          },
+          "to": {
+            "type": "number",
+            "in": "query",
+            "description": "Window end as a UNIX timestamp (seconds); at most 6 hours after 'from'",
+          },
+          "hasFailures": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Only return results with failures",
+          },
+          "resultType": {
+            "type": "string",
+            "in": "query",
+            "description": "Result type filter: ALL, FINAL, or ATTEMPT",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Results per page (max 100)",
+            "default": 50,
+          },
+          "page": { "type": "number", "in": "query", "description": "Page number (starts at 1)" },
+        },
+      },
+    }, {
+      "id": "list_check_statuses",
+      "name": "List Check Statuses",
+      "description": "Get the current status of every check in the account",
+      "requiresWrite": false,
+      "endpoint": { "method": "GET", "url": "https://api.checklyhq.com/v1/check-statuses" },
+    }, {
+      "id": "get_check_status",
+      "name": "Get Check Status",
+      "description": "Get the current status of a single check",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.checklyhq.com/v1/check-statuses/{checkId}",
+        "params": {
+          "checkId": {
+            "type": "string",
+            "in": "path",
+            "description": "Check ID",
+            "required": true,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "failing_checks",
+      "title": "Failing checks",
+      "prompt":
+        "List my Checkly check statuses and tell me which checks are currently failing or degraded.",
+      "category": "observability",
+      "icon": "alert",
+    }, {
+      "id": "recent_failures",
+      "title": "Recent failures",
+      "prompt":
+        "Get the results with failures for my main Checkly check over the last 6 hours and summarize the errors.",
+      "category": "observability",
+      "icon": "search",
+    }],
+    "suggestedWith": ["github", "pagerduty", "slack"],
+  },
+  {
     "name": "circleci",
     "displayName": "CircleCI",
     "icon": "circleci.svg",
@@ -4235,6 +5684,375 @@ export const connectors: IntegrationConfig[] = [
       "icon": "alert",
     }],
     "suggestedWith": ["github", "slack", "bitbucket"],
+  },
+  {
+    "name": "clickhouse",
+    "displayName": "ClickHouse Cloud",
+    "icon": "clickhouse.svg",
+    "description": "Manage ClickHouse Cloud organizations and services",
+    "auth": {
+      "type": "basic",
+      "requiredApis": [{
+        "name": "ClickHouse Cloud API Keys",
+        "enableUrl": "https://console.clickhouse.cloud/organizations",
+      }],
+      "usernameKey": "CLICKHOUSE_KEY_ID",
+      "passwordKey": "CLICKHOUSE_KEY_SECRET",
+      "docsUrl": "https://clickhouse.com/docs/cloud/manage/openapi",
+    },
+    "envVars": [{
+      "name": "CLICKHOUSE_KEY_ID",
+      "description": "ClickHouse Cloud API key ID (used as the HTTP Basic username)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://clickhouse.com/docs/cloud/manage/openapi",
+    }, {
+      "name": "CLICKHOUSE_KEY_SECRET",
+      "description": "ClickHouse Cloud API key secret (used as the HTTP Basic password)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://clickhouse.com/docs/cloud/manage/openapi",
+    }],
+    "tools": [{
+      "id": "list_organizations",
+      "name": "List Organizations",
+      "description": "List organizations the API key has access to",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.clickhouse.cloud/v1/organizations",
+        "response": {
+          "transform": "result",
+          "historicalSummary": {
+            "collectionKeys": ["result", "organizations"],
+            "collectionName": "organizations",
+            "itemFields": [{ "name": "id" }, { "name": "name" }, { "name": "createdAt" }],
+            "omitted": "organization billing and configuration details",
+          },
+        },
+      },
+    }, {
+      "id": "get_organization",
+      "name": "Get Organization",
+      "description": "Get details of an organization",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.clickhouse.cloud/v1/organizations/{organizationId}",
+        "params": {
+          "organizationId": {
+            "type": "string",
+            "in": "path",
+            "description": "Organization UUID (from List Organizations)",
+            "required": true,
+          },
+        },
+        "response": { "transform": "result" },
+      },
+    }, {
+      "id": "list_services",
+      "name": "List Services",
+      "description": "List all ClickHouse services in an organization",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.clickhouse.cloud/v1/organizations/{organizationId}/services",
+        "params": {
+          "organizationId": {
+            "type": "string",
+            "in": "path",
+            "description": "Organization UUID",
+            "required": true,
+          },
+        },
+        "response": {
+          "transform": "result",
+          "historicalSummary": {
+            "collectionKeys": ["result", "services"],
+            "collectionName": "services",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "state" },
+              { "name": "provider" },
+              { "name": "region" },
+              { "name": "tier" },
+              { "name": "createdAt" },
+            ],
+            "omitted": "endpoint lists, IP access lists, and scaling configuration",
+          },
+        },
+      },
+    }, {
+      "id": "get_service",
+      "name": "Get Service",
+      "description": "Get details of a ClickHouse service, including endpoints and state",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url":
+          "https://api.clickhouse.cloud/v1/organizations/{organizationId}/services/{serviceId}",
+        "params": {
+          "organizationId": {
+            "type": "string",
+            "in": "path",
+            "description": "Organization UUID",
+            "required": true,
+          },
+          "serviceId": {
+            "type": "string",
+            "in": "path",
+            "description": "Service UUID (from List Services)",
+            "required": true,
+          },
+        },
+        "response": { "transform": "result" },
+      },
+    }],
+    "prompts": [{
+      "id": "service_overview",
+      "title": "Service overview",
+      "prompt": "List my ClickHouse Cloud services with their state, provider, and region.",
+      "category": "data",
+      "icon": "list",
+    }, {
+      "id": "service_health",
+      "title": "Check a service",
+      "prompt":
+        "Get the details of my ClickHouse Cloud service and tell me whether it is running and where its endpoints are.",
+      "category": "data",
+      "icon": "search",
+    }],
+    "suggestedWith": ["datadog", "slack", "sheets"],
+  },
+  {
+    "name": "clickup",
+    "displayName": "ClickUp",
+    "icon": "clickup.svg",
+    "description": "Manage tasks, lists, and spaces in ClickUp workspaces",
+    "auth": {
+      "type": "oauth2",
+      "provider": "clickup",
+      "authorizationUrl": "https://app.clickup.com/api",
+      "tokenUrl": "https://api.clickup.com/api/v2/oauth/token",
+      "tokenAuthMethod": "request_body",
+      "requiredApis": [{
+        "name": "ClickUp OAuth App",
+        "enableUrl": "https://developer.clickup.com/docs/authentication",
+      }],
+      "docsUrl": "https://developer.clickup.com/docs/authentication",
+    },
+    "envVars": [{
+      "name": "CLICKUP_CLIENT_ID",
+      "description": "ClickUp OAuth Client ID (from your OAuth app in workspace settings)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.clickup.com/docs/authentication",
+    }, {
+      "name": "CLICKUP_CLIENT_SECRET",
+      "description": "ClickUp OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.clickup.com/docs/authentication",
+    }],
+    "tools": [{
+      "id": "list_workspaces",
+      "name": "List Workspaces",
+      "description": "List ClickUp Workspaces (teams) the authorized user can access",
+      "requiresWrite": false,
+      "endpoint": { "method": "GET", "url": "https://api.clickup.com/api/v2/team" },
+    }, {
+      "id": "list_spaces",
+      "name": "List Spaces",
+      "description": "List Spaces in a ClickUp Workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.clickup.com/api/v2/team/{teamId}/space",
+        "params": {
+          "teamId": {
+            "type": "string",
+            "in": "path",
+            "description": "ClickUp Workspace (team) ID",
+            "required": true,
+          },
+          "archived": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Whether to include archived Spaces",
+            "default": false,
+          },
+        },
+      },
+    }, {
+      "id": "list_lists",
+      "name": "List Lists",
+      "description": "List folderless Lists in a ClickUp Space",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.clickup.com/api/v2/space/{spaceId}/list",
+        "params": {
+          "spaceId": {
+            "type": "string",
+            "in": "path",
+            "description": "ClickUp Space ID",
+            "required": true,
+          },
+          "archived": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Whether to include archived Lists",
+            "default": false,
+          },
+        },
+      },
+    }, {
+      "id": "list_tasks",
+      "name": "List Tasks",
+      "description": "List tasks in a ClickUp List",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.clickup.com/api/v2/list/{listId}/task",
+        "params": {
+          "listId": {
+            "type": "string",
+            "in": "path",
+            "description": "ClickUp List ID",
+            "required": true,
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number to fetch (100 tasks per page)",
+            "default": 0,
+          },
+          "include_closed": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Whether to include closed tasks",
+            "default": false,
+          },
+          "order_by": {
+            "type": "string",
+            "in": "query",
+            "description": "Order by field: id, created, updated, or due_date",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["tasks"],
+            "collectionName": "tasks",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "status", "kind": "object" },
+              { "name": "priority", "kind": "object" },
+              { "name": "due_date" },
+              { "name": "date_created" },
+              { "name": "date_updated" },
+              { "name": "url" },
+              { "name": "assignees", "kind": "contact-array" },
+            ],
+            "outputFields": [{ "name": "last_page" }],
+            "omitted": "task descriptions, custom fields, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_task",
+      "name": "Get Task",
+      "description": "Get details of a ClickUp task",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.clickup.com/api/v2/task/{taskId}",
+        "params": {
+          "taskId": {
+            "type": "string",
+            "in": "path",
+            "description": "ClickUp task ID",
+            "required": true,
+          },
+          "include_subtasks": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Whether to include subtasks",
+            "default": false,
+          },
+        },
+      },
+    }, {
+      "id": "create_task",
+      "name": "Create Task",
+      "description": "Create a new task in a ClickUp List",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.clickup.com/api/v2/list/{listId}/task",
+        "params": {
+          "listId": {
+            "type": "string",
+            "in": "path",
+            "description": "ClickUp List ID",
+            "required": true,
+          },
+        },
+        "body": {
+          "name": { "type": "string", "description": "Task name", "required": true },
+          "description": { "type": "string", "description": "Task description (plain text)" },
+          "assignees": { "type": "array", "description": "Array of assignee user IDs (numbers)" },
+          "status": { "type": "string", "description": "Status name as defined on the List" },
+          "priority": {
+            "type": "number",
+            "description": "Priority: 1=urgent, 2=high, 3=normal, 4=low",
+          },
+          "due_date": { "type": "number", "description": "Due date as Unix time in milliseconds" },
+        },
+      },
+    }, {
+      "id": "update_task",
+      "name": "Update Task",
+      "description": "Update fields on an existing ClickUp task",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://api.clickup.com/api/v2/task/{taskId}",
+        "params": {
+          "taskId": {
+            "type": "string",
+            "in": "path",
+            "description": "ClickUp task ID",
+            "required": true,
+          },
+        },
+        "body": {
+          "name": { "type": "string", "description": "Task name" },
+          "description": { "type": "string", "description": "Task description" },
+          "status": { "type": "string", "description": "Status name as defined on the List" },
+          "priority": {
+            "type": "number",
+            "description": "Priority: 1=urgent, 2=high, 3=normal, 4=low",
+          },
+          "due_date": { "type": "number", "description": "Due date as Unix time in milliseconds" },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "open_tasks",
+      "title": "Show open tasks",
+      "prompt": "List the open tasks in a ClickUp list with their statuses and due dates.",
+      "category": "productivity",
+      "icon": "list",
+    }, {
+      "id": "create_task",
+      "title": "Create a task",
+      "prompt": "Create a new ClickUp task with a name, description, priority, and due date.",
+      "category": "productivity",
+      "icon": "plus",
+    }],
+    "suggestedWith": ["slack", "github", "calendar"],
   },
   {
     "name": "close",
@@ -4948,6 +6766,175 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["notion", "slack", "airtable"],
   },
   {
+    "name": "cohere",
+    "displayName": "Cohere",
+    "icon": "cohere.svg",
+    "description":
+      "Chat with Cohere Command models, create embeddings, and rerank documents via the Cohere API",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Cohere Dashboard API Keys",
+        "enableUrl": "https://dashboard.cohere.com/api-keys",
+      }],
+      "keyName": "COHERE_API_KEY",
+      "headerPrefix": "Bearer",
+      "docsUrl": "https://docs.cohere.com/reference/about",
+    },
+    "envVars": [{
+      "name": "COHERE_API_KEY",
+      "description": "Cohere API key from the Cohere dashboard",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://dashboard.cohere.com/api-keys",
+    }],
+    "tools": [{
+      "id": "list_models",
+      "name": "List Models",
+      "description": "List the Cohere models available to the API key",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.cohere.com/v1/models",
+        "params": {
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum number of models per page (1-1000)",
+            "default": 50,
+          },
+          "page_token": {
+            "type": "string",
+            "in": "query",
+            "description": "next_page_token from a previous list call",
+          },
+          "endpoint": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Filter to models compatible with an endpoint: chat, embed, classify, or rerank",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["models"],
+            "collectionName": "models",
+            "itemFields": [{ "name": "name" }, { "name": "context_length" }, {
+              "name": "endpoints",
+              "kind": "string-array",
+            }, { "name": "is_deprecated" }],
+            "outputFields": [{ "name": "next_page_token" }],
+            "omitted": "tokenizer URLs, sampling defaults, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "create_chat",
+      "name": "Create Chat",
+      "description": "Generate a chat response with a Cohere Command model (v2 Chat API)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.cohere.com/v2/chat",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Model ID to use, e.g. command-a-03-2025",
+            "required": true,
+          },
+          "messages": {
+            "type": "array",
+            "description": "Chat messages, each with role (system|user|assistant) and content",
+            "required": true,
+          },
+          "max_tokens": { "type": "number", "description": "Maximum tokens to generate" },
+          "temperature": {
+            "type": "number",
+            "description": "Sampling temperature, typically between 0 and 1",
+          },
+        },
+      },
+    }, {
+      "id": "create_embedding",
+      "name": "Create Embedding",
+      "description": "Create embedding vectors for input texts (v2 Embed API)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.cohere.com/v2/embed",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Embedding model ID, e.g. embed-v4.0",
+            "required": true,
+          },
+          "texts": {
+            "type": "array",
+            "description": "Array of strings to embed (max 96 per call)",
+            "required": true,
+          },
+          "input_type": {
+            "type": "string",
+            "description":
+              "One of search_document, search_query, classification, clustering, or image",
+            "required": true,
+          },
+          "embedding_types": {
+            "type": "array",
+            "description": 'Output formats, e.g. ["float"]',
+            "default": ["float"],
+          },
+        },
+      },
+    }, {
+      "id": "rerank_documents",
+      "name": "Rerank Documents",
+      "description": "Rank a list of documents by relevance to a query (v2 Rerank API)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.cohere.com/v2/rerank",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Rerank model ID, e.g. rerank-v3.5",
+            "required": true,
+          },
+          "query": {
+            "type": "string",
+            "description": "The search query to rank against",
+            "required": true,
+          },
+          "documents": {
+            "type": "array",
+            "description": "Array of document texts to compare to the query",
+            "required": true,
+          },
+          "top_n": {
+            "type": "number",
+            "description": "Limit results to the top N most relevant documents",
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "available_models",
+      "title": "List Cohere models",
+      "prompt":
+        "List the Cohere models available to my API key and note which endpoints each supports.",
+      "category": "ai",
+      "icon": "list",
+    }, {
+      "id": "rerank_results",
+      "title": "Rerank search results",
+      "prompt":
+        "Use Cohere Rerank to order a list of documents I provide by relevance to my query.",
+      "category": "ai",
+      "icon": "sparkles",
+    }],
+    "suggestedWith": ["openai", "anthropic", "gemini"],
+  },
+  {
     "name": "confluence",
     "displayName": "Confluence",
     "icon": "confluence.svg",
@@ -5486,6 +7473,141 @@ export const connectors: IntegrationConfig[] = [
       "icon": "search",
     }],
     "suggestedWith": ["sentry", "slack", "github"],
+  },
+  {
+    "name": "deepgram",
+    "displayName": "Deepgram",
+    "icon": "deepgram.svg",
+    "description":
+      "Transcribe prerecorded audio from URLs and manage projects, balances, and models via the Deepgram API",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Deepgram Console API Keys",
+        "enableUrl": "https://console.deepgram.com",
+      }],
+      "keyName": "DEEPGRAM_API_KEY",
+      "headerPrefix": "Token",
+      "docsUrl": "https://developers.deepgram.com/reference/deepgram-api-overview",
+    },
+    "envVars": [{
+      "name": "DEEPGRAM_API_KEY",
+      "description": "Deepgram API key from the Deepgram console",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developers.deepgram.com/docs/create-additional-api-keys",
+    }],
+    "tools": [{
+      "id": "transcribe_url",
+      "name": "Transcribe URL",
+      "description": "Transcribe a prerecorded audio file from a publicly accessible URL",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.deepgram.com/v1/listen",
+        "params": {
+          "model": {
+            "type": "string",
+            "in": "query",
+            "description": "Transcription model to use",
+            "default": "nova-3",
+          },
+          "language": {
+            "type": "string",
+            "in": "query",
+            "description": "BCP-47 language tag of the audio, e.g. en or es",
+          },
+          "smart_format": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Apply smart formatting to numbers, dates, and currency",
+            "default": true,
+          },
+          "diarize": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Label speakers in the transcript",
+          },
+          "punctuate": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Add punctuation and capitalization",
+          },
+        },
+        "body": {
+          "url": {
+            "type": "string",
+            "description": "Publicly accessible URL of the audio file to transcribe",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "list_projects",
+      "name": "List Projects",
+      "description": "List the Deepgram projects associated with the API key",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.deepgram.com/v1/projects",
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["projects"],
+            "collectionName": "projects",
+            "itemFields": [{ "name": "project_id" }, { "name": "name" }],
+            "omitted": "company metadata and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_project_balances",
+      "name": "Get Project Balances",
+      "description": "Get the outstanding credit balances for a project",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.deepgram.com/v1/projects/{project_id}/balances",
+        "params": {
+          "project_id": {
+            "type": "string",
+            "in": "path",
+            "description": "ID of the project (from List Projects)",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "list_models",
+      "name": "List Models",
+      "description": "List the speech-to-text and text-to-speech models Deepgram offers",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.deepgram.com/v1/models",
+        "params": {
+          "include_outdated": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include non-latest model versions",
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "transcribe_audio",
+      "title": "Transcribe an audio URL",
+      "prompt":
+        "Transcribe this audio file with Deepgram and give me a clean transcript: <paste URL>",
+      "category": "ai",
+      "icon": "sparkles",
+    }, {
+      "id": "check_balance",
+      "title": "Check credit balance",
+      "prompt": "List my Deepgram projects and check the remaining credit balance on each.",
+      "category": "ai",
+      "icon": "chart",
+    }],
+    "suggestedWith": ["assemblyai", "elevenlabs", "openai"],
   },
   {
     "name": "dialpad",
@@ -6373,6 +8495,152 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["gmail", "calendar", "sheets"],
   },
   {
+    "name": "elevenlabs",
+    "displayName": "ElevenLabs",
+    "icon": "elevenlabs.svg",
+    "description":
+      "Browse voices and models, check subscription usage, and synthesize speech with the ElevenLabs API",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "ElevenLabs API Keys",
+        "enableUrl": "https://elevenlabs.io/app/settings/api-keys",
+      }],
+      "keyName": "ELEVENLABS_API_KEY",
+      "headerName": "xi-api-key",
+      "docsUrl": "https://elevenlabs.io/docs/api-reference/authentication",
+    },
+    "envVars": [{
+      "name": "ELEVENLABS_API_KEY",
+      "description": "ElevenLabs API key from app settings",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://elevenlabs.io/app/settings/api-keys",
+    }],
+    "tools": [{
+      "id": "list_voices",
+      "name": "List Voices",
+      "description": "List and search the voices available to the account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.elevenlabs.io/v2/voices",
+        "params": {
+          "search": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter voices by name, description, labels, or category",
+          },
+          "category": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by category: premade, cloned, generated, or professional",
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Voices per page (max 100)",
+            "default": 30,
+          },
+          "next_page_token": {
+            "type": "string",
+            "in": "query",
+            "description": "Page token from a previous list call",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["voices"],
+            "collectionName": "voices",
+            "itemFields": [{ "name": "voice_id" }, { "name": "name" }, { "name": "category" }],
+            "outputFields": [{ "name": "next_page_token" }],
+            "omitted": "voice settings, previews, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_voice",
+      "name": "Get Voice",
+      "description": "Get details about a specific voice",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.elevenlabs.io/v1/voices/{voice_id}",
+        "params": {
+          "voice_id": {
+            "type": "string",
+            "in": "path",
+            "description": "ID of the voice to fetch",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "list_models",
+      "name": "List Models",
+      "description": "List the speech models available to the account",
+      "requiresWrite": false,
+      "endpoint": { "method": "GET", "url": "https://api.elevenlabs.io/v1/models" },
+    }, {
+      "id": "get_subscription",
+      "name": "Get Subscription",
+      "description": "Get subscription tier, character usage, and limits for the account",
+      "requiresWrite": false,
+      "endpoint": { "method": "GET", "url": "https://api.elevenlabs.io/v1/user/subscription" },
+    }, {
+      "id": "text_to_speech",
+      "name": "Text to Speech",
+      "description":
+        "Convert text to speech with a chosen voice; the response is binary audio (not JSON), so route the output to a file or player rather than parsing it",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
+        "params": {
+          "voice_id": {
+            "type": "string",
+            "in": "path",
+            "description": "ID of the voice to use (from List Voices)",
+            "required": true,
+          },
+          "output_format": {
+            "type": "string",
+            "in": "query",
+            "description": "Audio output format, e.g. mp3_44100_128",
+            "default": "mp3_44100_128",
+          },
+        },
+        "body": {
+          "text": {
+            "type": "string",
+            "description": "Text to convert to speech",
+            "required": true,
+          },
+          "model_id": {
+            "type": "string",
+            "description": "Model ID to use",
+            "default": "eleven_multilingual_v2",
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "browse_voices",
+      "title": "Browse voices",
+      "prompt": "List my available ElevenLabs voices and summarize them by category.",
+      "category": "ai",
+      "icon": "list",
+    }, {
+      "id": "check_usage",
+      "title": "Check character usage",
+      "prompt":
+        "Check my ElevenLabs subscription and tell me how much of my character quota is left.",
+      "category": "ai",
+      "icon": "chart",
+    }],
+    "suggestedWith": ["openai", "deepgram", "assemblyai"],
+  },
+  {
     "name": "exa",
     "displayName": "Exa",
     "icon": "exa.svg",
@@ -6518,6 +8786,223 @@ export const connectors: IntegrationConfig[] = [
       "icon": "link",
     }],
     "suggestedWith": ["openai", "anthropic", "notion"],
+  },
+  {
+    "name": "fal",
+    "displayName": "fal",
+    "icon": "fal.svg",
+    "description": "Run hosted generative AI models synchronously or through the fal queue API",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{ "name": "fal API Keys", "enableUrl": "https://fal.ai/dashboard/keys" }],
+      "keyName": "FAL_KEY",
+      "headerPrefix": "Key",
+      "docsUrl": "https://fal.ai/docs/model-apis/model-endpoints/queue",
+    },
+    "envVars": [{
+      "name": "FAL_KEY",
+      "description": "fal API key (sent as 'Authorization: Key <FAL_KEY>')",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://fal.ai/dashboard/keys",
+    }],
+    "tools": [{
+      "id": "run_model",
+      "name": "Run Model",
+      "description":
+        "Run a fal model synchronously and wait for the result (best for fast models; billed per run). The model endpoint ID is split into owner / app / variant segments, e.g. fal-ai/flux/schnell",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://fal.run/{app_owner}/{app_id}/{app_variant}",
+        "params": {
+          "app_owner": {
+            "type": "string",
+            "in": "path",
+            "description": "First segment of the model endpoint ID (the owner), e.g. fal-ai",
+            "default": "fal-ai",
+          },
+          "app_id": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Second segment of the model endpoint ID (the app), e.g. flux or fast-sdxl",
+            "required": true,
+          },
+          "app_variant": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Third segment of the model endpoint ID when present (the variant), e.g. schnell or dev; leave empty for two-segment IDs like fal-ai/fast-sdxl",
+            "default": "",
+          },
+        },
+        "body": {
+          "input": {
+            "type": "object",
+            "description":
+              'Model input payload sent as the request body, e.g. {"prompt": "a red panda"} — see the model\'s API page for its schema',
+            "required": true,
+          },
+        },
+        "bodyMode": "passthrough",
+      },
+    }, {
+      "id": "queue_submit",
+      "name": "Submit Queue Request",
+      "description":
+        "Submit a request to the fal queue and return immediately with a request_id (billed per run)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://queue.fal.run/{app_owner}/{app_id}/{app_variant}",
+        "params": {
+          "app_owner": {
+            "type": "string",
+            "in": "path",
+            "description": "First segment of the model endpoint ID (the owner), e.g. fal-ai",
+            "default": "fal-ai",
+          },
+          "app_id": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Second segment of the model endpoint ID (the app), e.g. flux or fast-sdxl",
+            "required": true,
+          },
+          "app_variant": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Third segment of the model endpoint ID when present (the variant), e.g. schnell or dev; leave empty for two-segment IDs like fal-ai/fast-sdxl",
+            "default": "",
+          },
+        },
+        "body": {
+          "input": {
+            "type": "object",
+            "description":
+              'Model input payload sent as the request body, e.g. {"prompt": "a red panda"} — see the model\'s API page for its schema',
+            "required": true,
+          },
+        },
+        "bodyMode": "passthrough",
+      },
+    }, {
+      "id": "queue_status",
+      "name": "Get Queue Status",
+      "description":
+        "Check the status of a queued request (IN_QUEUE, IN_PROGRESS, or COMPLETED). Use the base app ID without the variant segment, matching the status_url returned at submit time",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://queue.fal.run/{app_owner}/{app_id}/requests/{request_id}/status",
+        "params": {
+          "app_owner": {
+            "type": "string",
+            "in": "path",
+            "description": "Owner segment of the model endpoint ID, e.g. fal-ai",
+            "default": "fal-ai",
+          },
+          "app_id": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Base app segment without the variant (for fal-ai/flux/schnell use flux), matching the status_url returned by Submit Queue Request",
+            "required": true,
+          },
+          "request_id": {
+            "type": "string",
+            "in": "path",
+            "description": "Request ID returned by Submit Queue Request",
+            "required": true,
+          },
+          "logs": {
+            "type": "number",
+            "in": "query",
+            "description": "Set to 1 to include execution logs in the status response",
+            "default": 0,
+          },
+        },
+      },
+    }, {
+      "id": "queue_result",
+      "name": "Get Queue Result",
+      "description":
+        "Fetch the result of a completed queue request. Use the base app ID without the variant segment, matching the response_url returned at submit time",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://queue.fal.run/{app_owner}/{app_id}/requests/{request_id}/response",
+        "params": {
+          "app_owner": {
+            "type": "string",
+            "in": "path",
+            "description": "Owner segment of the model endpoint ID, e.g. fal-ai",
+            "default": "fal-ai",
+          },
+          "app_id": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Base app segment without the variant (for fal-ai/flux/schnell use flux), matching the response_url returned by Submit Queue Request",
+            "required": true,
+          },
+          "request_id": {
+            "type": "string",
+            "in": "path",
+            "description": "Request ID returned by Submit Queue Request",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "queue_cancel",
+      "name": "Cancel Queue Request",
+      "description": "Cancel a queued request that has not started running yet",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://queue.fal.run/{app_owner}/{app_id}/requests/{request_id}/cancel",
+        "params": {
+          "app_owner": {
+            "type": "string",
+            "in": "path",
+            "description": "Owner segment of the model endpoint ID, e.g. fal-ai",
+            "default": "fal-ai",
+          },
+          "app_id": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Base app segment without the variant (for fal-ai/flux/schnell use flux)",
+            "required": true,
+          },
+          "request_id": {
+            "type": "string",
+            "in": "path",
+            "description": "Request ID returned by Submit Queue Request",
+            "required": true,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "run_flux",
+      "title": "Generate an image",
+      "prompt":
+        "Run the fal-ai/flux/schnell model on fal with a prompt I provide and show me the resulting image URL.",
+      "category": "ai",
+      "icon": "image",
+    }, {
+      "id": "queue_job",
+      "title": "Queue a long job",
+      "prompt":
+        "Submit a request to a fal model via the queue, then poll its status and fetch the result when it completes.",
+      "category": "ai",
+      "icon": "clock",
+    }],
+    "suggestedWith": ["openai", "anthropic", "gemini"],
   },
   {
     "name": "fathom",
@@ -7183,6 +9668,343 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["calendar", "slack", "notion"],
   },
   {
+    "name": "fireworks-ai",
+    "displayName": "Fireworks AI",
+    "icon": "fireworks-ai.svg",
+    "description":
+      "Run chat completions, text completions, and embeddings on open models via the Fireworks AI inference API",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Fireworks AI API Keys",
+        "enableUrl": "https://app.fireworks.ai/settings/users/api-keys",
+      }],
+      "keyName": "FIREWORKS_API_KEY",
+      "headerPrefix": "Bearer",
+      "docsUrl": "https://docs.fireworks.ai/api-reference/introduction",
+    },
+    "envVars": [{
+      "name": "FIREWORKS_API_KEY",
+      "description": "Fireworks AI API key from account settings",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.fireworks.ai/api-reference/introduction",
+    }],
+    "tools": [{
+      "id": "list_models",
+      "name": "List Models",
+      "description": "List the models available on Fireworks AI",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.fireworks.ai/inference/v1/models",
+        "response": {
+          "transform": "data",
+          "historicalSummary": {
+            "collectionKeys": ["data", "models"],
+            "collectionName": "models",
+            "itemFields": [{ "name": "id" }, { "name": "owned_by" }, { "name": "created" }],
+            "omitted": "model capability details and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "create_chat_completion",
+      "name": "Create Chat Completion",
+      "description": "Generate a chat completion from a list of messages",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.fireworks.ai/inference/v1/chat/completions",
+        "body": {
+          "model": {
+            "type": "string",
+            "description":
+              "Model ID to use, e.g. accounts/fireworks/models/llama-v3p3-70b-instruct",
+            "required": true,
+          },
+          "messages": {
+            "type": "array",
+            "description": "Chat messages, each with role (system|user|assistant) and content",
+            "required": true,
+          },
+          "max_tokens": { "type": "number", "description": "Maximum tokens to generate" },
+          "temperature": { "type": "number", "description": "Sampling temperature" },
+        },
+      },
+    }, {
+      "id": "create_completion",
+      "name": "Create Completion",
+      "description": "Generate a text completion from a raw prompt",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.fireworks.ai/inference/v1/completions",
+        "body": {
+          "model": {
+            "type": "string",
+            "description":
+              "Model ID to use, e.g. accounts/fireworks/models/llama-v3p3-70b-instruct",
+            "required": true,
+          },
+          "prompt": {
+            "type": "string",
+            "description": "Prompt text to complete",
+            "required": true,
+          },
+          "max_tokens": { "type": "number", "description": "Maximum tokens to generate" },
+          "temperature": { "type": "number", "description": "Sampling temperature" },
+        },
+      },
+    }, {
+      "id": "create_embedding",
+      "name": "Create Embedding",
+      "description": "Create an embedding vector for input text",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.fireworks.ai/inference/v1/embeddings",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Embedding model ID, e.g. nomic-ai/nomic-embed-text-v1.5",
+            "required": true,
+          },
+          "input": {
+            "type": "string",
+            "description": "Text to embed (or an array of strings)",
+            "required": true,
+          },
+          "dimensions": {
+            "type": "number",
+            "description": "Number of output dimensions (supported models only)",
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "available_models",
+      "title": "List Fireworks models",
+      "prompt": "List the models available on Fireworks AI for my account.",
+      "category": "ai",
+      "icon": "list",
+    }, {
+      "id": "generate_text",
+      "title": "Generate a response",
+      "prompt": "Use Fireworks AI to generate a chat response to a prompt I provide.",
+      "category": "ai",
+      "icon": "sparkles",
+    }],
+    "suggestedWith": ["openai", "anthropic", "mistral"],
+  },
+  {
+    "name": "fly-io",
+    "displayName": "Fly.io",
+    "icon": "fly-io.svg",
+    "description": "Inspect Fly.io apps and manage Fly Machines",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Fly.io Access Tokens",
+        "enableUrl": "https://fly.io/dashboard/personal/tokens",
+      }],
+      "keyName": "FLY_API_TOKEN",
+      "headerPrefix": "Bearer",
+      "docsUrl": "https://fly.io/docs/machines/api/working-with-machines-api/",
+    },
+    "envVars": [{
+      "name": "FLY_API_TOKEN",
+      "description":
+        "Fly.io access token (create with 'fly tokens create org' or in the dashboard under Tokens)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://fly.io/docs/security/tokens/",
+    }],
+    "tools": [{
+      "id": "list_apps",
+      "name": "List Apps",
+      "description": "List apps in a Fly.io organization",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.machines.dev/v1/apps",
+        "params": {
+          "org_slug": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Organization slug to list apps for (use 'personal' for the personal org)",
+            "required": true,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["apps"],
+            "collectionName": "apps",
+            "itemFields": [{ "name": "id" }, { "name": "name" }, { "name": "machine_count" }, {
+              "name": "network",
+            }],
+            "outputFields": [{ "name": "total_apps" }],
+            "omitted": "app details and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_app",
+      "name": "Get App",
+      "description": "Get details about an app, including its organization and status",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.machines.dev/v1/apps/{appName}",
+        "params": {
+          "appName": {
+            "type": "string",
+            "in": "path",
+            "description": "Fly app name",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "list_machines",
+      "name": "List Machines",
+      "description": "List Machines of an app with their states",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.machines.dev/v1/apps/{appName}/machines",
+        "params": {
+          "appName": {
+            "type": "string",
+            "in": "path",
+            "description": "Fly app name",
+            "required": true,
+          },
+          "region": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter Machines by region code, e.g. iad",
+          },
+          "state": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter Machines by state, e.g. started, stopped",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["machines"],
+            "collectionName": "machines",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "state" },
+              { "name": "region" },
+              { "name": "instance_id" },
+              { "name": "created_at" },
+              { "name": "updated_at" },
+            ],
+            "omitted": "machine config, image refs, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_machine",
+      "name": "Get Machine",
+      "description": "Get a Machine by ID, including its config and state",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.machines.dev/v1/apps/{appName}/machines/{machineId}",
+        "params": {
+          "appName": {
+            "type": "string",
+            "in": "path",
+            "description": "Fly app name",
+            "required": true,
+          },
+          "machineId": {
+            "type": "string",
+            "in": "path",
+            "description": "Machine ID",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "start_machine",
+      "name": "Start Machine",
+      "description": "Start a stopped Machine",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.machines.dev/v1/apps/{appName}/machines/{machineId}/start",
+        "params": {
+          "appName": {
+            "type": "string",
+            "in": "path",
+            "description": "Fly app name",
+            "required": true,
+          },
+          "machineId": {
+            "type": "string",
+            "in": "path",
+            "description": "Machine ID",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "stop_machine",
+      "name": "Stop Machine",
+      "description": "Stop a running Machine",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.machines.dev/v1/apps/{appName}/machines/{machineId}/stop",
+        "params": {
+          "appName": {
+            "type": "string",
+            "in": "path",
+            "description": "Fly app name",
+            "required": true,
+          },
+          "machineId": {
+            "type": "string",
+            "in": "path",
+            "description": "Machine ID",
+            "required": true,
+          },
+        },
+        "body": {
+          "signal": {
+            "type": "string",
+            "description": "Signal to send the Machine's main process, e.g. SIGTERM",
+          },
+          "timeout": {
+            "type": "string",
+            "description": "Grace period before force-stop, e.g. 30s",
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "machine_states",
+      "title": "Machine states",
+      "prompt": "List the Machines of my Fly.io app grouped by state and region.",
+      "category": "devops",
+      "icon": "list",
+    }, {
+      "id": "stop_idle",
+      "title": "Stop a machine",
+      "prompt": "Find the started Machines of my Fly.io app and stop the one I specify.",
+      "category": "devops",
+      "icon": "pause",
+    }],
+    "suggestedWith": ["github", "slack", "sentry"],
+  },
+  {
     "name": "folk",
     "displayName": "folk",
     "icon": "folk.svg",
@@ -7388,6 +10210,257 @@ export const connectors: IntegrationConfig[] = [
       "icon": "plus",
     }],
     "suggestedWith": ["gmail", "notion", "slack"],
+  },
+  {
+    "name": "freshdesk",
+    "displayName": "Freshdesk",
+    "icon": "freshdesk.svg",
+    "description": "Manage support tickets and contacts in Freshdesk",
+    "auth": {
+      "type": "basic",
+      "requiredApis": [{
+        "name": "Freshdesk API Key",
+        "enableUrl": "https://developers.freshdesk.com/api/#authentication",
+      }],
+      "usernameKey": "FRESHDESK_API_KEY",
+      "passwordKey": "FRESHDESK_API_PASSWORD",
+      "docsUrl": "https://developers.freshdesk.com/api/#authentication",
+    },
+    "envVars": [{
+      "name": "FRESHDESK_API_KEY",
+      "description":
+        "Freshdesk API key (used as the HTTP Basic username), from Profile Settings → View API Key",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developers.freshdesk.com/api/#authentication",
+    }, {
+      "name": "FRESHDESK_API_PASSWORD",
+      "description":
+        "HTTP Basic password for Freshdesk — leave as the default 'X'; Freshdesk authenticates with the API key as username and a dummy password",
+      "required": false,
+      "sensitive": true,
+      "docsUrl": "https://developers.freshdesk.com/api/#authentication",
+      "default": "X",
+    }],
+    "tools": [{
+      "id": "list_tickets",
+      "name": "List Tickets",
+      "description": "List support tickets in the Freshdesk account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{domain}.freshdesk.com/api/v2/tickets",
+        "params": {
+          "domain": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Your Freshdesk subdomain — the part before .freshdesk.com in your helpdesk URL",
+            "required": true,
+          },
+          "filter": {
+            "type": "string",
+            "in": "query",
+            "description": "Predefined filter: new_and_my_open, watching, spam, or deleted",
+          },
+          "updated_since": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return tickets updated since this ISO 8601 timestamp",
+          },
+          "order_by": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort field: created_at, due_by, updated_at, or status",
+            "default": "created_at",
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Tickets per page (max 100)",
+            "default": 30,
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number, starting at 1",
+            "default": 1,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["tickets", "data"],
+            "collectionName": "tickets",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "subject" },
+              { "name": "status" },
+              { "name": "priority" },
+              { "name": "type" },
+              { "name": "requester_id" },
+              { "name": "created_at" },
+              { "name": "updated_at" },
+              { "name": "due_by" },
+            ],
+            "outputFields": [{ "name": "page" }],
+            "omitted": "ticket descriptions, conversations, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_ticket",
+      "name": "Get Ticket",
+      "description": "Get details of a Freshdesk ticket",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{domain}.freshdesk.com/api/v2/tickets/{ticketId}",
+        "params": {
+          "domain": {
+            "type": "string",
+            "in": "path",
+            "description": "Your Freshdesk subdomain — the part before .freshdesk.com",
+            "required": true,
+          },
+          "ticketId": {
+            "type": "number",
+            "in": "path",
+            "description": "Freshdesk ticket ID",
+            "required": true,
+          },
+          "include": {
+            "type": "string",
+            "in": "query",
+            "description": "Extra data to embed: conversations, requester, company, or stats",
+          },
+        },
+      },
+    }, {
+      "id": "create_ticket",
+      "name": "Create Ticket",
+      "description": "Create a new support ticket in Freshdesk",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{domain}.freshdesk.com/api/v2/tickets",
+        "params": {
+          "domain": {
+            "type": "string",
+            "in": "path",
+            "description": "Your Freshdesk subdomain — the part before .freshdesk.com",
+            "required": true,
+          },
+        },
+        "body": {
+          "subject": { "type": "string", "description": "Ticket subject", "required": true },
+          "description": {
+            "type": "string",
+            "description": "Ticket body (HTML allowed)",
+            "required": true,
+          },
+          "email": {
+            "type": "string",
+            "description": "Requester's email address",
+            "required": true,
+          },
+          "priority": {
+            "type": "number",
+            "description": "Priority: 1=low, 2=medium, 3=high, 4=urgent",
+            "required": true,
+            "default": 1,
+          },
+          "status": {
+            "type": "number",
+            "description": "Status: 2=open, 3=pending, 4=resolved, 5=closed",
+            "required": true,
+            "default": 2,
+          },
+          "tags": { "type": "array", "description": "Tags to apply to the ticket" },
+        },
+      },
+    }, {
+      "id": "update_ticket",
+      "name": "Update Ticket",
+      "description": "Update fields on an existing Freshdesk ticket",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://{domain}.freshdesk.com/api/v2/tickets/{ticketId}",
+        "params": {
+          "domain": {
+            "type": "string",
+            "in": "path",
+            "description": "Your Freshdesk subdomain — the part before .freshdesk.com",
+            "required": true,
+          },
+          "ticketId": {
+            "type": "number",
+            "in": "path",
+            "description": "Freshdesk ticket ID",
+            "required": true,
+          },
+        },
+        "body": {
+          "subject": { "type": "string", "description": "Ticket subject" },
+          "priority": {
+            "type": "number",
+            "description": "Priority: 1=low, 2=medium, 3=high, 4=urgent",
+          },
+          "status": {
+            "type": "number",
+            "description": "Status: 2=open, 3=pending, 4=resolved, 5=closed",
+          },
+        },
+      },
+    }, {
+      "id": "list_contacts",
+      "name": "List Contacts",
+      "description": "List contacts in the Freshdesk account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{domain}.freshdesk.com/api/v2/contacts",
+        "params": {
+          "domain": {
+            "type": "string",
+            "in": "path",
+            "description": "Your Freshdesk subdomain — the part before .freshdesk.com",
+            "required": true,
+          },
+          "email": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by exact email address",
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Contacts per page (max 100)",
+            "default": 30,
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number, starting at 1",
+            "default": 1,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "open_tickets",
+      "title": "Open tickets",
+      "prompt": "List my open Freshdesk tickets with their priorities and due dates.",
+      "category": "support",
+      "icon": "list",
+    }, {
+      "id": "create_ticket",
+      "title": "Create a ticket",
+      "prompt": "Create a new Freshdesk ticket with a subject, description, and requester email.",
+      "category": "support",
+      "icon": "plus",
+    }],
+    "suggestedWith": ["slack", "gmail", "jira"],
   },
   {
     "name": "gemini",
@@ -9966,6 +13039,353 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["gmail", "calendar", "drive"],
   },
   {
+    "name": "grafana-cloud",
+    "displayName": "Grafana Cloud",
+    "icon": "grafana-cloud.svg",
+    "description": "Search Grafana Cloud dashboards, folders, annotations, and data sources",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Grafana Service Accounts",
+        "enableUrl": "https://grafana.com/docs/grafana/latest/administration/service-accounts/",
+      }],
+      "keyName": "GRAFANA_CLOUD_TOKEN",
+      "headerPrefix": "Bearer",
+      "docsUrl": "https://grafana.com/docs/grafana/latest/developers/http_api/auth/",
+    },
+    "envVars": [{
+      "name": "GRAFANA_CLOUD_TOKEN",
+      "description": "Grafana service account token for your Grafana Cloud stack",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://grafana.com/docs/grafana/latest/administration/service-accounts/",
+    }],
+    "tools": [{
+      "id": "search_dashboards",
+      "name": "Search Dashboards",
+      "description": "Search dashboards and folders in the Grafana stack",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{stack}.grafana.net/api/search",
+        "params": {
+          "stack": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Grafana Cloud stack slug — the subdomain of your Grafana URL (e.g. mycompany for mycompany.grafana.net)",
+            "required": true,
+          },
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "Search term matched against dashboard and folder titles",
+          },
+          "type": {
+            "type": "string",
+            "in": "query",
+            "description": "Restrict results: dash-db (dashboards) or dash-folder (folders)",
+          },
+          "tag": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return results with this tag",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum results (max 5000)",
+            "default": 50,
+          },
+          "page": { "type": "number", "in": "query", "description": "Page number (starts at 1)" },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["dashboards"],
+            "collectionName": "dashboards",
+            "itemFields": [
+              { "name": "uid" },
+              { "name": "title" },
+              { "name": "type" },
+              { "name": "url" },
+              { "name": "folderTitle" },
+              { "name": "tags", "kind": "string-array" },
+            ],
+            "omitted": "numeric IDs and starring metadata",
+          },
+        },
+      },
+    }, {
+      "id": "get_dashboard",
+      "name": "Get Dashboard",
+      "description": "Get a dashboard's full JSON model by UID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{stack}.grafana.net/api/dashboards/uid/{uid}",
+        "params": {
+          "stack": {
+            "type": "string",
+            "in": "path",
+            "description": "Grafana Cloud stack slug",
+            "required": true,
+          },
+          "uid": {
+            "type": "string",
+            "in": "path",
+            "description": "Dashboard UID (from Search Dashboards)",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "list_folders",
+      "name": "List Folders",
+      "description": "List dashboard folders in the Grafana stack",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{stack}.grafana.net/api/folders",
+        "params": {
+          "stack": {
+            "type": "string",
+            "in": "path",
+            "description": "Grafana Cloud stack slug",
+            "required": true,
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum folders to return",
+            "default": 100,
+          },
+        },
+      },
+    }, {
+      "id": "list_annotations",
+      "name": "List Annotations",
+      "description": "List annotations and alert events in a time range",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{stack}.grafana.net/api/annotations",
+        "params": {
+          "stack": {
+            "type": "string",
+            "in": "path",
+            "description": "Grafana Cloud stack slug",
+            "required": true,
+          },
+          "from": {
+            "type": "number",
+            "in": "query",
+            "description": "Start of the window as epoch milliseconds",
+          },
+          "to": {
+            "type": "number",
+            "in": "query",
+            "description": "End of the window as epoch milliseconds",
+          },
+          "type": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by type: alert or annotation",
+          },
+          "tags": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by annotation tag, e.g. deploy",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum annotations to return",
+            "default": 100,
+          },
+        },
+      },
+    }, {
+      "id": "create_annotation",
+      "name": "Create Annotation",
+      "description": "Create an annotation (e.g. mark a deploy) on a dashboard or globally",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{stack}.grafana.net/api/annotations",
+        "params": {
+          "stack": {
+            "type": "string",
+            "in": "path",
+            "description": "Grafana Cloud stack slug",
+            "required": true,
+          },
+        },
+        "body": {
+          "text": { "type": "string", "description": "Annotation text", "required": true },
+          "dashboardUID": {
+            "type": "string",
+            "description":
+              "Dashboard UID to attach the annotation to (omit for a global annotation)",
+          },
+          "panelId": { "type": "number", "description": "Panel ID within the dashboard" },
+          "time": {
+            "type": "number",
+            "description": "Annotation time as epoch milliseconds (defaults to now)",
+          },
+          "timeEnd": {
+            "type": "number",
+            "description": "End time as epoch milliseconds, for region annotations",
+          },
+          "tags": { "type": "array", "description": 'Tags, e.g. ["deploy","api"]' },
+        },
+      },
+    }, {
+      "id": "list_datasources",
+      "name": "List Data Sources",
+      "description": "List data sources configured in the Grafana stack",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{stack}.grafana.net/api/datasources",
+        "params": {
+          "stack": {
+            "type": "string",
+            "in": "path",
+            "description": "Grafana Cloud stack slug",
+            "required": true,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "find_dashboard",
+      "title": "Find a dashboard",
+      "prompt":
+        "Search my Grafana Cloud stack for dashboards about latency and list their titles and folders.",
+      "category": "observability",
+      "icon": "search",
+    }, {
+      "id": "recent_annotations",
+      "title": "Recent annotations",
+      "prompt":
+        "List the annotations in my Grafana stack from the last 24 hours and summarize any alert events.",
+      "category": "observability",
+      "icon": "list",
+    }],
+    "suggestedWith": ["datadog", "pagerduty", "sentry"],
+  },
+  {
+    "name": "groq",
+    "displayName": "Groq",
+    "icon": "groq.svg",
+    "description":
+      "Run fast chat completions on Groq-hosted open models via the OpenAI-compatible Groq API",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Groq Console API Keys",
+        "enableUrl": "https://console.groq.com/keys",
+      }],
+      "keyName": "GROQ_API_KEY",
+      "headerPrefix": "Bearer",
+      "docsUrl": "https://console.groq.com/docs/api-reference",
+    },
+    "envVars": [{
+      "name": "GROQ_API_KEY",
+      "description": "Groq API key from the Groq console (starts with gsk_)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://console.groq.com/keys",
+    }],
+    "tools": [{
+      "id": "list_models",
+      "name": "List Models",
+      "description": "List the models available on Groq",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.groq.com/openai/v1/models",
+        "response": {
+          "transform": "data",
+          "historicalSummary": {
+            "collectionKeys": ["data", "models"],
+            "collectionName": "models",
+            "itemFields": [{ "name": "id" }, { "name": "owned_by" }, { "name": "context_window" }, {
+              "name": "active",
+            }],
+            "omitted": "model capability details and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_model",
+      "name": "Get Model",
+      "description": "Get details about a specific Groq model",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.groq.com/openai/v1/models/{model}",
+        "params": {
+          "model": {
+            "type": "string",
+            "in": "path",
+            "description": "Model ID, e.g. llama-3.3-70b-versatile",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "create_chat_completion",
+      "name": "Create Chat Completion",
+      "description": "Generate a chat completion from a list of messages",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Model ID to use, e.g. llama-3.3-70b-versatile",
+            "required": true,
+          },
+          "messages": {
+            "type": "array",
+            "description": "Chat messages, each with role (system|user|assistant) and content",
+            "required": true,
+          },
+          "max_completion_tokens": {
+            "type": "number",
+            "description": "Maximum tokens to generate",
+          },
+          "temperature": {
+            "type": "number",
+            "description": "Sampling temperature between 0 and 2",
+          },
+        },
+      },
+    }, {
+      "id": "list_batches",
+      "name": "List Batches",
+      "description": "List the organization's batch jobs",
+      "requiresWrite": false,
+      "endpoint": { "method": "GET", "url": "https://api.groq.com/openai/v1/batches" },
+    }],
+    "prompts": [{
+      "id": "available_models",
+      "title": "List Groq models",
+      "prompt": "List the models available on Groq and note their context windows.",
+      "category": "ai",
+      "icon": "list",
+    }, {
+      "id": "generate_text",
+      "title": "Generate a fast response",
+      "prompt": "Use Groq to generate a response to a prompt I provide.",
+      "category": "ai",
+      "icon": "sparkles",
+    }],
+    "suggestedWith": ["openai", "anthropic", "mistral"],
+  },
+  {
     "name": "gusto",
     "displayName": "Gusto",
     "icon": "gusto.svg",
@@ -11527,6 +14947,276 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["github", "jira", "slack"],
   },
   {
+    "name": "heroku",
+    "displayName": "Heroku",
+    "icon": "heroku.svg",
+    "description": "Inspect and manage Heroku apps, dynos, config vars, and releases",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Heroku Account Applications",
+        "enableUrl": "https://dashboard.heroku.com/account/applications",
+      }],
+      "keyName": "HEROKU_API_KEY",
+      "headerPrefix": "Bearer",
+      "docsUrl": "https://devcenter.heroku.com/articles/platform-api-reference#authentication",
+    },
+    "envVars": [{
+      "name": "HEROKU_API_KEY",
+      "description": "Heroku API token (from 'heroku authorizations:create' or the Account page)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://devcenter.heroku.com/articles/platform-api-quickstart",
+    }],
+    "tools": [{
+      "id": "list_apps",
+      "name": "List Apps",
+      "description": "List apps the authenticated user can access",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.heroku.com/apps",
+        "params": {
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "description": "Heroku API version header",
+            "default": "application/vnd.heroku+json; version=3",
+            "headerName": "Accept",
+          },
+          "range": {
+            "type": "string",
+            "in": "header",
+            "description":
+              "Pagination/sort range, e.g. 'name ..; order=asc; max=200;' (use the Next-Range response header to continue)",
+            "headerName": "Range",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["apps"],
+            "collectionName": "apps",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "web_url" },
+              { "name": "maintenance" },
+              { "name": "region", "kind": "object" },
+              { "name": "created_at" },
+              { "name": "updated_at" },
+              { "name": "owner", "kind": "contact" },
+            ],
+            "omitted": "stack, buildpack, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_app",
+      "name": "Get App",
+      "description": "Get details of an app",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.heroku.com/apps/{appIdOrName}",
+        "params": {
+          "appIdOrName": {
+            "type": "string",
+            "in": "path",
+            "description": "App name or UUID",
+            "required": true,
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "description": "Heroku API version header",
+            "default": "application/vnd.heroku+json; version=3",
+            "headerName": "Accept",
+          },
+        },
+      },
+    }, {
+      "id": "list_dynos",
+      "name": "List Dynos",
+      "description": "List the dynos of an app with their state",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.heroku.com/apps/{appIdOrName}/dynos",
+        "params": {
+          "appIdOrName": {
+            "type": "string",
+            "in": "path",
+            "description": "App name or UUID",
+            "required": true,
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "description": "Heroku API version header",
+            "default": "application/vnd.heroku+json; version=3",
+            "headerName": "Accept",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["dynos"],
+            "collectionName": "dynos",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "type" },
+              { "name": "state" },
+              { "name": "size" },
+              { "name": "command", "maxLength": 200 },
+              { "name": "created_at" },
+              { "name": "updated_at" },
+            ],
+            "omitted": "release references and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "restart_dyno",
+      "name": "Restart Dyno",
+      "description": "Restart a specific dyno of an app",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "DELETE",
+        "url": "https://api.heroku.com/apps/{appIdOrName}/dynos/{dynoIdOrName}",
+        "params": {
+          "appIdOrName": {
+            "type": "string",
+            "in": "path",
+            "description": "App name or UUID",
+            "required": true,
+          },
+          "dynoIdOrName": {
+            "type": "string",
+            "in": "path",
+            "description": "Dyno name (e.g. web.1) or UUID",
+            "required": true,
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "description": "Heroku API version header",
+            "default": "application/vnd.heroku+json; version=3",
+            "headerName": "Accept",
+          },
+        },
+      },
+    }, {
+      "id": "restart_all_dynos",
+      "name": "Restart All Dynos",
+      "description": "Restart every dyno of an app",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "DELETE",
+        "url": "https://api.heroku.com/apps/{appIdOrName}/dynos",
+        "params": {
+          "appIdOrName": {
+            "type": "string",
+            "in": "path",
+            "description": "App name or UUID",
+            "required": true,
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "description": "Heroku API version header",
+            "default": "application/vnd.heroku+json; version=3",
+            "headerName": "Accept",
+          },
+        },
+      },
+    }, {
+      "id": "get_config_vars",
+      "name": "Get Config Vars",
+      "description": "Get the config vars (environment variables) of an app",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.heroku.com/apps/{appIdOrName}/config-vars",
+        "params": {
+          "appIdOrName": {
+            "type": "string",
+            "in": "path",
+            "description": "App name or UUID",
+            "required": true,
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "description": "Heroku API version header",
+            "default": "application/vnd.heroku+json; version=3",
+            "headerName": "Accept",
+          },
+        },
+      },
+    }, {
+      "id": "list_releases",
+      "name": "List Releases",
+      "description": "List the release history of an app",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.heroku.com/apps/{appIdOrName}/releases",
+        "params": {
+          "appIdOrName": {
+            "type": "string",
+            "in": "path",
+            "description": "App name or UUID",
+            "required": true,
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "description": "Heroku API version header",
+            "default": "application/vnd.heroku+json; version=3",
+            "headerName": "Accept",
+          },
+          "range": {
+            "type": "string",
+            "in": "header",
+            "description": "Pagination/sort range, e.g. 'version ..; order=desc; max=25;'",
+            "headerName": "Range",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["releases"],
+            "collectionName": "releases",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "version" },
+              { "name": "status" },
+              { "name": "description", "maxLength": 200 },
+              { "name": "current" },
+              { "name": "created_at" },
+              { "name": "user", "kind": "contact" },
+            ],
+            "omitted": "slug references and provider-specific payload fields",
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "dyno_health",
+      "title": "Dyno health check",
+      "prompt":
+        "List the dynos of my Heroku app and tell me if any are crashed or not in the 'up' state.",
+      "category": "devops",
+      "icon": "list",
+    }, {
+      "id": "recent_releases",
+      "title": "Recent releases",
+      "prompt": "Show the latest releases of my Heroku app and who deployed them.",
+      "category": "devops",
+      "icon": "history",
+    }],
+    "suggestedWith": ["github", "slack", "sentry"],
+  },
+  {
     "name": "hubspot",
     "displayName": "HubSpot",
     "icon": "hubspot.svg",
@@ -12190,6 +15880,391 @@ export const connectors: IntegrationConfig[] = [
     }],
     "suggestedWith": ["sheets", "gmail", "slack"],
     "category": "sales",
+  },
+  {
+    "name": "huggingface",
+    "displayName": "Hugging Face",
+    "icon": "huggingface.svg",
+    "description":
+      "Search models and datasets on the Hugging Face Hub and run chat completions via Inference Providers",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Hugging Face Access Tokens",
+        "enableUrl": "https://huggingface.co/settings/tokens",
+      }],
+      "keyName": "HF_TOKEN",
+      "headerPrefix": "Bearer",
+      "docsUrl": "https://huggingface.co/docs/hub/security-tokens",
+    },
+    "envVars": [{
+      "name": "HF_TOKEN",
+      "description": "Hugging Face access token (starts with hf_)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://huggingface.co/settings/tokens",
+    }],
+    "tools": [{
+      "id": "search_models",
+      "name": "Search Models",
+      "description": "Search models on the Hugging Face Hub",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://huggingface.co/api/models",
+        "params": {
+          "search": {
+            "type": "string",
+            "in": "query",
+            "description": "Free-text search over model names",
+          },
+          "author": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by author or organization, e.g. meta-llama",
+          },
+          "filter": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by tag, e.g. text-generation or pytorch",
+          },
+          "sort": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort field: downloads, likes, createdAt, or trendingScore",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum models to return",
+            "default": 20,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["models"],
+            "collectionName": "models",
+            "itemFields": [{ "name": "id" }, { "name": "pipeline_tag" }, { "name": "downloads" }, {
+              "name": "likes",
+            }],
+            "omitted": "tags, timestamps, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_model",
+      "name": "Get Model",
+      "description": "Get details about a model repository on the Hub",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://huggingface.co/api/models/{namespace}/{repo}",
+        "params": {
+          "namespace": {
+            "type": "string",
+            "in": "path",
+            "description": "Model owner (user or organization), e.g. meta-llama",
+            "required": true,
+          },
+          "repo": {
+            "type": "string",
+            "in": "path",
+            "description": "Model repository name, e.g. Llama-3.3-70B-Instruct",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "search_datasets",
+      "name": "Search Datasets",
+      "description": "Search datasets on the Hugging Face Hub",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://huggingface.co/api/datasets",
+        "params": {
+          "search": {
+            "type": "string",
+            "in": "query",
+            "description": "Free-text search over dataset names",
+          },
+          "author": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by author or organization",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum datasets to return",
+            "default": 20,
+          },
+        },
+      },
+    }, {
+      "id": "whoami",
+      "name": "Who Am I",
+      "description": "Get the account and permissions associated with the access token",
+      "requiresWrite": false,
+      "endpoint": { "method": "GET", "url": "https://huggingface.co/api/whoami-v2" },
+    }, {
+      "id": "create_chat_completion",
+      "name": "Create Chat Completion",
+      "description":
+        "Generate a chat completion through the Hugging Face Inference Providers router (OpenAI-compatible)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://router.huggingface.co/v1/chat/completions",
+        "body": {
+          "model": {
+            "type": "string",
+            "description":
+              "Hub model ID, e.g. openai/gpt-oss-120b; append :cheapest or :fastest to pick a provider policy",
+            "required": true,
+          },
+          "messages": {
+            "type": "array",
+            "description": "Chat messages, each with role (system|user|assistant) and content",
+            "required": true,
+          },
+          "max_tokens": { "type": "number", "description": "Maximum tokens to generate" },
+          "temperature": { "type": "number", "description": "Sampling temperature" },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "find_models",
+      "title": "Find trending models",
+      "prompt":
+        "Search the Hugging Face Hub for trending models for a task I describe and summarize the top results.",
+      "category": "ai",
+      "icon": "list",
+    }, {
+      "id": "run_open_model",
+      "title": "Chat with an open model",
+      "prompt":
+        "Use Hugging Face Inference Providers to generate a response from an open model I pick.",
+      "category": "ai",
+      "icon": "sparkles",
+    }],
+    "suggestedWith": ["openai", "replicate", "together-ai"],
+  },
+  {
+    "name": "intercom",
+    "displayName": "Intercom",
+    "icon": "intercom.svg",
+    "description": "Work with contacts, conversations, and help center articles in Intercom",
+    "auth": {
+      "type": "oauth2",
+      "provider": "intercom",
+      "authorizationUrl": "https://app.intercom.com/oauth",
+      "tokenUrl": "https://api.intercom.io/auth/eagle/token",
+      "tokenAuthMethod": "request_body",
+      "requiredApis": [{
+        "name": "Intercom Developer Hub",
+        "enableUrl": "https://app.intercom.com/a/apps/_/developer-hub",
+      }],
+      "docsUrl":
+        "https://developers.intercom.com/docs/build-an-integration/learn-more/authentication/setting-up-oauth",
+    },
+    "envVars": [{
+      "name": "INTERCOM_CLIENT_ID",
+      "description":
+        "Intercom OAuth Client ID (from your app's Basic information page in the Developer Hub)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl":
+        "https://developers.intercom.com/docs/build-an-integration/learn-more/authentication/setting-up-oauth",
+    }, {
+      "name": "INTERCOM_CLIENT_SECRET",
+      "description": "Intercom OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl":
+        "https://developers.intercom.com/docs/build-an-integration/learn-more/authentication/setting-up-oauth",
+    }],
+    "tools": [{
+      "id": "list_contacts",
+      "name": "List Contacts",
+      "description": "List contacts (users and leads) in the Intercom workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.intercom.io/contacts",
+        "params": {
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Contacts per page (max 150)",
+            "default": 50,
+          },
+          "starting_after": {
+            "type": "string",
+            "in": "query",
+            "description": "Cursor from pages.next.starting_after in a previous response",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data", "contacts"],
+            "collectionName": "contacts",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "role" },
+              { "name": "email" },
+              { "name": "name" },
+              { "name": "phone" },
+              { "name": "created_at" },
+              { "name": "updated_at" },
+              { "name": "last_seen_at" },
+            ],
+            "outputFields": [{ "name": "total_count" }, { "name": "pages", "kind": "object" }],
+            "omitted":
+              "custom attributes, company associations, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "search_contacts",
+      "name": "Search Contacts",
+      "description": "Search Intercom contacts with a field/operator/value query",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.intercom.io/contacts/search",
+        "body": {
+          "query": {
+            "type": "object",
+            "description":
+              'Search query, e.g. { "field": "email", "operator": "=", "value": "jane@acme.com" } or a nested AND/OR query',
+            "required": true,
+          },
+          "pagination": {
+            "type": "object",
+            "description": 'Pagination, e.g. { "per_page": 50, "starting_after": "<cursor>" }',
+          },
+        },
+      },
+    }, {
+      "id": "get_contact",
+      "name": "Get Contact",
+      "description": "Get a single Intercom contact by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.intercom.io/contacts/{contactId}",
+        "params": {
+          "contactId": {
+            "type": "string",
+            "in": "path",
+            "description": "Intercom contact ID",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "list_conversations",
+      "name": "List Conversations",
+      "description": "List conversations in the Intercom workspace, newest first",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.intercom.io/conversations",
+        "params": {
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Conversations per page (max 150)",
+            "default": 20,
+          },
+          "starting_after": {
+            "type": "string",
+            "in": "query",
+            "description": "Cursor from pages.next.starting_after in a previous response",
+          },
+        },
+      },
+    }, {
+      "id": "reply_to_conversation",
+      "name": "Reply To Conversation",
+      "description": "Reply to an Intercom conversation as an admin (comment or internal note)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.intercom.io/conversations/{conversationId}/reply",
+        "params": {
+          "conversationId": {
+            "type": "string",
+            "in": "path",
+            "description": "Intercom conversation ID",
+            "required": true,
+          },
+        },
+        "body": {
+          "message_type": {
+            "type": "string",
+            "description": "Reply type: 'comment' (visible to the user) or 'note' (internal)",
+            "required": true,
+            "default": "comment",
+          },
+          "type": {
+            "type": "string",
+            "description": "Author type; must be 'admin'",
+            "required": true,
+            "default": "admin",
+          },
+          "admin_id": {
+            "type": "string",
+            "description": "ID of the admin authoring the reply",
+            "required": true,
+          },
+          "body": {
+            "type": "string",
+            "description": "Reply text (HTML allowed)",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "list_articles",
+      "name": "List Articles",
+      "description": "List help center articles in the Intercom workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.intercom.io/articles",
+        "params": {
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Articles per page (max 250)",
+            "default": 25,
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number, starting at 1",
+            "default": 1,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "recent_conversations",
+      "title": "Recent conversations",
+      "prompt":
+        "List the most recent Intercom conversations and summarize what customers are asking about.",
+      "category": "support",
+      "icon": "list",
+    }, {
+      "id": "find_contact",
+      "title": "Find a contact",
+      "prompt": "Search Intercom for a contact by email and show their profile.",
+      "category": "support",
+      "icon": "search",
+    }],
+    "suggestedWith": ["slack", "hubspot", "gmail"],
   },
   {
     "name": "jira",
@@ -13152,6 +17227,648 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["shopify", "stripe", "sheets"],
   },
   {
+    "name": "langfuse",
+    "displayName": "Langfuse",
+    "icon": "langfuse.svg",
+    "description":
+      "Query Langfuse traces and observations and create scores for LLM observability and evals",
+    "auth": {
+      "type": "basic",
+      "requiredApis": [{
+        "name": "Langfuse Project API Keys",
+        "enableUrl": "https://cloud.langfuse.com",
+      }],
+      "usernameKey": "LANGFUSE_PUBLIC_KEY",
+      "passwordKey": "LANGFUSE_SECRET_KEY",
+      "docsUrl": "https://langfuse.com/docs/api-and-data-platform/features/public-api",
+    },
+    "envVars": [{
+      "name": "LANGFUSE_PUBLIC_KEY",
+      "description":
+        "Langfuse project public key (starts with pk-lf-), used as the HTTP Basic username",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://langfuse.com/faq/all/where-are-langfuse-api-keys",
+    }, {
+      "name": "LANGFUSE_SECRET_KEY",
+      "description":
+        "Langfuse project secret key (starts with sk-lf-), used as the HTTP Basic password",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://langfuse.com/faq/all/where-are-langfuse-api-keys",
+    }],
+    "tools": [{
+      "id": "list_traces",
+      "name": "List Traces",
+      "description": "List traces in the Langfuse project with optional filters",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/api/public/traces",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Langfuse host: cloud.langfuse.com (EU), us.cloud.langfuse.com (US), or your self-hosted domain",
+            "default": "cloud.langfuse.com",
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1,
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Traces per page",
+            "default": 25,
+          },
+          "userId": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return traces for this user ID",
+          },
+          "name": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return traces with this name",
+          },
+          "sessionId": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return traces in this session",
+          },
+          "fromTimestamp": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Only traces on or after this ISO 8601 timestamp, e.g. 2026-06-01T00:00:00Z",
+          },
+          "toTimestamp": {
+            "type": "string",
+            "in": "query",
+            "description": "Only traces before this ISO 8601 timestamp",
+          },
+          "tags": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return traces with this tag",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "traces",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "timestamp" },
+              { "name": "userId" },
+              { "name": "sessionId" },
+              { "name": "tags", "kind": "string-array" },
+            ],
+            "outputFields": [{ "name": "meta", "kind": "object" }],
+            "omitted": "trace input/output payloads, costs, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_trace",
+      "name": "Get Trace",
+      "description": "Get a single trace with its full observation tree and scores",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/api/public/traces/{traceId}",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Langfuse host: cloud.langfuse.com (EU), us.cloud.langfuse.com (US), or your self-hosted domain",
+            "default": "cloud.langfuse.com",
+          },
+          "traceId": {
+            "type": "string",
+            "in": "path",
+            "description": "Trace ID",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "list_observations",
+      "name": "List Observations",
+      "description": "List observations (spans, generations, events) with optional filters",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/api/public/observations",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Langfuse host: cloud.langfuse.com (EU), us.cloud.langfuse.com (US), or your self-hosted domain",
+            "default": "cloud.langfuse.com",
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1,
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Observations per page",
+            "default": 25,
+          },
+          "traceId": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return observations belonging to this trace",
+          },
+          "type": {
+            "type": "string",
+            "in": "query",
+            "description": "Observation type: SPAN, GENERATION, or EVENT",
+          },
+          "name": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return observations with this name",
+          },
+          "userId": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return observations for this user ID",
+          },
+        },
+      },
+    }, {
+      "id": "create_score",
+      "name": "Create Score",
+      "description": "Attach a score (evaluation result) to a trace or observation",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{host}/api/public/scores",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Langfuse host: cloud.langfuse.com (EU), us.cloud.langfuse.com (US), or your self-hosted domain",
+            "default": "cloud.langfuse.com",
+          },
+        },
+        "body": {
+          "traceId": { "type": "string", "description": "Trace ID to score", "required": true },
+          "name": {
+            "type": "string",
+            "description": "Score name, e.g. accuracy or user-feedback",
+            "required": true,
+          },
+          "value": {
+            "type": "number",
+            "description": "Score value (numeric; for BOOLEAN data type use 1 or 0)",
+            "required": true,
+          },
+          "observationId": {
+            "type": "string",
+            "description":
+              "Score a specific observation within the trace instead of the whole trace",
+          },
+          "comment": { "type": "string", "description": "Optional comment explaining the score" },
+          "dataType": {
+            "type": "string",
+            "description": "Score data type: NUMERIC, BOOLEAN, or CATEGORICAL",
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "recent_traces",
+      "title": "Review recent traces",
+      "prompt":
+        "List my most recent Langfuse traces and summarize latency, errors, and usage patterns.",
+      "category": "observability",
+      "icon": "list",
+    }, {
+      "id": "score_trace",
+      "title": "Score a trace",
+      "prompt":
+        "Look up a Langfuse trace I specify and attach an accuracy score with a short comment.",
+      "category": "observability",
+      "icon": "star",
+    }],
+    "suggestedWith": ["openai", "anthropic", "gemini"],
+  },
+  {
+    "name": "langsmith",
+    "displayName": "LangSmith",
+    "icon": "langsmith.svg",
+    "description":
+      "Query LangSmith tracing projects, runs, datasets, and examples for LLM observability",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "LangSmith API Keys",
+        "enableUrl": "https://smith.langchain.com/settings",
+      }],
+      "keyName": "LANGSMITH_API_KEY",
+      "headerName": "x-api-key",
+      "docsUrl": "https://docs.langchain.com/langsmith/create-account-api-key",
+    },
+    "envVars": [{
+      "name": "LANGSMITH_API_KEY",
+      "description": "LangSmith API key (starts with lsv2_)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.langchain.com/langsmith/create-account-api-key",
+    }],
+    "tools": [{
+      "id": "list_projects",
+      "name": "List Projects",
+      "description": "List tracing projects (tracer sessions) in your LangSmith workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.smith.langchain.com/api/v1/sessions",
+        "params": {
+          "name_contains": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter projects by name substring",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum projects to return (max 100)",
+            "default": 25,
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of projects to skip for pagination",
+            "default": 0,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["sessions"],
+            "collectionName": "projects",
+            "itemFields": [{ "name": "id" }, { "name": "name" }, { "name": "start_time" }, {
+              "name": "last_run_start_time",
+            }, { "name": "run_count" }],
+            "omitted": "feedback statistics and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "query_runs",
+      "name": "Query Runs",
+      "description":
+        "Query traced runs with filters (project, trace filter expressions, root runs only)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.smith.langchain.com/api/v1/runs/query",
+        "body": {
+          "session": {
+            "type": "array",
+            "description": 'Project (tracer session) UUIDs to query, e.g. ["<project-uuid>"]',
+            "required": true,
+          },
+          "is_root": {
+            "type": "boolean",
+            "description": "Only return root runs (top-level traces)",
+            "default": true,
+          },
+          "filter": {
+            "type": "string",
+            "description":
+              'LangSmith filter expression, e.g. eq(status, "error") or gt(latency, "5s")',
+          },
+          "limit": {
+            "type": "number",
+            "description": "Maximum runs to return (max 100)",
+            "default": 25,
+          },
+          "select": {
+            "type": "array",
+            "description":
+              'Fields to include, e.g. ["id", "name", "status", "latency", "inputs", "outputs"]',
+          },
+        },
+        "response": { "transform": "runs" },
+      },
+    }, {
+      "id": "get_run",
+      "name": "Get Run",
+      "description": "Get full details of a single run, including inputs, outputs, and errors",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.smith.langchain.com/api/v1/runs/{run_id}",
+        "params": {
+          "run_id": { "type": "string", "in": "path", "description": "Run UUID", "required": true },
+        },
+      },
+    }, {
+      "id": "list_datasets",
+      "name": "List Datasets",
+      "description": "List evaluation datasets in your LangSmith workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.smith.langchain.com/api/v1/datasets",
+        "params": {
+          "name_contains": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter datasets by name substring",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum datasets to return (max 100)",
+            "default": 25,
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of datasets to skip for pagination",
+            "default": 0,
+          },
+        },
+      },
+    }, {
+      "id": "list_examples",
+      "name": "List Examples",
+      "description": "List examples in a LangSmith dataset",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.smith.langchain.com/api/v1/examples",
+        "params": {
+          "dataset": {
+            "type": "string",
+            "in": "query",
+            "description": "Dataset UUID to list examples from",
+            "required": true,
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum examples to return (max 100)",
+            "default": 25,
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of examples to skip for pagination",
+            "default": 0,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "recent_errors",
+      "title": "Find failing traces",
+      "prompt":
+        "Query my LangSmith projects for recent runs with errors and summarize what went wrong.",
+      "category": "observability",
+      "icon": "alert",
+    }, {
+      "id": "project_overview",
+      "title": "Project overview",
+      "prompt": "List my LangSmith tracing projects with their run counts and last activity.",
+      "category": "observability",
+      "icon": "list",
+    }],
+    "suggestedWith": ["openai", "anthropic", "datadog"],
+  },
+  {
+    "name": "launchdarkly",
+    "displayName": "LaunchDarkly",
+    "icon": "launchdarkly.svg",
+    "description": "Read LaunchDarkly projects, feature flags, and environments, and toggle flags",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "LaunchDarkly Access Tokens",
+        "enableUrl": "https://app.launchdarkly.com/settings/authorization",
+      }],
+      "keyName": "LAUNCHDARKLY_API_TOKEN",
+      "docsUrl": "https://launchdarkly.com/docs/api",
+    },
+    "envVars": [{
+      "name": "LAUNCHDARKLY_API_TOKEN",
+      "description":
+        "LaunchDarkly personal or service access token (sent raw in the Authorization header, no prefix)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://launchdarkly.com/docs/home/account/api-create",
+    }],
+    "tools": [{
+      "id": "list_projects",
+      "name": "List Projects",
+      "description": "List projects in the LaunchDarkly account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://app.launchdarkly.com/api/v2/projects",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Projects to return (default 20)",
+            "default": 20,
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Where to start in the list, for pagination",
+          },
+          "filter": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter expression, e.g. query:my-project",
+          },
+        },
+      },
+    }, {
+      "id": "list_flags",
+      "name": "List Feature Flags",
+      "description": "List feature flags in a project, optionally scoped to one environment",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://app.launchdarkly.com/api/v2/flags/{projectKey}",
+        "params": {
+          "projectKey": {
+            "type": "string",
+            "in": "path",
+            "description": "Project key (from List Projects)",
+            "required": true,
+          },
+          "env": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Environment key — restricts environment-specific flag configuration to this environment",
+          },
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "Case-insensitive match on flag key or name",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Flags to return (default 20)",
+            "default": 20,
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Where to start in the list, for pagination",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["items"],
+            "collectionName": "feature flags",
+            "itemFields": [{ "name": "key" }, { "name": "name" }, { "name": "kind" }, {
+              "name": "archived",
+            }, { "name": "tags", "kind": "string-array" }],
+            "outputFields": [{ "name": "totalCount" }],
+            "omitted": "variations, per-environment configuration, and link metadata",
+          },
+        },
+      },
+    }, {
+      "id": "get_flag",
+      "name": "Get Feature Flag",
+      "description":
+        "Get a feature flag including its variations and per-environment configuration",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://app.launchdarkly.com/api/v2/flags/{projectKey}/{featureFlagKey}",
+        "params": {
+          "projectKey": {
+            "type": "string",
+            "in": "path",
+            "description": "Project key",
+            "required": true,
+          },
+          "featureFlagKey": {
+            "type": "string",
+            "in": "path",
+            "description": "Feature flag key (from List Feature Flags)",
+            "required": true,
+          },
+          "env": {
+            "type": "string",
+            "in": "query",
+            "description": "Environment key — limit returned configuration to this environment",
+          },
+        },
+      },
+    }, {
+      "id": "list_environments",
+      "name": "List Environments",
+      "description": "List environments in a LaunchDarkly project",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://app.launchdarkly.com/api/v2/projects/{projectKey}/environments",
+        "params": {
+          "projectKey": {
+            "type": "string",
+            "in": "path",
+            "description": "Project key",
+            "required": true,
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Environments to return (default 20)",
+            "default": 20,
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Where to start in the list, for pagination",
+          },
+        },
+      },
+    }, {
+      "id": "toggle_flag",
+      "name": "Toggle Feature Flag",
+      "description":
+        "Turn a feature flag on or off in one environment using a semantic patch instruction",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://app.launchdarkly.com/api/v2/flags/{projectKey}/{featureFlagKey}",
+        "params": {
+          "projectKey": {
+            "type": "string",
+            "in": "path",
+            "description": "Project key",
+            "required": true,
+          },
+          "featureFlagKey": {
+            "type": "string",
+            "in": "path",
+            "description": "Feature flag key",
+            "required": true,
+          },
+        },
+        "body": {
+          "environmentKey": {
+            "type": "string",
+            "description": "Environment key the instructions apply to",
+            "required": true,
+          },
+          "instructions": {
+            "type": "array",
+            "description":
+              'Semantic patch instructions, e.g. [{"kind":"turnFlagOn"}] or [{"kind":"turnFlagOff"}]',
+            "required": true,
+          },
+          "comment": {
+            "type": "string",
+            "description": "Optional audit log comment for the change",
+          },
+        },
+        "contentType": "application/json; domain-model=launchdarkly.semanticpatch",
+      },
+    }],
+    "prompts": [{
+      "id": "flag_inventory",
+      "title": "Flag inventory",
+      "prompt":
+        "List the feature flags in my LaunchDarkly project and group them by whether they are archived or tagged as temporary.",
+      "category": "devops",
+      "icon": "list",
+    }, {
+      "id": "flag_state",
+      "title": "Check a flag",
+      "prompt":
+        "Get my LaunchDarkly flag and tell me whether it is on in production and what the default variation is.",
+      "category": "devops",
+      "icon": "search",
+    }],
+    "suggestedWith": ["github", "datadog", "segment"],
+  },
+  {
     "name": "lever",
     "displayName": "Lever",
     "icon": "lever.svg",
@@ -13796,6 +18513,246 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["github", "slack", "figma"],
   },
   {
+    "name": "mailchimp",
+    "displayName": "Mailchimp",
+    "icon": "mailchimp.svg",
+    "description": "Manage audiences, members, and campaigns in Mailchimp Marketing",
+    "auth": {
+      "type": "oauth2",
+      "provider": "mailchimp",
+      "authorizationUrl": "https://login.mailchimp.com/oauth2/authorize",
+      "tokenUrl": "https://login.mailchimp.com/oauth2/token",
+      "tokenAuthMethod": "request_body",
+      "requiredApis": [{
+        "name": "Mailchimp Registered Apps",
+        "enableUrl": "https://admin.mailchimp.com/account/oauth2/",
+      }],
+      "docsUrl": "https://mailchimp.com/developer/marketing/guides/access-user-data-oauth-2/",
+    },
+    "envVars": [{
+      "name": "MAILCHIMP_CLIENT_ID",
+      "description": "Mailchimp OAuth Client ID (from your registered app)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://mailchimp.com/developer/marketing/guides/access-user-data-oauth-2/",
+    }, {
+      "name": "MAILCHIMP_CLIENT_SECRET",
+      "description": "Mailchimp OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://mailchimp.com/developer/marketing/guides/access-user-data-oauth-2/",
+    }],
+    "tools": [{
+      "id": "list_audiences",
+      "name": "List Audiences",
+      "description": "List audiences (lists) in the Mailchimp account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{dc}.api.mailchimp.com/3.0/lists",
+        "params": {
+          "dc": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Mailchimp data center — the usXX prefix in your Mailchimp admin URL (e.g. us21 for us21.admin.mailchimp.com)",
+            "required": true,
+          },
+          "count": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of audiences to return (max 1000)",
+            "default": 10,
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of audiences to skip for pagination",
+            "default": 0,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["lists"],
+            "collectionName": "audiences",
+            "itemFields": [{ "name": "id" }, { "name": "name" }, { "name": "date_created" }, {
+              "name": "stats",
+              "kind": "object",
+            }],
+            "outputFields": [{ "name": "total_items" }],
+            "omitted": "audience defaults, campaign settings, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "list_members",
+      "name": "List Members",
+      "description": "List members of a Mailchimp audience",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{dc}.api.mailchimp.com/3.0/lists/{listId}/members",
+        "params": {
+          "dc": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Mailchimp data center — the usXX prefix in your Mailchimp admin URL (e.g. us21)",
+            "required": true,
+          },
+          "listId": {
+            "type": "string",
+            "in": "path",
+            "description": "Audience (list) ID",
+            "required": true,
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Filter by status: subscribed, unsubscribed, cleaned, pending, transactional, or archived",
+          },
+          "count": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of members to return (max 1000)",
+            "default": 25,
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of members to skip for pagination",
+            "default": 0,
+          },
+        },
+      },
+    }, {
+      "id": "get_member",
+      "name": "Get Member",
+      "description":
+        "Get a single audience member by email (MD5 hash of the lowercase address) or contact ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{dc}.api.mailchimp.com/3.0/lists/{listId}/members/{subscriberHash}",
+        "params": {
+          "dc": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Mailchimp data center — the usXX prefix in your Mailchimp admin URL (e.g. us21)",
+            "required": true,
+          },
+          "listId": {
+            "type": "string",
+            "in": "path",
+            "description": "Audience (list) ID",
+            "required": true,
+          },
+          "subscriberHash": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "MD5 hash of the member's lowercase email address (a contact ID or email also works)",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "add_member",
+      "name": "Add Member",
+      "description": "Add a new member to a Mailchimp audience",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{dc}.api.mailchimp.com/3.0/lists/{listId}/members",
+        "params": {
+          "dc": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Mailchimp data center — the usXX prefix in your Mailchimp admin URL (e.g. us21)",
+            "required": true,
+          },
+          "listId": {
+            "type": "string",
+            "in": "path",
+            "description": "Audience (list) ID",
+            "required": true,
+          },
+        },
+        "body": {
+          "email_address": {
+            "type": "string",
+            "description": "Member's email address",
+            "required": true,
+          },
+          "status": {
+            "type": "string",
+            "description":
+              "Subscription status: subscribed, unsubscribed, cleaned, pending, or transactional",
+            "required": true,
+            "default": "subscribed",
+          },
+          "merge_fields": {
+            "type": "object",
+            "description": 'Merge field values, e.g. { "FNAME": "Jane", "LNAME": "Doe" }',
+          },
+          "tags": { "type": "array", "description": 'Tag names to assign, e.g. ["newsletter"]' },
+        },
+      },
+    }, {
+      "id": "list_campaigns",
+      "name": "List Campaigns",
+      "description": "List campaigns in the Mailchimp account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{dc}.api.mailchimp.com/3.0/campaigns",
+        "params": {
+          "dc": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Mailchimp data center — the usXX prefix in your Mailchimp admin URL (e.g. us21)",
+            "required": true,
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by status: save, paused, schedule, sending, or sent",
+          },
+          "count": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of campaigns to return (max 1000)",
+            "default": 10,
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of campaigns to skip for pagination",
+            "default": 0,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "audience_overview",
+      "title": "Audience overview",
+      "prompt": "List my Mailchimp audiences with their member counts and recent growth.",
+      "category": "marketing",
+      "icon": "list",
+    }, {
+      "id": "add_subscriber",
+      "title": "Add a subscriber",
+      "prompt": "Add a new subscriber to one of my Mailchimp audiences with their name and email.",
+      "category": "marketing",
+      "icon": "plus",
+    }],
+    "suggestedWith": ["hubspot", "gmail", "slack"],
+  },
+  {
     "name": "metabase",
     "displayName": "Metabase",
     "icon": "metabase.svg",
@@ -14399,6 +19356,441 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["slack", "analytics", "monitoring"],
   },
   {
+    "name": "monday",
+    "displayName": "monday.com",
+    "icon": "monday.svg",
+    "description": "Manage boards, items, and column values in monday.com work management",
+    "auth": {
+      "type": "oauth2",
+      "provider": "monday",
+      "authorizationUrl": "https://auth.monday.com/oauth2/authorize",
+      "tokenUrl": "https://auth.monday.com/oauth2/token",
+      "scopes": ["boards:read", "boards:write"],
+      "tokenAuthMethod": "request_body",
+      "requiredApis": [{
+        "name": "monday.com Developer Center",
+        "enableUrl": "https://monday.com/developers/apps",
+      }],
+      "docsUrl": "https://developer.monday.com/apps/docs/oauth",
+    },
+    "envVars": [{
+      "name": "MONDAY_CLIENT_ID",
+      "description": "monday.com OAuth Client ID (from your app in the Developer Center)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.monday.com/apps/docs/oauth",
+    }, {
+      "name": "MONDAY_CLIENT_SECRET",
+      "description": "monday.com OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.monday.com/apps/docs/oauth",
+    }],
+    "tools": [{
+      "id": "list_boards",
+      "name": "List Boards",
+      "description": "List boards in the monday.com account",
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.monday.com/v2",
+        "query":
+          "query($limit: Int, $page: Int) { boards(limit: $limit, page: $page) { id name description state board_kind items_count workspace { id name } } }",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "body",
+            "description": "Maximum boards to return",
+            "default": 25,
+          },
+          "page": {
+            "type": "number",
+            "in": "body",
+            "description": "Page number, starting at 1",
+            "default": 1,
+          },
+        },
+        "response": {
+          "transform": "boards",
+          "historicalSummary": {
+            "collectionKeys": ["boards", "data"],
+            "collectionName": "boards",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "state" },
+              { "name": "board_kind" },
+              { "name": "items_count" },
+              { "name": "workspace", "kind": "object" },
+            ],
+            "outputFields": [{ "name": "page" }],
+            "omitted": "board descriptions, groups, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "list_items",
+      "name": "List Items",
+      "description": "List items on a monday.com board with their column values",
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.monday.com/v2",
+        "query":
+          "query($boardId: [ID!], $limit: Int, $cursor: String) { boards(ids: $boardId) { items_page(limit: $limit, cursor: $cursor) { cursor items { id name state created_at updated_at group { id title } column_values { id text type } } } } }",
+        "params": {
+          "boardId": {
+            "type": "string",
+            "in": "body",
+            "description": "Board ID to list items from",
+            "required": true,
+          },
+          "limit": {
+            "type": "number",
+            "in": "body",
+            "description": "Maximum items to return (max 500)",
+            "default": 25,
+          },
+          "cursor": {
+            "type": "string",
+            "in": "body",
+            "description": "Pagination cursor from a previous items_page response",
+          },
+        },
+        "response": { "transform": "boards" },
+      },
+    }, {
+      "id": "get_item",
+      "name": "Get Item",
+      "description": "Get a monday.com item by ID with its column values and updates",
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.monday.com/v2",
+        "query":
+          "query($itemId: [ID!]) { items(ids: $itemId) { id name state created_at updated_at board { id name } group { id title } column_values { id text type value } updates { id body created_at } } }",
+        "params": {
+          "itemId": { "type": "string", "in": "body", "description": "Item ID", "required": true },
+        },
+        "response": { "transform": "items" },
+      },
+    }, {
+      "id": "create_item",
+      "name": "Create Item",
+      "description": "Create a new item on a monday.com board",
+      "requiresWrite": true,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.monday.com/v2",
+        "query":
+          "mutation($boardId: ID!, $groupId: String, $itemName: String!, $columnValues: JSON) { create_item(board_id: $boardId, group_id: $groupId, item_name: $itemName, column_values: $columnValues) { id name board { id } } }",
+        "params": {
+          "boardId": {
+            "type": "string",
+            "in": "body",
+            "description": "Board ID to create the item on",
+            "required": true,
+          },
+          "groupId": {
+            "type": "string",
+            "in": "body",
+            "description": "Group ID within the board (defaults to the first group)",
+          },
+          "itemName": {
+            "type": "string",
+            "in": "body",
+            "description": "Name of the new item",
+            "required": true,
+          },
+          "columnValues": {
+            "type": "string",
+            "in": "body",
+            "description":
+              'JSON-encoded column values, e.g. "{\\"status\\": {\\"label\\": \\"Done\\"}}"',
+          },
+        },
+        "response": { "transform": "create_item" },
+      },
+    }, {
+      "id": "update_column_values",
+      "name": "Update Column Values",
+      "description": "Update one or more column values on an existing monday.com item",
+      "requiresWrite": true,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.monday.com/v2",
+        "query":
+          "mutation($boardId: ID!, $itemId: ID!, $columnValues: JSON!) { change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $columnValues) { id name column_values { id text } } }",
+        "params": {
+          "boardId": {
+            "type": "string",
+            "in": "body",
+            "description": "Board ID the item belongs to",
+            "required": true,
+          },
+          "itemId": {
+            "type": "string",
+            "in": "body",
+            "description": "Item ID to update",
+            "required": true,
+          },
+          "columnValues": {
+            "type": "string",
+            "in": "body",
+            "description":
+              'JSON-encoded column values to set, e.g. "{\\"status\\": {\\"label\\": \\"Working on it\\"}}"',
+            "required": true,
+          },
+        },
+        "response": { "transform": "change_multiple_column_values" },
+      },
+    }],
+    "prompts": [{
+      "id": "board_overview",
+      "title": "Board overview",
+      "prompt": "List my monday.com boards and summarize the items on the most active one.",
+      "category": "productivity",
+      "icon": "list",
+    }, {
+      "id": "add_item",
+      "title": "Add an item",
+      "prompt": "Create a new item on a monday.com board with a name and status.",
+      "category": "productivity",
+      "icon": "plus",
+    }],
+    "suggestedWith": ["slack", "gmail", "notion"],
+  },
+  {
+    "name": "mongodb-atlas",
+    "displayName": "MongoDB Atlas",
+    "icon": "mongodb-atlas.svg",
+    "description":
+      "Inspect MongoDB Atlas projects, clusters, and database users via the Atlas Administration API",
+    "auth": {
+      "type": "oauth2",
+      "tokenUrl": "https://cloud.mongodb.com/api/oauth/token",
+      "grantType": "client_credentials",
+      "tokenAuthMethod": "basic",
+      "requiredApis": [{
+        "name": "Atlas Service Accounts",
+        "enableUrl": "https://cloud.mongodb.com",
+      }],
+      "docsUrl": "https://www.mongodb.com/docs/atlas/api/service-accounts-overview/",
+    },
+    "envVars": [{
+      "name": "MONGODB_ATLAS_CLIENT_ID",
+      "description": "Atlas service account client ID (e.g. mdb_sa_id_...)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://www.mongodb.com/docs/atlas/api/service-accounts-overview/",
+    }, {
+      "name": "MONGODB_ATLAS_CLIENT_SECRET",
+      "description": "Atlas service account client secret (e.g. mdb_sa_sk_...)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://www.mongodb.com/docs/atlas/api/service-accounts-overview/",
+    }],
+    "tools": [{
+      "id": "list_projects",
+      "name": "List Projects",
+      "description": "List Atlas projects (groups) the service account can access",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://cloud.mongodb.com/api/atlas/v2/groups",
+        "params": {
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "description": "Atlas versioned media type",
+            "default": "application/vnd.atlas.2025-03-12+json",
+            "headerName": "Accept",
+          },
+          "itemsPerPage": {
+            "type": "number",
+            "in": "query",
+            "description": "Projects per page (max 500)",
+            "default": 100,
+          },
+          "pageNum": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["results"],
+            "collectionName": "projects",
+            "itemFields": [{ "name": "id" }, { "name": "name" }, { "name": "orgId" }, {
+              "name": "clusterCount",
+            }, { "name": "created" }],
+            "outputFields": [{ "name": "totalCount" }],
+            "omitted": "links and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "list_clusters",
+      "name": "List Clusters",
+      "description": "List clusters in an Atlas project",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://cloud.mongodb.com/api/atlas/v2/groups/{groupId}/clusters",
+        "params": {
+          "groupId": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Atlas project (group) ID — a 24-character hex string from List Projects",
+            "required": true,
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "description": "Atlas versioned media type",
+            "default": "application/vnd.atlas.2025-03-12+json",
+            "headerName": "Accept",
+          },
+          "itemsPerPage": {
+            "type": "number",
+            "in": "query",
+            "description": "Clusters per page (max 500)",
+            "default": 100,
+          },
+          "pageNum": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["results"],
+            "collectionName": "clusters",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "stateName" },
+              { "name": "clusterType" },
+              { "name": "mongoDBVersion" },
+              { "name": "paused" },
+              { "name": "createDate" },
+            ],
+            "outputFields": [{ "name": "totalCount" }],
+            "omitted":
+              "replication specs, connection strings, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_cluster",
+      "name": "Get Cluster",
+      "description": "Get details of a cluster, including state and connection strings",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://cloud.mongodb.com/api/atlas/v2/groups/{groupId}/clusters/{clusterName}",
+        "params": {
+          "groupId": {
+            "type": "string",
+            "in": "path",
+            "description": "Atlas project (group) ID",
+            "required": true,
+          },
+          "clusterName": {
+            "type": "string",
+            "in": "path",
+            "description": "Cluster name",
+            "required": true,
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "description": "Atlas versioned media type",
+            "default": "application/vnd.atlas.2025-03-12+json",
+            "headerName": "Accept",
+          },
+        },
+      },
+    }, {
+      "id": "list_database_users",
+      "name": "List Database Users",
+      "description": "List database users configured in an Atlas project",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://cloud.mongodb.com/api/atlas/v2/groups/{groupId}/databaseUsers",
+        "params": {
+          "groupId": {
+            "type": "string",
+            "in": "path",
+            "description": "Atlas project (group) ID",
+            "required": true,
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "description": "Atlas versioned media type",
+            "default": "application/vnd.atlas.2025-03-12+json",
+            "headerName": "Accept",
+          },
+          "itemsPerPage": {
+            "type": "number",
+            "in": "query",
+            "description": "Users per page (max 500)",
+            "default": 100,
+          },
+          "pageNum": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["results"],
+            "collectionName": "database_users",
+            "itemFields": [
+              { "name": "username" },
+              { "name": "databaseName" },
+              { "name": "roles", "kind": "object" },
+              { "name": "awsIAMType" },
+              { "name": "x509Type" },
+            ],
+            "outputFields": [{ "name": "totalCount" }],
+            "omitted": "scopes, labels, and provider-specific payload fields",
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "cluster_overview",
+      "title": "Cluster overview",
+      "prompt":
+        "List my MongoDB Atlas projects and the clusters in each, with their state and MongoDB version.",
+      "category": "data",
+      "icon": "list",
+    }, {
+      "id": "paused_clusters",
+      "title": "Find paused clusters",
+      "prompt":
+        "Check my MongoDB Atlas clusters and tell me which ones are paused or not in the IDLE state.",
+      "category": "data",
+      "icon": "alert",
+    }],
+    "suggestedWith": ["aws", "datadog", "slack"],
+  },
+  {
     "name": "neon",
     "displayName": "Neon",
     "icon": "neon.svg",
@@ -14604,6 +19996,399 @@ export const connectors: IntegrationConfig[] = [
       "icon": "search",
     }],
     "suggestedWith": ["stripe", "clerk", "vercel"],
+  },
+  {
+    "name": "netlify",
+    "displayName": "Netlify",
+    "icon": "netlify.svg",
+    "description": "Manage Netlify sites, deploys, builds, and form submissions",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Netlify Personal Access Tokens",
+        "enableUrl": "https://app.netlify.com/user/applications#personal-access-tokens",
+      }],
+      "keyName": "NETLIFY_AUTH_TOKEN",
+      "headerPrefix": "Bearer",
+      "docsUrl": "https://docs.netlify.com/api/get-started/",
+    },
+    "envVars": [{
+      "name": "NETLIFY_AUTH_TOKEN",
+      "description":
+        "Netlify personal access token (User settings > Applications > Personal access tokens)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.netlify.com/api/get-started/#authentication",
+    }],
+    "tools": [{
+      "id": "list_sites",
+      "name": "List Sites",
+      "description": "List all sites the authenticated user has access to",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.netlify.com/api/v1/sites",
+        "params": {
+          "name": { "type": "string", "in": "query", "description": "Filter sites by name" },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1,
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Sites per page (max 100)",
+            "default": 50,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["sites"],
+            "collectionName": "sites",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "url" },
+              { "name": "ssl_url" },
+              { "name": "state" },
+              { "name": "created_at" },
+              { "name": "updated_at" },
+              { "name": "published_deploy", "kind": "object" },
+            ],
+            "outputFields": [{ "name": "page" }, { "name": "per_page" }],
+            "omitted": "build settings, repo configuration, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_site",
+      "name": "Get Site",
+      "description": "Get a site by ID or custom domain",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.netlify.com/api/v1/sites/{siteId}",
+        "params": {
+          "siteId": {
+            "type": "string",
+            "in": "path",
+            "description": "Site ID (UUID) or site domain, e.g. my-site.netlify.app",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "list_deploys",
+      "name": "List Deploys",
+      "description": "List deploys for a site",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.netlify.com/api/v1/sites/{siteId}/deploys",
+        "params": {
+          "siteId": {
+            "type": "string",
+            "in": "path",
+            "description": "Site ID (UUID) or site domain",
+            "required": true,
+          },
+          "state": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by deploy state, e.g. ready, error, building",
+          },
+          "branch": { "type": "string", "in": "query", "description": "Filter by git branch" },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1,
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Deploys per page (max 100)",
+            "default": 20,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["deploys"],
+            "collectionName": "deploys",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "state" },
+              { "name": "branch" },
+              { "name": "context" },
+              { "name": "deploy_url" },
+              { "name": "created_at" },
+              { "name": "published_at" },
+              { "name": "error_message", "maxLength": 300 },
+            ],
+            "outputFields": [{ "name": "page" }, { "name": "per_page" }],
+            "omitted": "file digests, commit metadata, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_deploy",
+      "name": "Get Deploy",
+      "description": "Get a deploy by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.netlify.com/api/v1/deploys/{deployId}",
+        "params": {
+          "deployId": {
+            "type": "string",
+            "in": "path",
+            "description": "Deploy ID",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "trigger_build",
+      "name": "Trigger Build",
+      "description": "Trigger a new build of a site from its linked repository",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.netlify.com/api/v1/sites/{siteId}/builds",
+        "params": {
+          "siteId": {
+            "type": "string",
+            "in": "path",
+            "description": "Site ID (UUID) or site domain",
+            "required": true,
+          },
+        },
+        "body": {
+          "clear_cache": {
+            "type": "boolean",
+            "description": "Clear the build cache before building",
+            "default": false,
+          },
+        },
+      },
+    }, {
+      "id": "list_form_submissions",
+      "name": "List Form Submissions",
+      "description": "List verified form submissions across all forms of a site",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.netlify.com/api/v1/sites/{siteId}/submissions",
+        "params": {
+          "siteId": {
+            "type": "string",
+            "in": "path",
+            "description": "Site ID (UUID) or site domain",
+            "required": true,
+          },
+          "state": {
+            "type": "string",
+            "in": "query",
+            "description": "Set to 'spam' to list spam submissions instead of verified ones",
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1,
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Submissions per page (max 100)",
+            "default": 50,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["submissions"],
+            "collectionName": "submissions",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "form_name" },
+              { "name": "name" },
+              { "name": "email" },
+              { "name": "summary", "maxLength": 300 },
+              { "name": "created_at" },
+            ],
+            "outputFields": [{ "name": "page" }, { "name": "per_page" }],
+            "omitted": "full submission body fields and provider-specific payload fields",
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "deploy_status",
+      "title": "Latest deploy status",
+      "prompt":
+        "List the most recent Netlify deploys for my site and summarize their states, including any error messages.",
+      "category": "devops",
+      "icon": "list",
+    }, {
+      "id": "form_inbox",
+      "title": "Review form submissions",
+      "prompt":
+        "Show the latest form submissions for my Netlify site and summarize who submitted what.",
+      "category": "devops",
+      "icon": "inbox",
+    }],
+    "suggestedWith": ["github", "slack", "sentry"],
+  },
+  {
+    "name": "new-relic",
+    "displayName": "New Relic",
+    "icon": "new-relic.svg",
+    "description":
+      "Run NRQL queries and inspect entities and issues via the New Relic NerdGraph API",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "New Relic API Keys",
+        "enableUrl": "https://one.newrelic.com/api-keys",
+      }],
+      "keyName": "NEW_RELIC_API_KEY",
+      "headerName": "API-Key",
+      "docsUrl":
+        "https://docs.newrelic.com/docs/apis/nerdgraph/get-started/introduction-new-relic-nerdgraph/",
+    },
+    "envVars": [{
+      "name": "NEW_RELIC_API_KEY",
+      "description": "New Relic user API key (starts with NRAK-), sent as the API-Key header",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.newrelic.com/docs/apis/intro-apis/new-relic-api-keys/",
+    }],
+    "tools": [{
+      "id": "run_nrql_query",
+      "name": "Run NRQL Query",
+      "description": "Run an NRQL query against a New Relic account and return the results",
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.newrelic.com/graphql",
+        "query":
+          "query($accountId: Int!, $nrql: Nrql!) { actor { account(id: $accountId) { nrql(query: $nrql) { results } } } }",
+        "params": {
+          "accountId": {
+            "type": "number",
+            "in": "body",
+            "description": "New Relic account ID",
+            "required": true,
+          },
+          "nrql": {
+            "type": "string",
+            "in": "body",
+            "description": "NRQL query, e.g. SELECT count(*) FROM Transaction SINCE 1 hour ago",
+            "required": true,
+          },
+        },
+        "response": { "transform": "actor.account.nrql.results" },
+      },
+    }, {
+      "id": "search_entities",
+      "name": "Search Entities",
+      "description":
+        "Search monitored entities (apps, hosts, services) with an entity search query",
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.newrelic.com/graphql",
+        "query":
+          "query($query: String!, $cursor: String) { actor { entitySearch(query: $query) { count results(cursor: $cursor) { entities { guid name entityType domain type } nextCursor } } } }",
+        "params": {
+          "query": {
+            "type": "string",
+            "in": "body",
+            "description": "Entity search query, e.g. name LIKE 'checkout' AND domain = 'APM'",
+            "required": true,
+          },
+          "cursor": {
+            "type": "string",
+            "in": "body",
+            "description": "Pagination cursor from a previous response's nextCursor",
+          },
+        },
+        "response": {
+          "transform": "actor.entitySearch.results",
+          "historicalSummary": {
+            "collectionKeys": ["entities"],
+            "collectionName": "entities",
+            "itemFields": [{ "name": "guid" }, { "name": "name" }, { "name": "entityType" }, {
+              "name": "domain",
+            }],
+            "outputFields": [{ "name": "nextCursor" }],
+            "omitted": "entity tags and reporting metadata",
+          },
+        },
+      },
+    }, {
+      "id": "get_entity",
+      "name": "Get Entity",
+      "description": "Get an entity's details and tags by GUID",
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.newrelic.com/graphql",
+        "query":
+          "query($guid: EntityGuid!) { actor { entity(guid: $guid) { guid name entityType domain type tags { key values } } } }",
+        "params": {
+          "guid": {
+            "type": "string",
+            "in": "body",
+            "description": "Entity GUID (from Search Entities)",
+            "required": true,
+          },
+        },
+        "response": { "transform": "actor.entity" },
+      },
+    }, {
+      "id": "list_issues",
+      "name": "List Issues",
+      "description":
+        "List alert issues from the last day in an account (queries the NrAiIssue event type via NRQL)",
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.newrelic.com/graphql",
+        "query":
+          'query($accountId: Int!) { actor { account(id: $accountId) { nrql(query: "FROM NrAiIssue SELECT latest(title) AS title, latest(priority) AS priority, latest(event) AS lastEvent SINCE 1 day ago FACET issueId LIMIT 100") { results } } } }',
+        "params": {
+          "accountId": {
+            "type": "number",
+            "in": "body",
+            "description": "New Relic account ID",
+            "required": true,
+          },
+        },
+        "response": { "transform": "actor.account.nrql.results" },
+      },
+    }],
+    "prompts": [{
+      "id": "error_rate",
+      "title": "Error rate check",
+      "prompt":
+        "Run a New Relic NRQL query for the transaction error rate in the last hour and summarize the result.",
+      "category": "observability",
+      "icon": "search",
+    }, {
+      "id": "open_issues",
+      "title": "Open issues",
+      "prompt": "List the open New Relic issues in my account ordered by priority.",
+      "category": "observability",
+      "icon": "alert",
+    }],
+    "suggestedWith": ["pagerduty", "datadog", "github"],
   },
   {
     "name": "notion",
@@ -15359,6 +21144,115 @@ export const connectors: IntegrationConfig[] = [
       "icon": "sparkles",
     }],
     "suggestedWith": ["anthropic", "slack", "notion"],
+  },
+  {
+    "name": "openrouter",
+    "displayName": "OpenRouter",
+    "icon": "openrouter.svg",
+    "description":
+      "Access hundreds of LLMs through one OpenAI-compatible API with per-generation cost tracking via OpenRouter",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "OpenRouter API Keys",
+        "enableUrl": "https://openrouter.ai/settings/keys",
+      }],
+      "keyName": "OPENROUTER_API_KEY",
+      "headerPrefix": "Bearer",
+      "docsUrl": "https://openrouter.ai/docs/api/reference/overview",
+    },
+    "envVars": [{
+      "name": "OPENROUTER_API_KEY",
+      "description": "OpenRouter API key (starts with sk-or-)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://openrouter.ai/settings/keys",
+    }],
+    "tools": [{
+      "id": "list_models",
+      "name": "List Models",
+      "description": "List the models available through OpenRouter",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://openrouter.ai/api/v1/models",
+        "response": {
+          "transform": "data",
+          "historicalSummary": {
+            "collectionKeys": ["data", "models"],
+            "collectionName": "models",
+            "itemFields": [{ "name": "id" }, { "name": "name" }, { "name": "context_length" }],
+            "omitted": "pricing, architecture, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "create_chat_completion",
+      "name": "Create Chat Completion",
+      "description": "Generate a chat completion from any OpenRouter model",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Model ID to use, e.g. anthropic/claude-sonnet-4 or openai/gpt-4o",
+            "required": true,
+          },
+          "messages": {
+            "type": "array",
+            "description": "Chat messages, each with role (system|user|assistant) and content",
+            "required": true,
+          },
+          "max_tokens": { "type": "number", "description": "Maximum tokens to generate" },
+          "temperature": {
+            "type": "number",
+            "description": "Sampling temperature between 0 and 2",
+          },
+        },
+      },
+    }, {
+      "id": "get_generation",
+      "name": "Get Generation",
+      "description": "Get metadata, token counts, and cost for a past generation by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://openrouter.ai/api/v1/generation",
+        "params": {
+          "id": {
+            "type": "string",
+            "in": "query",
+            "description": "Generation ID returned by a chat completion (the response id field)",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "get_credits",
+      "name": "Get Credits",
+      "description":
+        "Get total credits purchased and used for the account (OpenRouter requires a management key for this endpoint)",
+      "requiresWrite": false,
+      "endpoint": { "method": "GET", "url": "https://openrouter.ai/api/v1/credits" },
+    }],
+    "prompts": [{
+      "id": "available_models",
+      "title": "List OpenRouter models",
+      "prompt":
+        "List the models available through OpenRouter and highlight a few with large context windows.",
+      "category": "ai",
+      "icon": "list",
+    }, {
+      "id": "compare_models",
+      "title": "Compare model responses",
+      "prompt":
+        "Use OpenRouter to send the same prompt to two different models and compare the responses.",
+      "category": "ai",
+      "icon": "sparkles",
+    }],
+    "suggestedWith": ["openai", "anthropic", "gemini"],
   },
   {
     "name": "outlook",
@@ -18084,6 +23978,740 @@ export const connectors: IntegrationConfig[] = [
     "category": "compliance",
   },
   {
+    "name": "pinecone",
+    "displayName": "Pinecone",
+    "icon": "pinecone.svg",
+    "description": "Manage Pinecone vector database indexes and query or upsert vectors",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{ "name": "Pinecone API Keys", "enableUrl": "https://app.pinecone.io" }],
+      "keyName": "PINECONE_API_KEY",
+      "headerName": "Api-Key",
+      "docsUrl": "https://docs.pinecone.io/reference/api/authentication",
+    },
+    "envVars": [{
+      "name": "PINECONE_API_KEY",
+      "description": "Pinecone API key (starts with pcsk_)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.pinecone.io/guides/projects/manage-api-keys",
+    }],
+    "tools": [{
+      "id": "list_indexes",
+      "name": "List Indexes",
+      "description": "List all indexes in the Pinecone project",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.pinecone.io/indexes",
+        "params": {
+          "api_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Pinecone API version date",
+            "default": "2025-01",
+            "headerName": "X-Pinecone-API-Version",
+          },
+        },
+        "response": {
+          "transform": "indexes",
+          "historicalSummary": {
+            "collectionKeys": ["indexes"],
+            "collectionName": "indexes",
+            "itemFields": [{ "name": "name" }, { "name": "dimension" }, { "name": "metric" }, {
+              "name": "host",
+            }, { "name": "status", "kind": "object" }],
+            "omitted": "index spec details and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "describe_index",
+      "name": "Describe Index",
+      "description":
+        "Get an index's configuration and its data-plane host (needed for Query Vectors and Upsert Vectors)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.pinecone.io/indexes/{indexName}",
+        "params": {
+          "indexName": {
+            "type": "string",
+            "in": "path",
+            "description": "Index name",
+            "required": true,
+          },
+          "api_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Pinecone API version date",
+            "default": "2025-01",
+            "headerName": "X-Pinecone-API-Version",
+          },
+        },
+      },
+    }, {
+      "id": "create_index",
+      "name": "Create Index",
+      "description": "Create a new serverless or pod-based index",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.pinecone.io/indexes",
+        "params": {
+          "api_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Pinecone API version date",
+            "default": "2025-01",
+            "headerName": "X-Pinecone-API-Version",
+          },
+        },
+        "body": {
+          "name": {
+            "type": "string",
+            "description": "Index name (1-45 characters, lowercase alphanumeric and hyphens)",
+            "required": true,
+          },
+          "dimension": {
+            "type": "number",
+            "description": "Vector dimension (required for dense indexes), e.g. 1536",
+          },
+          "metric": {
+            "type": "string",
+            "description": "Distance metric: cosine, euclidean, or dotproduct",
+            "default": "cosine",
+          },
+          "spec": {
+            "type": "object",
+            "description":
+              'Deployment spec, e.g. {"serverless":{"cloud":"aws","region":"us-east-1"}}',
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "query_vectors",
+      "name": "Query Vectors",
+      "description":
+        "Query an index for the nearest vectors (run Describe Index first to get the index host)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{indexHost}/query",
+        "params": {
+          "indexHost": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Index data-plane host from Describe Index, e.g. my-index-abc1234.svc.aped-4627-b74a.pinecone.io",
+            "required": true,
+          },
+          "api_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Pinecone API version date",
+            "default": "2025-01",
+            "headerName": "X-Pinecone-API-Version",
+          },
+        },
+        "body": {
+          "vector": {
+            "type": "array",
+            "description": "Query vector values (must match the index dimension)",
+            "required": true,
+          },
+          "topK": {
+            "type": "number",
+            "description": "Number of nearest matches to return",
+            "default": 10,
+          },
+          "namespace": {
+            "type": "string",
+            "description": "Namespace to query (omit for the default namespace)",
+          },
+          "includeMetadata": {
+            "type": "boolean",
+            "description": "Include record metadata in the matches",
+            "default": true,
+          },
+          "includeValues": {
+            "type": "boolean",
+            "description": "Include vector values in the matches",
+            "default": false,
+          },
+          "filter": {
+            "type": "object",
+            "description": 'Metadata filter, e.g. {"genre":{"$eq":"docs"}}',
+          },
+        },
+      },
+    }, {
+      "id": "upsert_vectors",
+      "name": "Upsert Vectors",
+      "description": "Write vectors into an index (run Describe Index first to get the index host)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{indexHost}/vectors/upsert",
+        "params": {
+          "indexHost": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Index data-plane host from Describe Index, e.g. my-index-abc1234.svc.aped-4627-b74a.pinecone.io",
+            "required": true,
+          },
+          "api_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Pinecone API version date",
+            "default": "2025-01",
+            "headerName": "X-Pinecone-API-Version",
+          },
+        },
+        "body": {
+          "vectors": {
+            "type": "array",
+            "description":
+              'Vectors to upsert, e.g. [{"id":"doc-1","values":[0.1,0.2],"metadata":{"title":"..."}}]',
+            "required": true,
+          },
+          "namespace": {
+            "type": "string",
+            "description": "Namespace to write into (omit for the default namespace)",
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "index_overview",
+      "title": "List my indexes",
+      "prompt": "List my Pinecone indexes with their dimensions, metrics, and status.",
+      "category": "data",
+      "icon": "database",
+    }, {
+      "id": "semantic_search",
+      "title": "Search an index",
+      "prompt":
+        "Describe my Pinecone index to get its host, then query it with an embedding vector and show the top matches with metadata.",
+      "category": "data",
+      "icon": "search",
+    }],
+    "suggestedWith": ["openai", "anthropic", "supabase"],
+  },
+  {
+    "name": "pipedrive",
+    "displayName": "Pipedrive",
+    "icon": "pipedrive.svg",
+    "description": "Manage deals, persons, and organizations in Pipedrive CRM",
+    "auth": {
+      "type": "oauth2",
+      "provider": "pipedrive",
+      "authorizationUrl": "https://oauth.pipedrive.com/oauth/authorize",
+      "tokenUrl": "https://oauth.pipedrive.com/oauth/token",
+      "scopes": ["base", "deals:full", "contacts:full"],
+      "tokenAuthMethod": "basic",
+      "requiredApis": [{
+        "name": "Pipedrive Developer Hub",
+        "enableUrl": "https://app.pipedrive.com/developer-hub",
+      }],
+      "docsUrl": "https://pipedrive.readme.io/docs/marketplace-oauth-authorization",
+    },
+    "envVars": [{
+      "name": "PIPEDRIVE_CLIENT_ID",
+      "description": "Pipedrive OAuth Client ID (from your app in the Developer Hub)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://pipedrive.readme.io/docs/marketplace-oauth-authorization",
+    }, {
+      "name": "PIPEDRIVE_CLIENT_SECRET",
+      "description": "Pipedrive OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://pipedrive.readme.io/docs/marketplace-oauth-authorization",
+    }],
+    "tools": [{
+      "id": "list_deals",
+      "name": "List Deals",
+      "description": "List deals in the Pipedrive account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "{{oauth.raw.api_domain}}/api/v1/deals",
+        "params": {
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by status: all_not_deleted, open, won, lost, or deleted",
+            "default": "all_not_deleted",
+          },
+          "start": {
+            "type": "number",
+            "in": "query",
+            "description": "Pagination start offset",
+            "default": 0,
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum deals to return",
+            "default": 50,
+          },
+          "sort": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort order, e.g. update_time DESC",
+          },
+        },
+        "response": {
+          "transform": "data",
+          "historicalSummary": {
+            "collectionKeys": ["data", "deals"],
+            "collectionName": "deals",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "title" },
+              { "name": "status" },
+              { "name": "value" },
+              { "name": "currency" },
+              { "name": "stage_id" },
+              { "name": "person_name" },
+              { "name": "org_name" },
+              { "name": "add_time" },
+              { "name": "update_time" },
+            ],
+            "outputFields": [{ "name": "additional_data", "kind": "object" }],
+            "omitted": "deal custom fields, activities, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_deal",
+      "name": "Get Deal",
+      "description": "Get full details of a Pipedrive deal",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "{{oauth.raw.api_domain}}/api/v1/deals/{dealId}",
+        "params": {
+          "dealId": {
+            "type": "number",
+            "in": "path",
+            "description": "Pipedrive deal ID",
+            "required": true,
+          },
+        },
+        "response": { "transform": "data" },
+      },
+    }, {
+      "id": "create_deal",
+      "name": "Create Deal",
+      "description": "Create a new deal in Pipedrive",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "{{oauth.raw.api_domain}}/api/v1/deals",
+        "body": {
+          "title": { "type": "string", "description": "Deal title", "required": true },
+          "value": { "type": "number", "description": "Deal value" },
+          "currency": { "type": "string", "description": "Currency code, e.g. USD or EUR" },
+          "person_id": {
+            "type": "number",
+            "description": "ID of the person the deal is linked to",
+          },
+          "org_id": {
+            "type": "number",
+            "description": "ID of the organization the deal is linked to",
+          },
+          "stage_id": {
+            "type": "number",
+            "description":
+              "Pipeline stage ID (defaults to the first stage of the default pipeline)",
+          },
+          "status": {
+            "type": "string",
+            "description": "Deal status: open, won, or lost",
+            "default": "open",
+          },
+        },
+        "response": { "transform": "data" },
+      },
+    }, {
+      "id": "update_deal",
+      "name": "Update Deal",
+      "description": "Update fields on an existing Pipedrive deal",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "{{oauth.raw.api_domain}}/api/v1/deals/{dealId}",
+        "params": {
+          "dealId": {
+            "type": "number",
+            "in": "path",
+            "description": "Pipedrive deal ID",
+            "required": true,
+          },
+        },
+        "body": {
+          "title": { "type": "string", "description": "Deal title" },
+          "value": { "type": "number", "description": "Deal value" },
+          "stage_id": { "type": "number", "description": "Pipeline stage ID" },
+          "status": { "type": "string", "description": "Deal status: open, won, or lost" },
+        },
+        "response": { "transform": "data" },
+      },
+    }, {
+      "id": "list_persons",
+      "name": "List Persons",
+      "description": "List persons (contacts) in the Pipedrive account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "{{oauth.raw.api_domain}}/api/v1/persons",
+        "params": {
+          "start": {
+            "type": "number",
+            "in": "query",
+            "description": "Pagination start offset",
+            "default": 0,
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum persons to return",
+            "default": 50,
+          },
+          "sort": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort order, e.g. update_time DESC",
+          },
+        },
+        "response": { "transform": "data" },
+      },
+    }, {
+      "id": "create_person",
+      "name": "Create Person",
+      "description": "Create a new person (contact) in Pipedrive",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "{{oauth.raw.api_domain}}/api/v1/persons",
+        "body": {
+          "name": { "type": "string", "description": "Person's full name", "required": true },
+          "email": {
+            "type": "array",
+            "description": 'Emails, e.g. [{ "value": "jane@acme.com", "primary": true }]',
+          },
+          "phone": {
+            "type": "array",
+            "description": 'Phones, e.g. [{ "value": "+1 555 0100", "primary": true }]',
+          },
+          "org_id": {
+            "type": "number",
+            "description": "ID of the organization the person belongs to",
+          },
+        },
+        "response": { "transform": "data" },
+      },
+    }, {
+      "id": "list_organizations",
+      "name": "List Organizations",
+      "description": "List organizations in the Pipedrive account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "{{oauth.raw.api_domain}}/api/v1/organizations",
+        "params": {
+          "start": {
+            "type": "number",
+            "in": "query",
+            "description": "Pagination start offset",
+            "default": 0,
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum organizations to return",
+            "default": 50,
+          },
+        },
+        "response": { "transform": "data" },
+      },
+    }],
+    "prompts": [{
+      "id": "pipeline_review",
+      "title": "Review my pipeline",
+      "prompt":
+        "List my open Pipedrive deals with their values and stages, and flag any that haven't been updated recently.",
+      "category": "sales",
+      "icon": "chart",
+    }, {
+      "id": "new_deal",
+      "title": "Add a deal",
+      "prompt": "Create a new deal in Pipedrive with a title, value, and linked person.",
+      "category": "sales",
+      "icon": "plus",
+    }],
+    "suggestedWith": ["gmail", "calendly", "slack"],
+  },
+  {
+    "name": "planetscale",
+    "displayName": "PlanetScale",
+    "icon": "planetscale.svg",
+    "description": "Inspect PlanetScale organizations, databases, branches, and deploy requests",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "PlanetScale Service Tokens",
+        "enableUrl": "https://app.planetscale.com",
+      }],
+      "keyName": "PLANETSCALE_SERVICE_TOKEN",
+      "docsUrl": "https://planetscale.com/docs/api/reference/service-tokens",
+    },
+    "envVars": [{
+      "name": "PLANETSCALE_SERVICE_TOKEN",
+      "description":
+        "PlanetScale service token as the combined 'TOKEN_ID:TOKEN' value (e.g. abc123xyz:pscale_tkn_...) — the Authorization header is sent verbatim with no Bearer prefix",
+      "required": true,
+      "sensitive": true,
+      "placeholder": "TOKEN_ID:TOKEN",
+      "docsUrl": "https://planetscale.com/docs/api/reference/service-tokens",
+    }],
+    "tools": [{
+      "id": "list_organizations",
+      "name": "List Organizations",
+      "description": "List organizations the service token can access",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.planetscale.com/v1/organizations",
+        "params": {
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1,
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Organizations per page",
+            "default": 25,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "organizations",
+            "itemFields": [{ "name": "id" }, { "name": "name" }, { "name": "created_at" }, {
+              "name": "updated_at",
+            }],
+            "outputFields": [{ "name": "current_page" }, { "name": "next_page" }],
+            "omitted": "billing, plan, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "list_databases",
+      "name": "List Databases",
+      "description": "List databases in an organization",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.planetscale.com/v1/organizations/{organization}/databases",
+        "params": {
+          "organization": {
+            "type": "string",
+            "in": "path",
+            "description": "Organization name",
+            "required": true,
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1,
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Databases per page",
+            "default": 25,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "databases",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "state" },
+              { "name": "html_url" },
+              { "name": "created_at" },
+              { "name": "updated_at" },
+            ],
+            "outputFields": [{ "name": "current_page" }, { "name": "next_page" }],
+            "omitted": "region details, settings, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_database",
+      "name": "Get Database",
+      "description": "Get details of a database",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.planetscale.com/v1/organizations/{organization}/databases/{database}",
+        "params": {
+          "organization": {
+            "type": "string",
+            "in": "path",
+            "description": "Organization name",
+            "required": true,
+          },
+          "database": {
+            "type": "string",
+            "in": "path",
+            "description": "Database name",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "list_branches",
+      "name": "List Branches",
+      "description": "List branches of a database",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url":
+          "https://api.planetscale.com/v1/organizations/{organization}/databases/{database}/branches",
+        "params": {
+          "organization": {
+            "type": "string",
+            "in": "path",
+            "description": "Organization name",
+            "required": true,
+          },
+          "database": {
+            "type": "string",
+            "in": "path",
+            "description": "Database name",
+            "required": true,
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1,
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Branches per page",
+            "default": 25,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "branches",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "production" },
+              { "name": "ready" },
+              { "name": "parent_branch" },
+              { "name": "created_at" },
+              { "name": "updated_at" },
+            ],
+            "outputFields": [{ "name": "current_page" }, { "name": "next_page" }],
+            "omitted": "restore metadata and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "list_deploy_requests",
+      "name": "List Deploy Requests",
+      "description": "List deploy requests for a database",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url":
+          "https://api.planetscale.com/v1/organizations/{organization}/databases/{database}/deploy-requests",
+        "params": {
+          "organization": {
+            "type": "string",
+            "in": "path",
+            "description": "Organization name",
+            "required": true,
+          },
+          "database": {
+            "type": "string",
+            "in": "path",
+            "description": "Database name",
+            "required": true,
+          },
+          "state": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by state: open or closed",
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1,
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Deploy requests per page",
+            "default": 25,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "deploy_requests",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "number" },
+              { "name": "state" },
+              { "name": "branch" },
+              { "name": "into_branch" },
+              { "name": "approved" },
+              { "name": "created_at" },
+              { "name": "updated_at" },
+            ],
+            "outputFields": [{ "name": "current_page" }, { "name": "next_page" }],
+            "omitted": "deployment operation details and provider-specific payload fields",
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "database_overview",
+      "title": "Database overview",
+      "prompt":
+        "List my PlanetScale databases and their branches, and flag any open deploy requests.",
+      "category": "data",
+      "icon": "list",
+    }, {
+      "id": "pending_deploys",
+      "title": "Pending deploy requests",
+      "prompt":
+        "Show open PlanetScale deploy requests for my database and whether they are approved.",
+      "category": "data",
+      "icon": "alert",
+    }],
+    "suggestedWith": ["github", "slack", "sentry"],
+  },
+  {
     "name": "posthog",
     "displayName": "PostHog",
     "icon": "posthog.svg",
@@ -18511,6 +25139,667 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["jira", "slack", "zendesk"],
   },
   {
+    "name": "qdrant",
+    "displayName": "Qdrant",
+    "icon": "qdrant.svg",
+    "description": "Manage Qdrant vector database collections and search or upsert points",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{ "name": "Qdrant Cloud API Keys", "enableUrl": "https://cloud.qdrant.io" }],
+      "keyName": "QDRANT_API_KEY",
+      "headerName": "api-key",
+      "docsUrl": "https://qdrant.tech/documentation/cloud/authentication/",
+    },
+    "envVars": [{
+      "name": "QDRANT_API_KEY",
+      "description": "Qdrant database API key for your cluster",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://qdrant.tech/documentation/cloud/authentication/",
+    }],
+    "tools": [{
+      "id": "list_collections",
+      "name": "List Collections",
+      "description": "List all collections in the Qdrant cluster",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{clusterHost}:6333/collections",
+        "params": {
+          "clusterHost": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Qdrant cluster hostname without scheme or port (the :6333 REST port is added automatically), e.g. xyz-example.eu-central-1-0.aws.cloud.qdrant.io",
+            "required": true,
+          },
+        },
+        "response": {
+          "transform": "result.collections",
+          "historicalSummary": {
+            "collectionKeys": ["collections"],
+            "collectionName": "collections",
+            "itemFields": [{ "name": "name" }],
+            "omitted": "provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_collection",
+      "name": "Get Collection Info",
+      "description": "Get a collection's configuration, vector parameters, and point count",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{clusterHost}:6333/collections/{collection_name}",
+        "params": {
+          "clusterHost": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Qdrant cluster hostname without scheme or port (the :6333 REST port is added automatically), e.g. xyz-example.eu-central-1-0.aws.cloud.qdrant.io",
+            "required": true,
+          },
+          "collection_name": {
+            "type": "string",
+            "in": "path",
+            "description": "Collection name",
+            "required": true,
+          },
+        },
+        "response": { "transform": "result" },
+      },
+    }, {
+      "id": "search_points",
+      "name": "Search Points",
+      "description": "Search a collection for the points nearest to a query vector",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{clusterHost}:6333/collections/{collection_name}/points/search",
+        "params": {
+          "clusterHost": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Qdrant cluster hostname without scheme or port (the :6333 REST port is added automatically), e.g. xyz-example.eu-central-1-0.aws.cloud.qdrant.io",
+            "required": true,
+          },
+          "collection_name": {
+            "type": "string",
+            "in": "path",
+            "description": "Collection name",
+            "required": true,
+          },
+        },
+        "body": {
+          "vector": {
+            "type": "array",
+            "description": "Query vector values (must match the collection's vector size)",
+            "required": true,
+          },
+          "limit": {
+            "type": "number",
+            "description": "Number of nearest points to return",
+            "default": 10,
+          },
+          "filter": {
+            "type": "object",
+            "description":
+              'Payload filter, e.g. {"must":[{"key":"city","match":{"value":"Berlin"}}]}',
+          },
+          "with_payload": {
+            "type": "boolean",
+            "description": "Include point payloads in results",
+            "default": true,
+          },
+          "with_vector": {
+            "type": "boolean",
+            "description": "Include vector values in results",
+            "default": false,
+          },
+          "score_threshold": {
+            "type": "number",
+            "description": "Exclude results with a similarity score below this value",
+          },
+        },
+        "response": { "transform": "result" },
+      },
+    }, {
+      "id": "upsert_points",
+      "name": "Upsert Points",
+      "description": "Insert or update points (vectors with payloads) in a collection",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://{clusterHost}:6333/collections/{collection_name}/points",
+        "params": {
+          "clusterHost": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Qdrant cluster hostname without scheme or port (the :6333 REST port is added automatically), e.g. xyz-example.eu-central-1-0.aws.cloud.qdrant.io",
+            "required": true,
+          },
+          "collection_name": {
+            "type": "string",
+            "in": "path",
+            "description": "Collection name",
+            "required": true,
+          },
+          "wait": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Wait until the operation is committed before responding",
+            "default": true,
+          },
+        },
+        "body": {
+          "points": {
+            "type": "array",
+            "description":
+              'Points to upsert, e.g. [{"id":1,"vector":[0.1,0.2],"payload":{"city":"Berlin"}}]',
+            "required": true,
+          },
+        },
+        "response": { "transform": "result" },
+      },
+    }],
+    "prompts": [{
+      "id": "collections_overview",
+      "title": "List my collections",
+      "prompt":
+        "List the collections in my Qdrant cluster and show each one's vector size and point count.",
+      "category": "data",
+      "icon": "database",
+    }, {
+      "id": "vector_search",
+      "title": "Search a collection",
+      "prompt":
+        "Search my Qdrant collection with an embedding vector and show the top matches with their payloads.",
+      "category": "data",
+      "icon": "search",
+    }],
+    "suggestedWith": ["openai", "anthropic", "mistral"],
+  },
+  {
+    "name": "quickbooks",
+    "displayName": "QuickBooks",
+    "icon": "quickbooks.svg",
+    "description": "Manage invoices, customers, and accounts in QuickBooks Online",
+    "auth": {
+      "type": "oauth2",
+      "provider": "quickbooks",
+      "authorizationUrl": "https://appcenter.intuit.com/connect/oauth2",
+      "tokenUrl": "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
+      "scopes": ["com.intuit.quickbooks.accounting"],
+      "tokenAuthMethod": "basic",
+      "requiredApis": [{
+        "name": "Intuit Developer App",
+        "enableUrl": "https://developer.intuit.com/app/developer/dashboard",
+      }],
+      "docsUrl":
+        "https://developer.intuit.com/app/developer/qbo/docs/develop/authentication-and-authorization/oauth-2.0",
+    },
+    "envVars": [{
+      "name": "QUICKBOOKS_CLIENT_ID",
+      "description": "Intuit OAuth Client ID (from your app's Keys & credentials page)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl":
+        "https://developer.intuit.com/app/developer/qbo/docs/develop/authentication-and-authorization/oauth-2.0",
+    }, {
+      "name": "QUICKBOOKS_CLIENT_SECRET",
+      "description": "Intuit OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl":
+        "https://developer.intuit.com/app/developer/qbo/docs/develop/authentication-and-authorization/oauth-2.0",
+    }],
+    "tools": [{
+      "id": "list_invoices",
+      "name": "List Invoices",
+      "description": "List recent invoices in a QuickBooks Online company",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/v3/company/{realmId}/query",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
+            "default": "quickbooks.api.intuit.com",
+          },
+          "realmId": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "QuickBooks company ID (realm ID) shown in the OAuth callback and under Settings → Additional Info in QuickBooks",
+            "required": true,
+          },
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "QuickBooks SQL-like query for invoices",
+            "default": "SELECT * FROM Invoice ORDERBY MetaData.LastUpdatedTime DESC MAXRESULTS 50",
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "default": "application/json",
+            "headerName": "Accept",
+          },
+        },
+        "response": {
+          "transform": "QueryResponse",
+          "historicalSummary": {
+            "collectionKeys": ["Invoice", "QueryResponse"],
+            "collectionName": "invoices",
+            "itemFields": [
+              { "name": "Id" },
+              { "name": "DocNumber" },
+              { "name": "TxnDate" },
+              { "name": "DueDate" },
+              { "name": "TotalAmt" },
+              { "name": "Balance" },
+              { "name": "EmailStatus" },
+              { "name": "CustomerRef", "kind": "object" },
+            ],
+            "outputFields": [{ "name": "startPosition" }, { "name": "maxResults" }, {
+              "name": "totalCount",
+            }],
+            "omitted": "invoice line items, tax details, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "list_customers",
+      "name": "List Customers",
+      "description": "List customers in a QuickBooks Online company",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/v3/company/{realmId}/query",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
+            "default": "quickbooks.api.intuit.com",
+          },
+          "realmId": {
+            "type": "string",
+            "in": "path",
+            "description": "QuickBooks company ID (realm ID)",
+            "required": true,
+          },
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "QuickBooks SQL-like query for customers",
+            "default": "SELECT * FROM Customer ORDERBY MetaData.LastUpdatedTime DESC MAXRESULTS 50",
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "default": "application/json",
+            "headerName": "Accept",
+          },
+        },
+        "response": { "transform": "QueryResponse" },
+      },
+    }, {
+      "id": "list_accounts",
+      "name": "List Accounts",
+      "description": "List the chart of accounts in a QuickBooks Online company",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/v3/company/{realmId}/query",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
+            "default": "quickbooks.api.intuit.com",
+          },
+          "realmId": {
+            "type": "string",
+            "in": "path",
+            "description": "QuickBooks company ID (realm ID)",
+            "required": true,
+          },
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "QuickBooks SQL-like query for accounts",
+            "default": "SELECT * FROM Account ORDERBY Name MAXRESULTS 100",
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "default": "application/json",
+            "headerName": "Accept",
+          },
+        },
+        "response": { "transform": "QueryResponse" },
+      },
+    }, {
+      "id": "get_invoice",
+      "name": "Get Invoice",
+      "description": "Get a QuickBooks invoice with its line items",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/v3/company/{realmId}/invoice/{invoiceId}",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
+            "default": "quickbooks.api.intuit.com",
+          },
+          "realmId": {
+            "type": "string",
+            "in": "path",
+            "description": "QuickBooks company ID (realm ID)",
+            "required": true,
+          },
+          "invoiceId": {
+            "type": "string",
+            "in": "path",
+            "description": "QuickBooks invoice Id",
+            "required": true,
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "default": "application/json",
+            "headerName": "Accept",
+          },
+        },
+        "response": { "transform": "Invoice" },
+      },
+    }, {
+      "id": "create_invoice",
+      "name": "Create Invoice",
+      "description": "Create an invoice in a QuickBooks Online company",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{host}/v3/company/{realmId}/invoice",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
+            "default": "quickbooks.api.intuit.com",
+          },
+          "realmId": {
+            "type": "string",
+            "in": "path",
+            "description": "QuickBooks company ID (realm ID)",
+            "required": true,
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "default": "application/json",
+            "headerName": "Accept",
+          },
+        },
+        "body": {
+          "invoice": {
+            "type": "object",
+            "description":
+              'Invoice payload, e.g. { "CustomerRef": { "value": "1" }, "Line": [{ "DetailType": "SalesItemLineDetail", "Amount": 100, "SalesItemLineDetail": { "ItemRef": { "value": "1" } } }] }',
+            "required": true,
+          },
+        },
+        "bodyMode": "passthrough",
+        "response": { "transform": "Invoice" },
+      },
+    }, {
+      "id": "run_query",
+      "name": "Run Query",
+      "description":
+        "Run an arbitrary QuickBooks query against any entity (Invoice, Customer, Account, Payment, Bill, Item, ...)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/v3/company/{realmId}/query",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
+            "default": "quickbooks.api.intuit.com",
+          },
+          "realmId": {
+            "type": "string",
+            "in": "path",
+            "description": "QuickBooks company ID (realm ID)",
+            "required": true,
+          },
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "QuickBooks SQL-like query, e.g. SELECT * FROM Payment WHERE TotalAmt > '100.00' MAXRESULTS 25",
+            "required": true,
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "default": "application/json",
+            "headerName": "Accept",
+          },
+        },
+        "response": { "transform": "QueryResponse" },
+      },
+    }],
+    "prompts": [{
+      "id": "open_invoices",
+      "title": "Open invoices",
+      "prompt": "List my QuickBooks invoices with an outstanding balance, sorted by due date.",
+      "category": "finance",
+      "icon": "chart",
+    }, {
+      "id": "create_invoice",
+      "title": "Create an invoice",
+      "prompt": "Create an invoice in QuickBooks for a customer with the line items I provide.",
+      "category": "finance",
+      "icon": "plus",
+    }],
+    "suggestedWith": ["stripe", "gmail", "hubspot"],
+  },
+  {
+    "name": "railway",
+    "displayName": "Railway",
+    "icon": "railway.svg",
+    "description": "Inspect and control Railway projects, services, and deployments",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Railway Account Tokens",
+        "enableUrl": "https://railway.com/account/tokens",
+      }],
+      "keyName": "RAILWAY_TOKEN",
+      "headerPrefix": "Bearer",
+      "docsUrl": "https://docs.railway.com/guides/public-api",
+    },
+    "envVars": [{
+      "name": "RAILWAY_TOKEN",
+      "description": "Railway account or workspace token (Account Settings > Tokens)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.railway.com/guides/public-api#authentication",
+    }],
+    "tools": [{
+      "id": "list_projects",
+      "name": "List Projects",
+      "description": "List Railway projects accessible to the token",
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://backboard.railway.com/graphql/v2",
+        "query":
+          "query { projects { edges { node { id name description createdAt updatedAt } } } }",
+        "response": {
+          "transform": "projects.edges",
+          "historicalSummary": {
+            "collectionKeys": ["edges", "projects", "nodes", "data"],
+            "collectionName": "projects",
+            "itemFields": [{ "name": "node", "kind": "object" }],
+            "outputFields": [{ "name": "pageInfo", "kind": "object" }],
+            "omitted": "project settings and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_project",
+      "name": "Get Project",
+      "description": "Get a project with its services and environments",
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://backboard.railway.com/graphql/v2",
+        "query":
+          "query($id: String!) { project(id: $id) { id name description createdAt services { edges { node { id name icon } } } environments { edges { node { id name } } } } }",
+        "params": {
+          "id": { "type": "string", "in": "body", "description": "Project ID", "required": true },
+        },
+        "response": { "transform": "project" },
+      },
+    }, {
+      "id": "list_deployments",
+      "name": "List Deployments",
+      "description": "List deployments filtered by project, service, or environment",
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://backboard.railway.com/graphql/v2",
+        "query":
+          "query($projectId: String, $serviceId: String, $environmentId: String, $first: Int) { deployments(input: { projectId: $projectId, serviceId: $serviceId, environmentId: $environmentId }, first: $first) { edges { node { id status createdAt url staticUrl } } } }",
+        "params": {
+          "projectId": { "type": "string", "in": "body", "description": "Filter by project ID" },
+          "serviceId": { "type": "string", "in": "body", "description": "Filter by service ID" },
+          "environmentId": {
+            "type": "string",
+            "in": "body",
+            "description": "Filter by environment ID",
+          },
+          "first": {
+            "type": "number",
+            "in": "body",
+            "description": "Maximum deployments to return",
+            "default": 20,
+          },
+        },
+        "response": {
+          "transform": "deployments.edges",
+          "historicalSummary": {
+            "collectionKeys": ["edges", "deployments", "nodes", "data"],
+            "collectionName": "deployments",
+            "itemFields": [{ "name": "node", "kind": "object" }],
+            "outputFields": [{ "name": "pageInfo", "kind": "object" }],
+            "omitted": "deployment metadata and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_deployment",
+      "name": "Get Deployment",
+      "description": "Get a deployment by ID, including redeploy/rollback eligibility",
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://backboard.railway.com/graphql/v2",
+        "query":
+          "query($id: String!) { deployment(id: $id) { id status createdAt url staticUrl meta canRedeploy canRollback } }",
+        "params": {
+          "id": {
+            "type": "string",
+            "in": "body",
+            "description": "Deployment ID",
+            "required": true,
+          },
+        },
+        "response": { "transform": "deployment" },
+      },
+    }, {
+      "id": "restart_deployment",
+      "name": "Restart Deployment",
+      "description": "Restart a running deployment",
+      "requiresWrite": true,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://backboard.railway.com/graphql/v2",
+        "query": "mutation($id: String!) { deploymentRestart(id: $id) }",
+        "params": {
+          "id": {
+            "type": "string",
+            "in": "body",
+            "description": "Deployment ID",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "redeploy_deployment",
+      "name": "Redeploy Deployment",
+      "description": "Redeploy an existing deployment (creates a new deployment from it)",
+      "requiresWrite": true,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://backboard.railway.com/graphql/v2",
+        "query": "mutation($id: String!) { deploymentRedeploy(id: $id) { id status } }",
+        "params": {
+          "id": {
+            "type": "string",
+            "in": "body",
+            "description": "Deployment ID to redeploy",
+            "required": true,
+          },
+        },
+        "response": { "transform": "deploymentRedeploy" },
+      },
+    }],
+    "prompts": [{
+      "id": "deployment_health",
+      "title": "Deployment health",
+      "prompt": "List the latest Railway deployments for my project and summarize their statuses.",
+      "category": "devops",
+      "icon": "list",
+    }, {
+      "id": "restart_service",
+      "title": "Restart a deployment",
+      "prompt": "Find the active deployment of my Railway service and restart it.",
+      "category": "devops",
+      "icon": "refresh",
+    }],
+    "suggestedWith": ["github", "slack", "sentry"],
+  },
+  {
     "name": "razorpay",
     "displayName": "Razorpay",
     "icon": "razorpay.svg",
@@ -18749,6 +26038,489 @@ export const connectors: IntegrationConfig[] = [
       "icon": "currency",
     }],
     "suggestedWith": ["stripe", "paypal", "sheets"],
+  },
+  {
+    "name": "redis-cloud",
+    "displayName": "Redis Cloud",
+    "icon": "redis-cloud.svg",
+    "description":
+      "Inspect Redis Cloud subscriptions and databases across Pro and Essentials plans",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Redis Cloud API Keys",
+        "enableUrl": "https://cloud.redis.io/#/access-management/api-keys",
+      }],
+      "keyName": "REDIS_CLOUD_API_KEY",
+      "headerName": "x-api-key",
+      "additionalHeaders": { "x-api-secret-key": "REDIS_CLOUD_SECRET_KEY" },
+      "docsUrl": "https://redis.io/docs/latest/operate/rc/api/get-started/use-rest-api/",
+    },
+    "envVars": [{
+      "name": "REDIS_CLOUD_API_KEY",
+      "description": "Redis Cloud account key (sent as x-api-key)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://redis.io/docs/latest/operate/rc/api/get-started/enable-the-api/",
+    }, {
+      "name": "REDIS_CLOUD_SECRET_KEY",
+      "description": "Redis Cloud user secret key (sent as x-api-secret-key)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://redis.io/docs/latest/operate/rc/api/get-started/manage-api-keys/",
+    }],
+    "tools": [{
+      "id": "list_subscriptions",
+      "name": "List Subscriptions",
+      "description": "List Redis Cloud Pro subscriptions in the account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.redislabs.com/v1/subscriptions",
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["subscriptions"],
+            "collectionName": "subscriptions",
+            "itemFields": [{ "name": "id" }, { "name": "name" }, { "name": "status" }, {
+              "name": "numberOfDatabases",
+            }, { "name": "paymentMethodType" }],
+            "omitted": "cloud provider deployment details and pricing fields",
+          },
+        },
+      },
+    }, {
+      "id": "list_fixed_subscriptions",
+      "name": "List Essentials Subscriptions",
+      "description": "List Redis Cloud Essentials (fixed plan) subscriptions in the account",
+      "requiresWrite": false,
+      "endpoint": { "method": "GET", "url": "https://api.redislabs.com/v1/fixed/subscriptions" },
+    }, {
+      "id": "list_databases",
+      "name": "List Databases",
+      "description": "List databases in a Redis Cloud Pro subscription",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.redislabs.com/v1/subscriptions/{subscriptionId}/databases",
+        "params": {
+          "subscriptionId": {
+            "type": "string",
+            "in": "path",
+            "description": "Subscription ID (from List Subscriptions)",
+            "required": true,
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of databases to skip for pagination",
+            "default": 0,
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum databases to return",
+            "default": 50,
+          },
+        },
+      },
+    }, {
+      "id": "get_database",
+      "name": "Get Database",
+      "description": "Get configuration and status of a database in a Pro subscription",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.redislabs.com/v1/subscriptions/{subscriptionId}/databases/{databaseId}",
+        "params": {
+          "subscriptionId": {
+            "type": "string",
+            "in": "path",
+            "description": "Subscription ID",
+            "required": true,
+          },
+          "databaseId": {
+            "type": "string",
+            "in": "path",
+            "description": "Database ID (from List Databases)",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "list_fixed_databases",
+      "name": "List Essentials Databases",
+      "description": "List databases in a Redis Cloud Essentials subscription",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.redislabs.com/v1/fixed/subscriptions/{subscriptionId}/databases",
+        "params": {
+          "subscriptionId": {
+            "type": "string",
+            "in": "path",
+            "description": "Essentials subscription ID (from List Essentials Subscriptions)",
+            "required": true,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "database_inventory",
+      "title": "Database inventory",
+      "prompt":
+        "List my Redis Cloud subscriptions and the databases in each, with their status and memory limits.",
+      "category": "devops",
+      "icon": "list",
+    }, {
+      "id": "database_status",
+      "title": "Check a database",
+      "prompt": "Get the details of my main Redis Cloud database and summarize its configuration.",
+      "category": "devops",
+      "icon": "search",
+    }],
+    "suggestedWith": ["digitalocean", "cloudflare", "datadog"],
+  },
+  {
+    "name": "render",
+    "displayName": "Render",
+    "icon": "render.svg",
+    "description": "Inspect Render services, deploys, and environment variables",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Render API Keys",
+        "enableUrl": "https://dashboard.render.com/settings#api-keys",
+      }],
+      "keyName": "RENDER_API_KEY",
+      "headerPrefix": "Bearer",
+      "docsUrl": "https://api-docs.render.com/reference/introduction",
+    },
+    "envVars": [{
+      "name": "RENDER_API_KEY",
+      "description": "Render API key (Account Settings > API Keys)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://render.com/docs/api",
+    }],
+    "tools": [{
+      "id": "list_services",
+      "name": "List Services",
+      "description": "List services owned by the authenticated user or team",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.render.com/v1/services",
+        "params": {
+          "name": { "type": "string", "in": "query", "description": "Filter services by name" },
+          "type": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Filter by service type: static_site, web_service, private_service, background_worker, cron_job",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum services to return (1-100)",
+            "default": 20,
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["services"],
+            "collectionName": "services",
+            "itemFields": [{ "name": "service", "kind": "object" }, { "name": "cursor" }],
+            "outputFields": [{ "name": "cursor" }],
+            "omitted": "service details and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_service",
+      "name": "Get Service",
+      "description": "Get a service by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.render.com/v1/services/{serviceId}",
+        "params": {
+          "serviceId": {
+            "type": "string",
+            "in": "path",
+            "description": "Service ID, e.g. srv-xxxxxxxxxxxxxxxxxxxx",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "list_deploys",
+      "name": "List Deploys",
+      "description": "List deploys for a service",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.render.com/v1/services/{serviceId}/deploys",
+        "params": {
+          "serviceId": {
+            "type": "string",
+            "in": "path",
+            "description": "Service ID",
+            "required": true,
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum deploys to return (1-100)",
+            "default": 20,
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["deploys"],
+            "collectionName": "deploys",
+            "itemFields": [{ "name": "deploy", "kind": "object" }, { "name": "cursor" }],
+            "outputFields": [{ "name": "cursor" }],
+            "omitted": "commit details and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "trigger_deploy",
+      "name": "Trigger Deploy",
+      "description": "Trigger a new deploy for a service",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.render.com/v1/services/{serviceId}/deploys",
+        "params": {
+          "serviceId": {
+            "type": "string",
+            "in": "path",
+            "description": "Service ID",
+            "required": true,
+          },
+        },
+        "body": {
+          "clearCache": {
+            "type": "string",
+            "description": "Build cache behavior: 'clear' or 'do_not_clear'",
+            "default": "do_not_clear",
+          },
+          "commitId": {
+            "type": "string",
+            "description":
+              "SHA of a specific git commit to deploy (defaults to the latest commit on the connected branch)",
+          },
+          "imageUrl": {
+            "type": "string",
+            "description":
+              "Image URL to deploy for an image-backed service (host/repository/name must match the service configuration)",
+          },
+        },
+      },
+    }, {
+      "id": "list_env_vars",
+      "name": "List Environment Variables",
+      "description": "List all environment variables for a service",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.render.com/v1/services/{serviceId}/env-vars",
+        "params": {
+          "serviceId": {
+            "type": "string",
+            "in": "path",
+            "description": "Service ID",
+            "required": true,
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum env vars to return (1-100)",
+            "default": 50,
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response",
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "deploy_status",
+      "title": "Latest deploy status",
+      "prompt": "List the most recent Render deploys for my service and summarize their statuses.",
+      "category": "devops",
+      "icon": "list",
+    }, {
+      "id": "redeploy",
+      "title": "Redeploy a service",
+      "prompt": "Trigger a new deploy of my Render service with a cleared build cache.",
+      "category": "devops",
+      "icon": "refresh",
+    }],
+    "suggestedWith": ["github", "slack", "sentry"],
+  },
+  {
+    "name": "replicate",
+    "displayName": "Replicate",
+    "icon": "replicate.svg",
+    "description":
+      "Browse public models and run predictions on Replicate-hosted machine learning models",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Replicate API Tokens",
+        "enableUrl": "https://replicate.com/account/api-tokens",
+      }],
+      "keyName": "REPLICATE_API_TOKEN",
+      "headerPrefix": "Bearer",
+      "docsUrl": "https://replicate.com/docs/reference/http",
+    },
+    "envVars": [{
+      "name": "REPLICATE_API_TOKEN",
+      "description": "Replicate API token (starts with r8_)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://replicate.com/account/api-tokens",
+    }],
+    "tools": [{
+      "id": "list_models",
+      "name": "List Models",
+      "description": "List public models available on Replicate",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.replicate.com/v1/models",
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["results", "models"],
+            "collectionName": "models",
+            "itemFields": [{ "name": "owner" }, { "name": "name" }, {
+              "name": "description",
+              "maxLength": 120,
+            }, { "name": "run_count" }],
+            "outputFields": [{ "name": "next" }],
+            "omitted": "version details, cover images, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_model",
+      "name": "Get Model",
+      "description": "Get details about a model, including its latest version ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.replicate.com/v1/models/{model_owner}/{model_name}",
+        "params": {
+          "model_owner": {
+            "type": "string",
+            "in": "path",
+            "description": "Owner of the model, e.g. stability-ai",
+            "required": true,
+          },
+          "model_name": {
+            "type": "string",
+            "in": "path",
+            "description": "Name of the model, e.g. sdxl",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "create_prediction",
+      "name": "Create Prediction",
+      "description": "Run a model by creating a prediction from a version ID and input object",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.replicate.com/v1/predictions",
+        "params": {
+          "wait": {
+            "type": "string",
+            "in": "header",
+            "description":
+              "Set to wait=60 to hold the request open up to 60 seconds for the prediction to finish",
+            "default": "wait=60",
+            "headerName": "Prefer",
+          },
+        },
+        "body": {
+          "version": {
+            "type": "string",
+            "description": "Model version ID (64-character hash from Get Model latest_version.id)",
+            "required": true,
+          },
+          "input": {
+            "type": "object",
+            "description": 'Model-specific input object, e.g. {"prompt":"a photo of an astronaut"}',
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "get_prediction",
+      "name": "Get Prediction",
+      "description": "Get the status and output of a prediction",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.replicate.com/v1/predictions/{prediction_id}",
+        "params": {
+          "prediction_id": {
+            "type": "string",
+            "in": "path",
+            "description": "ID of the prediction to fetch",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "cancel_prediction",
+      "name": "Cancel Prediction",
+      "description": "Cancel a running prediction",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.replicate.com/v1/predictions/{prediction_id}/cancel",
+        "params": {
+          "prediction_id": {
+            "type": "string",
+            "in": "path",
+            "description": "ID of the prediction to cancel",
+            "required": true,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "find_model",
+      "title": "Find a model",
+      "prompt":
+        "Find a Replicate model for a task I describe and show me its latest version ID and inputs.",
+      "category": "ai",
+      "icon": "list",
+    }, {
+      "id": "run_prediction",
+      "title": "Run a prediction",
+      "prompt":
+        "Run a Replicate model with inputs I provide and report the output when it finishes.",
+      "category": "ai",
+      "icon": "sparkles",
+    }],
+    "suggestedWith": ["openai", "huggingface", "together-ai"],
   },
   {
     "name": "resend",
@@ -22033,6 +29805,204 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["github", "slack", "notion"],
   },
   {
+    "name": "snyk",
+    "displayName": "Snyk",
+    "icon": "snyk.svg",
+    "description": "Query Snyk organizations, projects, and security issues",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{ "name": "Snyk API Token", "enableUrl": "https://app.snyk.io/account" }],
+      "keyName": "SNYK_TOKEN",
+      "headerPrefix": "token",
+      "docsUrl": "https://docs.snyk.io/snyk-api/authentication-for-api",
+    },
+    "envVars": [{
+      "name": "SNYK_TOKEN",
+      "description": "Snyk API token (personal token or service account token)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.snyk.io/snyk-api/authentication-for-api",
+    }],
+    "tools": [{
+      "id": "list_orgs",
+      "name": "List Organizations",
+      "description": "List Snyk organizations the token can access",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.snyk.io/rest/orgs",
+        "params": {
+          "version": {
+            "type": "string",
+            "in": "query",
+            "description": "Snyk REST API version (date-based)",
+            "default": "2024-10-15",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Organizations per page (max 100)",
+            "default": 50,
+          },
+        },
+      },
+    }, {
+      "id": "list_projects",
+      "name": "List Projects",
+      "description": "List projects in a Snyk organization",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.snyk.io/rest/orgs/{orgId}/projects",
+        "params": {
+          "orgId": {
+            "type": "string",
+            "in": "path",
+            "description": "Organization ID (UUID, from List Organizations)",
+            "required": true,
+          },
+          "version": {
+            "type": "string",
+            "in": "query",
+            "description": "Snyk REST API version (date-based)",
+            "default": "2024-10-15",
+          },
+          "names_start_with": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter projects whose name starts with this string",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Projects per page (max 100)",
+            "default": 50,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "projects",
+            "itemFields": [{ "name": "id" }, { "name": "type" }, {
+              "name": "attributes",
+              "kind": "object",
+            }],
+            "outputFields": [{ "name": "links", "kind": "object" }],
+            "omitted": "JSON:API relationship objects and project metadata",
+          },
+        },
+      },
+    }, {
+      "id": "get_project",
+      "name": "Get Project",
+      "description": "Get a project's details in a Snyk organization",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.snyk.io/rest/orgs/{orgId}/projects/{projectId}",
+        "params": {
+          "orgId": {
+            "type": "string",
+            "in": "path",
+            "description": "Organization ID (UUID)",
+            "required": true,
+          },
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "Project ID (UUID, from List Projects)",
+            "required": true,
+          },
+          "version": {
+            "type": "string",
+            "in": "query",
+            "description": "Snyk REST API version (date-based)",
+            "default": "2024-10-15",
+          },
+        },
+      },
+    }, {
+      "id": "list_issues",
+      "name": "List Issues",
+      "description":
+        "List security issues in a Snyk organization, optionally filtered by severity or status",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.snyk.io/rest/orgs/{orgId}/issues",
+        "params": {
+          "orgId": {
+            "type": "string",
+            "in": "path",
+            "description": "Organization ID (UUID)",
+            "required": true,
+          },
+          "version": {
+            "type": "string",
+            "in": "query",
+            "description": "Snyk REST API version (date-based)",
+            "default": "2024-10-15",
+          },
+          "effective_severity_level": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated severities to include: low, medium, high, critical",
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Issue status filter: open or resolved",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Issues per page (max 100)",
+            "default": 50,
+          },
+        },
+        "response": { "transform": "data" },
+      },
+    }, {
+      "id": "get_org",
+      "name": "Get Organization",
+      "description": "Get details of a Snyk organization",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.snyk.io/rest/orgs/{orgId}",
+        "params": {
+          "orgId": {
+            "type": "string",
+            "in": "path",
+            "description": "Organization ID (UUID)",
+            "required": true,
+          },
+          "version": {
+            "type": "string",
+            "in": "query",
+            "description": "Snyk REST API version (date-based)",
+            "default": "2024-10-15",
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "critical_issues",
+      "title": "Critical vulnerabilities",
+      "prompt":
+        "List the open critical and high severity issues across my Snyk organization and summarize them by project.",
+      "category": "security",
+      "icon": "alert",
+    }, {
+      "id": "project_overview",
+      "title": "Project overview",
+      "prompt": "List my Snyk projects and show which ones were tested most recently.",
+      "category": "security",
+      "icon": "list",
+    }],
+    "suggestedWith": ["github", "gitlab", "circleci"],
+  },
+  {
     "name": "square",
     "displayName": "Square",
     "icon": "square.svg",
@@ -22300,6 +30270,144 @@ export const connectors: IntegrationConfig[] = [
       "icon": "cart",
     }],
     "suggestedWith": ["stripe", "paypal", "sheets"],
+  },
+  {
+    "name": "stability-ai",
+    "displayName": "Stability AI",
+    "icon": "stability-ai.svg",
+    "description":
+      "Generate images with Stable Diffusion models and check engines, account, and credit balance via the Stability AI API",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Stability AI API Keys",
+        "enableUrl": "https://platform.stability.ai/account/keys",
+      }],
+      "keyName": "STABILITY_API_KEY",
+      "headerPrefix": "Bearer",
+      "docsUrl": "https://platform.stability.ai/docs/api-reference",
+    },
+    "envVars": [{
+      "name": "STABILITY_API_KEY",
+      "description": "Stability AI API key (starts with sk-)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://platform.stability.ai/account/keys",
+    }],
+    "tools": [{
+      "id": "list_engines",
+      "name": "List Engines",
+      "description": "List the generation engines (models) available to your account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.stability.ai/v1/engines/list",
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["engines"],
+            "collectionName": "engines",
+            "itemFields": [{ "name": "id" }, { "name": "name" }, { "name": "type" }, {
+              "name": "description",
+              "maxLength": 200,
+            }],
+            "omitted": "provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_balance",
+      "name": "Get Balance",
+      "description": "Get the credit balance of your Stability AI account",
+      "requiresWrite": false,
+      "endpoint": { "method": "GET", "url": "https://api.stability.ai/v1/user/balance" },
+    }, {
+      "id": "get_account",
+      "name": "Get Account",
+      "description": "Get profile and organization details for the account that owns the API key",
+      "requiresWrite": false,
+      "endpoint": { "method": "GET", "url": "https://api.stability.ai/v1/user/account" },
+    }, {
+      "id": "text_to_image",
+      "name": "Text to Image",
+      "description":
+        "Generate images from a text prompt with a Stable Diffusion engine (consumes credits)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.stability.ai/v1/generation/{engine_id}/text-to-image",
+        "params": {
+          "engine_id": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Generation engine ID (see List Engines), e.g. stable-diffusion-xl-1024-v1-0",
+            "default": "stable-diffusion-xl-1024-v1-0",
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "description":
+              "Response format: application/json returns base64-encoded image artifacts; image/png returns raw bytes",
+            "default": "application/json",
+            "headerName": "Accept",
+          },
+        },
+        "body": {
+          "text_prompts": {
+            "type": "array",
+            "description":
+              'Prompt objects with text and optional weight (negative prompts use a negative weight), e.g. [{"text":"a lighthouse at dawn","weight":1}]',
+            "required": true,
+          },
+          "cfg_scale": {
+            "type": "number",
+            "description": "How strictly the diffusion process adheres to the prompt (0-35)",
+            "default": 7,
+          },
+          "width": {
+            "type": "number",
+            "description": "Image width in pixels (must be an allowed dimension for the engine)",
+            "default": 1024,
+          },
+          "height": {
+            "type": "number",
+            "description": "Image height in pixels (must be an allowed dimension for the engine)",
+            "default": 1024,
+          },
+          "samples": {
+            "type": "number",
+            "description": "Number of images to generate",
+            "default": 1,
+          },
+          "steps": {
+            "type": "number",
+            "description": "Number of diffusion steps (10-50)",
+            "default": 30,
+          },
+          "seed": { "type": "number", "description": "Random noise seed (0 = random)" },
+          "style_preset": {
+            "type": "string",
+            "description": "Style preset, e.g. photographic, digital-art, anime, cinematic",
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "generate_image",
+      "title": "Generate an image",
+      "prompt":
+        "Generate an image with Stability AI from a prompt I provide and show me the seed used.",
+      "category": "ai",
+      "icon": "image",
+    }, {
+      "id": "check_credits",
+      "title": "Check my credits",
+      "prompt":
+        "Check my Stability AI credit balance and list the engines available to my account.",
+      "category": "ai",
+      "icon": "wallet",
+    }],
+    "suggestedWith": ["openai", "gemini", "tavily"],
   },
   {
     "name": "stripe",
@@ -23380,6 +31488,129 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["calendar", "notion", "slack"],
   },
   {
+    "name": "together-ai",
+    "displayName": "Together AI",
+    "icon": "together-ai.svg",
+    "description":
+      "Run chat completions, embeddings, and image generation on open models via the Together AI API",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Together AI API Keys",
+        "enableUrl": "https://api.together.ai/settings/api-keys",
+      }],
+      "keyName": "TOGETHER_API_KEY",
+      "headerPrefix": "Bearer",
+      "docsUrl": "https://docs.together.ai/docs/quickstart",
+    },
+    "envVars": [{
+      "name": "TOGETHER_API_KEY",
+      "description": "Together AI API key from account settings",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.together.ai/docs/quickstart",
+    }],
+    "tools": [{
+      "id": "list_models",
+      "name": "List Models",
+      "description": "List the models available on Together AI",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.together.ai/v1/models",
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data", "models"],
+            "collectionName": "models",
+            "itemFields": [{ "name": "id" }, { "name": "type" }, { "name": "context_length" }, {
+              "name": "organization",
+            }],
+            "omitted": "pricing details and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "create_chat_completion",
+      "name": "Create Chat Completion",
+      "description": "Generate a chat completion from a list of messages",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.together.ai/v1/chat/completions",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Model ID to use, e.g. meta-llama/Llama-3.3-70B-Instruct-Turbo",
+            "required": true,
+          },
+          "messages": {
+            "type": "array",
+            "description": "Chat messages, each with role (system|user|assistant) and content",
+            "required": true,
+          },
+          "max_tokens": { "type": "number", "description": "Maximum tokens to generate" },
+          "temperature": { "type": "number", "description": "Sampling temperature" },
+        },
+      },
+    }, {
+      "id": "create_embedding",
+      "name": "Create Embedding",
+      "description": "Create an embedding vector for input text",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.together.ai/v1/embeddings",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Embedding model ID, e.g. BAAI/bge-large-en-v1.5",
+            "required": true,
+          },
+          "input": { "type": "string", "description": "Text to embed", "required": true },
+        },
+      },
+    }, {
+      "id": "generate_image",
+      "name": "Generate Image",
+      "description": "Generate an image from a text prompt",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.together.ai/v1/images/generations",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Image model ID, e.g. black-forest-labs/FLUX.1-schnell",
+            "required": true,
+          },
+          "prompt": {
+            "type": "string",
+            "description": "Text description of the desired image",
+            "required": true,
+          },
+          "width": { "type": "number", "description": "Image width in pixels", "default": 1024 },
+          "height": { "type": "number", "description": "Image height in pixels", "default": 1024 },
+          "steps": { "type": "number", "description": "Number of generation steps", "default": 20 },
+          "n": { "type": "number", "description": "Number of images to generate", "default": 1 },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "available_models",
+      "title": "List Together AI models",
+      "prompt": "List the models available on Together AI and group them by type.",
+      "category": "ai",
+      "icon": "list",
+    }, {
+      "id": "generate_image",
+      "title": "Generate an image",
+      "prompt": "Use Together AI to generate an image from a prompt I provide.",
+      "category": "ai",
+      "icon": "sparkles",
+    }],
+    "suggestedWith": ["openai", "anthropic", "mistral"],
+  },
+  {
     "name": "trello",
     "displayName": "Trello",
     "icon": "trello.svg",
@@ -23841,6 +32072,906 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["sheets", "slack", "hubspot"],
   },
   {
+    "name": "vercel",
+    "displayName": "Vercel",
+    "icon": "vercel.svg",
+    "description": "Inspect Vercel projects, deployments, and environment variables",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Vercel Account Tokens",
+        "enableUrl": "https://vercel.com/account/settings/tokens",
+      }],
+      "keyName": "VERCEL_TOKEN",
+      "headerPrefix": "Bearer",
+      "docsUrl": "https://vercel.com/docs/rest-api",
+    },
+    "envVars": [{
+      "name": "VERCEL_TOKEN",
+      "description": "Vercel access token (Account Settings > Tokens)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://vercel.com/docs/rest-api/authentication/create-an-auth-token",
+    }],
+    "tools": [{
+      "id": "list_projects",
+      "name": "List Projects",
+      "description": "List projects of the authenticated user or team",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.vercel.com/v10/projects",
+        "params": {
+          "search": { "type": "string", "in": "query", "description": "Search projects by name" },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum projects to return",
+            "default": 20,
+          },
+          "from": {
+            "type": "string",
+            "in": "query",
+            "description": "Continuation token (pagination.next from a previous response)",
+          },
+          "teamId": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Team ID to perform the request on behalf of (omit for personal account)",
+          },
+          "slug": {
+            "type": "string",
+            "in": "query",
+            "description": "Team slug, alternative to teamId",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["projects"],
+            "collectionName": "projects",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "framework" },
+              { "name": "nodeVersion" },
+              { "name": "createdAt" },
+              { "name": "updatedAt" },
+            ],
+            "outputFields": [{ "name": "pagination", "kind": "object" }],
+            "omitted": "build settings, latest deployment payloads, and provider-specific fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_project",
+      "name": "Get Project",
+      "description": "Get a project by ID or name",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.vercel.com/v9/projects/{idOrName}",
+        "params": {
+          "idOrName": {
+            "type": "string",
+            "in": "path",
+            "description": "Project ID (prj_...) or project name",
+            "required": true,
+          },
+          "teamId": {
+            "type": "string",
+            "in": "query",
+            "description": "Team ID to perform the request on behalf of",
+          },
+          "slug": {
+            "type": "string",
+            "in": "query",
+            "description": "Team slug, alternative to teamId",
+          },
+        },
+      },
+    }, {
+      "id": "list_deployments",
+      "name": "List Deployments",
+      "description": "List deployments under the authenticated user or team",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.vercel.com/v7/deployments",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter deployments by project ID or name",
+          },
+          "app": { "type": "string", "in": "query", "description": "Filter by deployment name" },
+          "state": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Filter by state: BUILDING, ERROR, INITIALIZING, QUEUED, READY, CANCELED, BLOCKED",
+          },
+          "target": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by environment, e.g. production",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum deployments to return",
+            "default": 20,
+          },
+          "since": {
+            "type": "number",
+            "in": "query",
+            "description": "Only deployments created after this JavaScript timestamp (ms)",
+          },
+          "until": {
+            "type": "number",
+            "in": "query",
+            "description": "Only deployments created before this JavaScript timestamp (ms)",
+          },
+          "teamId": {
+            "type": "string",
+            "in": "query",
+            "description": "Team ID to perform the request on behalf of",
+          },
+          "slug": {
+            "type": "string",
+            "in": "query",
+            "description": "Team slug, alternative to teamId",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["deployments"],
+            "collectionName": "deployments",
+            "itemFields": [
+              { "name": "uid" },
+              { "name": "name" },
+              { "name": "url" },
+              { "name": "state" },
+              { "name": "target" },
+              { "name": "createdAt" },
+              { "name": "creator", "kind": "contact" },
+            ],
+            "outputFields": [{ "name": "pagination", "kind": "object" }],
+            "omitted": "git metadata, checks, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_deployment",
+      "name": "Get Deployment",
+      "description": "Get a deployment by ID or hostname URL",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.vercel.com/v13/deployments/{idOrUrl}",
+        "params": {
+          "idOrUrl": {
+            "type": "string",
+            "in": "path",
+            "description": "Deployment ID (dpl_...) or hostname, e.g. my-app-abc123.vercel.app",
+            "required": true,
+          },
+          "teamId": {
+            "type": "string",
+            "in": "query",
+            "description": "Team ID to perform the request on behalf of",
+          },
+          "slug": {
+            "type": "string",
+            "in": "query",
+            "description": "Team slug, alternative to teamId",
+          },
+        },
+      },
+    }, {
+      "id": "list_env_vars",
+      "name": "List Environment Variables",
+      "description":
+        "List the environment variables of a project (values stay encrypted unless decrypt is set)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.vercel.com/v10/projects/{idOrName}/env",
+        "params": {
+          "idOrName": {
+            "type": "string",
+            "in": "path",
+            "description": "Project ID or name",
+            "required": true,
+          },
+          "gitBranch": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter to variables for a preview git branch",
+          },
+          "decrypt": {
+            "type": "string",
+            "in": "query",
+            "description": "Set to 'true' to decrypt variable values in the response",
+          },
+          "teamId": {
+            "type": "string",
+            "in": "query",
+            "description": "Team ID to perform the request on behalf of",
+          },
+          "slug": {
+            "type": "string",
+            "in": "query",
+            "description": "Team slug, alternative to teamId",
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "deployment_status",
+      "title": "Latest deployments",
+      "prompt": "List my most recent Vercel deployments with their state and target environment.",
+      "category": "devops",
+      "icon": "list",
+    }, {
+      "id": "failed_deployments",
+      "title": "Find failed deployments",
+      "prompt":
+        "Find my Vercel deployments in ERROR state from the last day and tell me which projects are affected.",
+      "category": "devops",
+      "icon": "alert",
+    }],
+    "suggestedWith": ["github", "slack", "sentry"],
+  },
+  {
+    "name": "weaviate",
+    "displayName": "Weaviate",
+    "icon": "weaviate.svg",
+    "description":
+      "Browse Weaviate schema, run GraphQL queries, and read or create objects in a Weaviate cluster",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Weaviate Cloud API Keys",
+        "enableUrl": "https://console.weaviate.cloud",
+      }],
+      "keyName": "WEAVIATE_API_KEY",
+      "headerPrefix": "Bearer",
+      "docsUrl": "https://docs.weaviate.io/cloud/manage-clusters/connect",
+    },
+    "envVars": [{
+      "name": "WEAVIATE_API_KEY",
+      "description": "Weaviate cluster API key (sent as Authorization: Bearer)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.weaviate.io/cloud/manage-clusters/connect",
+    }],
+    "tools": [{
+      "id": "get_schema",
+      "name": "Get Schema",
+      "description": "List all collections (classes) and their property definitions",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{clusterHost}/v1/schema",
+        "params": {
+          "clusterHost": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Weaviate cluster REST endpoint host, e.g. my-cluster-abc123.weaviate.cloud",
+            "required": true,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["classes"],
+            "collectionName": "classes",
+            "itemFields": [{ "name": "class" }, { "name": "description", "maxLength": 200 }, {
+              "name": "vectorizer",
+            }],
+            "omitted": "property definitions, module configs, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "graphql_query",
+      "name": "Run GraphQL Query",
+      "description":
+        "Run a GraphQL query against the cluster (Get, Aggregate, Explore — including nearText/nearVector search)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{clusterHost}/v1/graphql",
+        "params": {
+          "clusterHost": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Weaviate cluster REST endpoint host, e.g. my-cluster-abc123.weaviate.cloud",
+            "required": true,
+          },
+        },
+        "body": {
+          "query": {
+            "type": "string",
+            "description": "GraphQL query, e.g. { Get { Article(limit: 5) { title url } } }",
+            "required": true,
+          },
+          "variables": { "type": "object", "description": "GraphQL variables object" },
+        },
+      },
+    }, {
+      "id": "list_objects",
+      "name": "List Objects",
+      "description": "List objects, optionally filtered to one collection (class)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{clusterHost}/v1/objects",
+        "params": {
+          "clusterHost": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Weaviate cluster REST endpoint host, e.g. my-cluster-abc123.weaviate.cloud",
+            "required": true,
+          },
+          "class": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return objects of this collection (class), e.g. Article",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum objects to return",
+            "default": 25,
+          },
+          "include": {
+            "type": "string",
+            "in": "query",
+            "description": "Extra properties to include, e.g. vector or classification",
+          },
+        },
+      },
+    }, {
+      "id": "get_object",
+      "name": "Get Object",
+      "description": "Get a single object by collection (class) and ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{clusterHost}/v1/objects/{className}/{id}",
+        "params": {
+          "clusterHost": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Weaviate cluster REST endpoint host, e.g. my-cluster-abc123.weaviate.cloud",
+            "required": true,
+          },
+          "className": {
+            "type": "string",
+            "in": "path",
+            "description": "Collection (class) name, e.g. Article",
+            "required": true,
+          },
+          "id": { "type": "string", "in": "path", "description": "Object UUID", "required": true },
+        },
+      },
+    }, {
+      "id": "create_object",
+      "name": "Create Object",
+      "description": "Create a new object in a collection (class)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{clusterHost}/v1/objects",
+        "params": {
+          "clusterHost": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Weaviate cluster REST endpoint host, e.g. my-cluster-abc123.weaviate.cloud",
+            "required": true,
+          },
+        },
+        "body": {
+          "class": {
+            "type": "string",
+            "description": "Collection (class) name the object belongs to, e.g. Article",
+            "required": true,
+          },
+          "properties": {
+            "type": "object",
+            "description":
+              'Object properties matching the collection schema, e.g. {"title":"Hello","url":"https://..."}',
+            "required": true,
+          },
+          "id": {
+            "type": "string",
+            "description": "Optional UUID for the object (generated if omitted)",
+          },
+          "vector": {
+            "type": "array",
+            "description":
+              "Optional vector values (omit when the collection has a vectorizer configured)",
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "schema_overview",
+      "title": "Explore my schema",
+      "prompt":
+        "Get my Weaviate schema and summarize the collections, their properties, and vectorizers.",
+      "category": "data",
+      "icon": "database",
+    }, {
+      "id": "semantic_search",
+      "title": "Semantic search",
+      "prompt":
+        "Run a Weaviate GraphQL nearText query against a collection I specify and summarize the top results.",
+      "category": "data",
+      "icon": "search",
+    }],
+    "suggestedWith": ["openai", "anthropic", "gemini"],
+  },
+  {
+    "name": "webex",
+    "displayName": "Webex",
+    "icon": "webex.svg",
+    "description": "Send messages and look up rooms and people in Webex",
+    "auth": {
+      "type": "oauth2",
+      "provider": "webex",
+      "authorizationUrl": "https://webexapis.com/v1/authorize",
+      "tokenUrl": "https://webexapis.com/v1/access_token",
+      "scopes": [
+        "spark:messages_read",
+        "spark:messages_write",
+        "spark:rooms_read",
+        "spark:people_read",
+      ],
+      "tokenAuthMethod": "request_body",
+      "requiredApis": [{
+        "name": "Webex Developer Portal (My Apps)",
+        "enableUrl": "https://developer.webex.com/my-apps",
+      }],
+      "docsUrl": "https://developer.webex.com/docs/integrations",
+    },
+    "envVars": [{
+      "name": "WEBEX_CLIENT_ID",
+      "description": "Webex Integration Client ID (from your integration in My Apps)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.webex.com/docs/integrations",
+    }, {
+      "name": "WEBEX_CLIENT_SECRET",
+      "description": "Webex Integration Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.webex.com/docs/integrations",
+    }],
+    "tools": [{
+      "id": "list_rooms",
+      "name": "List Rooms",
+      "description": "List Webex rooms (spaces) the authenticated user belongs to",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://webexapis.com/v1/rooms",
+        "params": {
+          "type": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by room type: 'direct' or 'group'",
+          },
+          "sortBy": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort order: id, lastactivity, or created",
+            "default": "lastactivity",
+          },
+          "max": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum rooms to return (max 1000)",
+            "default": 50,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["items"],
+            "collectionName": "rooms",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "title" },
+              { "name": "type" },
+              { "name": "isLocked" },
+              { "name": "lastActivity" },
+              { "name": "created" },
+            ],
+            "outputFields": [],
+            "omitted": "room metadata and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "list_messages",
+      "name": "List Messages",
+      "description": "List recent messages in a Webex room",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://webexapis.com/v1/messages",
+        "params": {
+          "roomId": {
+            "type": "string",
+            "in": "query",
+            "description": "Room ID to list messages from",
+            "required": true,
+          },
+          "max": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum messages to return",
+            "default": 50,
+          },
+          "before": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return messages sent before this ISO 8601 timestamp",
+          },
+        },
+      },
+    }, {
+      "id": "create_message",
+      "name": "Send Message",
+      "description": "Send a message to a Webex room or directly to a person",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://webexapis.com/v1/messages",
+        "body": {
+          "roomId": {
+            "type": "string",
+            "description": "Room ID to post the message to (omit when using toPersonEmail)",
+          },
+          "toPersonEmail": {
+            "type": "string",
+            "description": "Email address of a person to message directly (omit when using roomId)",
+          },
+          "text": { "type": "string", "description": "Plain-text message body" },
+          "markdown": {
+            "type": "string",
+            "description": "Markdown message body (takes precedence over text)",
+          },
+        },
+      },
+    }, {
+      "id": "get_my_details",
+      "name": "Get My Details",
+      "description": "Get the authenticated Webex user's profile",
+      "requiresWrite": false,
+      "endpoint": { "method": "GET", "url": "https://webexapis.com/v1/people/me" },
+    }, {
+      "id": "list_people",
+      "name": "List People",
+      "description": "Look up people in the organization by email or display name",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://webexapis.com/v1/people",
+        "params": {
+          "email": {
+            "type": "string",
+            "in": "query",
+            "description": "Exact email address to look up",
+          },
+          "displayName": {
+            "type": "string",
+            "in": "query",
+            "description": "Display name prefix to search for",
+          },
+          "max": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum people to return",
+            "default": 25,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "room_digest",
+      "title": "Catch up on a room",
+      "prompt":
+        "List the most recent messages in one of my Webex rooms and summarize the discussion.",
+      "category": "communication",
+      "icon": "list",
+    }, {
+      "id": "send_message",
+      "title": "Send a message",
+      "prompt": "Send a Webex message to a room or a person.",
+      "category": "communication",
+      "icon": "plus",
+    }],
+    "suggestedWith": ["calendar", "outlook", "gmail"],
+  },
+  {
+    "name": "xero",
+    "displayName": "Xero",
+    "icon": "xero.svg",
+    "description": "Manage invoices, contacts, and accounts in Xero accounting",
+    "auth": {
+      "type": "oauth2",
+      "provider": "xero",
+      "authorizationUrl": "https://login.xero.com/identity/connect/authorize",
+      "tokenUrl": "https://identity.xero.com/connect/token",
+      "scopes": [
+        "offline_access",
+        "accounting.transactions",
+        "accounting.contacts",
+        "accounting.settings",
+      ],
+      "tokenAuthMethod": "basic",
+      "requiredApis": [{
+        "name": "Xero Developer App",
+        "enableUrl": "https://developer.xero.com/app/manage",
+      }],
+      "docsUrl": "https://developer.xero.com/documentation/guides/oauth2/auth-flow/",
+    },
+    "envVars": [{
+      "name": "XERO_CLIENT_ID",
+      "description": "Xero OAuth Client ID (from your app at developer.xero.com)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.xero.com/documentation/guides/oauth2/auth-flow/",
+    }, {
+      "name": "XERO_CLIENT_SECRET",
+      "description": "Xero OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.xero.com/documentation/guides/oauth2/auth-flow/",
+    }],
+    "tools": [{
+      "id": "list_connections",
+      "name": "List Connections",
+      "description":
+        "List Xero tenants (organisations) connected to this token — run this first to discover the tenantId used by every other tool",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.xero.com/connections",
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["connections", "data"],
+            "collectionName": "connections",
+            "itemFields": [{ "name": "id" }, { "name": "tenantId" }, { "name": "tenantType" }, {
+              "name": "tenantName",
+            }, { "name": "createdDateUtc" }],
+            "outputFields": [],
+            "omitted": "auth event identifiers and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "list_invoices",
+      "name": "List Invoices",
+      "description": "List invoices in a Xero organisation",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.xero.com/api.xro/2.0/Invoices",
+        "params": {
+          "tenant_id": {
+            "type": "string",
+            "in": "header",
+            "description": "Xero tenant ID (from the List Connections tool)",
+            "required": true,
+            "headerName": "xero-tenant-id",
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "description": "Response format — keep application/json",
+            "default": "application/json",
+            "headerName": "Accept",
+          },
+          "where": {
+            "type": "string",
+            "in": "query",
+            "description": 'Filter, e.g. Status=="AUTHORISED" or Type=="ACCREC"',
+          },
+          "order": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort order, e.g. UpdatedDateUTC DESC",
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (100 invoices per page)",
+            "default": 1,
+          },
+        },
+        "response": {
+          "transform": "Invoices",
+          "historicalSummary": {
+            "collectionKeys": ["Invoices", "data"],
+            "collectionName": "invoices",
+            "itemFields": [
+              { "name": "InvoiceID" },
+              { "name": "InvoiceNumber" },
+              { "name": "Type" },
+              { "name": "Status" },
+              { "name": "Date" },
+              { "name": "DueDate" },
+              { "name": "Total" },
+              { "name": "AmountDue" },
+              { "name": "UpdatedDateUTC" },
+              { "name": "Contact", "kind": "object" },
+            ],
+            "outputFields": [],
+            "omitted": "invoice line items, payments, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_invoice",
+      "name": "Get Invoice",
+      "description": "Get a Xero invoice with its line items",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.xero.com/api.xro/2.0/Invoices/{invoiceId}",
+        "params": {
+          "invoiceId": {
+            "type": "string",
+            "in": "path",
+            "description": "Xero InvoiceID (GUID) or invoice number",
+            "required": true,
+          },
+          "tenant_id": {
+            "type": "string",
+            "in": "header",
+            "description": "Xero tenant ID (from the List Connections tool)",
+            "required": true,
+            "headerName": "xero-tenant-id",
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "description": "Response format — keep application/json",
+            "default": "application/json",
+            "headerName": "Accept",
+          },
+        },
+        "response": { "transform": "Invoices" },
+      },
+    }, {
+      "id": "create_invoice",
+      "name": "Create Invoice",
+      "description": "Create an invoice in a Xero organisation",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.xero.com/api.xro/2.0/Invoices",
+        "params": {
+          "tenant_id": {
+            "type": "string",
+            "in": "header",
+            "description": "Xero tenant ID (from the List Connections tool)",
+            "required": true,
+            "headerName": "xero-tenant-id",
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "description": "Response format — keep application/json",
+            "default": "application/json",
+            "headerName": "Accept",
+          },
+        },
+        "body": {
+          "invoice": {
+            "type": "object",
+            "description":
+              'Invoice payload, e.g. { "Type": "ACCREC", "Contact": { "ContactID": "..." }, "LineItems": [{ "Description": "Service", "Quantity": 1, "UnitAmount": 100, "AccountCode": "200" }], "DueDate": "2026-07-01" }',
+            "required": true,
+          },
+        },
+        "bodyMode": "passthrough",
+        "response": { "transform": "Invoices" },
+      },
+    }, {
+      "id": "list_contacts",
+      "name": "List Contacts",
+      "description": "List contacts in a Xero organisation",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.xero.com/api.xro/2.0/Contacts",
+        "params": {
+          "tenant_id": {
+            "type": "string",
+            "in": "header",
+            "description": "Xero tenant ID (from the List Connections tool)",
+            "required": true,
+            "headerName": "xero-tenant-id",
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "description": "Response format — keep application/json",
+            "default": "application/json",
+            "headerName": "Accept",
+          },
+          "where": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter, e.g. EmailAddress!=null",
+          },
+          "order": { "type": "string", "in": "query", "description": "Sort order, e.g. Name ASC" },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (100 contacts per page)",
+            "default": 1,
+          },
+        },
+        "response": { "transform": "Contacts" },
+      },
+    }, {
+      "id": "list_accounts",
+      "name": "List Accounts",
+      "description": "List the chart of accounts in a Xero organisation",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.xero.com/api.xro/2.0/Accounts",
+        "params": {
+          "tenant_id": {
+            "type": "string",
+            "in": "header",
+            "description": "Xero tenant ID (from the List Connections tool)",
+            "required": true,
+            "headerName": "xero-tenant-id",
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "description": "Response format — keep application/json",
+            "default": "application/json",
+            "headerName": "Accept",
+          },
+          "where": {
+            "type": "string",
+            "in": "query",
+            "description": 'Filter, e.g. Type=="REVENUE"',
+          },
+        },
+        "response": { "transform": "Accounts" },
+      },
+    }],
+    "prompts": [{
+      "id": "overdue_invoices",
+      "title": "Overdue invoices",
+      "prompt": "List my Xero invoices that are overdue, with amounts due and contact names.",
+      "category": "finance",
+      "icon": "chart",
+    }, {
+      "id": "create_invoice",
+      "title": "Create an invoice",
+      "prompt": "Create a draft sales invoice in Xero for a contact with the line items I provide.",
+      "category": "finance",
+      "icon": "plus",
+    }],
+    "suggestedWith": ["stripe", "hubspot", "gmail"],
+  },
+  {
     "name": "zendesk",
     "displayName": "Zendesk",
     "icon": "zendesk.svg",
@@ -24052,6 +33183,217 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["salesforce", "slack", "teams"],
     "category": "support",
   },
+  {
+    "name": "zoom",
+    "displayName": "Zoom",
+    "icon": "zoom.svg",
+    "description": "Schedule and manage Zoom meetings and access cloud recordings",
+    "auth": {
+      "type": "oauth2",
+      "provider": "zoom",
+      "authorizationUrl": "https://zoom.us/oauth/authorize",
+      "tokenUrl": "https://zoom.us/oauth/token",
+      "scopes": [
+        "user:read:user",
+        "meeting:read:meeting",
+        "meeting:read:list_meetings",
+        "meeting:write:meeting",
+        "cloud_recording:read:list_user_recordings",
+      ],
+      "tokenAuthMethod": "basic",
+      "requiredApis": [{
+        "name": "Zoom App Marketplace (General App)",
+        "enableUrl": "https://marketplace.zoom.us/develop/create",
+      }],
+      "docsUrl": "https://developers.zoom.us/docs/integrations/oauth/",
+    },
+    "envVars": [{
+      "name": "ZOOM_CLIENT_ID",
+      "description": "Zoom OAuth Client ID (from your app in the Zoom App Marketplace)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developers.zoom.us/docs/integrations/oauth/",
+    }, {
+      "name": "ZOOM_CLIENT_SECRET",
+      "description": "Zoom OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developers.zoom.us/docs/integrations/oauth/",
+    }],
+    "tools": [{
+      "id": "list_meetings",
+      "name": "List Meetings",
+      "description": "List scheduled or upcoming Zoom meetings for the authenticated user",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.zoom.us/v2/users/{userId}/meetings",
+        "params": {
+          "userId": {
+            "type": "string",
+            "in": "path",
+            "description": "Zoom user ID or 'me' for the authenticated user",
+            "default": "me",
+          },
+          "type": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Meeting type filter: scheduled, live, upcoming, upcoming_meetings, or previous_meetings",
+            "default": "upcoming",
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of meetings per page (max 300)",
+            "default": 30,
+          },
+          "next_page_token": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination token from a previous response",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["meetings"],
+            "collectionName": "meetings",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "uuid" },
+              { "name": "topic" },
+              { "name": "type" },
+              { "name": "start_time" },
+              { "name": "duration" },
+              { "name": "timezone" },
+              { "name": "join_url" },
+              { "name": "created_at" },
+            ],
+            "outputFields": [{ "name": "next_page_token" }, { "name": "page_size" }, {
+              "name": "total_records",
+            }],
+            "omitted": "meeting settings, passwords, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_meeting",
+      "name": "Get Meeting",
+      "description": "Get details of a Zoom meeting by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.zoom.us/v2/meetings/{meetingId}",
+        "params": {
+          "meetingId": {
+            "type": "string",
+            "in": "path",
+            "description": "Zoom meeting ID",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "create_meeting",
+      "name": "Create Meeting",
+      "description": "Schedule a new Zoom meeting for the authenticated user",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.zoom.us/v2/users/{userId}/meetings",
+        "params": {
+          "userId": {
+            "type": "string",
+            "in": "path",
+            "description": "Zoom user ID or 'me' for the authenticated user",
+            "default": "me",
+          },
+        },
+        "body": {
+          "topic": { "type": "string", "description": "Meeting topic", "required": true },
+          "type": {
+            "type": "number",
+            "description":
+              "Meeting type: 1=instant, 2=scheduled, 3=recurring (no fixed time), 8=recurring (fixed time)",
+            "default": 2,
+          },
+          "start_time": {
+            "type": "string",
+            "description": "Start time in ISO 8601 format, e.g. 2026-06-15T10:00:00Z",
+          },
+          "duration": { "type": "number", "description": "Duration in minutes" },
+          "timezone": {
+            "type": "string",
+            "description": "Timezone for start_time, e.g. Europe/Berlin",
+          },
+          "agenda": { "type": "string", "description": "Meeting agenda / description" },
+          "settings": {
+            "type": "object",
+            "description":
+              'Meeting settings, e.g. { "join_before_host": true, "waiting_room": false }',
+          },
+        },
+      },
+    }, {
+      "id": "list_recordings",
+      "name": "List Recordings",
+      "description": "List cloud recordings for the authenticated user",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.zoom.us/v2/users/{userId}/recordings",
+        "params": {
+          "userId": {
+            "type": "string",
+            "in": "path",
+            "description": "Zoom user ID or 'me' for the authenticated user",
+            "default": "me",
+          },
+          "from": {
+            "type": "string",
+            "in": "query",
+            "description": "Start date (yyyy-mm-dd) of the query window (within the last 6 months)",
+          },
+          "to": {
+            "type": "string",
+            "in": "query",
+            "description": "End date (yyyy-mm-dd) of the query window",
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of records per page (max 300)",
+            "default": 30,
+          },
+          "next_page_token": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination token from a previous response",
+          },
+        },
+      },
+    }, {
+      "id": "get_me",
+      "name": "Get My Profile",
+      "description": "Get the authenticated Zoom user's profile",
+      "requiresWrite": false,
+      "endpoint": { "method": "GET", "url": "https://api.zoom.us/v2/users/me" },
+    }],
+    "prompts": [{
+      "id": "upcoming_meetings",
+      "title": "Upcoming meetings",
+      "prompt": "List my upcoming Zoom meetings with their start times and join links.",
+      "category": "productivity",
+      "icon": "list",
+    }, {
+      "id": "schedule_meeting",
+      "title": "Schedule a meeting",
+      "prompt": "Schedule a Zoom meeting with a topic, start time, and duration.",
+      "category": "productivity",
+      "icon": "plus",
+    }],
+    "suggestedWith": ["calendar", "slack", "gmail"],
+  },
 ];
 
 export const icons: Record<string, string> = {
@@ -24065,38 +33407,62 @@ export const icons: Record<string, string> = {
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#1E61F0"/>\n  <path d="M20 76c8 0 10-32 22-32s10 48 22 48 10-64 22-64 14 48 22 48" fill="none" stroke="#fff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>\n</svg>\n',
   "anthropic":
     '<svg role="img" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><title>Anthropic</title><path d="M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z"/></svg>',
+  "apify":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="28" fill="#97D700"/>\n  <path d="M40 96 64 30l24 66H72l-8-24-8 24z" fill="#FFFFFF"/>\n</svg>\n',
   "apollo":
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#1C1C28"/>\n  <path d="M64 28 92 96h-14l-5.5-14h-25L42 96H28z" fill="#FFFFFF"/>\n  <path d="M64 52l7.5 19h-15z" fill="#1C1C28"/>\n  <circle cx="96" cy="34" r="7" fill="#FDB022"/>\n</svg>\n',
   "asana":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<mask id="mask0_60_20503" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="0" y="4" width="128" height="120">\n<path d="M91.8356 32.7671C91.8356 48.1096 79.3425 60.6027 64 60.6027C48.6575 60.6027 36.1644 48.1096 36.1644 32.7671C36.1644 17.4246 48.6575 4.93149 64 4.93149C79.5616 4.93149 91.8356 17.2055 91.8356 32.7671ZM27.8356 67.3972C12.4931 67.3972 0 79.8904 0 95.2328C0 110.575 12.4931 123.068 27.8356 123.068C43.1781 123.068 55.6712 110.575 55.6712 95.2328C55.6712 79.8904 43.3973 67.3972 27.8356 67.3972ZM100.164 67.3972C84.8219 67.3972 72.3288 79.8904 72.3288 95.2328C72.3288 110.575 84.8219 123.068 100.164 123.068C115.507 123.068 128 110.575 128 95.2328C128 79.8904 115.726 67.3972 100.164 67.3972Z" fill="white"/>\n</mask>\n<g mask="url(#mask0_60_20503)">\n<path d="M64.0003 3.61646C102.795 3.61646 134.137 34.9589 134.137 73.7534C134.137 112.548 102.795 143.89 64.0003 143.89C25.2057 143.89 -6.13672 112.548 -6.13672 73.7534C-5.91754 34.9589 25.4249 3.61646 64.0003 3.61646Z" fill="url(#paint0_radial_60_20503)"/>\n</g>\n<defs>\n<radialGradient id="paint0_radial_60_20503" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(64.0834 73.692) rotate(-90) scale(70.1091)">\n<stop stop-color="#FFB900"/>\n<stop offset="0.6" stop-color="#F95D8F"/>\n<stop offset="0.9991" stop-color="#F95353"/>\n</radialGradient>\n</defs>\n</svg>\n',
   "ashby":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#3E2BCB"/>\n<path d="M64 26 98 102H82.5l-7-16.5h-23L45.5 102H30L64 26Zm0 31-7.7 18.5h15.4L64 57Z" fill="#FFFFFF"/>\n</svg>\n',
+  "assemblyai":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="28" fill="#2545D3"/>\n  <circle cx="52" cy="64" r="16" fill="#FFFFFF"/>\n  <path d="M80 40 a 34 34 0 0 1 0 48" fill="none" stroke="#FFFFFF" stroke-width="10" stroke-linecap="round"/>\n  <path d="M92 28 a 50 50 0 0 1 0 72" fill="none" stroke="#FFFFFF" stroke-width="10" stroke-linecap="round" opacity="0.6"/>\n</svg>\n',
   "attio":
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#18181B"/>\n  <circle cx="48" cy="48" r="14" fill="none" stroke="#FFFFFF" stroke-width="9"/>\n  <circle cx="80" cy="80" r="14" fill="none" stroke="#FFFFFF" stroke-width="9"/>\n  <rect x="58" y="58" width="12" height="12" fill="#FFFFFF" transform="rotate(45 64 64)"/>\n</svg>\n',
   "aws":
     '<svg role="img" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><title>Amazon AWS</title><path d="M6.763 10.036c0 .296.032.535.088.71.064.176.144.368.256.576.04.063.056.127.056.183 0 .08-.048.16-.152.24l-.503.335a.383.383 0 0 1-.208.072c-.08 0-.16-.04-.239-.112a2.47 2.47 0 0 1-.287-.375 6.18 6.18 0 0 1-.248-.471c-.622.734-1.405 1.101-2.347 1.101-.67 0-1.205-.191-1.596-.574-.391-.384-.59-.894-.59-1.533 0-.678.239-1.23.726-1.644.487-.415 1.133-.623 1.955-.623.272 0 .551.024.846.064.296.04.6.104.918.176v-.583c0-.607-.127-1.03-.375-1.277-.255-.248-.686-.367-1.3-.367-.28 0-.568.031-.863.103-.295.072-.583.16-.862.272a2.287 2.287 0 0 1-.28.104.488.488 0 0 1-.127.023c-.112 0-.168-.08-.168-.247v-.391c0-.128.016-.224.056-.28a.597.597 0 0 1 .224-.167c.279-.144.614-.264 1.005-.36a4.84 4.84 0 0 1 1.246-.151c.95 0 1.644.216 2.091.647.439.43.662 1.085.662 1.963v2.586zm-3.24 1.214c.263 0 .534-.048.822-.144.287-.096.543-.271.758-.51.128-.152.224-.32.272-.512.047-.191.08-.423.08-.694v-.335a6.66 6.66 0 0 0-.735-.136 6.02 6.02 0 0 0-.75-.048c-.535 0-.926.104-1.19.32-.263.215-.39.518-.39.917 0 .375.095.655.295.846.191.2.47.296.838.296zm6.41.862c-.144 0-.24-.024-.304-.08-.064-.048-.12-.16-.168-.311L7.586 5.55a1.398 1.398 0 0 1-.072-.32c0-.128.064-.2.191-.2h.783c.151 0 .255.025.31.08.065.048.113.16.16.312l1.342 5.284 1.245-5.284c.04-.16.088-.264.151-.312a.549.549 0 0 1 .32-.08h.638c.152 0 .256.025.32.08.063.048.12.16.151.312l1.261 5.348 1.381-5.348c.048-.16.104-.264.16-.312a.52.52 0 0 1 .311-.08h.743c.127 0 .2.065.2.2 0 .04-.009.08-.017.128a1.137 1.137 0 0 1-.056.2l-1.923 6.17c-.048.16-.104.263-.168.311a.51.51 0 0 1-.303.08h-.687c-.151 0-.255-.024-.32-.08-.063-.056-.119-.16-.15-.32l-1.238-5.148-1.23 5.14c-.04.16-.087.264-.15.32-.065.056-.177.08-.32.08zm10.256.215c-.415 0-.83-.048-1.229-.143-.399-.096-.71-.2-.918-.32-.128-.071-.215-.151-.247-.223a.563.563 0 0 1-.048-.224v-.407c0-.167.064-.247.183-.247.048 0 .096.008.144.024.048.016.12.048.2.08.271.12.566.215.878.279.319.064.63.096.95.096.502 0 .894-.088 1.165-.264a.86.86 0 0 0 .415-.758.777.777 0 0 0-.215-.559c-.144-.151-.416-.287-.807-.415l-1.157-.36c-.583-.183-1.014-.454-1.277-.813a1.902 1.902 0 0 1-.4-1.158c0-.335.073-.63.216-.886.144-.255.335-.479.575-.654.24-.184.51-.32.83-.415.32-.096.655-.136 1.006-.136.175 0 .359.008.535.032.183.024.35.056.518.088.16.04.312.08.455.127.144.048.256.096.336.144a.69.69 0 0 1 .24.2.43.43 0 0 1 .071.263v.375c0 .168-.064.256-.184.256a.83.83 0 0 1-.303-.096 3.652 3.652 0 0 0-1.532-.311c-.455 0-.815.071-1.062.223-.248.152-.375.383-.375.71 0 .224.08.416.24.567.159.152.454.304.877.44l1.134.358c.574.184.99.44 1.237.767.247.327.367.702.367 1.117 0 .343-.072.655-.207.926-.144.272-.336.511-.583.703-.248.2-.543.343-.886.447-.36.111-.734.167-1.142.167zM21.698 16.207c-2.626 1.94-6.442 2.969-9.722 2.969-4.598 0-8.74-1.7-11.87-4.526-.247-.223-.024-.527.272-.351 3.384 1.963 7.559 3.153 11.877 3.153 2.914 0 6.114-.607 9.06-1.852.439-.2.814.287.383.607zM22.792 14.961c-.336-.43-2.22-.207-3.074-.103-.255.032-.295-.192-.063-.36 1.5-1.053 3.967-.75 4.254-.399.287.36-.08 2.826-1.485 4.007-.215.184-.423.088-.327-.151.32-.79 1.03-2.57.695-2.994z"/></svg>',
+  "axiom":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#16161D"/>\n  <path d="M64 28 L102 96 H26 Z" fill="none" stroke="#FFFFFF" stroke-width="9" stroke-linejoin="round"/>\n  <circle cx="64" cy="74" r="10" fill="#FFFFFF"/>\n</svg>\n',
   "basecamp":
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#1D2D35"/>\n  <path d="M64 30c-19 0-33 16.6-36 42.4 8.1 9.6 19.8 17.6 36 17.6s27.9-8 36-17.6C97 46.6 83 30 64 30zm0 48.6c-10.9 0-19.3-4.6-25.6-10.5C41.6 51.4 51 41.4 64 41.4c8.1 0 14.9 3.9 19.8 10.6l-8.7 8.4c-3.1-4.4-6.7-7.6-11.1-7.6-6.1 0-11.2 6-13.2 14.9 4 3 8.4 5 13.2 5 9.4 0 16.1-5.4 21.6-11.7 1.2 3.4 2.1 7.1 2.7 11.1C82 77.3 74.1 78.6 64 78.6z" fill="#fff"/>\n</svg>\n',
+  "betterstack":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#1F2025"/>\n  <rect x="40" y="30" width="58" height="16" rx="8" fill="#FFFFFF"/>\n  <rect x="32" y="56" width="58" height="16" rx="8" fill="#FFFFFF" opacity="0.85"/>\n  <rect x="40" y="82" width="58" height="16" rx="8" fill="#FFFFFF" opacity="0.7"/>\n</svg>\n',
   "bitbucket":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<path d="M4.15271 6.00034C3.55438 5.99262 2.96162 6.11597 2.41604 6.36173C1.87046 6.60748 1.38528 6.96967 0.994579 7.42289C0.603876 7.8761 0.317116 8.40935 0.154432 8.98519C-0.00825225 9.56102 -0.0429162 10.1655 0.0528736 10.7561L17.4567 116.409C17.6735 117.702 18.339 118.877 19.3362 119.728C20.3334 120.579 21.5985 121.051 22.9094 121.062H106.403C107.385 121.075 108.34 120.734 109.092 120.102C109.845 119.47 110.345 118.588 110.502 117.618L127.947 10.7971C128.043 10.2065 128.008 9.60202 127.846 9.02618C127.683 8.45035 127.396 7.9171 127.005 7.46389C126.615 7.01067 126.13 6.64848 125.584 6.40272C125.038 6.15697 124.446 6.03362 123.847 6.04134L4.15271 6.00034ZM77.4372 82.3597H50.7883L43.5726 44.6822H83.8944L77.4372 82.3597Z" fill="#2684FF"/>\n<path d="M122.371 44.6822H83.8944L77.4371 82.3597H50.7882L19.322 119.73C20.3194 120.592 21.5909 121.072 22.9094 121.083H106.423C107.406 121.095 108.36 120.754 109.113 120.122C109.865 119.49 110.366 118.609 110.523 117.639L122.371 44.6822Z" fill="url(#paint0_linear_0_425)"/>\n<defs>\n<linearGradient id="paint0_linear_0_425" x1="131.268" y1="55.2188" x2="67.6795" y2="104.868" gradientUnits="userSpaceOnUse">\n<stop offset="0.18" stop-color="#0052CC"/>\n<stop offset="1" stop-color="#2684FF"/>\n</linearGradient>\n</defs>\n</svg>\n',
+  "box":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#0061D5"/>\n  <g fill="none" stroke="#FFFFFF" stroke-width="10">\n    <circle cx="48" cy="72" r="17"/>\n    <circle cx="84" cy="72" r="17"/>\n  </g>\n  <rect x="26" y="34" width="10" height="38" rx="5" fill="#FFFFFF"/>\n</svg>\n',
   "brevo":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#0B996E"/>\n<path d="M40 30h30c12.2 0 22 8.3 22 19 0 6.4-3.6 11.9-9.2 15.3C90.6 67.8 95 74.5 95 82c0 12.7-11.6 23-26 23-10.4 0-19.8-5.6-24-13.6l9.4-5.2c2.7 5.1 8.3 8.6 14.6 8.6 8.6 0 15.5-5.9 15.5-13s-6.9-13-15.5-13H52v37H40V30Zm12 11v27h17.5c6.9 0 12.5-5.4 12.5-12s-5.6-12-12.5-12H52v-3Z" fill="#FFFFFF"/>\n</svg>\n',
+  "browserbase":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="28" fill="#1F1F1F"/>\n  <rect x="26" y="32" width="76" height="64" rx="10" fill="none" stroke="#FFFFFF" stroke-width="8"/>\n  <path d="M26 50h76" stroke="#FFFFFF" stroke-width="8"/>\n  <circle cx="38" cy="41" r="4" fill="#FFFFFF"/>\n  <circle cx="64" cy="73" r="11" fill="#FFFFFF"/>\n</svg>\n',
+  "buildkite":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#14B576"/>\n  <path d="M36 36 L64 50 V78 L36 64 Z" fill="#FFFFFF"/>\n  <path d="M64 50 L92 36 V64 L64 78 Z" fill="#FFFFFF" opacity="0.75"/>\n  <path d="M36 64 L64 78 V106 L36 92 Z" fill="#FFFFFF" opacity="0.55"/>\n</svg>\n',
   "calendar":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_64)">\n<g clip-path="url(#clip1_0_64)">\n<path d="M97.6844 30.3155L67.3689 26.9472L30.3161 30.3155L26.9471 64L30.3155 97.6845L63.9999 101.895L97.6844 97.6845L101.053 63.1584L97.6844 30.3155Z" fill="white"/>\n<path d="M44.135 82.5766C41.6173 80.8755 39.8739 78.3917 38.9222 75.1072L44.7667 72.6989C45.2973 74.72 46.2234 76.2861 47.5456 77.3978C48.8595 78.5094 50.4595 79.0566 52.329 79.0566C54.2406 79.0566 55.8829 78.4755 57.255 77.3133C58.6272 76.151 59.3184 74.6688 59.3184 72.8755C59.3184 71.04 58.5939 69.5405 57.1456 68.3789C55.6973 67.2173 53.8784 66.6355 51.7056 66.6355H48.329V60.8506H51.36C53.2294 60.8506 54.8045 60.3456 56.0845 59.335C57.3645 58.3245 58.0045 56.9434 58.0045 55.1834C58.0045 53.6173 57.4317 52.3706 56.2867 51.4362C55.1418 50.5018 53.6928 50.0301 51.9328 50.0301C50.215 50.0301 48.8506 50.4851 47.84 51.4029C46.8294 52.3206 46.0966 53.449 45.6339 54.7795L39.849 52.3712C40.615 50.1984 42.0218 48.2784 44.0845 46.6195C46.1478 44.9606 48.7834 44.1267 51.9834 44.1267C54.3494 44.1267 56.48 44.5818 58.3667 45.4995C60.2528 46.4173 61.735 47.689 62.8045 49.3056C63.8739 50.9306 64.4045 52.7501 64.4045 54.7706C64.4045 56.8339 63.9078 58.5766 62.9139 60.0083C61.92 61.44 60.6989 62.5344 59.2506 63.3011V63.6461C61.1622 64.4461 62.72 65.6672 63.9494 67.3094C65.1706 68.9517 65.785 70.9139 65.785 73.2045C65.785 75.495 65.2038 77.5411 64.0416 79.335C62.8794 81.129 61.271 82.5434 59.2333 83.5706C57.1872 84.5978 54.8883 85.12 52.3366 85.12C49.3811 85.1283 46.6528 84.2778 44.135 82.5766Z" fill="#1A73E8"/>\n<path d="M80 53.575L73.6166 58.215L70.4083 53.3478L81.92 45.0445H86.3328V84.2106H80V53.575Z" fill="#1A73E8"/>\n<path d="M97.6844 128L128 97.6845L112.842 90.9478L97.6844 97.6845L90.9478 112.842L97.6844 128Z" fill="#EA4335"/>\n<path d="M23.5789 112.842L30.3155 128H97.6838V97.6845H30.3155L23.5789 112.842Z" fill="#34A853"/>\n<path d="M10.105 0C4.52224 0 0 4.52224 0 10.105V97.6838L15.1578 104.42L30.3155 97.6838V30.3155H97.6838L104.42 15.1578L97.6845 0H10.105Z" fill="#4285F4"/>\n<path d="M0 97.6845V117.895C0 123.478 4.52224 128 10.105 128H30.3155V97.6845H0Z" fill="#188038"/>\n<path d="M97.6844 30.3155V97.6838H128V30.3155L112.842 23.5789L97.6844 30.3155Z" fill="#FBBC04"/>\n<path d="M128 30.3155V10.105C128 4.5216 123.478 0 117.895 0H97.6844V30.3155H128Z" fill="#1967D2"/>\n</g>\n</g>\n<defs>\n<clipPath id="clip0_0_64">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n<clipPath id="clip1_0_64">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n</defs>\n</svg>\n',
   "calendly":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#FFFFFF"/>\n<path d="M64 24c22.1 0 40 17.9 40 40s-17.9 40-40 40-40-17.9-40-40 17.9-40 40-40Zm0 14c-14.4 0-26 11.6-26 26s11.6 26 26 26c8.9 0 16.8-4.5 21.5-11.3l-11.9-7.2C71.5 75.3 68 77 64 77c-7.2 0-13-5.8-13-13s5.8-13 13-13c4 0 7.5 1.7 9.6 4.5l11.9-7.2C80.8 41.5 72.9 38 64 38Z" fill="#006BFF"/>\n</svg>\n',
+  "checkly":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#0075FF"/>\n  <path d="M34 66 L56 88 L96 42" fill="none" stroke="#FFFFFF" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>\n</svg>\n',
   "circleci":
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#343434"/>\n  <g fill="#fff">\n    <path d="M64 24c18.6 0 34.2 12.7 38.7 29.9.1.3.1.6.1.8 0 1.7-1.4 3.1-3.1 3.1H86.5c-1.2 0-2.3-.7-2.8-1.8C80.1 48.6 72.6 44 64 44c-11 0-20 9-20 20s9 20 20 20c8.6 0 16.1-4.6 19.7-12 .5-1.1 1.6-1.8 2.8-1.8h13.2c1.7 0 3.1 1.4 3.1 3.1 0 .3 0 .6-.1.8C98.2 91.3 82.6 104 64 104c-22.1 0-40-17.9-40-40s17.9-40 40-40z"/>\n    <circle cx="64" cy="64" r="9.5"/>\n  </g>\n</svg>\n',
+  "clickhouse":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#FFCC00"/>\n  <rect x="28" y="28" width="10" height="72" fill="#FFFFFF"/>\n  <rect x="46" y="28" width="10" height="72" fill="#FFFFFF"/>\n  <rect x="64" y="28" width="10" height="72" fill="#FFFFFF"/>\n  <rect x="82" y="28" width="10" height="72" fill="#FFFFFF"/>\n  <rect x="100" y="56" width="10" height="16" fill="#FFFFFF"/>\n</svg>\n',
+  "clickup":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#7B68EE"/>\n  <g fill="none" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">\n    <path d="M36 56l28-24 28 24"/>\n    <path d="M36 84l28 14 28-14"/>\n  </g>\n</svg>\n',
   "close":
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#1463FF"/>\n  <circle cx="64" cy="64" r="32" fill="none" stroke="#FFFFFF" stroke-width="10"/>\n  <path d="M64 48l18 16-18 16v-10H46v-12h18z" fill="#FFFFFF"/>\n</svg>\n',
   "cloudflare":
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#F38020"/>\n  <path d="M86.5 82H32.9c-1.4 0-2.2-1.7-1.3-2.8l2.7-3.4c2.3-2.9 5.8-4.6 9.5-4.6h.6l8.1-20.1C55.7 43.5 62.9 39 70.8 39c9.4 0 17.4 6.4 19.7 15.2 5.9 1.5 10.7 6 12.5 11.8 2.4 7.6-1.7 13.6-3.7 16.1-.6.7-1.4 1.1-2.3 1.1h-7.2c2.4-3.2 3.1-6.6 2.1-9.8-1.1-3.6-4.3-6.3-8.1-6.8l-4.6-.6-1.2-4.5c-1.4-5.4-6.3-9.2-11.9-9.2-4.8 0-9.2 2.8-11.2 7.2l-9 22.5z" fill="#fff"/>\n</svg>\n',
   "coda":
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#F46A54"/>\n  <path d="M88 36c-4.4-4.9-10.8-8-17.9-8C56.8 28 46 38.7 46 52v24c0 13.3 10.8 24 24.1 24 7.1 0 13.5-3.1 17.9-8v-14.7C84.6 84.3 78 88.7 70.1 88.7 60.4 88.7 52.5 81 52.5 64s7.9-24.7 17.6-24.7c7.9 0 14.5 4.4 17.9 11.4V36z" fill="#fff"/>\n</svg>\n',
+  "cohere":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="28" fill="#39594D"/>\n  <rect x="28" y="38" width="58" height="14" rx="7" fill="#FFFFFF"/>\n  <rect x="28" y="57" width="72" height="14" rx="7" fill="#FFFFFF" opacity="0.85"/>\n  <rect x="28" y="76" width="44" height="14" rx="7" fill="#FFFFFF" opacity="0.65"/>\n</svg>\n',
   "confluence":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_240_6563)">\n<g clip-path="url(#clip1_240_6563)">\n<path d="M38.0146 59.1266C36.0729 56.9907 33.1606 57.1849 31.8012 59.7093L0.344616 122.622C-0.820405 125.147 0.927179 128.059 3.64561 128.059H47.3352C48.6948 128.059 50.0538 127.283 50.6365 125.923C60.1508 106.506 54.5199 76.7967 38.0146 59.1266Z" fill="url(#paint0_linear_240_6563)"/>\n<path d="M60.9302 2.03887C43.4544 29.8061 44.6197 60.6804 56.0757 83.7872C67.7264 106.894 76.4643 124.758 77.2412 125.924C77.8239 127.283 79.1829 128.059 80.542 128.059H124.232C126.95 128.059 128.892 125.147 127.533 122.622C127.533 122.622 68.6975 4.95152 67.1437 2.03887C65.9789 -0.679622 62.6777 -0.679622 60.9302 2.03887Z" fill="#2684FF"/>\n</g>\n</g>\n<defs>\n<linearGradient id="paint0_linear_240_6563" x1="55.1799" y1="68.8586" x2="22.028" y2="126.28" gradientUnits="userSpaceOnUse">\n<stop stop-color="#0052CC"/>\n<stop offset="0.9228" stop-color="#2684FF"/>\n</linearGradient>\n<clipPath id="clip0_240_6563">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n<clipPath id="clip1_240_6563">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n</defs>\n</svg>\n',
   "datadog":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#632CA6"/>\n<g fill="#FFFFFF">\n<path d="M40 36h24c17.7 0 32 12.5 32 28s-14.3 28-32 28H40V36Zm14 12v32h10c10.5 0 19-7.2 19-16s-8.5-16-19-16H54Z"/>\n<circle cx="97" cy="35" r="7"/>\n</g>\n</svg>\n',
+  "deepgram":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="28" fill="#0D0D12"/>\n  <g fill="#FFFFFF">\n    <rect x="28" y="54" width="10" height="20" rx="5"/>\n    <rect x="46" y="42" width="10" height="44" rx="5"/>\n    <rect x="64" y="30" width="10" height="68" rx="5"/>\n    <rect x="82" y="46" width="10" height="36" rx="5"/>\n    <rect x="100" y="58" width="10" height="12" rx="5" opacity="0.8"/>\n  </g>\n</svg>\n',
   "dialpad":
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#6C3DFF"/>\n  <circle cx="44" cy="40" r="8" fill="#FFFFFF"/>\n  <circle cx="64" cy="40" r="8" fill="#FFFFFF"/>\n  <circle cx="84" cy="40" r="8" fill="#FFFFFF"/>\n  <circle cx="44" cy="64" r="8" fill="#FFFFFF"/>\n  <circle cx="64" cy="64" r="8" fill="#FFFFFF"/>\n  <circle cx="84" cy="64" r="8" fill="#FFFFFF"/>\n  <circle cx="64" cy="88" r="8" fill="#FFFFFF"/>\n</svg>\n',
   "digitalocean":
@@ -24105,8 +33471,12 @@ export const icons: Record<string, string> = {
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_239)">\n<mask id="mask0_0_239" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="18" y="0" width="93" height="128">\n<path d="M75.8462 0H26.6769C21.9046 0 18 3.92727 18 8.72727V119.273C18 124.073 21.9046 128 26.6769 128H101.877C106.649 128 110.554 124.073 110.554 119.273V34.9091L75.8462 0Z" fill="white"/>\n</mask>\n<g mask="url(#mask0_0_239)">\n<path d="M75.8462 0H26.6769C21.9046 0 18 3.92727 18 8.72727V119.273C18 124.073 21.9046 128 26.6769 128H101.877C106.649 128 110.554 124.073 110.554 119.273V34.9091L90.3077 20.3636L75.8462 0Z" fill="#4285F4"/>\n</g>\n<mask id="mask1_0_239" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="18" y="0" width="93" height="128">\n<path d="M75.8462 0H26.6769C21.9046 0 18 3.92727 18 8.72727V119.273C18 124.073 21.9046 128 26.6769 128H101.877C106.649 128 110.554 124.073 110.554 119.273V34.9091L75.8462 0Z" fill="white"/>\n</mask>\n<g mask="url(#mask1_0_239)">\n<path d="M78.3848 32.3564L110.554 64.7055V34.9091L78.3848 32.3564Z" fill="url(#paint0_linear_0_239)"/>\n</g>\n<mask id="mask2_0_239" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="18" y="0" width="93" height="128">\n<path d="M75.8462 0H26.6769C21.9046 0 18 3.92727 18 8.72727V119.273C18 124.073 21.9046 128 26.6769 128H101.877C106.649 128 110.554 124.073 110.554 119.273V34.9091L75.8462 0Z" fill="white"/>\n</mask>\n<g mask="url(#mask2_0_239)">\n<path d="M41.1382 93.0909H87.4151V87.2727H41.1382V93.0909ZM41.1382 104.727H75.8459V98.9091H41.1382V104.727ZM41.1382 64V69.8182H87.4151V64H41.1382ZM41.1382 81.4545H87.4151V75.6364H41.1382V81.4545Z" fill="#F1F1F1"/>\n</g>\n<mask id="mask3_0_239" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="18" y="0" width="93" height="128">\n<path d="M75.8462 0H26.6769C21.9046 0 18 3.92727 18 8.72727V119.273C18 124.073 21.9046 128 26.6769 128H101.877C106.649 128 110.554 124.073 110.554 119.273V34.9091L75.8462 0Z" fill="white"/>\n</mask>\n<g mask="url(#mask3_0_239)">\n<path d="M75.8462 0V26.1818C75.8462 31.0036 79.7291 34.9091 84.5231 34.9091H110.554L75.8462 0Z" fill="#A1C2FA"/>\n</g>\n<mask id="mask4_0_239" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="18" y="0" width="93" height="128">\n<path d="M75.8462 0H26.6769C21.9046 0 18 3.92727 18 8.72727V119.273C18 124.073 21.9046 128 26.6769 128H101.877C106.649 128 110.554 124.073 110.554 119.273V34.9091L75.8462 0Z" fill="white"/>\n</mask>\n<g mask="url(#mask4_0_239)">\n<path d="M26.6769 0C21.9046 0 18 3.92727 18 8.72727V9.45455C18 4.65455 21.9046 0.727273 26.6769 0.727273H75.8462V0H26.6769Z" fill="white" fill-opacity="0.2"/>\n</g>\n<mask id="mask5_0_239" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="18" y="0" width="93" height="128">\n<path d="M75.8462 0H26.6769C21.9046 0 18 3.92727 18 8.72727V119.273C18 124.073 21.9046 128 26.6769 128H101.877C106.649 128 110.554 124.073 110.554 119.273V34.9091L75.8462 0Z" fill="white"/>\n</mask>\n<g mask="url(#mask5_0_239)">\n<path d="M101.877 127.273H26.6769C21.9046 127.273 18 123.345 18 118.545V119.273C18 124.073 21.9046 128 26.6769 128H101.877C106.649 128 110.554 124.073 110.554 119.273V118.545C110.554 123.345 106.649 127.273 101.877 127.273Z" fill="#1A237E" fill-opacity="0.2"/>\n</g>\n<mask id="mask6_0_239" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="18" y="0" width="93" height="128">\n<path d="M75.8462 0H26.6769C21.9046 0 18 3.92727 18 8.72727V119.273C18 124.073 21.9046 128 26.6769 128H101.877C106.649 128 110.554 124.073 110.554 119.273V34.9091L75.8462 0Z" fill="white"/>\n</mask>\n<g mask="url(#mask6_0_239)">\n<path d="M84.5231 34.9091C79.7291 34.9091 75.8462 31.0036 75.8462 26.1818V26.9091C75.8462 31.7309 79.7291 35.6364 84.5231 35.6364H110.554V34.9091H84.5231Z" fill="#1A237E" fill-opacity="0.1"/>\n</g>\n<path d="M75.8462 0H26.6769C21.9046 0 18 3.92727 18 8.72727V119.273C18 124.073 21.9046 128 26.6769 128H101.877C106.649 128 110.554 124.073 110.554 119.273V34.9091L75.8462 0Z" fill="url(#paint1_radial_0_239)"/>\n</g>\n<defs>\n<linearGradient id="paint0_linear_0_239" x1="1687.04" y1="310.109" x2="1687.04" y2="3267.72" gradientUnits="userSpaceOnUse">\n<stop stop-color="#1A237E" stop-opacity="0.2"/>\n<stop offset="1" stop-color="#1A237E" stop-opacity="0.02"/>\n</linearGradient>\n<radialGradient id="paint1_radial_0_239" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(311.215 251.525) scale(14924.2 14924.2)">\n<stop stop-color="white" stop-opacity="0.1"/>\n<stop offset="1" stop-color="white" stop-opacity="0"/>\n</radialGradient>\n<clipPath id="clip0_0_239">\n<rect width="92.5538" height="128" fill="white" transform="translate(18)"/>\n</clipPath>\n</defs>\n</svg>\n',
   "drive":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_185)">\n<g clip-path="url(#clip1_0_185)">\n<path d="M9.32688 104.834L14.9718 114.584C16.1447 116.637 17.8309 118.25 19.8103 119.423L39.9706 84.5269H-0.350098C-0.350098 86.7995 0.236386 89.0722 1.40935 91.1249L9.32688 104.834Z" fill="#0066DA"/>\n<path d="M63.6499 43.4731L43.4895 8.57732C41.5102 9.75029 39.824 11.3631 38.651 13.4158L1.40935 77.929C0.257958 79.9374 -0.348565 82.2119 -0.350098 84.5269H39.9706L63.6499 43.4731Z" fill="#00AC47"/>\n<path d="M107.489 119.423C109.469 118.25 111.155 116.637 112.328 114.584L114.674 110.552L125.89 91.1249C127.063 89.0722 127.65 86.7995 127.65 84.5269H87.3262L95.9064 101.388L107.489 119.423Z" fill="#EA4335"/>\n<path d="M63.6496 43.4731L83.81 8.57732C81.8306 7.40435 79.558 6.81787 77.2121 6.81787H50.0872C47.7413 6.81787 45.4686 7.47767 43.4893 8.57732L63.6496 43.4731Z" fill="#00832D"/>\n<path d="M87.3294 84.5269H39.9709L19.8105 119.423C21.7899 120.596 24.0626 121.182 26.4085 121.182H100.892C103.238 121.182 105.51 120.522 107.49 119.423L87.3294 84.5269Z" fill="#2684FC"/>\n<path d="M107.27 45.6724L88.6488 13.4158C87.4758 11.3631 85.7896 9.75029 83.8103 8.57732L63.6499 43.4731L87.3292 84.5269H127.577C127.577 82.2543 126.99 79.9817 125.817 77.929L107.27 45.6724Z" fill="#FFBA00"/>\n</g>\n</g>\n<defs>\n<clipPath id="clip0_0_185">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n<clipPath id="clip1_0_185">\n<rect width="128" height="114.364" fill="white" transform="translate(-0.350098 6.81787)"/>\n</clipPath>\n</defs>\n</svg>\n',
+  "elevenlabs":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="28" fill="#000000"/>\n  <rect x="44" y="32" width="14" height="64" rx="4" fill="#FFFFFF"/>\n  <rect x="70" y="32" width="14" height="64" rx="4" fill="#FFFFFF"/>\n</svg>\n',
   "exa":
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#254BF1"/>\n  <g fill="#fff">\n    <rect x="34" y="30" width="60" height="12" rx="6"/>\n    <rect x="34" y="58" width="44" height="12" rx="6"/>\n    <rect x="34" y="86" width="60" height="12" rx="6"/>\n  </g>\n</svg>\n',
+  "fal":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="28" fill="#111111"/>\n  <circle cx="64" cy="64" r="34" fill="none" stroke="#FFFFFF" stroke-width="10"/>\n  <circle cx="64" cy="64" r="10" fill="#FFFFFF"/>\n  <rect x="59" y="14" width="10" height="16" rx="5" fill="#FFFFFF"/>\n  <rect x="59" y="98" width="10" height="16" rx="5" fill="#FFFFFF"/>\n  <rect x="14" y="59" width="16" height="10" rx="5" fill="#FFFFFF"/>\n  <rect x="98" y="59" width="16" height="10" rx="5" fill="#FFFFFF"/>\n</svg>\n',
   "fathom":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#7B5CFF"/>\n<g fill="#FFFFFF">\n<rect x="30" y="50" width="10" height="28" rx="5"/>\n<rect x="48" y="36" width="10" height="56" rx="5"/>\n<rect x="66" y="44" width="10" height="40" rx="5"/>\n<rect x="84" y="30" width="10" height="68" rx="5"/>\n</g>\n</svg>\n',
   "figma":
@@ -24115,8 +33485,14 @@ export const icons: Record<string, string> = {
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#FF4D00"/>\n  <path d="M64 22c4 14-12 20-12 34 0-8-8-10-8-20-10 10-16 22-16 34 0 20 16 36 36 36s36-16 36-36c0-16-10-28-20-40 0 12-12 16-16-8z" fill="#fff"/>\n  <circle cx="64" cy="88" r="14" fill="#FF4D00"/>\n</svg>\n',
   "fireflies":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#3B0764"/>\n<g fill="#FFFFFF">\n<circle cx="64" cy="44" r="14"/>\n<path d="M64 62c-15.5 0-28 9.4-28 21v9h56v-9c0-11.6-12.5-21-28-21Z" opacity="0.85"/>\n<circle cx="96" cy="32" r="6" opacity="0.6"/>\n<circle cx="32" cy="32" r="6" opacity="0.6"/>\n</g>\n</svg>\n',
+  "fireworks-ai":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="28" fill="#6720FF"/>\n  <g stroke="#FFFFFF" stroke-width="10" stroke-linecap="round">\n    <line x1="64" y1="30" x2="64" y2="50"/>\n    <line x1="64" y1="78" x2="64" y2="98"/>\n    <line x1="30" y1="64" x2="50" y2="64"/>\n    <line x1="78" y1="64" x2="98" y2="64"/>\n    <line x1="41" y1="41" x2="53" y2="53"/>\n    <line x1="75" y1="75" x2="87" y2="87"/>\n    <line x1="87" y1="41" x2="75" y2="53"/>\n    <line x1="53" y1="75" x2="41" y2="87"/>\n  </g>\n</svg>\n',
+  "fly-io":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#7B3FE4"/>\n  <circle cx="64" cy="54" r="26" fill="#FFFFFF"/>\n  <path d="M54 78 L74 78 L68 94 L60 94 Z" fill="#FFFFFF"/>\n  <rect x="58" y="96" width="12" height="8" rx="3" fill="#FFFFFF"/>\n</svg>\n',
   "folk":
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#111111"/>\n  <circle cx="46" cy="46" r="12" fill="#FFFFFF"/>\n  <circle cx="82" cy="46" r="12" fill="#FFFFFF"/>\n  <path d="M32 92c0-14 14-22 32-22s32 8 32 22a4 4 0 0 1-4 4H36a4 4 0 0 1-4-4z" fill="#FFFFFF"/>\n</svg>\n',
+  "freshdesk":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#25C16F"/>\n  <g fill="#FFFFFF">\n    <path d="M64 30c-19 0-34 15-34 34v18a12 12 0 0 0 12 12h10V70H40v-6c0-13.3 10.7-24 24-24s24 10.7 24 24v6H76v24h10a12 12 0 0 0 12-12V64c0-19-15-34-34-34z"/>\n  </g>\n</svg>\n',
   "gemini":
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#1B72E8"/>\n  <path d="M64 24c2.4 14.6 5.8 24.6 12.4 31.4C83 62 93 65.5 107.6 68c-14.6 2.5-24.6 6-31.2 12.6C69.8 87.4 66.4 97.4 64 112c-2.4-14.6-5.8-24.6-12.4-31.4C45 74 35 70.5 20.4 68c14.6-2.5 24.6-6 31.2-12.6C58.2 48.6 61.6 38.6 64 24z" fill="#fff"/>\n</svg>\n',
   "github":
@@ -24131,36 +33507,64 @@ export const icons: Record<string, string> = {
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect x="84" y="20" width="24" height="88" rx="12" fill="#F9AB00"/>\n<rect x="52" y="52" width="24" height="56" rx="12" fill="#E37400"/>\n<circle cx="32" cy="96" r="12" fill="#E37400"/>\n</svg>\n',
   "google-chat":
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#00AC47"/>\n  <path d="M36 34h56a6 6 0 0 1 6 6v34a6 6 0 0 1-6 6H52L36 94a2 2 0 0 1-3.4-1.4V40a6 6 0 0 1 3.4-6z" fill="#FFFFFF" fill-rule="evenodd"/>\n  <rect x="46" y="48" width="36" height="6" rx="3" fill="#00AC47"/>\n  <rect x="46" y="60" width="26" height="6" rx="3" fill="#00AC47"/>\n</svg>\n',
+  "grafana-cloud":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#F46800"/>\n  <rect x="30" y="68" width="16" height="30" rx="4" fill="#FFFFFF" opacity="0.75"/>\n  <rect x="56" y="50" width="16" height="48" rx="4" fill="#FFFFFF" opacity="0.9"/>\n  <rect x="82" y="30" width="16" height="68" rx="4" fill="#FFFFFF"/>\n</svg>\n',
+  "groq":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="28" fill="#F55036"/>\n  <circle cx="64" cy="64" r="30" fill="none" stroke="#FFFFFF" stroke-width="12"/>\n  <rect x="82" y="64" width="12" height="34" rx="6" fill="#FFFFFF"/>\n</svg>\n',
   "gusto":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#F45D48"/>\n<path d="M64 26c-21 0-38 17-38 38s17 38 38 38 38-17 38-38v-7H64v14h23.2C84.1 84.1 74.9 92 64 92c-15.5 0-28-12.5-28-28s12.5-28 28-28c7.7 0 14.7 3.1 19.8 8.2l9.9-9.9C86.1 26.7 75.6 26 64 26Z" fill="#FFFFFF"/>\n</svg>\n',
   "harvest":
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">\n  <circle cx="50" cy="50" r="50" fill="#FA5B35"/>\n  <path d="M24 28h10v18h24V28h10v44H58V54H34v18H24V28z" fill="#fff"/>\n</svg>\n',
+  "heroku":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#430098"/>\n  <rect x="38" y="30" width="12" height="68" rx="4" fill="#FFFFFF"/>\n  <rect x="78" y="30" width="12" height="68" rx="4" fill="#FFFFFF"/>\n  <path d="M50 64 C58 56 70 56 78 64 L78 76 C70 68 58 68 50 76 Z" fill="#FFFFFF"/>\n</svg>\n',
   "hubspot":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n  <rect width="128" height="128" rx="20" fill="#FF5C35"/>\n  <path d="M86 51.5V39.2C91.7 37.2 95.8 31.8 95.8 25.4C95.8 17.3 89.3 10.8 81.2 10.8C73.1 10.8 66.6 17.3 66.6 25.4C66.6 31.8 70.7 37.2 76.4 39.2V51.5C70.8 52.4 65.9 55.2 62.1 59.2L39.3 41.4C40.2 39.5 40.7 37.4 40.7 35.2C40.7 27.1 34.2 20.6 26.1 20.6C18 20.6 11.5 27.1 11.5 35.2C11.5 43.3 18 49.8 26.1 49.8C28.9 49.8 31.5 49 33.7 47.7L56.2 65.3C54.7 68.4 53.8 71.9 53.8 75.6C53.8 77.9 54.1 80.1 54.8 82.2L38.2 92.6C35.5 90.2 32 88.7 28.1 88.7C20 88.7 13.5 95.2 13.5 103.3C13.5 111.4 20 117.9 28.1 117.9C36.2 117.9 42.7 111.4 42.7 103.3C42.7 102 42.5 100.8 42.2 99.6L58.9 89.1C63.4 95.4 70.7 99.5 79 99.5C92.7 99.5 103.8 88.4 103.8 74.7C103.8 62.2 94.7 52 86 51.5ZM79 89.2C71 89.2 64.5 82.7 64.5 74.7C64.5 66.7 71 60.2 79 60.2C87 60.2 93.5 66.7 93.5 74.7C93.5 82.7 87 89.2 79 89.2Z" fill="white"/>\n</svg>\n',
+  "huggingface":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="28" fill="#FF9D00"/>\n  <circle cx="46" cy="50" r="9" fill="#FFFFFF"/>\n  <circle cx="82" cy="50" r="9" fill="#FFFFFF"/>\n  <path d="M38 72 C 46 90, 82 90, 90 72" fill="none" stroke="#FFFFFF" stroke-width="11" stroke-linecap="round"/>\n</svg>\n',
+  "intercom":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#0057FF"/>\n  <g fill="#FFFFFF">\n    <rect x="34" y="36" width="8" height="40" rx="4"/>\n    <rect x="49" y="32" width="8" height="48" rx="4"/>\n    <rect x="64" y="32" width="8" height="48" rx="4"/>\n    <rect x="79" y="36" width="8" height="40" rx="4"/>\n  </g>\n  <path d="M34 90c20 10 40 10 60 0" fill="none" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round"/>\n</svg>\n',
   "jira":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_328)">\n<path d="M44.5144 60.3244C43.0588 58.7232 40.8756 58.8688 39.8565 60.7612L16.275 107.924C15.4016 109.816 16.7117 112 18.7496 112H51.5016C52.5208 112 53.5396 111.418 53.9764 110.399C61.1088 95.8424 56.8876 73.5708 44.5144 60.3244Z" fill="url(#paint0_linear_0_328)"/>\n<path d="M61.6932 17.5284C48.5924 38.3442 49.466 61.4892 58.054 78.8112C66.788 96.1336 73.3384 109.525 73.9208 110.399C74.3576 111.418 75.3764 112 76.3952 112H109.148C111.185 112 112.641 109.816 111.622 107.924C111.622 107.924 67.516 19.7119 66.3512 17.5284C65.478 15.4905 63.0032 15.4905 61.6932 17.5284Z" fill="#2684FF"/>\n</g>\n<defs>\n<linearGradient id="paint0_linear_0_328" x1="57.3824" y1="67.62" x2="32.53" y2="110.666" gradientUnits="userSpaceOnUse">\n<stop stop-color="#0052CC"/>\n<stop offset="0.9228" stop-color="#2684FF"/>\n</linearGradient>\n<clipPath id="clip0_0_328">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n</defs>\n</svg>\n',
   "jotform":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#FF6100"/>\n<g fill="#FFFFFF">\n<rect x="32" y="34" width="64" height="12" rx="6"/>\n<rect x="32" y="58" width="48" height="12" rx="6"/>\n<rect x="32" y="82" width="56" height="12" rx="6"/>\n</g>\n</svg>\n',
   "klaviyo":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#0E1015"/>\n<path d="M30 34h68v60H30V34Zm10 8 24 22 24-22H40Zm48 44V51L64 73 40 51v35h48Z" fill="#FFFFFF"/>\n</svg>\n',
+  "langfuse":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="28" fill="#0A2540"/>\n  <circle cx="50" cy="64" r="22" fill="none" stroke="#FFFFFF" stroke-width="10"/>\n  <circle cx="78" cy="64" r="22" fill="none" stroke="#FFFFFF" stroke-width="10"/>\n</svg>\n',
+  "langsmith":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="28" fill="#1C3C3C"/>\n  <rect x="26" y="44" width="44" height="40" rx="20" fill="none" stroke="#FFFFFF" stroke-width="10"/>\n  <rect x="58" y="44" width="44" height="40" rx="20" fill="none" stroke="#FFFFFF" stroke-width="10"/>\n</svg>\n',
+  "launchdarkly":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#405BFF"/>\n  <rect x="24" y="46" width="80" height="36" rx="18" fill="none" stroke="#FFFFFF" stroke-width="8"/>\n  <circle cx="84" cy="64" r="11" fill="#FFFFFF"/>\n</svg>\n',
   "lever":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#1E1E2F"/>\n<g fill="#FFFFFF">\n<path d="M40 28h16v56h36v16H40V28Z"/>\n<circle cx="88" cy="40" r="10" opacity="0.8"/>\n</g>\n</svg>\n',
   "linear":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_298)">\n<g clip-path="url(#clip1_0_298)">\n<path d="M1.56852 78.7492C1.28372 77.5351 2.7301 76.7704 3.61189 77.6522L50.3478 124.388C51.2296 125.27 50.4649 126.716 49.2508 126.431C25.6659 120.899 7.10117 102.334 1.56852 78.7492ZM0.00242092 60.018C-0.0201631 60.3806 0.116177 60.7347 0.373073 60.9916L67.0084 127.627C67.2653 127.884 67.6193 128.02 67.9819 127.998C71.0145 127.809 73.99 127.409 76.8938 126.812C77.8724 126.611 78.2123 125.409 77.5059 124.703L3.29722 50.4941C2.59084 49.7876 1.38852 50.1276 1.18755 51.1062C0.591182 54.01 0.191304 56.9854 0.00242092 60.018ZM5.38999 38.0229C5.17688 38.5014 5.28543 39.0605 5.65578 39.4309L88.5691 122.344C88.9395 122.715 89.4986 122.823 89.9771 122.61C92.2633 121.592 94.479 120.443 96.6145 119.174C97.3212 118.755 97.4303 117.784 96.849 117.202L10.7976 31.151C10.2164 30.5697 9.24538 30.6788 8.8255 31.3855C7.55661 33.521 6.40831 35.7367 5.38999 38.0229ZM16.2031 23.1347C15.7294 22.661 15.7001 21.9012 16.1464 21.4015C27.8778 8.26791 44.9426 0 63.9384 0C99.3187 0 128 28.6813 128 64.0615C128 83.0574 119.732 100.122 106.599 111.854C106.099 112.3 105.339 112.271 104.865 111.797L16.2031 23.1347Z" fill="#222326"/>\n</g>\n</g>\n<defs>\n<clipPath id="clip0_0_298">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n<clipPath id="clip1_0_298">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n</defs>\n</svg>\n',
+  "mailchimp":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#FFE01B"/>\n  <g fill="none" stroke="#241C15" stroke-width="9" stroke-linecap="round">\n    <path d="M40 78a24 24 0 0 1 48 0"/>\n    <path d="M40 78c-8 0-12 6-8 12s12 4 14-2"/>\n    <path d="M88 78c8 0 12 6 8 12s-12 4-14-2"/>\n  </g>\n  <circle cx="56" cy="62" r="5" fill="#241C15"/>\n  <circle cx="74" cy="62" r="5" fill="#241C15"/>\n</svg>\n',
   "metabase":
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#509EE3"/>\n  <g fill="#fff">\n    <circle cx="40" cy="32" r="6"/>\n    <circle cx="64" cy="32" r="6" opacity="0.5"/>\n    <circle cx="88" cy="32" r="6"/>\n    <circle cx="40" cy="53" r="6"/>\n    <circle cx="64" cy="53" r="6"/>\n    <circle cx="88" cy="53" r="6"/>\n    <circle cx="40" cy="74" r="6" opacity="0.5"/>\n    <circle cx="64" cy="74" r="6"/>\n    <circle cx="88" cy="74" r="6" opacity="0.5"/>\n    <circle cx="40" cy="95" r="6"/>\n    <circle cx="64" cy="95" r="6"/>\n    <circle cx="88" cy="95" r="6"/>\n  </g>\n</svg>\n',
   "mistral":
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#FA520F"/>\n  <g fill="#fff">\n    <rect x="24" y="32" width="16" height="16"/>\n    <rect x="88" y="32" width="16" height="16"/>\n    <rect x="24" y="48" width="32" height="16"/>\n    <rect x="72" y="48" width="32" height="16"/>\n    <rect x="24" y="64" width="80" height="16"/>\n    <rect x="24" y="80" width="16" height="16"/>\n    <rect x="56" y="80" width="16" height="16"/>\n    <rect x="88" y="80" width="16" height="16"/>\n  </g>\n</svg>\n',
   "mixpanel":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_993)">\n<path d="M37.1571 53.3247H53.4279C49.3537 50.772 47.8324 47.2135 45.7953 40.6124L39.6841 17.9726C36.8993 7.78728 34.6044 2.93958 23.4134 2.93958H0.0257857V9.05078H3.35214C10.2111 9.05078 10.9847 11.6036 13.0218 19.2361L18.3594 39.0911C21.1442 48.7349 25.4762 53.3247 37.1571 53.3247ZM74.8042 53.3247H91.0749C102.782 53.3247 106.83 48.7349 109.641 39.0911L114.978 19.2361C117.015 11.6036 118.021 9.05078 124.648 9.05078H127.974V2.93958H104.819C93.3699 2.93958 91.075 7.52942 88.5222 17.9468L82.411 40.5866C80.4255 47.4456 78.8783 50.772 74.8042 53.3247ZM53.4279 74.6753H74.8042V53.299H53.4279V74.6753ZM0.0257857 125.06H23.4134C34.6044 125.06 36.8993 120.213 39.6841 110.053L45.7953 87.4134C47.8324 80.8123 49.3537 77.2281 53.4279 74.7011H37.1571C25.4504 74.7011 21.1185 79.2909 18.3336 88.9347L12.996 108.79C10.9331 116.396 10.1853 118.949 3.32635 118.949H0L0.0257857 125.06ZM104.819 125.06H127.974V118.949H124.648C118.047 118.949 117.015 116.396 114.978 108.764L109.641 88.909C106.856 79.2393 102.782 74.6753 91.0749 74.6753H74.83C78.9041 77.2281 80.3739 80.5286 82.411 87.3876L88.5222 110.027C91.0492 120.471 93.3441 125.06 104.819 125.06Z" fill="#1B0B3B"/>\n</g>\n<defs>\n<clipPath id="clip0_0_993">\n<rect width="128" height="122.121" fill="white" transform="translate(0 2.93958)"/>\n</clipPath>\n</defs>\n</svg>\n',
+  "monday":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#6161FF"/>\n  <g fill="#FFFFFF">\n    <rect x="24" y="40" width="48" height="14" rx="7"/>\n    <rect x="24" y="74" width="36" height="14" rx="7"/>\n    <circle cx="92" cy="47" r="9"/>\n    <circle cx="80" cy="81" r="9"/>\n  </g>\n</svg>\n',
+  "mongodb-atlas":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#00684A"/>\n  <path d="M64 22 C48 46 46 74 60 100 L64 106 L68 100 C82 74 80 46 64 22 Z" fill="#FFFFFF"/>\n  <rect x="61" y="96" width="6" height="12" rx="3" fill="#FFFFFF"/>\n</svg>\n',
   "neon":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_760)">\n<path fill-rule="evenodd" clip-rule="evenodd" d="M0 23.231C0 11.3138 9.71034 1.60345 21.8483 1.60345H105.048C116.966 1.60345 126.897 11.3138 126.897 23.231V93.4103C126.897 105.769 111.007 111.066 103.283 101.355L79.4483 70.6793V107.976C79.4483 118.569 70.6207 127.397 59.5862 127.397H21.8483C9.71034 127.397 0 117.686 0 105.769L0 23.231ZM21.8483 18.8172C19.4207 18.8172 17.4345 20.8035 17.4345 23.231V105.548C17.4345 107.976 19.4207 109.962 21.8483 109.962H60.2483C61.5724 109.962 61.7931 108.859 61.7931 107.755V58.1C61.7931 45.5207 77.6828 40.2241 85.4069 49.9345L109.241 80.6104V23.231C109.241 20.8035 109.462 18.8172 107.034 18.8172H21.8483Z" fill="#32C0ED"/>\n<path fill-rule="evenodd" clip-rule="evenodd" d="M0 23.231C0 11.3138 9.71034 1.60345 21.8483 1.60345H105.048C116.966 1.60345 126.897 11.3138 126.897 23.231V93.4103C126.897 105.769 111.007 111.066 103.283 101.355L79.4483 70.6793V107.976C79.4483 118.569 70.6207 127.397 59.5862 127.397H21.8483C9.71034 127.397 0 117.686 0 105.769L0 23.231ZM21.8483 18.8172C19.4207 18.8172 17.4345 20.8035 17.4345 23.231V105.548C17.4345 107.976 19.4207 109.962 21.8483 109.962H60.2483C61.5724 109.962 61.7931 108.859 61.7931 107.755V58.1C61.7931 45.5207 77.6828 40.2241 85.4069 49.9345L109.241 80.6104V23.231C109.241 20.8035 109.462 18.8172 107.034 18.8172H21.8483Z" fill="url(#paint0_linear_0_760)"/>\n<path opacity="0.3" fill-rule="evenodd" clip-rule="evenodd" d="M0 23.231C0 11.3138 9.71034 1.60345 21.8483 1.60345H105.048C116.966 1.60345 126.897 11.3138 126.897 23.231V93.4103C126.897 105.769 111.007 111.066 103.283 101.355L79.4483 70.6793V107.976C79.4483 118.569 70.6207 127.397 59.5862 127.397H21.8483C9.71034 127.397 0 117.686 0 105.769L0 23.231ZM21.8483 18.8172C19.4207 18.8172 17.4345 20.8035 17.4345 23.231V105.548C17.4345 107.976 19.4207 109.962 21.8483 109.962H60.2483C61.5724 109.962 61.7931 108.859 61.7931 107.755V58.1C61.7931 45.5207 77.6828 40.2241 85.4069 49.9345L109.241 80.6104V23.231C109.241 20.8035 109.462 18.8172 107.034 18.8172H21.8483Z" fill="url(#paint1_linear_0_760)"/>\n<path d="M105.048 1.60345C116.965 1.60345 126.897 11.3138 126.897 23.231V93.4103C126.897 105.769 111.007 111.066 103.283 101.355L79.4483 70.6793V107.976C79.4483 118.569 70.6207 127.397 59.5862 127.397C60.9103 127.397 61.7931 126.514 61.7931 125.19V58.1C61.7931 45.7414 77.6827 40.4448 85.4069 50.1552L109.241 80.831V6.01725C109.241 3.58966 107.255 1.60345 105.048 1.60345Z" fill="#63F655"/>\n</g>\n<defs>\n<linearGradient id="paint0_linear_0_760" x1="127.091" y1="127.397" x2="16.675" y2="0.164846" gradientUnits="userSpaceOnUse">\n<stop stop-color="#2EF51C"/>\n<stop offset="1" stop-color="#2EF51C" stop-opacity="0"/>\n</linearGradient>\n<linearGradient id="paint1_linear_0_760" x1="126.81" y1="127.322" x2="51.7518" y2="97.7401" gradientUnits="userSpaceOnUse">\n<stop stop-opacity="0.9"/>\n<stop offset="1" stop-color="#1A1A1A" stop-opacity="0"/>\n</linearGradient>\n<clipPath id="clip0_0_760">\n<rect width="128" height="125.793" fill="white" transform="translate(0 1.60345)"/>\n</clipPath>\n</defs>\n</svg>\n',
+  "netlify":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#05BDBA"/>\n  <path d="M64 26 L102 64 L64 102 L26 64 Z" fill="#FFFFFF"/>\n  <path d="M64 46 L82 64 L64 82 L46 64 Z" fill="#05BDBA"/>\n</svg>\n',
+  "new-relic":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#1CE783"/>\n  <path d="M64 26 L96 44 V82 L64 100 L32 82 V44 Z" fill="none" stroke="#FFFFFF" stroke-width="9" stroke-linejoin="round"/>\n  <circle cx="64" cy="63" r="12" fill="#FFFFFF"/>\n</svg>\n',
   "notion":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_82)">\n<path d="M10.5303 5.52077L81.278 0.204473C89.8658 -0.613419 92.115 0 97.6358 3.88498L120.332 19.8339C124.013 22.492 125.24 23.3099 125.24 26.377V113.687C125.24 119.208 123.195 122.479 116.243 122.888L34.0447 127.796C28.7284 128 26.2748 127.387 23.6166 123.911L7.05431 102.441C3.98721 98.3514 2.76038 95.4888 2.76038 92.0128V14.3131C2.76038 9.8147 4.8051 5.92971 10.5303 5.52077Z" fill="white"/>\n<path fill-rule="evenodd" clip-rule="evenodd" d="M81.278 0.204473L10.5303 5.52077C4.8051 5.92971 2.76038 9.8147 2.76038 14.3131V92.0128C2.76038 95.4888 3.98721 98.5559 7.05431 102.441L23.6166 124.115C26.2748 127.591 28.9329 128.409 34.0447 128L116.243 123.093C123.195 122.684 125.24 119.412 125.24 113.891V26.377C125.24 23.5144 124.217 22.6965 120.741 20.2428C120.537 20.0383 120.332 20.0383 120.128 19.8339L97.6358 4.08946C92.3195 1.19209e-07 90.0703 -0.408946 81.278 0.204473ZM35.885 24.9457C29.1374 25.3546 27.7061 25.5591 23.8211 22.2875L14.2109 14.722C13.1885 13.6997 13.5974 12.4728 16.2556 12.2684L84.345 7.36102C90.0703 6.95208 92.9329 8.79233 95.1821 10.6326L106.837 19.016C107.45 19.2204 108.677 20.6518 107.042 20.6518L36.7029 24.9457H35.885ZM28.115 113.073V38.8498C28.115 35.5783 29.1374 34.147 32 33.9425L112.767 29.2396C115.425 29.0351 116.652 30.6709 116.652 33.9425V107.553C116.652 110.824 116.038 113.482 111.744 113.687L34.4537 118.185C30.1597 118.594 28.115 116.958 28.115 113.073ZM104.383 42.9393C104.792 45.1885 104.383 47.4377 102.134 47.6422L98.4537 48.4601V103.259C95.1821 105.099 92.3195 105.917 89.8658 105.917C85.9808 105.917 84.9585 104.69 81.8914 101.01L57.3546 62.5687V99.5783L65.1246 101.419C65.1246 101.419 65.1246 105.917 58.9904 105.917L41.8147 106.939C41.4057 105.917 41.8147 103.463 43.4505 103.054L47.9489 101.827V52.754L41.8147 52.1406C41.4057 49.8914 42.6326 46.6198 46.1086 46.4153L64.5112 45.1885L89.8658 84.0383V49.6869L83.3227 48.869C82.9137 46.2109 84.754 44.1661 87.2077 43.9617L104.383 42.9393Z" fill="black"/>\n</g>\n<defs>\n<clipPath id="clip0_0_82">\n<rect width="122.479" height="128" fill="white" transform="translate(2.76038)"/>\n</clipPath>\n</defs>\n</svg>\n',
   "onedrive":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_168_637)">\n<path d="M48.8105 45.7717L48.8117 45.7673L75.6823 61.8624L91.694 55.1244C94.9477 53.7178 98.456 52.9965 102.001 53C102.591 53 103.175 53.0268 103.756 53.0656C101.831 45.5592 97.7669 38.7736 92.0581 33.5333C86.3493 28.293 79.2414 24.8236 71.5981 23.5468C63.9547 22.2699 56.1051 23.2406 49.003 26.3408C41.9009 29.441 35.8522 34.5373 31.5918 41.0103C31.7287 41.0086 31.8635 41 32.0007 41C37.9393 40.9919 43.7618 42.6447 48.8105 45.7717Z" fill="#0364B8"/>\n<path d="M48.811 45.7673L48.8098 45.7717C43.7611 42.6448 37.9386 40.992 32 41C31.8628 41 31.7278 41.0086 31.5911 41.0103C25.7787 41.0823 20.0958 42.7368 15.153 45.7959C10.2103 48.8551 6.1946 53.2033 3.53748 58.3733C0.880366 63.5433 -0.317721 69.3396 0.0719724 75.1394C0.461666 80.9391 2.42441 86.5231 5.74928 91.2911L29.4453 81.3194L39.979 76.8867L63.4331 67.0168L75.6816 61.8625L48.811 45.7673Z" fill="#0078D4"/>\n<path d="M103.755 53.0656C103.174 53.0268 102.591 53 102 53C98.4553 52.9966 94.9477 53.7205 91.6941 55.1271L75.6816 61.8625L80.3247 64.6436L95.5444 73.76L102.185 77.7375L124.89 91.3378C126.953 87.5079 128.022 83.2215 128 78.8713C127.977 74.521 126.863 70.246 124.76 66.4379C122.657 62.6297 119.632 59.41 115.962 57.0738C112.293 54.7375 108.095 53.3594 103.755 53.0656Z" fill="#1490DF"/>\n<path d="M102.185 77.7374L95.5451 73.7599L80.3254 64.6435L75.6823 61.8624L63.4338 67.0167L39.9797 76.8866L29.446 81.3193L5.75 91.291C8.69466 95.5247 12.6202 98.9828 17.1914 101.37C21.7626 103.757 26.8437 105.003 32.0007 105H102.001C106.694 105.001 111.3 103.732 115.33 101.327C119.361 98.9211 122.664 95.4694 124.891 91.3377L102.185 77.7374Z" fill="#28A8EA"/>\n</g>\n<defs>\n<clipPath id="clip0_168_637">\n<rect width="128" height="82" fill="white" transform="translate(0 23)"/>\n</clipPath>\n</defs>\n</svg>\n',
   "openai":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#000000"/>\n<g stroke="#FFFFFF" stroke-width="7" stroke-linejoin="round" fill="none">\n<path d="M64 22 L98 41 L98 64 L64 45 L30 64 L30 41 Z"/>\n<path d="M98 64 L98 87 L64 106 L30 87 L30 64 L64 83 Z"/>\n<path d="M64 45 L64 83" stroke-linecap="round"/>\n</g>\n</svg>\n',
+  "openrouter":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="28" fill="#6467F2"/>\n  <g stroke="#FFFFFF" stroke-width="11" stroke-linecap="round" fill="none">\n    <path d="M28 46 C 50 46, 56 82, 84 82"/>\n    <path d="M28 82 C 50 82, 56 46, 84 46"/>\n  </g>\n  <path d="M80 30 L104 46 L80 62 Z" fill="#FFFFFF"/>\n  <path d="M80 66 L104 82 L80 98 Z" fill="#FFFFFF"/>\n</svg>\n',
   "outlook":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_142)">\n<g clip-path="url(#clip1_0_142)">\n<path d="M127.542 66.6442C127.549 65.6433 127.032 64.7117 126.179 64.1884H126.164L126.11 64.1586L81.7569 37.9037C81.5653 37.7743 81.3666 37.6561 81.1615 37.5495C79.449 36.666 77.4147 36.666 75.7021 37.5495C75.4971 37.6561 75.2983 37.7743 75.1068 37.9037L30.7534 64.1586L30.6999 64.1884C29.3443 65.0313 28.9287 66.8137 29.7717 68.1693C30.0201 68.5687 30.3622 68.9014 30.7683 69.1387L75.1218 95.3936C75.314 95.5218 75.5127 95.6401 75.7172 95.7478C77.4297 96.6313 79.464 96.6313 81.1765 95.7478C81.381 95.6401 81.5797 95.5219 81.7719 95.3936L126.125 69.1387C127.011 68.6221 127.552 67.6699 127.542 66.6442Z" fill="#0A2767"/>\n<path d="M35.924 49.1141H65.0306V75.7947H35.924V49.1141ZM121.589 21.993V9.78838C121.659 6.73693 119.243 4.20571 116.192 4.13259H40.6601C37.6086 4.20571 35.1933 6.73693 35.2632 9.78838V21.993L79.9143 33.9L121.589 21.993Z" fill="#0364B8"/>\n<path d="M35.2634 21.993H65.0308V48.7837H35.2634V21.993Z" fill="#0078D4"/>\n<path d="M94.7982 21.993H65.0308V48.7837L94.7982 75.5744H121.589V48.7837L94.7982 21.993Z" fill="#28A8EA"/>\n<path d="M65.0308 48.7837H94.7982V75.5744H65.0308V48.7837Z" fill="#0078D4"/>\n<path d="M65.0308 75.5744H94.7982V102.365H65.0308V75.5744Z" fill="#0364B8"/>\n<path d="M35.9243 75.7947H65.0309V100.049H35.9243V75.7947Z" fill="#14447D"/>\n<path d="M94.7983 75.5744H121.589V102.365H94.7983V75.5744Z" fill="#0078D4"/>\n<path d="M126.179 68.975L126.122 69.0047L81.7687 93.9498C81.5752 94.0689 81.3788 94.182 81.1733 94.2832C80.42 94.6419 79.6018 94.8444 78.7681 94.8786L76.345 93.4616C76.1403 93.3589 75.9415 93.2446 75.7497 93.1193L30.8009 67.4657H30.7801L29.3096 66.6442V117.142C29.3325 120.511 32.0815 123.224 35.4506 123.202H121.496C121.547 123.202 121.592 123.178 121.645 123.178C122.357 123.133 123.058 122.987 123.729 122.744C124.019 122.621 124.298 122.476 124.565 122.309C124.765 122.196 125.107 121.949 125.107 121.949C126.632 120.821 127.534 119.039 127.542 117.142V66.6442C127.541 67.61 127.02 68.5006 126.179 68.975Z" fill="url(#paint0_linear_0_142)"/>\n<path opacity="0.5" d="M125.161 66.4447V69.5406L78.7832 101.472L30.7683 67.4866C30.7683 67.4702 30.755 67.4568 30.7386 67.4568L26.333 64.8075V62.5749L28.1488 62.5451L31.9888 64.748L32.0781 64.7777L32.4055 64.9861C32.4055 64.9861 77.5329 90.7349 77.652 90.7944L79.3785 91.8065C79.5273 91.747 79.6761 91.6875 79.8547 91.6279C79.9441 91.5683 124.655 66.4149 124.655 66.4149L125.161 66.4447Z" fill="#0A2767"/>\n<path d="M126.179 68.975L126.123 69.0077L81.7691 93.9528C81.5756 94.0718 81.3792 94.1849 81.1737 94.2861C79.4512 95.1276 77.4369 95.1276 75.7144 94.2861C75.5104 94.1851 75.3117 94.0738 75.119 93.9528L30.7657 69.0077L30.7121 68.975C29.8558 68.5107 29.3189 67.6182 29.3101 66.6442V117.142C29.3314 120.51 32.0794 123.224 35.4478 123.202C35.4478 123.202 35.448 123.202 35.4481 123.202H121.404C124.773 123.224 127.521 120.51 127.543 117.142C127.543 117.142 127.543 117.142 127.543 117.142V66.6442C127.541 67.61 127.02 68.5006 126.179 68.975Z" fill="#1490DF"/>\n<path opacity="0.1" d="M82.4148 93.5837L81.751 93.9558C81.5586 94.0782 81.3599 94.1906 81.1556 94.2921C80.4243 94.6511 79.629 94.8616 78.8159 94.9113L95.6911 114.867L125.128 121.961C125.935 121.352 126.576 120.55 126.995 119.63L82.4148 93.5837Z" fill="black"/>\n<path opacity="0.05" d="M85.4213 91.8929L81.751 93.9558C81.5586 94.0782 81.3599 94.1906 81.1556 94.2921C80.4243 94.6511 79.629 94.8616 78.8159 94.9113L86.7221 116.71L125.137 121.952C126.65 120.816 127.541 119.034 127.542 117.142V116.49L85.4213 91.8929Z" fill="black"/>\n<path d="M35.5314 123.202H121.396C122.717 123.209 124.005 122.792 125.072 122.012L76.3425 93.4676C76.1378 93.3649 75.939 93.2506 75.7472 93.1253L30.7984 67.4717H30.7776L29.3101 66.6442V116.969C29.3067 120.408 32.0921 123.199 35.5314 123.202Z" fill="#28A8EA"/>\n<path opacity="0.1" d="M70.984 33.4029V96.8968C70.9787 99.123 69.625 101.124 67.5607 101.957C66.9212 102.232 66.2325 102.374 65.5365 102.374H29.3096V30.9233H35.2631V27.9465H65.5366C68.5438 27.9579 70.9775 30.3956 70.984 33.4029Z" fill="black"/>\n<path opacity="0.2" d="M68.0073 36.3796V99.8735C68.0147 100.593 67.8623 101.304 67.5607 101.957C66.734 103.995 64.7588 105.332 62.5598 105.342H29.3096V30.9233H62.5598C63.4235 30.9146 64.2747 31.13 65.0305 31.5484C66.8552 32.4677 68.0066 34.3364 68.0073 36.3796Z" fill="black"/>\n<path opacity="0.2" d="M68.0073 36.3796V93.92C67.9927 96.9259 65.5657 99.3623 62.5599 99.3883H29.3096V30.9233H62.5598C63.4235 30.9146 64.2747 31.13 65.0305 31.5484C66.8552 32.4677 68.0066 34.3364 68.0073 36.3796Z" fill="black"/>\n<path opacity="0.2" d="M65.0305 36.3796V93.92C65.0273 96.9306 62.5935 99.3736 59.5831 99.3883H29.3096V30.9233H59.583C62.5932 30.9249 65.0321 33.3665 65.0304 36.3767C65.0305 36.3777 65.0305 36.3786 65.0305 36.3796Z" fill="black"/>\n<path d="M4.99883 30.9233H59.5744C62.5879 30.9233 65.0308 33.3662 65.0308 36.3796V90.9552C65.0308 93.9687 62.5879 96.4116 59.5744 96.4116H4.99883C1.98534 96.4116 -0.45752 93.9686 -0.45752 90.9552V36.3796C-0.45752 33.3662 1.98541 30.9233 4.99883 30.9233Z" fill="url(#paint1_linear_0_142)"/>\n<path d="M16.5963 53.8085C17.9411 50.9433 20.1118 48.5455 22.8296 46.9233C25.8395 45.2001 29.2665 44.341 32.7333 44.4406C35.9464 44.371 39.117 45.1855 41.8987 46.7952C44.5141 48.3549 46.6205 50.6402 47.9623 53.3738C49.4235 56.386 50.1518 59.701 50.0877 63.0482C50.1585 66.5464 49.4092 70.0126 47.8998 73.1691C46.526 76.0005 44.3528 78.3672 41.6486 79.9769C38.7597 81.636 35.4714 82.4719 32.1409 82.3941C28.8591 82.4733 25.6187 81.6495 22.7731 80.0127C20.1351 78.4509 18.0022 76.163 16.6291 73.4221C15.1592 70.4535 14.4222 67.1759 14.4799 63.8638C14.4187 60.3954 15.1422 56.958 16.5963 53.8085ZM23.2404 69.9721C23.9574 71.7835 25.1733 73.3544 26.747 74.5028C28.3499 75.623 30.2692 76.201 32.2242 76.1519C34.3061 76.2342 36.3583 75.6365 38.0705 74.4491C39.6243 73.3045 40.8082 71.7293 41.4759 69.9185C42.2222 67.8964 42.5906 65.7542 42.5624 63.5989C42.5855 61.423 42.2392 59.259 41.5384 57.199C40.9194 55.339 39.7736 53.6989 38.2402 52.4779C36.5709 51.2343 34.5242 50.6035 32.4444 50.6918C30.4471 50.6401 28.4848 51.2226 26.8393 52.3558C25.239 53.5089 24 55.0938 23.2672 56.9251C21.6416 61.1227 21.6331 65.7746 23.2433 69.9781L23.2404 69.9721Z" fill="white"/>\n<path d="M94.7983 21.993H121.589V48.7837H94.7983V21.993Z" fill="#50D9FF"/>\n</g>\n</g>\n<defs>\n<linearGradient id="paint0_linear_0_142" x1="78.4258" y1="66.6442" x2="78.4258" y2="123.202" gradientUnits="userSpaceOnUse">\n<stop stop-color="#35B8F1"/>\n<stop offset="1" stop-color="#28A8EA"/>\n</linearGradient>\n<linearGradient id="paint1_linear_0_142" x1="10.9191" y1="26.6598" x2="53.6542" y2="100.675" gradientUnits="userSpaceOnUse">\n<stop stop-color="#1784D9"/>\n<stop offset="0.5" stop-color="#107AD5"/>\n<stop offset="1" stop-color="#0A63C9"/>\n</linearGradient>\n<clipPath id="clip0_0_142">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n<clipPath id="clip1_0_142">\n<rect width="128" height="119.07" fill="white" transform="translate(-0.45752 4.13259)"/>\n</clipPath>\n</defs>\n</svg>\n',
   "pagerduty":
@@ -24171,12 +33575,30 @@ export const icons: Record<string, string> = {
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#20808D"/>\n  <g fill="none" stroke="#fff" stroke-width="6" stroke-linejoin="round">\n    <path d="M64 24v80"/>\n    <path d="M64 48L34 24v36h60V24L64 48z"/>\n    <path d="M64 80l30 24V68H34v36l30-24z"/>\n  </g>\n</svg>\n',
   "persona":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<path d="M112.152 115.656V122.68C112.152 126.088 110.254 128 106.828 128H20.3232C16.9128 128 15 126.103 15 122.68V115.656C15 112.248 16.898 110.336 20.3232 110.336H106.843C110.254 110.336 112.166 112.233 112.166 115.656H112.152ZM106.25 62.5179L83.6972 49.5077C82.9556 49.0779 82.9556 48.0258 83.6972 47.5962L106.25 34.5858C108.801 33.1187 109.66 29.8587 108.193 27.3248L104.679 21.2494C103.211 18.7006 99.9632 17.8412 97.4132 19.3082L74.8597 32.3185C74.1187 32.7483 73.1991 32.2148 73.1991 31.3702V5.31976C73.1991 2.38573 70.8119 0 67.8759 0H60.8476C57.9116 0 55.5244 2.38573 55.5244 5.31976V31.3554C55.5244 32.2 54.6051 32.7334 53.8637 32.3038L31.3106 19.2933C28.7602 17.8263 25.5129 18.7006 24.045 21.2345L20.5308 27.31C19.0628 29.8587 19.9377 33.1039 22.4732 34.5709L45.0263 47.5813C45.7677 48.0111 45.7677 49.0632 45.0263 49.4929L22.4732 62.5031C19.9228 63.9702 19.0628 67.2155 20.5308 69.7644L24.045 75.8395C25.5129 78.3884 28.7602 79.2481 31.3106 77.781L53.8637 64.7705C54.6051 64.3407 55.5244 64.8744 55.5244 65.7187V91.7545C55.5244 94.6887 57.9116 97.0743 60.8476 97.0743H67.8759C70.8119 97.0743 73.1991 94.6887 73.1991 91.7545V65.7187C73.1991 64.8744 74.1187 64.3407 74.8597 64.7705L97.4132 77.781C99.9632 79.2481 103.211 78.3735 104.679 75.8395L108.193 69.7644C109.66 67.2155 108.786 63.9702 106.25 62.5031V62.5179Z" fill="#7379FD"/>\n</svg>\n',
+  "pinecone":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="28" fill="#4F46E5"/>\n  <path d="M64 18 88 42H40z" fill="#FFFFFF"/>\n  <path d="M64 44 92 70H36z" fill="#FFFFFF"/>\n  <path d="M64 74 96 102H32z" fill="#FFFFFF"/>\n</svg>\n',
+  "pipedrive":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#08A742"/>\n  <g fill="#FFFFFF">\n    <circle cx="70" cy="56" r="22" fill="none" stroke="#FFFFFF" stroke-width="12"/>\n    <rect x="40" y="40" width="12" height="62" rx="6"/>\n  </g>\n</svg>\n',
+  "planetscale":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#000000"/>\n  <path d="M64 24 A40 40 0 0 0 24 64 H64 Z" fill="#FFFFFF"/>\n  <path d="M64 24 A40 40 0 0 1 104 64 H64 Z" fill="#FFFFFF"/>\n  <path d="M24 76 H80 L60 104 A40 40 0 0 1 24 76 Z" fill="#FFFFFF"/>\n</svg>\n',
   "posthog":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<path d="M27.8824 69.6467C26.939 71.5336 24.2464 71.5336 23.3029 69.6467L21.0466 65.1342C20.6863 64.4135 20.6863 63.5651 21.0466 62.8445L23.3029 58.332C24.2464 56.445 26.939 56.445 27.8824 58.332L30.1387 62.8445C30.4989 63.5651 30.4989 64.4135 30.1387 65.1342L27.8824 69.6467ZM27.8824 95.2392C26.939 97.126 24.2464 97.126 23.3029 95.2392L21.0466 90.7265C20.6863 90.0058 20.6863 89.1575 21.0466 88.4368L23.3029 83.9243C24.2464 82.0373 26.939 82.0373 27.8824 83.9243L30.1387 88.4368C30.4989 89.1575 30.4989 90.0058 30.1387 90.7265L27.8824 95.2392Z" fill="#1D4AFF"/>\n<path d="M0 85.5251C0 83.2444 2.75748 82.1021 4.3702 83.7149L16.1037 95.4484C17.7164 97.0612 16.5742 99.8186 14.2935 99.8186H2.56C1.14615 99.8186 0 98.6725 0 97.2586V85.5251ZM0 73.1659C0 73.8448 0.269714 74.4961 0.749806 74.9761L24.8425 99.0687C25.3226 99.5488 25.9738 99.8186 26.6527 99.8186H39.8858C42.1665 99.8186 43.3088 97.0612 41.696 95.4484L4.3702 58.1226C2.75748 56.5098 0 57.6521 0 59.9328V73.1659ZM0 47.5736C0 48.2525 0.269714 48.9037 0.749806 49.3837L50.4348 99.0687C50.9148 99.5488 51.5661 99.8186 52.245 99.8186H65.4781C67.7589 99.8186 68.9011 97.0612 67.2883 95.4484L4.3702 32.5303C2.7575 30.9176 0 32.0598 0 34.3405V47.5736ZM25.5923 47.5736C25.5923 48.2525 25.8621 48.9037 26.3421 49.3837L72.4068 95.4484C74.0196 97.0612 76.777 95.9189 76.777 93.6382V80.4051C76.777 79.7262 76.5071 79.0749 76.0271 78.5949L29.9625 32.5303C28.3497 30.9176 25.5923 32.0598 25.5923 34.3405V47.5736ZM55.5548 32.5303C53.942 30.9176 51.1846 32.0598 51.1846 34.3405V47.5736C51.1846 48.2525 51.4545 48.9037 51.9345 49.3837L72.4068 69.8561C74.0196 71.4689 76.777 70.3266 76.777 68.0459V54.8128C76.777 54.1338 76.5071 53.4826 76.0271 53.0026L55.5548 32.5303Z" fill="#F9BD2B"/>\n<path d="M108.863 85.8389L84.7667 61.7423C83.1539 60.1295 80.3965 61.2718 80.3965 63.5525V97.2585C80.3965 98.6724 81.5426 99.8185 82.9565 99.8185H120.283C121.697 99.8185 122.843 98.6724 122.843 97.2585V94.1891C122.843 92.7752 121.692 91.646 120.29 91.4634C115.987 90.9033 111.963 88.9382 108.863 85.8389ZM92.6806 91.6291C90.4204 91.6291 88.5859 89.7946 88.5859 87.5341C88.5859 85.2739 90.4204 83.4394 92.6806 83.4394C94.9411 83.4394 96.7756 85.2739 96.7756 87.5341C96.7756 89.7946 94.9411 91.6291 92.6806 91.6291Z" fill="black"/>\n<path d="M0 97.2586C0 98.6725 1.14615 99.8186 2.56 99.8186H14.2935C16.5742 99.8186 17.7164 97.0612 16.1037 95.4484L4.3702 83.7149C2.75748 82.1021 0 83.2444 0 85.5251V97.2586ZM25.5923 53.7524L4.3702 32.5303C2.75748 30.9176 0 32.0597 0 34.3405V47.5736C0 48.2525 0.269714 48.9037 0.749806 49.3837L25.5923 74.2262V53.7524ZM4.3702 58.1226C2.75748 56.5098 0 57.652 0 59.9327V73.1659C0 73.8448 0.269714 74.4961 0.749806 74.9761L25.5923 99.8186V79.3447L4.3702 58.1226Z" fill="#1D4AFF"/>\n<path d="M51.1846 54.8127C51.1846 54.1338 50.915 53.4826 50.4348 53.0026L29.9624 32.5303C28.3499 30.9176 25.5923 32.0597 25.5923 34.3405V47.5736C25.5923 48.2525 25.8621 48.9037 26.3421 49.3837L51.1846 74.2262V54.8127ZM25.5923 99.8186H39.8858C42.1665 99.8186 43.3087 97.0612 41.6959 95.4484L25.5923 79.3447V99.8186ZM25.5923 53.7524V73.1659C25.5923 73.8448 25.8621 74.4961 26.3421 74.9761L51.1846 99.8186V80.4051C51.1846 79.7262 50.915 79.0749 50.4348 78.5949L25.5923 53.7524Z" fill="#F54E00"/>\n</svg>\n',
   "productboard":
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#1E6BFF"/>\n  <g fill="#fff">\n    <path d="M28 36h36L46 54H28z" opacity="0.7"/>\n    <path d="M64 36h36L82 54H64z"/>\n    <path d="M46 54h36L64 72H46z" opacity="0.85"/>\n    <path d="M64 72h36L82 90H64z" opacity="0.7"/>\n    <path d="M28 72h36L46 90H28z"/>\n  </g>\n</svg>\n',
+  "qdrant":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="28" fill="#DC244C"/>\n  <path d="M64 20 100 41v42L64 104 28 83V41z" fill="none" stroke="#FFFFFF" stroke-width="10"/>\n  <circle cx="64" cy="62" r="12" fill="#FFFFFF"/>\n  <path d="M72 70 92 92" stroke="#FFFFFF" stroke-width="10" stroke-linecap="round"/>\n</svg>\n',
+  "quickbooks":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#2CA01C"/>\n  <circle cx="64" cy="64" r="36" fill="none" stroke="#FFFFFF" stroke-width="9"/>\n  <path d="M52 46v36M76 46v36" stroke="#FFFFFF" stroke-width="9" stroke-linecap="round"/>\n</svg>\n',
+  "railway":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#13111C"/>\n  <path d="M24 64 A40 40 0 0 1 104 64" fill="none" stroke="#FFFFFF" stroke-width="10" stroke-linecap="round"/>\n  <rect x="40" y="74" width="48" height="10" rx="5" fill="#FFFFFF"/>\n  <circle cx="64" cy="98" r="8" fill="#FFFFFF"/>\n</svg>\n',
   "razorpay":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#072654"/>\n<g fill="#FFFFFF">\n<path d="M84 26 52 70l22-8-14 40h12l26-76z" opacity="0.95"/>\n<path d="M44 58 30 102h12l16-46z"/>\n</g>\n</svg>\n',
+  "redis-cloud":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#FF4438"/>\n  <path d="M64 30 L98 44 L64 58 L30 44 Z" fill="#FFFFFF"/>\n  <path d="M30 60 L64 74 L98 60 L98 70 L64 84 L30 70 Z" fill="#FFFFFF" opacity="0.85"/>\n  <path d="M30 84 L64 98 L98 84 L98 94 L64 108 L30 94 Z" fill="#FFFFFF" opacity="0.7"/>\n</svg>\n',
+  "render":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#000000"/>\n  <path d="M30 30 H62 A32 32 0 0 1 94 62 A32 32 0 0 1 62 94 H58 V62 H30 Z" fill="#FFFFFF"/>\n  <rect x="30" y="72" width="20" height="26" fill="#FFFFFF"/>\n</svg>\n',
+  "replicate":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="28" fill="#000000"/>\n  <rect x="30" y="32" width="68" height="14" rx="4" fill="#FFFFFF"/>\n  <rect x="44" y="57" width="54" height="14" rx="4" fill="#FFFFFF"/>\n  <rect x="58" y="82" width="40" height="14" rx="4" fill="#FFFFFF"/>\n</svg>\n',
   "resend":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#000000"/>\n<path d="M42 30h28c13.8 0 25 10.1 25 22.5 0 9.3-6.3 17.3-15.3 20.7L98 105H80.5L63.4 75H58v30H42V30Zm16 14v17h12c5.5 0 10-3.8 10-8.5S75.5 44 70 44H58Z" fill="#FFFFFF"/>\n</svg>\n',
   "salesflare":
@@ -24205,8 +33627,12 @@ export const icons: Record<string, string> = {
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_113)">\n<g clip-path="url(#clip1_0_113)">\n<path d="M26.8925 80.886C26.8925 88.2866 20.8469 94.3323 13.4463 94.3323C6.04561 94.3323 0 88.2866 0 80.886C0 73.4853 6.04561 67.4397 13.4463 67.4397H26.8925V80.886Z" fill="#E01E5A"/>\n<path d="M33.6675 80.886C33.6675 73.4853 39.7131 67.4397 47.1137 67.4397C54.5144 67.4397 60.56 73.4853 60.56 80.886V114.554C60.56 121.954 54.5144 128 47.1137 128C39.7131 128 33.6675 121.954 33.6675 114.554V80.886Z" fill="#E01E5A"/>\n<path d="M47.1137 26.8925C39.7131 26.8925 33.6675 20.8469 33.6675 13.4463C33.6675 6.0456 39.7131 -3.8147e-06 47.1137 -3.8147e-06C54.5144 -3.8147e-06 60.56 6.0456 60.56 13.4463V26.8925H47.1137Z" fill="#36C5F0"/>\n<path d="M47.114 33.6678C54.5147 33.6678 60.5603 39.7134 60.5603 47.114C60.5603 54.5147 54.5147 60.5603 47.114 60.5603H13.4463C6.0456 60.5603 0 54.5147 0 47.114C0 39.7134 6.0456 33.6678 13.4463 33.6678H47.114Z" fill="#36C5F0"/>\n<path d="M101.107 47.114C101.107 39.7134 107.153 33.6678 114.554 33.6678C121.954 33.6678 128 39.7134 128 47.114C128 54.5147 121.954 60.5603 114.554 60.5603H101.107V47.114Z" fill="#2EB67D"/>\n<path d="M94.3322 47.114C94.3322 54.5147 88.2866 60.5603 80.8859 60.5603C73.4853 60.5603 67.4397 54.5147 67.4397 47.114V13.4463C67.4397 6.0456 73.4853 -3.8147e-06 80.8859 -3.8147e-06C88.2866 -3.8147e-06 94.3322 6.0456 94.3322 13.4463V47.114Z" fill="#2EB67D"/>\n<path d="M80.8859 101.107C88.2866 101.107 94.3322 107.153 94.3322 114.554C94.3322 121.954 88.2866 128 80.8859 128C73.4853 128 67.4397 121.954 67.4397 114.554V101.107H80.8859Z" fill="#ECB22E"/>\n<path d="M80.8859 94.3323C73.4853 94.3323 67.4397 88.2866 67.4397 80.886C67.4397 73.4853 73.4853 67.4397 80.8859 67.4397H114.554C121.954 67.4397 128 73.4853 128 80.886C128 88.2866 121.954 94.3323 114.554 94.3323H80.8859Z" fill="#ECB22E"/>\n</g>\n</g>\n<defs>\n<clipPath id="clip0_0_113">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n<clipPath id="clip1_0_113">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n</defs>\n</svg>\n',
   "snowflake":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_58_7704)">\n<path fill-rule="evenodd" clip-rule="evenodd" d="M117.899 55.7094L103.495 64.009L117.899 72.2385C118.76 72.7364 119.515 73.3991 120.12 74.1887C120.726 74.9782 121.169 75.8793 121.427 76.8405C121.684 77.8016 121.749 78.8039 121.618 79.7902C121.488 80.7766 121.165 81.7275 120.667 82.5889C120.169 83.4503 119.506 84.2051 118.717 84.8104C117.927 85.4157 117.026 85.8595 116.065 86.1165C115.104 86.3736 114.101 86.4388 113.115 86.3084C112.129 86.1781 111.178 85.8547 110.316 85.3569L84.5083 70.4894C83.3255 69.8051 82.3494 68.8142 81.6829 67.6213C81.0164 66.4283 80.6842 65.0776 80.7215 63.7116C80.7417 63.1198 80.8328 62.5326 80.9926 61.9625C81.5209 60.0506 82.7766 58.4214 84.4909 57.4236L110.299 42.6086C111.164 42.1086 112.119 41.7842 113.11 41.6539C114.101 41.5235 115.107 41.5898 116.072 41.8489C117.037 42.108 117.942 42.5549 118.734 43.164C119.526 43.7731 120.19 44.5323 120.689 45.3984C121.189 46.257 121.514 47.2063 121.645 48.1915C121.775 49.1766 121.709 50.1779 121.449 51.1371C121.19 52.0964 120.742 52.9945 120.133 53.7794C119.523 54.5643 118.764 55.2204 117.899 55.7094ZM104.265 95.939L78.4652 81.0978C77.3109 80.4354 76.0034 80.0865 74.6726 80.086C73.3417 80.0854 72.0339 80.4331 70.8791 81.0945C69.7243 81.7559 68.7626 82.708 68.0897 83.8562C67.4168 85.0044 67.0561 86.3087 67.0435 87.6395V117.287C67.1103 119.257 67.9398 121.124 69.357 122.493C70.7741 123.863 72.668 124.629 74.639 124.629C76.61 124.629 78.5039 123.863 79.921 122.493C81.3381 121.124 82.1676 119.257 82.2345 117.287V100.67L96.6734 108.97C97.5348 109.468 98.4859 109.792 99.4724 109.923C100.459 110.054 101.462 109.989 102.423 109.733C103.385 109.476 104.286 109.033 105.076 108.427C105.866 107.822 106.53 107.068 107.028 106.206C107.527 105.345 107.851 104.394 107.981 103.407C108.112 102.421 108.048 101.418 107.791 100.457C107.534 99.495 107.091 98.5935 106.486 97.8033C105.881 97.0132 105.126 96.35 104.265 95.8515V95.939ZM74.5297 66.9387L63.7726 77.5646C63.4046 77.9067 62.9277 78.108 62.4258 78.133H59.2687C58.768 78.103 58.2927 77.9024 57.9218 77.5646L47.226 66.9037C46.8914 66.5386 46.6937 66.0689 46.6663 65.5744V62.426C46.6952 61.9293 46.8926 61.4573 47.226 61.0879L57.9218 50.4271C58.2935 50.0919 58.7689 49.8943 59.2687 49.8674H62.4258C62.9264 49.8907 63.403 50.0888 63.7726 50.4271L74.4947 61.0879C74.8255 61.4581 75.0199 61.9302 75.0456 62.426V65.5744C75.0214 66.068 74.8267 66.5378 74.4947 66.9037L74.5297 66.9387ZM65.959 63.9827C65.9177 63.4729 65.705 62.992 65.3556 62.6184L62.2509 59.5487C61.8789 59.2141 61.4037 59.0166 60.9041 58.989H60.7904C60.293 59.0151 59.8201 59.2129 59.4523 59.5487L56.3476 62.6184C56.0144 62.994 55.8199 63.4724 55.7967 63.974V64.0877C55.8187 64.5817 56.0137 65.0522 56.3476 65.417L59.4698 68.4779C59.8384 68.8125 60.3108 69.0102 60.8079 69.0377H60.9216C61.4212 69.01 61.8964 68.8126 62.2684 68.4779L65.3731 65.3908C65.7084 65.0253 65.909 64.5564 65.9415 64.0614L65.959 63.9827ZM17.4299 32.0789L43.2381 46.8764C44.3936 47.5386 45.7023 47.8869 47.0341 47.8869C48.3659 47.8869 49.6746 47.5385 50.8301 46.8763C51.9857 46.2141 52.9479 45.2611 53.6212 44.1121C54.2946 42.963 54.6556 41.6578 54.6685 40.326V10.7048C54.6017 8.73493 53.7721 6.8681 52.355 5.49824C50.9379 4.12839 49.044 3.36266 47.073 3.36266C45.102 3.36266 43.2081 4.12839 41.791 5.49824C40.3738 6.8681 39.5443 8.73493 39.4775 10.7048V27.3213L25.0211 19.0131C24.1597 18.5146 23.2086 18.1907 22.222 18.0598C21.2355 17.929 20.2329 17.9937 19.2713 18.2503C18.3098 18.5069 17.4082 18.9504 16.6181 19.5555C15.828 20.1605 15.1648 20.9153 14.6663 21.7767C14.1679 22.638 13.844 23.5891 13.7131 24.5757C13.5822 25.5622 13.647 26.5649 13.9036 27.5264C14.1602 28.4879 14.6037 29.3895 15.2087 30.1796C15.8138 30.9697 16.5685 31.633 17.4299 32.1314V32.0789ZM74.0661 47.8909C75.5902 48.0114 77.1149 47.6668 78.4389 46.9026L104.238 32.0352C105.1 31.5368 105.854 30.8735 106.459 30.0834C107.065 29.2933 107.508 28.3917 107.765 27.4302C108.021 26.4687 108.086 25.466 107.955 24.4795C107.824 23.4929 107.5 22.5418 107.002 21.6805C106.503 20.8191 105.84 20.0643 105.05 19.4593C104.26 18.8542 103.358 18.4107 102.397 18.1541C100.455 17.6358 98.3868 17.9102 96.6472 18.9169L82.2083 27.2951V10.6785C82.1414 8.7087 81.3119 6.84186 79.8948 5.47201C78.4776 4.10215 76.5837 3.33643 74.6127 3.33643C72.6418 3.33643 70.7479 4.10215 69.3307 5.47201C67.9136 6.84186 67.0841 8.7087 67.0172 10.6785V40.326C67.0148 42.2454 67.7413 44.0942 69.0499 45.4985C70.3584 46.9028 72.1513 47.7579 74.0661 47.8909ZM47.6458 80.1095C46.1216 79.9857 44.5959 80.3305 43.273 81.0978L17.4299 95.904C15.6903 96.9107 14.4219 98.5671 13.9036 100.509C13.3853 102.451 13.6597 104.519 14.6663 106.259C15.673 107.998 17.3294 109.267 19.2713 109.785C21.2132 110.303 23.2815 110.029 25.0211 109.022L39.4775 100.723V117.339C39.5443 119.309 40.3738 121.176 41.791 122.546C43.2081 123.916 45.102 124.681 47.073 124.681C49.044 124.681 50.9379 123.916 52.355 122.546C53.7721 121.176 54.6017 119.309 54.6685 117.339V87.6395C54.6646 85.7297 53.9385 83.892 52.6359 82.4954C51.3333 81.0987 49.5507 80.2464 47.6458 80.1095ZM40.6494 66.2303C41.1476 64.5921 41.0725 62.8329 40.4365 61.243C39.8006 59.6532 38.6417 58.3275 37.1511 57.4848L11.3692 42.6261C9.62803 41.6287 7.56307 41.3605 5.62485 41.8799C3.68663 42.3993 2.03247 43.6641 1.02324 45.3984C0.523605 46.2567 0.199114 47.2056 0.0685393 48.1901C-0.0620352 49.1746 0.00389896 50.1753 0.262528 51.1342C0.521157 52.093 0.967347 52.9911 1.57529 53.7764C2.18323 54.5618 2.94085 55.2188 3.80433 55.7094L18.2083 64.009L3.80433 72.2385C2.94297 72.7353 2.18788 73.3968 1.58217 74.1853C0.976458 74.9738 0.531994 75.874 0.274153 76.8343C0.0163107 77.7946 -0.0498595 78.7963 0.0794199 79.7822C0.208699 80.768 0.530896 81.7188 1.02762 82.5802C1.52433 83.4415 2.18585 84.1966 2.97439 84.8023C3.76292 85.408 4.66304 85.8525 5.62335 86.1103C6.58366 86.3682 7.58535 86.4343 8.57123 86.3051C9.55711 86.1758 10.5079 85.8536 11.3692 85.3569L37.1511 70.4894C38.8114 69.5625 40.0584 68.0405 40.6406 66.2303H40.6494ZM122.114 17.0628H120.951V18.4883H122.106C122.639 18.4883 122.98 18.2435 122.98 17.7887C122.98 17.3339 122.665 17.0628 122.106 17.0628H122.114ZM119.543 15.751H122.167C123.584 15.751 124.528 16.5293 124.528 17.7362C124.533 18.0722 124.447 18.4032 124.281 18.6953C124.115 18.9874 123.874 19.2299 123.584 19.3979L124.607 20.8671V21.1645H123.129L122.106 19.7652H120.951V21.1645H119.534L119.543 15.751ZM126.802 18.567C126.844 17.905 126.749 17.2413 126.522 16.618C126.294 15.9947 125.94 15.4254 125.481 14.9461C125.023 14.4669 124.469 14.088 123.857 13.8337C123.244 13.5793 122.585 13.4549 121.922 13.4684C119.027 13.4684 117.103 15.5586 117.103 18.567C117.103 21.4356 119.027 23.657 121.922 23.657C122.585 23.6729 123.245 23.5505 123.859 23.2977C124.473 23.0449 125.027 22.6671 125.487 22.1883C125.947 21.7096 126.302 21.1404 126.53 20.517C126.758 19.8935 126.853 19.2295 126.811 18.567H126.802ZM128.009 18.567C128.009 21.9691 125.735 24.8114 121.887 24.8114C118.039 24.8114 115.861 21.9428 115.861 18.567C115.861 15.1913 118.109 12.3227 121.887 12.3227C125.665 12.3227 128 15.1563 128 18.567H128.009Z" fill="#29B5E8"/>\n</g>\n<defs>\n<clipPath id="clip0_58_7704">\n<rect width="128" height="121.703" fill="white" transform="translate(0 3.14844)"/>\n</clipPath>\n</defs>\n</svg>\n',
+  "snyk":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#4B45A1"/>\n  <path d="M64 24 L98 38 V62 C98 84 84 98 64 106 C44 98 30 84 30 62 V38 Z" fill="#FFFFFF"/>\n  <path d="M50 62 L60 72 L80 50" fill="none" stroke="#4B45A1" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>\n</svg>\n',
   "square":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#000000"/>\n<path d="M40 28h48c6.6 0 12 5.4 12 12v48c0 6.6-5.4 12-12 12H40c-6.6 0-12-5.4-12-12V40c0-6.6 5.4-12 12-12Zm4 16c-2.2 0-4 1.8-4 4v32c0 2.2 1.8 4 4 4h40c2.2 0 4-1.8 4-4V48c0-2.2-1.8-4-4-4H44Zm12 12h16c1.1 0 2 .9 2 2v16c0 1.1-.9 2-2 2H56c-1.1 0-2-.9-2-2V58c0-1.1.9-2 2-2Z" fill="#FFFFFF"/>\n</svg>\n',
+  "stability-ai":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="28" fill="#7C3AED"/>\n  <path d="M40 82c6 6 15 10 25 10 13 0 21-6 21-15 0-8-6-12-17-15l-10-3c-13-4-21-10-21-22 0-13 11-21 26-21 10 0 18 3 24 8l-8 11c-5-4-10-6-16-6-8 0-13 4-13 10 0 6 5 9 14 12l10 3c14 4 22 10 22 23 0 14-11 23-29 23-12 0-23-4-30-11z" fill="#FFFFFF"/>\n</svg>\n',
   "stripe":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_794)">\n<path fill-rule="evenodd" clip-rule="evenodd" d="M54.5868 38.5631C54.5868 33.0774 59.0879 30.9675 66.5429 30.9675C77.233 30.9675 90.7363 34.2027 101.426 39.9697V6.91478C89.7516 2.27303 78.2176 0.444458 66.5429 0.444458C37.989 0.444458 19 15.3544 19 40.2511C19 79.073 72.4505 72.884 72.4505 89.6225C72.4505 96.0928 66.8242 98.2027 58.9473 98.2027C47.2725 98.2027 32.3626 93.4203 20.5473 86.95V120.427C33.6286 126.053 46.8505 128.444 58.9473 128.444C88.2044 128.444 108.319 113.957 108.319 88.7785C108.178 46.862 54.5868 54.317 54.5868 38.5631Z" fill="#635BFF"/>\n</g>\n<defs>\n<clipPath id="clip0_0_794">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n</defs>\n</svg>\n',
   "supabase":
@@ -24217,12 +33643,24 @@ export const icons: Record<string, string> = {
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_168_571)">\n<g clip-path="url(#clip1_168_571)">\n<path d="M89.6979 48.7828H122.761C125.884 48.7828 128.416 51.3149 128.416 54.4386V84.5543C128.416 96.0345 119.11 105.341 107.63 105.341H107.532C96.0514 105.343 86.7436 96.0374 86.7419 84.5572C86.7419 84.5563 86.7419 84.5553 86.7419 84.5542V51.7387C86.742 50.1062 88.0654 48.7828 89.6979 48.7828Z" fill="#5059C9"/>\n<path d="M112.045 42.8293C119.443 42.8293 125.44 36.832 125.44 29.4339C125.44 22.0359 119.443 16.0386 112.045 16.0386C104.646 16.0386 98.6492 22.0359 98.6492 29.4339C98.6492 36.832 104.646 42.8293 112.045 42.8293Z" fill="#5059C9"/>\n<path d="M70.3701 42.8293C81.0562 42.8293 89.719 34.1666 89.719 23.4805C89.719 12.7944 81.0562 4.13162 70.3701 4.13162C59.684 4.13162 51.0212 12.7944 51.0212 23.4805C51.0212 34.1666 59.684 42.8293 70.3701 42.8293Z" fill="#7B83EB"/>\n<path d="M96.1695 48.7828H41.5938C38.5074 48.8592 36.0658 51.4206 36.1374 54.5071V88.8558C35.7064 107.378 50.3602 122.748 68.8817 123.201C87.4031 122.748 102.057 107.378 101.626 88.8558V54.5071C101.697 51.4206 99.2559 48.8592 96.1695 48.7828Z" fill="#7B83EB"/>\n<path opacity="0.1" d="M71.8583 48.7828V96.9167C71.8435 99.124 70.5059 101.107 68.4648 101.947C67.8149 102.222 67.1165 102.364 66.4108 102.364H38.7568C38.3699 101.382 38.0127 100.4 37.715 99.3875C36.673 95.9717 36.1413 92.4209 36.1373 88.8498V54.4981C36.0657 51.4165 38.5032 48.8592 41.5847 48.7828H71.8583Z" fill="black"/>\n<path opacity="0.2" d="M68.8815 48.7828V99.8935C68.8814 100.599 68.7397 101.298 68.4648 101.947C67.6244 103.989 65.6414 105.326 63.4341 105.341H40.1559C39.6499 104.359 39.1736 103.376 38.7568 102.364C38.3401 101.352 38.0127 100.4 37.715 99.3875C36.673 95.9718 36.1413 92.4209 36.1373 88.8498V54.4981C36.0657 51.4165 38.5032 48.8592 41.5847 48.7828H68.8815Z" fill="black"/>\n<path opacity="0.2" d="M68.8817 48.7828V93.94C68.859 96.9391 66.4334 99.3648 63.4343 99.3875H37.7152C36.6732 95.9718 36.1415 92.4209 36.1375 88.8498V54.4981C36.066 51.4165 38.5035 48.8592 41.585 48.7828H68.8817Z" fill="black"/>\n<path opacity="0.2" d="M65.9049 48.7828V93.94C65.8823 96.9391 63.4566 99.3648 60.4575 99.3875H37.7152C36.6732 95.9718 36.1415 92.4209 36.1375 88.8498V54.4981C36.066 51.4165 38.5035 48.8592 41.585 48.7828H65.9049Z" fill="black"/>\n<path opacity="0.1" d="M71.8583 33.393V42.7698C71.3523 42.7995 70.876 42.8293 70.3699 42.8293C69.8639 42.8293 69.3876 42.7996 68.8815 42.7698C67.8768 42.7031 66.8802 42.5437 65.9048 42.2935C59.8769 40.866 54.8969 36.6385 52.5095 30.9224C52.0987 29.9624 51.7798 28.9657 51.5569 27.9456H66.4108C69.4147 27.957 71.8469 30.3892 71.8583 33.393Z" fill="black"/>\n<path opacity="0.2" d="M68.8816 36.3698V42.7698C67.8768 42.7031 66.8803 42.5437 65.9049 42.2935C59.8769 40.866 54.8969 36.6385 52.5095 30.9224H63.4342C66.4379 30.9338 68.8702 33.366 68.8816 36.3698Z" fill="black"/>\n<path opacity="0.2" d="M68.8816 36.3698V42.7698C67.8768 42.7031 66.8803 42.5437 65.9049 42.2935C59.8769 40.866 54.8969 36.6385 52.5095 30.9224H63.4342C66.4379 30.9338 68.8702 33.366 68.8816 36.3698Z" fill="black"/>\n<path opacity="0.2" d="M65.9049 36.3698V42.2935C59.8769 40.866 54.8969 36.6385 52.5095 30.9223H60.4574C63.4613 30.9338 65.8934 33.366 65.9049 36.3698Z" fill="black"/>\n<path d="M5.87285 30.9223H60.4485C63.4619 30.9223 65.9048 33.3653 65.9048 36.3787V90.9543C65.9048 93.9678 63.4619 96.4106 60.4485 96.4106H5.87285C2.85937 96.4106 0.416504 93.9677 0.416504 90.9543V36.3787C0.416504 33.3653 2.85943 30.9223 5.87285 30.9223Z" fill="url(#paint0_linear_168_571)"/>\n<path d="M47.5204 51.694H36.6106V81.402H29.6599V51.694H18.8008V45.9311H47.5204V51.694Z" fill="white"/>\n</g>\n</g>\n<defs>\n<linearGradient id="paint0_linear_168_571" x1="11.7932" y1="26.6588" x2="54.5282" y2="100.674" gradientUnits="userSpaceOnUse">\n<stop stop-color="#5A62C3"/>\n<stop offset="0.5" stop-color="#4D55BD"/>\n<stop offset="1" stop-color="#3940AB"/>\n</linearGradient>\n<clipPath id="clip0_168_571">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n<clipPath id="clip1_168_571">\n<rect width="128" height="119.07" fill="white" transform="translate(0.416504 4.13162)"/>\n</clipPath>\n</defs>\n</svg>\n',
   "todoist":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#E44332"/>\n<g fill="#FFFFFF">\n<path d="M28 47.5 56.5 31c2.1-1.2 4.6-1.2 6.7 0l8.3 4.8-31.9 18.5L28 47.5Z" opacity="0.95"/>\n<path d="M28 64.5 67.9 41.4l11.6 6.7-39.9 23.1L28 64.5Z" opacity="0.85"/>\n<path d="M28 81.5 84 49.1l11.6 6.7L39.6 88.2 28 81.5Z" opacity="0.75"/>\n</g>\n</svg>\n',
+  "together-ai":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="28" fill="#0F6FFF"/>\n  <circle cx="46" cy="46" r="16" fill="#FFFFFF"/>\n  <circle cx="82" cy="46" r="16" fill="#FFFFFF" opacity="0.75"/>\n  <circle cx="46" cy="82" r="16" fill="#FFFFFF" opacity="0.75"/>\n  <circle cx="82" cy="82" r="16" fill="#FFFFFF" opacity="0.5"/>\n</svg>\n',
   "trello":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_240_7025)">\n<g clip-path="url(#clip1_240_7025)">\n<path fill-rule="evenodd" clip-rule="evenodd" d="M112.867 0H15.133C6.72578 0 0 6.72578 0 15.133V112.657C0 121.064 6.72578 127.79 15.133 127.79H112.657C121.064 127.79 127.79 121.064 127.79 112.657V15.3432C128 6.72578 121.274 0 112.867 0ZM55.0673 92.2693C55.0673 95.0016 52.7553 97.3136 50.023 97.3136H28.7947C26.0624 97.3136 23.7504 95.0016 23.7504 92.2693V28.7947C23.7504 26.0624 26.0624 23.7504 28.7947 23.7504H50.2332C52.9655 23.7504 55.2775 26.0624 55.2775 28.7947V92.2693H55.0673ZM104.46 63.0542C104.46 65.7865 102.358 68.0985 99.4154 68.3087C99.4154 68.3087 99.4154 68.3087 99.2053 68.3087H77.977C75.2447 68.3087 72.9327 65.9967 72.9327 63.2644V28.7947C72.9327 26.0624 75.2447 23.7504 77.977 23.7504H99.4154C102.148 23.7504 104.46 26.0624 104.46 28.7947V63.0542Z" fill="url(#paint0_linear_240_7025)"/>\n</g>\n</g>\n<defs>\n<linearGradient id="paint0_linear_240_7025" x1="64.042" y1="128.084" x2="64.042" y2="0" gradientUnits="userSpaceOnUse">\n<stop stop-color="#0052CC"/>\n<stop offset="1" stop-color="#2684FF"/>\n</linearGradient>\n<clipPath id="clip0_240_7025">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n<clipPath id="clip1_240_7025">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n</defs>\n</svg>\n',
   "twilio":
     '<svg role="img" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><title>Twilio</title><path d="M12 0C5.381-.008.008 5.352 0 11.971V12c0 6.64 5.359 12 12 12 6.64 0 12-5.36 12-12 0-6.641-5.36-12-12-12zm0 20.801c-4.846.015-8.786-3.904-8.801-8.75V12c-.014-4.846 3.904-8.786 8.75-8.801H12c4.847-.014 8.786 3.904 8.801 8.75V12c.015 4.847-3.904 8.786-8.75 8.801H12zm5.44-11.76c0 1.359-1.12 2.479-2.481 2.479-1.366-.007-2.472-1.113-2.479-2.479 0-1.361 1.12-2.481 2.479-2.481 1.361 0 2.481 1.12 2.481 2.481zm0 5.919c0 1.36-1.12 2.48-2.481 2.48-1.367-.008-2.473-1.114-2.479-2.48 0-1.359 1.12-2.479 2.479-2.479 1.361-.001 2.481 1.12 2.481 2.479zm-5.919 0c0 1.36-1.12 2.48-2.479 2.48-1.368-.007-2.475-1.113-2.481-2.48 0-1.359 1.12-2.479 2.481-2.479 1.358-.001 2.479 1.12 2.479 2.479zm0-5.919c0 1.359-1.12 2.479-2.479 2.479-1.367-.007-2.475-1.112-2.481-2.479 0-1.361 1.12-2.481 2.481-2.481 1.358 0 2.479 1.12 2.479 2.481z"/></svg>',
   "typeform":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#262627"/>\n<g fill="#FFFFFF">\n<rect x="30" y="38" width="68" height="12" rx="6"/>\n<rect x="52" y="50" width="12" height="44" rx="6"/>\n</g>\n</svg>\n',
+  "vercel":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#000000"/>\n  <path d="M64 34 L98 92 H30 Z" fill="#FFFFFF"/>\n</svg>\n',
+  "weaviate":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="28" fill="#130C49"/>\n  <path d="M34 36c0 36 12 56 30 56" fill="none" stroke="#FFFFFF" stroke-width="10" stroke-linecap="round"/>\n  <path d="M94 36c0 36-12 56-30 56" fill="none" stroke="#FFFFFF" stroke-width="10" stroke-linecap="round"/>\n  <circle cx="64" cy="36" r="9" fill="#FFFFFF"/>\n</svg>\n',
+  "webex":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#00BCEB"/>\n  <g fill="none" stroke="#FFFFFF" stroke-width="11" stroke-linecap="round">\n    <path d="M30 50c10 36 18 36 26 12"/>\n    <path d="M56 62c8-24 16-24 26 12"/>\n    <path d="M82 74c8 24 14 10 16-24"/>\n  </g>\n</svg>\n',
+  "xero":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#13B5EA"/>\n  <circle cx="64" cy="64" r="34" fill="none" stroke="#FFFFFF" stroke-width="9"/>\n  <path d="M53 53l22 22M75 53L53 75" stroke="#FFFFFF" stroke-width="9" stroke-linecap="round"/>\n</svg>\n',
   "zendesk":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<path d="M59.1236 40.6152V111.996H0L59.1236 40.6152ZM59.1236 15C59.1236 22.8403 56.0091 30.3594 50.4652 35.9034C44.9213 41.4473 37.4021 44.5618 29.5618 44.5618C21.7215 44.5618 14.2024 41.4473 8.65846 35.9034C3.11454 30.3594 0 22.8403 0 15L59.1236 15ZM68.8637 112.002C68.8637 104.162 71.9783 96.643 77.5222 91.0991C83.0661 85.5552 90.5853 82.4407 98.4255 82.4407C106.266 82.4407 113.785 85.5552 119.329 91.0991C124.873 96.643 127.987 104.162 127.987 112.002H68.8637ZM68.8637 86.3873V15H128L68.8637 86.381V86.3873Z" fill="#03363D"/>\n</svg>\n',
+  "zoom":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#0B5CFF"/>\n  <g fill="#FFFFFF">\n    <rect x="26" y="44" width="52" height="40" rx="10"/>\n    <path d="M84 56l18-12v40L84 72z"/>\n  </g>\n</svg>\n',
 };

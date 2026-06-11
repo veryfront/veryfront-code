@@ -1,0 +1,192 @@
+{
+  "name": "replicate",
+  "displayName": "Replicate",
+  "icon": "replicate.svg",
+  "description": "Browse public models and run predictions on Replicate-hosted machine learning models",
+  "auth": {
+    "type": "api-key",
+    "keyName": "REPLICATE_API_TOKEN",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://replicate.com/docs/reference/http",
+    "requiredApis": [
+      {
+        "name": "Replicate API Tokens",
+        "enableUrl": "https://replicate.com/account/api-tokens"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "REPLICATE_API_TOKEN",
+      "description": "Replicate API token (starts with r8_)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://replicate.com/account/api-tokens"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_models",
+      "name": "List Models",
+      "description": "List public models available on Replicate",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.replicate.com/v1/models",
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["results", "models"],
+            "collectionName": "models",
+            "itemFields": [
+              { "name": "owner" },
+              { "name": "name" },
+              { "name": "description", "maxLength": 120 },
+              { "name": "run_count" }
+            ],
+            "omitted": "version details, cover images, and provider-specific payload fields",
+            "outputFields": [{ "name": "next" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_model",
+      "name": "Get Model",
+      "description": "Get details about a model, including its latest version ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.replicate.com/v1/models/{model_owner}/{model_name}",
+        "params": {
+          "model_owner": {
+            "type": "string",
+            "in": "path",
+            "description": "Owner of the model, e.g. stability-ai",
+            "required": true
+          },
+          "model_name": {
+            "type": "string",
+            "in": "path",
+            "description": "Name of the model, e.g. sdxl",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_prediction",
+      "name": "Create Prediction",
+      "description": "Run a model by creating a prediction from a version ID and input object",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.replicate.com/v1/predictions",
+        "params": {
+          "wait": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Prefer",
+            "description": "Set to wait=60 to hold the request open up to 60 seconds for the prediction to finish",
+            "default": "wait=60"
+          }
+        },
+        "body": {
+          "version": {
+            "type": "string",
+            "description": "Model version ID (64-character hash from Get Model latest_version.id)",
+            "required": true
+          },
+          "input": {
+            "type": "object",
+            "description": "Model-specific input object, e.g. {\"prompt\":\"a photo of an astronaut\"}",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "get_prediction",
+      "name": "Get Prediction",
+      "description": "Get the status and output of a prediction",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.replicate.com/v1/predictions/{prediction_id}",
+        "params": {
+          "prediction_id": {
+            "type": "string",
+            "in": "path",
+            "description": "ID of the prediction to fetch",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "cancel_prediction",
+      "name": "Cancel Prediction",
+      "description": "Cancel a running prediction",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.replicate.com/v1/predictions/{prediction_id}/cancel",
+        "params": {
+          "prediction_id": {
+            "type": "string",
+            "in": "path",
+            "description": "ID of the prediction to cancel",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "find_model",
+      "title": "Find a model",
+      "prompt": "Find a Replicate model for a task I describe and show me its latest version ID and inputs.",
+      "category": "ai",
+      "icon": "list"
+    },
+    {
+      "id": "run_prediction",
+      "title": "Run a prediction",
+      "prompt": "Run a Replicate model with inputs I provide and report the output when it finishes.",
+      "category": "ai",
+      "icon": "sparkles"
+    }
+  ],
+  "suggestedWith": ["openai", "huggingface", "together-ai"],
+  "SETUP_GUIDE": {
+    "title": "Replicate API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Replicate account",
+        "description": "Go to https://replicate.com and sign up (GitHub sign-in supported). New accounts get a small amount of free usage before billing is required."
+      },
+      {
+        "step": 2,
+        "title": "Create an API token",
+        "description": "Open https://replicate.com/account/api-tokens, give the token a descriptive name (e.g. 'Veryfront Integration'), and create it."
+      },
+      {
+        "step": 3,
+        "title": "Store the token",
+        "description": "Copy the token and add it to your .env file as REPLICATE_API_TOKEN=r8_..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Models tool to confirm the token works. A 401 means the token is wrong or revoked."
+      }
+    ],
+    "notes": [
+      "Predictions are billed per second of compute — costs vary widely by model and hardware",
+      "Create Prediction sends Prefer: wait=60 to return synchronously when possible; long-running models still return status 'starting' or 'processing' — poll with Get Prediction",
+      "Use the version ID from Get Model's latest_version.id field when creating predictions"
+    ],
+    "documentation": "https://replicate.com/docs/reference/http"
+  }
+}

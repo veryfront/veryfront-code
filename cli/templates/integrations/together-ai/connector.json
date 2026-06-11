@@ -1,0 +1,193 @@
+{
+  "name": "together-ai",
+  "displayName": "Together AI",
+  "icon": "together-ai.svg",
+  "description": "Run chat completions, embeddings, and image generation on open models via the Together AI API",
+  "auth": {
+    "type": "api-key",
+    "keyName": "TOGETHER_API_KEY",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://docs.together.ai/docs/quickstart",
+    "requiredApis": [
+      {
+        "name": "Together AI API Keys",
+        "enableUrl": "https://api.together.ai/settings/api-keys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "TOGETHER_API_KEY",
+      "description": "Together AI API key from account settings",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.together.ai/docs/quickstart"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_models",
+      "name": "List Models",
+      "description": "List the models available on Together AI",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.together.ai/v1/models",
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data", "models"],
+            "collectionName": "models",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "type" },
+              { "name": "context_length" },
+              { "name": "organization" }
+            ],
+            "omitted": "pricing details and provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_chat_completion",
+      "name": "Create Chat Completion",
+      "description": "Generate a chat completion from a list of messages",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.together.ai/v1/chat/completions",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Model ID to use, e.g. meta-llama/Llama-3.3-70B-Instruct-Turbo",
+            "required": true
+          },
+          "messages": {
+            "type": "array",
+            "description": "Chat messages, each with role (system|user|assistant) and content",
+            "required": true
+          },
+          "max_tokens": {
+            "type": "number",
+            "description": "Maximum tokens to generate"
+          },
+          "temperature": {
+            "type": "number",
+            "description": "Sampling temperature"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_embedding",
+      "name": "Create Embedding",
+      "description": "Create an embedding vector for input text",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.together.ai/v1/embeddings",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Embedding model ID, e.g. BAAI/bge-large-en-v1.5",
+            "required": true
+          },
+          "input": {
+            "type": "string",
+            "description": "Text to embed",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "generate_image",
+      "name": "Generate Image",
+      "description": "Generate an image from a text prompt",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.together.ai/v1/images/generations",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Image model ID, e.g. black-forest-labs/FLUX.1-schnell",
+            "required": true
+          },
+          "prompt": {
+            "type": "string",
+            "description": "Text description of the desired image",
+            "required": true
+          },
+          "width": {
+            "type": "number",
+            "description": "Image width in pixels",
+            "default": 1024
+          },
+          "height": {
+            "type": "number",
+            "description": "Image height in pixels",
+            "default": 1024
+          },
+          "steps": {
+            "type": "number",
+            "description": "Number of generation steps",
+            "default": 20
+          },
+          "n": {
+            "type": "number",
+            "description": "Number of images to generate",
+            "default": 1
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "available_models",
+      "title": "List Together AI models",
+      "prompt": "List the models available on Together AI and group them by type.",
+      "category": "ai",
+      "icon": "list"
+    },
+    {
+      "id": "generate_image",
+      "title": "Generate an image",
+      "prompt": "Use Together AI to generate an image from a prompt I provide.",
+      "category": "ai",
+      "icon": "sparkles"
+    }
+  ],
+  "suggestedWith": ["openai", "anthropic", "mistral"],
+  "SETUP_GUIDE": {
+    "title": "Together AI API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Together AI account",
+        "description": "Go to https://api.together.ai and sign up or sign in. New accounts include trial credits for testing."
+      },
+      {
+        "step": 2,
+        "title": "Create an API key",
+        "description": "Open Settings → API Keys at https://api.together.ai/settings/api-keys and create a new key."
+      },
+      {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Copy the key and add it to your .env file as TOGETHER_API_KEY=..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Models tool to confirm the key works. A 401 means the key is wrong or revoked."
+      }
+    ],
+    "notes": [
+      "The official base URL is https://api.together.ai/v1 (the legacy api.together.xyz host also resolves)",
+      "Inference is billed per token (text) or per image step — check model pricing in the dashboard before large jobs"
+    ],
+    "documentation": "https://docs.together.ai/reference/models-1"
+  }
+}

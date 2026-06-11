@@ -1,0 +1,197 @@
+{
+  "name": "elevenlabs",
+  "displayName": "ElevenLabs",
+  "icon": "elevenlabs.svg",
+  "description": "Browse voices and models, check subscription usage, and synthesize speech with the ElevenLabs API",
+  "auth": {
+    "type": "api-key",
+    "keyName": "ELEVENLABS_API_KEY",
+    "headerName": "xi-api-key",
+    "docsUrl": "https://elevenlabs.io/docs/api-reference/authentication",
+    "requiredApis": [
+      {
+        "name": "ElevenLabs API Keys",
+        "enableUrl": "https://elevenlabs.io/app/settings/api-keys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "ELEVENLABS_API_KEY",
+      "description": "ElevenLabs API key from app settings",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://elevenlabs.io/app/settings/api-keys"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_voices",
+      "name": "List Voices",
+      "description": "List and search the voices available to the account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.elevenlabs.io/v2/voices",
+        "params": {
+          "search": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter voices by name, description, labels, or category"
+          },
+          "category": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by category: premade, cloned, generated, or professional"
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Voices per page (max 100)",
+            "default": 30
+          },
+          "next_page_token": {
+            "type": "string",
+            "in": "query",
+            "description": "Page token from a previous list call"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["voices"],
+            "collectionName": "voices",
+            "itemFields": [
+              { "name": "voice_id" },
+              { "name": "name" },
+              { "name": "category" }
+            ],
+            "omitted": "voice settings, previews, and provider-specific payload fields",
+            "outputFields": [{ "name": "next_page_token" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_voice",
+      "name": "Get Voice",
+      "description": "Get details about a specific voice",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.elevenlabs.io/v1/voices/{voice_id}",
+        "params": {
+          "voice_id": {
+            "type": "string",
+            "in": "path",
+            "description": "ID of the voice to fetch",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_models",
+      "name": "List Models",
+      "description": "List the speech models available to the account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.elevenlabs.io/v1/models"
+      }
+    },
+    {
+      "id": "get_subscription",
+      "name": "Get Subscription",
+      "description": "Get subscription tier, character usage, and limits for the account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.elevenlabs.io/v1/user/subscription"
+      }
+    },
+    {
+      "id": "text_to_speech",
+      "name": "Text to Speech",
+      "description": "Convert text to speech with a chosen voice; the response is binary audio (not JSON), so route the output to a file or player rather than parsing it",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
+        "params": {
+          "voice_id": {
+            "type": "string",
+            "in": "path",
+            "description": "ID of the voice to use (from List Voices)",
+            "required": true
+          },
+          "output_format": {
+            "type": "string",
+            "in": "query",
+            "description": "Audio output format, e.g. mp3_44100_128",
+            "default": "mp3_44100_128"
+          }
+        },
+        "body": {
+          "text": {
+            "type": "string",
+            "description": "Text to convert to speech",
+            "required": true
+          },
+          "model_id": {
+            "type": "string",
+            "description": "Model ID to use",
+            "default": "eleven_multilingual_v2"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "browse_voices",
+      "title": "Browse voices",
+      "prompt": "List my available ElevenLabs voices and summarize them by category.",
+      "category": "ai",
+      "icon": "list"
+    },
+    {
+      "id": "check_usage",
+      "title": "Check character usage",
+      "prompt": "Check my ElevenLabs subscription and tell me how much of my character quota is left.",
+      "category": "ai",
+      "icon": "chart"
+    }
+  ],
+  "suggestedWith": ["openai", "deepgram", "assemblyai"],
+  "SETUP_GUIDE": {
+    "title": "ElevenLabs API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create an ElevenLabs account",
+        "description": "Go to https://elevenlabs.io and sign up or sign in. The free tier includes a monthly character allowance suitable for testing."
+      },
+      {
+        "step": 2,
+        "title": "Create an API key",
+        "description": "Open https://elevenlabs.io/app/settings/api-keys and click 'Create API Key'. You can restrict the key to specific permissions (e.g. text-to-speech, voices read)."
+      },
+      {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Copy the key and add it to your .env file as ELEVENLABS_API_KEY=..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the Get Subscription tool to confirm the key works and see your character quota."
+      }
+    ],
+    "notes": [
+      "Authentication uses the xi-api-key header, not Authorization",
+      "Text to Speech returns raw binary audio (application/octet-stream), not JSON — treat the response as a file",
+      "Speech synthesis consumes characters from your plan quota; overages depend on your subscription tier"
+    ],
+    "documentation": "https://elevenlabs.io/docs/api-reference/introduction"
+  }
+}

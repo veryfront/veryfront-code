@@ -1,0 +1,267 @@
+{
+  "name": "pinecone",
+  "displayName": "Pinecone",
+  "icon": "pinecone.svg",
+  "description": "Manage Pinecone vector database indexes and query or upsert vectors",
+  "auth": {
+    "type": "api-key",
+    "keyName": "PINECONE_API_KEY",
+    "headerName": "Api-Key",
+    "docsUrl": "https://docs.pinecone.io/reference/api/authentication",
+    "requiredApis": [
+      {
+        "name": "Pinecone API Keys",
+        "enableUrl": "https://app.pinecone.io"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "PINECONE_API_KEY",
+      "description": "Pinecone API key (starts with pcsk_)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.pinecone.io/guides/projects/manage-api-keys"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_indexes",
+      "name": "List Indexes",
+      "description": "List all indexes in the Pinecone project",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.pinecone.io/indexes",
+        "params": {
+          "api_version": {
+            "type": "string",
+            "in": "header",
+            "headerName": "X-Pinecone-API-Version",
+            "description": "Pinecone API version date",
+            "default": "2025-01"
+          }
+        },
+        "response": {
+          "transform": "indexes",
+          "historicalSummary": {
+            "collectionKeys": ["indexes"],
+            "collectionName": "indexes",
+            "itemFields": [
+              { "name": "name" },
+              { "name": "dimension" },
+              { "name": "metric" },
+              { "name": "host" },
+              { "name": "status", "kind": "object" }
+            ],
+            "omitted": "index spec details and provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "describe_index",
+      "name": "Describe Index",
+      "description": "Get an index's configuration and its data-plane host (needed for Query Vectors and Upsert Vectors)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.pinecone.io/indexes/{indexName}",
+        "params": {
+          "indexName": {
+            "type": "string",
+            "in": "path",
+            "description": "Index name",
+            "required": true
+          },
+          "api_version": {
+            "type": "string",
+            "in": "header",
+            "headerName": "X-Pinecone-API-Version",
+            "description": "Pinecone API version date",
+            "default": "2025-01"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_index",
+      "name": "Create Index",
+      "description": "Create a new serverless or pod-based index",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.pinecone.io/indexes",
+        "params": {
+          "api_version": {
+            "type": "string",
+            "in": "header",
+            "headerName": "X-Pinecone-API-Version",
+            "description": "Pinecone API version date",
+            "default": "2025-01"
+          }
+        },
+        "body": {
+          "name": {
+            "type": "string",
+            "description": "Index name (1-45 characters, lowercase alphanumeric and hyphens)",
+            "required": true
+          },
+          "dimension": {
+            "type": "number",
+            "description": "Vector dimension (required for dense indexes), e.g. 1536"
+          },
+          "metric": {
+            "type": "string",
+            "description": "Distance metric: cosine, euclidean, or dotproduct",
+            "default": "cosine"
+          },
+          "spec": {
+            "type": "object",
+            "description": "Deployment spec, e.g. {\"serverless\":{\"cloud\":\"aws\",\"region\":\"us-east-1\"}}",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "query_vectors",
+      "name": "Query Vectors",
+      "description": "Query an index for the nearest vectors (run Describe Index first to get the index host)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{indexHost}/query",
+        "params": {
+          "indexHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Index data-plane host from Describe Index, e.g. my-index-abc1234.svc.aped-4627-b74a.pinecone.io",
+            "required": true
+          },
+          "api_version": {
+            "type": "string",
+            "in": "header",
+            "headerName": "X-Pinecone-API-Version",
+            "description": "Pinecone API version date",
+            "default": "2025-01"
+          }
+        },
+        "body": {
+          "vector": {
+            "type": "array",
+            "description": "Query vector values (must match the index dimension)",
+            "required": true
+          },
+          "topK": {
+            "type": "number",
+            "description": "Number of nearest matches to return",
+            "default": 10
+          },
+          "namespace": {
+            "type": "string",
+            "description": "Namespace to query (omit for the default namespace)"
+          },
+          "includeMetadata": {
+            "type": "boolean",
+            "description": "Include record metadata in the matches",
+            "default": true
+          },
+          "includeValues": {
+            "type": "boolean",
+            "description": "Include vector values in the matches",
+            "default": false
+          },
+          "filter": {
+            "type": "object",
+            "description": "Metadata filter, e.g. {\"genre\":{\"$eq\":\"docs\"}}"
+          }
+        }
+      }
+    },
+    {
+      "id": "upsert_vectors",
+      "name": "Upsert Vectors",
+      "description": "Write vectors into an index (run Describe Index first to get the index host)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{indexHost}/vectors/upsert",
+        "params": {
+          "indexHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Index data-plane host from Describe Index, e.g. my-index-abc1234.svc.aped-4627-b74a.pinecone.io",
+            "required": true
+          },
+          "api_version": {
+            "type": "string",
+            "in": "header",
+            "headerName": "X-Pinecone-API-Version",
+            "description": "Pinecone API version date",
+            "default": "2025-01"
+          }
+        },
+        "body": {
+          "vectors": {
+            "type": "array",
+            "description": "Vectors to upsert, e.g. [{\"id\":\"doc-1\",\"values\":[0.1,0.2],\"metadata\":{\"title\":\"...\"}}]",
+            "required": true
+          },
+          "namespace": {
+            "type": "string",
+            "description": "Namespace to write into (omit for the default namespace)"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "index_overview",
+      "title": "List my indexes",
+      "prompt": "List my Pinecone indexes with their dimensions, metrics, and status.",
+      "category": "data",
+      "icon": "database"
+    },
+    {
+      "id": "semantic_search",
+      "title": "Search an index",
+      "prompt": "Describe my Pinecone index to get its host, then query it with an embedding vector and show the top matches with metadata.",
+      "category": "data",
+      "icon": "search"
+    }
+  ],
+  "suggestedWith": ["openai", "anthropic", "supabase"],
+  "SETUP_GUIDE": {
+    "title": "Pinecone API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Pinecone account",
+        "description": "Sign up at https://app.pinecone.io — the free Starter plan includes serverless indexes for testing."
+      },
+      {
+        "step": 2,
+        "title": "Create an API key",
+        "description": "In the Pinecone console, select your project, open API Keys, and create a key (pcsk_...). Copy it immediately."
+      },
+      {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Add it to your .env file as PINECONE_API_KEY=pcsk_..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Indexes tool. To read or write vectors, first run Describe Index and use the returned 'host' value as the indexHost parameter for Query Vectors / Upsert Vectors."
+      }
+    ],
+    "notes": [
+      "Pinecone is two-step: control-plane tools (list/describe/create index) hit api.pinecone.io, while query/upsert hit the per-index host returned by Describe Index",
+      "All requests send the X-Pinecone-API-Version header (default 2025-01)",
+      "Embeddings must be generated separately (e.g. with OpenAI) — vectors you query or upsert must match the index dimension"
+    ],
+    "documentation": "https://docs.pinecone.io/reference/api/introduction"
+  }
+}

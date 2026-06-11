@@ -1,0 +1,178 @@
+{
+  "name": "axiom",
+  "displayName": "Axiom",
+  "icon": "axiom.svg",
+  "description": "Query Axiom datasets with APL and ingest events",
+  "auth": {
+    "type": "api-key",
+    "keyName": "AXIOM_TOKEN",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://axiom.co/docs/reference/tokens",
+    "requiredApis": [
+      {
+        "name": "Axiom API Tokens",
+        "enableUrl": "https://app.axiom.co/settings/api-tokens"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "AXIOM_TOKEN",
+      "description": "Axiom API token with query (and optionally ingest) permissions",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://axiom.co/docs/reference/tokens"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_datasets",
+      "name": "List Datasets",
+      "description": "List datasets in the Axiom organization",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.axiom.co/v2/datasets",
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["datasets"],
+            "collectionName": "datasets",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "description" },
+              { "name": "created" }
+            ],
+            "omitted": "dataset ownership and retention metadata"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_dataset",
+      "name": "Get Dataset",
+      "description": "Get a dataset's details",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.axiom.co/v2/datasets/{datasetId}",
+        "params": {
+          "datasetId": {
+            "type": "string",
+            "in": "path",
+            "description": "Dataset ID (from List Datasets)",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "query_apl",
+      "name": "Run APL Query",
+      "description": "Run an APL (Axiom Processing Language) query across datasets",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.axiom.co/v1/query/_apl",
+        "params": {
+          "format": {
+            "type": "string",
+            "in": "query",
+            "description": "Result format: tabular or legacy",
+            "default": "tabular"
+          }
+        },
+        "body": {
+          "apl": {
+            "type": "string",
+            "description": "APL query, e.g. ['my-dataset'] | where status == 500 | limit 50",
+            "required": true
+          },
+          "startTime": {
+            "type": "string",
+            "description": "Query window start — RFC3339 timestamp or relative expression like now-1h"
+          },
+          "endTime": {
+            "type": "string",
+            "description": "Query window end — RFC3339 timestamp or relative expression like now"
+          }
+        }
+      }
+    },
+    {
+      "id": "ingest_events",
+      "name": "Ingest Events",
+      "description": "Ingest a batch of JSON events into a dataset",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.axiom.co/v1/datasets/{datasetName}/ingest",
+        "contentType": "application/json",
+        "params": {
+          "datasetName": {
+            "type": "string",
+            "in": "path",
+            "description": "Dataset to ingest into",
+            "required": true
+          }
+        },
+        "bodyMode": "passthrough",
+        "body": {
+          "events": {
+            "type": "array",
+            "description": "Array of JSON event objects to ingest, e.g. [{\"level\":\"info\",\"message\":\"deploy finished\"}]",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "recent_errors",
+      "title": "Recent errors",
+      "prompt": "Run an Axiom APL query for error-level events in my main dataset over the last hour and summarize them.",
+      "category": "observability",
+      "icon": "search"
+    },
+    {
+      "id": "dataset_overview",
+      "title": "Dataset overview",
+      "prompt": "List my Axiom datasets and tell me what kind of data each one holds.",
+      "category": "observability",
+      "icon": "list"
+    }
+  ],
+  "suggestedWith": ["sentry", "datadog", "cloudflare"],
+  "SETUP_GUIDE": {
+    "title": "Axiom API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Sign up for Axiom",
+        "description": "Create a free account at https://app.axiom.co — the free plan includes API access. Create a dataset and send a few test events so queries return data."
+      },
+      {
+        "step": 2,
+        "title": "Create an API token",
+        "description": "Go to Settings → API tokens (https://app.axiom.co/settings/api-tokens) and create a token. Grant query permission on the datasets you want to read, and ingest permission if you will use Ingest Events."
+      },
+      {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the token to your .env as AXIOM_TOKEN=..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Datasets, then Run APL Query with ['<dataset>'] | limit 10."
+      }
+    ],
+    "notes": [
+      "Requests authenticate with 'Authorization: Bearer <token>' against https://api.axiom.co",
+      "APL queries POST to /v1/query/_apl; startTime/endTime accept RFC3339 timestamps or relative expressions like now-1d",
+      "API tokens have granular dataset permissions — a query-only token cannot ingest; personal access tokens additionally require an org ID header and are not used here"
+    ],
+    "documentation": "https://axiom.co/docs/restapi/introduction"
+  }
+}

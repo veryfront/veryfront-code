@@ -1,0 +1,228 @@
+{
+  "name": "qdrant",
+  "displayName": "Qdrant",
+  "icon": "qdrant.svg",
+  "description": "Manage Qdrant vector database collections and search or upsert points",
+  "auth": {
+    "type": "api-key",
+    "keyName": "QDRANT_API_KEY",
+    "headerName": "api-key",
+    "docsUrl": "https://qdrant.tech/documentation/cloud/authentication/",
+    "requiredApis": [
+      {
+        "name": "Qdrant Cloud API Keys",
+        "enableUrl": "https://cloud.qdrant.io"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "QDRANT_API_KEY",
+      "description": "Qdrant database API key for your cluster",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://qdrant.tech/documentation/cloud/authentication/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_collections",
+      "name": "List Collections",
+      "description": "List all collections in the Qdrant cluster",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{clusterHost}:6333/collections",
+        "params": {
+          "clusterHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Qdrant cluster hostname without scheme or port (the :6333 REST port is added automatically), e.g. xyz-example.eu-central-1-0.aws.cloud.qdrant.io",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "result.collections",
+          "historicalSummary": {
+            "collectionKeys": ["collections"],
+            "collectionName": "collections",
+            "itemFields": [{ "name": "name" }],
+            "omitted": "provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_collection",
+      "name": "Get Collection Info",
+      "description": "Get a collection's configuration, vector parameters, and point count",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{clusterHost}:6333/collections/{collection_name}",
+        "params": {
+          "clusterHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Qdrant cluster hostname without scheme or port (the :6333 REST port is added automatically), e.g. xyz-example.eu-central-1-0.aws.cloud.qdrant.io",
+            "required": true
+          },
+          "collection_name": {
+            "type": "string",
+            "in": "path",
+            "description": "Collection name",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "result"
+        }
+      }
+    },
+    {
+      "id": "search_points",
+      "name": "Search Points",
+      "description": "Search a collection for the points nearest to a query vector",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{clusterHost}:6333/collections/{collection_name}/points/search",
+        "params": {
+          "clusterHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Qdrant cluster hostname without scheme or port (the :6333 REST port is added automatically), e.g. xyz-example.eu-central-1-0.aws.cloud.qdrant.io",
+            "required": true
+          },
+          "collection_name": {
+            "type": "string",
+            "in": "path",
+            "description": "Collection name",
+            "required": true
+          }
+        },
+        "body": {
+          "vector": {
+            "type": "array",
+            "description": "Query vector values (must match the collection's vector size)",
+            "required": true
+          },
+          "limit": {
+            "type": "number",
+            "description": "Number of nearest points to return",
+            "default": 10
+          },
+          "filter": {
+            "type": "object",
+            "description": "Payload filter, e.g. {\"must\":[{\"key\":\"city\",\"match\":{\"value\":\"Berlin\"}}]}"
+          },
+          "with_payload": {
+            "type": "boolean",
+            "description": "Include point payloads in results",
+            "default": true
+          },
+          "with_vector": {
+            "type": "boolean",
+            "description": "Include vector values in results",
+            "default": false
+          },
+          "score_threshold": {
+            "type": "number",
+            "description": "Exclude results with a similarity score below this value"
+          }
+        },
+        "response": {
+          "transform": "result"
+        }
+      }
+    },
+    {
+      "id": "upsert_points",
+      "name": "Upsert Points",
+      "description": "Insert or update points (vectors with payloads) in a collection",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://{clusterHost}:6333/collections/{collection_name}/points",
+        "params": {
+          "clusterHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Qdrant cluster hostname without scheme or port (the :6333 REST port is added automatically), e.g. xyz-example.eu-central-1-0.aws.cloud.qdrant.io",
+            "required": true
+          },
+          "collection_name": {
+            "type": "string",
+            "in": "path",
+            "description": "Collection name",
+            "required": true
+          },
+          "wait": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Wait until the operation is committed before responding",
+            "default": true
+          }
+        },
+        "body": {
+          "points": {
+            "type": "array",
+            "description": "Points to upsert, e.g. [{\"id\":1,\"vector\":[0.1,0.2],\"payload\":{\"city\":\"Berlin\"}}]",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "result"
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "collections_overview",
+      "title": "List my collections",
+      "prompt": "List the collections in my Qdrant cluster and show each one's vector size and point count.",
+      "category": "data",
+      "icon": "database"
+    },
+    {
+      "id": "vector_search",
+      "title": "Search a collection",
+      "prompt": "Search my Qdrant collection with an embedding vector and show the top matches with their payloads.",
+      "category": "data",
+      "icon": "search"
+    }
+  ],
+  "suggestedWith": ["openai", "anthropic", "mistral"],
+  "SETUP_GUIDE": {
+    "title": "Qdrant Cloud Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Qdrant Cloud account",
+        "description": "Sign up at https://cloud.qdrant.io — the free tier includes a 1GB cluster, enough for testing. Self-hosted Qdrant works too (run it with an api-key configured)."
+      },
+      {
+        "step": 2,
+        "title": "Create a cluster and API key",
+        "description": "Create a cluster, then open its API Keys tab and create a database API key. Copy it immediately — it is only shown once."
+      },
+      {
+        "step": 3,
+        "title": "Store the key and note your endpoint",
+        "description": "Add QDRANT_API_KEY=... to your .env file. Copy the cluster endpoint hostname from Cluster details — tools take it as the clusterHost parameter without scheme or port (e.g. xyz-example.eu-central-1-0.aws.cloud.qdrant.io); requests go to port 6333."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Collections tool with your clusterHost."
+      }
+    ],
+    "notes": [
+      "The API key is sent in the api-key header; Qdrant Cloud also accepts Authorization: Bearer",
+      "Every tool needs the clusterHost parameter (hostname only; requests target HTTPS port 6333) — there is no global Qdrant API host",
+      "Vectors must match the collection's configured vector size; generate embeddings separately (e.g. with OpenAI or Mistral)"
+    ],
+    "documentation": "https://api.qdrant.tech/api-reference"
+  }
+}

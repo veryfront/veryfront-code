@@ -1,0 +1,159 @@
+{
+  "name": "groq",
+  "displayName": "Groq",
+  "icon": "groq.svg",
+  "description": "Run fast chat completions on Groq-hosted open models via the OpenAI-compatible Groq API",
+  "auth": {
+    "type": "api-key",
+    "keyName": "GROQ_API_KEY",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://console.groq.com/docs/api-reference",
+    "requiredApis": [
+      {
+        "name": "Groq Console API Keys",
+        "enableUrl": "https://console.groq.com/keys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "GROQ_API_KEY",
+      "description": "Groq API key from the Groq console (starts with gsk_)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://console.groq.com/keys"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_models",
+      "name": "List Models",
+      "description": "List the models available on Groq",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.groq.com/openai/v1/models",
+        "response": {
+          "transform": "data",
+          "historicalSummary": {
+            "collectionKeys": ["data", "models"],
+            "collectionName": "models",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "owned_by" },
+              { "name": "context_window" },
+              { "name": "active" }
+            ],
+            "omitted": "model capability details and provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_model",
+      "name": "Get Model",
+      "description": "Get details about a specific Groq model",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.groq.com/openai/v1/models/{model}",
+        "params": {
+          "model": {
+            "type": "string",
+            "in": "path",
+            "description": "Model ID, e.g. llama-3.3-70b-versatile",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_chat_completion",
+      "name": "Create Chat Completion",
+      "description": "Generate a chat completion from a list of messages",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Model ID to use, e.g. llama-3.3-70b-versatile",
+            "required": true
+          },
+          "messages": {
+            "type": "array",
+            "description": "Chat messages, each with role (system|user|assistant) and content",
+            "required": true
+          },
+          "max_completion_tokens": {
+            "type": "number",
+            "description": "Maximum tokens to generate"
+          },
+          "temperature": {
+            "type": "number",
+            "description": "Sampling temperature between 0 and 2"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_batches",
+      "name": "List Batches",
+      "description": "List the organization's batch jobs",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.groq.com/openai/v1/batches"
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "available_models",
+      "title": "List Groq models",
+      "prompt": "List the models available on Groq and note their context windows.",
+      "category": "ai",
+      "icon": "list"
+    },
+    {
+      "id": "generate_text",
+      "title": "Generate a fast response",
+      "prompt": "Use Groq to generate a response to a prompt I provide.",
+      "category": "ai",
+      "icon": "sparkles"
+    }
+  ],
+  "suggestedWith": ["openai", "anthropic", "mistral"],
+  "SETUP_GUIDE": {
+    "title": "Groq API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Groq account",
+        "description": "Go to https://console.groq.com and sign up or sign in. The free tier works for testing without billing."
+      },
+      {
+        "step": 2,
+        "title": "Create an API key",
+        "description": "Open https://console.groq.com/keys, click 'Create API Key', and give it a descriptive name (e.g. 'Veryfront Integration')."
+      },
+      {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Copy the key immediately — it is only shown once. Add it to your .env file as GROQ_API_KEY=gsk_..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Models tool to confirm the key works. A 401 means the key is wrong or revoked."
+      }
+    ],
+    "notes": [
+      "The API is OpenAI-compatible — requests use the /openai/v1 path prefix",
+      "Free-tier keys are rate limited per model; upgrade to a paid tier for higher limits",
+      "Chat completions are billed per token on paid tiers"
+    ],
+    "documentation": "https://console.groq.com/docs/api-reference"
+  }
+}

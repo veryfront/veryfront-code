@@ -1,0 +1,185 @@
+{
+  "name": "stability-ai",
+  "displayName": "Stability AI",
+  "icon": "stability-ai.svg",
+  "description": "Generate images with Stable Diffusion models and check engines, account, and credit balance via the Stability AI API",
+  "auth": {
+    "type": "api-key",
+    "keyName": "STABILITY_API_KEY",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://platform.stability.ai/docs/api-reference",
+    "requiredApis": [
+      {
+        "name": "Stability AI API Keys",
+        "enableUrl": "https://platform.stability.ai/account/keys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "STABILITY_API_KEY",
+      "description": "Stability AI API key (starts with sk-)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://platform.stability.ai/account/keys"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_engines",
+      "name": "List Engines",
+      "description": "List the generation engines (models) available to your account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.stability.ai/v1/engines/list",
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["engines"],
+            "collectionName": "engines",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "type" },
+              { "name": "description", "maxLength": 200 }
+            ],
+            "omitted": "provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_balance",
+      "name": "Get Balance",
+      "description": "Get the credit balance of your Stability AI account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.stability.ai/v1/user/balance"
+      }
+    },
+    {
+      "id": "get_account",
+      "name": "Get Account",
+      "description": "Get profile and organization details for the account that owns the API key",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.stability.ai/v1/user/account"
+      }
+    },
+    {
+      "id": "text_to_image",
+      "name": "Text to Image",
+      "description": "Generate images from a text prompt with a Stable Diffusion engine (consumes credits)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.stability.ai/v1/generation/{engine_id}/text-to-image",
+        "params": {
+          "engine_id": {
+            "type": "string",
+            "in": "path",
+            "description": "Generation engine ID (see List Engines), e.g. stable-diffusion-xl-1024-v1-0",
+            "default": "stable-diffusion-xl-1024-v1-0"
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Accept",
+            "description": "Response format: application/json returns base64-encoded image artifacts; image/png returns raw bytes",
+            "default": "application/json"
+          }
+        },
+        "body": {
+          "text_prompts": {
+            "type": "array",
+            "description": "Prompt objects with text and optional weight (negative prompts use a negative weight), e.g. [{\"text\":\"a lighthouse at dawn\",\"weight\":1}]",
+            "required": true
+          },
+          "cfg_scale": {
+            "type": "number",
+            "description": "How strictly the diffusion process adheres to the prompt (0-35)",
+            "default": 7
+          },
+          "width": {
+            "type": "number",
+            "description": "Image width in pixels (must be an allowed dimension for the engine)",
+            "default": 1024
+          },
+          "height": {
+            "type": "number",
+            "description": "Image height in pixels (must be an allowed dimension for the engine)",
+            "default": 1024
+          },
+          "samples": {
+            "type": "number",
+            "description": "Number of images to generate",
+            "default": 1
+          },
+          "steps": {
+            "type": "number",
+            "description": "Number of diffusion steps (10-50)",
+            "default": 30
+          },
+          "seed": {
+            "type": "number",
+            "description": "Random noise seed (0 = random)"
+          },
+          "style_preset": {
+            "type": "string",
+            "description": "Style preset, e.g. photographic, digital-art, anime, cinematic"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "generate_image",
+      "title": "Generate an image",
+      "prompt": "Generate an image with Stability AI from a prompt I provide and show me the seed used.",
+      "category": "ai",
+      "icon": "image"
+    },
+    {
+      "id": "check_credits",
+      "title": "Check my credits",
+      "prompt": "Check my Stability AI credit balance and list the engines available to my account.",
+      "category": "ai",
+      "icon": "wallet"
+    }
+  ],
+  "suggestedWith": ["openai", "gemini", "tavily"],
+  "SETUP_GUIDE": {
+    "title": "Stability AI API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Stability AI account",
+        "description": "Sign up at https://platform.stability.ai — new accounts receive 25 free credits, enough to test image generation."
+      },
+      {
+        "step": 2,
+        "title": "Create an API key",
+        "description": "Open https://platform.stability.ai/account/keys and copy your API key (starts with sk-). Create a dedicated key per application if you prefer."
+      },
+      {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Add it to your .env file as STABILITY_API_KEY=sk-..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the Get Balance tool to confirm the key works, then List Engines and try Text to Image with a simple prompt."
+      }
+    ],
+    "notes": [
+      "Image generation is billed in credits per image — buy credits at https://platform.stability.ai/account/credits",
+      "Text to Image defaults the Accept header to application/json so images return as base64 artifacts (each with its seed and finishReason)",
+      "The newer v2beta Stable Image endpoints require multipart/form-data uploads and are not exposed here; tools use the JSON v1 generation API (SDXL)"
+    ],
+    "documentation": "https://platform.stability.ai/docs/api-reference"
+  }
+}

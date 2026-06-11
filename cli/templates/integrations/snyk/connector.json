@@ -1,0 +1,247 @@
+{
+  "name": "snyk",
+  "displayName": "Snyk",
+  "icon": "snyk.svg",
+  "description": "Query Snyk organizations, projects, and security issues",
+  "auth": {
+    "type": "api-key",
+    "keyName": "SNYK_TOKEN",
+    "headerPrefix": "token",
+    "docsUrl": "https://docs.snyk.io/snyk-api/authentication-for-api",
+    "requiredApis": [
+      {
+        "name": "Snyk API Token",
+        "enableUrl": "https://app.snyk.io/account"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "SNYK_TOKEN",
+      "description": "Snyk API token (personal token or service account token)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.snyk.io/snyk-api/authentication-for-api"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_orgs",
+      "name": "List Organizations",
+      "description": "List Snyk organizations the token can access",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.snyk.io/rest/orgs",
+        "params": {
+          "version": {
+            "type": "string",
+            "in": "query",
+            "description": "Snyk REST API version (date-based)",
+            "default": "2024-10-15"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Organizations per page (max 100)",
+            "default": 50
+          }
+        }
+      }
+    },
+    {
+      "id": "list_projects",
+      "name": "List Projects",
+      "description": "List projects in a Snyk organization",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.snyk.io/rest/orgs/{orgId}/projects",
+        "params": {
+          "orgId": {
+            "type": "string",
+            "in": "path",
+            "description": "Organization ID (UUID, from List Organizations)",
+            "required": true
+          },
+          "version": {
+            "type": "string",
+            "in": "query",
+            "description": "Snyk REST API version (date-based)",
+            "default": "2024-10-15"
+          },
+          "names_start_with": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter projects whose name starts with this string"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Projects per page (max 100)",
+            "default": 50
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "projects",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "type" },
+              { "name": "attributes", "kind": "object" }
+            ],
+            "omitted": "JSON:API relationship objects and project metadata",
+            "outputFields": [{ "name": "links", "kind": "object" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_project",
+      "name": "Get Project",
+      "description": "Get a project's details in a Snyk organization",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.snyk.io/rest/orgs/{orgId}/projects/{projectId}",
+        "params": {
+          "orgId": {
+            "type": "string",
+            "in": "path",
+            "description": "Organization ID (UUID)",
+            "required": true
+          },
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "Project ID (UUID, from List Projects)",
+            "required": true
+          },
+          "version": {
+            "type": "string",
+            "in": "query",
+            "description": "Snyk REST API version (date-based)",
+            "default": "2024-10-15"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_issues",
+      "name": "List Issues",
+      "description": "List security issues in a Snyk organization, optionally filtered by severity or status",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.snyk.io/rest/orgs/{orgId}/issues",
+        "params": {
+          "orgId": {
+            "type": "string",
+            "in": "path",
+            "description": "Organization ID (UUID)",
+            "required": true
+          },
+          "version": {
+            "type": "string",
+            "in": "query",
+            "description": "Snyk REST API version (date-based)",
+            "default": "2024-10-15"
+          },
+          "effective_severity_level": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated severities to include: low, medium, high, critical"
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Issue status filter: open or resolved"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Issues per page (max 100)",
+            "default": 50
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "get_org",
+      "name": "Get Organization",
+      "description": "Get details of a Snyk organization",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.snyk.io/rest/orgs/{orgId}",
+        "params": {
+          "orgId": {
+            "type": "string",
+            "in": "path",
+            "description": "Organization ID (UUID)",
+            "required": true
+          },
+          "version": {
+            "type": "string",
+            "in": "query",
+            "description": "Snyk REST API version (date-based)",
+            "default": "2024-10-15"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "critical_issues",
+      "title": "Critical vulnerabilities",
+      "prompt": "List the open critical and high severity issues across my Snyk organization and summarize them by project.",
+      "category": "security",
+      "icon": "alert"
+    },
+    {
+      "id": "project_overview",
+      "title": "Project overview",
+      "prompt": "List my Snyk projects and show which ones were tested most recently.",
+      "category": "security",
+      "icon": "list"
+    }
+  ],
+  "suggestedWith": ["github", "gitlab", "circleci"],
+  "SETUP_GUIDE": {
+    "title": "Snyk API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Sign up for Snyk",
+        "description": "Create a free account at https://app.snyk.io and import at least one repository so projects and issues exist to query."
+      },
+      {
+        "step": 2,
+        "title": "Get your API token",
+        "description": "Go to Account Settings (https://app.snyk.io/account) and copy your personal API token, or create a service account token for shared use. Free plans include API access via the personal token."
+      },
+      {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the token to your .env as SNYK_TOKEN=..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Organizations, then List Projects with one of the returned org IDs."
+      }
+    ],
+    "notes": [
+      "Authentication uses 'Authorization: token <SNYK_TOKEN>' — the prefix is 'token', not 'Bearer'",
+      "Every REST API request requires a date-based ?version= query parameter; tools default to 2024-10-15",
+      "If your account is in a regional environment (e.g. US-02 at api.us.snyk.io), API hosts differ — these tools target the default https://api.snyk.io",
+      "Responses follow the JSON:API format: items are under data[] with attributes, pagination under links"
+    ],
+    "documentation": "https://docs.snyk.io/snyk-api"
+  }
+}

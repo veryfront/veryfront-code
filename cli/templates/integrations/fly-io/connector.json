@@ -1,0 +1,287 @@
+{
+  "name": "fly-io",
+  "displayName": "Fly.io",
+  "icon": "fly-io.svg",
+  "description": "Inspect Fly.io apps and manage Fly Machines",
+  "auth": {
+    "type": "api-key",
+    "keyName": "FLY_API_TOKEN",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://fly.io/docs/machines/api/working-with-machines-api/",
+    "requiredApis": [
+      {
+        "name": "Fly.io Access Tokens",
+        "enableUrl": "https://fly.io/dashboard/personal/tokens"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "FLY_API_TOKEN",
+      "description": "Fly.io access token (create with 'fly tokens create org' or in the dashboard under Tokens)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://fly.io/docs/security/tokens/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_apps",
+      "name": "List Apps",
+      "description": "List apps in a Fly.io organization",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.machines.dev/v1/apps",
+        "params": {
+          "org_slug": {
+            "type": "string",
+            "in": "query",
+            "description": "Organization slug to list apps for (use 'personal' for the personal org)",
+            "required": true
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "apps"
+            ],
+            "collectionName": "apps",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "machine_count"
+              },
+              {
+                "name": "network"
+              }
+            ],
+            "omitted": "app details and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "total_apps"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_app",
+      "name": "Get App",
+      "description": "Get details about an app, including its organization and status",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.machines.dev/v1/apps/{appName}",
+        "params": {
+          "appName": {
+            "type": "string",
+            "in": "path",
+            "description": "Fly app name",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_machines",
+      "name": "List Machines",
+      "description": "List Machines of an app with their states",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.machines.dev/v1/apps/{appName}/machines",
+        "params": {
+          "appName": {
+            "type": "string",
+            "in": "path",
+            "description": "Fly app name",
+            "required": true
+          },
+          "region": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter Machines by region code, e.g. iad"
+          },
+          "state": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter Machines by state, e.g. started, stopped"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "machines"
+            ],
+            "collectionName": "machines",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "state"
+              },
+              {
+                "name": "region"
+              },
+              {
+                "name": "instance_id"
+              },
+              {
+                "name": "created_at"
+              },
+              {
+                "name": "updated_at"
+              }
+            ],
+            "omitted": "machine config, image refs, and provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_machine",
+      "name": "Get Machine",
+      "description": "Get a Machine by ID, including its config and state",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.machines.dev/v1/apps/{appName}/machines/{machineId}",
+        "params": {
+          "appName": {
+            "type": "string",
+            "in": "path",
+            "description": "Fly app name",
+            "required": true
+          },
+          "machineId": {
+            "type": "string",
+            "in": "path",
+            "description": "Machine ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "start_machine",
+      "name": "Start Machine",
+      "description": "Start a stopped Machine",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.machines.dev/v1/apps/{appName}/machines/{machineId}/start",
+        "params": {
+          "appName": {
+            "type": "string",
+            "in": "path",
+            "description": "Fly app name",
+            "required": true
+          },
+          "machineId": {
+            "type": "string",
+            "in": "path",
+            "description": "Machine ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "stop_machine",
+      "name": "Stop Machine",
+      "description": "Stop a running Machine",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.machines.dev/v1/apps/{appName}/machines/{machineId}/stop",
+        "params": {
+          "appName": {
+            "type": "string",
+            "in": "path",
+            "description": "Fly app name",
+            "required": true
+          },
+          "machineId": {
+            "type": "string",
+            "in": "path",
+            "description": "Machine ID",
+            "required": true
+          }
+        },
+        "body": {
+          "signal": {
+            "type": "string",
+            "description": "Signal to send the Machine's main process, e.g. SIGTERM"
+          },
+          "timeout": {
+            "type": "string",
+            "description": "Grace period before force-stop, e.g. 30s"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "machine_states",
+      "title": "Machine states",
+      "prompt": "List the Machines of my Fly.io app grouped by state and region.",
+      "category": "devops",
+      "icon": "list"
+    },
+    {
+      "id": "stop_idle",
+      "title": "Stop a machine",
+      "prompt": "Find the started Machines of my Fly.io app and stop the one I specify.",
+      "category": "devops",
+      "icon": "pause"
+    }
+  ],
+  "suggestedWith": [
+    "github",
+    "slack",
+    "sentry"
+  ],
+  "SETUP_GUIDE": {
+    "title": "Fly.io Machines API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Sign up for Fly.io",
+        "description": "Go to https://fly.io and create an account (the pay-as-you-go plan with a small test app is sufficient; new accounts include trial credit)."
+      },
+      {
+        "step": 2,
+        "title": "Create an access token",
+        "description": "Run 'fly tokens create org -o <org-slug>' with flyctl, or create a token in the dashboard under Account > Access Tokens (https://fly.io/dashboard/personal/tokens). Org tokens are preferred over personal auth tokens."
+      },
+      {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the token to your .env as FLY_API_TOKEN=..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Apps with your org slug (use 'personal' for the default personal organization), then List Machines on one of the apps."
+      }
+    ],
+    "notes": [
+      "The public Machines API endpoint is https://api.machines.dev; tokens are sent as 'Authorization: Bearer <token>'",
+      "org_slug is required when listing apps",
+      "Tokens created with 'fly tokens create' may include a 'FlyV1 ' prefix in CLI output — store only the token value; the API accepts it after Bearer either way"
+    ],
+    "documentation": "https://fly.io/docs/machines/api/"
+  }
+}

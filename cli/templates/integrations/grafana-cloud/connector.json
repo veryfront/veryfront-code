@@ -1,0 +1,291 @@
+{
+  "name": "grafana-cloud",
+  "displayName": "Grafana Cloud",
+  "icon": "grafana-cloud.svg",
+  "description": "Search Grafana Cloud dashboards, folders, annotations, and data sources",
+  "auth": {
+    "type": "api-key",
+    "keyName": "GRAFANA_CLOUD_TOKEN",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://grafana.com/docs/grafana/latest/developers/http_api/auth/",
+    "requiredApis": [
+      {
+        "name": "Grafana Service Accounts",
+        "enableUrl": "https://grafana.com/docs/grafana/latest/administration/service-accounts/"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "GRAFANA_CLOUD_TOKEN",
+      "description": "Grafana service account token for your Grafana Cloud stack",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://grafana.com/docs/grafana/latest/administration/service-accounts/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "search_dashboards",
+      "name": "Search Dashboards",
+      "description": "Search dashboards and folders in the Grafana stack",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{stack}.grafana.net/api/search",
+        "params": {
+          "stack": {
+            "type": "string",
+            "in": "path",
+            "description": "Grafana Cloud stack slug — the subdomain of your Grafana URL (e.g. mycompany for mycompany.grafana.net)",
+            "required": true
+          },
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "Search term matched against dashboard and folder titles"
+          },
+          "type": {
+            "type": "string",
+            "in": "query",
+            "description": "Restrict results: dash-db (dashboards) or dash-folder (folders)"
+          },
+          "tag": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return results with this tag"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum results (max 5000)",
+            "default": 50
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (starts at 1)"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["dashboards"],
+            "collectionName": "dashboards",
+            "itemFields": [
+              { "name": "uid" },
+              { "name": "title" },
+              { "name": "type" },
+              { "name": "url" },
+              { "name": "folderTitle" },
+              { "name": "tags", "kind": "string-array" }
+            ],
+            "omitted": "numeric IDs and starring metadata"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_dashboard",
+      "name": "Get Dashboard",
+      "description": "Get a dashboard's full JSON model by UID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{stack}.grafana.net/api/dashboards/uid/{uid}",
+        "params": {
+          "stack": {
+            "type": "string",
+            "in": "path",
+            "description": "Grafana Cloud stack slug",
+            "required": true
+          },
+          "uid": {
+            "type": "string",
+            "in": "path",
+            "description": "Dashboard UID (from Search Dashboards)",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_folders",
+      "name": "List Folders",
+      "description": "List dashboard folders in the Grafana stack",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{stack}.grafana.net/api/folders",
+        "params": {
+          "stack": {
+            "type": "string",
+            "in": "path",
+            "description": "Grafana Cloud stack slug",
+            "required": true
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum folders to return",
+            "default": 100
+          }
+        }
+      }
+    },
+    {
+      "id": "list_annotations",
+      "name": "List Annotations",
+      "description": "List annotations and alert events in a time range",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{stack}.grafana.net/api/annotations",
+        "params": {
+          "stack": {
+            "type": "string",
+            "in": "path",
+            "description": "Grafana Cloud stack slug",
+            "required": true
+          },
+          "from": {
+            "type": "number",
+            "in": "query",
+            "description": "Start of the window as epoch milliseconds"
+          },
+          "to": {
+            "type": "number",
+            "in": "query",
+            "description": "End of the window as epoch milliseconds"
+          },
+          "type": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by type: alert or annotation"
+          },
+          "tags": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by annotation tag, e.g. deploy"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum annotations to return",
+            "default": 100
+          }
+        }
+      }
+    },
+    {
+      "id": "create_annotation",
+      "name": "Create Annotation",
+      "description": "Create an annotation (e.g. mark a deploy) on a dashboard or globally",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{stack}.grafana.net/api/annotations",
+        "params": {
+          "stack": {
+            "type": "string",
+            "in": "path",
+            "description": "Grafana Cloud stack slug",
+            "required": true
+          }
+        },
+        "body": {
+          "text": {
+            "type": "string",
+            "description": "Annotation text",
+            "required": true
+          },
+          "dashboardUID": {
+            "type": "string",
+            "description": "Dashboard UID to attach the annotation to (omit for a global annotation)"
+          },
+          "panelId": {
+            "type": "number",
+            "description": "Panel ID within the dashboard"
+          },
+          "time": {
+            "type": "number",
+            "description": "Annotation time as epoch milliseconds (defaults to now)"
+          },
+          "timeEnd": {
+            "type": "number",
+            "description": "End time as epoch milliseconds, for region annotations"
+          },
+          "tags": {
+            "type": "array",
+            "description": "Tags, e.g. [\"deploy\",\"api\"]"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_datasources",
+      "name": "List Data Sources",
+      "description": "List data sources configured in the Grafana stack",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{stack}.grafana.net/api/datasources",
+        "params": {
+          "stack": {
+            "type": "string",
+            "in": "path",
+            "description": "Grafana Cloud stack slug",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "find_dashboard",
+      "title": "Find a dashboard",
+      "prompt": "Search my Grafana Cloud stack for dashboards about latency and list their titles and folders.",
+      "category": "observability",
+      "icon": "search"
+    },
+    {
+      "id": "recent_annotations",
+      "title": "Recent annotations",
+      "prompt": "List the annotations in my Grafana stack from the last 24 hours and summarize any alert events.",
+      "category": "observability",
+      "icon": "list"
+    }
+  ],
+  "suggestedWith": ["datadog", "pagerduty", "sentry"],
+  "SETUP_GUIDE": {
+    "title": "Grafana Cloud API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Find your stack slug",
+        "description": "Your Grafana Cloud stack URL looks like https://<stack>.grafana.net — the subdomain is the 'stack' parameter every tool requires. Free Grafana Cloud accounts include one stack."
+      },
+      {
+        "step": 2,
+        "title": "Create a service account",
+        "description": "In your stack, go to Administration → Users and access → Service accounts, and create a service account with the Viewer role (Editor if you want to create annotations)."
+      },
+      {
+        "step": 3,
+        "title": "Generate a token",
+        "description": "Add a token to the service account and copy it to your .env as GRAFANA_CLOUD_TOKEN."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run Search Dashboards with your stack slug."
+      }
+    ],
+    "notes": [
+      "Tokens are scoped to a single stack; pass that stack's slug as the 'stack' parameter on every call",
+      "Service account tokens are sent as 'Authorization: Bearer <token>'",
+      "These tools call the Grafana instance HTTP API (dashboards, folders, annotations, data sources) — not the Cloud portal API or hosted Loki/Prometheus endpoints"
+    ],
+    "documentation": "https://grafana.com/docs/grafana/latest/developers/http_api/"
+  }
+}

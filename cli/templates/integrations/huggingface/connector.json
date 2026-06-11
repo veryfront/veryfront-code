@@ -1,0 +1,220 @@
+{
+  "name": "huggingface",
+  "displayName": "Hugging Face",
+  "icon": "huggingface.svg",
+  "description": "Search models and datasets on the Hugging Face Hub and run chat completions via Inference Providers",
+  "auth": {
+    "type": "api-key",
+    "keyName": "HF_TOKEN",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://huggingface.co/docs/hub/security-tokens",
+    "requiredApis": [
+      {
+        "name": "Hugging Face Access Tokens",
+        "enableUrl": "https://huggingface.co/settings/tokens"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "HF_TOKEN",
+      "description": "Hugging Face access token (starts with hf_)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://huggingface.co/settings/tokens"
+    }
+  ],
+  "tools": [
+    {
+      "id": "search_models",
+      "name": "Search Models",
+      "description": "Search models on the Hugging Face Hub",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://huggingface.co/api/models",
+        "params": {
+          "search": {
+            "type": "string",
+            "in": "query",
+            "description": "Free-text search over model names"
+          },
+          "author": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by author or organization, e.g. meta-llama"
+          },
+          "filter": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by tag, e.g. text-generation or pytorch"
+          },
+          "sort": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort field: downloads, likes, createdAt, or trendingScore"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum models to return",
+            "default": 20
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["models"],
+            "collectionName": "models",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "pipeline_tag" },
+              { "name": "downloads" },
+              { "name": "likes" }
+            ],
+            "omitted": "tags, timestamps, and provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_model",
+      "name": "Get Model",
+      "description": "Get details about a model repository on the Hub",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://huggingface.co/api/models/{namespace}/{repo}",
+        "params": {
+          "namespace": {
+            "type": "string",
+            "in": "path",
+            "description": "Model owner (user or organization), e.g. meta-llama",
+            "required": true
+          },
+          "repo": {
+            "type": "string",
+            "in": "path",
+            "description": "Model repository name, e.g. Llama-3.3-70B-Instruct",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "search_datasets",
+      "name": "Search Datasets",
+      "description": "Search datasets on the Hugging Face Hub",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://huggingface.co/api/datasets",
+        "params": {
+          "search": {
+            "type": "string",
+            "in": "query",
+            "description": "Free-text search over dataset names"
+          },
+          "author": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by author or organization"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum datasets to return",
+            "default": 20
+          }
+        }
+      }
+    },
+    {
+      "id": "whoami",
+      "name": "Who Am I",
+      "description": "Get the account and permissions associated with the access token",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://huggingface.co/api/whoami-v2"
+      }
+    },
+    {
+      "id": "create_chat_completion",
+      "name": "Create Chat Completion",
+      "description": "Generate a chat completion through the Hugging Face Inference Providers router (OpenAI-compatible)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://router.huggingface.co/v1/chat/completions",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Hub model ID, e.g. openai/gpt-oss-120b; append :cheapest or :fastest to pick a provider policy",
+            "required": true
+          },
+          "messages": {
+            "type": "array",
+            "description": "Chat messages, each with role (system|user|assistant) and content",
+            "required": true
+          },
+          "max_tokens": {
+            "type": "number",
+            "description": "Maximum tokens to generate"
+          },
+          "temperature": {
+            "type": "number",
+            "description": "Sampling temperature"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "find_models",
+      "title": "Find trending models",
+      "prompt": "Search the Hugging Face Hub for trending models for a task I describe and summarize the top results.",
+      "category": "ai",
+      "icon": "list"
+    },
+    {
+      "id": "run_open_model",
+      "title": "Chat with an open model",
+      "prompt": "Use Hugging Face Inference Providers to generate a response from an open model I pick.",
+      "category": "ai",
+      "icon": "sparkles"
+    }
+  ],
+  "suggestedWith": ["openai", "replicate", "together-ai"],
+  "SETUP_GUIDE": {
+    "title": "Hugging Face API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Hugging Face account",
+        "description": "Go to https://huggingface.co and sign up or sign in. Hub API access and a generous Inference Providers free tier are available without billing."
+      },
+      {
+        "step": 2,
+        "title": "Create an access token",
+        "description": "Open https://huggingface.co/settings/tokens and create a fine-grained token. Enable 'Make calls to Inference Providers' if you want to use the chat completion tool; read access covers the Hub search tools."
+      },
+      {
+        "step": 3,
+        "title": "Store the token",
+        "description": "Copy the token and add it to your .env file as HF_TOKEN=hf_..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the Who Am I tool to confirm the token works and shows the expected permissions."
+      }
+    ],
+    "notes": [
+      "Hub search endpoints work with read-scoped tokens; chat completions require the Inference Providers permission",
+      "Inference Providers usage beyond the free tier is billed at provider rates with no markup; PRO accounts include monthly credits",
+      "Some gated models (e.g. meta-llama) require accepting their license on the Hub before access"
+    ],
+    "documentation": "https://huggingface.co/docs/hub/api"
+  }
+}

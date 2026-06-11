@@ -1,0 +1,179 @@
+{
+  "name": "deepgram",
+  "displayName": "Deepgram",
+  "icon": "deepgram.svg",
+  "description": "Transcribe prerecorded audio from URLs and manage projects, balances, and models via the Deepgram API",
+  "auth": {
+    "type": "api-key",
+    "keyName": "DEEPGRAM_API_KEY",
+    "headerPrefix": "Token",
+    "docsUrl": "https://developers.deepgram.com/reference/deepgram-api-overview",
+    "requiredApis": [
+      {
+        "name": "Deepgram Console API Keys",
+        "enableUrl": "https://console.deepgram.com"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "DEEPGRAM_API_KEY",
+      "description": "Deepgram API key from the Deepgram console",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developers.deepgram.com/docs/create-additional-api-keys"
+    }
+  ],
+  "tools": [
+    {
+      "id": "transcribe_url",
+      "name": "Transcribe URL",
+      "description": "Transcribe a prerecorded audio file from a publicly accessible URL",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.deepgram.com/v1/listen",
+        "params": {
+          "model": {
+            "type": "string",
+            "in": "query",
+            "description": "Transcription model to use",
+            "default": "nova-3"
+          },
+          "language": {
+            "type": "string",
+            "in": "query",
+            "description": "BCP-47 language tag of the audio, e.g. en or es"
+          },
+          "smart_format": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Apply smart formatting to numbers, dates, and currency",
+            "default": true
+          },
+          "diarize": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Label speakers in the transcript"
+          },
+          "punctuate": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Add punctuation and capitalization"
+          }
+        },
+        "body": {
+          "url": {
+            "type": "string",
+            "description": "Publicly accessible URL of the audio file to transcribe",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_projects",
+      "name": "List Projects",
+      "description": "List the Deepgram projects associated with the API key",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.deepgram.com/v1/projects",
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["projects"],
+            "collectionName": "projects",
+            "itemFields": [
+              { "name": "project_id" },
+              { "name": "name" }
+            ],
+            "omitted": "company metadata and provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_project_balances",
+      "name": "Get Project Balances",
+      "description": "Get the outstanding credit balances for a project",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.deepgram.com/v1/projects/{project_id}/balances",
+        "params": {
+          "project_id": {
+            "type": "string",
+            "in": "path",
+            "description": "ID of the project (from List Projects)",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_models",
+      "name": "List Models",
+      "description": "List the speech-to-text and text-to-speech models Deepgram offers",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.deepgram.com/v1/models",
+        "params": {
+          "include_outdated": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include non-latest model versions"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "transcribe_audio",
+      "title": "Transcribe an audio URL",
+      "prompt": "Transcribe this audio file with Deepgram and give me a clean transcript: <paste URL>",
+      "category": "ai",
+      "icon": "sparkles"
+    },
+    {
+      "id": "check_balance",
+      "title": "Check credit balance",
+      "prompt": "List my Deepgram projects and check the remaining credit balance on each.",
+      "category": "ai",
+      "icon": "chart"
+    }
+  ],
+  "suggestedWith": ["assemblyai", "elevenlabs", "openai"],
+  "SETUP_GUIDE": {
+    "title": "Deepgram API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Deepgram account",
+        "description": "Go to https://console.deepgram.com and sign up. New accounts receive free credits to test transcription without a credit card."
+      },
+      {
+        "step": 2,
+        "title": "Create an API key",
+        "description": "In the console, open your project, go to Settings → API Keys, and create a new key. Choose the Member role (or narrower) for day-to-day transcription."
+      },
+      {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Copy the key and add it to your .env file as DEEPGRAM_API_KEY=..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Projects tool to confirm the key works, then transcribe a sample file such as https://dpgr.am/spacewalk.wav"
+      }
+    ],
+    "notes": [
+      "Authentication uses the Authorization header with the Token prefix (Authorization: Token <key>), not Bearer",
+      "Transcription is billed per minute of audio and draws down project credits",
+      "The Transcribe URL tool only handles remote files — uploading raw audio bytes is not supported by this connector"
+    ],
+    "documentation": "https://developers.deepgram.com/reference/deepgram-api-overview"
+  }
+}
