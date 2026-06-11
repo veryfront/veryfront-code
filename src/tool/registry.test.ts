@@ -154,6 +154,28 @@ describe("tool registry", () => {
       assertEquals(toolRegistry.get("conflict-tool")?.description, "original description");
     });
 
+    it("allows a project tool to shadow a shared/framework tool with the same ID", () => {
+      const sharedTool = tool({
+        id: "shadowed-tool",
+        description: "framework version",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: async () => null,
+      });
+      const projectTool = tool({
+        id: "shadowed-tool",
+        description: "project version",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: async () => null,
+      });
+
+      toolRegistry.registerShared("shadowed-tool", sharedTool);
+      // Project-scoped registration with a different definition must NOT
+      // conflict with the shared entry — projects shadow shared tools.
+      toolRegistry.register("shadowed-tool", projectTool);
+
+      assertEquals(toolRegistry.get("shadowed-tool")?.description, "project version");
+    });
+
     it("two agents created concurrently with the same-named but different tools — second registration throws", async () => {
       const schema = defineSchema((v) => v.object({}))();
 

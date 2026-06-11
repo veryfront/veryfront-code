@@ -108,6 +108,17 @@ export class ProjectScopedRegistryManager<T> {
   }
 
   /**
+   * Get item registered in the current project's own scope, without falling
+   * back to the shared registry. Use this to distinguish a project-local
+   * registration (which may legitimately shadow a shared item) from a true
+   * same-scope duplicate.
+   */
+  getOwn(id: string): T | undefined {
+    const scopeId = this.getCurrentScopeId();
+    return this.registriesByScope.get(scopeId)?.get(id);
+  }
+
+  /**
    * Check if item exists for the current project.
    */
   has(id: string): boolean {

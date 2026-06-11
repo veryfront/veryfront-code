@@ -20,7 +20,9 @@ function isSameToolDefinition(existing: Tool, incoming: Tool): boolean {
 
 class ToolRegistryClass extends ScopedRegistryFacade<Tool> {
   override register(id: string, item: Tool): void {
-    const existing = this.get(id);
+    // Conflict-check against the project's own scope only: a project tool is
+    // allowed to shadow a shared/framework tool with the same ID.
+    const existing = this.getOwn(id);
     if (existing !== undefined && !isSameToolDefinition(existing, item)) {
       throw TOOL_ID_CONFLICT.create({
         detail:
