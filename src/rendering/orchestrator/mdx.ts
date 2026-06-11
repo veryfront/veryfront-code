@@ -3,6 +3,7 @@ import type { MdxBundle } from "#veryfront/types";
 import type { MDXCacheAdapter } from "#veryfront/transforms/mdx/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
+import { Singleflight } from "#veryfront/utils/singleflight.ts";
 
 export interface MDXCompilerConfig {
   projectDir: string;
@@ -16,6 +17,11 @@ type MDXCompileResult = MdxBundle & {
   headings?: Array<{ id: string; text: string; level: number }>;
   nodeMap?: Map<number, unknown>;
 };
+
+// Module-level so dedup spans compiler instances: the renderer creates an
+// MDXCompiler per render context, and the bundle cache key (mdx:<mode>:<hash>)
+// is already global, so the flight map can be too.
+const compileFlight = new Singleflight<MDXCompileResult>();
 
 export class MDXCompiler {
   constructor(private config: MDXCompilerConfig) {}
@@ -41,7 +47,19 @@ export class MDXCompiler {
 
         if (cachedBundle) return cachedBundle;
 
-        return this.compileAndCache(content, frontmatter, filePath);
+        // Key includes projectDir and filePath because relative imports are
+        // resolved against the file's location: identical source in two
+        // places can compile to different modules, so only compiles of the
+        // same file may share an in-flight promise.
+        const contentHash = await this.config.mdxCacheAdapter.computeHash(content);
+        const flightKey = `mdx:${this.config.projectDir}:${this.config.mode}:${contentHash}:${
+          filePath ?? "inline"
+        }`;
+
+        return compileFlight.do(
+          flightKey,
+          () => this.compileAndCache(content, frontmatter, filePath),
+        );
       },
       { ...spanAttrs, "mdx.mode": this.config.mode },
     );
