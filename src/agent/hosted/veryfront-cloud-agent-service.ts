@@ -742,10 +742,9 @@ function createAgentRuntime(
     refreshSystem,
     onSteeringMutation: async ({ mutation, taskContext }) => {
       if (mutation.skillsChanged) {
-        await refreshProjectSkillIds(context, {
-          ...taskContext,
-          authToken: taskContext.authToken,
-        });
+        // Pass the live task context (not a spread copy) so the refreshed
+        // owner-scoped skill ids and source paths actually land on the run.
+        await refreshProjectSkillIds(context, taskContext);
       }
     },
     onStudioProjectSwitch: async ({ projectId, taskContext }) => {
@@ -753,10 +752,7 @@ function createAgentRuntime(
         return false;
       }
 
-      await refreshProjectSkillIds(context, {
-        ...taskContext,
-        authToken: taskContext.authToken,
-      });
+      await refreshProjectSkillIds(context, taskContext);
       return true;
     },
     projectScopedRemoteToolOptions: {

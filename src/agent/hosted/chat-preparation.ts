@@ -26,7 +26,7 @@ import {
   resolveHostedRuntimeRequestConfig,
 } from "./runtime-request-config.ts";
 import { getRuntimeUploadUrl } from "../runtime/upload-url-client.ts";
-import type { RuntimeSkillDefinition } from "../runtime/skill-metadata.ts";
+import { isRuntimeSkillVisibleTo, type RuntimeSkillDefinition } from "../runtime/skill-metadata.ts";
 import {
   applyContextBudget,
   type ContextBudgetDiagnostics,
@@ -266,13 +266,20 @@ export async function prepareHostedChatRuntimeCreationOptions<
     authToken: input.authToken,
     branchId: input.branchId,
   });
+  // Owner-aware: the run only ever sees skills visible to its agent (unowned
+  // plus the agent's own). Filtering here scopes the prompt manifest, the
+  // per-run availableSkillIds gate used by hosted load_skill, its not-found
+  // enumeration, and the live steering payload in one place.
+  const visibleSkills = steering.skills.filter((skill) =>
+    isRuntimeSkillVisibleTo(skill, { agentId: input.agentConfig.id })
+  );
   const agentInstructions = input.buildInstructions({
     agentConfig: input.agentConfig,
     projectId: input.projectId,
     branchId: input.branchId,
     environmentContext: input.environmentContext,
     instructions: steering.instructions,
-    skills: steering.skills,
+    skills: visibleSkills,
   });
   const runtimeConfig = resolveHostedRuntimeRequestConfig({
     request: input.request,
@@ -312,7 +319,16 @@ export async function prepareHostedChatRuntimeCreationOptions<
       ...(input.rootRunContext?.effectiveParentMessageId
         ? { parentMessageId: input.rootRunContext.effectiveParentMessageId }
         : {}),
-      availableSkillIds: steering.skills.map((skill) => skill.id),
+      availableSkillIds: visibleSkills.map((skill) => skill.id),
+      ...(visibleSkills.some((skill) => skill.sourcePath)
+        ? {
+          skillSourcePaths: Object.fromEntries(
+            visibleSkills
+              .filter((skill) => skill.sourcePath)
+              .map((skill) => [skill.id, skill.sourcePath as string]),
+          ),
+        }
+        : {}),
       ...(input.rootRunContext?.publishParentRunEvents
         ? { publishParentRunEvents: input.rootRunContext.publishParentRunEvents }
         : {}),
@@ -321,11 +337,12 @@ export async function prepareHostedChatRuntimeCreationOptions<
         agentConfig: input.agentConfig,
         environmentContext: input.environmentContext,
         instructions: steering.instructions,
-        skills: steering.skills,
+        skills: visibleSkills,
       }),
     },
     steering: {
       ...steering,
+      skills: visibleSkills,
       agentInstructions,
     },
     runtimeConfig,

@@ -205,3 +205,80 @@ Deno.test("runtime project skill loader returns null and logs when lookup is den
     },
   ]);
 });
+
+// ── Catalog sourcePath resolution (colocated/owned skills) ────────────────
+
+const COLOCATED_CONTEXT = {
+  ...PROJECT_CONTEXT,
+  skillSourcePaths: {
+    "researcher--cite": "agents/researcher/skills/cite/SKILL.md",
+  },
+};
+
+Deno.test("loadProjectSkill resolves a colocated skill at its catalog sourcePath", async () => {
+  const { loader, fileCalls } = createLoader({
+    getProjectFile: (options) =>
+      Promise.resolve(
+        options.path === "agents/researcher/skills/cite/SKILL.md"
+          ? { path: options.path, content: "Cite primary sources." }
+          : null,
+      ),
+  });
+
+  const skill = await loader.loadProjectSkill(COLOCATED_CONTEXT, "researcher--cite");
+
+  assertEquals(skill?.instructions, "Cite primary sources.");
+  // The namespaced id must never be probed as skills/{id}/SKILL.md.
+  assertEquals(
+    fileCalls.some((call) => call.path.includes("skills/researcher--cite")),
+    false,
+  );
+});
+
+Deno.test("loadProjectSkillReference reads reference files from the catalog skill dir", async () => {
+  const { loader } = createLoader({
+    getProjectFile: (options) =>
+      Promise.resolve(
+        options.path === "agents/researcher/skills/cite/references/styles.md"
+          ? { path: options.path, content: "APA or MLA." }
+          : null,
+      ),
+  });
+
+  const content = await loader.loadProjectSkillReference(
+    COLOCATED_CONTEXT,
+    "researcher--cite",
+    "references/styles.md",
+  );
+
+  assertEquals(content, "APA or MLA.");
+});
+
+Deno.test("listProjectSkillReferences lists references under the catalog skill dir", async () => {
+  const { loader } = createLoader({
+    getProjectFiles: () =>
+      Promise.resolve([
+        { path: "agents/researcher/skills/cite/references/styles.md" },
+        { path: "agents/researcher/skills/cite/references/journals.md" },
+        { path: "skills/other/references/nope.md" },
+      ] as RuntimeProjectFileListItem[]),
+  });
+
+  const references = await loader.listProjectSkillReferences(
+    COLOCATED_CONTEXT,
+    "researcher--cite",
+  );
+
+  assertEquals(references, ["references/journals.md", "references/styles.md"]);
+});
+
+Deno.test("loader falls back to steering-path probing without a catalog entry", async () => {
+  const { loader, fileCalls } = createLoader();
+
+  await loader.loadProjectSkill(PROJECT_CONTEXT, "plain-skill");
+
+  assertEquals(
+    fileCalls.some((call) => call.path.endsWith("/plain-skill/SKILL.md")),
+    true,
+  );
+});

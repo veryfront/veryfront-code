@@ -68,7 +68,31 @@ export type RuntimeSkillDefinition = {
   thinking?: false | number;
   maxSteps?: number;
   references?: string[];
+  /**
+   * Owning agent id for agent-scoped (colocated) skills. Unowned (undefined)
+   * skills are project-global; owned skills are visible only to their owner.
+   */
+  ownerAgentId?: string;
+  /** Short name used by the owning agent's `skills:` selector (e.g. "cite"). */
+  shortName?: string;
+  /**
+   * Actual discovered source path of the skill's SKILL.md. Consumers must use
+   * this instead of reconstructing paths from (possibly namespaced) ids.
+   */
+  sourcePath?: string;
 };
+
+/**
+ * Whether a runtime skill definition is visible to the caller identified by
+ * the scope — the same owner-aware rule as the local skill registry: unowned
+ * skills plus the caller's own.
+ */
+export function isRuntimeSkillVisibleTo(
+  definition: Pick<RuntimeSkillDefinition, "ownerAgentId">,
+  scope?: { agentId?: string },
+): boolean {
+  return definition.ownerAgentId === undefined || definition.ownerAgentId === scope?.agentId;
+}
 
 /** Public API contract for runtime loaded skill response messages. */
 export type RuntimeLoadedSkillResponseMessages = {
@@ -171,6 +195,9 @@ export function buildRuntimeSkillDefinition(input: {
   id: string;
   content: string;
   references?: readonly string[];
+  ownerAgentId?: string;
+  shortName?: string;
+  sourcePath?: string;
   logger?: RuntimeSkillMetadataLogger;
 }): RuntimeSkillDefinition | null {
   const document = parseRuntimeSkillDocument(input.content, { logger: input.logger });
@@ -192,6 +219,9 @@ export function buildRuntimeSkillDefinition(input: {
     ...(input.references && input.references.length > 0
       ? { references: [...input.references] }
       : {}),
+    ...(input.ownerAgentId === undefined ? {} : { ownerAgentId: input.ownerAgentId }),
+    ...(input.shortName === undefined ? {} : { shortName: input.shortName }),
+    ...(input.sourcePath === undefined ? {} : { sourcePath: input.sourcePath }),
   };
 }
 

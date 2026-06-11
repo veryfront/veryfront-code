@@ -195,3 +195,62 @@ Deno.test("getRuntimeProjectSkillCatalog still parses legacy hidden project skil
   assertEquals(skills.map((skill) => skill.id), ["legacy"]);
   assertEquals(fileCalls.map((call) => call.path), [".veryfront/skills/legacy/SKILL.md"]);
 });
+
+// ── Colocated (agent-owned) skills in the catalog (review finding) ────────
+
+const CITE_SKILL_MD = `---
+name: cite
+description: Cite sources properly
+---
+Cite primary sources.
+`;
+
+const RESEARCHER_SKILL_MD = `---
+name: researcher
+description: Research methodology
+---
+Follow the method.
+`;
+
+Deno.test("catalog includes colocated skills with owner metadata and source paths", async () => {
+  const { catalog } = createSkillCatalog({
+    paths: [
+      "agents/researcher/AGENT.md",
+      "agents/researcher/SKILL.md",
+      "agents/researcher/skills/cite/SKILL.md",
+      "agents/researcher/skills/cite/references/styles.md",
+    ],
+    contentsByPath: {
+      "agents/researcher/SKILL.md": RESEARCHER_SKILL_MD,
+      "agents/researcher/skills/cite/SKILL.md": CITE_SKILL_MD,
+    },
+  });
+
+  const skills = await catalog();
+  const ids = skills.map((skill) => skill.id).sort();
+  assertEquals(ids, ["researcher", "researcher--cite"]);
+
+  const nested = skills.find((skill) => skill.id === "researcher--cite");
+  assertEquals(nested?.ownerAgentId, "researcher");
+  assertEquals(nested?.shortName, "cite");
+  assertEquals(nested?.sourcePath, "agents/researcher/skills/cite/SKILL.md");
+  assertEquals(nested?.references, ["references/styles.md"]);
+
+  const own = skills.find((skill) => skill.id === "researcher");
+  assertEquals(own?.ownerAgentId, "researcher");
+  assertEquals(own?.sourcePath, "agents/researcher/SKILL.md");
+});
+
+Deno.test("catalog keeps global skills unowned and carries their source paths", async () => {
+  const { catalog } = createSkillCatalog({
+    paths: ["skills/gmail/SKILL.md"],
+    contentsByPath: {
+      "skills/gmail/SKILL.md": CITE_SKILL_MD,
+    },
+  });
+
+  const skills = await catalog();
+  assertEquals(skills.length, 1);
+  assertEquals(skills[0]?.ownerAgentId, undefined);
+  assertEquals(skills[0]?.sourcePath, "skills/gmail/SKILL.md");
+});

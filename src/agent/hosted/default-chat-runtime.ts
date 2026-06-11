@@ -79,6 +79,8 @@ export type DefaultHostedChatRuntimeTaskContext = HostedRuntimeStateResolverCont
   parentRunId?: string;
   parentMessageId?: string;
   availableSkillIds?: string[];
+  /** Per-run skill id -> discovered SKILL.md source path (owner-aware catalog). */
+  skillSourcePaths?: Readonly<Record<string, string>>;
   publishParentRunEvents?: DefaultHostedChatRuntimeCreationOptions["publishParentRunEvents"];
   availableToolNames?: string[];
 };
@@ -149,6 +151,7 @@ function createDefaultTaskContext(
     parentRunId: input.options.parentRunId,
     parentMessageId: input.options.parentMessageId,
     availableSkillIds: input.options.availableSkillIds,
+    skillSourcePaths: input.options.skillSourcePaths,
     publishParentRunEvents: input.options.publishParentRunEvents,
   };
 }

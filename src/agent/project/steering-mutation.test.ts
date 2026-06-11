@@ -64,6 +64,36 @@ Deno.test("getProjectSteeringMutation detects legacy hidden skill directory move
   );
 });
 
+Deno.test("getProjectSteeringMutation detects colocated skill writes", () => {
+  assertEquals(
+    getProjectSteeringMutation({
+      toolName: "update_file",
+      toolInput: {
+        project_reference: "project-1",
+        branch_id: "branch-1",
+        path: "agents/researcher/SKILL.md",
+      },
+      activeProjectId: "project-1",
+      activeBranchId: "branch-1",
+    }),
+    { instructionsChanged: false, skillsChanged: true },
+  );
+
+  assertEquals(
+    getProjectSteeringMutation({
+      toolName: "update_file",
+      toolInput: {
+        project_reference: "project-1",
+        branch_id: "branch-1",
+        path: "agents/researcher/skills/cite/references/style.md",
+      },
+      activeProjectId: "project-1",
+      activeBranchId: "branch-1",
+    }),
+    { instructionsChanged: false, skillsChanged: true },
+  );
+});
+
 Deno.test("getProjectSteeringMutation ignores mutations for other projects", () => {
   assertEquals(
     getProjectSteeringMutation({

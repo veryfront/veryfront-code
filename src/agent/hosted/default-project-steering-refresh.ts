@@ -165,7 +165,7 @@ function filterVisibleSkills(input: {
   skills: RuntimeSkillDefinition[];
   allowedSkillIds?: string[];
 }): RuntimeSkillDefinition[] {
-  if (!input.allowedSkillIds || input.allowedSkillIds.length === 0) {
+  if (!input.allowedSkillIds) {
     return input.skills;
   }
 

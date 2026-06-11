@@ -635,3 +635,69 @@ Deno.test("prepareHostedChatRuntimeMessages omits provider-owned remote tool his
     text: "Unlimited tax liability is based on Chapter 3 of the Income Tax Act.",
   }]);
 });
+
+Deno.test("prepareHostedChatRuntimeCreationOptions filters skills to the run agent's owner scope", async () => {
+  const skills = [
+    {
+      id: "global-howto",
+      name: "Global Howto",
+      description: "Project-global guide",
+      instructions: "Follow the guide.",
+      allowedTools: [],
+    },
+    {
+      id: "researcher--cite",
+      name: "cite",
+      description: "Cite sources",
+      instructions: "Cite primary sources.",
+      allowedTools: [],
+      ownerAgentId: "researcher",
+      shortName: "cite",
+      sourcePath: "agents/researcher/skills/cite/SKILL.md",
+    },
+    {
+      id: "writer--style",
+      name: "style",
+      description: "House style",
+      instructions: "Use the house style.",
+      allowedTools: [],
+      ownerAgentId: "writer",
+      shortName: "style",
+    },
+  ];
+  const seenByInstructions: string[][] = [];
+
+  const result = await prepareHostedChatRuntimeCreationOptions({
+    request: createParsedHostedChatRequest({}),
+    agentConfig: { id: "researcher", model: "configured-model" },
+    projectId: "project-1",
+    authToken: "token-1",
+    resolveModelId: (modelId) => modelId,
+    resolveModelThinking: () => undefined,
+    fetchSteering: () =>
+      Promise.resolve({
+        instructions: "Project instructions",
+        skills,
+      }),
+    buildInstructions: (input) => {
+      seenByInstructions.push(input.skills.map((entry) => entry.id));
+      return [{ role: "system", content: "x" }];
+    },
+  });
+
+  const expected = ["global-howto", "researcher--cite"];
+  // Prompt-manifest input, per-run load_skill gate, live steering payload, and
+  // the returned steering all carry the same owner-scoped set.
+  assertEquals(seenByInstructions, [expected]);
+  assertEquals(result.creationOptions.availableSkillIds, expected);
+  assertEquals(result.creationOptions.skillSourcePaths, {
+    "researcher--cite": "agents/researcher/skills/cite/SKILL.md",
+  });
+  assertEquals(
+    (result.creationOptions.liveProjectSteering?.initialSkills ?? []).map((
+      skill: { id: string },
+    ) => skill.id),
+    expected,
+  );
+  assertEquals(result.steering.skills.map((skill) => skill.id), expected);
+});

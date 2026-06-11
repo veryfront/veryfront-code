@@ -146,6 +146,30 @@ describe("agent/default-hosted-project-steering-refresh", () => {
     assertEquals(system.includes("Current run tool inventory:"), true);
   });
 
+  it("keeps an empty visible skill set restrictive during refresh", async () => {
+    const refresh = createDefaultHostedProjectSteeringRefresh({
+      fetchProjectInstructions: () => Promise.resolve("Fresh instructions"),
+      fetchSkills: () => Promise.resolve([createSkill("other-agent--private")]),
+      buildInstructions: (input) =>
+        `${input.instructions}:${input.skills.map((skill) => skill.id).join(",")}`,
+    });
+
+    const system = await refresh(
+      createRefreshInput({
+        taskContext: {
+          authToken: "auth-token",
+          projectId: "project-1",
+          branchId: "branch-1",
+          model: "openai/gpt-test",
+          availableSkillIds: [],
+        },
+      }),
+    );
+
+    assertEquals(system.includes("Fresh instructions:other-agent--private"), false);
+    assertEquals(system.includes("Fresh instructions:"), true);
+  });
+
   it("keeps provider-native tools in refreshed runtime inventory", async () => {
     const refresh = createDefaultHostedProjectSteeringRefresh({
       fetchProjectInstructions: () => Promise.resolve("Fresh instructions"),

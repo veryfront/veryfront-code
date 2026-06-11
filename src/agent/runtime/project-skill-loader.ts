@@ -15,6 +15,15 @@ export type RuntimeProjectSkillContext = {
   projectId?: string | null;
   authToken: string;
   branchId?: string | null;
+  /**
+   * Per-run map of skill id to its discovered SKILL.md source path (from the
+   * owner-aware catalog). When present for an id, the loader resolves the
+   * skill and its references at that real path instead of probing
+   * `{skillsPath}/{skillId}/...` — required for colocated skills whose
+   * namespaced ids (e.g. `researcher--cite`) do not correspond to a
+   * `skills/{id}/` directory.
+   */
+  skillSourcePaths?: Readonly<Record<string, string>>;
 };
 
 /** Public API contract for runtime loaded project skill. */
@@ -69,7 +78,31 @@ function isAccessDeniedError(
 
 type ProjectSkillSource =
   | { kind: "directory"; skillsPath: string }
-  | { kind: "flat"; skillsPath: string };
+  | { kind: "flat"; skillsPath: string }
+  | { kind: "explicit"; skillDir: string };
+
+/** Directory containing the skill's files, per source kind. */
+function getSkillDir(source: ProjectSkillSource, skillId: string): string | null {
+  if (source.kind === "explicit") {
+    return source.skillDir;
+  }
+  if (source.kind === "directory") {
+    return `${source.skillsPath}/${skillId}`;
+  }
+  return null;
+}
+
+/** Resolves a skill's directory from the per-run catalog source path, if any. */
+function resolveCatalogSkillDir(
+  context: RuntimeProjectSkillContext,
+  skillId: string,
+): string | null {
+  const sourcePath = context.skillSourcePaths?.[skillId];
+  if (!sourcePath || !sourcePath.endsWith("/SKILL.md")) {
+    return null;
+  }
+  return sourcePath.slice(0, -"/SKILL.md".length);
+}
 
 async function findProjectSkillSource(input: {
   options: RuntimeProjectSkillLoaderOptions;
@@ -79,6 +112,11 @@ async function findProjectSkillSource(input: {
   const projectId = input.context.projectId;
   if (!projectId) {
     return null;
+  }
+
+  const catalogSkillDir = resolveCatalogSkillDir(input.context, input.skillId);
+  if (catalogSkillDir) {
+    return { kind: "explicit", skillDir: catalogSkillDir };
   }
 
   for (const skillsPath of getSkillPaths(input.options)) {
@@ -108,10 +146,9 @@ async function findProjectSkillSource(input: {
 
 function collectProjectSkillReferences(input: {
   allFiles: readonly RuntimeProjectFileListItem[];
-  skillsPath: string;
-  skillId: string;
+  skillDir: string;
 }): string[] {
-  const skillPrefix = `${input.skillsPath}/${input.skillId}/`;
+  const skillPrefix = `${input.skillDir}/`;
   const refsPrefix = `${skillPrefix}references/`;
   const references = new Set<string>();
 
@@ -148,7 +185,8 @@ async function listProjectSkillReferences(input: {
   const source: ProjectSkillSource | null = input.skillsPath
     ? { kind: "directory", skillsPath: input.skillsPath }
     : await findProjectSkillSource(input);
-  if (source?.kind !== "directory") {
+  const skillDir = source ? getSkillDir(source, input.skillId) : null;
+  if (!skillDir) {
     return [];
   }
 
@@ -160,8 +198,7 @@ async function listProjectSkillReferences(input: {
 
   return collectProjectSkillReferences({
     allFiles,
-    skillsPath: source.skillsPath,
-    skillId: input.skillId,
+    skillDir,
   });
 }
 
@@ -176,6 +213,22 @@ async function loadProjectSkill(input: {
   }
 
   try {
+    const catalogSkillDir = resolveCatalogSkillDir(input.context, input.skillId);
+    if (catalogSkillDir) {
+      const catalogSkill = await input.options.getProjectFile({
+        projectId,
+        authToken: input.context.authToken,
+        branchId: input.context.branchId,
+        path: `${catalogSkillDir}/SKILL.md`,
+      });
+      if (catalogSkill?.content) {
+        return {
+          instructions: catalogSkill.content,
+          references: await listProjectSkillReferences(input),
+        };
+      }
+    }
+
     for (const skillsPath of getSkillPaths(input.options)) {
       const directorySkill = await input.options.getProjectFile({
         projectId,
@@ -237,7 +290,8 @@ async function loadProjectSkillReference(input: {
 
   try {
     const source = await findProjectSkillSource(input);
-    if (source?.kind !== "directory") {
+    const skillDir = source ? getSkillDir(source, input.skillId) : null;
+    if (!skillDir) {
       return null;
     }
 
@@ -245,7 +299,7 @@ async function loadProjectSkillReference(input: {
       projectId,
       authToken: input.context.authToken,
       branchId: input.context.branchId,
-      path: `${source.skillsPath}/${input.skillId}/${input.normalizedFile}`,
+      path: `${skillDir}/${input.normalizedFile}`,
     });
     if (projectFile?.content) {
       return projectFile.content;
