@@ -332,7 +332,14 @@ export const getIntegrationSetupGuideSchema = defineSchema((v) =>
   v.object({
     title: v.string().optional(),
     steps: v.array(
-      v.object({ step: v.number().optional(), title: v.string(), description: v.string() }),
+      v.object({
+        step: v.number().optional(),
+        title: v.string(),
+        description: v.string(),
+        url: v.string().optional(),
+        docsUrl: v.string().optional(),
+        code: v.string().optional(),
+      }),
     ),
     notes: v.array(v.string()).optional(),
     documentation: v.string().optional(),

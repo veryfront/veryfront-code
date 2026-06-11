@@ -3274,6 +3274,13 @@ export const connectors: IntegrationConfig[] = [
       "@aws-sdk/client-lambda": "^3.600.0",
       "@aws-sdk/credential-providers": "^3.600.0",
     },
+    "setupGuide": {
+      "steps": [{
+        "title": "Setup guide",
+        "description":
+          '# AWS Integration Setup Guide\n\n## Step 1: Create an IAM User\n\n1. Log in to the [AWS Console](https://console.aws.amazon.com/)\n2. Navigate to **IAM** (Identity and Access Management)\n3. Click on **Users** in the left sidebar\n4. Click **Add users**\n5. Enter a username (e.g., `veryfront-integration`)\n6. Select **Access key - Programmatic access**\n7. Click **Next: Permissions**\n\n## Step 2: Attach Permissions\n\nYou can either:\n\n### Option A: Create a Custom Policy (Recommended)\n\n1. Click **Attach existing policies directly**\n2. Click **Create policy**\n3. Choose the **JSON** tab\n4. Paste the following policy:\n\n```json\n{\n  "Version": "2012-10-17",\n  "Statement": [\n    {\n      "Effect": "Allow",\n      "Action": [\n        "s3:ListAllMyBuckets",\n        "s3:ListBucket",\n        "s3:GetObject",\n        "ec2:DescribeInstances",\n        "lambda:ListFunctions"\n      ],\n      "Resource": "*"\n    }\n  ]\n}\n```\n\n5. Click **Review policy**\n6. Name it `VeryfrontAWSIntegration`\n7. Click **Create policy**\n8. Go back to the user creation tab and refresh the policy list\n9. Search for and select `VeryfrontAWSIntegration`\n\n### Option B: Use AWS Managed Policies\n\nAttach these managed policies:\n- `AmazonS3ReadOnlyAccess`\n- `AmazonEC2ReadOnlyAccess`\n- `AWSLambdaReadOnlyAccess`\n\n**Note:** Option B provides broader read access than Option A.\n\n## Step 3: Complete User Creation\n\n1. Click **Next: Tags** (optional)\n2. Click **Next: Review**\n3. Click **Create user**\n4. **Important:** Save your credentials:\n   - **Access Key ID**\n   - **Secret Access Key**\n   \n   ⚠️ This is the only time you\'ll be able to see the Secret Access Key!\n\n## Step 4: Configure Environment Variables\n\n1. Copy the `.env.example` file to `.env.local`\n2. Add your AWS credentials:\n\n```env\nAWS_ACCESS_KEY_ID=your_access_key_id_here\nAWS_SECRET_ACCESS_KEY=your_secret_access_key_here\nAWS_REGION=us-east-1\n```\n\n3. Replace `your_access_key_id_here` and `your_secret_access_key_here` with your actual credentials\n4. Update `AWS_REGION` to your preferred region (e.g., `us-west-2`, `eu-west-1`)\n\n## Step 5: Install Dependencies\n\nRun the following command to install required AWS SDK packages:\n\n```bash\nnpm install @aws-sdk/client-s3 @aws-sdk/client-ec2 @aws-sdk/client-lambda @aws-sdk/credential-providers\n```\n\n## Step 6: Test Your Integration\n\nYou can test your integration by using any of the available tools:\n\n- `list-s3-buckets` - List all your S3 buckets\n- `list-s3-objects` - List objects in a specific bucket\n- `get-s3-object` - Retrieve an object from S3\n- `list-ec2-instances` - List your EC2 instances\n- `list-lambda-functions` - List your Lambda functions\n\n## Security Best Practices\n\n1. **Never commit your `.env.local` file** - It\'s already in `.gitignore`\n2. **Use the principle of least privilege** - Only grant permissions needed\n3. **Rotate credentials regularly** - Update your access keys periodically\n4. **Use different credentials for different environments** - Dev, staging, and production\n5. **Consider using AWS IAM Roles** - For production environments, use IAM roles with EC2/ECS/Lambda\n\n## Troubleshooting\n\n### "Access Denied" Errors\n\n- Verify your IAM user has the correct permissions\n- Check that the region in your `.env.local` matches where your resources are located\n\n### "Invalid Access Key" Errors\n\n- Double-check your `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`\n- Ensure there are no extra spaces or newlines in your credentials\n- Verify the IAM user is active and the access key hasn\'t been deleted\n\n### Region Issues\n\n- Some resources are region-specific (EC2, Lambda)\n- S3 bucket listing is global, but object access respects bucket regions\n- Update `AWS_REGION` to match where your resources are located\n\n## Additional Resources\n\n- [AWS IAM User Guide](https://docs.aws.amazon.com/IAM/latest/UserGuide/)\n- [AWS SDK for JavaScript v3](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/)\n- [AWS Security Best Practices](https://aws.amazon.com/security/best-practices/)',
+      }],
+    },
   },
   {
     "name": "axiom",
@@ -9046,6 +9053,13 @@ export const connectors: IntegrationConfig[] = [
       "icon": "edit",
     }],
     "suggestedWith": ["gmail", "calendar", "drive", "sheets"],
+    "setupGuide": {
+      "steps": [{
+        "title": "Setup guide",
+        "description":
+          "# Google Docs Integration Setup\n\n## Prerequisites\n- A Google Cloud Platform account\n- A Google Cloud project\n\n## Step 1: Create OAuth 2.0 Credentials\n\n1. Go to the [Google Cloud Console](https://console.cloud.google.com/)\n2. Select or create a project\n3. Navigate to **APIs & Services** > **Credentials**\n4. Click **Create Credentials** > **OAuth client ID**\n5. Select **Web application** as the application type\n6. Add your authorized redirect URIs:\n   - For development: `http://localhost:3000/api/auth/docs-google/callback`\n   - For production: `https://yourdomain.com/api/auth/docs-google/callback`\n7. Click **Create** and copy your Client ID and Client Secret\n\n## Step 2: Enable Required APIs\n\nEnable the following APIs in your Google Cloud project:\n\n1. [Google Docs API](https://console.cloud.google.com/apis/library/docs.googleapis.com)\n2. [Google Drive API](https://console.cloud.google.com/apis/library/drive.googleapis.com)\n\n## Step 3: Configure Environment Variables\n\nAdd the following to your `.env` file:\n\n```bash\nGOOGLE_CLIENT_ID=your_client_id_here\nGOOGLE_CLIENT_SECRET=your_client_secret_here\n```\n\n## Step 4: Test the Integration\n\n1. Start your development server\n2. Navigate to `/api/auth/docs-google` to initiate OAuth flow\n3. Grant permissions when prompted\n4. You should be redirected back to your application\n\n## OAuth Scopes\n\nThis integration requests the following scopes:\n\n- `https://www.googleapis.com/auth/documents.readonly` - Read access to Google Docs\n- `https://www.googleapis.com/auth/documents` - Full access to create and edit Google Docs\n- `https://www.googleapis.com/auth/docs` - Manage Google Docs files in Drive (create, edit, delete)\n- `https://www.googleapis.com/auth/drive.readonly` - Read access to list documents from Drive\n\n## Security Notes\n\n- Keep your Client Secret secure and never commit it to version control\n- Use environment variables for all sensitive credentials\n- Consider implementing proper user session management in production\n- The default implementation uses an in-memory token store - replace with a persistent store for production use\n\n## Available AI Tools\n\nOnce configured, you can use these AI tools:\n\n- **list-documents** - List recent Google Docs from your Drive\n- **get-document** - Retrieve document content and structure\n- **create-document** - Create new documents with formatted content\n- **update-document** - Modify existing documents with batch updates\n- **search-documents** - Search for documents by name or content\n\n## Need Help?\n\nRefer to the [Google Docs API documentation](https://developers.google.com/docs/api) for detailed information about API capabilities and limits.",
+      }],
+    },
   },
   {
     "name": "drive",
@@ -9353,17 +9367,21 @@ export const connectors: IntegrationConfig[] = [
       "steps": [{
         "title": "Create a Google Cloud Project",
         "description": "Go to the Google Cloud Console and create a new project",
+        "url": "https://console.cloud.google.com/projectcreate",
       }, {
         "title": "Enable the Google Drive API",
         "description": "Navigate to APIs & Services > Library and enable the Google Drive API",
+        "url": "https://console.cloud.google.com/apis/library/drive.googleapis.com",
       }, {
         "title": "Configure OAuth Consent Screen",
         "description":
           "Go to APIs & Services > OAuth consent screen. Set up your app name, user support email, and developer contact. Add scope: drive (full access)",
+        "url": "https://console.cloud.google.com/apis/credentials/consent",
       }, {
         "title": "Create OAuth 2.0 Client ID",
         "description":
           "Go to APIs & Services > Credentials. Click 'Create Credentials' > 'OAuth client ID'. Choose 'Web application'. Add authorized redirect URI: http://localhost:3000/api/auth/drive/callback (adjust port/domain for production)",
+        "url": "https://console.cloud.google.com/apis/credentials",
       }, {
         "title": "Copy Credentials to .env",
         "description":
@@ -21093,6 +21111,13 @@ export const connectors: IntegrationConfig[] = [
       "icon": "users",
     }],
     "suggestedWith": ["slack", "analytics", "monitoring"],
+    "setupGuide": {
+      "steps": [{
+        "title": "Setup guide",
+        "description":
+          "# Mixpanel Integration Setup\n\n## Step 1: Create a Service Account\n1. Log in to Mixpanel and open Organization Settings > Service Accounts (https://mixpanel.com/settings/org#serviceaccounts)\n2. Create a service account with access to your project (Analyst role or higher is sufficient for queries)\n3. Copy the service account **username** and **secret** shown at creation time\n4. Add them to your .env file as `MIXPANEL_SERVICE_ACCOUNT_USERNAME` and `MIXPANEL_SERVICE_ACCOUNT_SECRET`\n\n## Step 2: Get Your Project ID\n1. In Mixpanel project settings URL, your Project ID is the number in the URL\n2. Format: https://mixpanel.com/project/YOUR_PROJECT_ID/settings\n3. Copy this ID and add it as `MIXPANEL_PROJECT_ID` in your .env file — query tools require it as the project_id parameter\n\n## Step 3: (Optional) Get Your Project Token\n1. Under Project Settings, find your **Project Token**\n2. Add it as `MIXPANEL_PROJECT_TOKEN` — it is only needed for local event-tracking (ingestion), not for queries\n\n## Step 4: Set Up Environment Variables\nAdd these to your `.env` file:\n```\nMIXPANEL_SERVICE_ACCOUNT_USERNAME=your_service_account_username\nMIXPANEL_SERVICE_ACCOUNT_SECRET=your_service_account_secret\nMIXPANEL_PROJECT_ID=your_project_id_here\nMIXPANEL_PROJECT_TOKEN=your_project_token_here\n```\n\n## Step 5: Test the Integration\nRun the List Cohorts or List Funnels tool with your project_id to verify the service account works.\n\n## Important Notes\n- Service accounts authenticate via HTTP Basic auth (username + secret) and are Mixpanel's recommended method for the Query and Export APIs\n- Every query tool requires the `project_id` parameter when authenticating with a service account\n- If your project stores data in the EU or India, pass the matching host parameter (eu.mixpanel.com / data-eu.mixpanel.com, or in.mixpanel.com / data-in.mixpanel.com)\n- **Project Token** is used only for tracking events (ingestion)\n- Keep credentials secure and never commit them to version control\n\n## Useful Resources\n- [Mixpanel API Documentation](https://developer.mixpanel.com/reference/overview)\n- [Service Accounts](https://developer.mixpanel.com/reference/service-accounts)\n- [Query API Guide](https://developer.mixpanel.com/reference/query-api)",
+      }],
+    },
   },
   {
     "name": "monday",
@@ -32291,25 +32316,32 @@ export const connectors: IntegrationConfig[] = [
         "title": "Locate Your Account Identifier",
         "description":
           "Find your Snowflake account identifier in the Snowflake web interface URL (e.g., xy12345.us-east-1 from https://xy12345.us-east-1.snowflakecomputing.com)",
+        "docsUrl": "https://docs.snowflake.com/en/user-guide/admin-account-identifier",
       }, {
         "title": "Create or Use Existing User",
         "description":
           "Use an existing Snowflake user or create a new one with appropriate permissions. The user needs USAGE privileges on the warehouse and database, and SELECT privileges on tables.",
+        "docsUrl": "https://docs.snowflake.com/en/user-guide/admin-user-management",
       }, {
         "title": "Generate a Programmatic Access Token",
         "description":
           "In Snowsight, open your user profile > Settings > Authentication and generate a programmatic access token (PAT), or run ALTER USER ... ADD PROGRAMMATIC ACCESS TOKEN. The SQL API does not accept username/password basic auth; the PAT is sent as a Bearer token.",
+        "docsUrl": "https://docs.snowflake.com/en/user-guide/programmatic-access-tokens",
       }, {
         "title": "Configure Warehouse",
         "description":
           "Ensure you have a warehouse created and running. The default warehouse is typically named COMPUTE_WH.",
+        "docsUrl": "https://docs.snowflake.com/en/user-guide/warehouses",
       }, {
         "title": "Set Environment Variables",
         "description":
           "Add the following environment variables to your .env file with your Snowflake credentials",
+        "code":
+          "SNOWFLAKE_PAT=your_programmatic_access_token\nSNOWFLAKE_ACCOUNT=xy12345.us-east-1\nSNOWFLAKE_USERNAME=your_username\nSNOWFLAKE_PASSWORD=your_password\nSNOWFLAKE_WAREHOUSE=COMPUTE_WH\nSNOWFLAKE_DATABASE=your_database\nSNOWFLAKE_SCHEMA=PUBLIC",
       }, {
         "title": "Test Connection",
         "description": "Test your connection by listing databases or running a simple query",
+        "code": "SELECT CURRENT_VERSION()",
       }],
     },
   },
@@ -34567,18 +34599,22 @@ export const connectors: IntegrationConfig[] = [
       "steps": [{
         "title": "Create a Twilio Account",
         "description": "Sign up for a free Twilio account at https://www.twilio.com/try-twilio",
+        "url": "https://www.twilio.com/try-twilio",
       }, {
         "title": "Get Your Account SID and Auth Token",
         "description":
           "Navigate to the Twilio Console Dashboard. Your Account SID and Auth Token are displayed on the main dashboard page. Click the eye icon to reveal your Auth Token.",
+        "url": "https://console.twilio.com/",
       }, {
         "title": "Get a Phone Number",
         "description":
           "Go to Phone Numbers > Manage > Buy a number. Select a phone number with SMS and Voice capabilities. Trial accounts come with one free phone number.",
+        "url": "https://console.twilio.com/us1/develop/phone-numbers/manage/search",
       }, {
         "title": "Set Up WhatsApp (Optional)",
         "description":
           "To send WhatsApp messages, join the Twilio Sandbox for WhatsApp. Go to Messaging > Try it out > Send a WhatsApp message. Follow the instructions to connect your WhatsApp to the sandbox.",
+        "url": "https://console.twilio.com/us1/develop/sms/try-it-out/whatsapp-learn",
       }, {
         "title": "Add Environment Variables",
         "description":
@@ -34587,6 +34623,7 @@ export const connectors: IntegrationConfig[] = [
         "title": "Test the Integration",
         "description":
           "Try sending a test SMS using the send-sms tool. For trial accounts, you can only send messages to verified phone numbers. Add your phone number at Phone Numbers > Manage > Verified Caller IDs.",
+        "url": "https://console.twilio.com/us1/develop/phone-numbers/manage/verified",
       }],
       "notes": [
         "Twilio authenticates with HTTP Basic auth: Account SID as the username and Auth Token as the password",

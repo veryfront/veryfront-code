@@ -49,7 +49,24 @@ for await (const entry of Deno.readDir(integrationsDir)) {
     // Keep setup guides in the runtime catalog — they power the
     // missing-credentials UX in chat (how a user obtains each key).
     const setupGuide = json.setupGuide ?? json.SETUP_GUIDE;
-    json.setupGuide = typeof setupGuide === "object" && setupGuide !== null ? setupGuide : undefined;
+    // Markdown-string guides (legacy authoring style) are wrapped as a single
+    // step so they still reach the missing-credentials UX.
+    if (typeof setupGuide === "object" && setupGuide !== null) {
+      // Drop explicit nulls (legacy authoring) so optional fields validate.
+      json.setupGuide = {
+        ...setupGuide,
+        steps: (setupGuide.steps ?? []).map((step: Record<string, unknown>) =>
+          Object.fromEntries(
+            Object.entries(step).filter(([, value]) => value !== null && value !== undefined),
+          )
+        ),
+      };
+    } else if (typeof setupGuide === "string" && setupGuide.length > 0) {
+      // Markdown-string guides (legacy authoring style) become a single step.
+      json.setupGuide = { steps: [{ title: "Setup guide", description: setupGuide }] };
+    } else {
+      json.setupGuide = undefined;
+    }
     delete json.SETUP_GUIDE;
 
     const result = IntegrationConfigSchema.safeParse(json);
