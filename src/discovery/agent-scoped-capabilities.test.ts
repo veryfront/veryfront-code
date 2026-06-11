@@ -263,3 +263,68 @@ Deno.test("discoverAll preserves directory-agent colocated skills through the sk
     await Deno.remove(root, { recursive: true });
   }
 });
+
+// ── Colocated tool loading through the real transpiler (esbuild) ─────────
+
+import { clearMCPRegistry } from "#veryfront/mcp";
+import { toolRegistry } from "#veryfront/tool";
+import { executeTool } from "#veryfront/tool";
+
+Deno.test({
+  name: "discoverAll loads colocated tools/*.ts with owner metadata and gates execution",
+  // importModule transpiles via esbuild, which keeps a warm child process
+  // alive across tests and trips Deno's op/resource sanitizers — same reason
+  // src/discovery/transpiler.test.ts opts out (tracked in the lint baseline).
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const root = await Deno.makeTempDir();
+    skillRegistry.clearAll();
+    clearMCPRegistry();
+    try {
+      await Deno.mkdir(`${root}/agents/researcher/tools`, { recursive: true });
+      await Deno.writeTextFile(
+        `${root}/agents/researcher/AGENT.md`,
+        `---\nname: Researcher\ntools: [fetch-paper]\n---\nResearch.\n`,
+      );
+      await Deno.writeTextFile(
+        `${root}/agents/researcher/tools/fetch-paper.ts`,
+        `export const fetchPaper = {
+  id: "fetch-paper",
+  type: "function",
+  description: "Fetch a paper by id",
+  inputSchema: { type: "object", properties: {} },
+  execute: () => Promise.resolve({ ok: true, paper: "attention-is-all-you-need" }),
+};
+`,
+      );
+
+      const result = await discoverAll({ baseDir: root });
+      assertEquals(result.errors, []);
+
+      // Registered under the namespaced id with owner metadata.
+      const registered = toolRegistry.get("researcher--fetch-paper");
+      assertEquals(registered?.ownerAgentId, "researcher");
+      assertEquals(registered?.shortName, "fetch-paper");
+
+      // Owner executes (by full id through the registry gate)...
+      const ok = await executeTool("researcher--fetch-paper", {}, { agentId: "researcher" });
+      assertEquals(ok, { ok: true, paper: "attention-is-all-you-need" });
+
+      // ...other agents and external callers cannot.
+      let rejected = false;
+      try {
+        await executeTool("researcher--fetch-paper", {}, { agentId: "writer" });
+      } catch (error) {
+        rejected = true;
+        assertEquals(String(error).includes("not found"), true);
+      }
+      assertEquals(rejected, true);
+    } finally {
+      skillRegistry.clearAll();
+      clearMCPRegistry();
+      cleanupAgents(["researcher"]);
+      await Deno.remove(root, { recursive: true });
+    }
+  },
+});
