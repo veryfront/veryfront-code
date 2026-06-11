@@ -22,6 +22,23 @@ describe("rendering/layouts/utils/component-loader", () => {
       const cache = createLayoutComponentCache(10);
       assertEquals(typeof cache.get, "function");
     });
+
+    it("should clamp the per-project bucket to a small custom maxEntries", () => {
+      function C() {
+        return null;
+      }
+      // maxEntries=2 with the env-derived per-project default (larger than 2):
+      // a single project's bucket must still respect the total budget of 2.
+      const cache = createLayoutComponentCache(2);
+      cache.set("layout:proj:/a:h1:c", C);
+      cache.set("layout:proj:/b:h2:c", C);
+      cache.set("layout:proj:/c:h3:c", C);
+
+      // Oldest entry evicted at the requested cap, not the per-project default
+      assertEquals(cache.get("layout:proj:/a:h1:c"), undefined);
+      assertEquals(cache.get("layout:proj:/b:h2:c"), C);
+      assertEquals(cache.get("layout:proj:/c:h3:c"), C);
+    });
   });
 
   describe("InMemoryLayoutComponentCache (via factory)", () => {
@@ -32,75 +49,81 @@ describe("rendering/layouts/utils/component-loader", () => {
       return null;
     }
 
+    // Use real-format keys: layout:{projectId}:{path}:{hash}:{csid}
+    const key1 = "layout:proj:/path1:hash1:csid";
+    const key2 = "layout:proj:/path2:hash2:csid";
+    const key3 = "layout:proj:/path3:hash3:csid";
+
     it("should return undefined for missing keys", () => {
       const cache = createLayoutComponentCache();
-      assertEquals(cache.get("nonexistent"), undefined);
+      assertEquals(cache.get("layout:proj:/missing:h:c"), undefined);
     });
 
     it("should set and get a component", () => {
       const cache = createLayoutComponentCache();
-      cache.set("key1", DummyComponent);
-      assertEquals(cache.get("key1"), DummyComponent);
+      cache.set(key1, DummyComponent);
+      assertEquals(cache.get(key1), DummyComponent);
     });
 
     it("should overwrite existing key", () => {
       const cache = createLayoutComponentCache();
-      cache.set("key1", DummyComponent);
-      cache.set("key1", AnotherComponent);
-      assertEquals(cache.get("key1"), AnotherComponent);
+      cache.set(key1, DummyComponent);
+      cache.set(key1, AnotherComponent);
+      assertEquals(cache.get(key1), AnotherComponent);
     });
 
     it("should delete a key", () => {
       const cache = createLayoutComponentCache();
-      cache.set("key1", DummyComponent);
-      cache.delete("key1");
-      assertEquals(cache.get("key1"), undefined);
+      cache.set(key1, DummyComponent);
+      cache.delete(key1);
+      assertEquals(cache.get(key1), undefined);
     });
 
     it("should clear all entries", () => {
       const cache = createLayoutComponentCache();
-      cache.set("key1", DummyComponent);
-      cache.set("key2", AnotherComponent);
+      cache.set(key1, DummyComponent);
+      cache.set(key2, AnotherComponent);
       cache.clear();
-      assertEquals(cache.get("key1"), undefined);
-      assertEquals(cache.get("key2"), undefined);
+      assertEquals(cache.get(key1), undefined);
+      assertEquals(cache.get(key2), undefined);
     });
 
-    it("should evict oldest entry when maxEntries is reached", () => {
-      const cache = createLayoutComponentCache(2);
+    it("should evict oldest entry when per-project cap is reached", () => {
+      // perProjectMaxEntries=2, maxEntries large enough not to evict the project bucket
+      const cache = createLayoutComponentCache(100, 2);
 
       const C1 = () => null;
       const C2 = () => null;
       const C3 = () => null;
 
-      cache.set("k1", C1);
-      cache.set("k2", C2);
-      cache.set("k3", C3);
+      cache.set(key1, C1);
+      cache.set(key2, C2);
+      cache.set(key3, C3);
 
-      assertEquals(cache.get("k1"), undefined);
-      assertEquals(cache.get("k2"), C2);
-      assertEquals(cache.get("k3"), C3);
+      assertEquals(cache.get(key1), undefined);
+      assertEquals(cache.get(key2), C2);
+      assertEquals(cache.get(key3), C3);
     });
 
     it("should promote accessed entries (LRU behavior)", () => {
-      const cache = createLayoutComponentCache(2);
+      const cache = createLayoutComponentCache(100, 2);
 
       const C1 = () => null;
       const C2 = () => null;
       const C3 = () => null;
 
-      cache.set("k1", C1);
-      cache.set("k2", C2);
+      cache.set(key1, C1);
+      cache.set(key2, C2);
 
-      // Access k1 to promote it
-      cache.get("k1");
+      // Access key1 to promote it
+      cache.get(key1);
 
-      // Now k2 should be the oldest, so adding k3 should evict k2
-      cache.set("k3", C3);
+      // Now key2 should be the oldest, so adding key3 should evict key2
+      cache.set(key3, C3);
 
-      assertEquals(cache.get("k1"), C1);
-      assertEquals(cache.get("k2"), undefined);
-      assertEquals(cache.get("k3"), C3);
+      assertEquals(cache.get(key1), C1);
+      assertEquals(cache.get(key2), undefined);
+      assertEquals(cache.get(key3), C3);
     });
 
     it("should handle clearForProject", () => {
@@ -119,19 +142,93 @@ describe("rendering/layouts/utils/component-loader", () => {
 
     it("should handle delete of non-existing key", () => {
       const cache = createLayoutComponentCache();
-      cache.delete("nonexistent"); // Should not throw
+      cache.delete("layout:proj:/nonexistent:h:c"); // Should not throw
     });
 
-    it("should handle maxEntries of 1", () => {
-      const cache = createLayoutComponentCache(1);
+    it("should handle per-project cap of 1", () => {
+      const cache = createLayoutComponentCache(100, 1);
       const C1 = () => null;
       const C2 = () => null;
 
-      cache.set("k1", C1);
-      cache.set("k2", C2);
+      cache.set(key1, C1);
+      cache.set(key2, C2);
 
-      assertEquals(cache.get("k1"), undefined);
-      assertEquals(cache.get("k2"), C2);
+      assertEquals(cache.get(key1), undefined);
+      assertEquals(cache.get(key2), C2);
+    });
+  });
+
+  describe("PerProjectLayoutComponentCache (via factory with perProjectMaxEntries)", () => {
+    function makeKey(projectId: string, index: number): string {
+      return `layout:${projectId}:/path${index}:hash${index}:csid`;
+    }
+
+    it("should isolate project A entries from project B when A overflows its per-project cap", () => {
+      // perProjectMaxEntries=2, maxProjects derived from maxEntries=10 / 2 = 5
+      const cache = createLayoutComponentCache(10, 2);
+
+      const B1 = () => null;
+      const B2 = () => null;
+      cache.set(makeKey("project-b", 1), B1);
+      cache.set(makeKey("project-b", 2), B2);
+
+      // Fill project A beyond its per-project cap of 2
+      const A1 = () => null;
+      const A2 = () => null;
+      const A3 = () => null;
+      cache.set(makeKey("project-a", 1), A1);
+      cache.set(makeKey("project-a", 2), A2);
+      cache.set(makeKey("project-a", 3), A3); // evicts A1 within project-a only
+
+      // A1 should be gone, A2/A3 survive
+      assertEquals(cache.get(makeKey("project-a", 1)), undefined);
+      assertEquals(cache.get(makeKey("project-a", 2)), A2);
+      assertEquals(cache.get(makeKey("project-a", 3)), A3);
+
+      // Project B entries must be untouched
+      assertEquals(cache.get(makeKey("project-b", 1)), B1);
+      assertEquals(cache.get(makeKey("project-b", 2)), B2);
+    });
+
+    it("should not evict project B entries on heavy use of project A", () => {
+      const cache = createLayoutComponentCache(20, 3);
+
+      const BEntry = () => null;
+      cache.set(makeKey("project-b", 1), BEntry);
+
+      // Flood project A with 10 entries (cap=3, so 7 intra-A evictions happen)
+      for (let i = 0; i < 10; i++) {
+        cache.set(makeKey("project-a", i), () => null);
+      }
+
+      // Project B entry must still be present
+      assertEquals(cache.get(makeKey("project-b", 1)), BEntry);
+    });
+
+    it("should remove only the target project on clearForProject", () => {
+      const cache = createLayoutComponentCache(10, 2);
+
+      const A1 = () => null;
+      const B1 = () => null;
+      cache.set(makeKey("project-a", 1), A1);
+      cache.set(makeKey("project-b", 1), B1);
+
+      cache.clearForProject?.("project-a");
+
+      assertEquals(cache.get(makeKey("project-a", 1)), undefined);
+      assertEquals(cache.get(makeKey("project-b", 1)), B1);
+    });
+
+    it("should remove all projects on clear()", () => {
+      const cache = createLayoutComponentCache(10, 2);
+
+      cache.set(makeKey("project-a", 1), () => null);
+      cache.set(makeKey("project-b", 1), () => null);
+
+      cache.clear();
+
+      assertEquals(cache.get(makeKey("project-a", 1)), undefined);
+      assertEquals(cache.get(makeKey("project-b", 1)), undefined);
     });
   });
 
