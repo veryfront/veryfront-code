@@ -5,33 +5,245 @@
   "description": "Integrate with Anthropic Admin API to manage workspaces, monitor usage, and access organization data",
   "auth": {
     "type": "api-key",
-    "envVars": {
-      "ANTHROPIC_ADMIN_API_KEY": {
-        "description": "Admin API key for Anthropic organization management",
-        "required": true
+    "keyName": "ANTHROPIC_ADMIN_API_KEY",
+    "headerName": "x-api-key",
+    "docsUrl": "https://docs.anthropic.com/en/api/admin-api",
+    "requiredApis": [
+      {
+        "name": "Anthropic Admin API Keys",
+        "enableUrl": "https://console.anthropic.com/settings/admin-keys"
       }
-    }
+    ]
   },
+  "envVars": [
+    {
+      "name": "ANTHROPIC_ADMIN_API_KEY",
+      "description": "Admin API key for Anthropic organization management (starts with sk-ant-admin)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.anthropic.com/en/api/admin-api"
+    }
+  ],
   "tools": [
     {
+      "id": "list_workspaces",
       "name": "list-workspaces",
-      "description": "List all workspaces in the organization"
+      "description": "List all workspaces in the organization",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.anthropic.com/v1/organizations/workspaces",
+        "params": {
+          "anthropic_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Anthropic API version header",
+            "default": "2023-06-01",
+            "headerName": "anthropic-version"
+          },
+          "include_archived": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include archived workspaces in the results"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of workspaces per page (max 1000)",
+            "default": 20
+          },
+          "after_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Cursor: return the page after this workspace ID"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "workspaces",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "created_at" },
+              { "name": "archived_at" }
+            ],
+            "omitted": "workspace display colors and provider-specific payload fields",
+            "outputFields": [{ "name": "has_more" }, { "name": "last_id" }]
+          }
+        }
+      }
     },
     {
+      "id": "get_usage",
       "name": "get-usage",
-      "description": "Get API usage statistics for a date range"
+      "description": "Get API usage statistics for a date range",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.anthropic.com/v1/organizations/usage_report/messages",
+        "params": {
+          "anthropic_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Anthropic API version header",
+            "default": "2023-06-01",
+            "headerName": "anthropic-version"
+          },
+          "starting_at": {
+            "type": "string",
+            "in": "query",
+            "description": "Start of the reporting window as an RFC 3339 timestamp, e.g. 2025-01-01T00:00:00Z",
+            "required": true
+          },
+          "ending_at": {
+            "type": "string",
+            "in": "query",
+            "description": "End of the reporting window as an RFC 3339 timestamp"
+          },
+          "bucket_width": {
+            "type": "string",
+            "in": "query",
+            "description": "Time bucket granularity: 1m, 1h, or 1d",
+            "default": "1d"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of time buckets to return"
+          },
+          "page": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response's next_page"
+          }
+        }
+      }
     },
     {
+      "id": "list_api_keys",
       "name": "list-api-keys",
-      "description": "List API keys for a workspace or organization"
+      "description": "List API keys for a workspace or organization",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.anthropic.com/v1/organizations/api_keys",
+        "params": {
+          "anthropic_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Anthropic API version header",
+            "default": "2023-06-01",
+            "headerName": "anthropic-version"
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by key status: active, inactive, or archived"
+          },
+          "workspace_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return API keys belonging to this workspace ID"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of API keys per page (max 1000)",
+            "default": 20
+          },
+          "after_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Cursor: return the page after this API key ID"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "api_keys",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "status" },
+              { "name": "workspace_id" },
+              { "name": "created_at" },
+              { "name": "partial_key_hint" }
+            ],
+            "omitted": "key creator details and provider-specific payload fields",
+            "outputFields": [{ "name": "has_more" }, { "name": "last_id" }]
+          }
+        }
+      }
     },
     {
+      "id": "list_members",
       "name": "list-members",
-      "description": "List all members in the organization"
+      "description": "List all members in the organization",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.anthropic.com/v1/organizations/users",
+        "params": {
+          "anthropic_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Anthropic API version header",
+            "default": "2023-06-01",
+            "headerName": "anthropic-version"
+          },
+          "email": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter members by email address"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of members per page (max 1000)",
+            "default": 20
+          },
+          "after_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Cursor: return the page after this user ID"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "members",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "email" },
+              { "name": "name" },
+              { "name": "role" },
+              { "name": "added_at" }
+            ],
+            "omitted": "provider-specific payload fields",
+            "outputFields": [{ "name": "has_more" }, { "name": "last_id" }]
+          }
+        }
+      }
     },
     {
+      "id": "get_organization",
       "name": "get-organization",
-      "description": "Get organization details and settings"
+      "description": "Get organization details and settings",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.anthropic.com/v1/organizations/me",
+        "params": {
+          "anthropic_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Anthropic API version header",
+            "default": "2023-06-01",
+            "headerName": "anthropic-version"
+          }
+        }
+      }
     }
   ],
   "SETUP_GUIDE": {
@@ -80,7 +292,8 @@
     ],
     "notes": [
       "Admin API keys have full access to organization management features. Keep them secure and never commit them to version control",
-      "For production use, consider using workspace-specific keys with limited permissions where appropriate",
+      "The Admin API authenticates with the x-api-key header and requires the anthropic-version header on every request (tools default it to 2023-06-01)",
+      "Admin API keys are only available on organization accounts; individual accounts cannot use the Admin API",
       "You can revoke API keys at any time from the Anthropic Console",
       "Rate limits apply to all API endpoints. See https://docs.anthropic.com/en/api/rate-limits for details"
     ],

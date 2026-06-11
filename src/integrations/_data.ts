@@ -1139,20 +1139,232 @@ export const connectors: IntegrationConfig[] = [
       "Integrate with Anthropic Admin API to manage workspaces, monitor usage, and access organization data",
     "auth": {
       "type": "api-key",
-      "envVars": {
-        "ANTHROPIC_ADMIN_API_KEY": {
-          "description": "Admin API key for Anthropic organization management",
-          "required": true,
+      "requiredApis": [{
+        "name": "Anthropic Admin API Keys",
+        "enableUrl": "https://console.anthropic.com/settings/admin-keys",
+      }],
+      "keyName": "ANTHROPIC_ADMIN_API_KEY",
+      "headerName": "x-api-key",
+      "docsUrl": "https://docs.anthropic.com/en/api/admin-api",
+    },
+    "envVars": [{
+      "name": "ANTHROPIC_ADMIN_API_KEY",
+      "description":
+        "Admin API key for Anthropic organization management (starts with sk-ant-admin)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.anthropic.com/en/api/admin-api",
+    }],
+    "tools": [{
+      "id": "list_workspaces",
+      "name": "list-workspaces",
+      "description": "List all workspaces in the organization",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.anthropic.com/v1/organizations/workspaces",
+        "params": {
+          "anthropic_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Anthropic API version header",
+            "default": "2023-06-01",
+            "headerName": "anthropic-version",
+          },
+          "include_archived": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include archived workspaces in the results",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of workspaces per page (max 1000)",
+            "default": 20,
+          },
+          "after_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Cursor: return the page after this workspace ID",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "workspaces",
+            "itemFields": [{ "name": "id" }, { "name": "name" }, { "name": "created_at" }, {
+              "name": "archived_at",
+            }],
+            "outputFields": [{ "name": "has_more" }, { "name": "last_id" }],
+            "omitted": "workspace display colors and provider-specific payload fields",
+          },
         },
       },
-    },
-    "tools": [
-      { "name": "list-workspaces", "description": "List all workspaces in the organization" },
-      { "name": "get-usage", "description": "Get API usage statistics for a date range" },
-      { "name": "list-api-keys", "description": "List API keys for a workspace or organization" },
-      { "name": "list-members", "description": "List all members in the organization" },
-      { "name": "get-organization", "description": "Get organization details and settings" },
-    ],
+    }, {
+      "id": "get_usage",
+      "name": "get-usage",
+      "description": "Get API usage statistics for a date range",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.anthropic.com/v1/organizations/usage_report/messages",
+        "params": {
+          "anthropic_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Anthropic API version header",
+            "default": "2023-06-01",
+            "headerName": "anthropic-version",
+          },
+          "starting_at": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Start of the reporting window as an RFC 3339 timestamp, e.g. 2025-01-01T00:00:00Z",
+            "required": true,
+          },
+          "ending_at": {
+            "type": "string",
+            "in": "query",
+            "description": "End of the reporting window as an RFC 3339 timestamp",
+          },
+          "bucket_width": {
+            "type": "string",
+            "in": "query",
+            "description": "Time bucket granularity: 1m, 1h, or 1d",
+            "default": "1d",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of time buckets to return",
+          },
+          "page": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response's next_page",
+          },
+        },
+      },
+    }, {
+      "id": "list_api_keys",
+      "name": "list-api-keys",
+      "description": "List API keys for a workspace or organization",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.anthropic.com/v1/organizations/api_keys",
+        "params": {
+          "anthropic_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Anthropic API version header",
+            "default": "2023-06-01",
+            "headerName": "anthropic-version",
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by key status: active, inactive, or archived",
+          },
+          "workspace_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return API keys belonging to this workspace ID",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of API keys per page (max 1000)",
+            "default": 20,
+          },
+          "after_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Cursor: return the page after this API key ID",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "api_keys",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "status" },
+              { "name": "workspace_id" },
+              { "name": "created_at" },
+              { "name": "partial_key_hint" },
+            ],
+            "outputFields": [{ "name": "has_more" }, { "name": "last_id" }],
+            "omitted": "key creator details and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "list_members",
+      "name": "list-members",
+      "description": "List all members in the organization",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.anthropic.com/v1/organizations/users",
+        "params": {
+          "anthropic_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Anthropic API version header",
+            "default": "2023-06-01",
+            "headerName": "anthropic-version",
+          },
+          "email": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter members by email address",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of members per page (max 1000)",
+            "default": 20,
+          },
+          "after_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Cursor: return the page after this user ID",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "members",
+            "itemFields": [{ "name": "id" }, { "name": "email" }, { "name": "name" }, {
+              "name": "role",
+            }, { "name": "added_at" }],
+            "outputFields": [{ "name": "has_more" }, { "name": "last_id" }],
+            "omitted": "provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_organization",
+      "name": "get-organization",
+      "description": "Get organization details and settings",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.anthropic.com/v1/organizations/me",
+        "params": {
+          "anthropic_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Anthropic API version header",
+            "default": "2023-06-01",
+            "headerName": "anthropic-version",
+          },
+        },
+      },
+    }],
   },
   {
     "name": "apollo",
@@ -1934,6 +2146,29 @@ export const connectors: IntegrationConfig[] = [
           },
         },
       },
+    }, {
+      "id": "get_project",
+      "name": "Get Project",
+      "description": "Get details of a specific Asana project",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://app.asana.com/api/1.0/projects/{projectGid}",
+        "params": {
+          "projectGid": {
+            "type": "string",
+            "in": "path",
+            "description": "Asana project GID",
+            "required": true,
+          },
+          "opt_fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated project fields to return",
+          },
+        },
+        "response": { "transform": "data" },
+      },
     }],
     "prompts": [{
       "id": "my_tasks",
@@ -2700,7 +2935,7 @@ export const connectors: IntegrationConfig[] = [
       "provider": "bitbucket",
       "authorizationUrl": "https://bitbucket.org/site/oauth2/authorize",
       "tokenUrl": "https://bitbucket.org/site/oauth2/access_token",
-      "scopes": ["repository", "pullrequest", "issue", "account"],
+      "scopes": ["repository", "pullrequest:write", "issue", "account"],
     },
     "envVars": [{
       "name": "BITBUCKET_CLIENT_ID",
@@ -2720,21 +2955,299 @@ export const connectors: IntegrationConfig[] = [
       "name": "List Repositories",
       "description": "Get list of user's repositories",
       "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.bitbucket.org/2.0/repositories",
+        "params": {
+          "role": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Filter to repositories where the user has this role: member, contributor, admin, or owner",
+            "default": "member",
+          },
+          "q": {
+            "type": "string",
+            "in": "query",
+            "description": 'Bitbucket query filter, for example name~"api"',
+          },
+          "sort": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort field, for example -updated_on",
+            "default": "-updated_on",
+          },
+          "pagelen": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum repositories per page",
+            "default": 25,
+          },
+          "page": { "type": "number", "in": "query", "description": "Page number to fetch" },
+        },
+        "response": {
+          "transform": "values",
+          "historicalSummary": {
+            "collectionKeys": ["values", "repositories"],
+            "collectionName": "repositories",
+            "itemFields": [
+              { "name": "uuid" },
+              { "name": "name" },
+              { "name": "full_name" },
+              { "name": "slug" },
+              { "name": "is_private" },
+              { "name": "language" },
+              { "name": "created_on" },
+              { "name": "updated_on" },
+              { "name": "owner", "kind": "contact" },
+            ],
+            "outputFields": [{ "name": "next" }, { "name": "page" }, { "name": "pagelen" }, {
+              "name": "size",
+            }],
+            "omitted": "repository links, clone URLs, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_repository",
+      "name": "Get Repository",
+      "description": "Get details of a specific repository",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.bitbucket.org/2.0/repositories/{workspace}/{repoSlug}",
+        "params": {
+          "workspace": {
+            "type": "string",
+            "in": "path",
+            "description": "Bitbucket workspace ID or slug",
+            "required": true,
+          },
+          "repoSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Repository slug",
+            "required": true,
+          },
+        },
+      },
     }, {
       "id": "list_pull_requests",
       "name": "List Pull Requests",
       "description": "Get pull requests for a repository",
       "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.bitbucket.org/2.0/repositories/{workspace}/{repoSlug}/pullrequests",
+        "params": {
+          "workspace": {
+            "type": "string",
+            "in": "path",
+            "description": "Bitbucket workspace ID or slug",
+            "required": true,
+          },
+          "repoSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Repository slug",
+            "required": true,
+          },
+          "state": {
+            "type": "string",
+            "in": "query",
+            "description": "Pull request state filter: OPEN, MERGED, DECLINED, or SUPERSEDED",
+            "default": "OPEN",
+          },
+          "q": {
+            "type": "string",
+            "in": "query",
+            "description": 'Bitbucket query filter, for example author.nickname="alice"',
+          },
+          "pagelen": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum pull requests per page",
+            "default": 25,
+          },
+          "page": { "type": "number", "in": "query", "description": "Page number to fetch" },
+        },
+        "response": {
+          "transform": "values",
+          "historicalSummary": {
+            "collectionKeys": ["values", "pull_requests"],
+            "collectionName": "pull_requests",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "title" },
+              { "name": "state" },
+              { "name": "created_on" },
+              { "name": "updated_on" },
+              { "name": "author", "kind": "contact" },
+            ],
+            "outputFields": [{ "name": "next" }, { "name": "page" }, { "name": "pagelen" }, {
+              "name": "size",
+            }],
+            "omitted":
+              "pull request descriptions, diffs, links, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_pull_request",
+      "name": "Get Pull Request",
+      "description": "Get details of a specific pull request",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url":
+          "https://api.bitbucket.org/2.0/repositories/{workspace}/{repoSlug}/pullrequests/{pullRequestId}",
+        "params": {
+          "workspace": {
+            "type": "string",
+            "in": "path",
+            "description": "Bitbucket workspace ID or slug",
+            "required": true,
+          },
+          "repoSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Repository slug",
+            "required": true,
+          },
+          "pullRequestId": {
+            "type": "number",
+            "in": "path",
+            "description": "Pull request ID",
+            "required": true,
+          },
+        },
+      },
     }, {
       "id": "create_pull_request",
       "name": "Create Pull Request",
       "description": "Create a new pull request",
       "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.bitbucket.org/2.0/repositories/{workspace}/{repoSlug}/pullrequests",
+        "params": {
+          "workspace": {
+            "type": "string",
+            "in": "path",
+            "description": "Bitbucket workspace ID or slug",
+            "required": true,
+          },
+          "repoSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Repository slug",
+            "required": true,
+          },
+        },
+        "body": {
+          "title": { "type": "string", "description": "Pull request title", "required": true },
+          "source": {
+            "type": "object",
+            "description": "Source branch, e.g. { branch: { name: 'feature-branch' } }",
+            "required": true,
+          },
+          "destination": {
+            "type": "object",
+            "description":
+              "Destination branch, e.g. { branch: { name: 'main' } }; defaults to the repository main branch",
+          },
+          "description": {
+            "type": "string",
+            "description": "Pull request description (markup supported)",
+          },
+          "close_source_branch": {
+            "type": "boolean",
+            "description": "Whether to close the source branch after merge",
+          },
+          "reviewers": {
+            "type": "array",
+            "description": "Reviewers, e.g. [{ uuid: '{user-uuid}' }]",
+          },
+        },
+      },
+    }, {
+      "id": "add_pull_request_comment",
+      "name": "Add Pull Request Comment",
+      "description": "Add a comment to a pull request",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url":
+          "https://api.bitbucket.org/2.0/repositories/{workspace}/{repoSlug}/pullrequests/{pullRequestId}/comments",
+        "params": {
+          "workspace": {
+            "type": "string",
+            "in": "path",
+            "description": "Bitbucket workspace ID or slug",
+            "required": true,
+          },
+          "repoSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Repository slug",
+            "required": true,
+          },
+          "pullRequestId": {
+            "type": "number",
+            "in": "path",
+            "description": "Pull request ID",
+            "required": true,
+          },
+        },
+        "body": {
+          "content": {
+            "type": "object",
+            "description": "Comment content, e.g. { raw: 'Comment text' }",
+            "required": true,
+          },
+        },
+      },
     }, {
       "id": "list_issues",
       "name": "List Issues",
       "description": "Get issues for a repository",
       "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.bitbucket.org/2.0/repositories/{workspace}/{repoSlug}/issues",
+        "params": {
+          "workspace": {
+            "type": "string",
+            "in": "path",
+            "description": "Bitbucket workspace ID or slug",
+            "required": true,
+          },
+          "repoSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Repository slug",
+            "required": true,
+          },
+          "q": {
+            "type": "string",
+            "in": "query",
+            "description": 'Bitbucket query filter, for example state="new"',
+          },
+          "sort": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort field, for example -updated_on",
+          },
+          "pagelen": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum issues per page",
+            "default": 25,
+          },
+          "page": { "type": "number", "in": "query", "description": "Page number to fetch" },
+        },
+        "response": { "transform": "values" },
+      },
     }],
     "prompts": [{
       "id": "review_prs",
@@ -4653,6 +5166,41 @@ export const connectors: IntegrationConfig[] = [
         },
         "response": { "transform": "results" },
       },
+    }, {
+      "id": "add_comment",
+      "name": "Add Comment",
+      "description": "Add a comment to a Confluence page (uses v1 content API)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.atlassian.com/ex/confluence/{cloudId}/wiki/rest/api/content",
+        "params": {
+          "cloudId": {
+            "type": "string",
+            "in": "path",
+            "description": "Atlassian cloud ID from accessible-resources",
+            "required": true,
+          },
+        },
+        "body": {
+          "type": {
+            "type": "string",
+            "description": "Content type; must be 'comment'",
+            "default": "comment",
+          },
+          "container": {
+            "type": "object",
+            "description": "Parent content, e.g. {id: '<pageId>', type: 'page'}",
+            "required": true,
+          },
+          "body": {
+            "type": "object",
+            "description":
+              "Comment body, e.g. {storage: {value: '<p>comment</p>', representation: 'storage'}}",
+            "required": true,
+          },
+        },
+      },
     }],
     "prompts": [{
       "id": "search_docs",
@@ -5749,6 +6297,54 @@ export const connectors: IntegrationConfig[] = [
             "type": "string",
             "in": "path",
             "description": "Google Drive file ID to delete",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "download_file",
+      "name": "Download File",
+      "description":
+        "Download the content of a binary or text file stored in Google Drive (not Google Docs/Sheets/Slides; use export_file for those)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://www.googleapis.com/drive/v3/files/{fileId}",
+        "params": {
+          "fileId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Drive file ID to download",
+            "required": true,
+          },
+          "alt": {
+            "type": "string",
+            "in": "query",
+            "description": "Response mode; media returns file content",
+            "default": "media",
+          },
+        },
+      },
+    }, {
+      "id": "export_file",
+      "name": "Export File",
+      "description":
+        "Export a Google Docs/Sheets/Slides file to another format such as text/plain, text/csv, or application/pdf",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://www.googleapis.com/drive/v3/files/{fileId}/export",
+        "params": {
+          "fileId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Drive file ID of the Google Workspace document to export",
+            "required": true,
+          },
+          "mimeType": {
+            "type": "string",
+            "in": "query",
+            "description": "Export MIME type, e.g. text/plain, text/csv, application/pdf",
             "required": true,
           },
         },
@@ -12056,6 +12652,56 @@ export const connectors: IntegrationConfig[] = [
           },
         },
       },
+    }, {
+      "id": "search_users",
+      "name": "Search Users",
+      "description":
+        "Search Jira users by name or email to find the accountId needed for assigning issues",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/user/search",
+        "params": {
+          "cloudId": {
+            "type": "string",
+            "in": "path",
+            "description": "Atlassian cloud ID from OAuth accessible resources",
+            "required": true,
+          },
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "Matches against display name and email address",
+            "required": true,
+          },
+          "maxResults": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum users to return",
+            "default": 50,
+          },
+          "startAt": {
+            "type": "number",
+            "in": "query",
+            "description": "Pagination offset",
+            "default": 0,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["users", "values"],
+            "collectionName": "users",
+            "itemFields": [
+              { "name": "accountId" },
+              { "name": "displayName" },
+              { "name": "emailAddress" },
+              { "name": "active" },
+              { "name": "accountType" },
+            ],
+            "omitted": "avatar URLs, timezone, and provider-specific profile fields",
+          },
+        },
+      },
     }],
     "prompts": [{
       "id": "find_bugs",
@@ -13093,6 +13739,34 @@ export const connectors: IntegrationConfig[] = [
         },
         "response": { "transform": "commentCreate" },
       },
+    }, {
+      "id": "list_issue_labels",
+      "name": "List Issue Labels",
+      "description":
+        "List Linear issue labels so the right label IDs can be applied when creating or updating issues",
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.linear.app/graphql",
+        "query":
+          "query($first: Int) { issueLabels(first: $first) { nodes { id name color description team { id name } } } }",
+        "params": {
+          "first": { "type": "number", "in": "body", "description": "Max results", "default": 100 },
+        },
+        "response": {
+          "transform": "issueLabels",
+          "historicalSummary": {
+            "collectionKeys": ["issueLabels", "nodes", "data"],
+            "collectionName": "issueLabels",
+            "itemFields": [{ "name": "id" }, { "name": "name" }, { "name": "color" }, {
+              "name": "description",
+            }],
+            "outputFields": [{ "name": "pageInfo", "kind": "object" }],
+            "omitted": "label team details and provider-specific payload fields",
+          },
+        },
+      },
     }],
     "prompts": [{
       "id": "find_issues",
@@ -13438,28 +14112,46 @@ export const connectors: IntegrationConfig[] = [
     "description":
       "Track events, analyze funnels, and understand user behavior with Mixpanel analytics",
     "auth": {
-      "type": "api-key",
+      "type": "basic",
       "requiredApis": [{
-        "name": "Mixpanel API",
-        "enableUrl": "https://mixpanel.com/settings/project",
+        "name": "Mixpanel Service Accounts",
+        "enableUrl": "https://mixpanel.com/settings/org#serviceaccounts",
       }],
-      "keyName": "MIXPANEL_PROJECT_TOKEN",
+      "usernameKey": "MIXPANEL_SERVICE_ACCOUNT_USERNAME",
+      "passwordKey": "MIXPANEL_SERVICE_ACCOUNT_SECRET",
+      "docsUrl": "https://developer.mixpanel.com/reference/service-accounts",
     },
     "envVars": [{
+      "name": "MIXPANEL_SERVICE_ACCOUNT_USERNAME",
+      "description":
+        "Mixpanel service account username (HTTP Basic username for Query and Export APIs)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.mixpanel.com/reference/service-accounts",
+    }, {
+      "name": "MIXPANEL_SERVICE_ACCOUNT_SECRET",
+      "description":
+        "Mixpanel service account secret (HTTP Basic password for Query and Export APIs)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.mixpanel.com/reference/service-accounts",
+    }, {
       "name": "MIXPANEL_PROJECT_TOKEN",
       "description": "Mixpanel Project Token for event tracking",
-      "required": true,
+      "required": false,
       "sensitive": true,
       "docsUrl": "https://docs.mixpanel.com/docs/tracking-methods/id-management/authentication",
     }, {
       "name": "MIXPANEL_API_SECRET",
-      "description": "Mixpanel API Secret for data export and query operations",
-      "required": true,
+      "description":
+        "Legacy Mixpanel project API secret (deprecated by Mixpanel in favor of service accounts; only used by local file-based tools)",
+      "required": false,
       "sensitive": true,
       "docsUrl": "https://developer.mixpanel.com/reference/authentication",
     }, {
       "name": "MIXPANEL_PROJECT_ID",
-      "description": "Mixpanel Project ID (found in project settings)",
+      "description":
+        "Mixpanel Project ID (found in project settings; pass it as the project_id parameter on query tools)",
       "required": true,
       "sensitive": false,
       "docsUrl": "https://docs.mixpanel.com/docs/admin/organizations-projects/manage-projects",
@@ -13474,21 +14166,215 @@ export const connectors: IntegrationConfig[] = [
       "name": "Query Events",
       "description": "Query and export event data from Mixpanel",
       "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{exportHost}/api/2.0/export",
+        "params": {
+          "exportHost": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Mixpanel raw export host: data.mixpanel.com (US), data-eu.mixpanel.com (EU), or data-in.mixpanel.com (India)",
+            "default": "data.mixpanel.com",
+          },
+          "project_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Mixpanel project ID (same as MIXPANEL_PROJECT_ID)",
+            "required": true,
+          },
+          "from_date": {
+            "type": "string",
+            "in": "query",
+            "description": "Start date (YYYY-MM-DD, inclusive)",
+            "required": true,
+          },
+          "to_date": {
+            "type": "string",
+            "in": "query",
+            "description": "End date (YYYY-MM-DD, inclusive)",
+            "required": true,
+          },
+          "event": {
+            "type": "string",
+            "in": "query",
+            "description": 'JSON array of event names to export, e.g. ["Signed Up","Purchased"]',
+          },
+          "where": {
+            "type": "string",
+            "in": "query",
+            "description": "Segmentation expression to filter events",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum events to return (max 100000)",
+            "default": 100,
+          },
+        },
+      },
     }, {
       "id": "get_funnel",
       "name": "Get Funnel",
       "description": "Retrieve funnel analysis data to understand conversion rates",
       "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/api/query/funnels",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Mixpanel API host: mixpanel.com (US), eu.mixpanel.com (EU), or in.mixpanel.com (India)",
+            "default": "mixpanel.com",
+          },
+          "project_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Mixpanel project ID (same as MIXPANEL_PROJECT_ID)",
+            "required": true,
+          },
+          "funnel_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Saved funnel ID (use List Funnels to find it)",
+            "required": true,
+          },
+          "from_date": {
+            "type": "string",
+            "in": "query",
+            "description": "Start date (YYYY-MM-DD)",
+            "required": true,
+          },
+          "to_date": {
+            "type": "string",
+            "in": "query",
+            "description": "End date (YYYY-MM-DD)",
+            "required": true,
+          },
+          "unit": {
+            "type": "string",
+            "in": "query",
+            "description": "Bucket size: day, week, or month",
+          },
+        },
+      },
+    }, {
+      "id": "list_funnels",
+      "name": "List Funnels",
+      "description": "List saved funnels with their names and funnel IDs",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/api/query/funnels/list",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Mixpanel API host: mixpanel.com (US), eu.mixpanel.com (EU), or in.mixpanel.com (India)",
+            "default": "mixpanel.com",
+          },
+          "project_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Mixpanel project ID (same as MIXPANEL_PROJECT_ID)",
+            "required": true,
+          },
+        },
+      },
     }, {
       "id": "get_retention",
       "name": "Get Retention",
       "description": "Analyze user retention cohorts over time",
       "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/api/query/retention",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Mixpanel API host: mixpanel.com (US), eu.mixpanel.com (EU), or in.mixpanel.com (India)",
+            "default": "mixpanel.com",
+          },
+          "project_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Mixpanel project ID (same as MIXPANEL_PROJECT_ID)",
+            "required": true,
+          },
+          "from_date": {
+            "type": "string",
+            "in": "query",
+            "description": "Start date (YYYY-MM-DD)",
+            "required": true,
+          },
+          "to_date": {
+            "type": "string",
+            "in": "query",
+            "description": "End date (YYYY-MM-DD)",
+            "required": true,
+          },
+          "retention_type": {
+            "type": "string",
+            "in": "query",
+            "description": "birth (first-time) or compounded; defaults to birth",
+          },
+          "born_event": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Cohort-defining first event, e.g. Signed Up (required when retention_type is birth)",
+          },
+          "event": {
+            "type": "string",
+            "in": "query",
+            "description": "Event that counts as a return visit",
+          },
+          "unit": {
+            "type": "string",
+            "in": "query",
+            "description": "Bucket size: day, week, or month",
+          },
+        },
+      },
     }, {
       "id": "list_cohorts",
       "name": "List Cohorts",
       "description": "List all user cohorts defined in your Mixpanel project",
       "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{host}/api/query/cohorts/list",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Mixpanel API host: mixpanel.com (US), eu.mixpanel.com (EU), or in.mixpanel.com (India)",
+            "default": "mixpanel.com",
+          },
+          "project_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Mixpanel project ID (same as MIXPANEL_PROJECT_ID)",
+            "required": true,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["cohorts"],
+            "collectionName": "cohorts",
+            "itemFields": [{ "name": "id" }, { "name": "name" }, { "name": "count" }, {
+              "name": "created",
+            }, { "name": "is_visible" }],
+            "omitted": "cohort descriptions and provider-specific payload fields",
+          },
+        },
+      },
     }],
     "prompts": [{
       "id": "event_analysis",
@@ -13523,6 +14409,9 @@ export const connectors: IntegrationConfig[] = [
         "name": "Neon Management API",
         "enableUrl": "https://console.neon.tech/app/settings/api-keys",
       }],
+      "keyName": "NEON_API_KEY",
+      "headerName": "Authorization",
+      "headerPrefix": "Bearer",
       "tokenName": "API Key",
       "docsUrl": "https://neon.tech/docs/manage/api-keys",
     },
@@ -13545,11 +14434,140 @@ export const connectors: IntegrationConfig[] = [
       "name": "List Projects",
       "description": "List all Neon projects in your account",
       "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://console.neon.tech/api/v2/projects",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Projects per page (max 400)",
+            "default": 25,
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["projects"],
+            "collectionName": "projects",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "region_id" },
+              { "name": "pg_version" },
+              { "name": "created_at" },
+              { "name": "updated_at" },
+            ],
+            "omitted": "compute settings, quotas, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_project",
+      "name": "Get Project",
+      "description": "Get details of a specific Neon project",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://console.neon.tech/api/v2/projects/{projectId}",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "Neon project ID",
+            "required": true,
+          },
+        },
+      },
     }, {
       "id": "list_branches",
       "name": "List Branches",
       "description": "List all branches for a specific project",
       "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://console.neon.tech/api/v2/projects/{projectId}/branches",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "Neon project ID",
+            "required": true,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["branches"],
+            "collectionName": "branches",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "parent_id" },
+              { "name": "default" },
+              { "name": "current_state" },
+              { "name": "created_at" },
+            ],
+            "omitted": "branch size/usage metrics and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "create_branch",
+      "name": "Create Branch",
+      "description": "Create a new branch in a Neon project",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://console.neon.tech/api/v2/projects/{projectId}/branches",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "Neon project ID",
+            "required": true,
+          },
+        },
+        "body": {
+          "branch": {
+            "type": "object",
+            "description":
+              'Branch settings, e.g. {"name":"feature-x","parent_id":"br-xxx"} (parent defaults to the project\'s default branch)',
+          },
+          "endpoints": {
+            "type": "array",
+            "description":
+              'Compute endpoints to create with the branch, e.g. [{"type":"read_write"}]',
+          },
+        },
+      },
+    }, {
+      "id": "list_databases",
+      "name": "List Databases",
+      "description": "List databases on a specific branch of a project",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url":
+          "https://console.neon.tech/api/v2/projects/{projectId}/branches/{branchId}/databases",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "Neon project ID",
+            "required": true,
+          },
+          "branchId": {
+            "type": "string",
+            "in": "path",
+            "description": "Neon branch ID, e.g. br-xxx (use List Branches to find it)",
+            "required": true,
+          },
+        },
+      },
     }, {
       "id": "query_database",
       "name": "Query Database",
@@ -13847,6 +14865,71 @@ export const connectors: IntegrationConfig[] = [
           "cover": { "type": "object", "description": "Optional page cover" },
         },
       },
+    }, {
+      "id": "create_database",
+      "name": "Create Database",
+      "description": "Create a new Notion database as a subpage with a property schema",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/databases",
+        "params": {
+          "Notion-Version": {
+            "type": "string",
+            "in": "header",
+            "description": "Notion API version",
+            "default": "2022-06-28",
+          },
+        },
+        "body": {
+          "parent": {
+            "type": "object",
+            "description": "Notion parent object, e.g. {type: 'page_id', page_id: '...'}",
+            "required": true,
+          },
+          "title": {
+            "type": "array",
+            "description": "Database title as an array of rich text objects",
+            "required": true,
+          },
+          "properties": {
+            "type": "object",
+            "description":
+              "Database property schema, e.g. {Name: {title: {}}, Status: {select: {options: [...]}}}",
+            "required": true,
+          },
+          "is_inline": {
+            "type": "boolean",
+            "description": "Whether the database appears inline in the parent page",
+          },
+        },
+      },
+    }, {
+      "id": "list_users",
+      "name": "List Users",
+      "description":
+        "List users in the Notion workspace so pages can mention or attribute the right person",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.notion.com/v1/users",
+        "params": {
+          "Notion-Version": {
+            "type": "string",
+            "in": "header",
+            "description": "Notion API version",
+            "default": "2022-06-28",
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum users to return",
+            "default": 100,
+          },
+          "start_cursor": { "type": "string", "in": "query", "description": "Pagination cursor" },
+        },
+        "response": { "transform": "results" },
+      },
     }],
     "prompts": [{
       "id": "search_docs",
@@ -14000,6 +15083,75 @@ export const connectors: IntegrationConfig[] = [
             "type": "string",
             "in": "path",
             "description": "OneDrive file item ID",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "get_file",
+      "name": "Get File",
+      "description": "Get metadata for a OneDrive file or folder",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/me/drive/items/{itemId}",
+        "params": {
+          "itemId": {
+            "type": "string",
+            "in": "path",
+            "description": "OneDrive item ID",
+            "required": true,
+          },
+          "$select": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated fields to return",
+          },
+        },
+      },
+    }, {
+      "id": "create_folder",
+      "name": "Create Folder",
+      "description": "Create a new folder in OneDrive",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/me/drive/items/{parentFolderId}/children",
+        "params": {
+          "parentFolderId": {
+            "type": "string",
+            "in": "path",
+            "description": "Parent folder item ID, or root",
+            "default": "root",
+          },
+        },
+        "body": {
+          "name": { "type": "string", "description": "Folder name", "required": true },
+          "folder": {
+            "type": "object",
+            "description": "Empty folder facet marking the item as a folder",
+            "default": {},
+          },
+          "@microsoft.graph.conflictBehavior": {
+            "type": "string",
+            "description": "How to handle name conflicts: rename, replace, or fail",
+            "default": "rename",
+          },
+        },
+      },
+    }, {
+      "id": "delete_file",
+      "name": "Delete File",
+      "description": "Delete a file or folder from OneDrive (moves it to the recycle bin)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "DELETE",
+        "url": "https://graph.microsoft.com/v1.0/me/drive/items/{itemId}",
+        "params": {
+          "itemId": {
+            "type": "string",
+            "in": "path",
+            "description": "OneDrive item ID to delete",
             "required": true,
           },
         },
@@ -16945,6 +18097,7 @@ export const connectors: IntegrationConfig[] = [
       "keyName": "POSTHOG_API_KEY",
       "headerName": "Authorization",
       "headerPrefix": "Bearer",
+      "docsUrl": "https://posthog.com/docs/api",
     },
     "envVars": [{
       "name": "POSTHOG_API_KEY",
@@ -16954,7 +18107,8 @@ export const connectors: IntegrationConfig[] = [
       "docsUrl": "https://posthog.com/docs/api/overview",
     }, {
       "name": "POSTHOG_HOST",
-      "description": "PostHog API host (defaults to https://app.posthog.com)",
+      "description":
+        "PostHog API host (defaults to https://us.posthog.com; app.posthog.com is the legacy US alias)",
       "required": false,
       "sensitive": false,
       "docsUrl": "https://posthog.com/docs/self-host",
@@ -16964,16 +18118,137 @@ export const connectors: IntegrationConfig[] = [
       "name": "Get Trends",
       "description": "Retrieve event trends and analytics data",
       "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{host}/api/projects/{projectId}/query/",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "PostHog API host: us.posthog.com for US Cloud, eu.posthog.com for EU Cloud",
+            "default": "us.posthog.com",
+          },
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "PostHog project ID",
+            "required": true,
+          },
+        },
+        "body": {
+          "query": {
+            "type": "object",
+            "description":
+              'PostHog query object, e.g. {"kind":"HogQLQuery","query":"SELECT event, count() FROM events WHERE timestamp > now() - INTERVAL 7 DAY GROUP BY event ORDER BY count() DESC LIMIT 20"} or a TrendsQuery',
+            "required": true,
+          },
+          "name": {
+            "type": "string",
+            "description": "Optional name to identify the query in logs",
+          },
+        },
+      },
     }, {
       "id": "list_feature_flags",
       "name": "List Feature Flags",
       "description": "List all feature flags in your PostHog project",
       "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/api/projects/{projectId}/feature_flags/",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "PostHog API host: us.posthog.com for US Cloud, eu.posthog.com for EU Cloud",
+            "default": "us.posthog.com",
+          },
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "PostHog project ID",
+            "required": true,
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Feature flags per page",
+            "default": 50,
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of feature flags to skip for pagination",
+            "default": 0,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["results"],
+            "collectionName": "feature_flags",
+            "itemFields": [{ "name": "id" }, { "name": "key" }, { "name": "name" }, {
+              "name": "active",
+            }, { "name": "created_at" }],
+            "outputFields": [{ "name": "count" }, { "name": "next" }],
+            "omitted": "rollout filters, variants, and provider-specific payload fields",
+          },
+        },
+      },
     }, {
       "id": "list_persons",
       "name": "List Persons",
       "description": "List persons/users tracked in PostHog",
       "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/api/projects/{projectId}/persons/",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "PostHog API host: us.posthog.com for US Cloud, eu.posthog.com for EU Cloud",
+            "default": "us.posthog.com",
+          },
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "PostHog project ID",
+            "required": true,
+          },
+          "search": {
+            "type": "string",
+            "in": "query",
+            "description": "Search persons by name, email, or distinct ID",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Persons per page",
+            "default": 20,
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of persons to skip for pagination",
+            "default": 0,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["results"],
+            "collectionName": "persons",
+            "itemFields": [{ "name": "id" }, { "name": "name" }, {
+              "name": "distinct_ids",
+              "kind": "string-array",
+            }, { "name": "created_at" }],
+            "outputFields": [{ "name": "count" }, { "name": "next" }],
+            "omitted": "person properties and provider-specific payload fields",
+          },
+        },
+      },
     }, {
       "id": "capture_event",
       "name": "Capture Event",
@@ -17958,6 +19233,43 @@ export const connectors: IntegrationConfig[] = [
           "Status": { "type": "string", "description": "Lead status" },
         },
       },
+    }, {
+      "id": "soql_query",
+      "name": "Run SOQL Query",
+      "description": "Run an arbitrary SOQL query against any Salesforce object",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "{{oauth.raw.instance_url}}/services/data/v61.0/query",
+        "params": {
+          "q": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "SOQL query to execute, for example SELECT Id, Name FROM Account LIMIT 10",
+            "required": true,
+          },
+        },
+        "response": { "transform": "records" },
+      },
+    }, {
+      "id": "describe_object",
+      "name": "Describe Object",
+      "description": "Get metadata and field definitions for a Salesforce object",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "{{oauth.raw.instance_url}}/services/data/v61.0/sobjects/{sobjectType}/describe",
+        "params": {
+          "sobjectType": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Salesforce object API name, for example Account, Contact, or Opportunity",
+            "required": true,
+          },
+        },
+      },
     }],
     "prompts": [{
       "id": "find_accounts",
@@ -18783,6 +20095,31 @@ export const connectors: IntegrationConfig[] = [
           "statusDetails": { "type": "object", "description": "Optional Sentry status details" },
         },
       },
+    }, {
+      "id": "get_latest_event",
+      "name": "Get Latest Event",
+      "description":
+        "Get the latest event for a Sentry issue, including the stack trace and tags needed for root-cause analysis",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url":
+          "https://sentry.io/api/0/organizations/{organizationSlug}/issues/{issueId}/events/latest/",
+        "params": {
+          "organizationSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Sentry organization slug",
+            "required": true,
+          },
+          "issueId": {
+            "type": "string",
+            "in": "path",
+            "description": "Sentry issue ID",
+            "required": true,
+          },
+        },
+      },
     }],
     "prompts": [{
       "id": "check_errors",
@@ -19005,6 +20342,42 @@ export const connectors: IntegrationConfig[] = [
         },
         "response": { "transform": "result" },
       },
+    }, {
+      "id": "search_users",
+      "name": "Search Users",
+      "description": "Search ServiceNow users to find the sys_id needed for assigning incidents",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{instanceHost}/api/now/v1/table/sys_user",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "ServiceNow instance host, for example example.service-now.com",
+            "required": true,
+          },
+          "sysparm_query": {
+            "type": "string",
+            "in": "query",
+            "description": "Encoded query for users, e.g. nameLIKEsmith^active=true",
+            "required": true,
+          },
+          "sysparm_limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum users to return",
+            "default": 10,
+          },
+          "sysparm_fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated user fields",
+            "default": "sys_id,user_name,name,email,active,department",
+          },
+        },
+        "response": { "transform": "result" },
+      },
     }],
     "prompts": [{
       "id": "check_ticket_status",
@@ -19190,6 +20563,60 @@ export const connectors: IntegrationConfig[] = [
           },
         },
         "contentType": "application/octet-stream",
+      },
+    }, {
+      "id": "search_files",
+      "name": "Search Files",
+      "description":
+        "Search for files and folders in a SharePoint document library by name or content",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/sites/{siteId}/drive/root/search(q='{query}')",
+        "params": {
+          "siteId": {
+            "type": "string",
+            "in": "path",
+            "description": "SharePoint site ID",
+            "required": true,
+          },
+          "query": {
+            "type": "string",
+            "in": "path",
+            "description": "Search query",
+            "required": true,
+          },
+          "$top": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum number of items to return",
+            "default": 200,
+          },
+        },
+        "response": { "transform": "value" },
+      },
+    }, {
+      "id": "download_file",
+      "name": "Download File",
+      "description": "Download file content from a SharePoint document library",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/sites/{siteId}/drive/items/{itemId}/content",
+        "params": {
+          "siteId": {
+            "type": "string",
+            "in": "path",
+            "description": "SharePoint site ID",
+            "required": true,
+          },
+          "itemId": {
+            "type": "string",
+            "in": "path",
+            "description": "Drive item ID",
+            "required": true,
+          },
+        },
       },
     }],
     "prompts": [{
@@ -20128,6 +21555,53 @@ export const connectors: IntegrationConfig[] = [
         },
       },
     }, {
+      "id": "update_message",
+      "name": "Update Message",
+      "description": "Update a message previously sent by this integration",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.update",
+        "body": {
+          "channel": {
+            "type": "string",
+            "description": "Channel ID containing the message",
+            "required": true,
+          },
+          "ts": {
+            "type": "string",
+            "description": "Timestamp (ts) of the message to update",
+            "required": true,
+          },
+          "text": {
+            "type": "string",
+            "description": "New message text (supports mrkdwn)",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "delete_message",
+      "name": "Delete Message",
+      "description": "Delete a message previously sent by this integration",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.delete",
+        "body": {
+          "channel": {
+            "type": "string",
+            "description": "Channel ID containing the message",
+            "required": true,
+          },
+          "ts": {
+            "type": "string",
+            "description": "Timestamp (ts) of the message to delete",
+            "required": true,
+          },
+        },
+      },
+    }, {
       "id": "get_messages",
       "name": "Get Messages",
       "description": "Get recent messages from a channel",
@@ -20220,8 +21694,19 @@ export const connectors: IntegrationConfig[] = [
     "auth": {
       "type": "api-key",
       "requiredApis": [{ "name": "Snowflake Account", "enableUrl": "https://app.snowflake.com/" }],
+      "keyName": "SNOWFLAKE_PAT",
+      "headerName": "Authorization",
+      "headerPrefix": "Bearer",
+      "docsUrl": "https://docs.snowflake.com/en/developer-guide/sql-api/authenticating",
     },
     "envVars": [{
+      "name": "SNOWFLAKE_PAT",
+      "description":
+        "Snowflake programmatic access token (PAT) used as a Bearer token with the SQL API",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.snowflake.com/en/user-guide/programmatic-access-tokens",
+    }, {
       "name": "SNOWFLAKE_ACCOUNT",
       "description": "Your Snowflake account identifier (e.g., xy12345.us-east-1)",
       "required": true,
@@ -20262,7 +21747,43 @@ export const connectors: IntegrationConfig[] = [
       "id": "run_query",
       "name": "Run Query",
       "description": "Execute a SQL query against your Snowflake data warehouse",
-      "requiresWrite": false,
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{account}.snowflakecomputing.com/api/v2/statements",
+        "params": {
+          "account": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Snowflake account identifier, e.g. xy12345.us-east-1 (the same value as SNOWFLAKE_ACCOUNT)",
+            "required": true,
+          },
+          "token_type": {
+            "type": "string",
+            "in": "header",
+            "description": "Snowflake authorization token type",
+            "default": "PROGRAMMATIC_ACCESS_TOKEN",
+            "headerName": "X-Snowflake-Authorization-Token-Type",
+          },
+        },
+        "body": {
+          "statement": {
+            "type": "string",
+            "description":
+              "SQL statement to execute, e.g. SELECT * FROM my_table LIMIT 10 or SHOW DATABASES",
+            "required": true,
+          },
+          "warehouse": {
+            "type": "string",
+            "description": "Warehouse to run the statement on (e.g. COMPUTE_WH)",
+          },
+          "database": { "type": "string", "description": "Database context for the statement" },
+          "schema": { "type": "string", "description": "Schema context for the statement" },
+          "role": { "type": "string", "description": "Role to use when executing the statement" },
+          "timeout": { "type": "number", "description": "Statement timeout in seconds" },
+        },
+      },
     }, {
       "id": "list_databases",
       "name": "List Databases",
@@ -20597,6 +22118,7 @@ export const connectors: IntegrationConfig[] = [
       "keyName": "STRIPE_SECRET_KEY",
       "headerName": "Authorization",
       "headerPrefix": "Bearer",
+      "docsUrl": "https://docs.stripe.com/api/authentication",
     },
     "envVars": [{
       "name": "STRIPE_SECRET_KEY",
@@ -20616,26 +22138,270 @@ export const connectors: IntegrationConfig[] = [
       "name": "List Customers",
       "description": "List Stripe customers with optional filtering",
       "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.stripe.com/v1/customers",
+        "params": {
+          "email": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter customers by exact email address",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of customers to return (1-100)",
+            "default": 25,
+          },
+          "starting_after": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor: customer ID to start after",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "customers",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "email" },
+              { "name": "name" },
+              { "name": "created" },
+              { "name": "currency" },
+              { "name": "delinquent" },
+            ],
+            "outputFields": [{ "name": "has_more" }],
+            "omitted": "customer addresses, invoice settings, and provider-specific payload fields",
+          },
+        },
+      },
     }, {
       "id": "get_customer",
       "name": "Get Customer",
       "description": "Retrieve detailed information about a specific customer",
       "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.stripe.com/v1/customers/{customerId}",
+        "params": {
+          "customerId": {
+            "type": "string",
+            "in": "path",
+            "description": "Stripe customer ID, e.g. cus_xxx",
+            "required": true,
+          },
+        },
+      },
     }, {
       "id": "list_payments",
       "name": "List Payments",
       "description": "List payment intents with optional status filtering",
       "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.stripe.com/v1/payment_intents",
+        "params": {
+          "customer": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return payment intents for this customer ID",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of payment intents to return (1-100)",
+            "default": 25,
+          },
+          "starting_after": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor: payment intent ID to start after",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "payment_intents",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "amount" },
+              { "name": "currency" },
+              { "name": "status" },
+              { "name": "customer" },
+              { "name": "created" },
+              { "name": "description" },
+            ],
+            "outputFields": [{ "name": "has_more" }],
+            "omitted":
+              "payment method details, charge breakdowns, and provider-specific payload fields",
+          },
+        },
+      },
     }, {
       "id": "get_balance",
       "name": "Get Balance",
       "description": "Retrieve the current account balance",
       "requiresWrite": false,
+      "endpoint": { "method": "GET", "url": "https://api.stripe.com/v1/balance" },
     }, {
       "id": "list_subscriptions",
       "name": "List Subscriptions",
       "description": "List subscriptions with optional status filtering",
       "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.stripe.com/v1/subscriptions",
+        "params": {
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Filter by status: active, past_due, unpaid, canceled, incomplete, incomplete_expired, trialing, paused, or all",
+          },
+          "customer": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return subscriptions for this customer ID",
+          },
+          "price": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return subscriptions for this price ID",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of subscriptions to return (1-100)",
+            "default": 25,
+          },
+          "starting_after": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor: subscription ID to start after",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "subscriptions",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "customer" },
+              { "name": "status" },
+              { "name": "current_period_end" },
+              { "name": "cancel_at_period_end" },
+              { "name": "created" },
+            ],
+            "outputFields": [{ "name": "has_more" }],
+            "omitted": "subscription items, pricing tiers, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "list_invoices",
+      "name": "List Invoices",
+      "description": "List invoices with optional customer and status filtering",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.stripe.com/v1/invoices",
+        "params": {
+          "customer": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return invoices for this customer ID",
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by status: draft, open, paid, uncollectible, or void",
+          },
+          "subscription": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return invoices for this subscription ID",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of invoices to return (1-100)",
+            "default": 25,
+          },
+          "starting_after": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor: invoice ID to start after",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "invoices",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "customer" },
+              { "name": "status" },
+              { "name": "amount_due" },
+              { "name": "amount_paid" },
+              { "name": "currency" },
+              { "name": "created" },
+            ],
+            "outputFields": [{ "name": "has_more" }],
+            "omitted": "invoice line items, tax details, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "list_charges",
+      "name": "List Charges",
+      "description": "List charges with optional customer or payment intent filtering",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.stripe.com/v1/charges",
+        "params": {
+          "customer": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return charges for this customer ID",
+          },
+          "payment_intent": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return charges for this payment intent ID",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of charges to return (1-100)",
+            "default": 25,
+          },
+          "starting_after": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor: charge ID to start after",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "charges",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "amount" },
+              { "name": "currency" },
+              { "name": "status" },
+              { "name": "paid" },
+              { "name": "refunded" },
+              { "name": "customer" },
+              { "name": "created" },
+            ],
+            "outputFields": [{ "name": "has_more" }],
+            "omitted": "payment method details, outcome data, and provider-specific payload fields",
+          },
+        },
+      },
     }],
     "prompts": [{
       "id": "check_balance",
@@ -20674,11 +22440,21 @@ export const connectors: IntegrationConfig[] = [
     "auth": {
       "type": "api-key",
       "requiredApis": [{
-        "name": "Supabase Project",
-        "enableUrl": "https://supabase.com/dashboard/projects",
-      }],
+        "name": "Supabase Access Tokens",
+        "enableUrl": "https://supabase.com/dashboard/account/tokens",
+      }, { "name": "Supabase Project", "enableUrl": "https://supabase.com/dashboard/projects" }],
+      "keyName": "SUPABASE_ACCESS_TOKEN",
+      "headerName": "Authorization",
+      "headerPrefix": "Bearer",
+      "docsUrl": "https://supabase.com/docs/reference/api/introduction",
     },
     "envVars": [{
+      "name": "SUPABASE_ACCESS_TOKEN",
+      "description": "Supabase personal access token for the Management API (starts with sbp_)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://supabase.com/dashboard/account/tokens",
+    }, {
       "name": "SUPABASE_URL",
       "description": "Your Supabase project URL (e.g., https://xxxxx.supabase.co)",
       "required": true,
@@ -20722,6 +22498,59 @@ export const connectors: IntegrationConfig[] = [
       "name": "Delete Row",
       "description": "Delete a row from a table",
       "requiresWrite": true,
+    }, {
+      "id": "list_organizations",
+      "name": "List Organizations",
+      "description": "List the organizations your access token can manage",
+      "requiresWrite": false,
+      "endpoint": { "method": "GET", "url": "https://api.supabase.com/v1/organizations" },
+    }, {
+      "id": "list_projects",
+      "name": "List Projects",
+      "description": "List all Supabase projects across your organizations",
+      "requiresWrite": false,
+      "endpoint": { "method": "GET", "url": "https://api.supabase.com/v1/projects" },
+    }, {
+      "id": "get_project",
+      "name": "Get Project",
+      "description": "Get details and status of a Supabase project",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.supabase.com/v1/projects/{ref}",
+        "params": {
+          "ref": {
+            "type": "string",
+            "in": "path",
+            "description": "Project reference ID (the xxxxx in https://xxxxx.supabase.co)",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "run_sql",
+      "name": "Run SQL",
+      "description": "Run a SQL query against a project's Postgres database via the Management API",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.supabase.com/v1/projects/{ref}/database/query",
+        "params": {
+          "ref": {
+            "type": "string",
+            "in": "path",
+            "description": "Project reference ID (the xxxxx in https://xxxxx.supabase.co)",
+            "required": true,
+          },
+        },
+        "body": {
+          "query": {
+            "type": "string",
+            "description": "SQL statement to execute, e.g. select * from public.users limit 10",
+            "required": true,
+          },
+        },
+      },
     }],
     "prompts": [{
       "id": "query_data",
@@ -21090,6 +22919,30 @@ export const connectors: IntegrationConfig[] = [
         },
         "response": { "transform": "value" },
       },
+    }, {
+      "id": "create_chat",
+      "name": "Create Chat",
+      "description":
+        "Create a new 1:1 or group chat so a message can be sent to someone without an existing chat",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/chats",
+        "body": {
+          "chatType": {
+            "type": "string",
+            "description": "Chat type: oneOnOne or group",
+            "default": "oneOnOne",
+          },
+          "members": {
+            "type": "array",
+            "description":
+              'Conversation members, each like {"@odata.type": "#microsoft.graph.aadUserConversationMember", "roles": ["owner"], "user@odata.bind": "https://graph.microsoft.com/v1.0/users(\'<userIdOrUpn>\')"}',
+            "required": true,
+          },
+          "topic": { "type": "string", "description": "Chat title (group chats only)" },
+        },
+      },
     }],
     "prompts": [{
       "id": "check_messages",
@@ -21405,14 +23258,14 @@ export const connectors: IntegrationConfig[] = [
     "icon": "twilio.svg",
     "description": "Send SMS, WhatsApp messages, make calls, and manage communications with Twilio",
     "auth": {
-      "type": "api-key",
+      "type": "basic",
       "requiredApis": [{
         "name": "Twilio API",
         "enableUrl": "https://console.twilio.com/us1/develop/sms/overview",
       }],
-      "keyName": "TWILIO_AUTH_TOKEN",
-      "headerName": "Authorization",
-      "headerPrefix": "Basic",
+      "usernameKey": "TWILIO_ACCOUNT_SID",
+      "passwordKey": "TWILIO_AUTH_TOKEN",
+      "docsUrl": "https://www.twilio.com/docs/iam/credentials/api",
     },
     "envVars": [{
       "name": "TWILIO_ACCOUNT_SID",
@@ -21448,16 +23301,129 @@ export const connectors: IntegrationConfig[] = [
       "name": "List Messages",
       "description": "List recent SMS and WhatsApp messages",
       "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.twilio.com/2010-04-01/Accounts/{accountSid}/Messages.json",
+        "params": {
+          "accountSid": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Twilio Account SID (starts with AC; the same value as TWILIO_ACCOUNT_SID)",
+            "required": true,
+          },
+          "to": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return messages sent to this E.164 phone number",
+            "queryName": "To",
+          },
+          "from": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return messages sent from this E.164 phone number",
+            "queryName": "From",
+          },
+          "date_sent": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return messages sent on this date (YYYY-MM-DD)",
+            "queryName": "DateSent",
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Messages per page (max 1000)",
+            "default": 20,
+            "queryName": "PageSize",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["messages"],
+            "collectionName": "messages",
+            "itemFields": [
+              { "name": "sid" },
+              { "name": "to" },
+              { "name": "from" },
+              { "name": "status" },
+              { "name": "direction" },
+              { "name": "date_sent" },
+              { "name": "body", "maxLength": 160 },
+            ],
+            "outputFields": [{ "name": "next_page_uri" }],
+            "omitted": "delivery error details, pricing, and provider-specific payload fields",
+          },
+        },
+      },
     }, {
       "id": "get_message",
       "name": "Get Message",
       "description": "Get details about a specific message",
       "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.twilio.com/2010-04-01/Accounts/{accountSid}/Messages/{messageSid}.json",
+        "params": {
+          "accountSid": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Twilio Account SID (starts with AC; the same value as TWILIO_ACCOUNT_SID)",
+            "required": true,
+          },
+          "messageSid": {
+            "type": "string",
+            "in": "path",
+            "description": "Message SID (starts with SM or MM)",
+            "required": true,
+          },
+        },
+      },
     }, {
       "id": "list_calls",
       "name": "List Calls",
       "description": "List recent phone calls",
       "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.twilio.com/2010-04-01/Accounts/{accountSid}/Calls.json",
+        "params": {
+          "accountSid": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Twilio Account SID (starts with AC; the same value as TWILIO_ACCOUNT_SID)",
+            "required": true,
+          },
+          "to": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return calls to this E.164 phone number",
+            "queryName": "To",
+          },
+          "from": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return calls from this E.164 phone number",
+            "queryName": "From",
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Filter by status: queued, ringing, in-progress, completed, busy, failed, or no-answer",
+            "queryName": "Status",
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Calls per page (max 1000)",
+            "default": 20,
+            "queryName": "PageSize",
+          },
+        },
+      },
     }],
     "prompts": [{
       "id": "send_notification",
@@ -21810,6 +23776,68 @@ export const connectors: IntegrationConfig[] = [
           },
         },
         "response": { "transform": "ticket" },
+      },
+    }, {
+      "id": "create_ticket",
+      "name": "Create Ticket",
+      "description": "Create a new Zendesk support ticket",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{subdomain}.zendesk.com/api/v2/tickets",
+        "params": {
+          "subdomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Zendesk subdomain, for example example for example.zendesk.com",
+            "required": true,
+          },
+        },
+        "body": {
+          "ticket": {
+            "type": "object",
+            "description":
+              "Zendesk ticket payload, for example { subject, comment: { body }, priority, requester_id, tags }",
+            "required": true,
+          },
+        },
+        "response": { "transform": "ticket" },
+      },
+    }, {
+      "id": "list_ticket_comments",
+      "name": "List Ticket Comments",
+      "description": "List comments on a Zendesk ticket",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{subdomain}.zendesk.com/api/v2/tickets/{ticketId}/comments",
+        "params": {
+          "subdomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Zendesk subdomain, for example example for example.zendesk.com",
+            "required": true,
+          },
+          "ticketId": {
+            "type": "number",
+            "in": "path",
+            "description": "Zendesk ticket ID",
+            "required": true,
+          },
+          "page[size]": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum comments to return",
+            "default": 25,
+          },
+          "sort_order": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort order asc or desc",
+            "default": "desc",
+          },
+        },
+        "response": { "transform": "comments" },
       },
     }],
     "prompts": [{

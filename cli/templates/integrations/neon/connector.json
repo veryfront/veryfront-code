@@ -5,6 +5,9 @@
   "description": "Manage Neon Postgres projects, branches, and execute database queries",
   "auth": {
     "type": "api-key",
+    "keyName": "NEON_API_KEY",
+    "headerName": "Authorization",
+    "headerPrefix": "Bearer",
     "tokenName": "API Key",
     "docsUrl": "https://neon.tech/docs/manage/api-keys",
     "requiredApis": [
@@ -38,13 +41,142 @@
       "id": "list_projects",
       "name": "List Projects",
       "description": "List all Neon projects in your account",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://console.neon.tech/api/v2/projects",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Projects per page (max 400)",
+            "default": 25
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["projects"],
+            "collectionName": "projects",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "region_id" },
+              { "name": "pg_version" },
+              { "name": "created_at" },
+              { "name": "updated_at" }
+            ],
+            "omitted": "compute settings, quotas, and provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_project",
+      "name": "Get Project",
+      "description": "Get details of a specific Neon project",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://console.neon.tech/api/v2/projects/{projectId}",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "Neon project ID",
+            "required": true
+          }
+        }
+      }
     },
     {
       "id": "list_branches",
       "name": "List Branches",
       "description": "List all branches for a specific project",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://console.neon.tech/api/v2/projects/{projectId}/branches",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "Neon project ID",
+            "required": true
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["branches"],
+            "collectionName": "branches",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "parent_id" },
+              { "name": "default" },
+              { "name": "current_state" },
+              { "name": "created_at" }
+            ],
+            "omitted": "branch size/usage metrics and provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_branch",
+      "name": "Create Branch",
+      "description": "Create a new branch in a Neon project",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://console.neon.tech/api/v2/projects/{projectId}/branches",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "Neon project ID",
+            "required": true
+          }
+        },
+        "body": {
+          "branch": {
+            "type": "object",
+            "description": "Branch settings, e.g. {\"name\":\"feature-x\",\"parent_id\":\"br-xxx\"} (parent defaults to the project's default branch)"
+          },
+          "endpoints": {
+            "type": "array",
+            "description": "Compute endpoints to create with the branch, e.g. [{\"type\":\"read_write\"}]"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_databases",
+      "name": "List Databases",
+      "description": "List databases on a specific branch of a project",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://console.neon.tech/api/v2/projects/{projectId}/branches/{branchId}/databases",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "Neon project ID",
+            "required": true
+          },
+          "branchId": {
+            "type": "string",
+            "in": "path",
+            "description": "Neon branch ID, e.g. br-xxx (use List Branches to find it)",
+            "required": true
+          }
+        }
+      }
     },
     {
       "id": "query_database",

@@ -8,6 +8,7 @@
     "keyName": "STRIPE_SECRET_KEY",
     "headerName": "Authorization",
     "headerPrefix": "Bearer",
+    "docsUrl": "https://docs.stripe.com/api/authentication",
     "requiredApis": [
       {
         "name": "Stripe API",
@@ -36,31 +37,278 @@
       "id": "list_customers",
       "name": "List Customers",
       "description": "List Stripe customers with optional filtering",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.stripe.com/v1/customers",
+        "params": {
+          "email": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter customers by exact email address"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of customers to return (1-100)",
+            "default": 25
+          },
+          "starting_after": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor: customer ID to start after"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "customers",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "email" },
+              { "name": "name" },
+              { "name": "created" },
+              { "name": "currency" },
+              { "name": "delinquent" }
+            ],
+            "omitted": "customer addresses, invoice settings, and provider-specific payload fields",
+            "outputFields": [{ "name": "has_more" }]
+          }
+        }
+      }
     },
     {
       "id": "get_customer",
       "name": "Get Customer",
       "description": "Retrieve detailed information about a specific customer",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.stripe.com/v1/customers/{customerId}",
+        "params": {
+          "customerId": {
+            "type": "string",
+            "in": "path",
+            "description": "Stripe customer ID, e.g. cus_xxx",
+            "required": true
+          }
+        }
+      }
     },
     {
       "id": "list_payments",
       "name": "List Payments",
       "description": "List payment intents with optional status filtering",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.stripe.com/v1/payment_intents",
+        "params": {
+          "customer": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return payment intents for this customer ID"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of payment intents to return (1-100)",
+            "default": 25
+          },
+          "starting_after": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor: payment intent ID to start after"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "payment_intents",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "amount" },
+              { "name": "currency" },
+              { "name": "status" },
+              { "name": "customer" },
+              { "name": "created" },
+              { "name": "description" }
+            ],
+            "omitted": "payment method details, charge breakdowns, and provider-specific payload fields",
+            "outputFields": [{ "name": "has_more" }]
+          }
+        }
+      }
     },
     {
       "id": "get_balance",
       "name": "Get Balance",
       "description": "Retrieve the current account balance",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.stripe.com/v1/balance"
+      }
     },
     {
       "id": "list_subscriptions",
       "name": "List Subscriptions",
       "description": "List subscriptions with optional status filtering",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.stripe.com/v1/subscriptions",
+        "params": {
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by status: active, past_due, unpaid, canceled, incomplete, incomplete_expired, trialing, paused, or all"
+          },
+          "customer": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return subscriptions for this customer ID"
+          },
+          "price": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return subscriptions for this price ID"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of subscriptions to return (1-100)",
+            "default": 25
+          },
+          "starting_after": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor: subscription ID to start after"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "subscriptions",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "customer" },
+              { "name": "status" },
+              { "name": "current_period_end" },
+              { "name": "cancel_at_period_end" },
+              { "name": "created" }
+            ],
+            "omitted": "subscription items, pricing tiers, and provider-specific payload fields",
+            "outputFields": [{ "name": "has_more" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "list_invoices",
+      "name": "List Invoices",
+      "description": "List invoices with optional customer and status filtering",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.stripe.com/v1/invoices",
+        "params": {
+          "customer": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return invoices for this customer ID"
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by status: draft, open, paid, uncollectible, or void"
+          },
+          "subscription": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return invoices for this subscription ID"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of invoices to return (1-100)",
+            "default": 25
+          },
+          "starting_after": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor: invoice ID to start after"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "invoices",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "customer" },
+              { "name": "status" },
+              { "name": "amount_due" },
+              { "name": "amount_paid" },
+              { "name": "currency" },
+              { "name": "created" }
+            ],
+            "omitted": "invoice line items, tax details, and provider-specific payload fields",
+            "outputFields": [{ "name": "has_more" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "list_charges",
+      "name": "List Charges",
+      "description": "List charges with optional customer or payment intent filtering",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.stripe.com/v1/charges",
+        "params": {
+          "customer": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return charges for this customer ID"
+          },
+          "payment_intent": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return charges for this payment intent ID"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of charges to return (1-100)",
+            "default": 25
+          },
+          "starting_after": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor: charge ID to start after"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "charges",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "amount" },
+              { "name": "currency" },
+              { "name": "status" },
+              { "name": "paid" },
+              { "name": "refunded" },
+              { "name": "customer" },
+              { "name": "created" }
+            ],
+            "omitted": "payment method details, outcome data, and provider-specific payload fields",
+            "outputFields": [{ "name": "has_more" }]
+          }
+        }
+      }
     }
   ],
   "prompts": [

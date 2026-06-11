@@ -200,6 +200,30 @@
           }
         }
       }
+    },
+    {
+      "id": "get_latest_event",
+      "name": "Get Latest Event",
+      "description": "Get the latest event for a Sentry issue, including the stack trace and tags needed for root-cause analysis",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://sentry.io/api/0/organizations/{organizationSlug}/issues/{issueId}/events/latest/",
+        "params": {
+          "organizationSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Sentry organization slug",
+            "required": true
+          },
+          "issueId": {
+            "type": "string",
+            "in": "path",
+            "description": "Sentry issue ID",
+            "required": true
+          }
+        }
+      }
     }
   ],
   "prompts": [

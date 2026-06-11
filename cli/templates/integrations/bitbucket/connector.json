@@ -10,7 +10,7 @@
     "tokenUrl": "https://bitbucket.org/site/oauth2/access_token",
     "scopes": [
       "repository",
-      "pullrequest",
+      "pullrequest:write",
       "issue",
       "account"
     ],
@@ -37,25 +37,379 @@
       "id": "list_repositories",
       "name": "List Repositories",
       "description": "Get list of user's repositories",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.bitbucket.org/2.0/repositories",
+        "params": {
+          "role": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter to repositories where the user has this role: member, contributor, admin, or owner",
+            "default": "member"
+          },
+          "q": {
+            "type": "string",
+            "in": "query",
+            "description": "Bitbucket query filter, for example name~\"api\""
+          },
+          "sort": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort field, for example -updated_on",
+            "default": "-updated_on"
+          },
+          "pagelen": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum repositories per page",
+            "default": 25
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number to fetch"
+          }
+        },
+        "response": {
+          "transform": "values",
+          "historicalSummary": {
+            "collectionKeys": [
+              "values",
+              "repositories"
+            ],
+            "collectionName": "repositories",
+            "itemFields": [
+              {
+                "name": "uuid"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "full_name"
+              },
+              {
+                "name": "slug"
+              },
+              {
+                "name": "is_private"
+              },
+              {
+                "name": "language"
+              },
+              {
+                "name": "created_on"
+              },
+              {
+                "name": "updated_on"
+              },
+              {
+                "name": "owner",
+                "kind": "contact"
+              }
+            ],
+            "omitted": "repository links, clone URLs, and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "next"
+              },
+              {
+                "name": "page"
+              },
+              {
+                "name": "pagelen"
+              },
+              {
+                "name": "size"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_repository",
+      "name": "Get Repository",
+      "description": "Get details of a specific repository",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.bitbucket.org/2.0/repositories/{workspace}/{repoSlug}",
+        "params": {
+          "workspace": {
+            "type": "string",
+            "in": "path",
+            "description": "Bitbucket workspace ID or slug",
+            "required": true
+          },
+          "repoSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Repository slug",
+            "required": true
+          }
+        }
+      }
     },
     {
       "id": "list_pull_requests",
       "name": "List Pull Requests",
       "description": "Get pull requests for a repository",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.bitbucket.org/2.0/repositories/{workspace}/{repoSlug}/pullrequests",
+        "params": {
+          "workspace": {
+            "type": "string",
+            "in": "path",
+            "description": "Bitbucket workspace ID or slug",
+            "required": true
+          },
+          "repoSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Repository slug",
+            "required": true
+          },
+          "state": {
+            "type": "string",
+            "in": "query",
+            "description": "Pull request state filter: OPEN, MERGED, DECLINED, or SUPERSEDED",
+            "default": "OPEN"
+          },
+          "q": {
+            "type": "string",
+            "in": "query",
+            "description": "Bitbucket query filter, for example author.nickname=\"alice\""
+          },
+          "pagelen": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum pull requests per page",
+            "default": 25
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number to fetch"
+          }
+        },
+        "response": {
+          "transform": "values",
+          "historicalSummary": {
+            "collectionKeys": [
+              "values",
+              "pull_requests"
+            ],
+            "collectionName": "pull_requests",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "title"
+              },
+              {
+                "name": "state"
+              },
+              {
+                "name": "created_on"
+              },
+              {
+                "name": "updated_on"
+              },
+              {
+                "name": "author",
+                "kind": "contact"
+              }
+            ],
+            "omitted": "pull request descriptions, diffs, links, and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "next"
+              },
+              {
+                "name": "page"
+              },
+              {
+                "name": "pagelen"
+              },
+              {
+                "name": "size"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_pull_request",
+      "name": "Get Pull Request",
+      "description": "Get details of a specific pull request",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.bitbucket.org/2.0/repositories/{workspace}/{repoSlug}/pullrequests/{pullRequestId}",
+        "params": {
+          "workspace": {
+            "type": "string",
+            "in": "path",
+            "description": "Bitbucket workspace ID or slug",
+            "required": true
+          },
+          "repoSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Repository slug",
+            "required": true
+          },
+          "pullRequestId": {
+            "type": "number",
+            "in": "path",
+            "description": "Pull request ID",
+            "required": true
+          }
+        }
+      }
     },
     {
       "id": "create_pull_request",
       "name": "Create Pull Request",
       "description": "Create a new pull request",
-      "requiresWrite": true
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.bitbucket.org/2.0/repositories/{workspace}/{repoSlug}/pullrequests",
+        "params": {
+          "workspace": {
+            "type": "string",
+            "in": "path",
+            "description": "Bitbucket workspace ID or slug",
+            "required": true
+          },
+          "repoSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Repository slug",
+            "required": true
+          }
+        },
+        "body": {
+          "title": {
+            "type": "string",
+            "description": "Pull request title",
+            "required": true
+          },
+          "source": {
+            "type": "object",
+            "description": "Source branch, e.g. { branch: { name: 'feature-branch' } }",
+            "required": true
+          },
+          "destination": {
+            "type": "object",
+            "description": "Destination branch, e.g. { branch: { name: 'main' } }; defaults to the repository main branch"
+          },
+          "description": {
+            "type": "string",
+            "description": "Pull request description (markup supported)"
+          },
+          "close_source_branch": {
+            "type": "boolean",
+            "description": "Whether to close the source branch after merge"
+          },
+          "reviewers": {
+            "type": "array",
+            "description": "Reviewers, e.g. [{ uuid: '{user-uuid}' }]"
+          }
+        }
+      }
+    },
+    {
+      "id": "add_pull_request_comment",
+      "name": "Add Pull Request Comment",
+      "description": "Add a comment to a pull request",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.bitbucket.org/2.0/repositories/{workspace}/{repoSlug}/pullrequests/{pullRequestId}/comments",
+        "params": {
+          "workspace": {
+            "type": "string",
+            "in": "path",
+            "description": "Bitbucket workspace ID or slug",
+            "required": true
+          },
+          "repoSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Repository slug",
+            "required": true
+          },
+          "pullRequestId": {
+            "type": "number",
+            "in": "path",
+            "description": "Pull request ID",
+            "required": true
+          }
+        },
+        "body": {
+          "content": {
+            "type": "object",
+            "description": "Comment content, e.g. { raw: 'Comment text' }",
+            "required": true
+          }
+        }
+      }
     },
     {
       "id": "list_issues",
       "name": "List Issues",
       "description": "Get issues for a repository",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.bitbucket.org/2.0/repositories/{workspace}/{repoSlug}/issues",
+        "params": {
+          "workspace": {
+            "type": "string",
+            "in": "path",
+            "description": "Bitbucket workspace ID or slug",
+            "required": true
+          },
+          "repoSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Repository slug",
+            "required": true
+          },
+          "q": {
+            "type": "string",
+            "in": "query",
+            "description": "Bitbucket query filter, for example state=\"new\""
+          },
+          "sort": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort field, for example -updated_on"
+          },
+          "pagelen": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum issues per page",
+            "default": 25
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number to fetch"
+          }
+        },
+        "response": {
+          "transform": "values"
+        }
+      }
     }
   ],
   "prompts": [

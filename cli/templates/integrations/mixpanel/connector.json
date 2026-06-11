@@ -4,33 +4,49 @@
   "icon": "mixpanel.svg",
   "description": "Track events, analyze funnels, and understand user behavior with Mixpanel analytics",
   "auth": {
-    "type": "api-key",
-    "keyName": "MIXPANEL_PROJECT_TOKEN",
+    "type": "basic",
+    "usernameKey": "MIXPANEL_SERVICE_ACCOUNT_USERNAME",
+    "passwordKey": "MIXPANEL_SERVICE_ACCOUNT_SECRET",
+    "docsUrl": "https://developer.mixpanel.com/reference/service-accounts",
     "requiredApis": [
       {
-        "name": "Mixpanel API",
-        "enableUrl": "https://mixpanel.com/settings/project"
+        "name": "Mixpanel Service Accounts",
+        "enableUrl": "https://mixpanel.com/settings/org#serviceaccounts"
       }
     ]
   },
   "envVars": [
     {
+      "name": "MIXPANEL_SERVICE_ACCOUNT_USERNAME",
+      "description": "Mixpanel service account username (HTTP Basic username for Query and Export APIs)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.mixpanel.com/reference/service-accounts"
+    },
+    {
+      "name": "MIXPANEL_SERVICE_ACCOUNT_SECRET",
+      "description": "Mixpanel service account secret (HTTP Basic password for Query and Export APIs)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.mixpanel.com/reference/service-accounts"
+    },
+    {
       "name": "MIXPANEL_PROJECT_TOKEN",
       "description": "Mixpanel Project Token for event tracking",
-      "required": true,
+      "required": false,
       "sensitive": true,
       "docsUrl": "https://docs.mixpanel.com/docs/tracking-methods/id-management/authentication"
     },
     {
       "name": "MIXPANEL_API_SECRET",
-      "description": "Mixpanel API Secret for data export and query operations",
-      "required": true,
+      "description": "Legacy Mixpanel project API secret (deprecated by Mixpanel in favor of service accounts; only used by local file-based tools)",
+      "required": false,
       "sensitive": true,
       "docsUrl": "https://developer.mixpanel.com/reference/authentication"
     },
     {
       "name": "MIXPANEL_PROJECT_ID",
-      "description": "Mixpanel Project ID (found in project settings)",
+      "description": "Mixpanel Project ID (found in project settings; pass it as the project_id parameter on query tools)",
       "required": true,
       "sensitive": false,
       "docsUrl": "https://docs.mixpanel.com/docs/admin/organizations-projects/manage-projects"
@@ -47,25 +63,218 @@
       "id": "query_events",
       "name": "Query Events",
       "description": "Query and export event data from Mixpanel",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{exportHost}/api/2.0/export",
+        "params": {
+          "exportHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Mixpanel raw export host: data.mixpanel.com (US), data-eu.mixpanel.com (EU), or data-in.mixpanel.com (India)",
+            "default": "data.mixpanel.com"
+          },
+          "project_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Mixpanel project ID (same as MIXPANEL_PROJECT_ID)",
+            "required": true
+          },
+          "from_date": {
+            "type": "string",
+            "in": "query",
+            "description": "Start date (YYYY-MM-DD, inclusive)",
+            "required": true
+          },
+          "to_date": {
+            "type": "string",
+            "in": "query",
+            "description": "End date (YYYY-MM-DD, inclusive)",
+            "required": true
+          },
+          "event": {
+            "type": "string",
+            "in": "query",
+            "description": "JSON array of event names to export, e.g. [\"Signed Up\",\"Purchased\"]"
+          },
+          "where": {
+            "type": "string",
+            "in": "query",
+            "description": "Segmentation expression to filter events"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum events to return (max 100000)",
+            "default": 100
+          }
+        }
+      }
     },
     {
       "id": "get_funnel",
       "name": "Get Funnel",
       "description": "Retrieve funnel analysis data to understand conversion rates",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/api/query/funnels",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Mixpanel API host: mixpanel.com (US), eu.mixpanel.com (EU), or in.mixpanel.com (India)",
+            "default": "mixpanel.com"
+          },
+          "project_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Mixpanel project ID (same as MIXPANEL_PROJECT_ID)",
+            "required": true
+          },
+          "funnel_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Saved funnel ID (use List Funnels to find it)",
+            "required": true
+          },
+          "from_date": {
+            "type": "string",
+            "in": "query",
+            "description": "Start date (YYYY-MM-DD)",
+            "required": true
+          },
+          "to_date": {
+            "type": "string",
+            "in": "query",
+            "description": "End date (YYYY-MM-DD)",
+            "required": true
+          },
+          "unit": {
+            "type": "string",
+            "in": "query",
+            "description": "Bucket size: day, week, or month"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_funnels",
+      "name": "List Funnels",
+      "description": "List saved funnels with their names and funnel IDs",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/api/query/funnels/list",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Mixpanel API host: mixpanel.com (US), eu.mixpanel.com (EU), or in.mixpanel.com (India)",
+            "default": "mixpanel.com"
+          },
+          "project_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Mixpanel project ID (same as MIXPANEL_PROJECT_ID)",
+            "required": true
+          }
+        }
+      }
     },
     {
       "id": "get_retention",
       "name": "Get Retention",
       "description": "Analyze user retention cohorts over time",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/api/query/retention",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Mixpanel API host: mixpanel.com (US), eu.mixpanel.com (EU), or in.mixpanel.com (India)",
+            "default": "mixpanel.com"
+          },
+          "project_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Mixpanel project ID (same as MIXPANEL_PROJECT_ID)",
+            "required": true
+          },
+          "from_date": {
+            "type": "string",
+            "in": "query",
+            "description": "Start date (YYYY-MM-DD)",
+            "required": true
+          },
+          "to_date": {
+            "type": "string",
+            "in": "query",
+            "description": "End date (YYYY-MM-DD)",
+            "required": true
+          },
+          "retention_type": {
+            "type": "string",
+            "in": "query",
+            "description": "birth (first-time) or compounded; defaults to birth"
+          },
+          "born_event": {
+            "type": "string",
+            "in": "query",
+            "description": "Cohort-defining first event, e.g. Signed Up (required when retention_type is birth)"
+          },
+          "event": {
+            "type": "string",
+            "in": "query",
+            "description": "Event that counts as a return visit"
+          },
+          "unit": {
+            "type": "string",
+            "in": "query",
+            "description": "Bucket size: day, week, or month"
+          }
+        }
+      }
     },
     {
       "id": "list_cohorts",
       "name": "List Cohorts",
       "description": "List all user cohorts defined in your Mixpanel project",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{host}/api/query/cohorts/list",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Mixpanel API host: mixpanel.com (US), eu.mixpanel.com (EU), or in.mixpanel.com (India)",
+            "default": "mixpanel.com"
+          },
+          "project_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Mixpanel project ID (same as MIXPANEL_PROJECT_ID)",
+            "required": true
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["cohorts"],
+            "collectionName": "cohorts",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "count" },
+              { "name": "created" },
+              { "name": "is_visible" }
+            ],
+            "omitted": "cohort descriptions and provider-specific payload fields"
+          }
+        }
+      }
     }
   ],
   "prompts": [
@@ -92,5 +301,5 @@
     }
   ],
   "suggestedWith": ["slack", "analytics", "monitoring"],
-  "SETUP_GUIDE": "# Mixpanel Integration Setup\n\n## Step 1: Get Your Project Token\n1. Log in to your Mixpanel account at https://mixpanel.com\n2. Navigate to your project settings\n3. Under 'Project Settings', find your **Project Token**\n4. Copy the token and add it as `MIXPANEL_PROJECT_TOKEN` in your .env file\n\n## Step 2: Get Your API Secret\n1. In Mixpanel, go to Settings > Project Settings\n2. Scroll to 'Service Accounts' section\n3. Create a new Service Account or use an existing one\n4. Copy the **API Secret** and add it as `MIXPANEL_API_SECRET` in your .env file\n\n## Step 3: Get Your Project ID\n1. In Mixpanel project settings URL, your Project ID is the number in the URL\n2. Format: https://mixpanel.com/project/YOUR_PROJECT_ID/settings\n3. Copy this ID and add it as `MIXPANEL_PROJECT_ID` in your .env file\n\n## Step 4: Set Up Environment Variables\nAdd these to your `.env` file:\n```\nMIXPANEL_PROJECT_TOKEN=your_project_token_here\nMIXPANEL_API_SECRET=your_api_secret_here\nMIXPANEL_PROJECT_ID=your_project_id_here\n```\n\n## Step 5: Test the Integration\nRun your application and try tracking a test event to verify the setup is working correctly.\n\n## Important Notes\n- **Project Token** is used for tracking events (ingestion)\n- **API Secret** is used for querying and exporting data\n- Keep both credentials secure and never commit them to version control\n- For production deployments, use environment variables or secure secret management\n\n## Useful Resources\n- [Mixpanel API Documentation](https://developer.mixpanel.com/reference/overview)\n- [Event Tracking Guide](https://docs.mixpanel.com/docs/tracking-methods/sdks)\n- [Query API Guide](https://developer.mixpanel.com/reference/query-api)"
+  "SETUP_GUIDE": "# Mixpanel Integration Setup\n\n## Step 1: Create a Service Account\n1. Log in to Mixpanel and open Organization Settings > Service Accounts (https://mixpanel.com/settings/org#serviceaccounts)\n2. Create a service account with access to your project (Analyst role or higher is sufficient for queries)\n3. Copy the service account **username** and **secret** shown at creation time\n4. Add them to your .env file as `MIXPANEL_SERVICE_ACCOUNT_USERNAME` and `MIXPANEL_SERVICE_ACCOUNT_SECRET`\n\n## Step 2: Get Your Project ID\n1. In Mixpanel project settings URL, your Project ID is the number in the URL\n2. Format: https://mixpanel.com/project/YOUR_PROJECT_ID/settings\n3. Copy this ID and add it as `MIXPANEL_PROJECT_ID` in your .env file — query tools require it as the project_id parameter\n\n## Step 3: (Optional) Get Your Project Token\n1. Under Project Settings, find your **Project Token**\n2. Add it as `MIXPANEL_PROJECT_TOKEN` — it is only needed for local event-tracking (ingestion), not for queries\n\n## Step 4: Set Up Environment Variables\nAdd these to your `.env` file:\n```\nMIXPANEL_SERVICE_ACCOUNT_USERNAME=your_service_account_username\nMIXPANEL_SERVICE_ACCOUNT_SECRET=your_service_account_secret\nMIXPANEL_PROJECT_ID=your_project_id_here\nMIXPANEL_PROJECT_TOKEN=your_project_token_here\n```\n\n## Step 5: Test the Integration\nRun the List Cohorts or List Funnels tool with your project_id to verify the service account works.\n\n## Important Notes\n- Service accounts authenticate via HTTP Basic auth (username + secret) and are Mixpanel's recommended method for the Query and Export APIs\n- Every query tool requires the `project_id` parameter when authenticating with a service account\n- If your project stores data in the EU or India, pass the matching host parameter (eu.mixpanel.com / data-eu.mixpanel.com, or in.mixpanel.com / data-in.mixpanel.com)\n- **Project Token** is used only for tracking events (ingestion)\n- Keep credentials secure and never commit them to version control\n\n## Useful Resources\n- [Mixpanel API Documentation](https://developer.mixpanel.com/reference/overview)\n- [Service Accounts](https://developer.mixpanel.com/reference/service-accounts)\n- [Query API Guide](https://developer.mixpanel.com/reference/query-api)"
 }

@@ -187,6 +187,32 @@
           "transform": "value"
         }
       }
+    },
+    {
+      "id": "create_chat",
+      "name": "Create Chat",
+      "description": "Create a new 1:1 or group chat so a message can be sent to someone without an existing chat",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/chats",
+        "body": {
+          "chatType": {
+            "type": "string",
+            "description": "Chat type: oneOnOne or group",
+            "default": "oneOnOne"
+          },
+          "members": {
+            "type": "array",
+            "description": "Conversation members, each like {\"@odata.type\": \"#microsoft.graph.aadUserConversationMember\", \"roles\": [\"owner\"], \"user@odata.bind\": \"https://graph.microsoft.com/v1.0/users('<userIdOrUpn>')\"}",
+            "required": true
+          },
+          "topic": {
+            "type": "string",
+            "description": "Chat title (group chats only)"
+          }
+        }
+      }
     }
   ],
   "prompts": [

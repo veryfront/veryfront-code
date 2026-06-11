@@ -114,6 +114,35 @@
       }
     },
     {
+      "id": "update_message",
+      "name": "Update Message",
+      "description": "Update a message previously sent by this integration",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.update",
+        "body": {
+          "channel": { "type": "string", "description": "Channel ID containing the message", "required": true },
+          "ts": { "type": "string", "description": "Timestamp (ts) of the message to update", "required": true },
+          "text": { "type": "string", "description": "New message text (supports mrkdwn)", "required": true }
+        }
+      }
+    },
+    {
+      "id": "delete_message",
+      "name": "Delete Message",
+      "description": "Delete a message previously sent by this integration",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.delete",
+        "body": {
+          "channel": { "type": "string", "description": "Channel ID containing the message", "required": true },
+          "ts": { "type": "string", "description": "Timestamp (ts) of the message to delete", "required": true }
+        }
+      }
+    },
+    {
       "id": "get_messages",
       "name": "Get Messages",
       "description": "Get recent messages from a channel",

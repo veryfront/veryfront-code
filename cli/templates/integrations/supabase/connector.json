@@ -5,7 +5,15 @@
   "description": "Query and manage your Supabase database with full CRUD operations",
   "auth": {
     "type": "api-key",
+    "keyName": "SUPABASE_ACCESS_TOKEN",
+    "headerName": "Authorization",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://supabase.com/docs/reference/api/introduction",
     "requiredApis": [
+      {
+        "name": "Supabase Access Tokens",
+        "enableUrl": "https://supabase.com/dashboard/account/tokens"
+      },
       {
         "name": "Supabase Project",
         "enableUrl": "https://supabase.com/dashboard/projects"
@@ -13,6 +21,13 @@
     ]
   },
   "envVars": [
+    {
+      "name": "SUPABASE_ACCESS_TOKEN",
+      "description": "Supabase personal access token for the Management API (starts with sbp_)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://supabase.com/dashboard/account/tokens"
+    },
     {
       "name": "SUPABASE_URL",
       "description": "Your Supabase project URL (e.g., https://xxxxx.supabase.co)",
@@ -65,6 +80,69 @@
       "name": "Delete Row",
       "description": "Delete a row from a table",
       "requiresWrite": true
+    },
+    {
+      "id": "list_organizations",
+      "name": "List Organizations",
+      "description": "List the organizations your access token can manage",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.supabase.com/v1/organizations"
+      }
+    },
+    {
+      "id": "list_projects",
+      "name": "List Projects",
+      "description": "List all Supabase projects across your organizations",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.supabase.com/v1/projects"
+      }
+    },
+    {
+      "id": "get_project",
+      "name": "Get Project",
+      "description": "Get details and status of a Supabase project",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.supabase.com/v1/projects/{ref}",
+        "params": {
+          "ref": {
+            "type": "string",
+            "in": "path",
+            "description": "Project reference ID (the xxxxx in https://xxxxx.supabase.co)",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "run_sql",
+      "name": "Run SQL",
+      "description": "Run a SQL query against a project's Postgres database via the Management API",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.supabase.com/v1/projects/{ref}/database/query",
+        "params": {
+          "ref": {
+            "type": "string",
+            "in": "path",
+            "description": "Project reference ID (the xxxxx in https://xxxxx.supabase.co)",
+            "required": true
+          }
+        },
+        "body": {
+          "query": {
+            "type": "string",
+            "description": "SQL statement to execute, e.g. select * from public.users limit 10",
+            "required": true
+          }
+        }
+      }
     }
   ],
   "prompts": [

@@ -288,14 +288,14 @@ describe("integration endpoint specs", () => {
       totalEndpointTools += endpointTools.length;
     }
 
-    assertEquals(totalEndpointTools, 70);
+    assertEquals(totalEndpointTools, 73);
   });
 
   it("adds endpoint specs for the newly configured integration providers", () => {
     const expectedEndpointCounts = new Map([
       ["airtable", 11],
       ["figma", 4],
-      ["notion", 8],
+      ["notion", 10],
     ]);
 
     for (
@@ -366,11 +366,11 @@ describe("integration endpoint specs", () => {
 
   it("adds static endpoint specs for the next configured integration providers", () => {
     const expectedEndpointCounts = new Map([
-      ["drive", 7],
+      ["drive", 9],
       ["docs-google", 5],
       ["sheets", 16],
-      ["onedrive", 4],
-      ["sharepoint", 5],
+      ["onedrive", 7],
+      ["sharepoint", 7],
     ]);
 
     for (
@@ -389,12 +389,12 @@ describe("integration endpoint specs", () => {
 
   it("adds callable endpoint specs for remaining configured OAuth providers", () => {
     const expectedEndpointCounts = new Map([
-      ["asana", 11],
+      ["asana", 12],
       ["gitlab", 10],
-      ["jira", 11],
-      ["confluence", 6],
+      ["jira", 12],
+      ["confluence", 7],
       ["outlook", 61],
-      ["teams", 6],
+      ["teams", 7],
     ]);
 
     for (
@@ -425,7 +425,14 @@ describe("integration endpoint specs", () => {
     );
     assertEquals(
       endpointTools.map((tool) => tool.id).sort(),
-      ["get_issue", "list_issues", "list_organizations", "list_projects", "resolve_issue"],
+      [
+        "get_issue",
+        "get_latest_event",
+        "list_issues",
+        "list_organizations",
+        "list_projects",
+        "resolve_issue",
+      ],
     );
 
     const listOrganizations = getTool("sentry", "list_organizations");

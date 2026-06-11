@@ -176,6 +176,43 @@
         },
         "response": { "transform": "result" }
       }
+    },
+    {
+      "id": "search_users",
+      "name": "Search Users",
+      "description": "Search ServiceNow users to find the sys_id needed for assigning incidents",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{instanceHost}/api/now/v1/table/sys_user",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "ServiceNow instance host, for example example.service-now.com",
+            "required": true
+          },
+          "sysparm_query": {
+            "type": "string",
+            "in": "query",
+            "description": "Encoded query for users, e.g. nameLIKEsmith^active=true",
+            "required": true
+          },
+          "sysparm_limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum users to return",
+            "default": 10
+          },
+          "sysparm_fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated user fields",
+            "default": "sys_id,user_name,name,email,active,department"
+          }
+        },
+        "response": { "transform": "result" }
+      }
     }
   ],
   "prompts": [

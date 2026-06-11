@@ -142,6 +142,69 @@
         },
         "response": { "transform": "ticket" }
       }
+    },
+    {
+      "id": "create_ticket",
+      "name": "Create Ticket",
+      "description": "Create a new Zendesk support ticket",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{subdomain}.zendesk.com/api/v2/tickets",
+        "params": {
+          "subdomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Zendesk subdomain, for example example for example.zendesk.com",
+            "required": true
+          }
+        },
+        "body": {
+          "ticket": {
+            "type": "object",
+            "description": "Zendesk ticket payload, for example { subject, comment: { body }, priority, requester_id, tags }",
+            "required": true
+          }
+        },
+        "response": { "transform": "ticket" }
+      }
+    },
+    {
+      "id": "list_ticket_comments",
+      "name": "List Ticket Comments",
+      "description": "List comments on a Zendesk ticket",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{subdomain}.zendesk.com/api/v2/tickets/{ticketId}/comments",
+        "params": {
+          "subdomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Zendesk subdomain, for example example for example.zendesk.com",
+            "required": true
+          },
+          "ticketId": {
+            "type": "number",
+            "in": "path",
+            "description": "Zendesk ticket ID",
+            "required": true
+          },
+          "page[size]": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum comments to return",
+            "default": 25
+          },
+          "sort_order": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort order asc or desc",
+            "default": "desc"
+          }
+        },
+        "response": { "transform": "comments" }
+      }
     }
   ],
   "prompts": [

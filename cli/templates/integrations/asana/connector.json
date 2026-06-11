@@ -898,6 +898,32 @@
           }
         }
       }
+    },
+    {
+      "id": "get_project",
+      "name": "Get Project",
+      "description": "Get details of a specific Asana project",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://app.asana.com/api/1.0/projects/{projectGid}",
+        "params": {
+          "projectGid": {
+            "type": "string",
+            "in": "path",
+            "description": "Asana project GID",
+            "required": true
+          },
+          "opt_fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated project fields to return"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
     }
   ],
   "prompts": [

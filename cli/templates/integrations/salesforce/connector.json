@@ -157,6 +157,45 @@
           }
         }
       }
+    },
+    {
+      "id": "soql_query",
+      "name": "Run SOQL Query",
+      "description": "Run an arbitrary SOQL query against any Salesforce object",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "{{oauth.raw.instance_url}}/services/data/v61.0/query",
+        "params": {
+          "q": {
+            "type": "string",
+            "in": "query",
+            "description": "SOQL query to execute, for example SELECT Id, Name FROM Account LIMIT 10",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "records"
+        }
+      }
+    },
+    {
+      "id": "describe_object",
+      "name": "Describe Object",
+      "description": "Get metadata and field definitions for a Salesforce object",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "{{oauth.raw.instance_url}}/services/data/v61.0/sobjects/{sobjectType}/describe",
+        "params": {
+          "sobjectType": {
+            "type": "string",
+            "in": "path",
+            "description": "Salesforce object API name, for example Account, Contact, or Opportunity",
+            "required": true
+          }
+        }
+      }
     }
   ],
   "prompts": [
