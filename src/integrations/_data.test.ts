@@ -211,6 +211,28 @@ describe("integration endpoint specs", () => {
     assertEquals(paypal.auth.authorizationUrl, undefined);
   });
 
+  it("publishes generic record tools via body passthrough", () => {
+    const salesforceCreate = getTool("salesforce", "create_record");
+    assertEquals(salesforceCreate.requiresWrite, true);
+    assertEquals(salesforceCreate.endpoint?.bodyMode, "passthrough");
+    assertEquals(salesforceCreate.endpoint?.body?.record?.required, true);
+    assertEquals(
+      getTool("salesforce", "delete_record").endpoint?.method,
+      "DELETE",
+    );
+
+    const servicenowQuery = getTool("servicenow", "query_table");
+    assertEquals(servicenowQuery.requiresWrite, false);
+    assertEquals(
+      servicenowQuery.endpoint?.url,
+      "https://{instanceHost}/api/now/v1/table/{tableName}",
+    );
+    assertEquals(
+      getTool("servicenow", "create_table_record").endpoint?.bodyMode,
+      "passthrough",
+    );
+  });
+
   it("does not expose retired integrations until they have verified working tool surfaces", () => {
     const connectorNames = connectors.map((item) => item.name as string);
 

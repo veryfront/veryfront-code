@@ -196,6 +196,88 @@
           }
         }
       }
+    },
+    {
+      "id": "create_record",
+      "name": "Create Record",
+      "description": "Create a record of any object type (use Describe Object to discover fields)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "{{oauth.raw.instance_url}}/services/data/v61.0/sobjects/{sobjectType}",
+        "params": {
+          "sobjectType": {
+            "type": "string",
+            "in": "path",
+            "description": "Object API name, e.g. Account, Contact, Custom_Object__c",
+            "required": true
+          }
+        },
+        "bodyMode": "passthrough",
+        "body": {
+          "record": {
+            "type": "object",
+            "description": "Field map for the new record, e.g. {\"Name\":\"Acme\",\"Industry\":\"Technology\"}",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "update_record",
+      "name": "Update Record",
+      "description": "Update fields on a record of any object type",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "{{oauth.raw.instance_url}}/services/data/v61.0/sobjects/{sobjectType}/{recordId}",
+        "params": {
+          "sobjectType": {
+            "type": "string",
+            "in": "path",
+            "description": "Object API name, e.g. Account, Contact, Custom_Object__c",
+            "required": true
+          },
+          "recordId": {
+            "type": "string",
+            "in": "path",
+            "description": "Salesforce record ID (15 or 18 chars)",
+            "required": true
+          }
+        },
+        "bodyMode": "passthrough",
+        "body": {
+          "record": {
+            "type": "object",
+            "description": "Field map of fields to update",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "delete_record",
+      "name": "Delete Record",
+      "description": "Delete a record of any object type",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "DELETE",
+        "url": "{{oauth.raw.instance_url}}/services/data/v61.0/sobjects/{sobjectType}/{recordId}",
+        "params": {
+          "sobjectType": {
+            "type": "string",
+            "in": "path",
+            "description": "Object API name, e.g. Account, Contact, Custom_Object__c",
+            "required": true
+          },
+          "recordId": {
+            "type": "string",
+            "in": "path",
+            "description": "Salesforce record ID (15 or 18 chars)",
+            "required": true
+          }
+        }
+      }
     }
   ],
   "prompts": [

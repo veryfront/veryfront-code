@@ -51,7 +51,9 @@
             "default": "sys_id,number,short_description,description,state,impact,urgency,priority,assignment_group,assigned_to,opened_at,sys_updated_on"
           }
         },
-        "response": { "transform": "result" }
+        "response": {
+          "transform": "result"
+        }
       }
     },
     {
@@ -82,7 +84,9 @@
             "default": "all"
           }
         },
-        "response": { "transform": "result" }
+        "response": {
+          "transform": "result"
+        }
       }
     },
     {
@@ -102,14 +106,35 @@
           }
         },
         "body": {
-          "short_description": { "type": "string", "description": "Incident short description", "required": true },
-          "description": { "type": "string", "description": "Incident description" },
-          "impact": { "type": "string", "description": "Business impact, typically 1, 2, or 3" },
-          "urgency": { "type": "string", "description": "Incident urgency, typically 1, 2, or 3" },
-          "category": { "type": "string", "description": "Incident category" },
-          "assignment_group": { "type": "string", "description": "Assignment group sys_id or display value" }
+          "short_description": {
+            "type": "string",
+            "description": "Incident short description",
+            "required": true
+          },
+          "description": {
+            "type": "string",
+            "description": "Incident description"
+          },
+          "impact": {
+            "type": "string",
+            "description": "Business impact, typically 1, 2, or 3"
+          },
+          "urgency": {
+            "type": "string",
+            "description": "Incident urgency, typically 1, 2, or 3"
+          },
+          "category": {
+            "type": "string",
+            "description": "Incident category"
+          },
+          "assignment_group": {
+            "type": "string",
+            "description": "Assignment group sys_id or display value"
+          }
         },
-        "response": { "transform": "result" }
+        "response": {
+          "transform": "result"
+        }
       }
     },
     {
@@ -127,17 +152,42 @@
             "description": "ServiceNow instance host, for example example.service-now.com",
             "required": true
           },
-          "sysId": { "type": "string", "in": "path", "description": "Incident sys_id", "required": true }
+          "sysId": {
+            "type": "string",
+            "in": "path",
+            "description": "Incident sys_id",
+            "required": true
+          }
         },
         "body": {
-          "state": { "type": "string", "description": "Incident state" },
-          "priority": { "type": "string", "description": "Incident priority" },
-          "assignment_group": { "type": "string", "description": "Assignment group sys_id or display value" },
-          "assigned_to": { "type": "string", "description": "Assignee sys_id or display value" },
-          "work_notes": { "type": "string", "description": "Internal work notes" },
-          "comments": { "type": "string", "description": "Customer-visible comments" }
+          "state": {
+            "type": "string",
+            "description": "Incident state"
+          },
+          "priority": {
+            "type": "string",
+            "description": "Incident priority"
+          },
+          "assignment_group": {
+            "type": "string",
+            "description": "Assignment group sys_id or display value"
+          },
+          "assigned_to": {
+            "type": "string",
+            "description": "Assignee sys_id or display value"
+          },
+          "work_notes": {
+            "type": "string",
+            "description": "Internal work notes"
+          },
+          "comments": {
+            "type": "string",
+            "description": "Customer-visible comments"
+          }
         },
-        "response": { "transform": "result" }
+        "response": {
+          "transform": "result"
+        }
       }
     },
     {
@@ -174,7 +224,9 @@
             "default": "sys_id,number,short_description,text,workflow_state,sys_updated_on"
           }
         },
-        "response": { "transform": "result" }
+        "response": {
+          "transform": "result"
+        }
       }
     },
     {
@@ -211,7 +263,133 @@
             "default": "sys_id,user_name,name,email,active,department"
           }
         },
-        "response": { "transform": "result" }
+        "response": {
+          "transform": "result"
+        }
+      }
+    },
+    {
+      "id": "query_table",
+      "name": "Query Table",
+      "description": "Query any ServiceNow table with an encoded query (covers change requests, problems, CMDB, catalog tasks, etc.)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{instanceHost}/api/now/v1/table/{tableName}",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "ServiceNow instance host, for example example.service-now.com",
+            "required": true
+          },
+          "tableName": {
+            "type": "string",
+            "in": "path",
+            "description": "Table name, e.g. incident, change_request, problem, cmdb_ci, sc_task",
+            "required": true
+          },
+          "sysparm_query": {
+            "type": "string",
+            "in": "query",
+            "description": "Encoded query, e.g. active=true^priority=1^ORDERBYDESCsys_created_on"
+          },
+          "sysparm_fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated fields to return"
+          },
+          "sysparm_limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum records to return",
+            "default": 25
+          },
+          "sysparm_offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Record offset for pagination"
+          }
+        },
+        "response": {
+          "transform": "result"
+        }
+      }
+    },
+    {
+      "id": "create_table_record",
+      "name": "Create Table Record",
+      "description": "Create a record in any ServiceNow table",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{instanceHost}/api/now/v1/table/{tableName}",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "ServiceNow instance host, for example example.service-now.com",
+            "required": true
+          },
+          "tableName": {
+            "type": "string",
+            "in": "path",
+            "description": "Table name, e.g. incident, change_request, problem, cmdb_ci, sc_task",
+            "required": true
+          }
+        },
+        "bodyMode": "passthrough",
+        "body": {
+          "record": {
+            "type": "object",
+            "description": "Field map for the new record, e.g. {\"short_description\":\"...\",\"priority\":\"2\"}",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "result"
+        }
+      }
+    },
+    {
+      "id": "update_table_record",
+      "name": "Update Table Record",
+      "description": "Update a record in any ServiceNow table",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://{instanceHost}/api/now/v1/table/{tableName}/{sysId}",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "ServiceNow instance host, for example example.service-now.com",
+            "required": true
+          },
+          "tableName": {
+            "type": "string",
+            "in": "path",
+            "description": "Table name, e.g. incident, change_request, problem, cmdb_ci, sc_task",
+            "required": true
+          },
+          "sysId": {
+            "type": "string",
+            "in": "path",
+            "description": "sys_id of the record",
+            "required": true
+          }
+        },
+        "bodyMode": "passthrough",
+        "body": {
+          "record": {
+            "type": "object",
+            "description": "Field map of fields to update",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "result"
+        }
       }
     }
   ],
@@ -236,8 +414,20 @@
     }
   ],
   "envVars": [
-    { "name": "SERVICENOW_INSTANCE", "description": "ServiceNow instance URL (e.g. your-instance.service-now.com)", "required": true },
-    { "name": "SERVICENOW_ACCESS_TOKEN", "description": "ServiceNow OAuth access token for the Table API", "required": true, "sensitive": true }
+    {
+      "name": "SERVICENOW_INSTANCE",
+      "description": "ServiceNow instance URL (e.g. your-instance.service-now.com)",
+      "required": true
+    },
+    {
+      "name": "SERVICENOW_ACCESS_TOKEN",
+      "description": "ServiceNow OAuth access token for the Table API",
+      "required": true,
+      "sensitive": true
+    }
   ],
-  "suggestedWith": ["slack", "jira"]
+  "suggestedWith": [
+    "slack",
+    "jira"
+  ]
 }

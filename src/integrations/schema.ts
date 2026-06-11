@@ -256,6 +256,11 @@ export const getIntegrationEndpointSchema = defineSchema((v) =>
     query: v.string().optional(),
     params: v.record(v.string(), getIntegrationEndpointParamSchema()).optional(),
     body: v.record(v.string(), getIntegrationEndpointBodyFieldSchema()).optional(),
+    // "passthrough": body declares exactly one object/array field whose value is
+    // sent as the entire request body. For APIs that take arbitrary flat payloads
+    // (e.g. Salesforce sObject writes, ServiceNow table records). Default: each
+    // body field becomes a key of a JSON object.
+    bodyMode: v.enum(["passthrough"]).optional(),
     contentType: v.string().optional(),
     response: v.object({
       transform: v.string().optional(),

@@ -19270,6 +19270,86 @@ export const connectors: IntegrationConfig[] = [
           },
         },
       },
+    }, {
+      "id": "create_record",
+      "name": "Create Record",
+      "description": "Create a record of any object type (use Describe Object to discover fields)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "{{oauth.raw.instance_url}}/services/data/v61.0/sobjects/{sobjectType}",
+        "params": {
+          "sobjectType": {
+            "type": "string",
+            "in": "path",
+            "description": "Object API name, e.g. Account, Contact, Custom_Object__c",
+            "required": true,
+          },
+        },
+        "body": {
+          "record": {
+            "type": "object",
+            "description":
+              'Field map for the new record, e.g. {"Name":"Acme","Industry":"Technology"}',
+            "required": true,
+          },
+        },
+        "bodyMode": "passthrough",
+      },
+    }, {
+      "id": "update_record",
+      "name": "Update Record",
+      "description": "Update fields on a record of any object type",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "{{oauth.raw.instance_url}}/services/data/v61.0/sobjects/{sobjectType}/{recordId}",
+        "params": {
+          "sobjectType": {
+            "type": "string",
+            "in": "path",
+            "description": "Object API name, e.g. Account, Contact, Custom_Object__c",
+            "required": true,
+          },
+          "recordId": {
+            "type": "string",
+            "in": "path",
+            "description": "Salesforce record ID (15 or 18 chars)",
+            "required": true,
+          },
+        },
+        "body": {
+          "record": {
+            "type": "object",
+            "description": "Field map of fields to update",
+            "required": true,
+          },
+        },
+        "bodyMode": "passthrough",
+      },
+    }, {
+      "id": "delete_record",
+      "name": "Delete Record",
+      "description": "Delete a record of any object type",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "DELETE",
+        "url": "{{oauth.raw.instance_url}}/services/data/v61.0/sobjects/{sobjectType}/{recordId}",
+        "params": {
+          "sobjectType": {
+            "type": "string",
+            "in": "path",
+            "description": "Object API name, e.g. Account, Contact, Custom_Object__c",
+            "required": true,
+          },
+          "recordId": {
+            "type": "string",
+            "in": "path",
+            "description": "Salesforce record ID (15 or 18 chars)",
+            "required": true,
+          },
+        },
+      },
     }],
     "prompts": [{
       "id": "find_accounts",
@@ -20376,6 +20456,123 @@ export const connectors: IntegrationConfig[] = [
             "default": "sys_id,user_name,name,email,active,department",
           },
         },
+        "response": { "transform": "result" },
+      },
+    }, {
+      "id": "query_table",
+      "name": "Query Table",
+      "description":
+        "Query any ServiceNow table with an encoded query (covers change requests, problems, CMDB, catalog tasks, etc.)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{instanceHost}/api/now/v1/table/{tableName}",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "ServiceNow instance host, for example example.service-now.com",
+            "required": true,
+          },
+          "tableName": {
+            "type": "string",
+            "in": "path",
+            "description": "Table name, e.g. incident, change_request, problem, cmdb_ci, sc_task",
+            "required": true,
+          },
+          "sysparm_query": {
+            "type": "string",
+            "in": "query",
+            "description": "Encoded query, e.g. active=true^priority=1^ORDERBYDESCsys_created_on",
+          },
+          "sysparm_fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated fields to return",
+          },
+          "sysparm_limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum records to return",
+            "default": 25,
+          },
+          "sysparm_offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Record offset for pagination",
+          },
+        },
+        "response": { "transform": "result" },
+      },
+    }, {
+      "id": "create_table_record",
+      "name": "Create Table Record",
+      "description": "Create a record in any ServiceNow table",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{instanceHost}/api/now/v1/table/{tableName}",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "ServiceNow instance host, for example example.service-now.com",
+            "required": true,
+          },
+          "tableName": {
+            "type": "string",
+            "in": "path",
+            "description": "Table name, e.g. incident, change_request, problem, cmdb_ci, sc_task",
+            "required": true,
+          },
+        },
+        "body": {
+          "record": {
+            "type": "object",
+            "description":
+              'Field map for the new record, e.g. {"short_description":"...","priority":"2"}',
+            "required": true,
+          },
+        },
+        "bodyMode": "passthrough",
+        "response": { "transform": "result" },
+      },
+    }, {
+      "id": "update_table_record",
+      "name": "Update Table Record",
+      "description": "Update a record in any ServiceNow table",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://{instanceHost}/api/now/v1/table/{tableName}/{sysId}",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "ServiceNow instance host, for example example.service-now.com",
+            "required": true,
+          },
+          "tableName": {
+            "type": "string",
+            "in": "path",
+            "description": "Table name, e.g. incident, change_request, problem, cmdb_ci, sc_task",
+            "required": true,
+          },
+          "sysId": {
+            "type": "string",
+            "in": "path",
+            "description": "sys_id of the record",
+            "required": true,
+          },
+        },
+        "body": {
+          "record": {
+            "type": "object",
+            "description": "Field map of fields to update",
+            "required": true,
+          },
+        },
+        "bodyMode": "passthrough",
         "response": { "transform": "result" },
       },
     }],
