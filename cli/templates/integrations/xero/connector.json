@@ -1,0 +1,334 @@
+{
+  "name": "xero",
+  "displayName": "Xero",
+  "icon": "xero.svg",
+  "description": "Manage invoices, contacts, and accounts in Xero accounting",
+  "auth": {
+    "type": "oauth2",
+    "provider": "xero",
+    "authorizationUrl": "https://login.xero.com/identity/connect/authorize",
+    "tokenUrl": "https://identity.xero.com/connect/token",
+    "scopes": [
+      "offline_access",
+      "accounting.transactions",
+      "accounting.contacts",
+      "accounting.settings"
+    ],
+    "callbackPath": "/api/auth/xero/callback",
+    "tokenAuthMethod": "basic",
+    "docsUrl": "https://developer.xero.com/documentation/guides/oauth2/auth-flow/",
+    "requiredApis": [
+      {
+        "name": "Xero Developer App",
+        "enableUrl": "https://developer.xero.com/app/manage"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "XERO_CLIENT_ID",
+      "description": "Xero OAuth Client ID (from your app at developer.xero.com)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.xero.com/documentation/guides/oauth2/auth-flow/"
+    },
+    {
+      "name": "XERO_CLIENT_SECRET",
+      "description": "Xero OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.xero.com/documentation/guides/oauth2/auth-flow/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_connections",
+      "name": "List Connections",
+      "description": "List Xero tenants (organisations) connected to this token — run this first to discover the tenantId used by every other tool",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.xero.com/connections",
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["connections", "data"],
+            "collectionName": "connections",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "tenantId" },
+              { "name": "tenantType" },
+              { "name": "tenantName" },
+              { "name": "createdDateUtc" }
+            ],
+            "omitted": "auth event identifiers and provider-specific payload fields",
+            "outputFields": []
+          }
+        }
+      }
+    },
+    {
+      "id": "list_invoices",
+      "name": "List Invoices",
+      "description": "List invoices in a Xero organisation",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.xero.com/api.xro/2.0/Invoices",
+        "params": {
+          "tenant_id": {
+            "type": "string",
+            "in": "header",
+            "headerName": "xero-tenant-id",
+            "description": "Xero tenant ID (from the List Connections tool)",
+            "required": true
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Accept",
+            "description": "Response format — keep application/json",
+            "default": "application/json"
+          },
+          "where": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter, e.g. Status==\"AUTHORISED\" or Type==\"ACCREC\""
+          },
+          "order": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort order, e.g. UpdatedDateUTC DESC"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (100 invoices per page)",
+            "default": 1
+          }
+        },
+        "response": {
+          "transform": "Invoices",
+          "historicalSummary": {
+            "collectionKeys": ["Invoices", "data"],
+            "collectionName": "invoices",
+            "itemFields": [
+              { "name": "InvoiceID" },
+              { "name": "InvoiceNumber" },
+              { "name": "Type" },
+              { "name": "Status" },
+              { "name": "Date" },
+              { "name": "DueDate" },
+              { "name": "Total" },
+              { "name": "AmountDue" },
+              { "name": "UpdatedDateUTC" },
+              { "name": "Contact", "kind": "object" }
+            ],
+            "omitted": "invoice line items, payments, and provider-specific payload fields",
+            "outputFields": []
+          }
+        }
+      }
+    },
+    {
+      "id": "get_invoice",
+      "name": "Get Invoice",
+      "description": "Get a Xero invoice with its line items",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.xero.com/api.xro/2.0/Invoices/{invoiceId}",
+        "params": {
+          "invoiceId": {
+            "type": "string",
+            "in": "path",
+            "description": "Xero InvoiceID (GUID) or invoice number",
+            "required": true
+          },
+          "tenant_id": {
+            "type": "string",
+            "in": "header",
+            "headerName": "xero-tenant-id",
+            "description": "Xero tenant ID (from the List Connections tool)",
+            "required": true
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Accept",
+            "description": "Response format — keep application/json",
+            "default": "application/json"
+          }
+        },
+        "response": {
+          "transform": "Invoices"
+        }
+      }
+    },
+    {
+      "id": "create_invoice",
+      "name": "Create Invoice",
+      "description": "Create an invoice in a Xero organisation",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.xero.com/api.xro/2.0/Invoices",
+        "params": {
+          "tenant_id": {
+            "type": "string",
+            "in": "header",
+            "headerName": "xero-tenant-id",
+            "description": "Xero tenant ID (from the List Connections tool)",
+            "required": true
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Accept",
+            "description": "Response format — keep application/json",
+            "default": "application/json"
+          }
+        },
+        "bodyMode": "passthrough",
+        "body": {
+          "invoice": {
+            "type": "object",
+            "description": "Invoice payload, e.g. { \"Type\": \"ACCREC\", \"Contact\": { \"ContactID\": \"...\" }, \"LineItems\": [{ \"Description\": \"Service\", \"Quantity\": 1, \"UnitAmount\": 100, \"AccountCode\": \"200\" }], \"DueDate\": \"2026-07-01\" }",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "Invoices"
+        }
+      }
+    },
+    {
+      "id": "list_contacts",
+      "name": "List Contacts",
+      "description": "List contacts in a Xero organisation",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.xero.com/api.xro/2.0/Contacts",
+        "params": {
+          "tenant_id": {
+            "type": "string",
+            "in": "header",
+            "headerName": "xero-tenant-id",
+            "description": "Xero tenant ID (from the List Connections tool)",
+            "required": true
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Accept",
+            "description": "Response format — keep application/json",
+            "default": "application/json"
+          },
+          "where": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter, e.g. EmailAddress!=null"
+          },
+          "order": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort order, e.g. Name ASC"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (100 contacts per page)",
+            "default": 1
+          }
+        },
+        "response": {
+          "transform": "Contacts"
+        }
+      }
+    },
+    {
+      "id": "list_accounts",
+      "name": "List Accounts",
+      "description": "List the chart of accounts in a Xero organisation",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.xero.com/api.xro/2.0/Accounts",
+        "params": {
+          "tenant_id": {
+            "type": "string",
+            "in": "header",
+            "headerName": "xero-tenant-id",
+            "description": "Xero tenant ID (from the List Connections tool)",
+            "required": true
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Accept",
+            "description": "Response format — keep application/json",
+            "default": "application/json"
+          },
+          "where": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter, e.g. Type==\"REVENUE\""
+          }
+        },
+        "response": {
+          "transform": "Accounts"
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "overdue_invoices",
+      "title": "Overdue invoices",
+      "prompt": "List my Xero invoices that are overdue, with amounts due and contact names.",
+      "category": "finance",
+      "icon": "chart"
+    },
+    {
+      "id": "create_invoice",
+      "title": "Create an invoice",
+      "prompt": "Create a draft sales invoice in Xero for a contact with the line items I provide.",
+      "category": "finance",
+      "icon": "plus"
+    }
+  ],
+  "suggestedWith": ["stripe", "hubspot", "gmail"],
+  "SETUP_GUIDE": {
+    "title": "Xero OAuth Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Xero account",
+        "description": "Sign up at https://www.xero.com/ — every Xero login includes the free Demo Company, which is ideal for testing API calls without touching real books."
+      },
+      {
+        "step": 2,
+        "title": "Create an app in the Xero developer portal",
+        "description": "Go to https://developer.xero.com/app/manage and create a new app (Web app type). Set the redirect URI to your app's /api/auth/xero/callback URL."
+      },
+      {
+        "step": 3,
+        "title": "Copy credentials",
+        "description": "Copy the Client ID and generate a Client Secret from the app's Configuration page. Set XERO_CLIENT_ID and XERO_CLIENT_SECRET in your .env."
+      },
+      {
+        "step": 4,
+        "title": "Connect and discover your tenant",
+        "description": "Complete the OAuth flow, then run the List Connections tool. Copy the tenantId from the response — every other Xero tool requires it as the tenant_id parameter (sent as the xero-tenant-id header)."
+      }
+    ],
+    "notes": [
+      "The offline_access scope is required — without it Xero issues no refresh token and access expires after 30 minutes",
+      "Refresh tokens are single-use and expire after 60 days of inactivity",
+      "The token endpoint authenticates with HTTP Basic (client_id:client_secret base64-encoded)",
+      "Every Accounting API call must include the xero-tenant-id header; use List Connections to find it",
+      "Uncertified apps are limited to 25 connected organisations"
+    ],
+    "documentation": "https://developer.xero.com/documentation/guides/oauth2/auth-flow/"
+  }
+}

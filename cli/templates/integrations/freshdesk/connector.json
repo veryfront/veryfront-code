@@ -1,0 +1,303 @@
+{
+  "name": "freshdesk",
+  "displayName": "Freshdesk",
+  "icon": "freshdesk.svg",
+  "description": "Manage support tickets and contacts in Freshdesk",
+  "auth": {
+    "type": "basic",
+    "usernameKey": "FRESHDESK_API_KEY",
+    "passwordKey": "FRESHDESK_API_PASSWORD",
+    "docsUrl": "https://developers.freshdesk.com/api/#authentication",
+    "requiredApis": [
+      {
+        "name": "Freshdesk API Key",
+        "enableUrl": "https://developers.freshdesk.com/api/#authentication"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "FRESHDESK_API_KEY",
+      "description": "Freshdesk API key (used as the HTTP Basic username), from Profile Settings → View API Key",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developers.freshdesk.com/api/#authentication"
+    },
+    {
+      "name": "FRESHDESK_API_PASSWORD",
+      "description": "HTTP Basic password for Freshdesk — leave as the default 'X'; Freshdesk authenticates with the API key as username and a dummy password",
+      "required": false,
+      "sensitive": true,
+      "default": "X",
+      "docsUrl": "https://developers.freshdesk.com/api/#authentication"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_tickets",
+      "name": "List Tickets",
+      "description": "List support tickets in the Freshdesk account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{domain}.freshdesk.com/api/v2/tickets",
+        "params": {
+          "domain": {
+            "type": "string",
+            "in": "path",
+            "description": "Your Freshdesk subdomain — the part before .freshdesk.com in your helpdesk URL",
+            "required": true
+          },
+          "filter": {
+            "type": "string",
+            "in": "query",
+            "description": "Predefined filter: new_and_my_open, watching, spam, or deleted"
+          },
+          "updated_since": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return tickets updated since this ISO 8601 timestamp"
+          },
+          "order_by": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort field: created_at, due_by, updated_at, or status",
+            "default": "created_at"
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Tickets per page (max 100)",
+            "default": 30
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number, starting at 1",
+            "default": 1
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["tickets", "data"],
+            "collectionName": "tickets",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "subject" },
+              { "name": "status" },
+              { "name": "priority" },
+              { "name": "type" },
+              { "name": "requester_id" },
+              { "name": "created_at" },
+              { "name": "updated_at" },
+              { "name": "due_by" }
+            ],
+            "omitted": "ticket descriptions, conversations, and provider-specific payload fields",
+            "outputFields": [{ "name": "page" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_ticket",
+      "name": "Get Ticket",
+      "description": "Get details of a Freshdesk ticket",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{domain}.freshdesk.com/api/v2/tickets/{ticketId}",
+        "params": {
+          "domain": {
+            "type": "string",
+            "in": "path",
+            "description": "Your Freshdesk subdomain — the part before .freshdesk.com",
+            "required": true
+          },
+          "ticketId": {
+            "type": "number",
+            "in": "path",
+            "description": "Freshdesk ticket ID",
+            "required": true
+          },
+          "include": {
+            "type": "string",
+            "in": "query",
+            "description": "Extra data to embed: conversations, requester, company, or stats"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_ticket",
+      "name": "Create Ticket",
+      "description": "Create a new support ticket in Freshdesk",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{domain}.freshdesk.com/api/v2/tickets",
+        "params": {
+          "domain": {
+            "type": "string",
+            "in": "path",
+            "description": "Your Freshdesk subdomain — the part before .freshdesk.com",
+            "required": true
+          }
+        },
+        "body": {
+          "subject": {
+            "type": "string",
+            "description": "Ticket subject",
+            "required": true
+          },
+          "description": {
+            "type": "string",
+            "description": "Ticket body (HTML allowed)",
+            "required": true
+          },
+          "email": {
+            "type": "string",
+            "description": "Requester's email address",
+            "required": true
+          },
+          "priority": {
+            "type": "number",
+            "description": "Priority: 1=low, 2=medium, 3=high, 4=urgent",
+            "required": true,
+            "default": 1
+          },
+          "status": {
+            "type": "number",
+            "description": "Status: 2=open, 3=pending, 4=resolved, 5=closed",
+            "required": true,
+            "default": 2
+          },
+          "tags": {
+            "type": "array",
+            "description": "Tags to apply to the ticket"
+          }
+        }
+      }
+    },
+    {
+      "id": "update_ticket",
+      "name": "Update Ticket",
+      "description": "Update fields on an existing Freshdesk ticket",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://{domain}.freshdesk.com/api/v2/tickets/{ticketId}",
+        "params": {
+          "domain": {
+            "type": "string",
+            "in": "path",
+            "description": "Your Freshdesk subdomain — the part before .freshdesk.com",
+            "required": true
+          },
+          "ticketId": {
+            "type": "number",
+            "in": "path",
+            "description": "Freshdesk ticket ID",
+            "required": true
+          }
+        },
+        "body": {
+          "subject": {
+            "type": "string",
+            "description": "Ticket subject"
+          },
+          "priority": {
+            "type": "number",
+            "description": "Priority: 1=low, 2=medium, 3=high, 4=urgent"
+          },
+          "status": {
+            "type": "number",
+            "description": "Status: 2=open, 3=pending, 4=resolved, 5=closed"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_contacts",
+      "name": "List Contacts",
+      "description": "List contacts in the Freshdesk account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{domain}.freshdesk.com/api/v2/contacts",
+        "params": {
+          "domain": {
+            "type": "string",
+            "in": "path",
+            "description": "Your Freshdesk subdomain — the part before .freshdesk.com",
+            "required": true
+          },
+          "email": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by exact email address"
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Contacts per page (max 100)",
+            "default": 30
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number, starting at 1",
+            "default": 1
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "open_tickets",
+      "title": "Open tickets",
+      "prompt": "List my open Freshdesk tickets with their priorities and due dates.",
+      "category": "support",
+      "icon": "list"
+    },
+    {
+      "id": "create_ticket",
+      "title": "Create a ticket",
+      "prompt": "Create a new Freshdesk ticket with a subject, description, and requester email.",
+      "category": "support",
+      "icon": "plus"
+    }
+  ],
+  "suggestedWith": ["slack", "gmail", "jira"],
+  "SETUP_GUIDE": {
+    "title": "Freshdesk API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Freshdesk account",
+        "description": "Sign up at https://www.freshdesk.com/ — the free plan or a trial works for testing. Note your subdomain (yourcompany in yourcompany.freshdesk.com)."
+      },
+      {
+        "step": 2,
+        "title": "Find your API key",
+        "description": "In Freshdesk, click your profile picture → Profile Settings, then reveal 'Your API Key' on the right side."
+      },
+      {
+        "step": 3,
+        "title": "Set environment variables",
+        "description": "Add FRESHDESK_API_KEY to your .env. Leave FRESHDESK_API_PASSWORD unset (it defaults to 'X') — Freshdesk uses HTTP Basic auth with the API key as the username and a dummy password."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Tickets tool with your subdomain as the domain parameter."
+      }
+    ],
+    "notes": [
+      "Freshdesk does not use OAuth for its REST API; HTTP Basic with the personal API key is the official method",
+      "The API key inherits the permissions of the agent it belongs to",
+      "All endpoints are per-account: https://<domain>.freshdesk.com/api/v2, HTTPS only"
+    ],
+    "documentation": "https://developers.freshdesk.com/api/"
+  }
+}

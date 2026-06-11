@@ -1,0 +1,282 @@
+{
+  "name": "mailchimp",
+  "displayName": "Mailchimp",
+  "icon": "mailchimp.svg",
+  "description": "Manage audiences, members, and campaigns in Mailchimp Marketing",
+  "auth": {
+    "type": "oauth2",
+    "provider": "mailchimp",
+    "authorizationUrl": "https://login.mailchimp.com/oauth2/authorize",
+    "tokenUrl": "https://login.mailchimp.com/oauth2/token",
+    "callbackPath": "/api/auth/mailchimp/callback",
+    "tokenAuthMethod": "request_body",
+    "docsUrl": "https://mailchimp.com/developer/marketing/guides/access-user-data-oauth-2/",
+    "requiredApis": [
+      {
+        "name": "Mailchimp Registered Apps",
+        "enableUrl": "https://admin.mailchimp.com/account/oauth2/"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "MAILCHIMP_CLIENT_ID",
+      "description": "Mailchimp OAuth Client ID (from your registered app)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://mailchimp.com/developer/marketing/guides/access-user-data-oauth-2/"
+    },
+    {
+      "name": "MAILCHIMP_CLIENT_SECRET",
+      "description": "Mailchimp OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://mailchimp.com/developer/marketing/guides/access-user-data-oauth-2/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_audiences",
+      "name": "List Audiences",
+      "description": "List audiences (lists) in the Mailchimp account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{dc}.api.mailchimp.com/3.0/lists",
+        "params": {
+          "dc": {
+            "type": "string",
+            "in": "path",
+            "description": "Mailchimp data center — the usXX prefix in your Mailchimp admin URL (e.g. us21 for us21.admin.mailchimp.com)",
+            "required": true
+          },
+          "count": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of audiences to return (max 1000)",
+            "default": 10
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of audiences to skip for pagination",
+            "default": 0
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["lists"],
+            "collectionName": "audiences",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "date_created" },
+              { "name": "stats", "kind": "object" }
+            ],
+            "omitted": "audience defaults, campaign settings, and provider-specific payload fields",
+            "outputFields": [{ "name": "total_items" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "list_members",
+      "name": "List Members",
+      "description": "List members of a Mailchimp audience",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{dc}.api.mailchimp.com/3.0/lists/{listId}/members",
+        "params": {
+          "dc": {
+            "type": "string",
+            "in": "path",
+            "description": "Mailchimp data center — the usXX prefix in your Mailchimp admin URL (e.g. us21)",
+            "required": true
+          },
+          "listId": {
+            "type": "string",
+            "in": "path",
+            "description": "Audience (list) ID",
+            "required": true
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by status: subscribed, unsubscribed, cleaned, pending, transactional, or archived"
+          },
+          "count": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of members to return (max 1000)",
+            "default": 25
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of members to skip for pagination",
+            "default": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "get_member",
+      "name": "Get Member",
+      "description": "Get a single audience member by email (MD5 hash of the lowercase address) or contact ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{dc}.api.mailchimp.com/3.0/lists/{listId}/members/{subscriberHash}",
+        "params": {
+          "dc": {
+            "type": "string",
+            "in": "path",
+            "description": "Mailchimp data center — the usXX prefix in your Mailchimp admin URL (e.g. us21)",
+            "required": true
+          },
+          "listId": {
+            "type": "string",
+            "in": "path",
+            "description": "Audience (list) ID",
+            "required": true
+          },
+          "subscriberHash": {
+            "type": "string",
+            "in": "path",
+            "description": "MD5 hash of the member's lowercase email address (a contact ID or email also works)",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "add_member",
+      "name": "Add Member",
+      "description": "Add a new member to a Mailchimp audience",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{dc}.api.mailchimp.com/3.0/lists/{listId}/members",
+        "params": {
+          "dc": {
+            "type": "string",
+            "in": "path",
+            "description": "Mailchimp data center — the usXX prefix in your Mailchimp admin URL (e.g. us21)",
+            "required": true
+          },
+          "listId": {
+            "type": "string",
+            "in": "path",
+            "description": "Audience (list) ID",
+            "required": true
+          }
+        },
+        "body": {
+          "email_address": {
+            "type": "string",
+            "description": "Member's email address",
+            "required": true
+          },
+          "status": {
+            "type": "string",
+            "description": "Subscription status: subscribed, unsubscribed, cleaned, pending, or transactional",
+            "required": true,
+            "default": "subscribed"
+          },
+          "merge_fields": {
+            "type": "object",
+            "description": "Merge field values, e.g. { \"FNAME\": \"Jane\", \"LNAME\": \"Doe\" }"
+          },
+          "tags": {
+            "type": "array",
+            "description": "Tag names to assign, e.g. [\"newsletter\"]"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_campaigns",
+      "name": "List Campaigns",
+      "description": "List campaigns in the Mailchimp account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{dc}.api.mailchimp.com/3.0/campaigns",
+        "params": {
+          "dc": {
+            "type": "string",
+            "in": "path",
+            "description": "Mailchimp data center — the usXX prefix in your Mailchimp admin URL (e.g. us21)",
+            "required": true
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by status: save, paused, schedule, sending, or sent"
+          },
+          "count": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of campaigns to return (max 1000)",
+            "default": 10
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of campaigns to skip for pagination",
+            "default": 0
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "audience_overview",
+      "title": "Audience overview",
+      "prompt": "List my Mailchimp audiences with their member counts and recent growth.",
+      "category": "marketing",
+      "icon": "list"
+    },
+    {
+      "id": "add_subscriber",
+      "title": "Add a subscriber",
+      "prompt": "Add a new subscriber to one of my Mailchimp audiences with their name and email.",
+      "category": "marketing",
+      "icon": "plus"
+    }
+  ],
+  "suggestedWith": ["hubspot", "gmail", "slack"],
+  "SETUP_GUIDE": {
+    "title": "Mailchimp OAuth Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Register a Mailchimp app",
+        "description": "Sign in to Mailchimp (the free plan works for testing) and go to Account → Extras → Registered apps (https://admin.mailchimp.com/account/oauth2/). Click Register An App."
+      },
+      {
+        "step": 2,
+        "title": "Set the redirect URI",
+        "description": "Set the app's Redirect URI to your app URL ending in /api/auth/mailchimp/callback."
+      },
+      {
+        "step": 3,
+        "title": "Copy credentials",
+        "description": "Copy the Client ID and Client Secret into MAILCHIMP_CLIENT_ID and MAILCHIMP_CLIENT_SECRET."
+      },
+      {
+        "step": 4,
+        "title": "Find your data center and verify",
+        "description": "Note the usXX prefix in your Mailchimp admin URL (e.g. us21.admin.mailchimp.com → us21). Connect your account and run List Audiences with that dc value."
+      }
+    ],
+    "notes": [
+      "Mailchimp access tokens do not expire and no refresh tokens are issued; reauthorize to rotate",
+      "The OAuth flow uses no scopes; the token grants the user's account access",
+      "The API host is data-center-specific (usXX.api.mailchimp.com). The dc is NOT in the token response — Mailchimp returns it from GET https://login.mailchimp.com/oauth2/metadata. Tools therefore take dc as a required parameter (the usXX prefix in your admin URL); the tradeoff is the agent must supply it on every call"
+    ],
+    "documentation": "https://mailchimp.com/developer/marketing/api/"
+  }
+}

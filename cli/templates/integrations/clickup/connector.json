@@ -1,0 +1,308 @@
+{
+  "name": "clickup",
+  "displayName": "ClickUp",
+  "icon": "clickup.svg",
+  "description": "Manage tasks, lists, and spaces in ClickUp workspaces",
+  "auth": {
+    "type": "oauth2",
+    "provider": "clickup",
+    "authorizationUrl": "https://app.clickup.com/api",
+    "tokenUrl": "https://api.clickup.com/api/v2/oauth/token",
+    "callbackPath": "/api/auth/clickup/callback",
+    "tokenAuthMethod": "request_body",
+    "docsUrl": "https://developer.clickup.com/docs/authentication",
+    "requiredApis": [
+      {
+        "name": "ClickUp OAuth App",
+        "enableUrl": "https://developer.clickup.com/docs/authentication"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "CLICKUP_CLIENT_ID",
+      "description": "ClickUp OAuth Client ID (from your OAuth app in workspace settings)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.clickup.com/docs/authentication"
+    },
+    {
+      "name": "CLICKUP_CLIENT_SECRET",
+      "description": "ClickUp OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.clickup.com/docs/authentication"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_workspaces",
+      "name": "List Workspaces",
+      "description": "List ClickUp Workspaces (teams) the authorized user can access",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.clickup.com/api/v2/team"
+      }
+    },
+    {
+      "id": "list_spaces",
+      "name": "List Spaces",
+      "description": "List Spaces in a ClickUp Workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.clickup.com/api/v2/team/{teamId}/space",
+        "params": {
+          "teamId": {
+            "type": "string",
+            "in": "path",
+            "description": "ClickUp Workspace (team) ID",
+            "required": true
+          },
+          "archived": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Whether to include archived Spaces",
+            "default": false
+          }
+        }
+      }
+    },
+    {
+      "id": "list_lists",
+      "name": "List Lists",
+      "description": "List folderless Lists in a ClickUp Space",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.clickup.com/api/v2/space/{spaceId}/list",
+        "params": {
+          "spaceId": {
+            "type": "string",
+            "in": "path",
+            "description": "ClickUp Space ID",
+            "required": true
+          },
+          "archived": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Whether to include archived Lists",
+            "default": false
+          }
+        }
+      }
+    },
+    {
+      "id": "list_tasks",
+      "name": "List Tasks",
+      "description": "List tasks in a ClickUp List",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.clickup.com/api/v2/list/{listId}/task",
+        "params": {
+          "listId": {
+            "type": "string",
+            "in": "path",
+            "description": "ClickUp List ID",
+            "required": true
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number to fetch (100 tasks per page)",
+            "default": 0
+          },
+          "include_closed": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Whether to include closed tasks",
+            "default": false
+          },
+          "order_by": {
+            "type": "string",
+            "in": "query",
+            "description": "Order by field: id, created, updated, or due_date"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["tasks"],
+            "collectionName": "tasks",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "status", "kind": "object" },
+              { "name": "priority", "kind": "object" },
+              { "name": "due_date" },
+              { "name": "date_created" },
+              { "name": "date_updated" },
+              { "name": "url" },
+              { "name": "assignees", "kind": "contact-array" }
+            ],
+            "omitted": "task descriptions, custom fields, and provider-specific payload fields",
+            "outputFields": [{ "name": "last_page" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_task",
+      "name": "Get Task",
+      "description": "Get details of a ClickUp task",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.clickup.com/api/v2/task/{taskId}",
+        "params": {
+          "taskId": {
+            "type": "string",
+            "in": "path",
+            "description": "ClickUp task ID",
+            "required": true
+          },
+          "include_subtasks": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Whether to include subtasks",
+            "default": false
+          }
+        }
+      }
+    },
+    {
+      "id": "create_task",
+      "name": "Create Task",
+      "description": "Create a new task in a ClickUp List",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.clickup.com/api/v2/list/{listId}/task",
+        "params": {
+          "listId": {
+            "type": "string",
+            "in": "path",
+            "description": "ClickUp List ID",
+            "required": true
+          }
+        },
+        "body": {
+          "name": {
+            "type": "string",
+            "description": "Task name",
+            "required": true
+          },
+          "description": {
+            "type": "string",
+            "description": "Task description (plain text)"
+          },
+          "assignees": {
+            "type": "array",
+            "description": "Array of assignee user IDs (numbers)"
+          },
+          "status": {
+            "type": "string",
+            "description": "Status name as defined on the List"
+          },
+          "priority": {
+            "type": "number",
+            "description": "Priority: 1=urgent, 2=high, 3=normal, 4=low"
+          },
+          "due_date": {
+            "type": "number",
+            "description": "Due date as Unix time in milliseconds"
+          }
+        }
+      }
+    },
+    {
+      "id": "update_task",
+      "name": "Update Task",
+      "description": "Update fields on an existing ClickUp task",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://api.clickup.com/api/v2/task/{taskId}",
+        "params": {
+          "taskId": {
+            "type": "string",
+            "in": "path",
+            "description": "ClickUp task ID",
+            "required": true
+          }
+        },
+        "body": {
+          "name": {
+            "type": "string",
+            "description": "Task name"
+          },
+          "description": {
+            "type": "string",
+            "description": "Task description"
+          },
+          "status": {
+            "type": "string",
+            "description": "Status name as defined on the List"
+          },
+          "priority": {
+            "type": "number",
+            "description": "Priority: 1=urgent, 2=high, 3=normal, 4=low"
+          },
+          "due_date": {
+            "type": "number",
+            "description": "Due date as Unix time in milliseconds"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "open_tasks",
+      "title": "Show open tasks",
+      "prompt": "List the open tasks in a ClickUp list with their statuses and due dates.",
+      "category": "productivity",
+      "icon": "list"
+    },
+    {
+      "id": "create_task",
+      "title": "Create a task",
+      "prompt": "Create a new ClickUp task with a name, description, priority, and due date.",
+      "category": "productivity",
+      "icon": "plus"
+    }
+  ],
+  "suggestedWith": ["slack", "github", "calendar"],
+  "SETUP_GUIDE": {
+    "title": "ClickUp OAuth Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a ClickUp OAuth app",
+        "description": "Sign in to ClickUp (a Free Forever workspace works), open your avatar menu → Settings → ClickUp API, and click Create an App."
+      },
+      {
+        "step": 2,
+        "title": "Set the redirect URL",
+        "description": "Set the app's redirect URL to your app URL ending in /api/auth/clickup/callback."
+      },
+      {
+        "step": 3,
+        "title": "Copy credentials",
+        "description": "Copy the generated Client ID and Client Secret into CLICKUP_CLIENT_ID and CLICKUP_CLIENT_SECRET."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Connect your ClickUp account and run the List Workspaces tool."
+      }
+    ],
+    "notes": [
+      "ClickUp OAuth has no scopes; users pick which Workspaces to authorize during the consent screen",
+      "OAuth access tokens currently do not expire and no refresh tokens are issued",
+      "OAuth access tokens are sent as Authorization: Bearer <token>; only personal pk_ tokens use the bare-token header"
+    ],
+    "documentation": "https://developer.clickup.com/reference"
+  }
+}

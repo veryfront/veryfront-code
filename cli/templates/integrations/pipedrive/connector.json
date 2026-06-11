@@ -1,0 +1,376 @@
+{
+  "name": "pipedrive",
+  "displayName": "Pipedrive",
+  "icon": "pipedrive.svg",
+  "description": "Manage deals, persons, and organizations in Pipedrive CRM",
+  "auth": {
+    "type": "oauth2",
+    "provider": "pipedrive",
+    "authorizationUrl": "https://oauth.pipedrive.com/oauth/authorize",
+    "tokenUrl": "https://oauth.pipedrive.com/oauth/token",
+    "scopes": [
+      "base",
+      "deals:full",
+      "contacts:full"
+    ],
+    "callbackPath": "/api/auth/pipedrive/callback",
+    "tokenAuthMethod": "basic",
+    "docsUrl": "https://pipedrive.readme.io/docs/marketplace-oauth-authorization",
+    "requiredApis": [
+      {
+        "name": "Pipedrive Developer Hub",
+        "enableUrl": "https://app.pipedrive.com/developer-hub"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "PIPEDRIVE_CLIENT_ID",
+      "description": "Pipedrive OAuth Client ID (from your app in the Developer Hub)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://pipedrive.readme.io/docs/marketplace-oauth-authorization"
+    },
+    {
+      "name": "PIPEDRIVE_CLIENT_SECRET",
+      "description": "Pipedrive OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://pipedrive.readme.io/docs/marketplace-oauth-authorization"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_deals",
+      "name": "List Deals",
+      "description": "List deals in the Pipedrive account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "{{oauth.raw.api_domain}}/api/v1/deals",
+        "params": {
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by status: all_not_deleted, open, won, lost, or deleted",
+            "default": "all_not_deleted"
+          },
+          "start": {
+            "type": "number",
+            "in": "query",
+            "description": "Pagination start offset",
+            "default": 0
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum deals to return",
+            "default": 50
+          },
+          "sort": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort order, e.g. update_time DESC"
+          }
+        },
+        "response": {
+          "transform": "data",
+          "historicalSummary": {
+            "collectionKeys": [
+              "data",
+              "deals"
+            ],
+            "collectionName": "deals",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "title"
+              },
+              {
+                "name": "status"
+              },
+              {
+                "name": "value"
+              },
+              {
+                "name": "currency"
+              },
+              {
+                "name": "stage_id"
+              },
+              {
+                "name": "person_name"
+              },
+              {
+                "name": "org_name"
+              },
+              {
+                "name": "add_time"
+              },
+              {
+                "name": "update_time"
+              }
+            ],
+            "omitted": "deal custom fields, activities, and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "additional_data",
+                "kind": "object"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_deal",
+      "name": "Get Deal",
+      "description": "Get full details of a Pipedrive deal",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "{{oauth.raw.api_domain}}/api/v1/deals/{dealId}",
+        "params": {
+          "dealId": {
+            "type": "number",
+            "in": "path",
+            "description": "Pipedrive deal ID",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "create_deal",
+      "name": "Create Deal",
+      "description": "Create a new deal in Pipedrive",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "{{oauth.raw.api_domain}}/api/v1/deals",
+        "body": {
+          "title": {
+            "type": "string",
+            "description": "Deal title",
+            "required": true
+          },
+          "value": {
+            "type": "number",
+            "description": "Deal value"
+          },
+          "currency": {
+            "type": "string",
+            "description": "Currency code, e.g. USD or EUR"
+          },
+          "person_id": {
+            "type": "number",
+            "description": "ID of the person the deal is linked to"
+          },
+          "org_id": {
+            "type": "number",
+            "description": "ID of the organization the deal is linked to"
+          },
+          "stage_id": {
+            "type": "number",
+            "description": "Pipeline stage ID (defaults to the first stage of the default pipeline)"
+          },
+          "status": {
+            "type": "string",
+            "description": "Deal status: open, won, or lost",
+            "default": "open"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "update_deal",
+      "name": "Update Deal",
+      "description": "Update fields on an existing Pipedrive deal",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "{{oauth.raw.api_domain}}/api/v1/deals/{dealId}",
+        "params": {
+          "dealId": {
+            "type": "number",
+            "in": "path",
+            "description": "Pipedrive deal ID",
+            "required": true
+          }
+        },
+        "body": {
+          "title": {
+            "type": "string",
+            "description": "Deal title"
+          },
+          "value": {
+            "type": "number",
+            "description": "Deal value"
+          },
+          "stage_id": {
+            "type": "number",
+            "description": "Pipeline stage ID"
+          },
+          "status": {
+            "type": "string",
+            "description": "Deal status: open, won, or lost"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "list_persons",
+      "name": "List Persons",
+      "description": "List persons (contacts) in the Pipedrive account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "{{oauth.raw.api_domain}}/api/v1/persons",
+        "params": {
+          "start": {
+            "type": "number",
+            "in": "query",
+            "description": "Pagination start offset",
+            "default": 0
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum persons to return",
+            "default": 50
+          },
+          "sort": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort order, e.g. update_time DESC"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "create_person",
+      "name": "Create Person",
+      "description": "Create a new person (contact) in Pipedrive",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "{{oauth.raw.api_domain}}/api/v1/persons",
+        "body": {
+          "name": {
+            "type": "string",
+            "description": "Person's full name",
+            "required": true
+          },
+          "email": {
+            "type": "array",
+            "description": "Emails, e.g. [{ \"value\": \"jane@acme.com\", \"primary\": true }]"
+          },
+          "phone": {
+            "type": "array",
+            "description": "Phones, e.g. [{ \"value\": \"+1 555 0100\", \"primary\": true }]"
+          },
+          "org_id": {
+            "type": "number",
+            "description": "ID of the organization the person belongs to"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "list_organizations",
+      "name": "List Organizations",
+      "description": "List organizations in the Pipedrive account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "{{oauth.raw.api_domain}}/api/v1/organizations",
+        "params": {
+          "start": {
+            "type": "number",
+            "in": "query",
+            "description": "Pagination start offset",
+            "default": 0
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum organizations to return",
+            "default": 50
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "pipeline_review",
+      "title": "Review my pipeline",
+      "prompt": "List my open Pipedrive deals with their values and stages, and flag any that haven't been updated recently.",
+      "category": "sales",
+      "icon": "chart"
+    },
+    {
+      "id": "new_deal",
+      "title": "Add a deal",
+      "prompt": "Create a new deal in Pipedrive with a title, value, and linked person.",
+      "category": "sales",
+      "icon": "plus"
+    }
+  ],
+  "suggestedWith": [
+    "gmail",
+    "calendly",
+    "slack"
+  ],
+  "SETUP_GUIDE": {
+    "title": "Pipedrive OAuth Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Pipedrive developer sandbox",
+        "description": "Request a free developer sandbox account at https://developers.pipedrive.com/start-here — apps can only be created from a sandbox or company account with admin rights."
+      },
+      {
+        "step": 2,
+        "title": "Create an app in the Developer Hub",
+        "description": "In Pipedrive, open Tools and apps → Developer Hub (or https://app.pipedrive.com/developer-hub) and create an app. A private/unlisted app is fine for internal use."
+      },
+      {
+        "step": 3,
+        "title": "Set the callback URL and scopes",
+        "description": "Set the OAuth callback URL to your app URL ending in /api/auth/pipedrive/callback and enable the deals:full, contacts:full, and search:read scopes (base is always included)."
+      },
+      {
+        "step": 4,
+        "title": "Copy credentials and verify",
+        "description": "Copy the Client ID and Client Secret from the app's OAuth & access scopes page into PIPEDRIVE_CLIENT_ID and PIPEDRIVE_CLIENT_SECRET, connect your account, and run the List Deals tool."
+      }
+    ],
+    "notes": [
+      "The token endpoint authenticates the client with HTTP Basic (base64 of client_id:client_secret)",
+      "Access tokens expire after about 60 minutes; refresh tokens are issued and expire if unused for 60 days",
+      "API calls go to the company-specific host returned as api_domain in the token response (e.g. https://yourcompany.pipedrive.com); tool URLs template it via {{oauth.raw.api_domain}}"
+    ],
+    "documentation": "https://developers.pipedrive.com/docs/api/v1"
+  }
+}

@@ -1,0 +1,269 @@
+{
+  "name": "zoom",
+  "displayName": "Zoom",
+  "icon": "zoom.svg",
+  "description": "Schedule and manage Zoom meetings and access cloud recordings",
+  "auth": {
+    "type": "oauth2",
+    "provider": "zoom",
+    "authorizationUrl": "https://zoom.us/oauth/authorize",
+    "tokenUrl": "https://zoom.us/oauth/token",
+    "scopes": [
+      "user:read:user",
+      "meeting:read:meeting",
+      "meeting:read:list_meetings",
+      "meeting:write:meeting",
+      "cloud_recording:read:list_user_recordings"
+    ],
+    "callbackPath": "/api/auth/zoom/callback",
+    "tokenAuthMethod": "basic",
+    "docsUrl": "https://developers.zoom.us/docs/integrations/oauth/",
+    "requiredApis": [
+      {
+        "name": "Zoom App Marketplace (General App)",
+        "enableUrl": "https://marketplace.zoom.us/develop/create"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "ZOOM_CLIENT_ID",
+      "description": "Zoom OAuth Client ID (from your app in the Zoom App Marketplace)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developers.zoom.us/docs/integrations/oauth/"
+    },
+    {
+      "name": "ZOOM_CLIENT_SECRET",
+      "description": "Zoom OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developers.zoom.us/docs/integrations/oauth/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_meetings",
+      "name": "List Meetings",
+      "description": "List scheduled or upcoming Zoom meetings for the authenticated user",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.zoom.us/v2/users/{userId}/meetings",
+        "params": {
+          "userId": {
+            "type": "string",
+            "in": "path",
+            "description": "Zoom user ID or 'me' for the authenticated user",
+            "default": "me"
+          },
+          "type": {
+            "type": "string",
+            "in": "query",
+            "description": "Meeting type filter: scheduled, live, upcoming, upcoming_meetings, or previous_meetings",
+            "default": "upcoming"
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of meetings per page (max 300)",
+            "default": 30
+          },
+          "next_page_token": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination token from a previous response"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["meetings"],
+            "collectionName": "meetings",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "uuid" },
+              { "name": "topic" },
+              { "name": "type" },
+              { "name": "start_time" },
+              { "name": "duration" },
+              { "name": "timezone" },
+              { "name": "join_url" },
+              { "name": "created_at" }
+            ],
+            "omitted": "meeting settings, passwords, and provider-specific payload fields",
+            "outputFields": [
+              { "name": "next_page_token" },
+              { "name": "page_size" },
+              { "name": "total_records" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_meeting",
+      "name": "Get Meeting",
+      "description": "Get details of a Zoom meeting by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.zoom.us/v2/meetings/{meetingId}",
+        "params": {
+          "meetingId": {
+            "type": "string",
+            "in": "path",
+            "description": "Zoom meeting ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_meeting",
+      "name": "Create Meeting",
+      "description": "Schedule a new Zoom meeting for the authenticated user",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.zoom.us/v2/users/{userId}/meetings",
+        "params": {
+          "userId": {
+            "type": "string",
+            "in": "path",
+            "description": "Zoom user ID or 'me' for the authenticated user",
+            "default": "me"
+          }
+        },
+        "body": {
+          "topic": {
+            "type": "string",
+            "description": "Meeting topic",
+            "required": true
+          },
+          "type": {
+            "type": "number",
+            "description": "Meeting type: 1=instant, 2=scheduled, 3=recurring (no fixed time), 8=recurring (fixed time)",
+            "default": 2
+          },
+          "start_time": {
+            "type": "string",
+            "description": "Start time in ISO 8601 format, e.g. 2026-06-15T10:00:00Z"
+          },
+          "duration": {
+            "type": "number",
+            "description": "Duration in minutes"
+          },
+          "timezone": {
+            "type": "string",
+            "description": "Timezone for start_time, e.g. Europe/Berlin"
+          },
+          "agenda": {
+            "type": "string",
+            "description": "Meeting agenda / description"
+          },
+          "settings": {
+            "type": "object",
+            "description": "Meeting settings, e.g. { \"join_before_host\": true, \"waiting_room\": false }"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_recordings",
+      "name": "List Recordings",
+      "description": "List cloud recordings for the authenticated user",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.zoom.us/v2/users/{userId}/recordings",
+        "params": {
+          "userId": {
+            "type": "string",
+            "in": "path",
+            "description": "Zoom user ID or 'me' for the authenticated user",
+            "default": "me"
+          },
+          "from": {
+            "type": "string",
+            "in": "query",
+            "description": "Start date (yyyy-mm-dd) of the query window (within the last 6 months)"
+          },
+          "to": {
+            "type": "string",
+            "in": "query",
+            "description": "End date (yyyy-mm-dd) of the query window"
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of records per page (max 300)",
+            "default": 30
+          },
+          "next_page_token": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination token from a previous response"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_me",
+      "name": "Get My Profile",
+      "description": "Get the authenticated Zoom user's profile",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.zoom.us/v2/users/me"
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "upcoming_meetings",
+      "title": "Upcoming meetings",
+      "prompt": "List my upcoming Zoom meetings with their start times and join links.",
+      "category": "productivity",
+      "icon": "list"
+    },
+    {
+      "id": "schedule_meeting",
+      "title": "Schedule a meeting",
+      "prompt": "Schedule a Zoom meeting with a topic, start time, and duration.",
+      "category": "productivity",
+      "icon": "plus"
+    }
+  ],
+  "suggestedWith": ["calendar", "slack", "gmail"],
+  "SETUP_GUIDE": {
+    "title": "Zoom OAuth Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Zoom app",
+        "description": "Sign in at https://marketplace.zoom.us/ (a free Zoom account works) and choose Develop → Build App → General App (user-managed)."
+      },
+      {
+        "step": 2,
+        "title": "Configure the redirect URL",
+        "description": "In the app's OAuth settings, set the OAuth Redirect URL to your app URL ending in /api/auth/zoom/callback and add it to the allow list."
+      },
+      {
+        "step": 3,
+        "title": "Add scopes",
+        "description": "Under Scopes, add the granular scopes user:read:user, meeting:read:meeting, meeting:read:list_meetings, meeting:write:meeting, and cloud_recording:read:list_user_recordings."
+      },
+      {
+        "step": 4,
+        "title": "Copy credentials and verify",
+        "description": "Copy the Client ID and Client Secret into ZOOM_CLIENT_ID and ZOOM_CLIENT_SECRET, connect your account, and run the Get My Profile tool."
+      }
+    ],
+    "notes": [
+      "The token endpoint authenticates the client with HTTP Basic (base64 of client_id:client_secret)",
+      "Access tokens expire after 1 hour; refresh tokens are issued and expire after 90 days",
+      "Apps created since 2024 use granular scopes (e.g. meeting:read:list_meetings) instead of classic scopes like meeting:read"
+    ],
+    "documentation": "https://developers.zoom.us/docs/api/"
+  }
+}
