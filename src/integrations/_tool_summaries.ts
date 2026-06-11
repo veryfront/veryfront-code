@@ -186,6 +186,47 @@ export const historicalToolSummaries: Record<string, IntegrationEndpointHistoric
     ],
     "omitted": "workspaces details and provider-specific payload fields",
   },
+  "calendly__list_event_invitees": {
+    "collectionKeys": ["collection", "invitees"],
+    "collectionName": "invitees",
+    "itemFields": [
+      { "name": "uri" },
+      { "name": "name" },
+      { "name": "email" },
+      { "name": "status" },
+      { "name": "created_at" },
+    ],
+    "outputFields": [{ "name": "next_page_token" }],
+    "omitted": "invitee questions/answers and provider-specific payload fields",
+  },
+  "calendly__list_event_types": {
+    "collectionKeys": ["collection", "event_types"],
+    "collectionName": "event_types",
+    "itemFields": [
+      { "name": "uri" },
+      { "name": "name" },
+      { "name": "slug" },
+      { "name": "duration" },
+      { "name": "active" },
+      { "name": "scheduling_url" },
+    ],
+    "outputFields": [{ "name": "next_page_token" }],
+    "omitted": "event type descriptions and provider-specific payload fields",
+  },
+  "calendly__list_scheduled_events": {
+    "collectionKeys": ["collection", "events"],
+    "collectionName": "events",
+    "itemFields": [
+      { "name": "uri" },
+      { "name": "name" },
+      { "name": "status" },
+      { "name": "start_time" },
+      { "name": "end_time" },
+      { "name": "event_type" },
+    ],
+    "outputFields": [{ "name": "next_page_token" }],
+    "omitted": "location details and provider-specific payload fields",
+  },
   "github__get_issue": {
     "collectionKeys": ["issue", "data"],
     "collectionName": "issues",
@@ -372,6 +413,16 @@ export const historicalToolSummaries: Record<string, IntegrationEndpointHistoric
     ],
     "outputFields": [{ "name": "nextPageToken" }, { "name": "resultSizeEstimate" }],
     "omitted": "large email bodies and provider-specific payload fields",
+  },
+  "google-analytics__list_account_summaries": {
+    "collectionKeys": ["accountSummaries"],
+    "collectionName": "accountSummaries",
+    "itemFields": [{ "name": "account" }, { "name": "displayName" }, {
+      "name": "propertySummaries",
+      "kind": "object",
+    }],
+    "outputFields": [{ "name": "nextPageToken" }],
+    "omitted": "property detail fields beyond names and IDs",
   },
   "harvest__invoice_report": {
     "collectionKeys": ["results", "data"],
@@ -901,6 +952,12 @@ export const historicalToolSummaries: Record<string, IntegrationEndpointHistoric
     "outputFields": [{ "name": "pageInfo", "kind": "object" }],
     "omitted": "issue descriptions, comments, and provider-specific payload fields",
   },
+  "openai__list_models": {
+    "collectionKeys": ["data", "models"],
+    "collectionName": "models",
+    "itemFields": [{ "name": "id" }, { "name": "owned_by" }, { "name": "created" }],
+    "omitted": "model capability details and provider-specific payload fields",
+  },
   "outlook__find_free_time": {
     "collectionKeys": ["value", "schedules", "data"],
     "collectionName": "schedules",
@@ -1274,5 +1331,29 @@ export const historicalToolSummaries: Record<string, IntegrationEndpointHistoric
     ],
     "outputFields": [{ "name": "response_metadata", "kind": "object" }],
     "omitted": "user profiles, avatars, and provider-specific payload fields",
+  },
+  "todoist__list_projects": {
+    "collectionKeys": ["results", "projects"],
+    "collectionName": "projects",
+    "itemFields": [{ "name": "id" }, { "name": "name" }, { "name": "color" }, {
+      "name": "is_favorite",
+    }, { "name": "parent_id" }],
+    "outputFields": [{ "name": "next_cursor" }],
+    "omitted": "project view settings and provider-specific payload fields",
+  },
+  "todoist__list_tasks": {
+    "collectionKeys": ["results", "tasks"],
+    "collectionName": "tasks",
+    "itemFields": [
+      { "name": "id" },
+      { "name": "content" },
+      { "name": "project_id" },
+      { "name": "priority" },
+      { "name": "due", "kind": "object" },
+      { "name": "checked" },
+      { "name": "added_at" },
+    ],
+    "outputFields": [{ "name": "next_cursor" }],
+    "omitted": "task descriptions and provider-specific payload fields",
   },
 };

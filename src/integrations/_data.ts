@@ -1397,6 +1397,266 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["gmail", "slack"],
   },
   {
+    "name": "calendly",
+    "displayName": "Calendly",
+    "icon": "calendly.svg",
+    "description":
+      "Read scheduling links, scheduled events, and invitees from Calendly, and cancel events",
+    "auth": {
+      "type": "oauth2",
+      "provider": "calendly",
+      "authorizationUrl": "https://auth.calendly.com/oauth/authorize",
+      "tokenUrl": "https://auth.calendly.com/oauth/token",
+      "scopes": [],
+      "requiredApis": [{
+        "name": "Calendly Developer Portal",
+        "enableUrl": "https://developer.calendly.com/",
+      }],
+      "docsUrl": "https://developer.calendly.com/api-docs",
+    },
+    "envVars": [{
+      "name": "CALENDLY_CLIENT_ID",
+      "description": "Calendly OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.calendly.com/create-a-developer-account",
+    }, {
+      "name": "CALENDLY_CLIENT_SECRET",
+      "description": "Calendly OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.calendly.com/create-a-developer-account",
+    }],
+    "tools": [{
+      "id": "get_current_user",
+      "name": "Get Current User",
+      "description":
+        "Get the connected Calendly user, including their user URI and organization URI (needed by the other tools)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.calendly.com/users/me",
+        "response": { "transform": "resource" },
+      },
+    }, {
+      "id": "list_event_types",
+      "name": "List Event Types",
+      "description": "List the user's or organization's event types (scheduling links)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.calendly.com/event_types",
+        "params": {
+          "user": {
+            "type": "string",
+            "in": "query",
+            "description": "User URI (from Get Current User); provide this or organization",
+          },
+          "organization": {
+            "type": "string",
+            "in": "query",
+            "description": "Organization URI (from Get Current User)",
+          },
+          "active": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Only return active event types",
+          },
+          "count": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of results per page (max 100)",
+            "default": 20,
+          },
+          "page_token": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination token from a previous response",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["collection", "event_types"],
+            "collectionName": "event_types",
+            "itemFields": [
+              { "name": "uri" },
+              { "name": "name" },
+              { "name": "slug" },
+              { "name": "duration" },
+              { "name": "active" },
+              { "name": "scheduling_url" },
+            ],
+            "outputFields": [{ "name": "next_page_token" }],
+            "omitted": "event type descriptions and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "list_scheduled_events",
+      "name": "List Scheduled Events",
+      "description": "List scheduled events for a user or organization",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.calendly.com/scheduled_events",
+        "params": {
+          "user": {
+            "type": "string",
+            "in": "query",
+            "description": "User URI (from Get Current User); provide this or organization",
+          },
+          "organization": {
+            "type": "string",
+            "in": "query",
+            "description": "Organization URI (from Get Current User)",
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by status: active or canceled",
+          },
+          "min_start_time": {
+            "type": "string",
+            "in": "query",
+            "description": "Only events starting after this ISO timestamp",
+          },
+          "max_start_time": {
+            "type": "string",
+            "in": "query",
+            "description": "Only events starting before this ISO timestamp",
+          },
+          "count": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of results per page (max 100)",
+            "default": 20,
+          },
+          "page_token": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination token from a previous response",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["collection", "events"],
+            "collectionName": "events",
+            "itemFields": [
+              { "name": "uri" },
+              { "name": "name" },
+              { "name": "status" },
+              { "name": "start_time" },
+              { "name": "end_time" },
+              { "name": "event_type" },
+            ],
+            "outputFields": [{ "name": "next_page_token" }],
+            "omitted": "location details and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_scheduled_event",
+      "name": "Get Scheduled Event",
+      "description": "Get details of a specific scheduled event",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.calendly.com/scheduled_events/{eventUuid}",
+        "params": {
+          "eventUuid": {
+            "type": "string",
+            "in": "path",
+            "description": "Scheduled event UUID (last path segment of the event URI)",
+            "required": true,
+          },
+        },
+        "response": { "transform": "resource" },
+      },
+    }, {
+      "id": "list_event_invitees",
+      "name": "List Event Invitees",
+      "description": "List invitees of a scheduled event",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.calendly.com/scheduled_events/{eventUuid}/invitees",
+        "params": {
+          "eventUuid": {
+            "type": "string",
+            "in": "path",
+            "description": "Scheduled event UUID",
+            "required": true,
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by status: active or canceled",
+          },
+          "count": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of results per page (max 100)",
+            "default": 20,
+          },
+          "page_token": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination token from a previous response",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["collection", "invitees"],
+            "collectionName": "invitees",
+            "itemFields": [{ "name": "uri" }, { "name": "name" }, { "name": "email" }, {
+              "name": "status",
+            }, { "name": "created_at" }],
+            "outputFields": [{ "name": "next_page_token" }],
+            "omitted": "invitee questions/answers and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "cancel_event",
+      "name": "Cancel Event",
+      "description": "Cancel a scheduled event",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.calendly.com/scheduled_events/{eventUuid}/cancellation",
+        "params": {
+          "eventUuid": {
+            "type": "string",
+            "in": "path",
+            "description": "Scheduled event UUID",
+            "required": true,
+          },
+        },
+        "body": {
+          "reason": {
+            "type": "string",
+            "description": "Reason for the cancellation shown to invitees",
+          },
+        },
+        "response": { "transform": "resource" },
+      },
+    }],
+    "prompts": [{
+      "id": "upcoming_meetings",
+      "title": "Upcoming meetings",
+      "prompt": "List my upcoming Calendly events with their times and invitees.",
+      "category": "scheduling",
+      "icon": "calendar",
+    }, {
+      "id": "scheduling_links",
+      "title": "My scheduling links",
+      "prompt": "Show my active Calendly event types and their scheduling URLs.",
+      "category": "scheduling",
+      "icon": "link",
+    }],
+    "suggestedWith": ["calendar", "gmail", "slack"],
+  },
+  {
     "name": "confluence",
     "displayName": "Confluence",
     "icon": "confluence.svg",
@@ -4040,6 +4300,185 @@ export const connectors: IntegrationConfig[] = [
       "icon": "search",
     }],
     "suggestedWith": ["calendar", "slack"],
+  },
+  {
+    "name": "google-analytics",
+    "displayName": "Google Analytics",
+    "icon": "google-analytics.svg",
+    "description":
+      "Run GA4 reports and realtime reports, and discover Analytics accounts and properties",
+    "auth": {
+      "type": "oauth2",
+      "provider": "google",
+      "authorizationUrl": "https://accounts.google.com/o/oauth2/v2/auth",
+      "tokenUrl": "https://oauth2.googleapis.com/token",
+      "scopes": ["https://www.googleapis.com/auth/analytics.readonly"],
+      "requiredApis": [{
+        "name": "Google Analytics Data API",
+        "enableUrl": "https://console.cloud.google.com/apis/library/analyticsdata.googleapis.com",
+      }, {
+        "name": "Google Analytics Admin API",
+        "enableUrl": "https://console.cloud.google.com/apis/library/analyticsadmin.googleapis.com",
+      }],
+      "docsUrl": "https://developers.google.com/analytics/devguides/reporting/data/v1",
+    },
+    "envVars": [{
+      "name": "GOOGLE_CLIENT_ID",
+      "description": "Google OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://console.cloud.google.com/apis/credentials",
+    }, {
+      "name": "GOOGLE_CLIENT_SECRET",
+      "description": "Google OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://console.cloud.google.com/apis/credentials",
+    }],
+    "tools": [{
+      "id": "list_account_summaries",
+      "name": "List Account Summaries",
+      "description":
+        "List GA4 accounts and their properties accessible to the connected user (use this to find property IDs)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://analyticsadmin.googleapis.com/v1beta/accountSummaries",
+        "params": {
+          "pageSize": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum account summaries to return",
+            "default": 50,
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination token from a previous response",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["accountSummaries"],
+            "collectionName": "accountSummaries",
+            "itemFields": [{ "name": "account" }, { "name": "displayName" }, {
+              "name": "propertySummaries",
+              "kind": "object",
+            }],
+            "outputFields": [{ "name": "nextPageToken" }],
+            "omitted": "property detail fields beyond names and IDs",
+          },
+        },
+      },
+    }, {
+      "id": "run_report",
+      "name": "Run Report",
+      "description": "Run a GA4 report for a property over one or more date ranges",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://analyticsdata.googleapis.com/v1beta/properties/{propertyId}:runReport",
+        "params": {
+          "propertyId": {
+            "type": "string",
+            "in": "path",
+            "description": "Numeric GA4 property ID (e.g. 123456789)",
+            "required": true,
+          },
+        },
+        "body": {
+          "metrics": {
+            "type": "array",
+            "description": 'Metrics to report, e.g. [{"name":"activeUsers"},{"name":"sessions"}]',
+            "required": true,
+          },
+          "dimensions": {
+            "type": "array",
+            "description": 'Dimensions to break down by, e.g. [{"name":"country"}]',
+          },
+          "dateRanges": {
+            "type": "array",
+            "description": 'Date ranges, e.g. [{"startDate":"7daysAgo","endDate":"today"}]',
+            "required": true,
+          },
+          "dimensionFilter": {
+            "type": "object",
+            "description": "Optional GA4 FilterExpression to filter dimension values",
+          },
+          "orderBys": {
+            "type": "array",
+            "description":
+              'Optional ordering, e.g. [{"metric":{"metricName":"sessions"},"desc":true}]',
+          },
+          "limit": { "type": "number", "description": "Maximum rows to return", "default": 100 },
+          "offset": { "type": "number", "description": "Row offset for pagination" },
+        },
+      },
+    }, {
+      "id": "run_realtime_report",
+      "name": "Run Realtime Report",
+      "description": "Run a GA4 realtime report showing activity from the last 30 minutes",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url":
+          "https://analyticsdata.googleapis.com/v1beta/properties/{propertyId}:runRealtimeReport",
+        "params": {
+          "propertyId": {
+            "type": "string",
+            "in": "path",
+            "description": "Numeric GA4 property ID (e.g. 123456789)",
+            "required": true,
+          },
+        },
+        "body": {
+          "metrics": {
+            "type": "array",
+            "description": 'Metrics to report, e.g. [{"name":"activeUsers"}]',
+            "required": true,
+          },
+          "dimensions": {
+            "type": "array",
+            "description": 'Dimensions to break down by, e.g. [{"name":"country"}]',
+          },
+          "limit": { "type": "number", "description": "Maximum rows to return", "default": 100 },
+        },
+      },
+    }, {
+      "id": "get_metadata",
+      "name": "Get Report Metadata",
+      "description":
+        "List the dimensions and metrics available for a GA4 property (use before building reports)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://analyticsdata.googleapis.com/v1beta/properties/{propertyId}/metadata",
+        "params": {
+          "propertyId": {
+            "type": "string",
+            "in": "path",
+            "description": "Numeric GA4 property ID (e.g. 123456789)",
+            "required": true,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "traffic_summary",
+      "title": "Traffic summary",
+      "prompt":
+        "Show active users and sessions for my Google Analytics property over the last 7 days, broken down by country.",
+      "category": "analytics",
+      "icon": "chart",
+    }, {
+      "id": "realtime_users",
+      "title": "Who's online now",
+      "prompt":
+        "Show the number of active users on my site right now using Google Analytics realtime data.",
+      "category": "analytics",
+      "icon": "pulse",
+    }],
+    "suggestedWith": ["sheets", "slack", "posthog"],
   },
   {
     "name": "harvest",
@@ -7530,6 +7969,182 @@ export const connectors: IntegrationConfig[] = [
       "icon": "upload",
     }],
     "suggestedWith": ["outlook", "teams", "sharepoint"],
+  },
+  {
+    "name": "openai",
+    "displayName": "OpenAI",
+    "icon": "openai.svg",
+    "description":
+      "Query OpenAI models, generate text responses, embeddings, and images via the OpenAI API",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "OpenAI API Keys",
+        "enableUrl": "https://platform.openai.com/api-keys",
+      }],
+      "keyName": "OPENAI_API_KEY",
+      "headerName": "Authorization",
+      "headerPrefix": "Bearer",
+      "docsUrl": "https://platform.openai.com/docs/api-reference/authentication",
+    },
+    "envVars": [{
+      "name": "OPENAI_API_KEY",
+      "description": "OpenAI API key (starts with sk-)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://platform.openai.com/api-keys",
+    }],
+    "tools": [{
+      "id": "list_models",
+      "name": "List Models",
+      "description": "List the models available to the API key",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.openai.com/v1/models",
+        "response": {
+          "transform": "data",
+          "historicalSummary": {
+            "collectionKeys": ["data", "models"],
+            "collectionName": "models",
+            "itemFields": [{ "name": "id" }, { "name": "owned_by" }, { "name": "created" }],
+            "omitted": "model capability details and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_model",
+      "name": "Get Model",
+      "description": "Get details about a specific model",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.openai.com/v1/models/{model}",
+        "params": {
+          "model": {
+            "type": "string",
+            "in": "path",
+            "description": "Model ID, e.g. gpt-4o or o4-mini",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "create_response",
+      "name": "Create Response",
+      "description": "Generate a model response using the OpenAI Responses API",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/responses",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Model ID to use, e.g. gpt-4o",
+            "required": true,
+          },
+          "input": {
+            "type": "string",
+            "description": "Text input or prompt for the model",
+            "required": true,
+          },
+          "instructions": { "type": "string", "description": "System instructions for the model" },
+          "max_output_tokens": {
+            "type": "number",
+            "description": "Upper bound for generated tokens",
+          },
+          "temperature": {
+            "type": "number",
+            "description": "Sampling temperature between 0 and 2",
+          },
+        },
+      },
+    }, {
+      "id": "create_chat_completion",
+      "name": "Create Chat Completion",
+      "description": "Generate a chat completion from a list of messages",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Model ID to use, e.g. gpt-4o",
+            "required": true,
+          },
+          "messages": {
+            "type": "array",
+            "description": "Chat messages, each with role (system|user|assistant) and content",
+            "required": true,
+          },
+          "max_tokens": { "type": "number", "description": "Maximum tokens to generate" },
+          "temperature": {
+            "type": "number",
+            "description": "Sampling temperature between 0 and 2",
+          },
+        },
+      },
+    }, {
+      "id": "create_embedding",
+      "name": "Create Embedding",
+      "description": "Create an embedding vector for input text",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/embeddings",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Embedding model ID, e.g. text-embedding-3-small",
+            "required": true,
+          },
+          "input": { "type": "string", "description": "Text to embed", "required": true },
+          "dimensions": {
+            "type": "number",
+            "description": "Number of dimensions for the output embedding (supported models only)",
+          },
+        },
+      },
+    }, {
+      "id": "generate_image",
+      "name": "Generate Image",
+      "description": "Generate an image from a text prompt",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/images/generations",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Image model ID, e.g. gpt-image-1 or dall-e-3",
+            "required": true,
+          },
+          "prompt": {
+            "type": "string",
+            "description": "Text description of the desired image",
+            "required": true,
+          },
+          "n": { "type": "number", "description": "Number of images to generate", "default": 1 },
+          "size": { "type": "string", "description": "Image size, e.g. 1024x1024" },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "available_models",
+      "title": "List available models",
+      "prompt":
+        "List the OpenAI models available to my API key and summarize what each is best for.",
+      "category": "ai",
+      "icon": "list",
+    }, {
+      "id": "generate_text",
+      "title": "Generate a response",
+      "prompt": "Use OpenAI to generate a response to a prompt I provide.",
+      "category": "ai",
+      "icon": "sparkles",
+    }],
+    "suggestedWith": ["anthropic", "slack", "notion"],
   },
   {
     "name": "outlook",
@@ -11898,6 +12513,222 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["outlook", "slack", "calendar"],
   },
   {
+    "name": "todoist",
+    "displayName": "Todoist",
+    "icon": "todoist.svg",
+    "description": "Manage tasks and projects in Todoist",
+    "auth": {
+      "type": "oauth2",
+      "provider": "todoist",
+      "authorizationUrl": "https://app.todoist.com/oauth/authorize",
+      "tokenUrl": "https://api.todoist.com/oauth/access_token",
+      "scopes": ["data:read_write"],
+      "requiredApis": [{
+        "name": "Todoist App Management",
+        "enableUrl": "https://developer.todoist.com/appconsole.html",
+      }],
+      "docsUrl": "https://developer.todoist.com/api/v1/",
+    },
+    "envVars": [{
+      "name": "TODOIST_CLIENT_ID",
+      "description": "Todoist OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.todoist.com/appconsole.html",
+    }, {
+      "name": "TODOIST_CLIENT_SECRET",
+      "description": "Todoist OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.todoist.com/appconsole.html",
+    }],
+    "tools": [{
+      "id": "list_tasks",
+      "name": "List Tasks",
+      "description": "List active tasks, optionally filtered by project",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.todoist.com/api/v1/tasks",
+        "params": {
+          "project_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return tasks in this project",
+          },
+          "label": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return tasks with this label name",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum tasks to return per page",
+            "default": 50,
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["results", "tasks"],
+            "collectionName": "tasks",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "content" },
+              { "name": "project_id" },
+              { "name": "priority" },
+              { "name": "due", "kind": "object" },
+              { "name": "checked" },
+              { "name": "added_at" },
+            ],
+            "outputFields": [{ "name": "next_cursor" }],
+            "omitted": "task descriptions and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_task",
+      "name": "Get Task",
+      "description": "Get details of a specific task",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.todoist.com/api/v1/tasks/{taskId}",
+        "params": {
+          "taskId": {
+            "type": "string",
+            "in": "path",
+            "description": "Todoist task ID",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "create_task",
+      "name": "Create Task",
+      "description": "Create a new task",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.todoist.com/api/v1/tasks",
+        "body": {
+          "content": {
+            "type": "string",
+            "description": "Task text, e.g. 'Buy milk'",
+            "required": true,
+          },
+          "description": { "type": "string", "description": "Longer task description" },
+          "project_id": {
+            "type": "string",
+            "description": "Project to add the task to (defaults to Inbox)",
+          },
+          "due_string": {
+            "type": "string",
+            "description": "Human-readable due date, e.g. 'tomorrow at 12:00'",
+          },
+          "priority": { "type": "number", "description": "Priority 1 (normal) to 4 (urgent)" },
+          "labels": { "type": "array", "description": "Label names to attach" },
+        },
+      },
+    }, {
+      "id": "update_task",
+      "name": "Update Task",
+      "description": "Update an existing task",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.todoist.com/api/v1/tasks/{taskId}",
+        "params": {
+          "taskId": {
+            "type": "string",
+            "in": "path",
+            "description": "Todoist task ID",
+            "required": true,
+          },
+        },
+        "body": {
+          "content": { "type": "string", "description": "New task text" },
+          "description": { "type": "string", "description": "New task description" },
+          "due_string": {
+            "type": "string",
+            "description": "New human-readable due date, or 'no date' to remove",
+          },
+          "priority": { "type": "number", "description": "Priority 1 (normal) to 4 (urgent)" },
+          "labels": { "type": "array", "description": "Replacement label names" },
+        },
+      },
+    }, {
+      "id": "close_task",
+      "name": "Complete Task",
+      "description": "Mark a task as complete",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.todoist.com/api/v1/tasks/{taskId}/close",
+        "params": {
+          "taskId": {
+            "type": "string",
+            "in": "path",
+            "description": "Todoist task ID",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "list_projects",
+      "name": "List Projects",
+      "description": "List the user's projects",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.todoist.com/api/v1/projects",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum projects to return per page",
+            "default": 50,
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["results", "projects"],
+            "collectionName": "projects",
+            "itemFields": [{ "name": "id" }, { "name": "name" }, { "name": "color" }, {
+              "name": "is_favorite",
+            }, { "name": "parent_id" }],
+            "outputFields": [{ "name": "next_cursor" }],
+            "omitted": "project view settings and provider-specific payload fields",
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "today_tasks",
+      "title": "Show my tasks",
+      "prompt": "List my active Todoist tasks with their due dates and priorities.",
+      "category": "productivity",
+      "icon": "list",
+    }, {
+      "id": "add_task",
+      "title": "Add a task",
+      "prompt": "Create a new Todoist task with a description and due date.",
+      "category": "productivity",
+      "icon": "plus",
+    }],
+    "suggestedWith": ["calendar", "notion", "slack"],
+  },
+  {
     "name": "trello",
     "displayName": "Trello",
     "icon": "trello.svg",
@@ -12219,6 +13050,8 @@ export const icons: Record<string, string> = {
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<path d="M4.15271 6.00034C3.55438 5.99262 2.96162 6.11597 2.41604 6.36173C1.87046 6.60748 1.38528 6.96967 0.994579 7.42289C0.603876 7.8761 0.317116 8.40935 0.154432 8.98519C-0.00825225 9.56102 -0.0429162 10.1655 0.0528736 10.7561L17.4567 116.409C17.6735 117.702 18.339 118.877 19.3362 119.728C20.3334 120.579 21.5985 121.051 22.9094 121.062H106.403C107.385 121.075 108.34 120.734 109.092 120.102C109.845 119.47 110.345 118.588 110.502 117.618L127.947 10.7971C128.043 10.2065 128.008 9.60202 127.846 9.02618C127.683 8.45035 127.396 7.9171 127.005 7.46389C126.615 7.01067 126.13 6.64848 125.584 6.40272C125.038 6.15697 124.446 6.03362 123.847 6.04134L4.15271 6.00034ZM77.4372 82.3597H50.7883L43.5726 44.6822H83.8944L77.4372 82.3597Z" fill="#2684FF"/>\n<path d="M122.371 44.6822H83.8944L77.4371 82.3597H50.7882L19.322 119.73C20.3194 120.592 21.5909 121.072 22.9094 121.083H106.423C107.406 121.095 108.36 120.754 109.113 120.122C109.865 119.49 110.366 118.609 110.523 117.639L122.371 44.6822Z" fill="url(#paint0_linear_0_425)"/>\n<defs>\n<linearGradient id="paint0_linear_0_425" x1="131.268" y1="55.2188" x2="67.6795" y2="104.868" gradientUnits="userSpaceOnUse">\n<stop offset="0.18" stop-color="#0052CC"/>\n<stop offset="1" stop-color="#2684FF"/>\n</linearGradient>\n</defs>\n</svg>\n',
   "calendar":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_64)">\n<g clip-path="url(#clip1_0_64)">\n<path d="M97.6844 30.3155L67.3689 26.9472L30.3161 30.3155L26.9471 64L30.3155 97.6845L63.9999 101.895L97.6844 97.6845L101.053 63.1584L97.6844 30.3155Z" fill="white"/>\n<path d="M44.135 82.5766C41.6173 80.8755 39.8739 78.3917 38.9222 75.1072L44.7667 72.6989C45.2973 74.72 46.2234 76.2861 47.5456 77.3978C48.8595 78.5094 50.4595 79.0566 52.329 79.0566C54.2406 79.0566 55.8829 78.4755 57.255 77.3133C58.6272 76.151 59.3184 74.6688 59.3184 72.8755C59.3184 71.04 58.5939 69.5405 57.1456 68.3789C55.6973 67.2173 53.8784 66.6355 51.7056 66.6355H48.329V60.8506H51.36C53.2294 60.8506 54.8045 60.3456 56.0845 59.335C57.3645 58.3245 58.0045 56.9434 58.0045 55.1834C58.0045 53.6173 57.4317 52.3706 56.2867 51.4362C55.1418 50.5018 53.6928 50.0301 51.9328 50.0301C50.215 50.0301 48.8506 50.4851 47.84 51.4029C46.8294 52.3206 46.0966 53.449 45.6339 54.7795L39.849 52.3712C40.615 50.1984 42.0218 48.2784 44.0845 46.6195C46.1478 44.9606 48.7834 44.1267 51.9834 44.1267C54.3494 44.1267 56.48 44.5818 58.3667 45.4995C60.2528 46.4173 61.735 47.689 62.8045 49.3056C63.8739 50.9306 64.4045 52.7501 64.4045 54.7706C64.4045 56.8339 63.9078 58.5766 62.9139 60.0083C61.92 61.44 60.6989 62.5344 59.2506 63.3011V63.6461C61.1622 64.4461 62.72 65.6672 63.9494 67.3094C65.1706 68.9517 65.785 70.9139 65.785 73.2045C65.785 75.495 65.2038 77.5411 64.0416 79.335C62.8794 81.129 61.271 82.5434 59.2333 83.5706C57.1872 84.5978 54.8883 85.12 52.3366 85.12C49.3811 85.1283 46.6528 84.2778 44.135 82.5766Z" fill="#1A73E8"/>\n<path d="M80 53.575L73.6166 58.215L70.4083 53.3478L81.92 45.0445H86.3328V84.2106H80V53.575Z" fill="#1A73E8"/>\n<path d="M97.6844 128L128 97.6845L112.842 90.9478L97.6844 97.6845L90.9478 112.842L97.6844 128Z" fill="#EA4335"/>\n<path d="M23.5789 112.842L30.3155 128H97.6838V97.6845H30.3155L23.5789 112.842Z" fill="#34A853"/>\n<path d="M10.105 0C4.52224 0 0 4.52224 0 10.105V97.6838L15.1578 104.42L30.3155 97.6838V30.3155H97.6838L104.42 15.1578L97.6845 0H10.105Z" fill="#4285F4"/>\n<path d="M0 97.6845V117.895C0 123.478 4.52224 128 10.105 128H30.3155V97.6845H0Z" fill="#188038"/>\n<path d="M97.6844 30.3155V97.6838H128V30.3155L112.842 23.5789L97.6844 30.3155Z" fill="#FBBC04"/>\n<path d="M128 30.3155V10.105C128 4.5216 123.478 0 117.895 0H97.6844V30.3155H128Z" fill="#1967D2"/>\n</g>\n</g>\n<defs>\n<clipPath id="clip0_0_64">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n<clipPath id="clip1_0_64">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n</defs>\n</svg>\n',
+  "calendly":
+    '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#FFFFFF"/>\n<path d="M64 24c22.1 0 40 17.9 40 40s-17.9 40-40 40-40-17.9-40-40 17.9-40 40-40Zm0 14c-14.4 0-26 11.6-26 26s11.6 26 26 26c8.9 0 16.8-4.5 21.5-11.3l-11.9-7.2C71.5 75.3 68 77 64 77c-7.2 0-13-5.8-13-13s5.8-13 13-13c4 0 7.5 1.7 9.6 4.5l11.9-7.2C80.8 41.5 72.9 38 64 38Z" fill="#006BFF"/>\n</svg>\n',
   "confluence":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_240_6563)">\n<g clip-path="url(#clip1_240_6563)">\n<path d="M38.0146 59.1266C36.0729 56.9907 33.1606 57.1849 31.8012 59.7093L0.344616 122.622C-0.820405 125.147 0.927179 128.059 3.64561 128.059H47.3352C48.6948 128.059 50.0538 127.283 50.6365 125.923C60.1508 106.506 54.5199 76.7967 38.0146 59.1266Z" fill="url(#paint0_linear_240_6563)"/>\n<path d="M60.9302 2.03887C43.4544 29.8061 44.6197 60.6804 56.0757 83.7872C67.7264 106.894 76.4643 124.758 77.2412 125.924C77.8239 127.283 79.1829 128.059 80.542 128.059H124.232C126.95 128.059 128.892 125.147 127.533 122.622C127.533 122.622 68.6975 4.95152 67.1437 2.03887C65.9789 -0.679622 62.6777 -0.679622 60.9302 2.03887Z" fill="#2684FF"/>\n</g>\n</g>\n<defs>\n<linearGradient id="paint0_linear_240_6563" x1="55.1799" y1="68.8586" x2="22.028" y2="126.28" gradientUnits="userSpaceOnUse">\n<stop stop-color="#0052CC"/>\n<stop offset="0.9228" stop-color="#2684FF"/>\n</linearGradient>\n<clipPath id="clip0_240_6563">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n<clipPath id="clip1_240_6563">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n</defs>\n</svg>\n',
   "docs-google":
@@ -12233,6 +13066,8 @@ export const icons: Record<string, string> = {
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_240_6238)">\n<g clip-path="url(#clip1_240_6238)">\n<path d="M125.848 51.1162L125.668 50.6562L108.268 5.25622C107.915 4.3644 107.289 3.60698 106.48 3.09222C105.665 2.57734 104.711 2.32811 103.749 2.37899C102.786 2.42986 101.864 2.77832 101.108 3.37622C100.36 3.97622 99.82 4.80022 99.564 5.72422L87.804 41.7282H40.204L28.44 5.72822C28.1887 4.79778 27.6485 3.97111 26.8973 3.36729C26.1462 2.76346 25.2227 2.41365 24.26 2.36822C23.3004 2.3176 22.3491 2.56794 21.5387 3.08427C20.7283 3.6006 20.0995 4.35714 19.74 5.24822L2.31598 50.7202L2.13598 51.1722C-0.364414 57.7204 -0.671054 64.9035 1.26218 71.6409C3.19542 78.3784 7.264 84.306 12.856 88.5322L12.92 88.5802L13.072 88.7002L39.612 108.568L52.732 118.504L60.708 124.544C61.6452 125.252 62.7876 125.635 63.962 125.635C65.1364 125.635 66.2788 125.252 67.216 124.544L75.192 118.504L88.32 108.568L115.012 88.5802L115.084 88.5282C120.694 84.3053 124.778 78.3718 126.719 71.6235C128.66 64.8752 128.353 57.6786 125.844 51.1202L125.848 51.1162Z" fill="#E24329"/>\n<path d="M125.848 51.1158L125.668 50.6558C117.181 52.4047 109.183 56.002 102.244 61.1918L64.032 90.1518C72.1526 96.2905 80.2752 102.427 88.4 108.56L115.092 88.5718L115.168 88.5198C120.763 84.2854 124.831 78.3471 126.757 71.5998C128.683 64.8525 128.364 57.662 125.848 51.1118V51.1158Z" fill="#FC6D26"/>\n<path d="M39.632 108.56L52.732 118.5L60.708 124.54C61.6452 125.248 62.7876 125.63 63.962 125.63C65.1364 125.63 66.2788 125.248 67.216 124.54L75.192 118.5L88.32 108.564C88.32 108.564 76.98 100.004 63.952 90.1519L39.632 108.564V108.56Z" fill="#FCA326"/>\n<path d="M25.74 61.22C18.8038 56.0281 10.8068 52.4318 2.32001 50.688L2.14001 51.14C-0.367146 57.6918 -0.677348 64.8809 1.25614 71.6242C3.18962 78.3676 7.26208 84.3001 12.86 88.528L12.924 88.576L13.076 88.696L39.616 108.564L64.036 90.152L25.74 61.22Z" fill="#FC6D26"/>\n</g>\n</g>\n<defs>\n<clipPath id="clip0_240_6238">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n<clipPath id="clip1_240_6238">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n</defs>\n</svg>\n',
   "gmail":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_12)">\n<path d="M8.7275 113.854H29.091V64.4L0 42.5817V105.127C0 109.949 3.9055 113.855 8.7275 113.855V113.854Z" fill="#4285F4"/>\n<path d="M98.909 113.854H119.273C124.095 113.854 128 109.949 128 105.127V42.5817L98.909 64.4V113.854Z" fill="#34A853"/>\n<path d="M98.909 26.5817V64.4L128 42.5817V30.9455C128 20.16 115.687 14 107.054 20.4727L98.909 26.5817Z" fill="#FBBC04"/>\n<path fill-rule="evenodd" clip-rule="evenodd" d="M29.091 64.4V26.5817L64 52.7638L98.909 26.5817V64.4L64 90.5817L29.091 64.4Z" fill="#EA4335"/>\n<path d="M0 30.9455V42.5817L29.091 64.4V26.5817L20.9455 20.4727C12.3125 14 0 20.16 0 30.945V30.9455Z" fill="#C5221F"/>\n</g>\n<defs>\n<clipPath id="clip0_0_12">\n<rect width="128" height="99.855" fill="white" transform="translate(0 14)"/>\n</clipPath>\n</defs>\n</svg>\n',
+  "google-analytics":
+    '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect x="84" y="20" width="24" height="88" rx="12" fill="#F9AB00"/>\n<rect x="52" y="52" width="24" height="56" rx="12" fill="#E37400"/>\n<circle cx="32" cy="96" r="12" fill="#E37400"/>\n</svg>\n',
   "harvest":
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">\n  <circle cx="50" cy="50" r="50" fill="#FA5B35"/>\n  <path d="M24 28h10v18h24V28h10v44H58V54H34v18H24V28z" fill="#fff"/>\n</svg>\n',
   "hubspot":
@@ -12249,6 +13084,8 @@ export const icons: Record<string, string> = {
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_82)">\n<path d="M10.5303 5.52077L81.278 0.204473C89.8658 -0.613419 92.115 0 97.6358 3.88498L120.332 19.8339C124.013 22.492 125.24 23.3099 125.24 26.377V113.687C125.24 119.208 123.195 122.479 116.243 122.888L34.0447 127.796C28.7284 128 26.2748 127.387 23.6166 123.911L7.05431 102.441C3.98721 98.3514 2.76038 95.4888 2.76038 92.0128V14.3131C2.76038 9.8147 4.8051 5.92971 10.5303 5.52077Z" fill="white"/>\n<path fill-rule="evenodd" clip-rule="evenodd" d="M81.278 0.204473L10.5303 5.52077C4.8051 5.92971 2.76038 9.8147 2.76038 14.3131V92.0128C2.76038 95.4888 3.98721 98.5559 7.05431 102.441L23.6166 124.115C26.2748 127.591 28.9329 128.409 34.0447 128L116.243 123.093C123.195 122.684 125.24 119.412 125.24 113.891V26.377C125.24 23.5144 124.217 22.6965 120.741 20.2428C120.537 20.0383 120.332 20.0383 120.128 19.8339L97.6358 4.08946C92.3195 1.19209e-07 90.0703 -0.408946 81.278 0.204473ZM35.885 24.9457C29.1374 25.3546 27.7061 25.5591 23.8211 22.2875L14.2109 14.722C13.1885 13.6997 13.5974 12.4728 16.2556 12.2684L84.345 7.36102C90.0703 6.95208 92.9329 8.79233 95.1821 10.6326L106.837 19.016C107.45 19.2204 108.677 20.6518 107.042 20.6518L36.7029 24.9457H35.885ZM28.115 113.073V38.8498C28.115 35.5783 29.1374 34.147 32 33.9425L112.767 29.2396C115.425 29.0351 116.652 30.6709 116.652 33.9425V107.553C116.652 110.824 116.038 113.482 111.744 113.687L34.4537 118.185C30.1597 118.594 28.115 116.958 28.115 113.073ZM104.383 42.9393C104.792 45.1885 104.383 47.4377 102.134 47.6422L98.4537 48.4601V103.259C95.1821 105.099 92.3195 105.917 89.8658 105.917C85.9808 105.917 84.9585 104.69 81.8914 101.01L57.3546 62.5687V99.5783L65.1246 101.419C65.1246 101.419 65.1246 105.917 58.9904 105.917L41.8147 106.939C41.4057 105.917 41.8147 103.463 43.4505 103.054L47.9489 101.827V52.754L41.8147 52.1406C41.4057 49.8914 42.6326 46.6198 46.1086 46.4153L64.5112 45.1885L89.8658 84.0383V49.6869L83.3227 48.869C82.9137 46.2109 84.754 44.1661 87.2077 43.9617L104.383 42.9393Z" fill="black"/>\n</g>\n<defs>\n<clipPath id="clip0_0_82">\n<rect width="122.479" height="128" fill="white" transform="translate(2.76038)"/>\n</clipPath>\n</defs>\n</svg>\n',
   "onedrive":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_168_637)">\n<path d="M48.8105 45.7717L48.8117 45.7673L75.6823 61.8624L91.694 55.1244C94.9477 53.7178 98.456 52.9965 102.001 53C102.591 53 103.175 53.0268 103.756 53.0656C101.831 45.5592 97.7669 38.7736 92.0581 33.5333C86.3493 28.293 79.2414 24.8236 71.5981 23.5468C63.9547 22.2699 56.1051 23.2406 49.003 26.3408C41.9009 29.441 35.8522 34.5373 31.5918 41.0103C31.7287 41.0086 31.8635 41 32.0007 41C37.9393 40.9919 43.7618 42.6447 48.8105 45.7717Z" fill="#0364B8"/>\n<path d="M48.811 45.7673L48.8098 45.7717C43.7611 42.6448 37.9386 40.992 32 41C31.8628 41 31.7278 41.0086 31.5911 41.0103C25.7787 41.0823 20.0958 42.7368 15.153 45.7959C10.2103 48.8551 6.1946 53.2033 3.53748 58.3733C0.880366 63.5433 -0.317721 69.3396 0.0719724 75.1394C0.461666 80.9391 2.42441 86.5231 5.74928 91.2911L29.4453 81.3194L39.979 76.8867L63.4331 67.0168L75.6816 61.8625L48.811 45.7673Z" fill="#0078D4"/>\n<path d="M103.755 53.0656C103.174 53.0268 102.591 53 102 53C98.4553 52.9966 94.9477 53.7205 91.6941 55.1271L75.6816 61.8625L80.3247 64.6436L95.5444 73.76L102.185 77.7375L124.89 91.3378C126.953 87.5079 128.022 83.2215 128 78.8713C127.977 74.521 126.863 70.246 124.76 66.4379C122.657 62.6297 119.632 59.41 115.962 57.0738C112.293 54.7375 108.095 53.3594 103.755 53.0656Z" fill="#1490DF"/>\n<path d="M102.185 77.7374L95.5451 73.7599L80.3254 64.6435L75.6823 61.8624L63.4338 67.0167L39.9797 76.8866L29.446 81.3193L5.75 91.291C8.69466 95.5247 12.6202 98.9828 17.1914 101.37C21.7626 103.757 26.8437 105.003 32.0007 105H102.001C106.694 105.001 111.3 103.732 115.33 101.327C119.361 98.9211 122.664 95.4694 124.891 91.3377L102.185 77.7374Z" fill="#28A8EA"/>\n</g>\n<defs>\n<clipPath id="clip0_168_637">\n<rect width="128" height="82" fill="white" transform="translate(0 23)"/>\n</clipPath>\n</defs>\n</svg>\n',
+  "openai":
+    '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#000000"/>\n<g stroke="#FFFFFF" stroke-width="7" stroke-linejoin="round" fill="none">\n<path d="M64 22 L98 41 L98 64 L64 45 L30 64 L30 41 Z"/>\n<path d="M98 64 L98 87 L64 106 L30 87 L30 64 L64 83 Z"/>\n<path d="M64 45 L64 83" stroke-linecap="round"/>\n</g>\n</svg>\n',
   "outlook":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_142)">\n<g clip-path="url(#clip1_0_142)">\n<path d="M127.542 66.6442C127.549 65.6433 127.032 64.7117 126.179 64.1884H126.164L126.11 64.1586L81.7569 37.9037C81.5653 37.7743 81.3666 37.6561 81.1615 37.5495C79.449 36.666 77.4147 36.666 75.7021 37.5495C75.4971 37.6561 75.2983 37.7743 75.1068 37.9037L30.7534 64.1586L30.6999 64.1884C29.3443 65.0313 28.9287 66.8137 29.7717 68.1693C30.0201 68.5687 30.3622 68.9014 30.7683 69.1387L75.1218 95.3936C75.314 95.5218 75.5127 95.6401 75.7172 95.7478C77.4297 96.6313 79.464 96.6313 81.1765 95.7478C81.381 95.6401 81.5797 95.5219 81.7719 95.3936L126.125 69.1387C127.011 68.6221 127.552 67.6699 127.542 66.6442Z" fill="#0A2767"/>\n<path d="M35.924 49.1141H65.0306V75.7947H35.924V49.1141ZM121.589 21.993V9.78838C121.659 6.73693 119.243 4.20571 116.192 4.13259H40.6601C37.6086 4.20571 35.1933 6.73693 35.2632 9.78838V21.993L79.9143 33.9L121.589 21.993Z" fill="#0364B8"/>\n<path d="M35.2634 21.993H65.0308V48.7837H35.2634V21.993Z" fill="#0078D4"/>\n<path d="M94.7982 21.993H65.0308V48.7837L94.7982 75.5744H121.589V48.7837L94.7982 21.993Z" fill="#28A8EA"/>\n<path d="M65.0308 48.7837H94.7982V75.5744H65.0308V48.7837Z" fill="#0078D4"/>\n<path d="M65.0308 75.5744H94.7982V102.365H65.0308V75.5744Z" fill="#0364B8"/>\n<path d="M35.9243 75.7947H65.0309V100.049H35.9243V75.7947Z" fill="#14447D"/>\n<path d="M94.7983 75.5744H121.589V102.365H94.7983V75.5744Z" fill="#0078D4"/>\n<path d="M126.179 68.975L126.122 69.0047L81.7687 93.9498C81.5752 94.0689 81.3788 94.182 81.1733 94.2832C80.42 94.6419 79.6018 94.8444 78.7681 94.8786L76.345 93.4616C76.1403 93.3589 75.9415 93.2446 75.7497 93.1193L30.8009 67.4657H30.7801L29.3096 66.6442V117.142C29.3325 120.511 32.0815 123.224 35.4506 123.202H121.496C121.547 123.202 121.592 123.178 121.645 123.178C122.357 123.133 123.058 122.987 123.729 122.744C124.019 122.621 124.298 122.476 124.565 122.309C124.765 122.196 125.107 121.949 125.107 121.949C126.632 120.821 127.534 119.039 127.542 117.142V66.6442C127.541 67.61 127.02 68.5006 126.179 68.975Z" fill="url(#paint0_linear_0_142)"/>\n<path opacity="0.5" d="M125.161 66.4447V69.5406L78.7832 101.472L30.7683 67.4866C30.7683 67.4702 30.755 67.4568 30.7386 67.4568L26.333 64.8075V62.5749L28.1488 62.5451L31.9888 64.748L32.0781 64.7777L32.4055 64.9861C32.4055 64.9861 77.5329 90.7349 77.652 90.7944L79.3785 91.8065C79.5273 91.747 79.6761 91.6875 79.8547 91.6279C79.9441 91.5683 124.655 66.4149 124.655 66.4149L125.161 66.4447Z" fill="#0A2767"/>\n<path d="M126.179 68.975L126.123 69.0077L81.7691 93.9528C81.5756 94.0718 81.3792 94.1849 81.1737 94.2861C79.4512 95.1276 77.4369 95.1276 75.7144 94.2861C75.5104 94.1851 75.3117 94.0738 75.119 93.9528L30.7657 69.0077L30.7121 68.975C29.8558 68.5107 29.3189 67.6182 29.3101 66.6442V117.142C29.3314 120.51 32.0794 123.224 35.4478 123.202C35.4478 123.202 35.448 123.202 35.4481 123.202H121.404C124.773 123.224 127.521 120.51 127.543 117.142C127.543 117.142 127.543 117.142 127.543 117.142V66.6442C127.541 67.61 127.02 68.5006 126.179 68.975Z" fill="#1490DF"/>\n<path opacity="0.1" d="M82.4148 93.5837L81.751 93.9558C81.5586 94.0782 81.3599 94.1906 81.1556 94.2921C80.4243 94.6511 79.629 94.8616 78.8159 94.9113L95.6911 114.867L125.128 121.961C125.935 121.352 126.576 120.55 126.995 119.63L82.4148 93.5837Z" fill="black"/>\n<path opacity="0.05" d="M85.4213 91.8929L81.751 93.9558C81.5586 94.0782 81.3599 94.1906 81.1556 94.2921C80.4243 94.6511 79.629 94.8616 78.8159 94.9113L86.7221 116.71L125.137 121.952C126.65 120.816 127.541 119.034 127.542 117.142V116.49L85.4213 91.8929Z" fill="black"/>\n<path d="M35.5314 123.202H121.396C122.717 123.209 124.005 122.792 125.072 122.012L76.3425 93.4676C76.1378 93.3649 75.939 93.2506 75.7472 93.1253L30.7984 67.4717H30.7776L29.3101 66.6442V116.969C29.3067 120.408 32.0921 123.199 35.5314 123.202Z" fill="#28A8EA"/>\n<path opacity="0.1" d="M70.984 33.4029V96.8968C70.9787 99.123 69.625 101.124 67.5607 101.957C66.9212 102.232 66.2325 102.374 65.5365 102.374H29.3096V30.9233H35.2631V27.9465H65.5366C68.5438 27.9579 70.9775 30.3956 70.984 33.4029Z" fill="black"/>\n<path opacity="0.2" d="M68.0073 36.3796V99.8735C68.0147 100.593 67.8623 101.304 67.5607 101.957C66.734 103.995 64.7588 105.332 62.5598 105.342H29.3096V30.9233H62.5598C63.4235 30.9146 64.2747 31.13 65.0305 31.5484C66.8552 32.4677 68.0066 34.3364 68.0073 36.3796Z" fill="black"/>\n<path opacity="0.2" d="M68.0073 36.3796V93.92C67.9927 96.9259 65.5657 99.3623 62.5599 99.3883H29.3096V30.9233H62.5598C63.4235 30.9146 64.2747 31.13 65.0305 31.5484C66.8552 32.4677 68.0066 34.3364 68.0073 36.3796Z" fill="black"/>\n<path opacity="0.2" d="M65.0305 36.3796V93.92C65.0273 96.9306 62.5935 99.3736 59.5831 99.3883H29.3096V30.9233H59.583C62.5932 30.9249 65.0321 33.3665 65.0304 36.3767C65.0305 36.3777 65.0305 36.3786 65.0305 36.3796Z" fill="black"/>\n<path d="M4.99883 30.9233H59.5744C62.5879 30.9233 65.0308 33.3662 65.0308 36.3796V90.9552C65.0308 93.9687 62.5879 96.4116 59.5744 96.4116H4.99883C1.98534 96.4116 -0.45752 93.9686 -0.45752 90.9552V36.3796C-0.45752 33.3662 1.98541 30.9233 4.99883 30.9233Z" fill="url(#paint1_linear_0_142)"/>\n<path d="M16.5963 53.8085C17.9411 50.9433 20.1118 48.5455 22.8296 46.9233C25.8395 45.2001 29.2665 44.341 32.7333 44.4406C35.9464 44.371 39.117 45.1855 41.8987 46.7952C44.5141 48.3549 46.6205 50.6402 47.9623 53.3738C49.4235 56.386 50.1518 59.701 50.0877 63.0482C50.1585 66.5464 49.4092 70.0126 47.8998 73.1691C46.526 76.0005 44.3528 78.3672 41.6486 79.9769C38.7597 81.636 35.4714 82.4719 32.1409 82.3941C28.8591 82.4733 25.6187 81.6495 22.7731 80.0127C20.1351 78.4509 18.0022 76.163 16.6291 73.4221C15.1592 70.4535 14.4222 67.1759 14.4799 63.8638C14.4187 60.3954 15.1422 56.958 16.5963 53.8085ZM23.2404 69.9721C23.9574 71.7835 25.1733 73.3544 26.747 74.5028C28.3499 75.623 30.2692 76.201 32.2242 76.1519C34.3061 76.2342 36.3583 75.6365 38.0705 74.4491C39.6243 73.3045 40.8082 71.7293 41.4759 69.9185C42.2222 67.8964 42.5906 65.7542 42.5624 63.5989C42.5855 61.423 42.2392 59.259 41.5384 57.199C40.9194 55.339 39.7736 53.6989 38.2402 52.4779C36.5709 51.2343 34.5242 50.6035 32.4444 50.6918C30.4471 50.6401 28.4848 51.2226 26.8393 52.3558C25.239 53.5089 24 55.0938 23.2672 56.9251C21.6416 61.1227 21.6331 65.7746 23.2433 69.9781L23.2404 69.9721Z" fill="white"/>\n<path d="M94.7983 21.993H121.589V48.7837H94.7983V21.993Z" fill="#50D9FF"/>\n</g>\n</g>\n<defs>\n<linearGradient id="paint0_linear_0_142" x1="78.4258" y1="66.6442" x2="78.4258" y2="123.202" gradientUnits="userSpaceOnUse">\n<stop stop-color="#35B8F1"/>\n<stop offset="1" stop-color="#28A8EA"/>\n</linearGradient>\n<linearGradient id="paint1_linear_0_142" x1="10.9191" y1="26.6598" x2="53.6542" y2="100.675" gradientUnits="userSpaceOnUse">\n<stop stop-color="#1784D9"/>\n<stop offset="0.5" stop-color="#107AD5"/>\n<stop offset="1" stop-color="#0A63C9"/>\n</linearGradient>\n<clipPath id="clip0_0_142">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n<clipPath id="clip1_0_142">\n<rect width="128" height="119.07" fill="white" transform="translate(-0.45752 4.13259)"/>\n</clipPath>\n</defs>\n</svg>\n',
   "persona":
@@ -12279,6 +13116,8 @@ export const icons: Record<string, string> = {
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_132)">\n<path d="M74.8244 125.802C71.5544 129.92 64.9243 127.664 64.8455 122.406L63.6934 45.501H115.404C124.77 45.501 129.994 56.3191 124.17 63.6545L74.8244 125.802Z" fill="url(#paint0_linear_0_132)"/>\n<path d="M74.8244 125.802C71.5544 129.92 64.9243 127.664 64.8455 122.406L63.6934 45.501H115.404C124.77 45.501 129.994 56.3191 124.17 63.6545L74.8244 125.802Z" fill="url(#paint1_linear_0_132)" fill-opacity="0.2"/>\n<path d="M53.7939 2.05576C57.0639 -2.06261 63.6942 0.193957 63.773 5.45206L64.2778 82.3569H13.2142C3.84765 82.3569 -1.37622 71.5389 4.44815 64.2035L53.7939 2.05576Z" fill="#3ECF8E"/>\n</g>\n<defs>\n<linearGradient id="paint0_linear_0_132" x1="63.6934" y1="62.5528" x2="109.652" y2="81.8278" gradientUnits="userSpaceOnUse">\n<stop stop-color="#249361"/>\n<stop offset="1" stop-color="#3ECF8E"/>\n</linearGradient>\n<linearGradient id="paint1_linear_0_132" x1="43.3176" y1="34.6548" x2="64.2773" y2="74.1101" gradientUnits="userSpaceOnUse">\n<stop/>\n<stop offset="1" stop-opacity="0"/>\n</linearGradient>\n<clipPath id="clip0_0_132">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n</defs>\n</svg>\n',
   "teams":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_168_571)">\n<g clip-path="url(#clip1_168_571)">\n<path d="M89.6979 48.7828H122.761C125.884 48.7828 128.416 51.3149 128.416 54.4386V84.5543C128.416 96.0345 119.11 105.341 107.63 105.341H107.532C96.0514 105.343 86.7436 96.0374 86.7419 84.5572C86.7419 84.5563 86.7419 84.5553 86.7419 84.5542V51.7387C86.742 50.1062 88.0654 48.7828 89.6979 48.7828Z" fill="#5059C9"/>\n<path d="M112.045 42.8293C119.443 42.8293 125.44 36.832 125.44 29.4339C125.44 22.0359 119.443 16.0386 112.045 16.0386C104.646 16.0386 98.6492 22.0359 98.6492 29.4339C98.6492 36.832 104.646 42.8293 112.045 42.8293Z" fill="#5059C9"/>\n<path d="M70.3701 42.8293C81.0562 42.8293 89.719 34.1666 89.719 23.4805C89.719 12.7944 81.0562 4.13162 70.3701 4.13162C59.684 4.13162 51.0212 12.7944 51.0212 23.4805C51.0212 34.1666 59.684 42.8293 70.3701 42.8293Z" fill="#7B83EB"/>\n<path d="M96.1695 48.7828H41.5938C38.5074 48.8592 36.0658 51.4206 36.1374 54.5071V88.8558C35.7064 107.378 50.3602 122.748 68.8817 123.201C87.4031 122.748 102.057 107.378 101.626 88.8558V54.5071C101.697 51.4206 99.2559 48.8592 96.1695 48.7828Z" fill="#7B83EB"/>\n<path opacity="0.1" d="M71.8583 48.7828V96.9167C71.8435 99.124 70.5059 101.107 68.4648 101.947C67.8149 102.222 67.1165 102.364 66.4108 102.364H38.7568C38.3699 101.382 38.0127 100.4 37.715 99.3875C36.673 95.9717 36.1413 92.4209 36.1373 88.8498V54.4981C36.0657 51.4165 38.5032 48.8592 41.5847 48.7828H71.8583Z" fill="black"/>\n<path opacity="0.2" d="M68.8815 48.7828V99.8935C68.8814 100.599 68.7397 101.298 68.4648 101.947C67.6244 103.989 65.6414 105.326 63.4341 105.341H40.1559C39.6499 104.359 39.1736 103.376 38.7568 102.364C38.3401 101.352 38.0127 100.4 37.715 99.3875C36.673 95.9718 36.1413 92.4209 36.1373 88.8498V54.4981C36.0657 51.4165 38.5032 48.8592 41.5847 48.7828H68.8815Z" fill="black"/>\n<path opacity="0.2" d="M68.8817 48.7828V93.94C68.859 96.9391 66.4334 99.3648 63.4343 99.3875H37.7152C36.6732 95.9718 36.1415 92.4209 36.1375 88.8498V54.4981C36.066 51.4165 38.5035 48.8592 41.585 48.7828H68.8817Z" fill="black"/>\n<path opacity="0.2" d="M65.9049 48.7828V93.94C65.8823 96.9391 63.4566 99.3648 60.4575 99.3875H37.7152C36.6732 95.9718 36.1415 92.4209 36.1375 88.8498V54.4981C36.066 51.4165 38.5035 48.8592 41.585 48.7828H65.9049Z" fill="black"/>\n<path opacity="0.1" d="M71.8583 33.393V42.7698C71.3523 42.7995 70.876 42.8293 70.3699 42.8293C69.8639 42.8293 69.3876 42.7996 68.8815 42.7698C67.8768 42.7031 66.8802 42.5437 65.9048 42.2935C59.8769 40.866 54.8969 36.6385 52.5095 30.9224C52.0987 29.9624 51.7798 28.9657 51.5569 27.9456H66.4108C69.4147 27.957 71.8469 30.3892 71.8583 33.393Z" fill="black"/>\n<path opacity="0.2" d="M68.8816 36.3698V42.7698C67.8768 42.7031 66.8803 42.5437 65.9049 42.2935C59.8769 40.866 54.8969 36.6385 52.5095 30.9224H63.4342C66.4379 30.9338 68.8702 33.366 68.8816 36.3698Z" fill="black"/>\n<path opacity="0.2" d="M68.8816 36.3698V42.7698C67.8768 42.7031 66.8803 42.5437 65.9049 42.2935C59.8769 40.866 54.8969 36.6385 52.5095 30.9224H63.4342C66.4379 30.9338 68.8702 33.366 68.8816 36.3698Z" fill="black"/>\n<path opacity="0.2" d="M65.9049 36.3698V42.2935C59.8769 40.866 54.8969 36.6385 52.5095 30.9223H60.4574C63.4613 30.9338 65.8934 33.366 65.9049 36.3698Z" fill="black"/>\n<path d="M5.87285 30.9223H60.4485C63.4619 30.9223 65.9048 33.3653 65.9048 36.3787V90.9543C65.9048 93.9678 63.4619 96.4106 60.4485 96.4106H5.87285C2.85937 96.4106 0.416504 93.9677 0.416504 90.9543V36.3787C0.416504 33.3653 2.85943 30.9223 5.87285 30.9223Z" fill="url(#paint0_linear_168_571)"/>\n<path d="M47.5204 51.694H36.6106V81.402H29.6599V51.694H18.8008V45.9311H47.5204V51.694Z" fill="white"/>\n</g>\n</g>\n<defs>\n<linearGradient id="paint0_linear_168_571" x1="11.7932" y1="26.6588" x2="54.5282" y2="100.674" gradientUnits="userSpaceOnUse">\n<stop stop-color="#5A62C3"/>\n<stop offset="0.5" stop-color="#4D55BD"/>\n<stop offset="1" stop-color="#3940AB"/>\n</linearGradient>\n<clipPath id="clip0_168_571">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n<clipPath id="clip1_168_571">\n<rect width="128" height="119.07" fill="white" transform="translate(0.416504 4.13162)"/>\n</clipPath>\n</defs>\n</svg>\n',
+  "todoist":
+    '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#E44332"/>\n<g fill="#FFFFFF">\n<path d="M28 47.5 56.5 31c2.1-1.2 4.6-1.2 6.7 0l8.3 4.8-31.9 18.5L28 47.5Z" opacity="0.95"/>\n<path d="M28 64.5 67.9 41.4l11.6 6.7-39.9 23.1L28 64.5Z" opacity="0.85"/>\n<path d="M28 81.5 84 49.1l11.6 6.7L39.6 88.2 28 81.5Z" opacity="0.75"/>\n</g>\n</svg>\n',
   "trello":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_240_7025)">\n<g clip-path="url(#clip1_240_7025)">\n<path fill-rule="evenodd" clip-rule="evenodd" d="M112.867 0H15.133C6.72578 0 0 6.72578 0 15.133V112.657C0 121.064 6.72578 127.79 15.133 127.79H112.657C121.064 127.79 127.79 121.064 127.79 112.657V15.3432C128 6.72578 121.274 0 112.867 0ZM55.0673 92.2693C55.0673 95.0016 52.7553 97.3136 50.023 97.3136H28.7947C26.0624 97.3136 23.7504 95.0016 23.7504 92.2693V28.7947C23.7504 26.0624 26.0624 23.7504 28.7947 23.7504H50.2332C52.9655 23.7504 55.2775 26.0624 55.2775 28.7947V92.2693H55.0673ZM104.46 63.0542C104.46 65.7865 102.358 68.0985 99.4154 68.3087C99.4154 68.3087 99.4154 68.3087 99.2053 68.3087H77.977C75.2447 68.3087 72.9327 65.9967 72.9327 63.2644V28.7947C72.9327 26.0624 75.2447 23.7504 77.977 23.7504H99.4154C102.148 23.7504 104.46 26.0624 104.46 28.7947V63.0542Z" fill="url(#paint0_linear_240_7025)"/>\n</g>\n</g>\n<defs>\n<linearGradient id="paint0_linear_240_7025" x1="64.042" y1="128.084" x2="64.042" y2="0" gradientUnits="userSpaceOnUse">\n<stop stop-color="#0052CC"/>\n<stop offset="1" stop-color="#2684FF"/>\n</linearGradient>\n<clipPath id="clip0_240_7025">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n<clipPath id="clip1_240_7025">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n</defs>\n</svg>\n',
   "twilio":

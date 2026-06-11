@@ -52,6 +52,7 @@ describe("integration endpoint specs", () => {
       "aws",
       "bitbucket",
       "calendar",
+      "calendly",
       "confluence",
       "docs-google",
       "drive",
@@ -59,6 +60,7 @@ describe("integration endpoint specs", () => {
       "github",
       "gitlab",
       "gmail",
+      "google-analytics",
       "harvest",
       "hubspot",
       "jira",
@@ -67,6 +69,7 @@ describe("integration endpoint specs", () => {
       "neon",
       "notion",
       "onedrive",
+      "openai",
       "outlook",
       "persona",
       "posthog",
@@ -82,6 +85,7 @@ describe("integration endpoint specs", () => {
       "stripe",
       "supabase",
       "teams",
+      "todoist",
       "trello",
       "twilio",
       "zendesk",
@@ -100,6 +104,45 @@ describe("integration endpoint specs", () => {
         `Expected every ${connector.name} tool to be endpoint-backed`,
       );
     }
+  });
+
+  it("registers the experimental wave-1 connectors behind the experimental flag", () => {
+    const waveConnectors = ["openai", "todoist", "calendly", "google-analytics"];
+
+    for (const name of waveConnectors) {
+      const connector = getConnector(name);
+      assertEquals(
+        connector.tools.every((tool) => Boolean(tool.endpoint)),
+        true,
+        `Expected every ${name} tool to be endpoint-backed`,
+      );
+      assertStringIncludes(icons[name] ?? "", "<svg");
+    }
+
+    const openai = getConnector("openai");
+    assertEquals(openai.auth.type, "api-key");
+    assertEquals(openai.auth.keyName, "OPENAI_API_KEY");
+    assertEquals(openai.auth.headerPrefix, "Bearer");
+
+    const todoist = getConnector("todoist");
+    assertEquals(todoist.auth.provider, "todoist");
+    assertEquals(todoist.auth.tokenUrl, "https://api.todoist.com/oauth/access_token");
+
+    const calendly = getConnector("calendly");
+    assertEquals(calendly.auth.provider, "calendly");
+    assertEquals(calendly.auth.authorizationUrl, "https://auth.calendly.com/oauth/authorize");
+
+    const googleAnalytics = getConnector("google-analytics");
+    assertEquals(googleAnalytics.auth.provider, "google");
+    assertEquals(
+      googleAnalytics.auth.scopes,
+      ["https://www.googleapis.com/auth/analytics.readonly"],
+    );
+    assertEquals(
+      googleAnalytics.tools.every((tool) => tool.requiresWrite === false),
+      true,
+      "Expected google-analytics to be read-only",
+    );
   });
 
   it("does not expose retired integrations until they have verified working tool surfaces", () => {

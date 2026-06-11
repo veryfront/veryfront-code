@@ -1,0 +1,287 @@
+{
+  "name": "todoist",
+  "displayName": "Todoist",
+  "icon": "todoist.svg",
+  "description": "Manage tasks and projects in Todoist",
+  "auth": {
+    "type": "oauth2",
+    "provider": "todoist",
+    "authorizationUrl": "https://app.todoist.com/oauth/authorize",
+    "tokenUrl": "https://api.todoist.com/oauth/access_token",
+    "scopes": ["data:read_write"],
+    "callbackPath": "/api/auth/todoist/callback",
+    "docsUrl": "https://developer.todoist.com/api/v1/",
+    "requiredApis": [
+      {
+        "name": "Todoist App Management",
+        "enableUrl": "https://developer.todoist.com/appconsole.html"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "TODOIST_CLIENT_ID",
+      "description": "Todoist OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.todoist.com/appconsole.html"
+    },
+    {
+      "name": "TODOIST_CLIENT_SECRET",
+      "description": "Todoist OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.todoist.com/appconsole.html"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_tasks",
+      "name": "List Tasks",
+      "description": "List active tasks, optionally filtered by project",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.todoist.com/api/v1/tasks",
+        "params": {
+          "project_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return tasks in this project"
+          },
+          "label": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return tasks with this label name"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum tasks to return per page",
+            "default": 50
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["results", "tasks"],
+            "collectionName": "tasks",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "content" },
+              { "name": "project_id" },
+              { "name": "priority" },
+              { "name": "due", "kind": "object" },
+              { "name": "checked" },
+              { "name": "added_at" }
+            ],
+            "omitted": "task descriptions and provider-specific payload fields",
+            "outputFields": [{ "name": "next_cursor" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_task",
+      "name": "Get Task",
+      "description": "Get details of a specific task",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.todoist.com/api/v1/tasks/{taskId}",
+        "params": {
+          "taskId": {
+            "type": "string",
+            "in": "path",
+            "description": "Todoist task ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_task",
+      "name": "Create Task",
+      "description": "Create a new task",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.todoist.com/api/v1/tasks",
+        "body": {
+          "content": {
+            "type": "string",
+            "description": "Task text, e.g. 'Buy milk'",
+            "required": true
+          },
+          "description": {
+            "type": "string",
+            "description": "Longer task description"
+          },
+          "project_id": {
+            "type": "string",
+            "description": "Project to add the task to (defaults to Inbox)"
+          },
+          "due_string": {
+            "type": "string",
+            "description": "Human-readable due date, e.g. 'tomorrow at 12:00'"
+          },
+          "priority": {
+            "type": "number",
+            "description": "Priority 1 (normal) to 4 (urgent)"
+          },
+          "labels": {
+            "type": "array",
+            "description": "Label names to attach"
+          }
+        }
+      }
+    },
+    {
+      "id": "update_task",
+      "name": "Update Task",
+      "description": "Update an existing task",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.todoist.com/api/v1/tasks/{taskId}",
+        "params": {
+          "taskId": {
+            "type": "string",
+            "in": "path",
+            "description": "Todoist task ID",
+            "required": true
+          }
+        },
+        "body": {
+          "content": {
+            "type": "string",
+            "description": "New task text"
+          },
+          "description": {
+            "type": "string",
+            "description": "New task description"
+          },
+          "due_string": {
+            "type": "string",
+            "description": "New human-readable due date, or 'no date' to remove"
+          },
+          "priority": {
+            "type": "number",
+            "description": "Priority 1 (normal) to 4 (urgent)"
+          },
+          "labels": {
+            "type": "array",
+            "description": "Replacement label names"
+          }
+        }
+      }
+    },
+    {
+      "id": "close_task",
+      "name": "Complete Task",
+      "description": "Mark a task as complete",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.todoist.com/api/v1/tasks/{taskId}/close",
+        "params": {
+          "taskId": {
+            "type": "string",
+            "in": "path",
+            "description": "Todoist task ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_projects",
+      "name": "List Projects",
+      "description": "List the user's projects",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.todoist.com/api/v1/projects",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum projects to return per page",
+            "default": 50
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["results", "projects"],
+            "collectionName": "projects",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "color" },
+              { "name": "is_favorite" },
+              { "name": "parent_id" }
+            ],
+            "omitted": "project view settings and provider-specific payload fields",
+            "outputFields": [{ "name": "next_cursor" }]
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "today_tasks",
+      "title": "Show my tasks",
+      "prompt": "List my active Todoist tasks with their due dates and priorities.",
+      "category": "productivity",
+      "icon": "list"
+    },
+    {
+      "id": "add_task",
+      "title": "Add a task",
+      "prompt": "Create a new Todoist task with a description and due date.",
+      "category": "productivity",
+      "icon": "plus"
+    }
+  ],
+  "suggestedWith": ["calendar", "notion", "slack"],
+  "SETUP_GUIDE": {
+    "title": "Todoist OAuth Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Todoist app",
+        "description": "Go to the Todoist App Management console at https://developer.todoist.com/appconsole.html and create a new app."
+      },
+      {
+        "step": 2,
+        "title": "Configure the OAuth redirect",
+        "description": "Set the OAuth redirect URL to your callback (e.g. https://your-app.example.com/api/auth/todoist/callback)."
+      },
+      {
+        "step": 3,
+        "title": "Set environment variables",
+        "description": "Copy the Client ID and Client Secret into your .env as TODOIST_CLIENT_ID and TODOIST_CLIENT_SECRET."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Connect your Todoist account and run the List Projects tool. A free Todoist account is sufficient for testing."
+      }
+    ],
+    "notes": [
+      "Todoist scopes are comma-separated in the authorize URL (e.g. data:read_write). The data:read_write scope covers all tools in this connector.",
+      "This connector uses the unified Todoist API v1 (api.todoist.com/api/v1); the older REST v2 API is deprecated."
+    ],
+    "documentation": "https://developer.todoist.com/api/v1/"
+  }
+}

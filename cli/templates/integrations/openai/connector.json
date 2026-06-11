@@ -1,0 +1,239 @@
+{
+  "name": "openai",
+  "displayName": "OpenAI",
+  "icon": "openai.svg",
+  "description": "Query OpenAI models, generate text responses, embeddings, and images via the OpenAI API",
+  "auth": {
+    "type": "api-key",
+    "keyName": "OPENAI_API_KEY",
+    "headerName": "Authorization",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://platform.openai.com/docs/api-reference/authentication",
+    "requiredApis": [
+      {
+        "name": "OpenAI API Keys",
+        "enableUrl": "https://platform.openai.com/api-keys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "OPENAI_API_KEY",
+      "description": "OpenAI API key (starts with sk-)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://platform.openai.com/api-keys"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_models",
+      "name": "List Models",
+      "description": "List the models available to the API key",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.openai.com/v1/models",
+        "response": {
+          "transform": "data",
+          "historicalSummary": {
+            "collectionKeys": ["data", "models"],
+            "collectionName": "models",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "owned_by" },
+              { "name": "created" }
+            ],
+            "omitted": "model capability details and provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_model",
+      "name": "Get Model",
+      "description": "Get details about a specific model",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.openai.com/v1/models/{model}",
+        "params": {
+          "model": {
+            "type": "string",
+            "in": "path",
+            "description": "Model ID, e.g. gpt-4o or o4-mini",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_response",
+      "name": "Create Response",
+      "description": "Generate a model response using the OpenAI Responses API",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/responses",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Model ID to use, e.g. gpt-4o",
+            "required": true
+          },
+          "input": {
+            "type": "string",
+            "description": "Text input or prompt for the model",
+            "required": true
+          },
+          "instructions": {
+            "type": "string",
+            "description": "System instructions for the model"
+          },
+          "max_output_tokens": {
+            "type": "number",
+            "description": "Upper bound for generated tokens"
+          },
+          "temperature": {
+            "type": "number",
+            "description": "Sampling temperature between 0 and 2"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_chat_completion",
+      "name": "Create Chat Completion",
+      "description": "Generate a chat completion from a list of messages",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Model ID to use, e.g. gpt-4o",
+            "required": true
+          },
+          "messages": {
+            "type": "array",
+            "description": "Chat messages, each with role (system|user|assistant) and content",
+            "required": true
+          },
+          "max_tokens": {
+            "type": "number",
+            "description": "Maximum tokens to generate"
+          },
+          "temperature": {
+            "type": "number",
+            "description": "Sampling temperature between 0 and 2"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_embedding",
+      "name": "Create Embedding",
+      "description": "Create an embedding vector for input text",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/embeddings",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Embedding model ID, e.g. text-embedding-3-small",
+            "required": true
+          },
+          "input": {
+            "type": "string",
+            "description": "Text to embed",
+            "required": true
+          },
+          "dimensions": {
+            "type": "number",
+            "description": "Number of dimensions for the output embedding (supported models only)"
+          }
+        }
+      }
+    },
+    {
+      "id": "generate_image",
+      "name": "Generate Image",
+      "description": "Generate an image from a text prompt",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/images/generations",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Image model ID, e.g. gpt-image-1 or dall-e-3",
+            "required": true
+          },
+          "prompt": {
+            "type": "string",
+            "description": "Text description of the desired image",
+            "required": true
+          },
+          "n": {
+            "type": "number",
+            "description": "Number of images to generate",
+            "default": 1
+          },
+          "size": {
+            "type": "string",
+            "description": "Image size, e.g. 1024x1024"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "available_models",
+      "title": "List available models",
+      "prompt": "List the OpenAI models available to my API key and summarize what each is best for.",
+      "category": "ai",
+      "icon": "list"
+    },
+    {
+      "id": "generate_text",
+      "title": "Generate a response",
+      "prompt": "Use OpenAI to generate a response to a prompt I provide.",
+      "category": "ai",
+      "icon": "sparkles"
+    }
+  ],
+  "suggestedWith": ["anthropic", "slack", "notion"],
+  "SETUP_GUIDE": {
+    "title": "OpenAI API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create an OpenAI account",
+        "description": "Go to https://platform.openai.com and sign up or sign in. New accounts may need to add billing details under Settings → Billing before API calls succeed."
+      },
+      {
+        "step": 2,
+        "title": "Create an API key",
+        "description": "Open https://platform.openai.com/api-keys, click 'Create new secret key', give it a descriptive name (e.g. 'Veryfront Integration'), and select the project it belongs to."
+      },
+      {
+        "step": 3,
+        "title": "Copy and store the key",
+        "description": "Copy the key immediately — it is only shown once. Add it to your .env file as OPENAI_API_KEY=sk-..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Models tool to confirm the key works. If you get a 401, check the key; if a 429, check your billing/quota."
+      }
+    ],
+    "notes": [
+      "Use project-scoped API keys to limit blast radius; you can revoke keys at any time from the dashboard",
+      "API usage is billed per token — set usage limits under Settings → Limits"
+    ],
+    "documentation": "https://platform.openai.com/docs/api-reference"
+  }
+}
