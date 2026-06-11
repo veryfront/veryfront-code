@@ -273,9 +273,14 @@ class DenoFileSystemAdapter implements FileSystemAdapter {
     };
 
     signal?.addEventListener("abort", cleanup, { once: true });
-    void pollLoop();
+    // Keep the loop promise so callers can await full termination: close()
+    // only flips the flag, while an in-flight snapshot (Deno.readDir) keeps
+    // running and would otherwise trip test op-sanitizers or delay shutdown.
+    const done = pollLoop();
 
-    return createFileWatcher(iterator, cleanup);
+    const watcher = createFileWatcher(iterator, cleanup);
+    watcher.done = done;
+    return watcher;
   }
 }
 
