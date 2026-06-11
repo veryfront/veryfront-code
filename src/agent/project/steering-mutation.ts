@@ -44,10 +44,19 @@ function getPathMutationFlags(
 ): ProjectSteeringMutationResult {
   return {
     instructionsChanged: steeringPaths.instructions.includes(path),
-    skillsChanged: steeringPaths.skills.some((prefix) =>
-      path === prefix || path.startsWith(`${prefix}/`)
-    ),
+    skillsChanged: isProjectSkillMutationPath(path, steeringPaths),
   };
+}
+
+function isProjectSkillMutationPath(
+  path: string,
+  steeringPaths: ProjectSteeringPaths,
+): boolean {
+  if (steeringPaths.skills.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))) {
+    return true;
+  }
+
+  return /^agents\/[^/]+\/(?:SKILL\.md|references\/|skills\/[^/]+\/)/.test(path);
 }
 
 function mergeMutationFlags(
