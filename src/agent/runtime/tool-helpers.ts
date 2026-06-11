@@ -95,6 +95,27 @@ export function isDynamicTool(name: string): boolean {
 // deno-lint-ignore no-explicit-any -- generic erasure: accepts Tool with any input/output types
 export type ToolConfigEntry = Tool<any, any> | boolean;
 
+/**
+ * Resolve a configured tool name for a caller: the caller's own tool by short
+ * name first, then an exact registry id — returning only tools visible to the
+ * caller (owner-aware).
+ */
+function resolveVisibleRegistryTool(
+  name: string,
+  callerAgentId?: string,
+  // deno-lint-ignore no-explicit-any -- generic erasure: registry tools carry any input/output types
+): Tool<any, any> | undefined {
+  if (callerAgentId !== undefined) {
+    for (const tool of toolRegistry.getAll().values()) {
+      if (tool.ownerAgentId === callerAgentId && tool.shortName === name) {
+        return tool;
+      }
+    }
+  }
+  const tool = toolRegistry.get(name);
+  return tool && isToolVisibleTo(tool, { agentId: callerAgentId }) ? tool : undefined;
+}
+
 function formatAvailableToolNames(names: Iterable<string>): string {
   const sorted = [...new Set(names)].sort();
   return sorted.length > 0 ? sorted.join(", ") : "(none)";
@@ -391,14 +412,13 @@ export async function getAvailableTools(
 
   for (const [name, entry] of Object.entries(toolsConfig)) {
     if (entry === true) {
-      const tool = toolRegistry.get(name);
-      if (tool && isToolVisibleTo(tool, { agentId: options?.callerAgentId })) {
-        addToolDefinition(tools, name, tool);
-        continue;
-      }
+      // Own short name first, then exact id; owned tools of other agents are
+      // invisible and fall through to the unresolved diagnostic. Definitions
+      // are exposed under the tool's full registry id so execution resolves
+      // through the same owner-aware gate.
+      const tool = resolveVisibleRegistryTool(name, options?.callerAgentId);
       if (tool) {
-        // Owned by another agent: treat as unresolved rather than binding it.
-        unresolvedConfiguredToolNames.push(name);
+        addToolDefinition(tools, tool.id, tool);
         continue;
       }
 
