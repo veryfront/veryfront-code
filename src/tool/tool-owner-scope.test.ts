@@ -185,3 +185,46 @@ Deno.test("executeConfiguredTool registry fallback rejects another agent's owned
     clearMCPRegistry();
   }
 });
+
+Deno.test("executeConfiguredTool with tools: true cannot execute another agent's owned tool", async () => {
+  setupTools();
+  try {
+    // Owner still works through the configured path.
+    const ok = await executeConfiguredTool("researcher--fetch", {}, true, {
+      agentId: "researcher",
+    });
+    assertEquals(ok, { ok: true, id: "researcher--fetch" });
+
+    let rejected = false;
+    try {
+      await executeConfiguredTool("researcher--fetch", {}, true, { agentId: "writer" });
+    } catch (error) {
+      rejected = true;
+      assertEquals(String(error).includes('Tool "researcher--fetch" not found'), true);
+    }
+    assertEquals(rejected, true);
+  } finally {
+    clearMCPRegistry();
+  }
+});
+
+Deno.test("executeConfiguredTool named registry entry cannot execute another agent's owned tool", async () => {
+  setupTools();
+  try {
+    let rejected = false;
+    try {
+      await executeConfiguredTool(
+        "researcher--fetch",
+        {},
+        { "researcher--fetch": true },
+        { agentId: "writer" },
+      );
+    } catch (error) {
+      rejected = true;
+      assertEquals(String(error).includes('Tool "researcher--fetch" not found'), true);
+    }
+    assertEquals(rejected, true);
+  } finally {
+    clearMCPRegistry();
+  }
+});

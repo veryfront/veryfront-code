@@ -213,18 +213,25 @@ async function executeRemoteToolFromSources(
 export function resolveConfiguredTool(
   toolsConfig: true | Record<string, ToolConfigEntry> | undefined,
   toolName: string,
+  context?: ToolExecutionContext,
 ): Tool | null {
   if (!toolsConfig) {
     return null;
   }
 
+  // Registry-backed lookups (`tools: true` and `{ name: true }` entries) are
+  // owner-aware: another agent's owned tool behaves as if it does not exist.
+  // Tool objects embedded directly in the config record were bound by the
+  // agent author and pass through as-is.
   if (toolsConfig === true) {
-    return toolRegistry.get(toolName) ?? null;
+    const registryTool = toolRegistry.get(toolName);
+    return registryTool && isToolVisibleTo(registryTool, context) ? registryTool : null;
   }
 
   const configuredEntry = toolsConfig[toolName];
   if (configuredEntry === true) {
-    return toolRegistry.get(toolName) ?? null;
+    const registryTool = toolRegistry.get(toolName);
+    return registryTool && isToolVisibleTo(registryTool, context) ? registryTool : null;
   }
 
   if (configuredEntry && typeof configuredEntry === "object") {
@@ -242,7 +249,7 @@ export async function executeConfiguredTool(
   allowedRemoteToolNames?: string[],
   remoteToolSources?: RemoteToolSource[],
 ): Promise<unknown> {
-  const configuredTool = resolveConfiguredTool(toolsConfig, toolName);
+  const configuredTool = resolveConfiguredTool(toolsConfig, toolName, context);
   if (configuredTool) {
     return await configuredTool.execute(input, context);
   }
