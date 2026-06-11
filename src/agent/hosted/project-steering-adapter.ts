@@ -37,6 +37,7 @@ import type {
   RuntimeSkillDefinition,
   RuntimeSkillMetadataLogger,
 } from "../runtime/skill-metadata.ts";
+import { isRuntimeSkillVisibleTo } from "../runtime/skill-metadata.ts";
 
 /** Public API contract for hosted project steering logger. */
 export type HostedProjectSteeringLogger =
@@ -59,6 +60,13 @@ export type HostedProjectSteeringAdapterOptions = {
 /** Context for hosted project skill IDs. */
 export type HostedProjectSkillIdsContext = MutableAgentProjectContext & {
   authToken: string;
+  /**
+   * Id of the agent this run executes as. Refreshes scope the rewritten
+   * skill set to this agent (unowned + own); when absent, the conservative
+   * project-level rule applies (unowned only) — a refresh can never widen
+   * visibility beyond the caller's scope.
+   */
+  agentId?: string;
 };
 
 /** Public API contract for hosted project steering adapter. */
@@ -183,7 +191,21 @@ export function createHostedProjectSteeringAdapter(
         branchId: context.branchId,
       });
 
-      context.availableSkillIds = skills.map((skill) => skill.id);
+      // Owner-aware: the refreshed per-run skill set keeps the caller's
+      // scope — never another agent's owned skills — and the source-path
+      // map stays in sync so colocated skills do not go stale.
+      const visibleSkills = skills.filter((skill) =>
+        isRuntimeSkillVisibleTo(skill, { agentId: context.agentId })
+      );
+      context.availableSkillIds = visibleSkills.map((skill) => skill.id);
+      const skillSourcePaths = Object.fromEntries(
+        visibleSkills
+          .filter((skill) => skill.sourcePath)
+          .map((skill) => [skill.id, skill.sourcePath as string]),
+      );
+      context.skillSourcePaths = Object.keys(skillSourcePaths).length > 0
+        ? skillSourcePaths
+        : undefined;
     },
   };
 }

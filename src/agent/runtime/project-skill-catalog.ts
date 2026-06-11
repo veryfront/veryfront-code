@@ -194,6 +194,53 @@ export async function getRuntimeProjectSkillCatalog(
         id,
         content: file.content,
         references: getProjectSkillReferences({ allFiles, file, isFlat }),
+        sourcePath: file.path,
+        logger: input.logger,
+      });
+
+      if (definition && !projectSkillsById.has(definition.id)) {
+        projectSkillsById.set(definition.id, definition);
+      }
+    }
+  }
+
+  // Colocated (agent-owned) skills: agents/{id}/SKILL.md (the agent's own
+  // skill) and agents/{id}/skills/{sub}/SKILL.md. Registered with owner
+  // metadata so per-run filtering and the source-path loader can apply the
+  // one owner-aware rule; ids match framework/control-plane discovery.
+  const colocatedPaths = allFiles
+    .map((file) => file.path)
+    .filter((path) => getColocatedSkillIdentity(path) !== null)
+    .sort();
+
+  if (colocatedPaths.length > 0) {
+    const colocatedFiles = await Promise.all(
+      colocatedPaths.map((path) =>
+        input.getProjectFile({
+          projectId: input.projectId,
+          authToken: input.authToken,
+          branchId: input.branchId,
+          path,
+        })
+      ),
+    );
+
+    for (const file of colocatedFiles) {
+      if (!file?.content) {
+        continue;
+      }
+      const identity = getColocatedSkillIdentity(file.path);
+      if (!identity) {
+        continue;
+      }
+
+      const definition = buildRuntimeSkillDefinition({
+        id: identity.id,
+        content: file.content,
+        references: getProjectSkillReferences({ allFiles, file, isFlat: false }),
+        ownerAgentId: identity.ownerAgentId,
+        shortName: identity.shortName,
+        sourcePath: file.path,
         logger: input.logger,
       });
 
@@ -213,6 +260,49 @@ export async function getRuntimeProjectSkillCatalog(
   }
 
   return sortSkillsById(mergedSkillsById.values());
+}
+
+/**
+ * Owned-capability namespace rule. Mirrors discovery
+ * (src/discovery/agent-scoped-capabilities.ts) and the control plane's skill
+ * source derivation; duplicated locally because the runtime layer must not
+ * import from discovery.
+ */
+const AGENT_CAPABILITY_NAMESPACE_SEPARATOR = "--";
+
+function sanitizeCapabilityNamespace(agentId: string): string {
+  return agentId.replace(/[^A-Za-z0-9_-]/g, "_");
+}
+
+const COLOCATED_OWN_SKILL_REGEX = /^agents\/([^/]+)\/SKILL\.md$/;
+const COLOCATED_NESTED_SKILL_REGEX = /^agents\/([^/]+)\/skills\/([^/]+)\/SKILL\.md$/;
+
+type ColocatedSkillIdentity = {
+  id: string;
+  ownerAgentId: string;
+  shortName: string;
+};
+
+function getColocatedSkillIdentity(path: string): ColocatedSkillIdentity | null {
+  const nested = path.match(COLOCATED_NESTED_SKILL_REGEX);
+  const nestedAgentId = nested?.[1];
+  const nestedShortName = nested?.[2];
+  if (nestedAgentId && nestedShortName) {
+    return {
+      id: `${
+        sanitizeCapabilityNamespace(nestedAgentId)
+      }${AGENT_CAPABILITY_NAMESPACE_SEPARATOR}${nestedShortName}`,
+      ownerAgentId: nestedAgentId,
+      shortName: nestedShortName,
+    };
+  }
+
+  const ownAgentId = path.match(COLOCATED_OWN_SKILL_REGEX)?.[1];
+  if (ownAgentId) {
+    return { id: ownAgentId, ownerAgentId: ownAgentId, shortName: ownAgentId };
+  }
+
+  return null;
 }
 
 function getProjectSkillId(path: string, isFlat: boolean): string | null {

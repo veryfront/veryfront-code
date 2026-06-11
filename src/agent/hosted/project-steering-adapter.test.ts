@@ -183,3 +183,60 @@ Deno.test("hosted project steering adapter accepts a custom builtin skill store"
     assertEquals(referenceCalls, [{ skillsDir, skillId: "custom" }]);
   });
 });
+
+Deno.test("refreshProjectSkillIds keeps the caller's owner scope and source paths", async () => {
+  await withSkillsDir(async (skillsDir) => {
+    const skillMd = (name: string) =>
+      `---
+name: ${name}
+description: ${name} skill
+---
+Body.`;
+    const adapter = createHostedProjectSteeringAdapter({
+      apiUrl: "https://api.example.test",
+      skillsDir,
+      projectFilesClient: createProjectFilesClient({
+        getProjectFile: async ({ path }) =>
+          path === "skills/global/SKILL.md" ||
+            path === "agents/researcher/skills/cite/SKILL.md" ||
+            path === "agents/writer/skills/style/SKILL.md"
+            ? { path, content: skillMd(path) }
+            : null,
+        getProjectFiles: async () => [
+          { path: "skills/global/SKILL.md" },
+          { path: "agents/researcher/skills/cite/SKILL.md" },
+          { path: "agents/writer/skills/style/SKILL.md" },
+        ],
+      }),
+    });
+
+    // With an agent scope: unowned + own, never another agent's owned skill;
+    // the source-path map refreshes alongside.
+    const researcherContext = {
+      projectId: "project-1",
+      authToken: "token-1",
+      branchId: null,
+      agentId: "researcher",
+      availableSkillIds: ["stale-id"],
+      skillSourcePaths: { "stale-id": "skills/stale/SKILL.md" } as Readonly<
+        Record<string, string>
+      >,
+    };
+    await adapter.refreshProjectSkillIds(researcherContext);
+    assertEquals(researcherContext.availableSkillIds, ["builtin", "global", "researcher--cite"]);
+    assertEquals(researcherContext.skillSourcePaths, {
+      global: "skills/global/SKILL.md",
+      "researcher--cite": "agents/researcher/skills/cite/SKILL.md",
+    });
+
+    // Without an agent scope: conservative project-level rule (unowned only).
+    const projectContext = {
+      projectId: "project-1",
+      authToken: "token-1",
+      branchId: null,
+      availableSkillIds: [],
+    };
+    await adapter.refreshProjectSkillIds(projectContext);
+    assertEquals(projectContext.availableSkillIds, ["builtin", "global"]);
+  });
+});
