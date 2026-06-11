@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import {
   createRuntimeAgentSystemMessages,
   parseRuntimeAgentMarkdownDefinition,
@@ -105,4 +105,79 @@ Deno.test("createRuntimeAgentSystemMessages appends runtime blocks when marker i
     role: "system",
     content: "<environment_context>\nBrowser timezone: UTC\n</environment_context>",
   });
+});
+
+Deno.test("parseRuntimeAgentMarkdownDefinition parses delegates frontmatter", () => {
+  const result = parseRuntimeAgentMarkdownDefinition({
+    id: "lead",
+    content: `---
+name: Lead
+delegates:
+  - writer
+  - editor
+---
+Coordinate the work.
+`,
+  });
+
+  assertEquals(result.delegates, ["writer", "editor"]);
+
+  const noDelegates = parseRuntimeAgentMarkdownDefinition({
+    id: "solo",
+    content: `---
+name: Solo
+---
+Work alone.
+`,
+  });
+
+  assertEquals(noDelegates.delegates, undefined);
+});
+
+Deno.test("parseRuntimeAgentMarkdownDefinition ignores empty delegate entries", () => {
+  const result = parseRuntimeAgentMarkdownDefinition({
+    id: "writer",
+    content: `---
+name: Writer
+delegates: ["", "  "]
+---
+Write copy.
+`,
+  });
+
+  assertEquals(result.delegates, undefined);
+});
+
+Deno.test("parseRuntimeAgentMarkdownDefinition rejects self-delegation with a diagnostic", () => {
+  assertThrows(
+    () =>
+      parseRuntimeAgentMarkdownDefinition({
+        id: "lead",
+        content: `---
+name: Lead
+delegates: [writer, lead]
+---
+Coordinate.
+`,
+      }),
+    Error,
+    'Agent "lead" cannot delegate to itself',
+  );
+});
+
+Deno.test("parseRuntimeAgentMarkdownDefinition rejects provider-unsafe delegate ids", () => {
+  assertThrows(
+    () =>
+      parseRuntimeAgentMarkdownDefinition({
+        id: "lead",
+        content: `---
+name: Lead
+delegates: [data.fetcher]
+---
+Coordinate.
+`,
+      }),
+    Error,
+    'produces an invalid tool name "agent_data.fetcher"',
+  );
 });

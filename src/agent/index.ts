@@ -224,6 +224,14 @@ export {
 } from "./runtime/agent-markdown-adapter.ts";
 
 export {
+  AGENT_DELEGATE_TOOL_PREFIX,
+  buildAgentDelegateTools,
+  type BuildAgentDelegateToolsInput,
+  type DelegateAgentResolver,
+  isProviderSafeDelegateId,
+} from "./runtime/agent-delegation.ts";
+
+export {
   loadRuntimeAgentMarkdownDefinitionFromFile,
   type LoadRuntimeAgentMarkdownDefinitionFromFileInput,
   loadRuntimeAgentMarkdownDefinitionFromFileInputSchema,

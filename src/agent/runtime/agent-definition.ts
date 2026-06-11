@@ -5,6 +5,7 @@ import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import { createRuntimePromptBlock } from "./prompt-block.ts";
 import { buildRuntimeAvailableSkillsPromptBlock } from "./skill-prompt.ts";
 import type { RuntimeSkillDefinition } from "./skill-metadata.ts";
+import { AGENT_DELEGATE_TOOL_PREFIX, isProviderSafeDelegateId } from "./agent-delegation-names.ts";
 
 /** Zod schema for get runtime agent thinking config. */
 export const getRuntimeAgentThinkingConfigSchema = defineSchema((v) =>
@@ -36,6 +37,7 @@ export const getRuntimeAgentMarkdownDefinitionSchema = defineSchema((v) =>
     temperature: v.number().min(0).max(2).optional(),
     maxSteps: v.number().optional(),
     providerTools: v.array(v.string().min(1)).optional(),
+    delegates: v.array(v.string().min(1)).optional(),
   })
 );
 
@@ -104,6 +106,33 @@ function parseProviderTools(value: unknown): unknown[] | undefined {
   return value;
 }
 
+function parseDelegates(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const ids = value
+    .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+    .map((entry) => entry.trim());
+  return ids.length > 0 ? ids : undefined;
+}
+
+function validateDelegates(agentId: string, delegates: string[] | undefined): void {
+  if (!delegates) {
+    return;
+  }
+  for (const delegateId of delegates) {
+    if (delegateId === agentId) {
+      throw new Error(`Agent "${agentId}" cannot delegate to itself.`);
+    }
+    if (!isProviderSafeDelegateId(delegateId)) {
+      throw new Error(
+        `Delegate id "${delegateId}" for agent "${agentId}" produces an invalid tool name ` +
+          `"${AGENT_DELEGATE_TOOL_PREFIX}${delegateId}" (must match [A-Za-z0-9_-], max 64 chars).`,
+      );
+    }
+  }
+}
+
 /** Definition for parse runtime agent markdown. */
 export function parseRuntimeAgentMarkdownDefinition(
   input: ParseRuntimeAgentMarkdownDefinitionInput,
@@ -117,6 +146,8 @@ export function parseRuntimeAgentMarkdownDefinition(
   const temperature = typeof attrs.temperature === "number" ? attrs.temperature : undefined;
   const maxSteps = typeof attrs["max-steps"] === "number" ? attrs["max-steps"] : undefined;
   const providerTools = parseProviderTools(attrs["provider-tools"]);
+  const delegates = parseDelegates(attrs.delegates);
+  validateDelegates(parsedInput.id, delegates);
 
   return getRuntimeAgentMarkdownDefinitionSchema().parse({
     id: parsedInput.id,
@@ -128,6 +159,7 @@ export function parseRuntimeAgentMarkdownDefinition(
     ...(temperature === undefined ? {} : { temperature }),
     ...(maxSteps === undefined ? {} : { maxSteps }),
     ...(providerTools ? { providerTools } : {}),
+    ...(delegates === undefined ? {} : { delegates }),
   });
 }
 
