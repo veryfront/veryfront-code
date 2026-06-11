@@ -176,6 +176,33 @@ export async function discoverAll(config: DiscoveryConfig): Promise<DiscoveryRes
     await discoverItems(`${baseDir}/${dir}`, result, context, toolHandler, config.verbose);
   }
 
+  // Clear stale skills before any skill registration so deleted/renamed
+  // skills are removed. Global skills are discovered BEFORE agents so that
+  // directory-agent colocated skills (registered during agent discovery)
+  // survive the clear and owned-short-name shadow diagnostics can see the
+  // global ids they shadow.
+  skillRegistry.clear();
+
+  // Discover skills (parallel path — markdown-based, not TypeScript import)
+  for (const dir of config.skillDirs ?? ["skills"]) {
+    const skillResult = await discoverSkills(
+      join(baseDir, dir),
+      context,
+      config.verbose,
+    );
+    for (const [id, skill] of skillResult.skills) {
+      if (result.skills.has(id)) {
+        logger.warn(`Duplicate skill "${id}" across discovery roots; keeping first registration`);
+        continue;
+      }
+      registerSkill(id, skill);
+      result.skills.set(id, skill);
+    }
+    result.errors.push(
+      ...skillResult.errors.map((e) => ({ file: e.file, error: e.error })),
+    );
+  }
+
   // Discover agents
   for (const dir of config.agentDirs ?? ["agents"]) {
     await discoverItems(`${baseDir}/${dir}`, result, context, agentHandler, config.verbose);
@@ -200,29 +227,6 @@ export async function discoverAll(config: DiscoveryConfig): Promise<DiscoveryRes
   // Discover tasks
   for (const dir of config.taskDirs ?? ["tasks"]) {
     await discoverItems(`${baseDir}/${dir}`, result, context, taskHandler, config.verbose);
-  }
-
-  // Clear stale skills before rediscovery so deleted/renamed skills are removed.
-  skillRegistry.clear();
-
-  // Discover skills (parallel path — markdown-based, not TypeScript import)
-  for (const dir of config.skillDirs ?? ["skills"]) {
-    const skillResult = await discoverSkills(
-      join(baseDir, dir),
-      context,
-      config.verbose,
-    );
-    for (const [id, skill] of skillResult.skills) {
-      if (result.skills.has(id)) {
-        logger.warn(`Duplicate skill "${id}" across discovery roots; keeping first registration`);
-        continue;
-      }
-      registerSkill(id, skill);
-      result.skills.set(id, skill);
-    }
-    result.errors.push(
-      ...skillResult.errors.map((e) => ({ file: e.file, error: e.error })),
-    );
   }
 
   return result;

@@ -99,6 +99,29 @@ const researcher = getAgent("researcher");
 const researchTool = agentAsTool(researcher, "Research a topic using web search");
 ```
 
+## Declarative delegation with `delegates`
+
+A markdown agent can opt into orchestration by listing the specialists it may
+call in its `delegates` frontmatter. The runtime gives the agent one
+`agent_{id}` tool per delegate; each delegate runs with its own settings,
+skills, and tools — capability ownership does not cross the delegation
+boundary in either direction.
+
+```md
+---
+name: Lead
+description: Plans the work and routes to specialists
+delegates: [researcher, writer]
+---
+
+Break the task down. Use agent_researcher to gather facts, then agent_writer to
+produce the final copy.
+```
+
+With several agents and no `delegates`, the agents are independent: a caller
+selects one by id. Self-delegation and delegate ids that cannot form a valid
+provider tool name are rejected at discovery with explicit diagnostics.
+
 ## Workflow-based composition
 
 For deterministic multi-agent pipelines, use [workflows](./workflows.md):

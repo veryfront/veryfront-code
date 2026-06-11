@@ -7,38 +7,131 @@ import { agentRegistry, registerAgent } from "../../agent/composition/index.ts";
 import { ensureError } from "#veryfront/errors/veryfront-error.ts";
 import type { DiscoveryResult, FileDiscoveryContext } from "../types.ts";
 import { trackAgentPath } from "../discovery-utils.ts";
-import { findMarkdownFiles, readDiscoveryTextFile } from "../file-discovery.ts";
+import {
+  discoveryFileExists,
+  listDiscoveryDirectoryEntries,
+  readDiscoveryTextFile,
+} from "../file-discovery.ts";
+import {
+  isSafePathSegment,
+  registerAgentColocatedSkills,
+  registerAgentColocatedTools,
+  sanitizeCapabilityNamespace,
+} from "../agent-scoped-capabilities.ts";
 
 const MARKDOWN_AGENT_FILE_PATTERN = /^[A-Za-z0-9._-]+\.md$/;
+const DIRECTORY_AGENT_FILENAME = "AGENT.md";
+const RESERVED_TOP_LEVEL_FILENAMES = new Set(["AGENT.md", "SKILL.md"]);
 
 type MarkdownAgentCandidate = {
   id: string;
   file: string;
+  rootPath?: string;
 };
 
-function getFileName(file: string): string {
-  return file.split("/").pop() ?? "";
-}
-
-function getMarkdownAgentCandidate(file: string): MarkdownAgentCandidate | null {
-  const fileName = getFileName(file);
+function getFlatAgentCandidate(dir: string, fileName: string): MarkdownAgentCandidate | null {
+  if (RESERVED_TOP_LEVEL_FILENAMES.has(fileName)) {
+    return null;
+  }
   if (!MARKDOWN_AGENT_FILE_PATTERN.test(fileName)) {
     return null;
   }
 
+  const id = fileName.slice(0, -".md".length);
+  // Reject `.`/`..` ids as defense-in-depth against path traversal.
+  if (!isSafePathSegment(id)) {
+    return null;
+  }
+
   return {
-    id: fileName.slice(0, -".md".length),
-    file,
+    id,
+    file: `${dir}/${fileName}`,
   };
 }
 
-function registerMarkdownAgent(
+async function getDirectoryAgentCandidate(
+  dir: string,
+  entryName: string,
+  context: FileDiscoveryContext,
+): Promise<MarkdownAgentCandidate | null> {
+  // Reject `.`/`..` and other non-segment names before joining into a path.
+  if (!isSafePathSegment(entryName)) {
+    return null;
+  }
+
+  const rootPath = `${dir}/${entryName}`;
+  const agentFile = `${rootPath}/${DIRECTORY_AGENT_FILENAME}`;
+  if (!(await discoveryFileExists(agentFile, context))) {
+    return null;
+  }
+
+  return { id: entryName, file: agentFile, rootPath };
+}
+
+/** Tracks sanitized capability namespaces to the agent that owns them. */
+type CapabilityNamespaceOwners = Map<string, string>;
+
+/**
+ * Registers a directory agent's colocated capabilities. This is PURE
+ * REGISTRATION — binding (`skills:` / `tools:` selectors) happens at
+ * invocation time via the owner-aware resolvers, identically for flat and
+ * directory agents.
+ *
+ * Two distinct agent ids can sanitize to the same provider-safe namespace
+ * (e.g. "a.b" and "a_b" -> "a_b"), which would collide owned capability ids;
+ * detected and reported instead of silently overwriting.
+ */
+async function registerColocatedCapabilities(
+  definition: RuntimeAgentMarkdownDefinition,
+  rootPath: string,
+  result: DiscoveryResult,
+  context: FileDiscoveryContext,
+  namespaceOwners: CapabilityNamespaceOwners,
+): Promise<void> {
+  const namespace = sanitizeCapabilityNamespace(definition.id);
+  const existingOwner = namespaceOwners.get(namespace);
+  if (existingOwner !== undefined && existingOwner !== definition.id) {
+    result.errors.push({
+      file: rootPath,
+      error: ensureError(
+        `Agent "${definition.id}" shares the sanitized capability namespace ` +
+          `"${namespace}" with agent "${existingOwner}". Rename one to avoid ` +
+          `colliding colocated tool/skill ids.`,
+      ),
+    });
+    return;
+  }
+  namespaceOwners.set(namespace, definition.id);
+
+  // Skills and tools live in disjoint subtrees; register them concurrently.
+  await Promise.all([
+    registerAgentColocatedSkills({ agentId: definition.id, rootPath, context, result }),
+    registerAgentColocatedTools({ agentId: definition.id, rootPath, context, result }),
+  ]);
+}
+
+async function registerMarkdownAgent(
   definition: RuntimeAgentMarkdownDefinition,
   file: string,
+  rootPath: string | undefined,
   result: DiscoveryResult,
-): void {
+  context: FileDiscoveryContext,
+  namespaceOwners: CapabilityNamespaceOwners,
+): Promise<void> {
   if (result.agents.has(definition.id)) {
+    result.errors.push({
+      file,
+      error: ensureError(
+        `Duplicate agent id "${definition.id}". An agent with this id was already ` +
+          `discovered (e.g. both a flat "${definition.id}.md" and a "${definition.id}/" ` +
+          `directory exist); keeping the first.`,
+      ),
+    });
     return;
+  }
+
+  if (rootPath) {
+    await registerColocatedCapabilities(definition, rootPath, result, context, namespaceOwners);
   }
 
   const runtimeAgent = createRuntimeAgentFromMarkdownDefinition(definition);
@@ -50,29 +143,63 @@ function registerMarkdownAgent(
   result.agents.set(definition.id, runtimeAgent);
 }
 
+async function discoverMarkdownAgentCandidate(
+  candidate: MarkdownAgentCandidate,
+  result: DiscoveryResult,
+  context: FileDiscoveryContext,
+  namespaceOwners: CapabilityNamespaceOwners,
+): Promise<void> {
+  try {
+    const definition = parseRuntimeAgentMarkdownDefinition({
+      id: candidate.id,
+      content: await readDiscoveryTextFile(candidate.file, context),
+    });
+    await registerMarkdownAgent(
+      definition,
+      candidate.file,
+      candidate.rootPath,
+      result,
+      context,
+      namespaceOwners,
+    );
+  } catch (error) {
+    result.errors.push({ file: candidate.file, error: ensureError(error) });
+  }
+}
+
+/**
+ * Discovers markdown agents from a directory.
+ *
+ * Supports two layouts side by side:
+ * - Flat: `agents/{id}.md`
+ * - Directory: `agents/{id}/AGENT.md` (+ colocated `SKILL.md` / `skills/` /
+ *   `tools/`, registered with owner metadata)
+ *
+ * Binding is NOT decided here: both layouts pass their parsed definition to
+ * the same adapter, and the owner-aware resolvers apply one rule for every
+ * agent kind at invocation time.
+ */
 export async function discoverRuntimeAgentMarkdownDefinitions(
   dir: string,
   result: DiscoveryResult,
   context: FileDiscoveryContext,
 ): Promise<void> {
-  const files = (await findMarkdownFiles(dir, context)).sort((left, right) =>
-    left.localeCompare(right)
+  const entries = (await listDiscoveryDirectoryEntries(dir, context)).sort((left, right) =>
+    left.name.localeCompare(right.name)
   );
+  const namespaceOwners: CapabilityNamespaceOwners = new Map();
 
-  for (const file of files) {
-    const candidate = getMarkdownAgentCandidate(file);
+  for (const entry of entries) {
+    const candidate = entry.isDirectory
+      ? await getDirectoryAgentCandidate(dir, entry.name, context)
+      : entry.isFile
+      ? getFlatAgentCandidate(dir, entry.name)
+      : null;
+
     if (!candidate) {
       continue;
     }
 
-    try {
-      const definition = parseRuntimeAgentMarkdownDefinition({
-        id: candidate.id,
-        content: await readDiscoveryTextFile(candidate.file, context),
-      });
-      registerMarkdownAgent(definition, candidate.file, result);
-    } catch (error) {
-      result.errors.push({ file: candidate.file, error: ensureError(error) });
-    }
+    await discoverMarkdownAgentCandidate(candidate, result, context, namespaceOwners);
   }
 }

@@ -113,7 +113,10 @@ export function agent(config: AgentConfig): Agent {
   const originalSystem = config.system;
   const augmentedSystem = config.skills
     ? async () => {
-      const currentSkills = skillRegistry.resolveForAgent(config.skills!);
+      // Owner-aware: the manifest only ever advertises skills visible to this
+      // agent (unowned project skills plus its own), matching skill-tool
+      // enforcement at execution time.
+      const currentSkills = skillRegistry.resolveForAgent(config.skills!, { agentId: id });
       const basePrompt = typeof originalSystem === "function"
         ? await originalSystem()
         : originalSystem;

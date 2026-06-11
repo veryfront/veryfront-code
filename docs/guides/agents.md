@@ -55,6 +55,54 @@ The file path provides the agent id. For example, `agents/support.md` registers
 `support` and can be invoked through the same project runtime and control-plane
 surfaces as `agents/support.ts`.
 
+## Per-agent skills and tools
+
+A markdown agent can own its skills and tools by using a directory instead of a
+single file. Put the agent definition in `AGENT.md` and colocate its
+capabilities beside it:
+
+```
+agents/
+  researcher/
+    AGENT.md            # the agent definition (frontmatter + instructions)
+    SKILL.md            # the agent's own skill, loaded as load_skill("researcher")
+    skills/
+      cite/SKILL.md     # an extra skill, loaded as load_skill("researcher--cite")
+    tools/
+      fetch-paper.ts    # a colocated tool, registered as "researcher--fetch-paper"
+```
+
+The directory name is the agent id. The flat `agents/{id}.md` form still works
+for agents that do not own skills or tools, and both layouts can coexist.
+
+Colocated capabilities are registered with owner metadata and namespaced
+`{agentId}--{name}`. Ownership controls visibility everywhere: an agent only
+ever sees unowned (project-global) capabilities plus its own — never another
+agent's. This one rule applies to `skills:` and `tools:` for every agent kind
+(TypeScript, flat markdown, and directory markdown):
+
+```md
+---
+name: Researcher
+model: anthropic/claude-sonnet-4-6
+skills: true # all skills visible to this agent (global + own)
+tools: [fetch-paper] # own short names resolve first, then global tool ids
+---
+
+Research the question and cite every claim.
+```
+
+- `skills: true` / `tools: true` — every capability visible to the agent.
+- `skills: [..]` / `tools: [..]` — each entry resolves as the agent's own
+  short name first, then as a global id. A colocated short name that shadows a
+  global id is reported at discovery so the reference stays unambiguous.
+- Duplicate agent ids (flat file + directory) and agent ids whose sanitized
+  namespaces collide are reported as discovery errors.
+
+> Note: colocated capabilities currently resolve in the local runtime; hosted
+> runtime catalog support is tracked separately and lands before this layout
+> is documented as stable.
+
 ## Add tools
 
 Agents call tools to take actions or fetch data. Reference tools by name: the
