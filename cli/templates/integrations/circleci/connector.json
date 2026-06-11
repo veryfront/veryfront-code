@@ -1,0 +1,307 @@
+{
+  "name": "circleci",
+  "displayName": "CircleCI",
+  "icon": "circleci.svg",
+  "description": "Inspect and control CircleCI pipelines, workflows, and jobs",
+  "auth": {
+    "type": "api-key",
+    "keyName": "CIRCLECI_TOKEN",
+    "headerName": "Circle-Token",
+    "docsUrl": "https://circleci.com/docs/api/v2/index.html",
+    "requiredApis": [
+      {
+        "name": "CircleCI Personal API Tokens",
+        "enableUrl": "https://app.circleci.com/settings/user/tokens"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "CIRCLECI_TOKEN",
+      "description": "CircleCI personal API token (User Settings > Personal API Tokens)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://circleci.com/docs/managing-api-tokens/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_pipelines",
+      "name": "List Pipelines",
+      "description": "List recent pipelines for a project",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://circleci.com/api/v2/project/{projectSlug}/pipeline",
+        "params": {
+          "projectSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Project slug in the form vcs-slug/org-name/repo-name, e.g. gh/acme/web (use 'circleci' as the vcs-slug for GitLab and GitHub App projects)",
+            "required": true
+          },
+          "branch": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return pipelines for this branch"
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "queryName": "page-token",
+            "description": "Pagination token from a previous response's next_page_token"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "items"
+            ],
+            "collectionName": "pipelines",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "number"
+              },
+              {
+                "name": "state"
+              },
+              {
+                "name": "created_at"
+              },
+              {
+                "name": "updated_at"
+              },
+              {
+                "name": "vcs",
+                "kind": "object"
+              }
+            ],
+            "omitted": "trigger details, pipeline parameters, and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "next_page_token"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_pipeline",
+      "name": "Get Pipeline",
+      "description": "Get a pipeline by its ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://circleci.com/api/v2/pipeline/{pipelineId}",
+        "params": {
+          "pipelineId": {
+            "type": "string",
+            "in": "path",
+            "description": "Pipeline UUID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "trigger_pipeline",
+      "name": "Trigger Pipeline",
+      "description": "Trigger a new pipeline for a project on a branch or tag",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://circleci.com/api/v2/project/{projectSlug}/pipeline",
+        "params": {
+          "projectSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Project slug in the form vcs-slug/org-name/repo-name, e.g. gh/acme/web",
+            "required": true
+          }
+        },
+        "body": {
+          "branch": {
+            "type": "string",
+            "description": "Branch to run on (mutually exclusive with tag)"
+          },
+          "tag": {
+            "type": "string",
+            "description": "Tag to run on (mutually exclusive with branch)"
+          },
+          "parameters": {
+            "type": "object",
+            "description": "Pipeline parameters as a key-value object"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_workflows",
+      "name": "List Pipeline Workflows",
+      "description": "List the workflows of a pipeline",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://circleci.com/api/v2/pipeline/{pipelineId}/workflow",
+        "params": {
+          "pipelineId": {
+            "type": "string",
+            "in": "path",
+            "description": "Pipeline UUID",
+            "required": true
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "queryName": "page-token",
+            "description": "Pagination token from a previous response's next_page_token"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "items"
+            ],
+            "collectionName": "workflows",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "status"
+              },
+              {
+                "name": "created_at"
+              },
+              {
+                "name": "stopped_at"
+              },
+              {
+                "name": "pipeline_number"
+              }
+            ],
+            "omitted": "workflow tags and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "next_page_token"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_workflow",
+      "name": "Get Workflow",
+      "description": "Get a workflow by its ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://circleci.com/api/v2/workflow/{workflowId}",
+        "params": {
+          "workflowId": {
+            "type": "string",
+            "in": "path",
+            "description": "Workflow UUID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_workflow_jobs",
+      "name": "List Workflow Jobs",
+      "description": "List the jobs of a workflow with their statuses",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://circleci.com/api/v2/workflow/{workflowId}/job",
+        "params": {
+          "workflowId": {
+            "type": "string",
+            "in": "path",
+            "description": "Workflow UUID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "cancel_workflow",
+      "name": "Cancel Workflow",
+      "description": "Cancel a running workflow",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://circleci.com/api/v2/workflow/{workflowId}/cancel",
+        "params": {
+          "workflowId": {
+            "type": "string",
+            "in": "path",
+            "description": "Workflow UUID",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "build_status",
+      "title": "Latest build status",
+      "prompt": "Show the most recent CircleCI pipelines for my project and the status of their workflows.",
+      "category": "devops",
+      "icon": "list"
+    },
+    {
+      "id": "rerun_failed",
+      "title": "Investigate a failure",
+      "prompt": "Find the last failed CircleCI workflow for my project and list which jobs failed.",
+      "category": "devops",
+      "icon": "alert"
+    }
+  ],
+  "suggestedWith": [
+    "github",
+    "slack",
+    "bitbucket"
+  ],
+  "SETUP_GUIDE": {
+    "title": "CircleCI API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Sign in to CircleCI",
+        "description": "Go to https://app.circleci.com and sign in (the free plan with a connected GitHub repo is sufficient for testing)."
+      },
+      {
+        "step": 2,
+        "title": "Create a personal API token",
+        "description": "Open User Settings > Personal API Tokens (https://app.circleci.com/settings/user/tokens) and create a token."
+      },
+      {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the token to your .env as CIRCLECI_TOKEN=..."
+      },
+      {
+        "step": 4,
+        "title": "Find your project slug",
+        "description": "Slugs look like gh/your-org/your-repo (or circleci/<org-id>/<project-id> for GitLab and GitHub App projects). Run List Pipelines with it to verify access."
+      }
+    ],
+    "notes": [
+      "CircleCI authenticates with a 'Circle-Token' header",
+      "Project slugs contain slashes (vcs/org/repo) and are passed verbatim in the URL path",
+      "Personal tokens act with your user's permissions across all your organizations"
+    ],
+    "documentation": "https://circleci.com/docs/api/v2/index.html"
+  }
+}

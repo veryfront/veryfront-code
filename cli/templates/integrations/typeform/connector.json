@@ -1,0 +1,255 @@
+{
+  "name": "typeform",
+  "displayName": "Typeform",
+  "icon": "typeform.svg",
+  "description": "Read forms and collect responses from Typeform",
+  "auth": {
+    "type": "oauth2",
+    "provider": "typeform",
+    "authorizationUrl": "https://api.typeform.com/oauth/authorize",
+    "tokenUrl": "https://api.typeform.com/oauth/token",
+    "scopes": [
+      "accounts:read",
+      "forms:read",
+      "responses:read",
+      "workspaces:read",
+      "offline"
+    ],
+    "callbackPath": "/api/auth/typeform/callback",
+    "docsUrl": "https://www.typeform.com/developers/get-started/applications/",
+    "requiredApis": [
+      {
+        "name": "Typeform Developer Apps",
+        "enableUrl": "https://admin.typeform.com/account#/section/tokens"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "TYPEFORM_CLIENT_ID",
+      "description": "Typeform OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://www.typeform.com/developers/get-started/applications/"
+    },
+    {
+      "name": "TYPEFORM_CLIENT_SECRET",
+      "description": "Typeform OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://www.typeform.com/developers/get-started/applications/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_forms",
+      "name": "List Forms",
+      "description": "List forms in the account or a workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.typeform.com/forms",
+        "params": {
+          "search": {
+            "type": "string",
+            "in": "query",
+            "description": "Search forms by title"
+          },
+          "workspace_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Limit results to a workspace ID"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Forms per page (max 200)",
+            "default": 25
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["items", "forms"],
+            "collectionName": "forms",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "title" },
+              { "name": "type" },
+              { "name": "last_updated_at" },
+              { "name": "_links", "kind": "object" }
+            ],
+            "omitted": "form settings and theme details",
+            "outputFields": [{ "name": "total_items" }, { "name": "page_count" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_form",
+      "name": "Get Form",
+      "description": "Get a form definition including its fields",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.typeform.com/forms/{formId}",
+        "params": {
+          "formId": {
+            "type": "string",
+            "in": "path",
+            "description": "Form ID (from the form URL or List Forms)",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_responses",
+      "name": "List Responses",
+      "description": "List responses submitted to a form",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.typeform.com/forms/{formId}/responses",
+        "params": {
+          "formId": {
+            "type": "string",
+            "in": "path",
+            "description": "Form ID to fetch responses for",
+            "required": true
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Responses per page (max 1000)",
+            "default": 25
+          },
+          "since": {
+            "type": "string",
+            "in": "query",
+            "description": "Only responses submitted after this ISO 8601 timestamp"
+          },
+          "until": {
+            "type": "string",
+            "in": "query",
+            "description": "Only responses submitted before this ISO 8601 timestamp"
+          },
+          "after": {
+            "type": "string",
+            "in": "query",
+            "description": "Cursor: return responses after this response token"
+          },
+          "completed": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Filter by completed (true) or partial (false) submissions"
+          },
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "Full-text search across answer values"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["items", "responses"],
+            "collectionName": "responses",
+            "itemFields": [
+              { "name": "response_id" },
+              { "name": "token" },
+              { "name": "submitted_at" },
+              { "name": "landed_at" },
+              { "name": "answers", "kind": "object" }
+            ],
+            "omitted": "hidden fields, calculated scores, and metadata blocks",
+            "outputFields": [{ "name": "total_items" }, { "name": "page_count" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "list_workspaces",
+      "name": "List Workspaces",
+      "description": "List workspaces in the account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.typeform.com/workspaces",
+        "params": {
+          "search": {
+            "type": "string",
+            "in": "query",
+            "description": "Search workspaces by name"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Workspaces per page (max 200)",
+            "default": 25
+          }
+        }
+      }
+    },
+    {
+      "id": "get_me",
+      "name": "Get Me",
+      "description": "Get the authenticated Typeform account profile",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.typeform.com/me"
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "latest_responses",
+      "title": "Latest responses",
+      "prompt": "List my Typeform forms, then show the most recent responses for the one I pick and summarize the answers.",
+      "category": "productivity",
+      "icon": "list"
+    }
+  ],
+  "suggestedWith": ["sheets", "slack", "hubspot"],
+  "SETUP_GUIDE": {
+    "title": "Typeform OAuth Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Typeform developer app",
+        "description": "Sign in at https://admin.typeform.com, open your account settings, and register an OAuth application (free accounts can create apps for testing)."
+      },
+      {
+        "step": 2,
+        "title": "Set the redirect URI",
+        "description": "Add your deployment's /api/auth/typeform/callback URL as the app's redirect URI."
+      },
+      {
+        "step": 3,
+        "title": "Set environment variables",
+        "description": "Copy the Client ID and Client Secret into TYPEFORM_CLIENT_ID and TYPEFORM_CLIENT_SECRET in your .env."
+      },
+      {
+        "step": 4,
+        "title": "Connect and verify",
+        "description": "Complete the OAuth consent flow, then run Get Me and List Forms to confirm access."
+      }
+    ],
+    "notes": [
+      "The 'offline' scope is required to receive a refresh token; without it access expires and the user must reauthorize",
+      "Token requests send client_id and client_secret as URL-encoded form fields in the POST body"
+    ],
+    "documentation": "https://www.typeform.com/developers/"
+  }
+}

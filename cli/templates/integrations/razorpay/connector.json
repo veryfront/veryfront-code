@@ -1,0 +1,284 @@
+{
+  "name": "razorpay",
+  "displayName": "Razorpay",
+  "icon": "razorpay.svg",
+  "description": "Read payments, orders, refunds, and settlements from Razorpay",
+  "auth": {
+    "type": "basic",
+    "usernameKey": "RAZORPAY_KEY_ID",
+    "passwordKey": "RAZORPAY_KEY_SECRET",
+    "docsUrl": "https://razorpay.com/docs/api/authentication/",
+    "requiredApis": [
+      {
+        "name": "Razorpay API Keys",
+        "enableUrl": "https://dashboard.razorpay.com/app/website-app-settings/api-keys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "RAZORPAY_KEY_ID",
+      "description": "Razorpay Key ID (rzp_test_... or rzp_live_...)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://razorpay.com/docs/api/authentication/"
+    },
+    {
+      "name": "RAZORPAY_KEY_SECRET",
+      "description": "Razorpay Key Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://razorpay.com/docs/api/authentication/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_payments",
+      "name": "List Payments",
+      "description": "List payments, optionally within a Unix-timestamp window",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.razorpay.com/v1/payments",
+        "params": {
+          "from": {
+            "type": "number",
+            "in": "query",
+            "description": "Unix timestamp (seconds) for the start of the window"
+          },
+          "to": {
+            "type": "number",
+            "in": "query",
+            "description": "Unix timestamp (seconds) for the end of the window"
+          },
+          "count": {
+            "type": "number",
+            "in": "query",
+            "description": "Payments to return (max 100)",
+            "default": 25
+          },
+          "skip": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of payments to skip",
+            "default": 0
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["items", "payments"],
+            "collectionName": "payments",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "amount" },
+              { "name": "currency" },
+              { "name": "status" },
+              { "name": "method" },
+              { "name": "order_id" },
+              { "name": "email" },
+              { "name": "contact" },
+              { "name": "created_at" }
+            ],
+            "omitted": "card/UPI instrument details and acquirer data",
+            "outputFields": [{ "name": "count" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_payment",
+      "name": "Get Payment",
+      "description": "Get details of a payment",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.razorpay.com/v1/payments/{paymentId}",
+        "params": {
+          "paymentId": {
+            "type": "string",
+            "in": "path",
+            "description": "Payment ID, e.g. pay_XXXXXXXXXXXXXX",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_orders",
+      "name": "List Orders",
+      "description": "List orders",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.razorpay.com/v1/orders",
+        "params": {
+          "from": {
+            "type": "number",
+            "in": "query",
+            "description": "Unix timestamp (seconds) for the start of the window"
+          },
+          "to": {
+            "type": "number",
+            "in": "query",
+            "description": "Unix timestamp (seconds) for the end of the window"
+          },
+          "authorized": {
+            "type": "number",
+            "in": "query",
+            "description": "Filter: 1 for orders with authorized payments, 0 without"
+          },
+          "receipt": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by your receipt identifier"
+          },
+          "count": {
+            "type": "number",
+            "in": "query",
+            "description": "Orders to return (max 100)",
+            "default": 25
+          },
+          "skip": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of orders to skip",
+            "default": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "get_order",
+      "name": "Get Order",
+      "description": "Get details of an order",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.razorpay.com/v1/orders/{orderId}",
+        "params": {
+          "orderId": {
+            "type": "string",
+            "in": "path",
+            "description": "Order ID, e.g. order_XXXXXXXXXXXXXX",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_refunds",
+      "name": "List Refunds",
+      "description": "List refunds",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.razorpay.com/v1/refunds",
+        "params": {
+          "from": {
+            "type": "number",
+            "in": "query",
+            "description": "Unix timestamp (seconds) for the start of the window"
+          },
+          "to": {
+            "type": "number",
+            "in": "query",
+            "description": "Unix timestamp (seconds) for the end of the window"
+          },
+          "count": {
+            "type": "number",
+            "in": "query",
+            "description": "Refunds to return (max 100)",
+            "default": 25
+          },
+          "skip": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of refunds to skip",
+            "default": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "list_settlements",
+      "name": "List Settlements",
+      "description": "List settlements paid out to your bank account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.razorpay.com/v1/settlements",
+        "params": {
+          "from": {
+            "type": "number",
+            "in": "query",
+            "description": "Unix timestamp (seconds) for the start of the window"
+          },
+          "to": {
+            "type": "number",
+            "in": "query",
+            "description": "Unix timestamp (seconds) for the end of the window"
+          },
+          "count": {
+            "type": "number",
+            "in": "query",
+            "description": "Settlements to return (max 100)",
+            "default": 25
+          },
+          "skip": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of settlements to skip",
+            "default": 0
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "recent_payments",
+      "title": "Recent payments",
+      "prompt": "List my Razorpay payments from the last 7 days and summarize totals by status and method.",
+      "category": "finance",
+      "icon": "payment"
+    },
+    {
+      "id": "settlement_summary",
+      "title": "Settlement summary",
+      "prompt": "Show my recent Razorpay settlements with amounts and statuses.",
+      "category": "finance",
+      "icon": "currency"
+    }
+  ],
+  "suggestedWith": ["stripe", "paypal", "sheets"],
+  "SETUP_GUIDE": {
+    "title": "Razorpay API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Sign in to the Razorpay Dashboard",
+        "description": "Go to https://dashboard.razorpay.com. Switch to Test Mode to experiment safely — test keys are prefixed rzp_test_."
+      },
+      {
+        "step": 2,
+        "title": "Generate API keys",
+        "description": "Open Account & Settings → API Keys and generate a key pair. The Key Secret is shown only once — store it immediately."
+      },
+      {
+        "step": 3,
+        "title": "Set environment variables",
+        "description": "Add RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET to your .env."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Payments (Test Mode returns test transactions). Switch to Live Mode keys for production data."
+      }
+    ],
+    "notes": [
+      "Authentication is HTTP Basic: base64(KEY_ID:KEY_SECRET) in the Authorization header",
+      "Timestamps in from/to filters are Unix epoch seconds; amounts are in the smallest currency unit (paise for INR)"
+    ],
+    "documentation": "https://razorpay.com/docs/api/"
+  }
+}

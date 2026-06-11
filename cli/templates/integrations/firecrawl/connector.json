@@ -1,0 +1,215 @@
+{
+  "name": "firecrawl",
+  "displayName": "Firecrawl",
+  "icon": "firecrawl.svg",
+  "description": "Scrape, crawl, map, and search websites into LLM-ready markdown via the Firecrawl API",
+  "auth": {
+    "type": "api-key",
+    "keyName": "FIRECRAWL_API_KEY",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://docs.firecrawl.dev/api-reference/introduction",
+    "requiredApis": [
+      {
+        "name": "Firecrawl API Keys",
+        "enableUrl": "https://www.firecrawl.dev/app/api-keys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "FIRECRAWL_API_KEY",
+      "description": "Firecrawl API key (starts with fc-)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.firecrawl.dev/introduction"
+    }
+  ],
+  "tools": [
+    {
+      "id": "scrape",
+      "name": "Scrape Page",
+      "description": "Scrape a single URL into markdown or other formats",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.firecrawl.dev/v2/scrape",
+        "body": {
+          "url": {
+            "type": "string",
+            "description": "URL to scrape",
+            "required": true
+          },
+          "formats": {
+            "type": "array",
+            "description": "Output formats: markdown, html, links, screenshot, json",
+            "default": ["markdown"]
+          },
+          "onlyMainContent": {
+            "type": "boolean",
+            "description": "Return only the main content, excluding nav/footer boilerplate",
+            "default": true
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "search",
+      "name": "Search Web",
+      "description": "Search the web and optionally scrape the results' content",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.firecrawl.dev/v2/search",
+        "body": {
+          "query": {
+            "type": "string",
+            "description": "Search query text",
+            "required": true
+          },
+          "limit": {
+            "type": "number",
+            "description": "Maximum results to return (max 100)",
+            "default": 10
+          },
+          "sources": {
+            "type": "array",
+            "description": "Result sources, e.g. [{\"type\":\"web\"}]; also supports news and images",
+            "default": [{ "type": "web" }]
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data.web", "data"],
+            "collectionName": "results",
+            "itemFields": [
+              { "name": "title" },
+              { "name": "url" },
+              { "name": "description", "maxLength": 300 }
+            ],
+            "omitted": "scraped page content and provider-specific payload fields",
+            "outputFields": [{ "name": "creditsUsed" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "map_site",
+      "name": "Map Site",
+      "description": "Quickly list the URLs discovered on a website",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.firecrawl.dev/v2/map",
+        "body": {
+          "url": {
+            "type": "string",
+            "description": "Root URL of the site to map",
+            "required": true
+          },
+          "search": {
+            "type": "string",
+            "description": "Filter discovered URLs by a search term"
+          },
+          "limit": {
+            "type": "number",
+            "description": "Maximum URLs to return"
+          }
+        }
+      }
+    },
+    {
+      "id": "start_crawl",
+      "name": "Start Crawl",
+      "description": "Start an asynchronous crawl job over a website (returns a job ID)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.firecrawl.dev/v2/crawl",
+        "body": {
+          "url": {
+            "type": "string",
+            "description": "Root URL to crawl",
+            "required": true
+          },
+          "limit": {
+            "type": "number",
+            "description": "Maximum number of pages to crawl",
+            "default": 10
+          },
+          "scrapeOptions": {
+            "type": "object",
+            "description": "Scrape options applied to each page, e.g. {\"formats\":[\"markdown\"]}"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_crawl_status",
+      "name": "Get Crawl Status",
+      "description": "Get the status and results of a crawl job",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.firecrawl.dev/v2/crawl/{id}",
+        "params": {
+          "id": {
+            "type": "string",
+            "in": "path",
+            "description": "Crawl job ID returned by Start Crawl",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "scrape_page",
+      "title": "Scrape a page",
+      "prompt": "Scrape a URL I provide with Firecrawl and summarize its content.",
+      "category": "search",
+      "icon": "document"
+    },
+    {
+      "id": "crawl_site",
+      "title": "Crawl a site",
+      "prompt": "Start a Firecrawl crawl of a website I provide, then check its status and summarize what was found.",
+      "category": "search",
+      "icon": "globe"
+    }
+  ],
+  "suggestedWith": ["openai", "notion", "airtable"],
+  "SETUP_GUIDE": {
+    "title": "Firecrawl API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Firecrawl account",
+        "description": "Go to https://www.firecrawl.dev and sign up — the free plan includes one-time credits for testing."
+      },
+      {
+        "step": 2,
+        "title": "Get your API key",
+        "description": "Open https://www.firecrawl.dev/app/api-keys and copy your key (or create a new one per project)."
+      },
+      {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Add it to your .env file as FIRECRAWL_API_KEY=fc-..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the Scrape Page tool on a public URL. A 401 means the key is invalid; a 402 means you are out of credits."
+      }
+    ],
+    "notes": [
+      "All endpoints consume credits per page; crawls multiply cost by the number of pages — set a small 'limit' first",
+      "Start Crawl is asynchronous: poll Get Crawl Status with the returned job ID until status is 'completed'"
+    ],
+    "documentation": "https://docs.firecrawl.dev/api-reference/introduction"
+  }
+}

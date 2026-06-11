@@ -1,0 +1,277 @@
+{
+  "name": "brevo",
+  "displayName": "Brevo",
+  "icon": "brevo.svg",
+  "description": "Send transactional email and manage contacts, lists, and campaigns in Brevo",
+  "auth": {
+    "type": "api-key",
+    "keyName": "BREVO_API_KEY",
+    "headerName": "api-key",
+    "docsUrl": "https://developers.brevo.com/docs/getting-started",
+    "requiredApis": [
+      {
+        "name": "Brevo API Keys",
+        "enableUrl": "https://app.brevo.com/settings/keys/api"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "BREVO_API_KEY",
+      "description": "Brevo API v3 key (starts with xkeysib-)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developers.brevo.com/docs/getting-started#using-your-api-key-to-authenticate"
+    }
+  ],
+  "tools": [
+    {
+      "id": "send_email",
+      "name": "Send Email",
+      "description": "Send a transactional email",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.brevo.com/v3/smtp/email",
+        "body": {
+          "sender": {
+            "type": "object",
+            "description": "Sender as {\"email\":\"sender@yourdomain.com\",\"name\":\"...\"} (must be a verified sender)",
+            "required": true
+          },
+          "to": {
+            "type": "array",
+            "description": "Recipients, e.g. [{\"email\":\"a@b.com\",\"name\":\"...\"}]",
+            "required": true
+          },
+          "subject": {
+            "type": "string",
+            "description": "Email subject line",
+            "required": true
+          },
+          "htmlContent": {
+            "type": "string",
+            "description": "HTML body of the email"
+          },
+          "textContent": {
+            "type": "string",
+            "description": "Plain-text body of the email"
+          },
+          "replyTo": {
+            "type": "object",
+            "description": "Optional reply-to as {\"email\":\"...\"}"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_contacts",
+      "name": "List Contacts",
+      "description": "List contacts in the account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.brevo.com/v3/contacts",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Contacts per page (max 1000)",
+            "default": 50
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of contacts to skip",
+            "default": 0
+          },
+          "modifiedSince": {
+            "type": "string",
+            "in": "query",
+            "description": "Only contacts modified after this ISO 8601 timestamp"
+          },
+          "sort": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort by creation time: asc or desc",
+            "default": "desc"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["contacts"],
+            "collectionName": "contacts",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "email" },
+              { "name": "emailBlacklisted" },
+              { "name": "createdAt" },
+              { "name": "modifiedAt" },
+              { "name": "attributes", "kind": "object" }
+            ],
+            "omitted": "SMS details, list membership, and custom attribute values",
+            "outputFields": [{ "name": "count" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_contact",
+      "name": "Get Contact",
+      "description": "Get a contact by email address or numeric ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.brevo.com/v3/contacts/{identifier}",
+        "params": {
+          "identifier": {
+            "type": "string",
+            "in": "path",
+            "description": "Contact email address (URL-encoded) or numeric contact ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_contact",
+      "name": "Create Contact",
+      "description": "Create a new contact",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.brevo.com/v3/contacts",
+        "body": {
+          "email": {
+            "type": "string",
+            "description": "Contact email address",
+            "required": true
+          },
+          "attributes": {
+            "type": "object",
+            "description": "Attribute values, e.g. {\"FIRSTNAME\":\"Ada\",\"LASTNAME\":\"Lovelace\"}"
+          },
+          "listIds": {
+            "type": "array",
+            "description": "Numeric list IDs to add the contact to"
+          },
+          "updateEnabled": {
+            "type": "boolean",
+            "description": "Update the contact if it already exists",
+            "default": false
+          }
+        }
+      }
+    },
+    {
+      "id": "list_lists",
+      "name": "List Lists",
+      "description": "List contact lists",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.brevo.com/v3/contacts/lists",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Lists per page (max 50)",
+            "default": 10
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of lists to skip",
+            "default": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "list_email_campaigns",
+      "name": "List Email Campaigns",
+      "description": "List email campaigns with status and scheduling info",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.brevo.com/v3/emailCampaigns",
+        "params": {
+          "type": {
+            "type": "string",
+            "in": "query",
+            "description": "Campaign type: classic or trigger"
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by status: suspended, archive, sent, queued, draft, inProcess"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Campaigns per page (max 100)",
+            "default": 50
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of campaigns to skip",
+            "default": 0
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "send_email",
+      "title": "Send an email",
+      "prompt": "Send a transactional email via Brevo with a subject, recipient, and HTML body.",
+      "category": "communication",
+      "icon": "mail"
+    },
+    {
+      "id": "find_contact",
+      "title": "Find a contact",
+      "prompt": "Look up a Brevo contact by email address and show their attributes and lists.",
+      "category": "marketing",
+      "icon": "search"
+    }
+  ],
+  "suggestedWith": ["klaviyo", "shopify", "sheets"],
+  "SETUP_GUIDE": {
+    "title": "Brevo API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Sign in to Brevo",
+        "description": "Go to https://app.brevo.com and sign in. The free plan is sufficient for testing (includes a daily transactional email allowance)."
+      },
+      {
+        "step": 2,
+        "title": "Create an API key",
+        "description": "Open Settings → SMTP & API → API Keys (https://app.brevo.com/settings/keys/api) and generate a new v3 API key."
+      },
+      {
+        "step": 3,
+        "title": "Verify a sender",
+        "description": "Under Senders, Domains & Dedicated IPs, add and verify the sender address you will use in Send Email."
+      },
+      {
+        "step": 4,
+        "title": "Set the environment variable",
+        "description": "Add the key to your .env as BREVO_API_KEY=xkeysib-..."
+      },
+      {
+        "step": 5,
+        "title": "Verify access",
+        "description": "Run List Lists to confirm the key works."
+      }
+    ],
+    "notes": [
+      "Brevo authenticates with an 'api-key' header — not an Authorization Bearer token",
+      "Get Contact accepts either an email address or the numeric contact ID in the path"
+    ],
+    "documentation": "https://developers.brevo.com/reference"
+  }
+}

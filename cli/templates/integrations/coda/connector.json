@@ -1,0 +1,322 @@
+{
+  "name": "coda",
+  "displayName": "Coda",
+  "icon": "coda.svg",
+  "description": "Read and manage Coda docs, pages, and content",
+  "auth": {
+    "type": "api-key",
+    "keyName": "CODA_API_TOKEN",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://coda.io/developers/apis/v1",
+    "requiredApis": [
+      {
+        "name": "Coda API Tokens",
+        "enableUrl": "https://coda.io/account"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "CODA_API_TOKEN",
+      "description": "Coda API token (generated under Account Settings)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://coda.io/developers/apis/v1#section/Authentication"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_docs",
+      "name": "List Docs",
+      "description": "List Coda docs accessible to the token",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://coda.io/apis/v1/docs",
+        "params": {
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "Search term to filter docs by name"
+          },
+          "isOwner": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Only return docs owned by the token user"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum docs to return",
+            "default": 25
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination token from a previous response"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "items"
+            ],
+            "collectionName": "docs",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "browserLink"
+              },
+              {
+                "name": "createdAt"
+              },
+              {
+                "name": "updatedAt"
+              },
+              {
+                "name": "owner",
+                "kind": "contact"
+              }
+            ],
+            "omitted": "doc icon, workspace, and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "nextPageToken"
+              },
+              {
+                "name": "nextPageLink"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_doc",
+      "name": "Get Doc",
+      "description": "Get metadata for a Coda doc",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://coda.io/apis/v1/docs/{docId}",
+        "params": {
+          "docId": {
+            "type": "string",
+            "in": "path",
+            "description": "Coda doc ID (the part after /d/ in the doc URL)",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_doc",
+      "name": "Create Doc",
+      "description": "Create a new Coda doc, optionally copying an existing doc",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://coda.io/apis/v1/docs",
+        "body": {
+          "title": {
+            "type": "string",
+            "description": "Title of the new doc"
+          },
+          "sourceDoc": {
+            "type": "string",
+            "description": "Optional doc ID to copy as the starting point"
+          },
+          "folderId": {
+            "type": "string",
+            "description": "Optional folder ID to create the doc in"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_pages",
+      "name": "List Pages",
+      "description": "List pages in a Coda doc",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://coda.io/apis/v1/docs/{docId}/pages",
+        "params": {
+          "docId": {
+            "type": "string",
+            "in": "path",
+            "description": "Coda doc ID",
+            "required": true
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum pages to return",
+            "default": 25
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination token from a previous response"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "items"
+            ],
+            "collectionName": "pages",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "browserLink"
+              },
+              {
+                "name": "contentType"
+              },
+              {
+                "name": "createdAt"
+              },
+              {
+                "name": "updatedAt"
+              }
+            ],
+            "omitted": "page icon, parent/children references, and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "nextPageToken"
+              },
+              {
+                "name": "nextPageLink"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_page",
+      "name": "Get Page",
+      "description": "Get metadata for a page in a Coda doc",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://coda.io/apis/v1/docs/{docId}/pages/{pageIdOrName}",
+        "params": {
+          "docId": {
+            "type": "string",
+            "in": "path",
+            "description": "Coda doc ID",
+            "required": true
+          },
+          "pageIdOrName": {
+            "type": "string",
+            "in": "path",
+            "description": "Page ID (preferred) or page name",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "update_page",
+      "name": "Update Page",
+      "description": "Update a page's name, subtitle, or content in a Coda doc",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://coda.io/apis/v1/docs/{docId}/pages/{pageIdOrName}",
+        "params": {
+          "docId": {
+            "type": "string",
+            "in": "path",
+            "description": "Coda doc ID",
+            "required": true
+          },
+          "pageIdOrName": {
+            "type": "string",
+            "in": "path",
+            "description": "Page ID (preferred) or page name",
+            "required": true
+          }
+        },
+        "body": {
+          "name": {
+            "type": "string",
+            "description": "New page name"
+          },
+          "subtitle": {
+            "type": "string",
+            "description": "New page subtitle"
+          },
+          "contentUpdate": {
+            "type": "object",
+            "description": "Content update payload, e.g. { \"insertionMode\": \"append\", \"canvasContent\": { \"format\": \"markdown\", \"content\": \"...\" } }"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "find_doc",
+      "title": "Find a doc",
+      "prompt": "Search my Coda docs for a doc about a topic and show its pages.",
+      "category": "productivity",
+      "icon": "search"
+    },
+    {
+      "id": "append_notes",
+      "title": "Append notes to a page",
+      "prompt": "Append a markdown summary of this conversation to a page in one of my Coda docs.",
+      "category": "productivity",
+      "icon": "plus"
+    }
+  ],
+  "suggestedWith": [
+    "notion",
+    "slack",
+    "airtable"
+  ],
+  "SETUP_GUIDE": {
+    "title": "Coda API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Sign in to Coda",
+        "description": "Go to https://coda.io and sign in. A free account is sufficient for testing — create a throwaway doc to experiment with."
+      },
+      {
+        "step": 2,
+        "title": "Generate an API token",
+        "description": "Open Account Settings (https://coda.io/account), scroll to the API settings section, and click 'Generate API token'. You can optionally restrict the token to specific docs or read-only access."
+      },
+      {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the token to your .env as CODA_API_TOKEN=..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Docs tool to confirm the token works."
+      }
+    ],
+    "notes": [
+      "Coda authenticates with 'Authorization: Bearer <token>'",
+      "Doc IDs are the part after /d/ in a doc's URL (strip any name prefix before the underscore)",
+      "Restricted tokens only see the docs they were granted"
+    ],
+    "documentation": "https://coda.io/developers/apis/v1"
+  }
+}

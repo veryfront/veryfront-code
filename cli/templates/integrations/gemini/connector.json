@@ -1,0 +1,223 @@
+{
+  "name": "gemini",
+  "displayName": "Google Gemini",
+  "icon": "gemini.svg",
+  "description": "Generate text, embeddings, and token counts with Google Gemini models via the Gemini API",
+  "auth": {
+    "type": "api-key",
+    "keyName": "GEMINI_API_KEY",
+    "headerName": "x-goog-api-key",
+    "docsUrl": "https://ai.google.dev/gemini-api/docs/api-key",
+    "requiredApis": [
+      {
+        "name": "Google AI Studio API Keys",
+        "enableUrl": "https://aistudio.google.com/app/apikey"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "GEMINI_API_KEY",
+      "description": "Gemini API key from Google AI Studio (starts with AIza)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://ai.google.dev/gemini-api/docs/api-key"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_models",
+      "name": "List Models",
+      "description": "List the Gemini models available to the API key",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models",
+        "params": {
+          "pageSize": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum models to return per page (max 1000)",
+            "default": 50
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Page token from a previous list call"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["models"],
+            "collectionName": "models",
+            "itemFields": [
+              { "name": "name" },
+              { "name": "displayName" },
+              { "name": "inputTokenLimit" },
+              { "name": "outputTokenLimit" }
+            ],
+            "omitted": "model capability details and provider-specific payload fields",
+            "outputFields": [{ "name": "nextPageToken" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_model",
+      "name": "Get Model",
+      "description": "Get details about a specific Gemini model",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/{model}",
+        "params": {
+          "model": {
+            "type": "string",
+            "in": "path",
+            "description": "Model ID without the models/ prefix, e.g. gemini-2.0-flash",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "generate_content",
+      "name": "Generate Content",
+      "description": "Generate a model response from text or multimodal content",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+        "params": {
+          "model": {
+            "type": "string",
+            "in": "path",
+            "description": "Model ID without the models/ prefix, e.g. gemini-2.0-flash",
+            "required": true
+          }
+        },
+        "body": {
+          "contents": {
+            "type": "array",
+            "description": "Conversation contents, e.g. [{\"role\":\"user\",\"parts\":[{\"text\":\"Hello\"}]}]",
+            "required": true
+          },
+          "systemInstruction": {
+            "type": "object",
+            "description": "System instructions, e.g. {\"parts\":[{\"text\":\"You are a helpful assistant\"}]}"
+          },
+          "generationConfig": {
+            "type": "object",
+            "description": "Generation settings, e.g. {\"temperature\":0.7,\"maxOutputTokens\":1024}"
+          }
+        }
+      }
+    },
+    {
+      "id": "embed_content",
+      "name": "Embed Content",
+      "description": "Create an embedding vector for input text",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/{model}:embedContent",
+        "params": {
+          "model": {
+            "type": "string",
+            "in": "path",
+            "description": "Embedding model ID without the models/ prefix, e.g. gemini-embedding-001",
+            "required": true
+          }
+        },
+        "body": {
+          "content": {
+            "type": "object",
+            "description": "Content to embed, e.g. {\"parts\":[{\"text\":\"Text to embed\"}]}",
+            "required": true
+          },
+          "taskType": {
+            "type": "string",
+            "description": "Embedding task type, e.g. RETRIEVAL_QUERY, RETRIEVAL_DOCUMENT, CLUSTERING"
+          },
+          "outputDimensionality": {
+            "type": "number",
+            "description": "Reduced dimension for the output embedding (supported models only)"
+          }
+        }
+      }
+    },
+    {
+      "id": "count_tokens",
+      "name": "Count Tokens",
+      "description": "Count the tokens a prompt would use for a given model",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/{model}:countTokens",
+        "params": {
+          "model": {
+            "type": "string",
+            "in": "path",
+            "description": "Model ID without the models/ prefix, e.g. gemini-2.0-flash",
+            "required": true
+          }
+        },
+        "body": {
+          "contents": {
+            "type": "array",
+            "description": "Contents to count tokens for, e.g. [{\"role\":\"user\",\"parts\":[{\"text\":\"Hello\"}]}]",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "available_models",
+      "title": "List Gemini models",
+      "prompt": "List the Gemini models available to my API key and summarize their token limits.",
+      "category": "ai",
+      "icon": "list"
+    },
+    {
+      "id": "generate_text",
+      "title": "Generate a response",
+      "prompt": "Use Gemini to generate a response to a prompt I provide.",
+      "category": "ai",
+      "icon": "sparkles"
+    }
+  ],
+  "suggestedWith": ["openai", "anthropic", "slack"],
+  "SETUP_GUIDE": {
+    "title": "Google Gemini API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Sign in to Google AI Studio",
+        "description": "Go to https://aistudio.google.com and sign in with a Google account. The free tier works for testing without billing."
+      },
+      {
+        "step": 2,
+        "title": "Create an API key",
+        "description": "Open https://aistudio.google.com/app/apikey and click 'Create API key'. Choose an existing Google Cloud project or let AI Studio create one for you."
+      },
+      {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Copy the key and add it to your .env file as GEMINI_API_KEY=AIza..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Models tool to confirm the key works. A 400 with API_KEY_INVALID means the key is wrong or restricted."
+      }
+    ],
+    "notes": [
+      "This connector uses the Gemini Developer API key (x-goog-api-key header), not Google OAuth — do not use Google Cloud OAuth credentials here",
+      "Free-tier keys are rate limited; attach a billing-enabled Google Cloud project for higher limits",
+      "Generation and embedding calls are billed per token on paid tiers"
+    ],
+    "documentation": "https://ai.google.dev/api"
+  }
+}

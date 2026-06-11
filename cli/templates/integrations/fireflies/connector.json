@@ -1,0 +1,235 @@
+{
+  "name": "fireflies",
+  "displayName": "Fireflies",
+  "icon": "fireflies.svg",
+  "description": "Read meeting transcripts, summaries, and teammates from Fireflies.ai",
+  "auth": {
+    "type": "api-key",
+    "keyName": "FIREFLIES_API_KEY",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://docs.fireflies.ai/getting-started/quickstart",
+    "requiredApis": [
+      {
+        "name": "Fireflies Developer Settings",
+        "enableUrl": "https://app.fireflies.ai/integrations/custom/fireflies"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "FIREFLIES_API_KEY",
+      "description": "Fireflies API key from the Fireflies integrations page",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.fireflies.ai/getting-started/quickstart"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_transcripts",
+      "name": "List Transcripts",
+      "description": "List meeting transcripts, optionally filtered by date, participants, or keyword",
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.fireflies.ai/graphql",
+        "query": "query($limit: Int, $skip: Int, $mine: Boolean, $fromDate: DateTime, $toDate: DateTime, $participants: [String], $keyword: String) { transcripts(limit: $limit, skip: $skip, mine: $mine, fromDate: $fromDate, toDate: $toDate, participants: $participants, keyword: $keyword) { id title date duration organizer_email participants transcript_url } }",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "body",
+            "description": "Transcripts to return (max 50)",
+            "default": 20
+          },
+          "skip": {
+            "type": "number",
+            "in": "body",
+            "description": "Number of transcripts to skip for pagination"
+          },
+          "mine": {
+            "type": "boolean",
+            "in": "body",
+            "description": "Only meetings organized by the API key owner"
+          },
+          "fromDate": {
+            "type": "string",
+            "in": "body",
+            "description": "Only meetings after this ISO 8601 timestamp"
+          },
+          "toDate": {
+            "type": "string",
+            "in": "body",
+            "description": "Only meetings before this ISO 8601 timestamp"
+          },
+          "participants": {
+            "type": "string[]",
+            "in": "body",
+            "description": "Filter by participant email addresses"
+          },
+          "keyword": {
+            "type": "string",
+            "in": "body",
+            "description": "Search meeting titles and spoken content"
+          }
+        },
+        "response": {
+          "transform": "transcripts",
+          "historicalSummary": {
+            "collectionKeys": ["transcripts", "data"],
+            "collectionName": "transcripts",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "title" },
+              { "name": "date" },
+              { "name": "duration" },
+              { "name": "organizer_email", "kind": "contact" },
+              { "name": "participants", "kind": "contact-array" },
+              { "name": "transcript_url" }
+            ],
+            "omitted": "sentences, summaries, and audio/video URLs",
+            "outputFields": [{ "name": "skip" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_transcript",
+      "name": "Get Transcript",
+      "description": "Get a transcript with its sentences and AI summary",
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.fireflies.ai/graphql",
+        "query": "query($id: String!) { transcript(id: $id) { id title date duration organizer_email participants transcript_url summary { overview action_items keywords } sentences { index speaker_name text start_time end_time } } }",
+        "params": {
+          "id": {
+            "type": "string",
+            "in": "body",
+            "description": "Transcript ID (from List Transcripts)",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "transcript"
+        }
+      }
+    },
+    {
+      "id": "search_transcripts",
+      "name": "Search Transcripts",
+      "description": "Keyword-search transcripts and return matches with summaries",
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.fireflies.ai/graphql",
+        "query": "query($keyword: String, $limit: Int) { transcripts(keyword: $keyword, limit: $limit) { id title date duration organizer_email summary { overview } } }",
+        "params": {
+          "keyword": {
+            "type": "string",
+            "in": "body",
+            "description": "Keyword to search in titles and spoken content",
+            "required": true
+          },
+          "limit": {
+            "type": "number",
+            "in": "body",
+            "description": "Transcripts to return (max 50)",
+            "default": 10
+          }
+        },
+        "response": {
+          "transform": "transcripts"
+        }
+      }
+    },
+    {
+      "id": "list_users",
+      "name": "List Users",
+      "description": "List teammates in the Fireflies workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.fireflies.ai/graphql",
+        "query": "query { users { user_id name email num_transcripts is_admin } }",
+        "response": {
+          "transform": "users"
+        }
+      }
+    },
+    {
+      "id": "get_user",
+      "name": "Get User",
+      "description": "Get a workspace user by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.fireflies.ai/graphql",
+        "query": "query($id: String!) { user(id: $id) { user_id name email num_transcripts minutes_consumed is_admin } }",
+        "params": {
+          "id": {
+            "type": "string",
+            "in": "body",
+            "description": "Fireflies user ID (from List Users)",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "user"
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "recent_meetings",
+      "title": "Recent meetings",
+      "prompt": "List my Fireflies meeting transcripts from the last week with titles, dates, and participants.",
+      "category": "productivity",
+      "icon": "list"
+    },
+    {
+      "id": "meeting_summary",
+      "title": "Summarize a meeting",
+      "prompt": "Get the Fireflies transcript for my latest meeting and summarize the key points and action items.",
+      "category": "productivity",
+      "icon": "doc"
+    }
+  ],
+  "suggestedWith": ["calendar", "slack", "notion"],
+  "SETUP_GUIDE": {
+    "title": "Fireflies API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Sign in to Fireflies",
+        "description": "Go to https://app.fireflies.ai and sign in. Free accounts can use the API; record at least one test meeting so transcripts exist."
+      },
+      {
+        "step": 2,
+        "title": "Get your API key",
+        "description": "Open Integrations → Fireflies API (https://app.fireflies.ai/integrations/custom/fireflies) and copy your API key."
+      },
+      {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the key to your .env as FIREFLIES_API_KEY=..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Users — it should return at least your own account."
+      }
+    ],
+    "notes": [
+      "All requests are GraphQL POSTs to https://api.fireflies.ai/graphql with 'Authorization: Bearer <key>'",
+      "transcripts is capped at 50 results per query; paginate with skip",
+      "Business/Enterprise plans unlock some fields (e.g. full AI summaries) that may be null on lower tiers"
+    ],
+    "documentation": "https://docs.fireflies.ai"
+  }
+}

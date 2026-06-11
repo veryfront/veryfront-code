@@ -1,0 +1,209 @@
+{
+  "name": "fathom",
+  "displayName": "Fathom",
+  "icon": "fathom.svg",
+  "description": "Read meetings, transcripts, summaries, and teams from the Fathom AI notetaker",
+  "auth": {
+    "type": "api-key",
+    "keyName": "FATHOM_API_KEY",
+    "headerName": "X-Api-Key",
+    "docsUrl": "https://developers.fathom.ai",
+    "requiredApis": [
+      {
+        "name": "Fathom API Settings",
+        "enableUrl": "https://fathom.video/customer/settings/api"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "FATHOM_API_KEY",
+      "description": "Fathom external API key (generated in Fathom settings)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developers.fathom.ai"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_meetings",
+      "name": "List Meetings",
+      "description": "List recorded meetings, optionally including summaries and action items",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.fathom.ai/external/v1/meetings",
+        "params": {
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from next_cursor in a previous response"
+          },
+          "created_after": {
+            "type": "string",
+            "in": "query",
+            "description": "Only meetings created after this ISO 8601 timestamp"
+          },
+          "created_before": {
+            "type": "string",
+            "in": "query",
+            "description": "Only meetings created before this ISO 8601 timestamp"
+          },
+          "meeting_type": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by meeting type name"
+          },
+          "include_summary": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include the AI summary for each meeting",
+            "default": false
+          },
+          "include_action_items": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include action items for each meeting",
+            "default": false
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["items", "meetings"],
+            "collectionName": "meetings",
+            "itemFields": [
+              { "name": "title" },
+              { "name": "meeting_title" },
+              { "name": "recording_id" },
+              { "name": "url" },
+              { "name": "created_at" },
+              { "name": "recording_start_time" },
+              { "name": "recording_end_time" },
+              { "name": "calendar_invitees", "kind": "contact-array" }
+            ],
+            "omitted": "transcripts, summaries, action items, and CRM matches",
+            "outputFields": [{ "name": "next_cursor" }, { "name": "limit" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_transcript",
+      "name": "Get Transcript",
+      "description": "Get the transcript of a recording",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.fathom.ai/external/v1/recordings/{recordingId}/transcript",
+        "params": {
+          "recordingId": {
+            "type": "number",
+            "in": "path",
+            "description": "Recording ID (from List Meetings)",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "get_summary",
+      "name": "Get Summary",
+      "description": "Get the AI summary of a recording",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.fathom.ai/external/v1/recordings/{recordingId}/summary",
+        "params": {
+          "recordingId": {
+            "type": "number",
+            "in": "path",
+            "description": "Recording ID (from List Meetings)",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_teams",
+      "name": "List Teams",
+      "description": "List teams in the Fathom workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.fathom.ai/external/v1/teams",
+        "params": {
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from next_cursor in a previous response"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_team_members",
+      "name": "List Team Members",
+      "description": "List team members in the Fathom workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.fathom.ai/external/v1/team_members",
+        "params": {
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from next_cursor in a previous response"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "recent_meetings",
+      "title": "Recent meetings",
+      "prompt": "List my Fathom meetings from the last week with their summaries and action items.",
+      "category": "productivity",
+      "icon": "list"
+    },
+    {
+      "id": "meeting_recap",
+      "title": "Meeting recap",
+      "prompt": "Get the transcript and summary of my latest Fathom meeting and draft a follow-up email.",
+      "category": "productivity",
+      "icon": "doc"
+    }
+  ],
+  "suggestedWith": ["calendar", "slack", "notion"],
+  "SETUP_GUIDE": {
+    "title": "Fathom API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Sign in to Fathom",
+        "description": "Go to https://fathom.video and sign in. This is the Fathom AI meeting notetaker (not Fathom Analytics). Record at least one test meeting so data exists."
+      },
+      {
+        "step": 2,
+        "title": "Generate an API key",
+        "description": "Open Fathom Settings → API and generate an API key. API access may require a paid team plan."
+      },
+      {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the key to your .env as FATHOM_API_KEY=..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Teams or List Meetings to confirm the key works."
+      }
+    ],
+    "notes": [
+      "Fathom authenticates with an 'X-Api-Key' request header",
+      "Rate limit is 60 requests per 60-second window",
+      "Transcript and summary endpoints can also deliver asynchronously to a destination_url; these tools fetch the data directly"
+    ],
+    "documentation": "https://developers.fathom.ai"
+  }
+}

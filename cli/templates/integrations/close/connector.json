@@ -1,0 +1,314 @@
+{
+  "name": "close",
+  "displayName": "Close",
+  "icon": "close.svg",
+  "description": "Manage leads, contacts, and opportunities in Close CRM",
+  "auth": {
+    "type": "basic",
+    "usernameKey": "CLOSE_API_KEY",
+    "passwordKey": "CLOSE_API_PASSWORD",
+    "docsUrl": "https://developer.close.com/api/overview/api-key-authentication",
+    "requiredApis": [
+      {
+        "name": "Close API Keys",
+        "enableUrl": "https://app.close.com/settings/developer/api-keys/"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "CLOSE_API_KEY",
+      "description": "Close API key (used as the HTTP Basic username)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.close.com/api/overview/api-key-authentication"
+    },
+    {
+      "name": "CLOSE_API_PASSWORD",
+      "description": "HTTP Basic password for Close — always leave this set to an empty string; Close authenticates with the API key as username and a blank password",
+      "required": false,
+      "sensitive": true,
+      "default": "",
+      "docsUrl": "https://developer.close.com/api/overview/api-key-authentication"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_leads",
+      "name": "List Leads",
+      "description": "List or search leads in Close using the lead query language",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.close.com/api/v1/lead/",
+        "params": {
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "Close search query, e.g. \"company: Acme\" or \"lead_status: Potential\""
+          },
+          "_limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum leads to return (max 200)",
+            "default": 25
+          },
+          "_skip": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of leads to skip for pagination",
+            "default": 0
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "leads",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "display_name" },
+              { "name": "name" },
+              { "name": "status_label" },
+              { "name": "url" },
+              { "name": "date_created" },
+              { "name": "date_updated" }
+            ],
+            "omitted": "lead contacts, addresses, custom fields, and provider-specific payload fields",
+            "outputFields": [{ "name": "has_more" }, { "name": "total_results" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_lead",
+      "name": "Get Lead",
+      "description": "Get full details of a Close lead, including contacts and opportunities",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.close.com/api/v1/lead/{leadId}/",
+        "params": {
+          "leadId": {
+            "type": "string",
+            "in": "path",
+            "description": "Close lead ID, e.g. lead_xxx",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_lead",
+      "name": "Create Lead",
+      "description": "Create a new lead in Close, optionally with contacts",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.close.com/api/v1/lead/",
+        "body": {
+          "name": {
+            "type": "string",
+            "description": "Company / lead name",
+            "required": true
+          },
+          "url": {
+            "type": "string",
+            "description": "Company website URL"
+          },
+          "description": {
+            "type": "string",
+            "description": "Lead description"
+          },
+          "status_id": {
+            "type": "string",
+            "description": "Lead status ID (defaults to the organization's first status)"
+          },
+          "contacts": {
+            "type": "array",
+            "description": "Contacts, e.g. [{ \"name\": \"Jane Doe\", \"emails\": [{ \"email\": \"jane@acme.com\", \"type\": \"office\" }] }]"
+          }
+        }
+      }
+    },
+    {
+      "id": "update_lead",
+      "name": "Update Lead",
+      "description": "Update fields on an existing Close lead",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://api.close.com/api/v1/lead/{leadId}/",
+        "params": {
+          "leadId": {
+            "type": "string",
+            "in": "path",
+            "description": "Close lead ID, e.g. lead_xxx",
+            "required": true
+          }
+        },
+        "body": {
+          "name": {
+            "type": "string",
+            "description": "Company / lead name"
+          },
+          "url": {
+            "type": "string",
+            "description": "Company website URL"
+          },
+          "description": {
+            "type": "string",
+            "description": "Lead description"
+          },
+          "status_id": {
+            "type": "string",
+            "description": "Lead status ID"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_opportunities",
+      "name": "List Opportunities",
+      "description": "List opportunities, optionally filtered by lead",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.close.com/api/v1/opportunity/",
+        "params": {
+          "lead_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return opportunities for this lead ID"
+          },
+          "_limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum opportunities to return (max 200)",
+            "default": 25
+          },
+          "_skip": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of opportunities to skip for pagination",
+            "default": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "create_opportunity",
+      "name": "Create Opportunity",
+      "description": "Create an opportunity on a Close lead",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.close.com/api/v1/opportunity/",
+        "body": {
+          "lead_id": {
+            "type": "string",
+            "description": "Close lead ID the opportunity belongs to",
+            "required": true
+          },
+          "note": {
+            "type": "string",
+            "description": "Opportunity note"
+          },
+          "value": {
+            "type": "number",
+            "description": "Opportunity value in cents"
+          },
+          "value_period": {
+            "type": "string",
+            "description": "one_time, monthly, or annual",
+            "default": "one_time"
+          },
+          "status_id": {
+            "type": "string",
+            "description": "Opportunity status ID (defaults to the organization's first status)"
+          },
+          "confidence": {
+            "type": "number",
+            "description": "Win confidence percentage (0-100)"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_contacts",
+      "name": "List Contacts",
+      "description": "List contacts, optionally filtered by lead",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.close.com/api/v1/contact/",
+        "params": {
+          "lead_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return contacts for this lead ID"
+          },
+          "_limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum contacts to return (max 200)",
+            "default": 25
+          },
+          "_skip": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of contacts to skip for pagination",
+            "default": 0
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "pipeline_review",
+      "title": "Review my pipeline",
+      "prompt": "List my open opportunities in Close with their values and confidence, grouped by status.",
+      "category": "sales",
+      "icon": "chart"
+    },
+    {
+      "id": "new_lead",
+      "title": "Add a lead",
+      "prompt": "Create a new lead in Close with a company name, website, and a primary contact.",
+      "category": "sales",
+      "icon": "plus"
+    }
+  ],
+  "suggestedWith": ["gmail", "slack", "calendly"],
+  "SETUP_GUIDE": {
+    "title": "Close API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Close account",
+        "description": "Sign up at https://www.close.com/ — a 14-day free trial works for testing the API."
+      },
+      {
+        "step": 2,
+        "title": "Create an API key",
+        "description": "In Close, go to Settings → Developer → API Keys (https://app.close.com/settings/developer/api-keys/) and create a new API key. Keys are scoped to your organization and inherit your user's permissions."
+      },
+      {
+        "step": 3,
+        "title": "Set environment variables",
+        "description": "Add CLOSE_API_KEY to your .env. Set CLOSE_API_PASSWORD to an empty string (or leave it unset) — Close uses HTTP Basic auth with the API key as the username and a blank password."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Leads tool with no query."
+      }
+    ],
+    "notes": [
+      "Close recommends API keys (HTTP Basic, key as username, empty password) for server-side integrations; OAuth is reserved for user-facing public apps",
+      "Lead, opportunity, and contact endpoints use trailing slashes (e.g. /api/v1/lead/)",
+      "Monetary values like opportunity value are expressed in cents"
+    ],
+    "documentation": "https://developer.close.com/"
+  }
+}

@@ -1,0 +1,329 @@
+{
+  "name": "productboard",
+  "displayName": "Productboard",
+  "icon": "productboard.svg",
+  "description": "Capture notes and manage features and product hierarchy in Productboard",
+  "auth": {
+    "type": "oauth2",
+    "provider": "productboard",
+    "authorizationUrl": "https://app.productboard.com/oauth2/authorize",
+    "tokenUrl": "https://app.productboard.com/oauth2/token",
+    "scopes": [
+      "notes:read",
+      "notes:write",
+      "entities:read",
+      "entities:write"
+    ],
+    "callbackPath": "/api/auth/productboard/callback",
+    "docsUrl": "https://developer.productboard.com/reference/oauth-authorization-code",
+    "requiredApis": [
+      {
+        "name": "Productboard Developer Portal (OAuth2 app registration)",
+        "enableUrl": "https://developer.productboard.com/"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "PRODUCTBOARD_CLIENT_ID",
+      "description": "Productboard OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.productboard.com/reference/oauth-authorization-code"
+    },
+    {
+      "name": "PRODUCTBOARD_CLIENT_SECRET",
+      "description": "Productboard OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.productboard.com/reference/oauth-authorization-code"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_notes",
+      "name": "List Notes",
+      "description": "List customer feedback notes in the Productboard workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.productboard.com/v2/notes",
+        "params": {
+          "archived": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Filter by archived status"
+          },
+          "processed": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Filter by processed status"
+          },
+          "createdFrom": {
+            "type": "string",
+            "in": "query",
+            "description": "Only notes created on/after this ISO-8601 date-time"
+          },
+          "updatedFrom": {
+            "type": "string",
+            "in": "query",
+            "description": "Only notes updated on/after this ISO-8601 date-time"
+          },
+          "pageCursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from the previous response's links.next URL"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "data"
+            ],
+            "collectionName": "notes",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "type"
+              },
+              {
+                "name": "fields",
+                "kind": "object"
+              },
+              {
+                "name": "links",
+                "kind": "object"
+              }
+            ],
+            "omitted": "note content bodies, relationships, and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "links",
+                "kind": "object"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_note",
+      "name": "Get Note",
+      "description": "Get a Productboard note by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.productboard.com/v2/notes/{noteId}",
+        "params": {
+          "noteId": {
+            "type": "string",
+            "in": "path",
+            "description": "Note UUID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_note",
+      "name": "Create Note",
+      "description": "Create a feedback note in Productboard",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.productboard.com/v2/notes",
+        "body": {
+          "data": {
+            "type": "object",
+            "description": "Note payload, e.g. { \"type\": \"textNote\", \"fields\": { \"name\": \"Title\", \"content\": \"Feedback text\" } }",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_entities",
+      "name": "List Entities",
+      "description": "List product hierarchy entities (features, components, initiatives, releases, etc.)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.productboard.com/v2/entities",
+        "params": {
+          "type": {
+            "type": "string",
+            "in": "query",
+            "queryName": "type[]",
+            "description": "Entity type filter: product, component, feature, subfeature, initiative, objective, keyResult, release, releaseGroup, user, or company"
+          },
+          "name": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by entity name"
+          },
+          "archived": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Filter by archived status"
+          },
+          "pageCursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from the previous response's links.next URL"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "data"
+            ],
+            "collectionName": "entities",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "type"
+              },
+              {
+                "name": "fields",
+                "kind": "object"
+              },
+              {
+                "name": "createdAt"
+              },
+              {
+                "name": "updatedAt"
+              },
+              {
+                "name": "links",
+                "kind": "object"
+              }
+            ],
+            "omitted": "entity relationships, custom fields, and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "links",
+                "kind": "object"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_entity",
+      "name": "Get Entity",
+      "description": "Get a hierarchy entity (e.g. a feature) by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.productboard.com/v2/entities/{entityId}",
+        "params": {
+          "entityId": {
+            "type": "string",
+            "in": "path",
+            "description": "Entity UUID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_entity",
+      "name": "Create Entity",
+      "description": "Create a hierarchy entity such as a feature or initiative",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.productboard.com/v2/entities",
+        "body": {
+          "data": {
+            "type": "object",
+            "description": "Entity payload, e.g. { \"type\": \"feature\", \"fields\": { \"name\": \"New feature\" }, \"relationships\": { \"data\": [{ \"type\": \"parent\", \"target\": { \"id\": \"<component-uuid>\" } }] } }",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "update_entity",
+      "name": "Update Entity",
+      "description": "Update fields of a hierarchy entity (e.g. rename a feature or change its status)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://api.productboard.com/v2/entities/{entityId}",
+        "params": {
+          "entityId": {
+            "type": "string",
+            "in": "path",
+            "description": "Entity UUID",
+            "required": true
+          }
+        },
+        "body": {
+          "data": {
+            "type": "object",
+            "description": "Partial entity payload with the fields to change, e.g. { \"fields\": { \"name\": \"Renamed feature\" } }",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "capture_feedback",
+      "title": "Capture feedback",
+      "prompt": "Create a Productboard note capturing this customer feedback with a clear title.",
+      "category": "product",
+      "icon": "plus"
+    },
+    {
+      "id": "feature_overview",
+      "title": "Feature overview",
+      "prompt": "List the features in my Productboard workspace and summarize their statuses.",
+      "category": "product",
+      "icon": "list"
+    }
+  ],
+  "suggestedWith": [
+    "jira",
+    "slack",
+    "zendesk"
+  ],
+  "SETUP_GUIDE": {
+    "title": "Productboard OAuth Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Get a Productboard workspace",
+        "description": "Sign up at https://www.productboard.com (a free trial workspace works for testing). Public API access requires a plan with API access enabled."
+      },
+      {
+        "step": 2,
+        "title": "Register an OAuth2 application",
+        "description": "Follow the developer documentation at https://developer.productboard.com/reference/oauth-authorization-code to register your OAuth2 client and obtain a client ID and secret. Set the redirect URI to your app's /api/auth/productboard/callback URL."
+      },
+      {
+        "step": 3,
+        "title": "Set environment variables",
+        "description": "Add PRODUCTBOARD_CLIENT_ID and PRODUCTBOARD_CLIENT_SECRET to your .env."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Complete the OAuth flow, then run List Entities with type=feature."
+      }
+    ],
+    "notes": [
+      "Tools target the Productboard REST API v2 (https://api.productboard.com/v2), which does not require the X-Version header used by the legacy v1 API",
+      "Access tokens expire after 24 hours; refresh tokens expire 180 days after issue or 60 minutes after use",
+      "Features, components, and initiatives are all 'entities' in v2 — filter with the type parameter"
+    ],
+    "documentation": "https://developer.productboard.com/"
+  }
+}

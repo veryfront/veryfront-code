@@ -1,0 +1,242 @@
+{
+  "name": "sendgrid",
+  "displayName": "SendGrid",
+  "icon": "sendgrid.svg",
+  "description": "Send transactional email and manage marketing contacts with Twilio SendGrid",
+  "auth": {
+    "type": "api-key",
+    "keyName": "SENDGRID_API_KEY",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://www.twilio.com/docs/sendgrid/api-reference/how-to-use-the-sendgrid-v3-api/authentication",
+    "requiredApis": [
+      {
+        "name": "SendGrid API Keys",
+        "enableUrl": "https://app.sendgrid.com/settings/api_keys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "SENDGRID_API_KEY",
+      "description": "SendGrid API key (starts with SG.)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://www.twilio.com/docs/sendgrid/ui/account-and-settings/api-keys"
+    }
+  ],
+  "tools": [
+    {
+      "id": "send_email",
+      "name": "Send Email",
+      "description": "Send an email via the SendGrid v3 Mail Send API",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.sendgrid.com/v3/mail/send",
+        "body": {
+          "personalizations": {
+            "type": "array",
+            "description": "Array of personalization objects, each with a 'to' array of {email, name} recipients, e.g. [{\"to\":[{\"email\":\"a@b.com\"}]}]",
+            "required": true
+          },
+          "from": {
+            "type": "object",
+            "description": "Verified sender as {\"email\":\"sender@yourdomain.com\",\"name\":\"...\"}",
+            "required": true
+          },
+          "subject": {
+            "type": "string",
+            "description": "Email subject line",
+            "required": true
+          },
+          "content": {
+            "type": "array",
+            "description": "Content blocks, e.g. [{\"type\":\"text/plain\",\"value\":\"...\"}] or text/html",
+            "required": true
+          },
+          "reply_to": {
+            "type": "object",
+            "description": "Optional reply-to as {\"email\":\"...\"}"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_contacts",
+      "name": "List Contacts",
+      "description": "List marketing contacts in the account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.sendgrid.com/v3/marketing/contacts",
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["result", "contacts"],
+            "collectionName": "contacts",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "email" },
+              { "name": "first_name" },
+              { "name": "last_name" },
+              { "name": "updated_at" }
+            ],
+            "omitted": "address, custom fields, and list membership details",
+            "outputFields": [{ "name": "contact_count" }, { "name": "_metadata", "kind": "object" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "search_contacts",
+      "name": "Search Contacts",
+      "description": "Search marketing contacts with an SGQL query (read-only search via POST)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.sendgrid.com/v3/marketing/contacts/search",
+        "body": {
+          "query": {
+            "type": "string",
+            "description": "SGQL query, e.g. email LIKE 'a@b.com'",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "result"
+        }
+      }
+    },
+    {
+      "id": "upsert_contacts",
+      "name": "Upsert Contacts",
+      "description": "Add or update marketing contacts (asynchronous; returns a job_id)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://api.sendgrid.com/v3/marketing/contacts",
+        "body": {
+          "contacts": {
+            "type": "array",
+            "description": "Contacts to upsert, e.g. [{\"email\":\"a@b.com\",\"first_name\":\"...\"}]",
+            "required": true
+          },
+          "list_ids": {
+            "type": "array",
+            "description": "Optional list IDs to add the contacts to"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_templates",
+      "name": "List Templates",
+      "description": "List transactional email templates",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.sendgrid.com/v3/templates",
+        "params": {
+          "generations": {
+            "type": "string",
+            "in": "query",
+            "description": "Template generations to include: legacy, dynamic, or legacy,dynamic",
+            "default": "dynamic"
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Templates per page (max 200)",
+            "default": 50
+          },
+          "page_token": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination token from a previous response"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_email_stats",
+      "name": "Get Email Stats",
+      "description": "Get global email statistics (delivered, opens, clicks, bounces) for a date range",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.sendgrid.com/v3/stats",
+        "params": {
+          "start_date": {
+            "type": "string",
+            "in": "query",
+            "description": "Start date YYYY-MM-DD",
+            "required": true
+          },
+          "end_date": {
+            "type": "string",
+            "in": "query",
+            "description": "End date YYYY-MM-DD (defaults to today)"
+          },
+          "aggregated_by": {
+            "type": "string",
+            "in": "query",
+            "description": "Aggregation period: day, week, or month",
+            "default": "day"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "send_email",
+      "title": "Send an email",
+      "prompt": "Send an email via SendGrid with a subject, recipient, and HTML body.",
+      "category": "communication",
+      "icon": "mail"
+    },
+    {
+      "id": "email_performance",
+      "title": "Email performance",
+      "prompt": "Show my SendGrid email stats for the last 30 days and summarize delivery, open, and bounce rates.",
+      "category": "marketing",
+      "icon": "chart"
+    }
+  ],
+  "suggestedWith": ["klaviyo", "hubspot", "sheets"],
+  "SETUP_GUIDE": {
+    "title": "SendGrid API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Sign in to SendGrid",
+        "description": "Go to https://app.sendgrid.com and sign in. A free tier account is sufficient for testing."
+      },
+      {
+        "step": 2,
+        "title": "Verify a sender",
+        "description": "Under Settings → Sender Authentication, verify a single sender address or authenticate your domain. Mail Send rejects unverified 'from' addresses."
+      },
+      {
+        "step": 3,
+        "title": "Create an API key",
+        "description": "Open Settings → API Keys (https://app.sendgrid.com/settings/api_keys) and create a key with Full Access, or Restricted Access including Mail Send, Marketing, Template Engine, and Stats."
+      },
+      {
+        "step": 4,
+        "title": "Set the environment variable",
+        "description": "Add the key to your .env as SENDGRID_API_KEY=SG...."
+      },
+      {
+        "step": 5,
+        "title": "Verify access",
+        "description": "Run List Templates to confirm the key works, then send a test email to yourself."
+      }
+    ],
+    "notes": [
+      "SendGrid authenticates with 'Authorization: Bearer SG.xxx'",
+      "Mail Send returns HTTP 202 with an empty body on success",
+      "Upsert Contacts is asynchronous — changes can take a few minutes to appear in List Contacts"
+    ],
+    "documentation": "https://www.twilio.com/docs/sendgrid/api-reference"
+  }
+}

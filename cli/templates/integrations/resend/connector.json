@@ -1,0 +1,243 @@
+{
+  "name": "resend",
+  "displayName": "Resend",
+  "icon": "resend.svg",
+  "description": "Send email and manage domains, audiences, and contacts with Resend",
+  "auth": {
+    "type": "api-key",
+    "keyName": "RESEND_API_KEY",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://resend.com/docs/api-reference/introduction",
+    "requiredApis": [
+      {
+        "name": "Resend API Keys",
+        "enableUrl": "https://resend.com/api-keys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "RESEND_API_KEY",
+      "description": "Resend API key (starts with re_)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://resend.com/docs/dashboard/api-keys/introduction"
+    }
+  ],
+  "tools": [
+    {
+      "id": "send_email",
+      "name": "Send Email",
+      "description": "Send an email",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "body": {
+          "from": {
+            "type": "string",
+            "description": "Sender address from a verified domain, e.g. 'Your Name <sender@yourdomain.com>'",
+            "required": true
+          },
+          "to": {
+            "type": "array",
+            "description": "Recipient email addresses (max 50)",
+            "required": true
+          },
+          "subject": {
+            "type": "string",
+            "description": "Email subject line",
+            "required": true
+          },
+          "html": {
+            "type": "string",
+            "description": "HTML body of the email"
+          },
+          "text": {
+            "type": "string",
+            "description": "Plain-text body of the email"
+          },
+          "cc": {
+            "type": "array",
+            "description": "CC recipients"
+          },
+          "bcc": {
+            "type": "array",
+            "description": "BCC recipients"
+          },
+          "reply_to": {
+            "type": "array",
+            "description": "Reply-to addresses"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_email",
+      "name": "Get Email",
+      "description": "Get a sent email and its delivery status by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.resend.com/emails/{emailId}",
+        "params": {
+          "emailId": {
+            "type": "string",
+            "in": "path",
+            "description": "Email ID returned by Send Email",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_domains",
+      "name": "List Domains",
+      "description": "List sending domains and their verification status",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.resend.com/domains",
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data", "domains"],
+            "collectionName": "domains",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "status" },
+              { "name": "region" },
+              { "name": "created_at" }
+            ],
+            "omitted": "DNS records and tracking settings",
+            "outputFields": [{ "name": "next" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "list_audiences",
+      "name": "List Audiences",
+      "description": "List audiences (contact groups)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.resend.com/audiences",
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "list_contacts",
+      "name": "List Contacts",
+      "description": "List contacts in an audience",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.resend.com/audiences/{audienceId}/contacts",
+        "params": {
+          "audienceId": {
+            "type": "string",
+            "in": "path",
+            "description": "Audience ID (from List Audiences)",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "create_contact",
+      "name": "Create Contact",
+      "description": "Add a contact to an audience",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.resend.com/audiences/{audienceId}/contacts",
+        "params": {
+          "audienceId": {
+            "type": "string",
+            "in": "path",
+            "description": "Audience ID to add the contact to",
+            "required": true
+          }
+        },
+        "body": {
+          "email": {
+            "type": "string",
+            "description": "Contact email address",
+            "required": true
+          },
+          "first_name": {
+            "type": "string",
+            "description": "Contact first name"
+          },
+          "last_name": {
+            "type": "string",
+            "description": "Contact last name"
+          },
+          "unsubscribed": {
+            "type": "boolean",
+            "description": "Whether the contact is unsubscribed",
+            "default": false
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "send_email",
+      "title": "Send an email",
+      "prompt": "Send an email via Resend with a subject, recipient, and HTML body.",
+      "category": "communication",
+      "icon": "mail"
+    },
+    {
+      "id": "domain_status",
+      "title": "Check domain status",
+      "prompt": "List my Resend domains and tell me which ones are verified for sending.",
+      "category": "communication",
+      "icon": "check"
+    }
+  ],
+  "suggestedWith": ["stripe", "supabase", "neon"],
+  "SETUP_GUIDE": {
+    "title": "Resend API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Sign in to Resend",
+        "description": "Go to https://resend.com and sign in. The free tier is sufficient for testing."
+      },
+      {
+        "step": 2,
+        "title": "Verify a domain (or use onboarding sender)",
+        "description": "Add and verify a sending domain under https://resend.com/domains. For quick tests you can send from onboarding@resend.dev to your own account email."
+      },
+      {
+        "step": 3,
+        "title": "Create an API key",
+        "description": "Open https://resend.com/api-keys and create a key with Full Access (Sending Access alone cannot read domains/audiences)."
+      },
+      {
+        "step": 4,
+        "title": "Set the environment variable",
+        "description": "Add the key to your .env as RESEND_API_KEY=re_..."
+      },
+      {
+        "step": 5,
+        "title": "Verify access",
+        "description": "Run List Domains to confirm the key works, then send a test email to yourself."
+      }
+    ],
+    "notes": [
+      "Resend authenticates with 'Authorization: Bearer re_...'",
+      "Audiences and contacts power Broadcasts; transactional sending only requires a verified domain"
+    ],
+    "documentation": "https://resend.com/docs/api-reference/introduction"
+  }
+}

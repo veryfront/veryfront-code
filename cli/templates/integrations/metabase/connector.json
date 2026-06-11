@@ -1,0 +1,254 @@
+{
+  "name": "metabase",
+  "displayName": "Metabase",
+  "icon": "metabase.svg",
+  "description": "Query saved questions, dashboards, and databases on a Metabase instance",
+  "auth": {
+    "type": "api-key",
+    "keyName": "METABASE_API_KEY",
+    "headerName": "x-api-key",
+    "docsUrl": "https://www.metabase.com/docs/latest/people-and-groups/api-keys",
+    "requiredApis": [
+      {
+        "name": "Metabase API Keys (Admin settings > Authentication > API keys)",
+        "enableUrl": "https://www.metabase.com/docs/latest/people-and-groups/api-keys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "METABASE_API_KEY",
+      "description": "Metabase API key (created in Admin settings > Authentication > API keys)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://www.metabase.com/docs/latest/people-and-groups/api-keys"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_databases",
+      "name": "List Databases",
+      "description": "List databases connected to the Metabase instance",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/api/database",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Your Metabase hostname without protocol, e.g. acme.metabaseapp.com or metabase.internal.example.com. Metabase is self-hosted or cloud-tenant, so there is no default.",
+            "required": true
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "data"
+            ],
+            "collectionName": "databases",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "engine"
+              },
+              {
+                "name": "created_at"
+              },
+              {
+                "name": "updated_at"
+              }
+            ],
+            "omitted": "connection details and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "total"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "list_cards",
+      "name": "List Questions",
+      "description": "List saved questions (cards) on the Metabase instance",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/api/card",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Your Metabase hostname without protocol, e.g. acme.metabaseapp.com",
+            "required": true
+          },
+          "f": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter: all, mine, archived, bookmarked, database, table, or using_model"
+          }
+        }
+      }
+    },
+    {
+      "id": "run_card_query",
+      "name": "Run Question Query",
+      "description": "Execute a saved question (card) and return its query results",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{host}/api/card/{cardId}/query",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Your Metabase hostname without protocol, e.g. acme.metabaseapp.com",
+            "required": true
+          },
+          "cardId": {
+            "type": "string",
+            "in": "path",
+            "description": "Saved question (card) ID",
+            "required": true
+          }
+        },
+        "body": {
+          "parameters": {
+            "type": "array",
+            "description": "Optional card parameter values, e.g. [{ \"type\": \"category\", \"target\": [\"variable\", [\"template-tag\", \"state\"]], \"value\": \"CA\" }]"
+          }
+        }
+      }
+    },
+    {
+      "id": "search",
+      "name": "Search",
+      "description": "Search questions, dashboards, collections, and tables across the instance",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/api/search",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Your Metabase hostname without protocol, e.g. acme.metabaseapp.com",
+            "required": true
+          },
+          "q": {
+            "type": "string",
+            "in": "query",
+            "description": "Search term",
+            "required": true
+          },
+          "models": {
+            "type": "string",
+            "in": "query",
+            "description": "Restrict to a model type: card, dashboard, collection, database, table, dataset"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_dashboard",
+      "name": "Get Dashboard",
+      "description": "Get a dashboard and its cards by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/api/dashboard/{dashboardId}",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Your Metabase hostname without protocol, e.g. acme.metabaseapp.com",
+            "required": true
+          },
+          "dashboardId": {
+            "type": "string",
+            "in": "path",
+            "description": "Dashboard ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_collections",
+      "name": "List Collections",
+      "description": "List collections that organize questions and dashboards",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/api/collection",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Your Metabase hostname without protocol, e.g. acme.metabaseapp.com",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "find_question",
+      "title": "Find a question",
+      "prompt": "Search my Metabase instance for questions about a topic and run the most relevant one.",
+      "category": "analytics",
+      "icon": "search"
+    },
+    {
+      "id": "dashboard_summary",
+      "title": "Summarize a dashboard",
+      "prompt": "Get one of my Metabase dashboards and summarize what each card shows.",
+      "category": "analytics",
+      "icon": "list"
+    }
+  ],
+  "suggestedWith": [
+    "snowflake",
+    "posthog",
+    "slack"
+  ],
+  "SETUP_GUIDE": {
+    "title": "Metabase API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Locate your Metabase instance",
+        "description": "Note your instance hostname, e.g. acme.metabaseapp.com (Metabase Cloud) or your self-hosted domain. Every tool takes it as the required 'host' parameter. For local testing you can run Metabase with 'docker run -p 3000:3000 metabase/metabase'."
+      },
+      {
+        "step": 2,
+        "title": "Create an API key",
+        "description": "As an admin, go to Admin settings > Authentication > API keys, create a key, and assign it to a group whose permissions cover the databases and collections you need. Copy the key (shown once, prefixed mb_)."
+      },
+      {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the key to your .env as METABASE_API_KEY=mb_..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Databases with your hostname as the host parameter."
+      }
+    ],
+    "notes": [
+      "Metabase authenticates with an 'x-api-key' header",
+      "Metabase is self-hosted or tenant-hosted, so tools require a 'host' parameter (hostname only, HTTPS is assumed) on every call",
+      "The API key inherits the permissions of the group it is assigned to"
+    ],
+    "documentation": "https://www.metabase.com/docs/latest/api"
+  }
+}

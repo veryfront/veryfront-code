@@ -3,6 +3,274 @@ import type { IntegrationConfig } from "./schema.ts";
 
 export const connectors: IntegrationConfig[] = [
   {
+    "name": "activecampaign",
+    "displayName": "ActiveCampaign",
+    "icon": "activecampaign.svg",
+    "description": "Manage contacts, deals, and accounts in ActiveCampaign",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "ActiveCampaign Developer Settings",
+        "enableUrl": "https://www.activecampaign.com/login",
+      }],
+      "keyName": "ACTIVECAMPAIGN_API_KEY",
+      "headerName": "Api-Token",
+      "docsUrl": "https://developers.activecampaign.com/reference/authentication",
+    },
+    "envVars": [{
+      "name": "ACTIVECAMPAIGN_API_KEY",
+      "description":
+        "ActiveCampaign API key (sent as the Api-Token header), from My Settings → Developer",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developers.activecampaign.com/reference/authentication",
+    }],
+    "tools": [{
+      "id": "list_contacts",
+      "name": "List Contacts",
+      "description": "List or search contacts in ActiveCampaign",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{account}.api-us1.com/api/3/contacts",
+        "params": {
+          "account": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "ActiveCampaign account subdomain — the 'youraccount' part of https://youraccount.api-us1.com, shown under My Settings → Developer",
+            "required": true,
+          },
+          "email": {
+            "type": "string",
+            "in": "query",
+            "description": "Return only the contact with this exact email",
+          },
+          "search": {
+            "type": "string",
+            "in": "query",
+            "description": "Search contacts by name, email, or phone",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum contacts to return (max 100)",
+            "default": 20,
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of contacts to skip for pagination",
+            "default": 0,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["contacts"],
+            "collectionName": "contacts",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "email" },
+              { "name": "firstName" },
+              { "name": "lastName" },
+              { "name": "phone" },
+              { "name": "cdate" },
+              { "name": "udate" },
+            ],
+            "outputFields": [{ "name": "meta", "kind": "object" }],
+            "omitted": "contact field values, scores, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_contact",
+      "name": "Get Contact",
+      "description": "Get details of an ActiveCampaign contact",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{account}.api-us1.com/api/3/contacts/{contactId}",
+        "params": {
+          "account": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "ActiveCampaign account subdomain — the 'youraccount' part of https://youraccount.api-us1.com",
+            "required": true,
+          },
+          "contactId": {
+            "type": "string",
+            "in": "path",
+            "description": "ActiveCampaign contact ID",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "create_contact",
+      "name": "Create Contact",
+      "description": "Create a new contact in ActiveCampaign",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{account}.api-us1.com/api/3/contacts",
+        "params": {
+          "account": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "ActiveCampaign account subdomain — the 'youraccount' part of https://youraccount.api-us1.com",
+            "required": true,
+          },
+        },
+        "body": {
+          "contact": {
+            "type": "object",
+            "description":
+              'Contact payload, e.g. { "email": "jane@acme.com", "firstName": "Jane", "lastName": "Doe", "phone": "+15551234567" }',
+            "required": true,
+          },
+        },
+        "response": { "transform": "contact" },
+      },
+    }, {
+      "id": "update_contact",
+      "name": "Update Contact",
+      "description": "Update an existing ActiveCampaign contact",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://{account}.api-us1.com/api/3/contacts/{contactId}",
+        "params": {
+          "account": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "ActiveCampaign account subdomain — the 'youraccount' part of https://youraccount.api-us1.com",
+            "required": true,
+          },
+          "contactId": {
+            "type": "string",
+            "in": "path",
+            "description": "ActiveCampaign contact ID",
+            "required": true,
+          },
+        },
+        "body": {
+          "contact": {
+            "type": "object",
+            "description": 'Contact fields to update, e.g. { "firstName": "Jane" }',
+            "required": true,
+          },
+        },
+        "response": { "transform": "contact" },
+      },
+    }, {
+      "id": "list_deals",
+      "name": "List Deals",
+      "description": "List deals in ActiveCampaign",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{account}.api-us1.com/api/3/deals",
+        "params": {
+          "account": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "ActiveCampaign account subdomain — the 'youraccount' part of https://youraccount.api-us1.com",
+            "required": true,
+          },
+          "search": { "type": "string", "in": "query", "description": "Search deals by title" },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum deals to return (max 100)",
+            "default": 20,
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of deals to skip for pagination",
+            "default": 0,
+          },
+        },
+      },
+    }, {
+      "id": "create_deal",
+      "name": "Create Deal",
+      "description": "Create a new deal in ActiveCampaign",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{account}.api-us1.com/api/3/deals",
+        "params": {
+          "account": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "ActiveCampaign account subdomain — the 'youraccount' part of https://youraccount.api-us1.com",
+            "required": true,
+          },
+        },
+        "body": {
+          "deal": {
+            "type": "object",
+            "description":
+              'Deal payload, e.g. { "title": "Acme renewal", "value": 50000, "currency": "usd", "contact": "<contactId>", "stage": "<stageId>" } — value is in cents',
+            "required": true,
+          },
+        },
+        "response": { "transform": "deal" },
+      },
+    }, {
+      "id": "list_accounts",
+      "name": "List Accounts",
+      "description": "List accounts (companies) in ActiveCampaign",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{account}.api-us1.com/api/3/accounts",
+        "params": {
+          "account": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "ActiveCampaign account subdomain — the 'youraccount' part of https://youraccount.api-us1.com",
+            "required": true,
+          },
+          "search": { "type": "string", "in": "query", "description": "Search accounts by name" },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum accounts to return (max 100)",
+            "default": 20,
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of accounts to skip for pagination",
+            "default": 0,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "find_contact",
+      "title": "Find a contact",
+      "prompt": "Search my ActiveCampaign contacts by email and show their details.",
+      "category": "marketing",
+      "icon": "search",
+    }, {
+      "id": "new_deal",
+      "title": "Create a deal",
+      "prompt": "Create a new deal in ActiveCampaign with a title, value, and linked contact.",
+      "category": "sales",
+      "icon": "plus",
+    }],
+    "suggestedWith": ["shopify", "stripe", "slack"],
+  },
+  {
     "name": "airtable",
     "displayName": "Airtable",
     "icon": "airtable.svg",
@@ -397,6 +665,473 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["gmail", "slack", "notion"],
   },
   {
+    "name": "algolia",
+    "displayName": "Algolia",
+    "icon": "algolia.svg",
+    "description": "Search, browse, and update records in Algolia search indices",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Algolia API Keys",
+        "enableUrl": "https://dashboard.algolia.com/account/api-keys/all",
+      }],
+      "keyName": "ALGOLIA_API_KEY",
+      "headerName": "X-Algolia-API-Key",
+      "additionalHeaders": { "X-Algolia-Application-Id": "ALGOLIA_APP_ID" },
+      "docsUrl": "https://www.algolia.com/doc/rest-api/search/",
+    },
+    "envVars": [{
+      "name": "ALGOLIA_API_KEY",
+      "description":
+        "Algolia API key (use the Search API key for read-only access, or a scoped key with addObject for writes)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://www.algolia.com/doc/guides/security/api-keys/",
+    }, {
+      "name": "ALGOLIA_APP_ID",
+      "description":
+        "Algolia application ID (10-character uppercase ID shown next to your API keys)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://www.algolia.com/doc/guides/security/api-keys/",
+    }],
+    "tools": [{
+      "id": "list_indices",
+      "name": "List Indices",
+      "description": "List the indices in the Algolia application",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/1/indexes",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              'Algolia host built from your application ID: pass "<ALGOLIA_APP_ID>-dsn.algolia.net", e.g. B1G2GM9NG0-dsn.algolia.net',
+            "required": true,
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page of indices to fetch (0-based; omit to list all)",
+          },
+        },
+        "response": {
+          "transform": "items",
+          "historicalSummary": {
+            "collectionKeys": ["items", "indices"],
+            "collectionName": "indices",
+            "itemFields": [{ "name": "name" }, { "name": "entries" }, { "name": "dataSize" }, {
+              "name": "createdAt",
+            }, { "name": "updatedAt" }],
+            "outputFields": [{ "name": "nbPages" }],
+            "omitted": "index settings and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "search_index",
+      "name": "Search Index",
+      "description": "Run a search query against an index",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{host}/1/indexes/{indexName}/query",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              'Algolia host built from your application ID: pass "<ALGOLIA_APP_ID>-dsn.algolia.net", e.g. B1G2GM9NG0-dsn.algolia.net',
+            "required": true,
+          },
+          "indexName": {
+            "type": "string",
+            "in": "path",
+            "description": "Name of the index to search",
+            "required": true,
+          },
+        },
+        "body": {
+          "query": { "type": "string", "description": "Search query text", "required": true },
+          "hitsPerPage": {
+            "type": "number",
+            "description": "Number of hits per page (max 1000)",
+            "default": 20,
+          },
+          "page": {
+            "type": "number",
+            "description": "Page of results to fetch (0-based)",
+            "default": 0,
+          },
+          "filters": {
+            "type": "string",
+            "description": "Filter expression, e.g. category:book AND price < 100",
+          },
+          "attributesToRetrieve": {
+            "type": "array",
+            "description": 'Record attributes to include in results, e.g. ["title","url"]',
+          },
+        },
+      },
+    }, {
+      "id": "browse_index",
+      "name": "Browse Index",
+      "description": "Browse all records in an index with cursor-based pagination",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{host}/1/indexes/{indexName}/browse",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              'Algolia host built from your application ID: pass "<ALGOLIA_APP_ID>-dsn.algolia.net", e.g. B1G2GM9NG0-dsn.algolia.net',
+            "required": true,
+          },
+          "indexName": {
+            "type": "string",
+            "in": "path",
+            "description": "Name of the index to browse",
+            "required": true,
+          },
+        },
+        "body": {
+          "query": {
+            "type": "string",
+            "description": "Optional query to restrict the records browsed",
+          },
+          "hitsPerPage": {
+            "type": "number",
+            "description": "Records per page (max 1000)",
+            "default": 100,
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Cursor from the previous browse response to fetch the next page",
+          },
+        },
+      },
+    }, {
+      "id": "get_object",
+      "name": "Get Object",
+      "description": "Retrieve a single record from an index by objectID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/1/indexes/{indexName}/{objectID}",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              'Algolia host built from your application ID: pass "<ALGOLIA_APP_ID>-dsn.algolia.net", e.g. B1G2GM9NG0-dsn.algolia.net',
+            "required": true,
+          },
+          "indexName": {
+            "type": "string",
+            "in": "path",
+            "description": "Name of the index",
+            "required": true,
+          },
+          "objectID": {
+            "type": "string",
+            "in": "path",
+            "description": "Unique object ID of the record",
+            "required": true,
+          },
+          "attributesToRetrieve": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated attributes to return",
+          },
+        },
+      },
+    }, {
+      "id": "save_objects",
+      "name": "Save Objects",
+      "description": "Add or update records in an index via a batch operation",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{host}/1/indexes/{indexName}/batch",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              'Algolia host built from your application ID: pass "<ALGOLIA_APP_ID>-dsn.algolia.net", e.g. B1G2GM9NG0-dsn.algolia.net',
+            "required": true,
+          },
+          "indexName": {
+            "type": "string",
+            "in": "path",
+            "description": "Name of the index to write to",
+            "required": true,
+          },
+        },
+        "body": {
+          "requests": {
+            "type": "array",
+            "description":
+              'Batch operations, e.g. [{"action":"addObject","body":{"objectID":"1","title":"My record"}}]; actions include addObject, updateObject, partialUpdateObject, deleteObject',
+            "required": true,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "search_records",
+      "title": "Search an index",
+      "prompt": "Search my Algolia index for a query I provide and summarize the top hits.",
+      "category": "search",
+      "icon": "search",
+    }, {
+      "id": "index_overview",
+      "title": "Index overview",
+      "prompt": "List my Algolia indices with their record counts and last update times.",
+      "category": "search",
+      "icon": "list",
+    }],
+    "suggestedWith": ["shopify", "supabase", "github"],
+  },
+  {
+    "name": "amplitude",
+    "displayName": "Amplitude",
+    "icon": "amplitude.svg",
+    "description":
+      "Query Amplitude analytics events, segmentation, charts, and active users, and track events",
+    "auth": {
+      "type": "basic",
+      "requiredApis": [{
+        "name": "Amplitude Project API Keys",
+        "enableUrl": "https://app.amplitude.com/analytics/settings/projects",
+      }],
+      "usernameKey": "AMPLITUDE_API_KEY",
+      "passwordKey": "AMPLITUDE_SECRET_KEY",
+      "docsUrl": "https://amplitude.com/docs/apis/analytics/dashboard-rest",
+    },
+    "envVars": [{
+      "name": "AMPLITUDE_API_KEY",
+      "description": "Amplitude project API key (basic auth username; also used by client SDKs)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://amplitude.com/docs/apis/authentication",
+    }, {
+      "name": "AMPLITUDE_SECRET_KEY",
+      "description": "Amplitude project secret key (basic auth password)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://amplitude.com/docs/apis/authentication",
+    }],
+    "tools": [{
+      "id": "list_events",
+      "name": "List Events",
+      "description": "List event types visible in the project with current week totals",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/api/2/events/list",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Amplitude analytics host: amplitude.com (US) or analytics.eu.amplitude.com (EU residency)",
+            "default": "amplitude.com",
+          },
+        },
+        "response": {
+          "transform": "data",
+          "historicalSummary": {
+            "collectionKeys": ["data", "events"],
+            "collectionName": "events",
+            "itemFields": [{ "name": "id" }, { "name": "value" }, { "name": "display" }, {
+              "name": "totals",
+            }, { "name": "non_active" }],
+            "omitted": "event property details and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "query_event_segmentation",
+      "name": "Query Event Segmentation",
+      "description": "Get metrics for an event over a date range (Event Segmentation chart data)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/api/2/events/segmentation",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Amplitude analytics host: amplitude.com (US) or analytics.eu.amplitude.com (EU)",
+            "default": "amplitude.com",
+          },
+          "e": {
+            "type": "string",
+            "in": "query",
+            "description": 'Event definition as JSON, e.g. {"event_type":"sign_up"}',
+            "required": true,
+          },
+          "start": {
+            "type": "string",
+            "in": "query",
+            "description": "Start date in YYYYMMDD format",
+            "required": true,
+          },
+          "end": {
+            "type": "string",
+            "in": "query",
+            "description": "End date in YYYYMMDD format",
+            "required": true,
+          },
+          "m": {
+            "type": "string",
+            "in": "query",
+            "description": "Metric: uniques, totals, pct_dau, or average",
+            "default": "uniques",
+          },
+          "i": {
+            "type": "number",
+            "in": "query",
+            "description": "Interval in days: 1 (daily), 7 (weekly), or 30 (monthly)",
+            "default": 1,
+          },
+          "g": {
+            "type": "string",
+            "in": "query",
+            "description": "Property to group by, e.g. country",
+          },
+        },
+        "response": { "transform": "data" },
+      },
+    }, {
+      "id": "query_active_users",
+      "name": "Query Active Users",
+      "description": "Get active or new user counts over a date range",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/api/2/users",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Amplitude analytics host: amplitude.com (US) or analytics.eu.amplitude.com (EU)",
+            "default": "amplitude.com",
+          },
+          "start": {
+            "type": "string",
+            "in": "query",
+            "description": "Start date in YYYYMMDD format",
+            "required": true,
+          },
+          "end": {
+            "type": "string",
+            "in": "query",
+            "description": "End date in YYYYMMDD format",
+            "required": true,
+          },
+          "m": {
+            "type": "string",
+            "in": "query",
+            "description": "User type: active or new",
+            "default": "active",
+          },
+          "i": {
+            "type": "number",
+            "in": "query",
+            "description": "Interval in days: 1 (daily), 7 (weekly), or 30 (monthly)",
+            "default": 1,
+          },
+          "g": {
+            "type": "string",
+            "in": "query",
+            "description": "Property to group by, e.g. country (limit one)",
+          },
+        },
+        "response": { "transform": "data" },
+      },
+    }, {
+      "id": "get_chart_results",
+      "name": "Get Chart Results",
+      "description": "Get JSON results from a saved Amplitude chart by chart ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/api/3/chart/{chartId}/query",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Amplitude analytics host: amplitude.com (US) or analytics.eu.amplitude.com (EU)",
+            "default": "amplitude.com",
+          },
+          "chartId": {
+            "type": "string",
+            "in": "path",
+            "description": "Chart ID from the chart's URL in the Amplitude web app",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "track_event",
+      "name": "Track Event",
+      "description": "Send events to Amplitude via the HTTP V2 ingestion API",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{ingestHost}/2/httpapi",
+        "params": {
+          "ingestHost": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Amplitude ingestion host: api2.amplitude.com (US) or api.eu.amplitude.com (EU)",
+            "default": "api2.amplitude.com",
+          },
+        },
+        "body": {
+          "api_key": {
+            "type": "string",
+            "description":
+              "Amplitude project API key — pass the same value as the AMPLITUDE_API_KEY env var (the ingestion API reads it from the body, not headers)",
+            "required": true,
+          },
+          "events": {
+            "type": "array",
+            "description":
+              'Events to upload; each needs event_type plus user_id (min 5 chars) or device_id, e.g. [{"user_id":"user_123","event_type":"sign_up"}]',
+            "required": true,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "event_overview",
+      "title": "Event overview",
+      "prompt":
+        "List my Amplitude event types and summarize which ones have the highest totals this week.",
+      "category": "analytics",
+      "icon": "list",
+    }, {
+      "id": "active_users_trend",
+      "title": "Active users trend",
+      "prompt":
+        "Show my daily active users in Amplitude for the last 30 days and describe the trend.",
+      "category": "analytics",
+      "icon": "chart",
+    }],
+    "suggestedWith": ["mixpanel", "posthog", "slack"],
+  },
+  {
     "name": "anthropic",
     "displayName": "Anthropic",
     "icon": "anthropic.svg",
@@ -418,6 +1153,237 @@ export const connectors: IntegrationConfig[] = [
       { "name": "list-members", "description": "List all members in the organization" },
       { "name": "get-organization", "description": "Get organization details and settings" },
     ],
+  },
+  {
+    "name": "apollo",
+    "displayName": "Apollo.io",
+    "icon": "apollo.svg",
+    "description": "Search and enrich people, companies, and contacts in Apollo.io",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Apollo API Keys",
+        "enableUrl": "https://app.apollo.io/#/settings/integrations/api",
+      }],
+      "keyName": "APOLLO_API_KEY",
+      "headerName": "X-Api-Key",
+      "docsUrl": "https://docs.apollo.io/reference/authentication",
+    },
+    "envVars": [{
+      "name": "APOLLO_API_KEY",
+      "description": "Apollo.io API key (sent as the X-Api-Key header)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.apollo.io/docs/create-api-key",
+    }],
+    "tools": [{
+      "id": "search_people",
+      "name": "Search People",
+      "description": "Search the Apollo database for people by keywords, titles, and locations",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.apollo.io/api/v1/mixed_people/search",
+        "body": {
+          "q_keywords": {
+            "type": "string",
+            "description": "Keywords to match against names, titles, and companies",
+          },
+          "person_titles": {
+            "type": "array",
+            "description": 'Job titles to match, e.g. ["sales manager"]',
+          },
+          "person_locations": {
+            "type": "array",
+            "description": 'Locations to match, e.g. ["california, us"]',
+          },
+          "organization_domains": {
+            "type": "array",
+            "description": 'Company domains to match, e.g. ["apollo.io"]',
+          },
+          "page": { "type": "number", "description": "Page number (1-based)", "default": 1 },
+          "per_page": {
+            "type": "number",
+            "description": "Results per page (max 100)",
+            "default": 25,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["people", "contacts"],
+            "collectionName": "people",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "title" },
+              { "name": "email" },
+              { "name": "linkedin_url" },
+              { "name": "organization", "kind": "object" },
+            ],
+            "outputFields": [{ "name": "pagination", "kind": "object" }],
+            "omitted": "employment history and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "search_organizations",
+      "name": "Search Organizations",
+      "description": "Search the Apollo database for companies; consumes Apollo credits",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.apollo.io/api/v1/mixed_companies/search",
+        "body": {
+          "q_organization_name": { "type": "string", "description": "Company name to match" },
+          "organization_locations": {
+            "type": "array",
+            "description": 'Company HQ locations, e.g. ["germany"]',
+          },
+          "organization_num_employees_ranges": {
+            "type": "array",
+            "description": 'Employee count ranges, e.g. ["1,10", "11,50"]',
+          },
+          "page": { "type": "number", "description": "Page number (1-based)", "default": 1 },
+          "per_page": {
+            "type": "number",
+            "description": "Results per page (max 100)",
+            "default": 25,
+          },
+        },
+      },
+    }, {
+      "id": "enrich_person",
+      "name": "Enrich Person",
+      "description":
+        "Enrich a person's profile by name, email, domain, or LinkedIn URL; consumes Apollo credits",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.apollo.io/api/v1/people/match",
+        "params": {
+          "reveal_personal_emails": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Reveal personal emails (consumes additional credits)",
+            "default": false,
+          },
+        },
+        "body": {
+          "first_name": { "type": "string", "description": "First name" },
+          "last_name": { "type": "string", "description": "Last name" },
+          "email": { "type": "string", "description": "Known email address" },
+          "domain": { "type": "string", "description": "Company domain, e.g. apollo.io" },
+          "organization_name": { "type": "string", "description": "Company name" },
+          "linkedin_url": { "type": "string", "description": "LinkedIn profile URL" },
+        },
+        "response": { "transform": "person" },
+      },
+    }, {
+      "id": "enrich_organization",
+      "name": "Enrich Organization",
+      "description": "Enrich a company profile from its domain; consumes Apollo credits",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.apollo.io/api/v1/organizations/enrich",
+        "params": {
+          "domain": {
+            "type": "string",
+            "in": "query",
+            "description": "Company domain to enrich, e.g. apollo.io",
+            "required": true,
+          },
+        },
+        "response": { "transform": "organization" },
+      },
+    }, {
+      "id": "search_contacts",
+      "name": "Search Contacts",
+      "description": "Search contacts already saved to your Apollo account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.apollo.io/api/v1/contacts/search",
+        "body": {
+          "q_keywords": {
+            "type": "string",
+            "description": "Keywords to match against contact names, titles, and companies",
+          },
+          "sort_by_field": {
+            "type": "string",
+            "description": "Sort field, e.g. contact_last_activity_date or contact_created_at",
+          },
+          "page": { "type": "number", "description": "Page number (1-based)", "default": 1 },
+          "per_page": {
+            "type": "number",
+            "description": "Results per page (max 100)",
+            "default": 25,
+          },
+        },
+      },
+    }, {
+      "id": "create_contact",
+      "name": "Create Contact",
+      "description": "Create a new contact in your Apollo account",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.apollo.io/api/v1/contacts",
+        "body": {
+          "first_name": { "type": "string", "description": "Contact first name", "required": true },
+          "last_name": { "type": "string", "description": "Contact last name" },
+          "email": { "type": "string", "description": "Contact email address" },
+          "title": { "type": "string", "description": "Job title" },
+          "organization_name": { "type": "string", "description": "Company name" },
+          "label_names": {
+            "type": "array",
+            "description": "Apollo list names to add the contact to",
+          },
+        },
+        "response": { "transform": "contact" },
+      },
+    }, {
+      "id": "update_contact",
+      "name": "Update Contact",
+      "description": "Update an existing contact in your Apollo account",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://api.apollo.io/api/v1/contacts/{contactId}",
+        "params": {
+          "contactId": {
+            "type": "string",
+            "in": "path",
+            "description": "Apollo contact ID",
+            "required": true,
+          },
+        },
+        "body": {
+          "first_name": { "type": "string", "description": "Contact first name" },
+          "last_name": { "type": "string", "description": "Contact last name" },
+          "email": { "type": "string", "description": "Contact email address" },
+          "title": { "type": "string", "description": "Job title" },
+          "organization_name": { "type": "string", "description": "Company name" },
+        },
+        "response": { "transform": "contact" },
+      },
+    }],
+    "prompts": [{
+      "id": "prospect_list",
+      "title": "Build a prospect list",
+      "prompt":
+        "Search Apollo for heads of sales at SaaS companies in the US and list their names, titles, and companies.",
+      "category": "sales",
+      "icon": "search",
+    }, {
+      "id": "enrich_lead",
+      "title": "Enrich a lead",
+      "prompt":
+        "Enrich this person in Apollo using their email address and summarize their role and company.",
+      "category": "sales",
+      "icon": "sparkles",
+    }],
+    "suggestedWith": ["hubspot", "salesforce", "gmail"],
   },
   {
     "name": "asana",
@@ -985,6 +1951,392 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["slack", "notion", "calendar"],
   },
   {
+    "name": "ashby",
+    "displayName": "Ashby",
+    "icon": "ashby.svg",
+    "description": "Read candidates, jobs, and applications from the Ashby ATS",
+    "auth": {
+      "type": "basic",
+      "requiredApis": [{
+        "name": "Ashby API Keys",
+        "enableUrl": "https://app.ashbyhq.com/admin/api/keys",
+      }],
+      "usernameKey": "ASHBY_API_KEY",
+      "passwordKey": "ASHBY_API_PASSWORD",
+      "docsUrl": "https://developers.ashbyhq.com/docs/authentication",
+    },
+    "envVars": [{
+      "name": "ASHBY_API_KEY",
+      "description": "Ashby API key (used as the HTTP Basic username; the password is blank)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developers.ashbyhq.com/docs/authentication",
+    }, {
+      "name": "ASHBY_API_PASSWORD",
+      "description":
+        "Leave empty — Ashby Basic auth uses the API key as username with a blank password",
+      "required": false,
+      "sensitive": true,
+      "docsUrl": "https://developers.ashbyhq.com/docs/authentication",
+      "default": "",
+    }],
+    "tools": [{
+      "id": "list_candidates",
+      "name": "List Candidates",
+      "description": "List all candidates in the organization (read-only RPC via POST)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.ashbyhq.com/candidate.list",
+        "body": {
+          "limit": {
+            "type": "number",
+            "description": "Candidates to return per page (max 100)",
+            "default": 50,
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Pagination cursor from nextCursor in a previous response",
+          },
+        },
+        "response": {
+          "transform": "results",
+          "historicalSummary": {
+            "collectionKeys": ["results", "candidates"],
+            "collectionName": "candidates",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "primaryEmailAddress", "kind": "object" },
+              { "name": "position" },
+              { "name": "company" },
+              { "name": "createdAt" },
+              { "name": "updatedAt" },
+            ],
+            "outputFields": [{ "name": "nextCursor" }, { "name": "moreDataAvailable" }],
+            "omitted": "resume file handles, social links, and custom field values",
+          },
+        },
+      },
+    }, {
+      "id": "get_candidate",
+      "name": "Get Candidate",
+      "description": "Get a candidate by ID (read-only RPC via POST)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.ashbyhq.com/candidate.info",
+        "body": { "id": { "type": "string", "description": "Candidate ID", "required": true } },
+        "response": { "transform": "results" },
+      },
+    }, {
+      "id": "search_candidates",
+      "name": "Search Candidates",
+      "description": "Search candidates by email or name (read-only RPC via POST)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.ashbyhq.com/candidate.search",
+        "body": {
+          "email": { "type": "string", "description": "Candidate email address to search for" },
+          "name": { "type": "string", "description": "Candidate name to search for" },
+        },
+        "response": { "transform": "results" },
+      },
+    }, {
+      "id": "create_candidate",
+      "name": "Create Candidate",
+      "description": "Create a new candidate",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.ashbyhq.com/candidate.create",
+        "body": {
+          "name": { "type": "string", "description": "Candidate full name", "required": true },
+          "email": { "type": "string", "description": "Candidate email address" },
+          "phoneNumber": { "type": "string", "description": "Candidate phone number" },
+          "linkedInUrl": { "type": "string", "description": "LinkedIn profile URL" },
+        },
+        "response": { "transform": "results" },
+      },
+    }, {
+      "id": "list_jobs",
+      "name": "List Jobs",
+      "description": "List jobs, optionally filtered by status (read-only RPC via POST)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.ashbyhq.com/job.list",
+        "body": {
+          "status": {
+            "type": "string",
+            "description": "Filter by status: Open, Closed, Archived, or Draft",
+          },
+          "limit": {
+            "type": "number",
+            "description": "Jobs to return per page (max 100)",
+            "default": 50,
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Pagination cursor from nextCursor in a previous response",
+          },
+        },
+        "response": { "transform": "results" },
+      },
+    }, {
+      "id": "list_applications",
+      "name": "List Applications",
+      "description":
+        "List applications, optionally filtered by job or status (read-only RPC via POST)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.ashbyhq.com/application.list",
+        "body": {
+          "jobId": { "type": "string", "description": "Only applications for this job ID" },
+          "status": {
+            "type": "string",
+            "description": "Filter by status: Active, Hired, or Archived",
+          },
+          "createdAfter": {
+            "type": "number",
+            "description": "Only applications created after this Unix timestamp in milliseconds",
+          },
+          "limit": {
+            "type": "number",
+            "description": "Applications to return per page (max 100)",
+            "default": 50,
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Pagination cursor from nextCursor in a previous response",
+          },
+        },
+        "response": { "transform": "results" },
+      },
+    }],
+    "prompts": [{
+      "id": "pipeline_overview",
+      "title": "Pipeline overview",
+      "prompt": "List my open Ashby jobs and the active applications for each, grouped by stage.",
+      "category": "hr",
+      "icon": "list",
+    }, {
+      "id": "find_candidate",
+      "title": "Find a candidate",
+      "prompt": "Search Ashby for a candidate by email and show their profile and applications.",
+      "category": "hr",
+      "icon": "search",
+    }],
+    "suggestedWith": ["slack", "calendar", "notion"],
+  },
+  {
+    "name": "attio",
+    "displayName": "Attio",
+    "icon": "attio.svg",
+    "description": "Query and manage records, objects, and lists in Attio CRM",
+    "auth": {
+      "type": "oauth2",
+      "provider": "attio",
+      "authorizationUrl": "https://app.attio.com/authorize",
+      "tokenUrl": "https://app.attio.com/oauth/token",
+      "scopes": [
+        "object_configuration:read",
+        "record_permission:read-write",
+        "list_configuration:read",
+      ],
+      "requiredApis": [{
+        "name": "Attio Developer Dashboard",
+        "enableUrl": "https://build.attio.com/",
+      }],
+      "docsUrl": "https://docs.attio.com/rest-api/tutorials/connect-an-app-through-oauth",
+    },
+    "envVars": [{
+      "name": "ATTIO_CLIENT_ID",
+      "description": "Attio OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://docs.attio.com/rest-api/tutorials/connect-an-app-through-oauth",
+    }, {
+      "name": "ATTIO_CLIENT_SECRET",
+      "description": "Attio OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.attio.com/rest-api/tutorials/connect-an-app-through-oauth",
+    }],
+    "tools": [{
+      "id": "list_objects",
+      "name": "List Objects",
+      "description":
+        "List object types in the Attio workspace (people, companies, deals, and custom objects)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.attio.com/v2/objects",
+        "response": { "transform": "data" },
+      },
+    }, {
+      "id": "query_records",
+      "name": "Query Records",
+      "description": "Query records of an object with optional filters and sorts",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.attio.com/v2/objects/{object}/records/query",
+        "params": {
+          "object": {
+            "type": "string",
+            "in": "path",
+            "description": "Object slug or ID, e.g. people, companies, deals",
+            "required": true,
+          },
+        },
+        "body": {
+          "filter": {
+            "type": "object",
+            "description": 'Attio filter object, e.g. { "name": { "$contains": "Acme" } }',
+          },
+          "sorts": {
+            "type": "array",
+            "description":
+              'Sort directives, e.g. [{ "attribute": "created_at", "direction": "desc" }]',
+          },
+          "limit": {
+            "type": "number",
+            "description": "Maximum records to return (max 500)",
+            "default": 25,
+          },
+          "offset": {
+            "type": "number",
+            "description": "Number of records to skip for pagination",
+            "default": 0,
+          },
+        },
+        "response": {
+          "transform": "data",
+          "historicalSummary": {
+            "collectionKeys": ["data", "records"],
+            "collectionName": "records",
+            "itemFields": [
+              { "name": "id", "kind": "object" },
+              { "name": "values", "kind": "object" },
+              { "name": "web_url" },
+              { "name": "created_at" },
+            ],
+            "omitted": "full attribute value histories and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_record",
+      "name": "Get Record",
+      "description": "Get a single record of an object by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.attio.com/v2/objects/{object}/records/{recordId}",
+        "params": {
+          "object": {
+            "type": "string",
+            "in": "path",
+            "description": "Object slug or ID, e.g. people, companies, deals",
+            "required": true,
+          },
+          "recordId": {
+            "type": "string",
+            "in": "path",
+            "description": "Attio record ID (UUID)",
+            "required": true,
+          },
+        },
+        "response": { "transform": "data" },
+      },
+    }, {
+      "id": "create_record",
+      "name": "Create Record",
+      "description": "Create a new record of an object (person, company, deal, or custom object)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.attio.com/v2/objects/{object}/records",
+        "params": {
+          "object": {
+            "type": "string",
+            "in": "path",
+            "description": "Object slug or ID, e.g. people, companies, deals",
+            "required": true,
+          },
+        },
+        "body": {
+          "data": {
+            "type": "object",
+            "description": 'Record payload, e.g. { "values": { "name": [{ "value": "Acme" }] } }',
+            "required": true,
+          },
+        },
+        "response": { "transform": "data" },
+      },
+    }, {
+      "id": "update_record",
+      "name": "Update Record",
+      "description": "Update attribute values on an existing record",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://api.attio.com/v2/objects/{object}/records/{recordId}",
+        "params": {
+          "object": {
+            "type": "string",
+            "in": "path",
+            "description": "Object slug or ID, e.g. people, companies, deals",
+            "required": true,
+          },
+          "recordId": {
+            "type": "string",
+            "in": "path",
+            "description": "Attio record ID (UUID)",
+            "required": true,
+          },
+        },
+        "body": {
+          "data": {
+            "type": "object",
+            "description":
+              'Partial record payload with values to update, e.g. { "values": { ... } }',
+            "required": true,
+          },
+        },
+        "response": { "transform": "data" },
+      },
+    }, {
+      "id": "list_lists",
+      "name": "List Lists",
+      "description": "List all lists in the Attio workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.attio.com/v2/lists",
+        "response": { "transform": "data" },
+      },
+    }],
+    "prompts": [{
+      "id": "find_company",
+      "title": "Find a company",
+      "prompt":
+        "Query my Attio companies for a name and show the matching records with their key attributes.",
+      "category": "crm",
+      "icon": "search",
+    }, {
+      "id": "log_person",
+      "title": "Add a person",
+      "prompt": "Create a new person record in Attio with a name and email address.",
+      "category": "crm",
+      "icon": "plus",
+    }],
+    "suggestedWith": ["slack", "gmail", "notion"],
+  },
+  {
     "name": "aws",
     "displayName": "Amazon Web Services",
     "icon": "aws.svg",
@@ -1056,6 +2408,289 @@ export const connectors: IntegrationConfig[] = [
     },
   },
   {
+    "name": "basecamp",
+    "displayName": "Basecamp",
+    "icon": "basecamp.svg",
+    "description": "Manage projects, to-do lists, and to-dos in Basecamp",
+    "auth": {
+      "type": "oauth2",
+      "provider": "basecamp",
+      "authorizationUrl": "https://launchpad.37signals.com/authorization/new",
+      "tokenUrl": "https://launchpad.37signals.com/authorization/token",
+      "scopes": [],
+      "requiredApis": [{
+        "name": "37signals Launchpad App Registration",
+        "enableUrl": "https://launchpad.37signals.com/integrations",
+      }],
+      "docsUrl": "https://github.com/basecamp/bc3-api/blob/master/sections/authentication.md",
+    },
+    "envVars": [{
+      "name": "BASECAMP_CLIENT_ID",
+      "description": "Basecamp (37signals Launchpad) OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://github.com/basecamp/bc3-api/blob/master/sections/authentication.md",
+    }, {
+      "name": "BASECAMP_CLIENT_SECRET",
+      "description": "Basecamp (37signals Launchpad) OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://github.com/basecamp/bc3-api/blob/master/sections/authentication.md",
+    }],
+    "tools": [{
+      "id": "list_projects",
+      "name": "List Projects",
+      "description": "List active projects in a Basecamp account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://3.basecampapi.com/{accountId}/projects.json",
+        "params": {
+          "accountId": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Basecamp account ID — the number after 3.basecamp.com/ in the app URL, e.g. 5899981",
+            "required": true,
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by status: archived or trashed (omit for active projects)",
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (Basecamp uses geared per-page sizes)",
+            "default": 1,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["projects"],
+            "collectionName": "projects",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "description" },
+              { "name": "status" },
+              { "name": "app_url" },
+              { "name": "created_at" },
+              { "name": "updated_at" },
+            ],
+            "outputFields": [{ "name": "page" }],
+            "omitted": "project dock tool references and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_project",
+      "name": "Get Project",
+      "description":
+        "Get a project including its dock (the todoset ID needed for to-do tools is in the dock entry named 'todoset')",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://3.basecampapi.com/{accountId}/projects/{projectId}.json",
+        "params": {
+          "accountId": {
+            "type": "string",
+            "in": "path",
+            "description": "Basecamp account ID",
+            "required": true,
+          },
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "Basecamp project ID",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "create_project",
+      "name": "Create Project",
+      "description": "Create a new Basecamp project",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://3.basecampapi.com/{accountId}/projects.json",
+        "params": {
+          "accountId": {
+            "type": "string",
+            "in": "path",
+            "description": "Basecamp account ID",
+            "required": true,
+          },
+        },
+        "body": {
+          "name": { "type": "string", "description": "Project name", "required": true },
+          "description": { "type": "string", "description": "Project description" },
+        },
+      },
+    }, {
+      "id": "list_todolists",
+      "name": "List To-do Lists",
+      "description":
+        "List to-do lists in a project's todoset (get the todoset ID from Get Project's dock)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://3.basecampapi.com/{accountId}/todosets/{todosetId}/todolists.json",
+        "params": {
+          "accountId": {
+            "type": "string",
+            "in": "path",
+            "description": "Basecamp account ID",
+            "required": true,
+          },
+          "todosetId": {
+            "type": "string",
+            "in": "path",
+            "description": "Todoset ID from the project dock",
+            "required": true,
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by status: archived or trashed (omit for active lists)",
+          },
+          "page": { "type": "number", "in": "query", "description": "Page number", "default": 1 },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["todolists"],
+            "collectionName": "todolists",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "title" },
+              { "name": "completed" },
+              { "name": "completed_ratio" },
+              { "name": "app_url" },
+              { "name": "created_at" },
+              { "name": "updated_at" },
+            ],
+            "outputFields": [{ "name": "page" }],
+            "omitted": "list descriptions and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "list_todos",
+      "name": "List To-dos",
+      "description": "List to-dos in a to-do list",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://3.basecampapi.com/{accountId}/todolists/{todolistId}/todos.json",
+        "params": {
+          "accountId": {
+            "type": "string",
+            "in": "path",
+            "description": "Basecamp account ID",
+            "required": true,
+          },
+          "todolistId": {
+            "type": "string",
+            "in": "path",
+            "description": "To-do list ID",
+            "required": true,
+          },
+          "completed": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Set true to include only completed to-dos",
+          },
+          "page": { "type": "number", "in": "query", "description": "Page number", "default": 1 },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["todos"],
+            "collectionName": "todos",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "content" },
+              { "name": "completed" },
+              { "name": "due_on" },
+              { "name": "app_url" },
+              { "name": "created_at" },
+              { "name": "updated_at" },
+              { "name": "assignees", "kind": "contact-array" },
+            ],
+            "outputFields": [{ "name": "page" }],
+            "omitted": "to-do descriptions, comment counts, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "create_todo",
+      "name": "Create To-do",
+      "description": "Create a to-do in a to-do list",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://3.basecampapi.com/{accountId}/todolists/{todolistId}/todos.json",
+        "params": {
+          "accountId": {
+            "type": "string",
+            "in": "path",
+            "description": "Basecamp account ID",
+            "required": true,
+          },
+          "todolistId": {
+            "type": "string",
+            "in": "path",
+            "description": "To-do list ID",
+            "required": true,
+          },
+        },
+        "body": {
+          "content": { "type": "string", "description": "What the to-do is for", "required": true },
+          "description": {
+            "type": "string",
+            "description": "Details about the to-do (HTML allowed)",
+          },
+          "due_on": { "type": "string", "description": "Due date (YYYY-MM-DD)" },
+          "starts_on": { "type": "string", "description": "Start date (YYYY-MM-DD)" },
+          "assignee_ids": { "type": "array", "description": "Array of person IDs to assign" },
+          "notify": { "type": "boolean", "description": "Whether to notify assignees" },
+        },
+      },
+    }, {
+      "id": "complete_todo",
+      "name": "Complete To-do",
+      "description": "Mark a Basecamp to-do as completed",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://3.basecampapi.com/{accountId}/todos/{todoId}/completion.json",
+        "params": {
+          "accountId": {
+            "type": "string",
+            "in": "path",
+            "description": "Basecamp account ID",
+            "required": true,
+          },
+          "todoId": { "type": "string", "in": "path", "description": "To-do ID", "required": true },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "project_status",
+      "title": "Project status",
+      "prompt": "List my Basecamp projects and summarize the open to-dos in one of them.",
+      "category": "productivity",
+      "icon": "list",
+    }, {
+      "id": "add_todo",
+      "title": "Add a to-do",
+      "prompt": "Add a to-do to a Basecamp to-do list with a due date and assignee.",
+      "category": "productivity",
+      "icon": "plus",
+    }],
+    "suggestedWith": ["slack", "github", "harvest"],
+  },
+  {
     "name": "bitbucket",
     "displayName": "Bitbucket",
     "icon": "bitbucket.svg",
@@ -1122,6 +2757,216 @@ export const connectors: IntegrationConfig[] = [
       "icon": "bug",
     }],
     "suggestedWith": ["github", "gitlab", "jira"],
+  },
+  {
+    "name": "brevo",
+    "displayName": "Brevo",
+    "icon": "brevo.svg",
+    "description": "Send transactional email and manage contacts, lists, and campaigns in Brevo",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Brevo API Keys",
+        "enableUrl": "https://app.brevo.com/settings/keys/api",
+      }],
+      "keyName": "BREVO_API_KEY",
+      "headerName": "api-key",
+      "docsUrl": "https://developers.brevo.com/docs/getting-started",
+    },
+    "envVars": [{
+      "name": "BREVO_API_KEY",
+      "description": "Brevo API v3 key (starts with xkeysib-)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl":
+        "https://developers.brevo.com/docs/getting-started#using-your-api-key-to-authenticate",
+    }],
+    "tools": [{
+      "id": "send_email",
+      "name": "Send Email",
+      "description": "Send a transactional email",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.brevo.com/v3/smtp/email",
+        "body": {
+          "sender": {
+            "type": "object",
+            "description":
+              'Sender as {"email":"sender@yourdomain.com","name":"..."} (must be a verified sender)',
+            "required": true,
+          },
+          "to": {
+            "type": "array",
+            "description": 'Recipients, e.g. [{"email":"a@b.com","name":"..."}]',
+            "required": true,
+          },
+          "subject": { "type": "string", "description": "Email subject line", "required": true },
+          "htmlContent": { "type": "string", "description": "HTML body of the email" },
+          "textContent": { "type": "string", "description": "Plain-text body of the email" },
+          "replyTo": { "type": "object", "description": 'Optional reply-to as {"email":"..."}' },
+        },
+      },
+    }, {
+      "id": "list_contacts",
+      "name": "List Contacts",
+      "description": "List contacts in the account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.brevo.com/v3/contacts",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Contacts per page (max 1000)",
+            "default": 50,
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of contacts to skip",
+            "default": 0,
+          },
+          "modifiedSince": {
+            "type": "string",
+            "in": "query",
+            "description": "Only contacts modified after this ISO 8601 timestamp",
+          },
+          "sort": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort by creation time: asc or desc",
+            "default": "desc",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["contacts"],
+            "collectionName": "contacts",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "email" },
+              { "name": "emailBlacklisted" },
+              { "name": "createdAt" },
+              { "name": "modifiedAt" },
+              { "name": "attributes", "kind": "object" },
+            ],
+            "outputFields": [{ "name": "count" }],
+            "omitted": "SMS details, list membership, and custom attribute values",
+          },
+        },
+      },
+    }, {
+      "id": "get_contact",
+      "name": "Get Contact",
+      "description": "Get a contact by email address or numeric ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.brevo.com/v3/contacts/{identifier}",
+        "params": {
+          "identifier": {
+            "type": "string",
+            "in": "path",
+            "description": "Contact email address (URL-encoded) or numeric contact ID",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "create_contact",
+      "name": "Create Contact",
+      "description": "Create a new contact",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.brevo.com/v3/contacts",
+        "body": {
+          "email": { "type": "string", "description": "Contact email address", "required": true },
+          "attributes": {
+            "type": "object",
+            "description": 'Attribute values, e.g. {"FIRSTNAME":"Ada","LASTNAME":"Lovelace"}',
+          },
+          "listIds": { "type": "array", "description": "Numeric list IDs to add the contact to" },
+          "updateEnabled": {
+            "type": "boolean",
+            "description": "Update the contact if it already exists",
+            "default": false,
+          },
+        },
+      },
+    }, {
+      "id": "list_lists",
+      "name": "List Lists",
+      "description": "List contact lists",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.brevo.com/v3/contacts/lists",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Lists per page (max 50)",
+            "default": 10,
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of lists to skip",
+            "default": 0,
+          },
+        },
+      },
+    }, {
+      "id": "list_email_campaigns",
+      "name": "List Email Campaigns",
+      "description": "List email campaigns with status and scheduling info",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.brevo.com/v3/emailCampaigns",
+        "params": {
+          "type": {
+            "type": "string",
+            "in": "query",
+            "description": "Campaign type: classic or trigger",
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by status: suspended, archive, sent, queued, draft, inProcess",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Campaigns per page (max 100)",
+            "default": 50,
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of campaigns to skip",
+            "default": 0,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "send_email",
+      "title": "Send an email",
+      "prompt": "Send a transactional email via Brevo with a subject, recipient, and HTML body.",
+      "category": "communication",
+      "icon": "mail",
+    }, {
+      "id": "find_contact",
+      "title": "Find a contact",
+      "prompt": "Look up a Brevo contact by email address and show their attributes and lists.",
+      "category": "marketing",
+      "icon": "search",
+    }],
+    "suggestedWith": ["klaviyo", "shopify", "sheets"],
   },
   {
     "name": "calendar",
@@ -1657,6 +3502,939 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["calendar", "gmail", "slack"],
   },
   {
+    "name": "circleci",
+    "displayName": "CircleCI",
+    "icon": "circleci.svg",
+    "description": "Inspect and control CircleCI pipelines, workflows, and jobs",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "CircleCI Personal API Tokens",
+        "enableUrl": "https://app.circleci.com/settings/user/tokens",
+      }],
+      "keyName": "CIRCLECI_TOKEN",
+      "headerName": "Circle-Token",
+      "docsUrl": "https://circleci.com/docs/api/v2/index.html",
+    },
+    "envVars": [{
+      "name": "CIRCLECI_TOKEN",
+      "description": "CircleCI personal API token (User Settings > Personal API Tokens)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://circleci.com/docs/managing-api-tokens/",
+    }],
+    "tools": [{
+      "id": "list_pipelines",
+      "name": "List Pipelines",
+      "description": "List recent pipelines for a project",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://circleci.com/api/v2/project/{projectSlug}/pipeline",
+        "params": {
+          "projectSlug": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Project slug in the form vcs-slug/org-name/repo-name, e.g. gh/acme/web (use 'circleci' as the vcs-slug for GitLab and GitHub App projects)",
+            "required": true,
+          },
+          "branch": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return pipelines for this branch",
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination token from a previous response's next_page_token",
+            "queryName": "page-token",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["items"],
+            "collectionName": "pipelines",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "number" },
+              { "name": "state" },
+              { "name": "created_at" },
+              { "name": "updated_at" },
+              { "name": "vcs", "kind": "object" },
+            ],
+            "outputFields": [{ "name": "next_page_token" }],
+            "omitted": "trigger details, pipeline parameters, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_pipeline",
+      "name": "Get Pipeline",
+      "description": "Get a pipeline by its ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://circleci.com/api/v2/pipeline/{pipelineId}",
+        "params": {
+          "pipelineId": {
+            "type": "string",
+            "in": "path",
+            "description": "Pipeline UUID",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "trigger_pipeline",
+      "name": "Trigger Pipeline",
+      "description": "Trigger a new pipeline for a project on a branch or tag",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://circleci.com/api/v2/project/{projectSlug}/pipeline",
+        "params": {
+          "projectSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Project slug in the form vcs-slug/org-name/repo-name, e.g. gh/acme/web",
+            "required": true,
+          },
+        },
+        "body": {
+          "branch": {
+            "type": "string",
+            "description": "Branch to run on (mutually exclusive with tag)",
+          },
+          "tag": {
+            "type": "string",
+            "description": "Tag to run on (mutually exclusive with branch)",
+          },
+          "parameters": {
+            "type": "object",
+            "description": "Pipeline parameters as a key-value object",
+          },
+        },
+      },
+    }, {
+      "id": "list_workflows",
+      "name": "List Pipeline Workflows",
+      "description": "List the workflows of a pipeline",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://circleci.com/api/v2/pipeline/{pipelineId}/workflow",
+        "params": {
+          "pipelineId": {
+            "type": "string",
+            "in": "path",
+            "description": "Pipeline UUID",
+            "required": true,
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination token from a previous response's next_page_token",
+            "queryName": "page-token",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["items"],
+            "collectionName": "workflows",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "status" },
+              { "name": "created_at" },
+              { "name": "stopped_at" },
+              { "name": "pipeline_number" },
+            ],
+            "outputFields": [{ "name": "next_page_token" }],
+            "omitted": "workflow tags and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_workflow",
+      "name": "Get Workflow",
+      "description": "Get a workflow by its ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://circleci.com/api/v2/workflow/{workflowId}",
+        "params": {
+          "workflowId": {
+            "type": "string",
+            "in": "path",
+            "description": "Workflow UUID",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "list_workflow_jobs",
+      "name": "List Workflow Jobs",
+      "description": "List the jobs of a workflow with their statuses",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://circleci.com/api/v2/workflow/{workflowId}/job",
+        "params": {
+          "workflowId": {
+            "type": "string",
+            "in": "path",
+            "description": "Workflow UUID",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "cancel_workflow",
+      "name": "Cancel Workflow",
+      "description": "Cancel a running workflow",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://circleci.com/api/v2/workflow/{workflowId}/cancel",
+        "params": {
+          "workflowId": {
+            "type": "string",
+            "in": "path",
+            "description": "Workflow UUID",
+            "required": true,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "build_status",
+      "title": "Latest build status",
+      "prompt":
+        "Show the most recent CircleCI pipelines for my project and the status of their workflows.",
+      "category": "devops",
+      "icon": "list",
+    }, {
+      "id": "rerun_failed",
+      "title": "Investigate a failure",
+      "prompt": "Find the last failed CircleCI workflow for my project and list which jobs failed.",
+      "category": "devops",
+      "icon": "alert",
+    }],
+    "suggestedWith": ["github", "slack", "bitbucket"],
+  },
+  {
+    "name": "close",
+    "displayName": "Close",
+    "icon": "close.svg",
+    "description": "Manage leads, contacts, and opportunities in Close CRM",
+    "auth": {
+      "type": "basic",
+      "requiredApis": [{
+        "name": "Close API Keys",
+        "enableUrl": "https://app.close.com/settings/developer/api-keys/",
+      }],
+      "usernameKey": "CLOSE_API_KEY",
+      "passwordKey": "CLOSE_API_PASSWORD",
+      "docsUrl": "https://developer.close.com/api/overview/api-key-authentication",
+    },
+    "envVars": [{
+      "name": "CLOSE_API_KEY",
+      "description": "Close API key (used as the HTTP Basic username)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.close.com/api/overview/api-key-authentication",
+    }, {
+      "name": "CLOSE_API_PASSWORD",
+      "description":
+        "HTTP Basic password for Close — always leave this set to an empty string; Close authenticates with the API key as username and a blank password",
+      "required": false,
+      "sensitive": true,
+      "docsUrl": "https://developer.close.com/api/overview/api-key-authentication",
+      "default": "",
+    }],
+    "tools": [{
+      "id": "list_leads",
+      "name": "List Leads",
+      "description": "List or search leads in Close using the lead query language",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.close.com/api/v1/lead/",
+        "params": {
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": 'Close search query, e.g. "company: Acme" or "lead_status: Potential"',
+          },
+          "_limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum leads to return (max 200)",
+            "default": 25,
+          },
+          "_skip": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of leads to skip for pagination",
+            "default": 0,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "leads",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "display_name" },
+              { "name": "name" },
+              { "name": "status_label" },
+              { "name": "url" },
+              { "name": "date_created" },
+              { "name": "date_updated" },
+            ],
+            "outputFields": [{ "name": "has_more" }, { "name": "total_results" }],
+            "omitted":
+              "lead contacts, addresses, custom fields, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_lead",
+      "name": "Get Lead",
+      "description": "Get full details of a Close lead, including contacts and opportunities",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.close.com/api/v1/lead/{leadId}/",
+        "params": {
+          "leadId": {
+            "type": "string",
+            "in": "path",
+            "description": "Close lead ID, e.g. lead_xxx",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "create_lead",
+      "name": "Create Lead",
+      "description": "Create a new lead in Close, optionally with contacts",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.close.com/api/v1/lead/",
+        "body": {
+          "name": { "type": "string", "description": "Company / lead name", "required": true },
+          "url": { "type": "string", "description": "Company website URL" },
+          "description": { "type": "string", "description": "Lead description" },
+          "status_id": {
+            "type": "string",
+            "description": "Lead status ID (defaults to the organization's first status)",
+          },
+          "contacts": {
+            "type": "array",
+            "description":
+              'Contacts, e.g. [{ "name": "Jane Doe", "emails": [{ "email": "jane@acme.com", "type": "office" }] }]',
+          },
+        },
+      },
+    }, {
+      "id": "update_lead",
+      "name": "Update Lead",
+      "description": "Update fields on an existing Close lead",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://api.close.com/api/v1/lead/{leadId}/",
+        "params": {
+          "leadId": {
+            "type": "string",
+            "in": "path",
+            "description": "Close lead ID, e.g. lead_xxx",
+            "required": true,
+          },
+        },
+        "body": {
+          "name": { "type": "string", "description": "Company / lead name" },
+          "url": { "type": "string", "description": "Company website URL" },
+          "description": { "type": "string", "description": "Lead description" },
+          "status_id": { "type": "string", "description": "Lead status ID" },
+        },
+      },
+    }, {
+      "id": "list_opportunities",
+      "name": "List Opportunities",
+      "description": "List opportunities, optionally filtered by lead",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.close.com/api/v1/opportunity/",
+        "params": {
+          "lead_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return opportunities for this lead ID",
+          },
+          "_limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum opportunities to return (max 200)",
+            "default": 25,
+          },
+          "_skip": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of opportunities to skip for pagination",
+            "default": 0,
+          },
+        },
+      },
+    }, {
+      "id": "create_opportunity",
+      "name": "Create Opportunity",
+      "description": "Create an opportunity on a Close lead",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.close.com/api/v1/opportunity/",
+        "body": {
+          "lead_id": {
+            "type": "string",
+            "description": "Close lead ID the opportunity belongs to",
+            "required": true,
+          },
+          "note": { "type": "string", "description": "Opportunity note" },
+          "value": { "type": "number", "description": "Opportunity value in cents" },
+          "value_period": {
+            "type": "string",
+            "description": "one_time, monthly, or annual",
+            "default": "one_time",
+          },
+          "status_id": {
+            "type": "string",
+            "description": "Opportunity status ID (defaults to the organization's first status)",
+          },
+          "confidence": { "type": "number", "description": "Win confidence percentage (0-100)" },
+        },
+      },
+    }, {
+      "id": "list_contacts",
+      "name": "List Contacts",
+      "description": "List contacts, optionally filtered by lead",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.close.com/api/v1/contact/",
+        "params": {
+          "lead_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return contacts for this lead ID",
+          },
+          "_limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum contacts to return (max 200)",
+            "default": 25,
+          },
+          "_skip": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of contacts to skip for pagination",
+            "default": 0,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "pipeline_review",
+      "title": "Review my pipeline",
+      "prompt":
+        "List my open opportunities in Close with their values and confidence, grouped by status.",
+      "category": "sales",
+      "icon": "chart",
+    }, {
+      "id": "new_lead",
+      "title": "Add a lead",
+      "prompt": "Create a new lead in Close with a company name, website, and a primary contact.",
+      "category": "sales",
+      "icon": "plus",
+    }],
+    "suggestedWith": ["gmail", "slack", "calendly"],
+  },
+  {
+    "name": "cloudflare",
+    "displayName": "Cloudflare",
+    "icon": "cloudflare.svg",
+    "description": "Manage zones and DNS records via the Cloudflare API",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Cloudflare API Tokens",
+        "enableUrl": "https://dash.cloudflare.com/profile/api-tokens",
+      }],
+      "keyName": "CLOUDFLARE_API_TOKEN",
+      "headerPrefix": "Bearer",
+      "docsUrl": "https://developers.cloudflare.com/fundamentals/api/get-started/create-token/",
+    },
+    "envVars": [{
+      "name": "CLOUDFLARE_API_TOKEN",
+      "description": "Cloudflare API token (scoped Bearer token, not the legacy Global API Key)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developers.cloudflare.com/fundamentals/api/get-started/create-token/",
+    }],
+    "tools": [{
+      "id": "verify_token",
+      "name": "Verify Token",
+      "description": "Check that the configured Cloudflare API token is valid and active",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.cloudflare.com/client/v4/user/tokens/verify",
+        "response": { "transform": "result" },
+      },
+    }, {
+      "id": "list_zones",
+      "name": "List Zones",
+      "description": "List zones (domains) the token can access",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.cloudflare.com/client/v4/zones",
+        "params": {
+          "name": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by zone name, e.g. example.com",
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by status: active, pending, initializing, moved, deleted",
+          },
+          "page": { "type": "number", "in": "query", "description": "Page number", "default": 1 },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Zones per page (max 50)",
+            "default": 20,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["result"],
+            "collectionName": "zones",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "status" },
+              { "name": "paused" },
+              { "name": "created_on" },
+              { "name": "modified_on" },
+            ],
+            "outputFields": [{ "name": "result_info", "kind": "object" }],
+            "omitted": "name servers, plan details, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_zone",
+      "name": "Get Zone",
+      "description": "Get details of a zone by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.cloudflare.com/client/v4/zones/{zoneId}",
+        "params": {
+          "zoneId": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Zone ID (32-hex identifier from List Zones or the dashboard Overview page)",
+            "required": true,
+          },
+        },
+        "response": { "transform": "result" },
+      },
+    }, {
+      "id": "list_dns_records",
+      "name": "List DNS Records",
+      "description": "List DNS records in a zone",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.cloudflare.com/client/v4/zones/{zoneId}/dns_records",
+        "params": {
+          "zoneId": { "type": "string", "in": "path", "description": "Zone ID", "required": true },
+          "type": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by record type, e.g. A, AAAA, CNAME, TXT, MX",
+          },
+          "name": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by record name, e.g. www.example.com",
+          },
+          "page": { "type": "number", "in": "query", "description": "Page number", "default": 1 },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Records per page (max 5000000)",
+            "default": 100,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["result"],
+            "collectionName": "dns_records",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "type" },
+              { "name": "name" },
+              { "name": "content" },
+              { "name": "proxied" },
+              { "name": "ttl" },
+              { "name": "modified_on" },
+            ],
+            "outputFields": [{ "name": "result_info", "kind": "object" }],
+            "omitted": "record metadata and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "create_dns_record",
+      "name": "Create DNS Record",
+      "description": "Create a DNS record in a zone",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.cloudflare.com/client/v4/zones/{zoneId}/dns_records",
+        "params": {
+          "zoneId": { "type": "string", "in": "path", "description": "Zone ID", "required": true },
+        },
+        "body": {
+          "type": {
+            "type": "string",
+            "description": "Record type, e.g. A, AAAA, CNAME, TXT, MX",
+            "required": true,
+          },
+          "name": {
+            "type": "string",
+            "description": "Record name, e.g. www.example.com or @ for the apex",
+            "required": true,
+          },
+          "content": {
+            "type": "string",
+            "description": "Record content, e.g. an IP address for A records",
+            "required": true,
+          },
+          "ttl": {
+            "type": "number",
+            "description": "TTL in seconds; 1 means automatic",
+            "default": 1,
+          },
+          "proxied": {
+            "type": "boolean",
+            "description": "Whether Cloudflare proxies traffic for this record",
+            "default": false,
+          },
+          "priority": {
+            "type": "number",
+            "description": "Priority (required for MX and SRV records)",
+          },
+        },
+        "response": { "transform": "result" },
+      },
+    }, {
+      "id": "update_dns_record",
+      "name": "Update DNS Record",
+      "description": "Update fields of an existing DNS record",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://api.cloudflare.com/client/v4/zones/{zoneId}/dns_records/{recordId}",
+        "params": {
+          "zoneId": { "type": "string", "in": "path", "description": "Zone ID", "required": true },
+          "recordId": {
+            "type": "string",
+            "in": "path",
+            "description": "DNS record ID",
+            "required": true,
+          },
+        },
+        "body": {
+          "type": { "type": "string", "description": "Record type, e.g. A, CNAME" },
+          "name": { "type": "string", "description": "Record name" },
+          "content": { "type": "string", "description": "Record content" },
+          "ttl": { "type": "number", "description": "TTL in seconds; 1 means automatic" },
+          "proxied": {
+            "type": "boolean",
+            "description": "Whether Cloudflare proxies traffic for this record",
+          },
+        },
+        "response": { "transform": "result" },
+      },
+    }, {
+      "id": "list_accounts",
+      "name": "List Accounts",
+      "description":
+        "List Cloudflare accounts the token can access (account IDs are needed for account-scoped APIs)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.cloudflare.com/client/v4/accounts",
+        "params": {
+          "page": { "type": "number", "in": "query", "description": "Page number", "default": 1 },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Accounts per page",
+            "default": 20,
+          },
+        },
+        "response": { "transform": "result" },
+      },
+    }],
+    "prompts": [{
+      "id": "dns_audit",
+      "title": "Audit DNS records",
+      "prompt": "List the DNS records for one of my Cloudflare zones and flag anything unusual.",
+      "category": "devops",
+      "icon": "search",
+    }, {
+      "id": "add_record",
+      "title": "Add a DNS record",
+      "prompt":
+        "Create a DNS record in one of my Cloudflare zones after confirming the type, name, and content with me.",
+      "category": "devops",
+      "icon": "plus",
+    }],
+    "suggestedWith": ["github", "datadog", "aws"],
+  },
+  {
+    "name": "coda",
+    "displayName": "Coda",
+    "icon": "coda.svg",
+    "description": "Read and manage Coda docs, pages, and content",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{ "name": "Coda API Tokens", "enableUrl": "https://coda.io/account" }],
+      "keyName": "CODA_API_TOKEN",
+      "headerPrefix": "Bearer",
+      "docsUrl": "https://coda.io/developers/apis/v1",
+    },
+    "envVars": [{
+      "name": "CODA_API_TOKEN",
+      "description": "Coda API token (generated under Account Settings)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://coda.io/developers/apis/v1#section/Authentication",
+    }],
+    "tools": [{
+      "id": "list_docs",
+      "name": "List Docs",
+      "description": "List Coda docs accessible to the token",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://coda.io/apis/v1/docs",
+        "params": {
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "Search term to filter docs by name",
+          },
+          "isOwner": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Only return docs owned by the token user",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum docs to return",
+            "default": 25,
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination token from a previous response",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["items"],
+            "collectionName": "docs",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "browserLink" },
+              { "name": "createdAt" },
+              { "name": "updatedAt" },
+              { "name": "owner", "kind": "contact" },
+            ],
+            "outputFields": [{ "name": "nextPageToken" }, { "name": "nextPageLink" }],
+            "omitted": "doc icon, workspace, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_doc",
+      "name": "Get Doc",
+      "description": "Get metadata for a Coda doc",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://coda.io/apis/v1/docs/{docId}",
+        "params": {
+          "docId": {
+            "type": "string",
+            "in": "path",
+            "description": "Coda doc ID (the part after /d/ in the doc URL)",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "create_doc",
+      "name": "Create Doc",
+      "description": "Create a new Coda doc, optionally copying an existing doc",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://coda.io/apis/v1/docs",
+        "body": {
+          "title": { "type": "string", "description": "Title of the new doc" },
+          "sourceDoc": {
+            "type": "string",
+            "description": "Optional doc ID to copy as the starting point",
+          },
+          "folderId": {
+            "type": "string",
+            "description": "Optional folder ID to create the doc in",
+          },
+        },
+      },
+    }, {
+      "id": "list_pages",
+      "name": "List Pages",
+      "description": "List pages in a Coda doc",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://coda.io/apis/v1/docs/{docId}/pages",
+        "params": {
+          "docId": {
+            "type": "string",
+            "in": "path",
+            "description": "Coda doc ID",
+            "required": true,
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum pages to return",
+            "default": 25,
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination token from a previous response",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["items"],
+            "collectionName": "pages",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "browserLink" },
+              { "name": "contentType" },
+              { "name": "createdAt" },
+              { "name": "updatedAt" },
+            ],
+            "outputFields": [{ "name": "nextPageToken" }, { "name": "nextPageLink" }],
+            "omitted":
+              "page icon, parent/children references, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_page",
+      "name": "Get Page",
+      "description": "Get metadata for a page in a Coda doc",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://coda.io/apis/v1/docs/{docId}/pages/{pageIdOrName}",
+        "params": {
+          "docId": {
+            "type": "string",
+            "in": "path",
+            "description": "Coda doc ID",
+            "required": true,
+          },
+          "pageIdOrName": {
+            "type": "string",
+            "in": "path",
+            "description": "Page ID (preferred) or page name",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "update_page",
+      "name": "Update Page",
+      "description": "Update a page's name, subtitle, or content in a Coda doc",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://coda.io/apis/v1/docs/{docId}/pages/{pageIdOrName}",
+        "params": {
+          "docId": {
+            "type": "string",
+            "in": "path",
+            "description": "Coda doc ID",
+            "required": true,
+          },
+          "pageIdOrName": {
+            "type": "string",
+            "in": "path",
+            "description": "Page ID (preferred) or page name",
+            "required": true,
+          },
+        },
+        "body": {
+          "name": { "type": "string", "description": "New page name" },
+          "subtitle": { "type": "string", "description": "New page subtitle" },
+          "contentUpdate": {
+            "type": "object",
+            "description":
+              'Content update payload, e.g. { "insertionMode": "append", "canvasContent": { "format": "markdown", "content": "..." } }',
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "find_doc",
+      "title": "Find a doc",
+      "prompt": "Search my Coda docs for a doc about a topic and show its pages.",
+      "category": "productivity",
+      "icon": "search",
+    }, {
+      "id": "append_notes",
+      "title": "Append notes to a page",
+      "prompt": "Append a markdown summary of this conversation to a page in one of my Coda docs.",
+      "category": "productivity",
+      "icon": "plus",
+    }],
+    "suggestedWith": ["notion", "slack", "airtable"],
+  },
+  {
     "name": "confluence",
     "displayName": "Confluence",
     "icon": "confluence.svg",
@@ -2162,6 +4940,405 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["sentry", "slack", "github"],
   },
   {
+    "name": "dialpad",
+    "displayName": "Dialpad",
+    "icon": "dialpad.svg",
+    "description": "Manage contacts, users, and SMS in Dialpad",
+    "auth": {
+      "type": "oauth2",
+      "provider": "dialpad",
+      "authorizationUrl": "https://dialpad.com/oauth2/authorize",
+      "tokenUrl": "https://dialpad.com/oauth2/token",
+      "scopes": ["offline_access"],
+      "requiredApis": [{
+        "name": "Dialpad OAuth App (request via Dialpad developer support)",
+        "enableUrl": "https://developers.dialpad.com/docs/oauth",
+      }],
+      "docsUrl": "https://developers.dialpad.com/docs/oauth",
+    },
+    "envVars": [{
+      "name": "DIALPAD_CLIENT_ID",
+      "description": "Dialpad OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developers.dialpad.com/docs/oauth",
+    }, {
+      "name": "DIALPAD_CLIENT_SECRET",
+      "description": "Dialpad OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developers.dialpad.com/docs/oauth",
+    }],
+    "tools": [{
+      "id": "list_contacts",
+      "name": "List Contacts",
+      "description": "List Dialpad contacts visible to the authenticated user",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://dialpad.com/api/v2/contacts",
+        "params": {
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Cursor token from a previous response to fetch the next page",
+          },
+          "owner_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return contacts owned by this Dialpad user ID",
+          },
+          "include_local": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include company local contacts",
+            "default": false,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["items"],
+            "collectionName": "contacts",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "display_name" },
+              { "name": "first_name" },
+              { "name": "last_name" },
+              { "name": "emails", "kind": "string-array" },
+              { "name": "phones", "kind": "string-array" },
+              { "name": "company_name" },
+            ],
+            "outputFields": [{ "name": "cursor" }],
+            "omitted": "contact details and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_contact",
+      "name": "Get Contact",
+      "description": "Get details of a Dialpad contact",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://dialpad.com/api/v2/contacts/{contactId}",
+        "params": {
+          "contactId": {
+            "type": "string",
+            "in": "path",
+            "description": "Dialpad contact ID",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "create_contact",
+      "name": "Create Contact",
+      "description": "Create a new contact in Dialpad",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://dialpad.com/api/v2/contacts",
+        "body": {
+          "first_name": { "type": "string", "description": "Contact first name", "required": true },
+          "last_name": { "type": "string", "description": "Contact last name", "required": true },
+          "emails": { "type": "array", "description": "Email addresses, primary first" },
+          "phones": { "type": "array", "description": "E.164 phone numbers, primary first" },
+          "company_name": { "type": "string", "description": "Company name" },
+          "job_title": { "type": "string", "description": "Job title" },
+        },
+      },
+    }, {
+      "id": "update_contact",
+      "name": "Update Contact",
+      "description": "Update an existing Dialpad contact",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://dialpad.com/api/v2/contacts/{contactId}",
+        "params": {
+          "contactId": {
+            "type": "string",
+            "in": "path",
+            "description": "Dialpad contact ID",
+            "required": true,
+          },
+        },
+        "body": {
+          "first_name": { "type": "string", "description": "Contact first name" },
+          "last_name": { "type": "string", "description": "Contact last name" },
+          "emails": { "type": "array", "description": "Email addresses, primary first" },
+          "phones": { "type": "array", "description": "E.164 phone numbers, primary first" },
+          "company_name": { "type": "string", "description": "Company name" },
+          "job_title": { "type": "string", "description": "Job title" },
+        },
+      },
+    }, {
+      "id": "list_users",
+      "name": "List Users",
+      "description": "List Dialpad users in the company",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://dialpad.com/api/v2/users",
+        "params": {
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Cursor token from a previous response to fetch the next page",
+          },
+          "email": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter users by email address",
+          },
+          "state": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by user state, e.g. active, suspended, deleted",
+          },
+        },
+      },
+    }, {
+      "id": "send_sms",
+      "name": "Send SMS",
+      "description": "Send an SMS message on behalf of a Dialpad user",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://dialpad.com/api/v2/sms",
+        "body": {
+          "user_id": {
+            "type": "string",
+            "description": "Dialpad user ID the SMS is sent on behalf of",
+            "required": true,
+          },
+          "to_numbers": {
+            "type": "array",
+            "description": "Recipient phone numbers in E.164 format (up to 10)",
+            "required": true,
+          },
+          "text": { "type": "string", "description": "Message text", "required": true },
+          "infer_country_code": {
+            "type": "boolean",
+            "description": "Infer country code from the sending user's settings",
+            "default": false,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "find_contact",
+      "title": "Find a contact",
+      "prompt": "Search my Dialpad contacts for a person and show their phone numbers and emails.",
+      "category": "communication",
+      "icon": "search",
+    }, {
+      "id": "send_text",
+      "title": "Send an SMS",
+      "prompt": "Send an SMS from my Dialpad number to a contact with a short message.",
+      "category": "communication",
+      "icon": "send",
+    }],
+    "suggestedWith": ["hubspot", "slack", "twilio"],
+  },
+  {
+    "name": "digitalocean",
+    "displayName": "DigitalOcean",
+    "icon": "digitalocean.svg",
+    "description": "Manage Droplets and managed databases on DigitalOcean",
+    "auth": {
+      "type": "oauth2",
+      "provider": "digitalocean",
+      "authorizationUrl": "https://cloud.digitalocean.com/v1/oauth/authorize",
+      "tokenUrl": "https://cloud.digitalocean.com/v1/oauth/token",
+      "scopes": ["read", "write"],
+      "requiredApis": [{
+        "name": "DigitalOcean OAuth Applications",
+        "enableUrl": "https://cloud.digitalocean.com/account/api/applications",
+      }],
+      "docsUrl": "https://docs.digitalocean.com/reference/api/oauth/",
+    },
+    "envVars": [{
+      "name": "DIGITALOCEAN_CLIENT_ID",
+      "description": "DigitalOcean OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://docs.digitalocean.com/reference/api/oauth/",
+    }, {
+      "name": "DIGITALOCEAN_CLIENT_SECRET",
+      "description": "DigitalOcean OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.digitalocean.com/reference/api/oauth/",
+    }],
+    "tools": [{
+      "id": "list_droplets",
+      "name": "List Droplets",
+      "description": "List Droplets in the account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.digitalocean.com/v2/droplets",
+        "params": {
+          "tag_name": {
+            "type": "string",
+            "in": "query",
+            "description": "Only list Droplets with this tag",
+          },
+          "page": { "type": "number", "in": "query", "description": "Page number", "default": 1 },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Droplets per page (max 200)",
+            "default": 25,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["droplets"],
+            "collectionName": "droplets",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "status" },
+              { "name": "memory" },
+              { "name": "vcpus" },
+              { "name": "created_at" },
+              { "name": "tags", "kind": "string-array" },
+            ],
+            "outputFields": [{ "name": "links", "kind": "object" }, {
+              "name": "meta",
+              "kind": "object",
+            }],
+            "omitted": "network interfaces, image details, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_droplet",
+      "name": "Get Droplet",
+      "description": "Get a Droplet by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.digitalocean.com/v2/droplets/{dropletId}",
+        "params": {
+          "dropletId": {
+            "type": "string",
+            "in": "path",
+            "description": "Droplet ID",
+            "required": true,
+          },
+        },
+        "response": { "transform": "droplet" },
+      },
+    }, {
+      "id": "create_droplet",
+      "name": "Create Droplet",
+      "description": "Create a new Droplet (provisions billable infrastructure)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.digitalocean.com/v2/droplets",
+        "body": {
+          "name": { "type": "string", "description": "Droplet hostname", "required": true },
+          "region": {
+            "type": "string",
+            "description": "Region slug, e.g. nyc3, fra1",
+            "required": true,
+          },
+          "size": {
+            "type": "string",
+            "description": "Size slug, e.g. s-1vcpu-1gb",
+            "required": true,
+          },
+          "image": {
+            "type": "string",
+            "description": "Image slug or ID, e.g. ubuntu-24-04-x64",
+            "required": true,
+          },
+          "ssh_keys": { "type": "array", "description": "SSH key IDs or fingerprints to embed" },
+          "tags": { "type": "array", "description": "Tags to apply to the Droplet" },
+          "backups": {
+            "type": "boolean",
+            "description": "Enable automated backups",
+            "default": false,
+          },
+        },
+        "response": { "transform": "droplet" },
+      },
+    }, {
+      "id": "delete_droplet",
+      "name": "Delete Droplet",
+      "description": "Permanently destroy a Droplet by ID",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "DELETE",
+        "url": "https://api.digitalocean.com/v2/droplets/{dropletId}",
+        "params": {
+          "dropletId": {
+            "type": "string",
+            "in": "path",
+            "description": "Droplet ID",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "list_databases",
+      "name": "List Database Clusters",
+      "description": "List managed database clusters in the account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.digitalocean.com/v2/databases",
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["databases"],
+            "collectionName": "databases",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "engine" },
+              { "name": "version" },
+              { "name": "status" },
+              { "name": "created_at" },
+              { "name": "tags", "kind": "string-array" },
+            ],
+            "outputFields": [],
+            "omitted":
+              "connection credentials, maintenance windows, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_account",
+      "name": "Get Account",
+      "description": "Get account information and limits for the authenticated user",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.digitalocean.com/v2/account",
+        "response": { "transform": "account" },
+      },
+    }],
+    "prompts": [{
+      "id": "infra_overview",
+      "title": "Infrastructure overview",
+      "prompt": "List my DigitalOcean Droplets and database clusters with their status and region.",
+      "category": "devops",
+      "icon": "list",
+    }, {
+      "id": "spin_up_droplet",
+      "title": "Spin up a Droplet",
+      "prompt":
+        "Create a small Ubuntu Droplet in the region closest to me, after confirming the size and cost with me.",
+      "category": "devops",
+      "icon": "plus",
+    }],
+    "suggestedWith": ["github", "datadog", "slack"],
+  },
+  {
     "name": "docs-google",
     "displayName": "Google Docs",
     "icon": "docs-google.svg",
@@ -2600,6 +5777,319 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["gmail", "calendar", "sheets"],
   },
   {
+    "name": "exa",
+    "displayName": "Exa",
+    "icon": "exa.svg",
+    "description":
+      "Neural web search, page contents, similar-link discovery, and grounded answers via the Exa API",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Exa API Keys",
+        "enableUrl": "https://dashboard.exa.ai/api-keys",
+      }],
+      "keyName": "EXA_API_KEY",
+      "headerName": "x-api-key",
+      "docsUrl": "https://docs.exa.ai/reference/getting-started",
+    },
+    "envVars": [{
+      "name": "EXA_API_KEY",
+      "description": "Exa API key from the Exa dashboard",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.exa.ai/reference/getting-started",
+    }],
+    "tools": [{
+      "id": "search",
+      "name": "Search",
+      "description": "Search the web with Exa's neural and keyword search",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.exa.ai/search",
+        "body": {
+          "query": { "type": "string", "description": "Search query text", "required": true },
+          "type": {
+            "type": "string",
+            "description": "Search type: auto, fast, instant, deep, or keyword",
+            "default": "auto",
+          },
+          "numResults": {
+            "type": "number",
+            "description": "Number of results to return (max 100)",
+            "default": 10,
+          },
+          "category": {
+            "type": "string",
+            "description": "Focus category, e.g. company, research paper, news, github, pdf",
+          },
+          "contents": {
+            "type": "object",
+            "description": 'Content options, e.g. {"text":true} to include page text in results',
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["results"],
+            "collectionName": "results",
+            "itemFields": [{ "name": "id" }, { "name": "title" }, { "name": "url" }, {
+              "name": "publishedDate",
+            }, { "name": "author" }],
+            "omitted": "page text, highlights, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_contents",
+      "name": "Get Contents",
+      "description": "Get parsed page contents, summaries, and metadata for a list of URLs",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.exa.ai/contents",
+        "body": {
+          "urls": {
+            "type": "array",
+            "description": 'URLs to fetch contents for, e.g. ["https://example.com"]',
+            "required": true,
+          },
+          "text": { "type": "boolean", "description": "Include full page text", "default": true },
+          "summary": {
+            "type": "object",
+            "description": 'Summary options, e.g. {"query":"What is this page about?"}',
+          },
+          "highlights": {
+            "type": "object",
+            "description": 'Highlight options for key excerpts, e.g. {"numSentences":3}',
+          },
+        },
+      },
+    }, {
+      "id": "find_similar",
+      "name": "Find Similar Links",
+      "description": "Find pages similar in meaning to a given URL",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.exa.ai/findSimilar",
+        "body": {
+          "url": {
+            "type": "string",
+            "description": "URL to find similar pages for",
+            "required": true,
+          },
+          "numResults": {
+            "type": "number",
+            "description": "Number of results to return (max 100)",
+            "default": 10,
+          },
+          "contents": {
+            "type": "object",
+            "description": 'Content options, e.g. {"text":true} to include page text in results',
+          },
+        },
+      },
+    }, {
+      "id": "answer",
+      "name": "Answer",
+      "description":
+        "Get an LLM-generated answer to a question grounded in Exa search results with citations",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.exa.ai/answer",
+        "body": {
+          "query": { "type": "string", "description": "Question to answer", "required": true },
+          "text": {
+            "type": "boolean",
+            "description": "Include full text of citation sources",
+            "default": false,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "neural_search",
+      "title": "Search the web",
+      "prompt": "Use Exa to search the web for a topic I provide and summarize the top results.",
+      "category": "search",
+      "icon": "search",
+    }, {
+      "id": "similar_pages",
+      "title": "Find similar pages",
+      "prompt": "Find pages similar to a URL I provide using Exa and explain how they relate.",
+      "category": "search",
+      "icon": "link",
+    }],
+    "suggestedWith": ["openai", "anthropic", "notion"],
+  },
+  {
+    "name": "fathom",
+    "displayName": "Fathom",
+    "icon": "fathom.svg",
+    "description": "Read meetings, transcripts, summaries, and teams from the Fathom AI notetaker",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Fathom API Settings",
+        "enableUrl": "https://fathom.video/customer/settings/api",
+      }],
+      "keyName": "FATHOM_API_KEY",
+      "headerName": "X-Api-Key",
+      "docsUrl": "https://developers.fathom.ai",
+    },
+    "envVars": [{
+      "name": "FATHOM_API_KEY",
+      "description": "Fathom external API key (generated in Fathom settings)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developers.fathom.ai",
+    }],
+    "tools": [{
+      "id": "list_meetings",
+      "name": "List Meetings",
+      "description": "List recorded meetings, optionally including summaries and action items",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.fathom.ai/external/v1/meetings",
+        "params": {
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from next_cursor in a previous response",
+          },
+          "created_after": {
+            "type": "string",
+            "in": "query",
+            "description": "Only meetings created after this ISO 8601 timestamp",
+          },
+          "created_before": {
+            "type": "string",
+            "in": "query",
+            "description": "Only meetings created before this ISO 8601 timestamp",
+          },
+          "meeting_type": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by meeting type name",
+          },
+          "include_summary": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include the AI summary for each meeting",
+            "default": false,
+          },
+          "include_action_items": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include action items for each meeting",
+            "default": false,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["items", "meetings"],
+            "collectionName": "meetings",
+            "itemFields": [
+              { "name": "title" },
+              { "name": "meeting_title" },
+              { "name": "recording_id" },
+              { "name": "url" },
+              { "name": "created_at" },
+              { "name": "recording_start_time" },
+              { "name": "recording_end_time" },
+              { "name": "calendar_invitees", "kind": "contact-array" },
+            ],
+            "outputFields": [{ "name": "next_cursor" }, { "name": "limit" }],
+            "omitted": "transcripts, summaries, action items, and CRM matches",
+          },
+        },
+      },
+    }, {
+      "id": "get_transcript",
+      "name": "Get Transcript",
+      "description": "Get the transcript of a recording",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.fathom.ai/external/v1/recordings/{recordingId}/transcript",
+        "params": {
+          "recordingId": {
+            "type": "number",
+            "in": "path",
+            "description": "Recording ID (from List Meetings)",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "get_summary",
+      "name": "Get Summary",
+      "description": "Get the AI summary of a recording",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.fathom.ai/external/v1/recordings/{recordingId}/summary",
+        "params": {
+          "recordingId": {
+            "type": "number",
+            "in": "path",
+            "description": "Recording ID (from List Meetings)",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "list_teams",
+      "name": "List Teams",
+      "description": "List teams in the Fathom workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.fathom.ai/external/v1/teams",
+        "params": {
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from next_cursor in a previous response",
+          },
+        },
+      },
+    }, {
+      "id": "list_team_members",
+      "name": "List Team Members",
+      "description": "List team members in the Fathom workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.fathom.ai/external/v1/team_members",
+        "params": {
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from next_cursor in a previous response",
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "recent_meetings",
+      "title": "Recent meetings",
+      "prompt": "List my Fathom meetings from the last week with their summaries and action items.",
+      "category": "productivity",
+      "icon": "list",
+    }, {
+      "id": "meeting_recap",
+      "title": "Meeting recap",
+      "prompt":
+        "Get the transcript and summary of my latest Fathom meeting and draft a follow-up email.",
+      "category": "productivity",
+      "icon": "doc",
+    }],
+    "suggestedWith": ["calendar", "slack", "notion"],
+  },
+  {
     "name": "figma",
     "displayName": "Figma",
     "icon": "figma.svg",
@@ -2752,6 +6242,738 @@ export const connectors: IntegrationConfig[] = [
       "icon": "plus",
     }],
     "suggestedWith": ["linear", "slack", "notion"],
+  },
+  {
+    "name": "firecrawl",
+    "displayName": "Firecrawl",
+    "icon": "firecrawl.svg",
+    "description":
+      "Scrape, crawl, map, and search websites into LLM-ready markdown via the Firecrawl API",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Firecrawl API Keys",
+        "enableUrl": "https://www.firecrawl.dev/app/api-keys",
+      }],
+      "keyName": "FIRECRAWL_API_KEY",
+      "headerPrefix": "Bearer",
+      "docsUrl": "https://docs.firecrawl.dev/api-reference/introduction",
+    },
+    "envVars": [{
+      "name": "FIRECRAWL_API_KEY",
+      "description": "Firecrawl API key (starts with fc-)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.firecrawl.dev/introduction",
+    }],
+    "tools": [{
+      "id": "scrape",
+      "name": "Scrape Page",
+      "description": "Scrape a single URL into markdown or other formats",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.firecrawl.dev/v2/scrape",
+        "body": {
+          "url": { "type": "string", "description": "URL to scrape", "required": true },
+          "formats": {
+            "type": "array",
+            "description": "Output formats: markdown, html, links, screenshot, json",
+            "default": ["markdown"],
+          },
+          "onlyMainContent": {
+            "type": "boolean",
+            "description": "Return only the main content, excluding nav/footer boilerplate",
+            "default": true,
+          },
+        },
+        "response": { "transform": "data" },
+      },
+    }, {
+      "id": "search",
+      "name": "Search Web",
+      "description": "Search the web and optionally scrape the results' content",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.firecrawl.dev/v2/search",
+        "body": {
+          "query": { "type": "string", "description": "Search query text", "required": true },
+          "limit": {
+            "type": "number",
+            "description": "Maximum results to return (max 100)",
+            "default": 10,
+          },
+          "sources": {
+            "type": "array",
+            "description": 'Result sources, e.g. [{"type":"web"}]; also supports news and images',
+            "default": [{ "type": "web" }],
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data.web", "data"],
+            "collectionName": "results",
+            "itemFields": [{ "name": "title" }, { "name": "url" }, {
+              "name": "description",
+              "maxLength": 300,
+            }],
+            "outputFields": [{ "name": "creditsUsed" }],
+            "omitted": "scraped page content and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "map_site",
+      "name": "Map Site",
+      "description": "Quickly list the URLs discovered on a website",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.firecrawl.dev/v2/map",
+        "body": {
+          "url": {
+            "type": "string",
+            "description": "Root URL of the site to map",
+            "required": true,
+          },
+          "search": { "type": "string", "description": "Filter discovered URLs by a search term" },
+          "limit": { "type": "number", "description": "Maximum URLs to return" },
+        },
+      },
+    }, {
+      "id": "start_crawl",
+      "name": "Start Crawl",
+      "description": "Start an asynchronous crawl job over a website (returns a job ID)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.firecrawl.dev/v2/crawl",
+        "body": {
+          "url": { "type": "string", "description": "Root URL to crawl", "required": true },
+          "limit": {
+            "type": "number",
+            "description": "Maximum number of pages to crawl",
+            "default": 10,
+          },
+          "scrapeOptions": {
+            "type": "object",
+            "description": 'Scrape options applied to each page, e.g. {"formats":["markdown"]}',
+          },
+        },
+      },
+    }, {
+      "id": "get_crawl_status",
+      "name": "Get Crawl Status",
+      "description": "Get the status and results of a crawl job",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.firecrawl.dev/v2/crawl/{id}",
+        "params": {
+          "id": {
+            "type": "string",
+            "in": "path",
+            "description": "Crawl job ID returned by Start Crawl",
+            "required": true,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "scrape_page",
+      "title": "Scrape a page",
+      "prompt": "Scrape a URL I provide with Firecrawl and summarize its content.",
+      "category": "search",
+      "icon": "document",
+    }, {
+      "id": "crawl_site",
+      "title": "Crawl a site",
+      "prompt":
+        "Start a Firecrawl crawl of a website I provide, then check its status and summarize what was found.",
+      "category": "search",
+      "icon": "globe",
+    }],
+    "suggestedWith": ["openai", "notion", "airtable"],
+  },
+  {
+    "name": "fireflies",
+    "displayName": "Fireflies",
+    "icon": "fireflies.svg",
+    "description": "Read meeting transcripts, summaries, and teammates from Fireflies.ai",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Fireflies Developer Settings",
+        "enableUrl": "https://app.fireflies.ai/integrations/custom/fireflies",
+      }],
+      "keyName": "FIREFLIES_API_KEY",
+      "headerPrefix": "Bearer",
+      "docsUrl": "https://docs.fireflies.ai/getting-started/quickstart",
+    },
+    "envVars": [{
+      "name": "FIREFLIES_API_KEY",
+      "description": "Fireflies API key from the Fireflies integrations page",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.fireflies.ai/getting-started/quickstart",
+    }],
+    "tools": [{
+      "id": "list_transcripts",
+      "name": "List Transcripts",
+      "description":
+        "List meeting transcripts, optionally filtered by date, participants, or keyword",
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.fireflies.ai/graphql",
+        "query":
+          "query($limit: Int, $skip: Int, $mine: Boolean, $fromDate: DateTime, $toDate: DateTime, $participants: [String], $keyword: String) { transcripts(limit: $limit, skip: $skip, mine: $mine, fromDate: $fromDate, toDate: $toDate, participants: $participants, keyword: $keyword) { id title date duration organizer_email participants transcript_url } }",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "body",
+            "description": "Transcripts to return (max 50)",
+            "default": 20,
+          },
+          "skip": {
+            "type": "number",
+            "in": "body",
+            "description": "Number of transcripts to skip for pagination",
+          },
+          "mine": {
+            "type": "boolean",
+            "in": "body",
+            "description": "Only meetings organized by the API key owner",
+          },
+          "fromDate": {
+            "type": "string",
+            "in": "body",
+            "description": "Only meetings after this ISO 8601 timestamp",
+          },
+          "toDate": {
+            "type": "string",
+            "in": "body",
+            "description": "Only meetings before this ISO 8601 timestamp",
+          },
+          "participants": {
+            "type": "string[]",
+            "in": "body",
+            "description": "Filter by participant email addresses",
+          },
+          "keyword": {
+            "type": "string",
+            "in": "body",
+            "description": "Search meeting titles and spoken content",
+          },
+        },
+        "response": {
+          "transform": "transcripts",
+          "historicalSummary": {
+            "collectionKeys": ["transcripts", "data"],
+            "collectionName": "transcripts",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "title" },
+              { "name": "date" },
+              { "name": "duration" },
+              { "name": "organizer_email", "kind": "contact" },
+              { "name": "participants", "kind": "contact-array" },
+              { "name": "transcript_url" },
+            ],
+            "outputFields": [{ "name": "skip" }],
+            "omitted": "sentences, summaries, and audio/video URLs",
+          },
+        },
+      },
+    }, {
+      "id": "get_transcript",
+      "name": "Get Transcript",
+      "description": "Get a transcript with its sentences and AI summary",
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.fireflies.ai/graphql",
+        "query":
+          "query($id: String!) { transcript(id: $id) { id title date duration organizer_email participants transcript_url summary { overview action_items keywords } sentences { index speaker_name text start_time end_time } } }",
+        "params": {
+          "id": {
+            "type": "string",
+            "in": "body",
+            "description": "Transcript ID (from List Transcripts)",
+            "required": true,
+          },
+        },
+        "response": { "transform": "transcript" },
+      },
+    }, {
+      "id": "search_transcripts",
+      "name": "Search Transcripts",
+      "description": "Keyword-search transcripts and return matches with summaries",
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.fireflies.ai/graphql",
+        "query":
+          "query($keyword: String, $limit: Int) { transcripts(keyword: $keyword, limit: $limit) { id title date duration organizer_email summary { overview } } }",
+        "params": {
+          "keyword": {
+            "type": "string",
+            "in": "body",
+            "description": "Keyword to search in titles and spoken content",
+            "required": true,
+          },
+          "limit": {
+            "type": "number",
+            "in": "body",
+            "description": "Transcripts to return (max 50)",
+            "default": 10,
+          },
+        },
+        "response": { "transform": "transcripts" },
+      },
+    }, {
+      "id": "list_users",
+      "name": "List Users",
+      "description": "List teammates in the Fireflies workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.fireflies.ai/graphql",
+        "query": "query { users { user_id name email num_transcripts is_admin } }",
+        "response": { "transform": "users" },
+      },
+    }, {
+      "id": "get_user",
+      "name": "Get User",
+      "description": "Get a workspace user by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.fireflies.ai/graphql",
+        "query":
+          "query($id: String!) { user(id: $id) { user_id name email num_transcripts minutes_consumed is_admin } }",
+        "params": {
+          "id": {
+            "type": "string",
+            "in": "body",
+            "description": "Fireflies user ID (from List Users)",
+            "required": true,
+          },
+        },
+        "response": { "transform": "user" },
+      },
+    }],
+    "prompts": [{
+      "id": "recent_meetings",
+      "title": "Recent meetings",
+      "prompt":
+        "List my Fireflies meeting transcripts from the last week with titles, dates, and participants.",
+      "category": "productivity",
+      "icon": "list",
+    }, {
+      "id": "meeting_summary",
+      "title": "Summarize a meeting",
+      "prompt":
+        "Get the Fireflies transcript for my latest meeting and summarize the key points and action items.",
+      "category": "productivity",
+      "icon": "doc",
+    }],
+    "suggestedWith": ["calendar", "slack", "notion"],
+  },
+  {
+    "name": "folk",
+    "displayName": "folk",
+    "icon": "folk.svg",
+    "description": "Manage people, companies, and groups in folk CRM",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "folk API Keys",
+        "enableUrl": "https://app.folk.app/apps/contacts/network/settings/api-keys",
+      }],
+      "keyName": "FOLK_API_KEY",
+      "headerPrefix": "Bearer",
+      "docsUrl": "https://developer.folk.app/api-reference/authentication",
+    },
+    "envVars": [{
+      "name": "FOLK_API_KEY",
+      "description":
+        "folk API key (sent as Authorization: Bearer), generated in workspace settings → API",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.folk.app/api-reference/authentication",
+    }],
+    "tools": [{
+      "id": "list_people",
+      "name": "List People",
+      "description": "List people in the folk workspace with optional filters",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.folk.app/v1/people",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of people to return (1-100)",
+            "default": 20,
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Cursor from a previous response for pagination",
+          },
+        },
+        "response": {
+          "transform": "data",
+          "historicalSummary": {
+            "collectionKeys": ["items"],
+            "collectionName": "people",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "fullName" },
+              { "name": "firstName" },
+              { "name": "lastName" },
+              { "name": "jobTitle" },
+              { "name": "emails", "kind": "string-array" },
+            ],
+            "outputFields": [{ "name": "pagination", "kind": "object" }],
+            "omitted": "custom fields, group memberships, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_person",
+      "name": "Get Person",
+      "description": "Get details of a person in folk",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.folk.app/v1/people/{personId}",
+        "params": {
+          "personId": {
+            "type": "string",
+            "in": "path",
+            "description": "folk person ID",
+            "required": true,
+          },
+        },
+        "response": { "transform": "data" },
+      },
+    }, {
+      "id": "create_person",
+      "name": "Create Person",
+      "description": "Create a new person in folk",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.folk.app/v1/people",
+        "body": {
+          "firstName": { "type": "string", "description": "First name" },
+          "lastName": { "type": "string", "description": "Last name" },
+          "emails": { "type": "array", "description": 'Email addresses, e.g. ["jane@acme.com"]' },
+          "jobTitle": { "type": "string", "description": "Job title" },
+          "description": { "type": "string", "description": "Free-text description" },
+          "groups": {
+            "type": "array",
+            "description": 'Group IDs to add the person to, e.g. [{ "id": "grp_..." }]',
+          },
+        },
+        "response": { "transform": "data" },
+      },
+    }, {
+      "id": "update_person",
+      "name": "Update Person",
+      "description": "Update fields on an existing person in folk",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://api.folk.app/v1/people/{personId}",
+        "params": {
+          "personId": {
+            "type": "string",
+            "in": "path",
+            "description": "folk person ID",
+            "required": true,
+          },
+        },
+        "body": {
+          "firstName": { "type": "string", "description": "First name" },
+          "lastName": { "type": "string", "description": "Last name" },
+          "emails": { "type": "array", "description": "Email addresses" },
+          "jobTitle": { "type": "string", "description": "Job title" },
+          "description": { "type": "string", "description": "Free-text description" },
+        },
+        "response": { "transform": "data" },
+      },
+    }, {
+      "id": "list_companies",
+      "name": "List Companies",
+      "description": "List companies in the folk workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.folk.app/v1/companies",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of companies to return (1-100)",
+            "default": 20,
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Cursor from a previous response for pagination",
+          },
+        },
+        "response": { "transform": "data" },
+      },
+    }, {
+      "id": "create_company",
+      "name": "Create Company",
+      "description": "Create a new company in folk",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.folk.app/v1/companies",
+        "body": {
+          "name": { "type": "string", "description": "Company name", "required": true },
+          "description": { "type": "string", "description": "Free-text description" },
+          "urls": { "type": "array", "description": 'Company URLs, e.g. ["https://acme.com"]' },
+          "groups": {
+            "type": "array",
+            "description": 'Group IDs to add the company to, e.g. [{ "id": "grp_..." }]',
+          },
+        },
+        "response": { "transform": "data" },
+      },
+    }, {
+      "id": "list_groups",
+      "name": "List Groups",
+      "description": "List groups (pipelines/segments) in the folk workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.folk.app/v1/groups",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of groups to return (1-100)",
+            "default": 20,
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Cursor from a previous response for pagination",
+          },
+        },
+        "response": { "transform": "data" },
+      },
+    }],
+    "prompts": [{
+      "id": "find_person",
+      "title": "Find a person",
+      "prompt": "List people in my folk workspace and find the one matching a given name or email.",
+      "category": "crm",
+      "icon": "search",
+    }, {
+      "id": "add_person",
+      "title": "Add a person",
+      "prompt": "Create a new person in folk with their name, email, and job title.",
+      "category": "crm",
+      "icon": "plus",
+    }],
+    "suggestedWith": ["gmail", "notion", "slack"],
+  },
+  {
+    "name": "gemini",
+    "displayName": "Google Gemini",
+    "icon": "gemini.svg",
+    "description":
+      "Generate text, embeddings, and token counts with Google Gemini models via the Gemini API",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Google AI Studio API Keys",
+        "enableUrl": "https://aistudio.google.com/app/apikey",
+      }],
+      "keyName": "GEMINI_API_KEY",
+      "headerName": "x-goog-api-key",
+      "docsUrl": "https://ai.google.dev/gemini-api/docs/api-key",
+    },
+    "envVars": [{
+      "name": "GEMINI_API_KEY",
+      "description": "Gemini API key from Google AI Studio (starts with AIza)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://ai.google.dev/gemini-api/docs/api-key",
+    }],
+    "tools": [{
+      "id": "list_models",
+      "name": "List Models",
+      "description": "List the Gemini models available to the API key",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models",
+        "params": {
+          "pageSize": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum models to return per page (max 1000)",
+            "default": 50,
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Page token from a previous list call",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["models"],
+            "collectionName": "models",
+            "itemFields": [{ "name": "name" }, { "name": "displayName" }, {
+              "name": "inputTokenLimit",
+            }, { "name": "outputTokenLimit" }],
+            "outputFields": [{ "name": "nextPageToken" }],
+            "omitted": "model capability details and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_model",
+      "name": "Get Model",
+      "description": "Get details about a specific Gemini model",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/{model}",
+        "params": {
+          "model": {
+            "type": "string",
+            "in": "path",
+            "description": "Model ID without the models/ prefix, e.g. gemini-2.0-flash",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "generate_content",
+      "name": "Generate Content",
+      "description": "Generate a model response from text or multimodal content",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+        "params": {
+          "model": {
+            "type": "string",
+            "in": "path",
+            "description": "Model ID without the models/ prefix, e.g. gemini-2.0-flash",
+            "required": true,
+          },
+        },
+        "body": {
+          "contents": {
+            "type": "array",
+            "description":
+              'Conversation contents, e.g. [{"role":"user","parts":[{"text":"Hello"}]}]',
+            "required": true,
+          },
+          "systemInstruction": {
+            "type": "object",
+            "description":
+              'System instructions, e.g. {"parts":[{"text":"You are a helpful assistant"}]}',
+          },
+          "generationConfig": {
+            "type": "object",
+            "description": 'Generation settings, e.g. {"temperature":0.7,"maxOutputTokens":1024}',
+          },
+        },
+      },
+    }, {
+      "id": "embed_content",
+      "name": "Embed Content",
+      "description": "Create an embedding vector for input text",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/{model}:embedContent",
+        "params": {
+          "model": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Embedding model ID without the models/ prefix, e.g. gemini-embedding-001",
+            "required": true,
+          },
+        },
+        "body": {
+          "content": {
+            "type": "object",
+            "description": 'Content to embed, e.g. {"parts":[{"text":"Text to embed"}]}',
+            "required": true,
+          },
+          "taskType": {
+            "type": "string",
+            "description":
+              "Embedding task type, e.g. RETRIEVAL_QUERY, RETRIEVAL_DOCUMENT, CLUSTERING",
+          },
+          "outputDimensionality": {
+            "type": "number",
+            "description": "Reduced dimension for the output embedding (supported models only)",
+          },
+        },
+      },
+    }, {
+      "id": "count_tokens",
+      "name": "Count Tokens",
+      "description": "Count the tokens a prompt would use for a given model",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/{model}:countTokens",
+        "params": {
+          "model": {
+            "type": "string",
+            "in": "path",
+            "description": "Model ID without the models/ prefix, e.g. gemini-2.0-flash",
+            "required": true,
+          },
+        },
+        "body": {
+          "contents": {
+            "type": "array",
+            "description":
+              'Contents to count tokens for, e.g. [{"role":"user","parts":[{"text":"Hello"}]}]',
+            "required": true,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "available_models",
+      "title": "List Gemini models",
+      "prompt": "List the Gemini models available to my API key and summarize their token limits.",
+      "category": "ai",
+      "icon": "list",
+    }, {
+      "id": "generate_text",
+      "title": "Generate a response",
+      "prompt": "Use Gemini to generate a response to a prompt I provide.",
+      "category": "ai",
+      "icon": "sparkles",
+    }],
+    "suggestedWith": ["openai", "anthropic", "slack"],
   },
   {
     "name": "github",
@@ -4559,6 +8781,197 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["calendar", "slack"],
   },
   {
+    "name": "gong",
+    "displayName": "Gong",
+    "icon": "gong.svg",
+    "description": "Read call recordings metadata, call content, and users from Gong",
+    "auth": {
+      "type": "basic",
+      "requiredApis": [{
+        "name": "Gong API Settings",
+        "enableUrl": "https://app.gong.io/company/api",
+      }],
+      "usernameKey": "GONG_ACCESS_KEY",
+      "passwordKey": "GONG_ACCESS_KEY_SECRET",
+      "docsUrl": "https://help.gong.io/docs/receive-access-to-the-api",
+    },
+    "envVars": [{
+      "name": "GONG_ACCESS_KEY",
+      "description": "Gong API Access Key",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://help.gong.io/docs/receive-access-to-the-api",
+    }, {
+      "name": "GONG_ACCESS_KEY_SECRET",
+      "description": "Gong API Access Key Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://help.gong.io/docs/receive-access-to-the-api",
+    }],
+    "tools": [{
+      "id": "list_calls",
+      "name": "List Calls",
+      "description": "List calls in a date window (max 90 days per request)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.gong.io/v2/calls",
+        "params": {
+          "fromDateTime": {
+            "type": "string",
+            "in": "query",
+            "description": "Window start, ISO 8601 with timezone, e.g. 2026-06-01T00:00:00Z",
+            "required": true,
+          },
+          "toDateTime": {
+            "type": "string",
+            "in": "query",
+            "description": "Window end, ISO 8601 with timezone (within 90 days of fromDateTime)",
+            "required": true,
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from records.cursor in a previous response",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["calls"],
+            "collectionName": "calls",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "title" },
+              { "name": "started" },
+              { "name": "duration" },
+              { "name": "direction" },
+              { "name": "primaryUserId" },
+              { "name": "url" },
+            ],
+            "outputFields": [{ "name": "records", "kind": "object" }],
+            "omitted": "media URLs, parties, and call system metadata",
+          },
+        },
+      },
+    }, {
+      "id": "get_call",
+      "name": "Get Call",
+      "description": "Get metadata for a single call",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.gong.io/v2/calls/{callId}",
+        "params": {
+          "callId": {
+            "type": "string",
+            "in": "path",
+            "description": "Gong call ID",
+            "required": true,
+          },
+        },
+        "response": { "transform": "call" },
+      },
+    }, {
+      "id": "get_calls_extensive",
+      "name": "Get Calls Extensive",
+      "description":
+        "Retrieve detailed call data with content selectors (read-only retrieval via POST)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.gong.io/v2/calls/extensive",
+        "body": {
+          "filter": {
+            "type": "object",
+            "description":
+              'Filter object, e.g. {"fromDateTime":"2026-06-01T00:00:00Z","toDateTime":"2026-06-08T00:00:00Z"} or {"callIds":["..."]}',
+            "required": true,
+          },
+          "contentSelector": {
+            "type": "object",
+            "description":
+              'Which data to include, e.g. {"exposedFields":{"parties":true,"content":{"brief":true,"keyPoints":true}}}',
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Pagination cursor from records.cursor in a previous response",
+          },
+        },
+      },
+    }, {
+      "id": "get_call_transcripts",
+      "name": "Get Call Transcripts",
+      "description": "Retrieve transcripts for specific calls (read-only retrieval via POST)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.gong.io/v2/calls/transcript",
+        "body": {
+          "filter": {
+            "type": "object",
+            "description":
+              'Filter object, e.g. {"callIds":["1234567890"]} or a fromDateTime/toDateTime window',
+            "required": true,
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Pagination cursor from records.cursor in a previous response",
+          },
+        },
+        "response": { "transform": "callTranscripts" },
+      },
+    }, {
+      "id": "list_users",
+      "name": "List Users",
+      "description": "List Gong users in the company",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.gong.io/v2/users",
+        "params": {
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from records.cursor in a previous response",
+          },
+        },
+      },
+    }, {
+      "id": "get_user",
+      "name": "Get User",
+      "description": "Get a Gong user by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.gong.io/v2/users/{userId}",
+        "params": {
+          "userId": {
+            "type": "string",
+            "in": "path",
+            "description": "Gong user ID",
+            "required": true,
+          },
+        },
+        "response": { "transform": "user" },
+      },
+    }],
+    "prompts": [{
+      "id": "recent_calls",
+      "title": "Recent calls",
+      "prompt": "List my Gong calls from the last 7 days with titles, durations, and owners.",
+      "category": "sales",
+      "icon": "phone",
+    }, {
+      "id": "call_summary",
+      "title": "Summarize a call",
+      "prompt":
+        "Get the transcript of my most recent Gong call and summarize the key points and next steps.",
+      "category": "sales",
+      "icon": "doc",
+    }],
+    "suggestedWith": ["salesforce", "hubspot", "slack"],
+  },
+  {
     "name": "google-analytics",
     "displayName": "Google Analytics",
     "icon": "google-analytics.svg",
@@ -4736,6 +9149,469 @@ export const connectors: IntegrationConfig[] = [
       "icon": "pulse",
     }],
     "suggestedWith": ["sheets", "slack", "posthog"],
+  },
+  {
+    "name": "google-chat",
+    "displayName": "Google Chat",
+    "icon": "google-chat.svg",
+    "description": "Read spaces and send messages in Google Chat",
+    "auth": {
+      "type": "oauth2",
+      "provider": "google",
+      "authorizationUrl": "https://accounts.google.com/o/oauth2/v2/auth",
+      "tokenUrl": "https://oauth2.googleapis.com/token",
+      "scopes": [
+        "https://www.googleapis.com/auth/chat.spaces.readonly",
+        "https://www.googleapis.com/auth/chat.messages",
+      ],
+      "requiredApis": [{
+        "name": "Google Chat API",
+        "enableUrl": "https://console.cloud.google.com/apis/library/chat.googleapis.com",
+      }],
+      "docsUrl": "https://developers.google.com/workspace/chat/api/reference/rest",
+    },
+    "envVars": [{
+      "name": "GOOGLE_CLIENT_ID",
+      "description": "Google OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://console.cloud.google.com/apis/credentials",
+    }, {
+      "name": "GOOGLE_CLIENT_SECRET",
+      "description": "Google OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://console.cloud.google.com/apis/credentials",
+    }],
+    "tools": [{
+      "id": "list_spaces",
+      "name": "List Spaces",
+      "description":
+        "List Google Chat spaces (rooms and direct messages) the authenticated user is a member of",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://chat.googleapis.com/v1/spaces",
+        "params": {
+          "pageSize": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum spaces to return (max 1000)",
+            "default": 50,
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Page token from a previous list call",
+          },
+          "filter": {
+            "type": "string",
+            "in": "query",
+            "description":
+              'Filter by space type, e.g. spaceType = "SPACE" or spaceType = "DIRECT_MESSAGE"',
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["spaces"],
+            "collectionName": "spaces",
+            "itemFields": [{ "name": "name" }, { "name": "displayName" }, { "name": "spaceType" }, {
+              "name": "singleUserBotDm",
+            }, { "name": "createTime" }],
+            "outputFields": [{ "name": "nextPageToken" }],
+            "omitted": "space details and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_space",
+      "name": "Get Space",
+      "description": "Get details of a Google Chat space",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://chat.googleapis.com/v1/spaces/{spaceId}",
+        "params": {
+          "spaceId": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Space ID — the part after 'spaces/' in the space resource name (e.g. AAAAAAAAAAA)",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "list_messages",
+      "name": "List Messages",
+      "description": "List messages in a Google Chat space, including messages in threads",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://chat.googleapis.com/v1/spaces/{spaceId}/messages",
+        "params": {
+          "spaceId": {
+            "type": "string",
+            "in": "path",
+            "description": "Space ID — the part after 'spaces/' in the space resource name",
+            "required": true,
+          },
+          "pageSize": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum messages to return (max 1000)",
+            "default": 25,
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Page token from a previous list call",
+          },
+          "filter": {
+            "type": "string",
+            "in": "query",
+            "description": 'Filter, e.g. createTime > "2026-01-01T00:00:00+00:00"',
+          },
+          "orderBy": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort order: createTime ASC or createTime DESC",
+            "default": "createTime DESC",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["messages"],
+            "collectionName": "messages",
+            "itemFields": [
+              { "name": "name" },
+              { "name": "text", "maxLength": 300 },
+              { "name": "sender", "kind": "contact" },
+              { "name": "createTime" },
+              { "name": "thread", "kind": "object" },
+            ],
+            "outputFields": [{ "name": "nextPageToken" }],
+            "omitted": "cards, annotations, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_message",
+      "name": "Get Message",
+      "description": "Get details of a specific Google Chat message",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://chat.googleapis.com/v1/spaces/{spaceId}/messages/{messageId}",
+        "params": {
+          "spaceId": {
+            "type": "string",
+            "in": "path",
+            "description": "Space ID — the part after 'spaces/' in the space resource name",
+            "required": true,
+          },
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Message ID — the part after 'messages/' in the message resource name",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "send_message",
+      "name": "Send Message",
+      "description": "Send a text message to a Google Chat space",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://chat.googleapis.com/v1/spaces/{spaceId}/messages",
+        "params": {
+          "spaceId": {
+            "type": "string",
+            "in": "path",
+            "description": "Space ID — the part after 'spaces/' in the space resource name",
+            "required": true,
+          },
+          "messageReplyOption": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Set to REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD to reply in a thread when body.thread is provided",
+          },
+        },
+        "body": {
+          "text": {
+            "type": "string",
+            "description": "Plain-text message body (supports Google Chat markup)",
+            "required": true,
+          },
+          "thread": {
+            "type": "object",
+            "description": 'Optional thread to reply to, e.g. { "name": "spaces/AAA/threads/BBB" }',
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "recent_messages",
+      "title": "Catch up on a space",
+      "prompt":
+        "List my Google Chat spaces, then summarize the most recent messages in the most active one.",
+      "category": "communication",
+      "icon": "message",
+    }, {
+      "id": "send_update",
+      "title": "Send a message",
+      "prompt": "Send a status update message to a Google Chat space of my choice.",
+      "category": "communication",
+      "icon": "send",
+    }],
+    "suggestedWith": ["gmail", "calendar", "drive"],
+  },
+  {
+    "name": "gusto",
+    "displayName": "Gusto",
+    "icon": "gusto.svg",
+    "description": "Read companies, employees, and payrolls from Gusto",
+    "auth": {
+      "type": "oauth2",
+      "provider": "gusto",
+      "authorizationUrl": "https://api.gusto.com/oauth/authorize",
+      "tokenUrl": "https://api.gusto.com/oauth/token",
+      "scopes": [],
+      "requiredApis": [{ "name": "Gusto Developer Portal", "enableUrl": "https://dev.gusto.com" }],
+      "docsUrl": "https://docs.gusto.com/app-integrations/docs/oauth2",
+    },
+    "envVars": [{
+      "name": "GUSTO_CLIENT_ID",
+      "description": "Gusto OAuth Client ID (from the Developer Portal application)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://docs.gusto.com/app-integrations/docs/introduction",
+    }, {
+      "name": "GUSTO_CLIENT_SECRET",
+      "description": "Gusto OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.gusto.com/app-integrations/docs/introduction",
+    }],
+    "tools": [{
+      "id": "get_token_info",
+      "name": "Get Token Info",
+      "description":
+        "Get the resource (company) and scope associated with the current access token",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.gusto.com/v1/token_info",
+        "params": {
+          "api_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Gusto API version",
+            "default": "2024-04-01",
+            "headerName": "X-Gusto-API-Version",
+          },
+        },
+      },
+    }, {
+      "id": "get_company",
+      "name": "Get Company",
+      "description": "Get a company's profile, locations, and entity details",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.gusto.com/v1/companies/{companyId}",
+        "params": {
+          "companyId": {
+            "type": "string",
+            "in": "path",
+            "description": "Company UUID (from Get Token Info)",
+            "required": true,
+          },
+          "api_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Gusto API version",
+            "default": "2024-04-01",
+            "headerName": "X-Gusto-API-Version",
+          },
+        },
+      },
+    }, {
+      "id": "list_employees",
+      "name": "List Employees",
+      "description": "List employees of a company",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.gusto.com/v1/companies/{companyId}/employees",
+        "params": {
+          "companyId": {
+            "type": "string",
+            "in": "path",
+            "description": "Company UUID",
+            "required": true,
+          },
+          "terminated": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include only terminated employees when true",
+            "default": false,
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1,
+          },
+          "per": {
+            "type": "number",
+            "in": "query",
+            "description": "Employees per page (max 100)",
+            "default": 25,
+          },
+          "api_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Gusto API version",
+            "default": "2024-04-01",
+            "headerName": "X-Gusto-API-Version",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["employees", "data"],
+            "collectionName": "employees",
+            "itemFields": [
+              { "name": "uuid" },
+              { "name": "first_name" },
+              { "name": "last_name" },
+              { "name": "email" },
+              { "name": "department" },
+              { "name": "terminated" },
+              { "name": "manager_uuid" },
+            ],
+            "outputFields": [{ "name": "page" }, { "name": "per" }],
+            "omitted": "compensation, home address, and job history details",
+          },
+        },
+      },
+    }, {
+      "id": "get_employee",
+      "name": "Get Employee",
+      "description": "Get a single employee",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.gusto.com/v1/employees/{employeeId}",
+        "params": {
+          "employeeId": {
+            "type": "string",
+            "in": "path",
+            "description": "Employee UUID",
+            "required": true,
+          },
+          "api_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Gusto API version",
+            "default": "2024-04-01",
+            "headerName": "X-Gusto-API-Version",
+          },
+        },
+      },
+    }, {
+      "id": "list_payrolls",
+      "name": "List Payrolls",
+      "description": "List payrolls for a company",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.gusto.com/v1/companies/{companyId}/payrolls",
+        "params": {
+          "companyId": {
+            "type": "string",
+            "in": "path",
+            "description": "Company UUID",
+            "required": true,
+          },
+          "processing_statuses": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated statuses: unprocessed, processed",
+          },
+          "payroll_types": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated types: regular, off_cycle, external",
+          },
+          "start_date": {
+            "type": "string",
+            "in": "query",
+            "description": "Return payrolls whose pay period ends on/after this date (YYYY-MM-DD)",
+          },
+          "end_date": {
+            "type": "string",
+            "in": "query",
+            "description": "Return payrolls whose pay period ends on/before this date (YYYY-MM-DD)",
+          },
+          "api_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Gusto API version",
+            "default": "2024-04-01",
+            "headerName": "X-Gusto-API-Version",
+          },
+        },
+      },
+    }, {
+      "id": "get_payroll",
+      "name": "Get Payroll",
+      "description": "Get a single payroll with totals",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.gusto.com/v1/companies/{companyId}/payrolls/{payrollId}",
+        "params": {
+          "companyId": {
+            "type": "string",
+            "in": "path",
+            "description": "Company UUID",
+            "required": true,
+          },
+          "payrollId": {
+            "type": "string",
+            "in": "path",
+            "description": "Payroll UUID",
+            "required": true,
+          },
+          "api_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Gusto API version",
+            "default": "2024-04-01",
+            "headerName": "X-Gusto-API-Version",
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "team_roster",
+      "title": "Team roster",
+      "prompt": "List all active employees in my Gusto company with their departments and emails.",
+      "category": "hr",
+      "icon": "users",
+    }, {
+      "id": "payroll_history",
+      "title": "Payroll history",
+      "prompt":
+        "Show my company's processed Gusto payrolls for this quarter with their pay periods and totals.",
+      "category": "hr",
+      "icon": "currency",
+    }],
+    "suggestedWith": ["sheets", "slack", "calendar"],
   },
   {
     "name": "harvest",
@@ -7209,6 +12085,197 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["github", "slack", "confluence"],
   },
   {
+    "name": "jotform",
+    "displayName": "Jotform",
+    "icon": "jotform.svg",
+    "description": "Read forms and submissions from Jotform",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Jotform API Keys",
+        "enableUrl": "https://www.jotform.com/myaccount/api",
+      }],
+      "keyName": "JOTFORM_API_KEY",
+      "headerName": "APIKEY",
+      "docsUrl": "https://api.jotform.com/docs/",
+    },
+    "envVars": [{
+      "name": "JOTFORM_API_KEY",
+      "description": "Jotform API key",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://api.jotform.com/docs/#gettingstarted",
+    }],
+    "tools": [{
+      "id": "list_forms",
+      "name": "List Forms",
+      "description": "List forms owned by the account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.jotform.com/user/forms",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Forms to return (max 1000)",
+            "default": 25,
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of forms to skip",
+            "default": 0,
+          },
+          "orderby": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort field, e.g. created_at, title, last_submission",
+            "default": "created_at",
+          },
+          "filter": {
+            "type": "string",
+            "in": "query",
+            "description": 'JSON filter, e.g. {"status":"ENABLED"}',
+          },
+        },
+        "response": {
+          "transform": "content",
+          "historicalSummary": {
+            "collectionKeys": ["content", "forms"],
+            "collectionName": "forms",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "title" },
+              { "name": "status" },
+              { "name": "count" },
+              { "name": "new" },
+              { "name": "created_at" },
+              { "name": "updated_at" },
+              { "name": "url" },
+            ],
+            "outputFields": [{ "name": "resultSet", "kind": "object" }],
+            "omitted": "form layout and per-form settings",
+          },
+        },
+      },
+    }, {
+      "id": "get_form",
+      "name": "Get Form",
+      "description": "Get basic details of a form",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.jotform.com/form/{formId}",
+        "params": {
+          "formId": {
+            "type": "string",
+            "in": "path",
+            "description": "Jotform form ID",
+            "required": true,
+          },
+        },
+        "response": { "transform": "content" },
+      },
+    }, {
+      "id": "get_form_questions",
+      "name": "Get Form Questions",
+      "description": "List the questions/fields on a form",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.jotform.com/form/{formId}/questions",
+        "params": {
+          "formId": {
+            "type": "string",
+            "in": "path",
+            "description": "Jotform form ID",
+            "required": true,
+          },
+        },
+        "response": { "transform": "content" },
+      },
+    }, {
+      "id": "list_submissions",
+      "name": "List Submissions",
+      "description": "List submissions for a form",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.jotform.com/form/{formId}/submissions",
+        "params": {
+          "formId": {
+            "type": "string",
+            "in": "path",
+            "description": "Jotform form ID",
+            "required": true,
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Submissions to return (max 1000)",
+            "default": 25,
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of submissions to skip",
+            "default": 0,
+          },
+          "orderby": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort field, e.g. created_at",
+            "default": "created_at",
+          },
+          "filter": {
+            "type": "string",
+            "in": "query",
+            "description": 'JSON filter, e.g. {"created_at:gt":"2026-01-01 00:00:00"}',
+          },
+        },
+        "response": { "transform": "content" },
+      },
+    }, {
+      "id": "get_submission",
+      "name": "Get Submission",
+      "description": "Get a single submission with its answers",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.jotform.com/submission/{submissionId}",
+        "params": {
+          "submissionId": {
+            "type": "string",
+            "in": "path",
+            "description": "Submission ID",
+            "required": true,
+          },
+        },
+        "response": { "transform": "content" },
+      },
+    }, {
+      "id": "get_user",
+      "name": "Get User",
+      "description": "Get the authenticated account profile and usage",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.jotform.com/user",
+        "response": { "transform": "content" },
+      },
+    }],
+    "prompts": [{
+      "id": "latest_submissions",
+      "title": "Latest submissions",
+      "prompt":
+        "List my Jotform forms, then show the latest submissions for the one I pick and summarize the answers.",
+      "category": "productivity",
+      "icon": "list",
+    }],
+    "suggestedWith": ["sheets", "slack", "airtable"],
+  },
+  {
     "name": "klaviyo",
     "displayName": "Klaviyo",
     "icon": "klaviyo.svg",
@@ -7437,6 +12504,204 @@ export const connectors: IntegrationConfig[] = [
       "icon": "search",
     }],
     "suggestedWith": ["shopify", "stripe", "sheets"],
+  },
+  {
+    "name": "lever",
+    "displayName": "Lever",
+    "icon": "lever.svg",
+    "description": "Read opportunities, postings, and stages from the Lever ATS",
+    "auth": {
+      "type": "oauth2",
+      "provider": "lever",
+      "authorizationUrl": "https://auth.lever.co/authorize",
+      "tokenUrl": "https://auth.lever.co/oauth/token",
+      "scopes": [
+        "opportunities:read:admin",
+        "postings:read:admin",
+        "stages:read:admin",
+        "offline_access",
+      ],
+      "requiredApis": [{
+        "name": "Lever Partner Integrations",
+        "enableUrl": "https://hire.lever.co/developer/oauth",
+      }],
+      "additionalAuthParams": { "audience": "https://api.lever.co/v1/", "prompt": "consent" },
+      "docsUrl": "https://hire.lever.co/developer/documentation",
+    },
+    "envVars": [{
+      "name": "LEVER_CLIENT_ID",
+      "description": "Lever OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://hire.lever.co/developer/documentation#authentication",
+    }, {
+      "name": "LEVER_CLIENT_SECRET",
+      "description": "Lever OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://hire.lever.co/developer/documentation#authentication",
+    }],
+    "tools": [{
+      "id": "list_opportunities",
+      "name": "List Opportunities",
+      "description": "List candidate opportunities",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.lever.co/v1/opportunities",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Opportunities per page (max 100)",
+            "default": 50,
+          },
+          "offset": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination offset token from next in a previous response",
+          },
+          "stage_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by stage ID (from List Stages)",
+          },
+          "posting_id": { "type": "string", "in": "query", "description": "Filter by posting ID" },
+          "email": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by candidate email address",
+          },
+          "tag": { "type": "string", "in": "query", "description": "Filter by tag" },
+          "archived": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Only archived (true) or active (false) opportunities",
+          },
+          "expand": {
+            "type": "string",
+            "in": "query",
+            "description": "Expand referenced fields, e.g. stage or owner",
+          },
+        },
+        "response": {
+          "transform": "data",
+          "historicalSummary": {
+            "collectionKeys": ["data", "opportunities"],
+            "collectionName": "opportunities",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "emails", "kind": "string-array" },
+              { "name": "stage" },
+              { "name": "origin" },
+              { "name": "tags", "kind": "string-array" },
+              { "name": "createdAt" },
+              { "name": "lastInteractionAt" },
+              { "name": "urls", "kind": "object" },
+            ],
+            "outputFields": [{ "name": "hasNext" }, { "name": "next" }],
+            "omitted": "applications, resumes, and contact metadata",
+          },
+        },
+      },
+    }, {
+      "id": "get_opportunity",
+      "name": "Get Opportunity",
+      "description": "Get a single opportunity",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.lever.co/v1/opportunities/{opportunityId}",
+        "params": {
+          "opportunityId": {
+            "type": "string",
+            "in": "path",
+            "description": "Opportunity UID",
+            "required": true,
+          },
+          "expand": {
+            "type": "string",
+            "in": "query",
+            "description": "Expand referenced fields, e.g. stage or owner",
+          },
+        },
+        "response": { "transform": "data" },
+      },
+    }, {
+      "id": "list_postings",
+      "name": "List Postings",
+      "description": "List job postings",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.lever.co/v1/postings",
+        "params": {
+          "state": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Filter by state: published, internal, closed, draft, pending, or rejected",
+            "default": "published",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Postings per page (max 100)",
+            "default": 50,
+          },
+          "offset": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination offset token from next in a previous response",
+          },
+        },
+        "response": { "transform": "data" },
+      },
+    }, {
+      "id": "get_posting",
+      "name": "Get Posting",
+      "description": "Get a single job posting",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.lever.co/v1/postings/{postingId}",
+        "params": {
+          "postingId": {
+            "type": "string",
+            "in": "path",
+            "description": "Posting UID",
+            "required": true,
+          },
+        },
+        "response": { "transform": "data" },
+      },
+    }, {
+      "id": "list_stages",
+      "name": "List Stages",
+      "description": "List pipeline stages",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.lever.co/v1/stages",
+        "response": { "transform": "data" },
+      },
+    }],
+    "prompts": [{
+      "id": "pipeline_overview",
+      "title": "Pipeline overview",
+      "prompt":
+        "List my active Lever opportunities grouped by stage with candidate names and tags.",
+      "category": "hr",
+      "icon": "list",
+    }, {
+      "id": "open_roles",
+      "title": "Open roles",
+      "prompt": "Show my published Lever postings with their teams and locations.",
+      "category": "hr",
+      "icon": "briefcase",
+    }],
+    "suggestedWith": ["slack", "calendar", "notion"],
   },
   {
     "name": "linear",
@@ -7855,6 +13120,316 @@ export const connectors: IntegrationConfig[] = [
       "icon": "list",
     }],
     "suggestedWith": ["github", "slack", "figma"],
+  },
+  {
+    "name": "metabase",
+    "displayName": "Metabase",
+    "icon": "metabase.svg",
+    "description": "Query saved questions, dashboards, and databases on a Metabase instance",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Metabase API Keys (Admin settings > Authentication > API keys)",
+        "enableUrl": "https://www.metabase.com/docs/latest/people-and-groups/api-keys",
+      }],
+      "keyName": "METABASE_API_KEY",
+      "headerName": "x-api-key",
+      "docsUrl": "https://www.metabase.com/docs/latest/people-and-groups/api-keys",
+    },
+    "envVars": [{
+      "name": "METABASE_API_KEY",
+      "description": "Metabase API key (created in Admin settings > Authentication > API keys)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://www.metabase.com/docs/latest/people-and-groups/api-keys",
+    }],
+    "tools": [{
+      "id": "list_databases",
+      "name": "List Databases",
+      "description": "List databases connected to the Metabase instance",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/api/database",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Your Metabase hostname without protocol, e.g. acme.metabaseapp.com or metabase.internal.example.com. Metabase is self-hosted or cloud-tenant, so there is no default.",
+            "required": true,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "databases",
+            "itemFields": [{ "name": "id" }, { "name": "name" }, { "name": "engine" }, {
+              "name": "created_at",
+            }, { "name": "updated_at" }],
+            "outputFields": [{ "name": "total" }],
+            "omitted": "connection details and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "list_cards",
+      "name": "List Questions",
+      "description": "List saved questions (cards) on the Metabase instance",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/api/card",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Your Metabase hostname without protocol, e.g. acme.metabaseapp.com",
+            "required": true,
+          },
+          "f": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Filter: all, mine, archived, bookmarked, database, table, or using_model",
+          },
+        },
+      },
+    }, {
+      "id": "run_card_query",
+      "name": "Run Question Query",
+      "description": "Execute a saved question (card) and return its query results",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{host}/api/card/{cardId}/query",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Your Metabase hostname without protocol, e.g. acme.metabaseapp.com",
+            "required": true,
+          },
+          "cardId": {
+            "type": "string",
+            "in": "path",
+            "description": "Saved question (card) ID",
+            "required": true,
+          },
+        },
+        "body": {
+          "parameters": {
+            "type": "array",
+            "description":
+              'Optional card parameter values, e.g. [{ "type": "category", "target": ["variable", ["template-tag", "state"]], "value": "CA" }]',
+          },
+        },
+      },
+    }, {
+      "id": "search",
+      "name": "Search",
+      "description": "Search questions, dashboards, collections, and tables across the instance",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/api/search",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Your Metabase hostname without protocol, e.g. acme.metabaseapp.com",
+            "required": true,
+          },
+          "q": { "type": "string", "in": "query", "description": "Search term", "required": true },
+          "models": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Restrict to a model type: card, dashboard, collection, database, table, dataset",
+          },
+        },
+      },
+    }, {
+      "id": "get_dashboard",
+      "name": "Get Dashboard",
+      "description": "Get a dashboard and its cards by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/api/dashboard/{dashboardId}",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Your Metabase hostname without protocol, e.g. acme.metabaseapp.com",
+            "required": true,
+          },
+          "dashboardId": {
+            "type": "string",
+            "in": "path",
+            "description": "Dashboard ID",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "list_collections",
+      "name": "List Collections",
+      "description": "List collections that organize questions and dashboards",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/api/collection",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Your Metabase hostname without protocol, e.g. acme.metabaseapp.com",
+            "required": true,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "find_question",
+      "title": "Find a question",
+      "prompt":
+        "Search my Metabase instance for questions about a topic and run the most relevant one.",
+      "category": "analytics",
+      "icon": "search",
+    }, {
+      "id": "dashboard_summary",
+      "title": "Summarize a dashboard",
+      "prompt": "Get one of my Metabase dashboards and summarize what each card shows.",
+      "category": "analytics",
+      "icon": "list",
+    }],
+    "suggestedWith": ["snowflake", "posthog", "slack"],
+  },
+  {
+    "name": "mistral",
+    "displayName": "Mistral AI",
+    "icon": "mistral.svg",
+    "description":
+      "Generate chat completions and embeddings with Mistral models via the Mistral AI API",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Mistral API Keys",
+        "enableUrl": "https://console.mistral.ai/api-keys",
+      }],
+      "keyName": "MISTRAL_API_KEY",
+      "headerPrefix": "Bearer",
+      "docsUrl": "https://docs.mistral.ai/api/",
+    },
+    "envVars": [{
+      "name": "MISTRAL_API_KEY",
+      "description": "Mistral AI API key from the La Plateforme console",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.mistral.ai/getting-started/quickstart/",
+    }],
+    "tools": [{
+      "id": "list_models",
+      "name": "List Models",
+      "description": "List the Mistral models available to the API key",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.mistral.ai/v1/models",
+        "response": {
+          "transform": "data",
+          "historicalSummary": {
+            "collectionKeys": ["data", "models"],
+            "collectionName": "models",
+            "itemFields": [{ "name": "id" }, { "name": "owned_by" }, { "name": "created" }, {
+              "name": "max_context_length",
+            }],
+            "omitted": "model capability details and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_model",
+      "name": "Get Model",
+      "description": "Get details about a specific Mistral model",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.mistral.ai/v1/models/{model}",
+        "params": {
+          "model": {
+            "type": "string",
+            "in": "path",
+            "description": "Model ID, e.g. mistral-large-latest or mistral-small-latest",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "create_chat_completion",
+      "name": "Create Chat Completion",
+      "description": "Generate a chat completion from a list of messages",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.mistral.ai/v1/chat/completions",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Model ID to use, e.g. mistral-large-latest",
+            "required": true,
+          },
+          "messages": {
+            "type": "array",
+            "description": "Chat messages, each with role (system|user|assistant) and content",
+            "required": true,
+          },
+          "max_tokens": { "type": "number", "description": "Maximum tokens to generate" },
+          "temperature": {
+            "type": "number",
+            "description": "Sampling temperature, recommended between 0 and 0.7",
+          },
+        },
+      },
+    }, {
+      "id": "create_embedding",
+      "name": "Create Embedding",
+      "description": "Create embedding vectors for input text",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.mistral.ai/v1/embeddings",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Embedding model ID, e.g. mistral-embed",
+            "required": true,
+            "default": "mistral-embed",
+          },
+          "input": {
+            "type": "array",
+            "description": 'Array of texts to embed, e.g. ["Text to embed"]',
+            "required": true,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "available_models",
+      "title": "List Mistral models",
+      "prompt":
+        "List the Mistral models available to my API key and summarize what each is best for.",
+      "category": "ai",
+      "icon": "list",
+    }, {
+      "id": "generate_text",
+      "title": "Generate a response",
+      "prompt": "Use Mistral to generate a chat completion for a prompt I provide.",
+      "category": "ai",
+      "icon": "sparkles",
+    }],
+    "suggestedWith": ["openai", "anthropic", "notion"],
   },
   {
     "name": "mixpanel",
@@ -10666,6 +16241,268 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["teams", "calendar", "gmail"],
   },
   {
+    "name": "pagerduty",
+    "displayName": "PagerDuty",
+    "icon": "pagerduty.svg",
+    "description": "Manage incidents, services, and on-call schedules in PagerDuty",
+    "auth": {
+      "type": "oauth2",
+      "provider": "pagerduty",
+      "authorizationUrl": "https://identity.pagerduty.com/oauth/authorize",
+      "tokenUrl": "https://identity.pagerduty.com/oauth/token",
+      "scopes": [
+        "incidents.read",
+        "incidents.write",
+        "services.read",
+        "oncalls.read",
+        "users.read",
+      ],
+      "requiredApis": [{
+        "name": "PagerDuty App Registration (Scoped OAuth)",
+        "enableUrl": "https://app.pagerduty.com/developer/applications",
+      }],
+      "docsUrl": "https://developer.pagerduty.com/docs/user-oauth-token-via-code-grant",
+    },
+    "envVars": [{
+      "name": "PAGERDUTY_CLIENT_ID",
+      "description": "PagerDuty OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.pagerduty.com/docs/user-oauth-token-via-code-grant",
+    }, {
+      "name": "PAGERDUTY_CLIENT_SECRET",
+      "description": "PagerDuty OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.pagerduty.com/docs/user-oauth-token-via-code-grant",
+    }],
+    "tools": [{
+      "id": "list_incidents",
+      "name": "List Incidents",
+      "description": "List PagerDuty incidents with optional status, service, and time filters",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.pagerduty.com/incidents",
+        "params": {
+          "statuses": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Filter by status: triggered, acknowledged, resolved",
+            "queryName": "statuses[]",
+          },
+          "service_ids": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Filter to incidents on these service IDs",
+            "queryName": "service_ids[]",
+          },
+          "since": {
+            "type": "string",
+            "in": "query",
+            "description": "Start of date range (ISO 8601)",
+          },
+          "until": {
+            "type": "string",
+            "in": "query",
+            "description": "End of date range (ISO 8601)",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Results per page (max 100)",
+            "default": 25,
+          },
+          "offset": { "type": "number", "in": "query", "description": "Pagination offset" },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["incidents"],
+            "collectionName": "incidents",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "incident_number" },
+              { "name": "title" },
+              { "name": "status" },
+              { "name": "urgency" },
+              { "name": "html_url" },
+              { "name": "created_at" },
+              { "name": "service", "kind": "object" },
+            ],
+            "outputFields": [{ "name": "offset" }, { "name": "limit" }, { "name": "more" }, {
+              "name": "total",
+            }],
+            "omitted": "incident bodies, alert details, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_incident",
+      "name": "Get Incident",
+      "description": "Get a PagerDuty incident by ID or incident number",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.pagerduty.com/incidents/{incidentId}",
+        "params": {
+          "incidentId": {
+            "type": "string",
+            "in": "path",
+            "description": "Incident ID (e.g. PT4KHLK) or incident number",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "create_incident",
+      "name": "Create Incident",
+      "description": "Manually trigger a new incident on a service",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.pagerduty.com/incidents",
+        "params": {
+          "from": {
+            "type": "string",
+            "in": "header",
+            "description":
+              "Email address of a valid PagerDuty user on the account, required by PagerDuty for incident writes",
+            "required": true,
+            "headerName": "From",
+          },
+        },
+        "body": {
+          "incident": {
+            "type": "object",
+            "description":
+              'Incident payload, e.g. { "type": "incident", "title": "DB is down", "service": { "id": "PWIXJZS", "type": "service_reference" }, "urgency": "high", "body": { "type": "incident_body", "details": "..." } }',
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "manage_incident",
+      "name": "Manage Incident",
+      "description": "Acknowledge, resolve, reassign, or escalate an incident",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://api.pagerduty.com/incidents/{incidentId}",
+        "params": {
+          "incidentId": {
+            "type": "string",
+            "in": "path",
+            "description": "Incident ID",
+            "required": true,
+          },
+          "from": {
+            "type": "string",
+            "in": "header",
+            "description":
+              "Email address of a valid PagerDuty user on the account, required by PagerDuty for incident writes",
+            "required": true,
+            "headerName": "From",
+          },
+        },
+        "body": {
+          "incident": {
+            "type": "object",
+            "description":
+              'Incident update payload, e.g. { "type": "incident_reference", "status": "resolved" } or { "type": "incident_reference", "status": "acknowledged" }',
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "list_services",
+      "name": "List Services",
+      "description": "List PagerDuty services",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.pagerduty.com/services",
+        "params": {
+          "query": { "type": "string", "in": "query", "description": "Filter services by name" },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Results per page (max 100)",
+            "default": 25,
+          },
+          "offset": { "type": "number", "in": "query", "description": "Pagination offset" },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["services"],
+            "collectionName": "services",
+            "itemFields": [{ "name": "id" }, { "name": "name" }, { "name": "status" }, {
+              "name": "html_url",
+            }, { "name": "created_at" }],
+            "outputFields": [{ "name": "offset" }, { "name": "limit" }, { "name": "more" }, {
+              "name": "total",
+            }],
+            "omitted":
+              "integration configs, escalation policy details, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "list_oncalls",
+      "name": "List On-Calls",
+      "description": "List on-call entries for schedules, escalation policies, and users",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.pagerduty.com/oncalls",
+        "params": {
+          "user_ids": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Filter to these user IDs",
+            "queryName": "user_ids[]",
+          },
+          "schedule_ids": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Filter to these schedule IDs",
+            "queryName": "schedule_ids[]",
+          },
+          "since": {
+            "type": "string",
+            "in": "query",
+            "description": "Start of date range (ISO 8601)",
+          },
+          "until": {
+            "type": "string",
+            "in": "query",
+            "description": "End of date range (ISO 8601)",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Results per page (max 100)",
+            "default": 25,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "open_incidents",
+      "title": "Open incidents",
+      "prompt":
+        "List my PagerDuty incidents that are triggered or acknowledged and summarize them by service.",
+      "category": "observability",
+      "icon": "alert",
+    }, {
+      "id": "whos_on_call",
+      "title": "Who's on call?",
+      "prompt": "Show who is currently on call in PagerDuty.",
+      "category": "observability",
+      "icon": "user",
+    }],
+    "suggestedWith": ["datadog", "sentry", "slack"],
+  },
+  {
     "name": "paypal",
     "displayName": "PayPal",
     "icon": "paypal.svg",
@@ -10854,6 +16691,136 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["stripe", "sheets", "slack"],
   },
   {
+    "name": "perplexity",
+    "displayName": "Perplexity",
+    "icon": "perplexity.svg",
+    "description":
+      "Search the web and generate grounded, citation-backed answers with Perplexity Sonar models",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Perplexity API Keys",
+        "enableUrl": "https://www.perplexity.ai/account/api/keys",
+      }],
+      "keyName": "PERPLEXITY_API_KEY",
+      "headerPrefix": "Bearer",
+      "docsUrl": "https://docs.perplexity.ai/getting-started/quickstart",
+    },
+    "envVars": [{
+      "name": "PERPLEXITY_API_KEY",
+      "description": "Perplexity API key (starts with pplx-)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.perplexity.ai/getting-started/quickstart",
+    }],
+    "tools": [{
+      "id": "search_web",
+      "name": "Search Web",
+      "description": "Search the web with Perplexity's Search API and get ranked results",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.perplexity.ai/search",
+        "body": {
+          "query": { "type": "string", "description": "Search query text", "required": true },
+          "max_results": {
+            "type": "number",
+            "description": "Maximum results to return",
+            "default": 10,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["results"],
+            "collectionName": "results",
+            "itemFields": [{ "name": "title" }, { "name": "url" }, {
+              "name": "snippet",
+              "maxLength": 300,
+            }, { "name": "date" }],
+            "omitted": "full result snippets and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "create_chat_completion",
+      "name": "Create Chat Completion",
+      "description": "Generate a web-grounded chat completion with citations using a Sonar model",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.perplexity.ai/v1/sonar",
+        "body": {
+          "model": {
+            "type": "string",
+            "description":
+              "Sonar model ID: sonar, sonar-pro, sonar-reasoning-pro, or sonar-deep-research",
+            "required": true,
+            "default": "sonar",
+          },
+          "messages": {
+            "type": "array",
+            "description": "Chat messages, each with role (system|user|assistant) and content",
+            "required": true,
+          },
+          "max_tokens": { "type": "number", "description": "Maximum tokens to generate" },
+          "temperature": {
+            "type": "number",
+            "description": "Sampling temperature between 0 and 2",
+          },
+          "search_mode": {
+            "type": "string",
+            "description": "Search corpus: web, academic, or sec",
+          },
+          "disable_search": {
+            "type": "boolean",
+            "description": "Set true to answer without web search",
+          },
+        },
+      },
+    }, {
+      "id": "create_agent_response",
+      "name": "Create Agent Response",
+      "description":
+        "Generate a response with Perplexity's Agent API using optional web search and reasoning",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.perplexity.ai/v1/agent",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Model ID or preset, e.g. fast-search, pro-search, deep-research",
+            "required": true,
+          },
+          "input": {
+            "type": "string",
+            "description": "Input text or question for the agent",
+            "required": true,
+          },
+          "reasoning": {
+            "type": "object",
+            "description": 'Reasoning configuration, e.g. {"effort":"medium"}',
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "research_topic",
+      "title": "Research a topic",
+      "prompt":
+        "Use Perplexity to research a topic I provide and summarize the answer with its citations.",
+      "category": "ai",
+      "icon": "search",
+    }, {
+      "id": "web_search",
+      "title": "Search the web",
+      "prompt": "Search the web with Perplexity for a query I provide and list the top results.",
+      "category": "ai",
+      "icon": "list",
+    }],
+    "suggestedWith": ["openai", "anthropic", "slack"],
+  },
+  {
     "name": "persona",
     "displayName": "Persona",
     "icon": "persona.svg",
@@ -11033,6 +17000,842 @@ export const connectors: IntegrationConfig[] = [
       "icon": "users",
     }],
     "suggestedWith": ["slack", "analytics", "monitoring"],
+  },
+  {
+    "name": "productboard",
+    "displayName": "Productboard",
+    "icon": "productboard.svg",
+    "description": "Capture notes and manage features and product hierarchy in Productboard",
+    "auth": {
+      "type": "oauth2",
+      "provider": "productboard",
+      "authorizationUrl": "https://app.productboard.com/oauth2/authorize",
+      "tokenUrl": "https://app.productboard.com/oauth2/token",
+      "scopes": ["notes:read", "notes:write", "entities:read", "entities:write"],
+      "requiredApis": [{
+        "name": "Productboard Developer Portal (OAuth2 app registration)",
+        "enableUrl": "https://developer.productboard.com/",
+      }],
+      "docsUrl": "https://developer.productboard.com/reference/oauth-authorization-code",
+    },
+    "envVars": [{
+      "name": "PRODUCTBOARD_CLIENT_ID",
+      "description": "Productboard OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.productboard.com/reference/oauth-authorization-code",
+    }, {
+      "name": "PRODUCTBOARD_CLIENT_SECRET",
+      "description": "Productboard OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.productboard.com/reference/oauth-authorization-code",
+    }],
+    "tools": [{
+      "id": "list_notes",
+      "name": "List Notes",
+      "description": "List customer feedback notes in the Productboard workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.productboard.com/v2/notes",
+        "params": {
+          "archived": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Filter by archived status",
+          },
+          "processed": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Filter by processed status",
+          },
+          "createdFrom": {
+            "type": "string",
+            "in": "query",
+            "description": "Only notes created on/after this ISO-8601 date-time",
+          },
+          "updatedFrom": {
+            "type": "string",
+            "in": "query",
+            "description": "Only notes updated on/after this ISO-8601 date-time",
+          },
+          "pageCursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from the previous response's links.next URL",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "notes",
+            "itemFields": [{ "name": "id" }, { "name": "type" }, {
+              "name": "fields",
+              "kind": "object",
+            }, { "name": "links", "kind": "object" }],
+            "outputFields": [{ "name": "links", "kind": "object" }],
+            "omitted": "note content bodies, relationships, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_note",
+      "name": "Get Note",
+      "description": "Get a Productboard note by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.productboard.com/v2/notes/{noteId}",
+        "params": {
+          "noteId": {
+            "type": "string",
+            "in": "path",
+            "description": "Note UUID",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "create_note",
+      "name": "Create Note",
+      "description": "Create a feedback note in Productboard",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.productboard.com/v2/notes",
+        "body": {
+          "data": {
+            "type": "object",
+            "description":
+              'Note payload, e.g. { "type": "textNote", "fields": { "name": "Title", "content": "Feedback text" } }',
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "list_entities",
+      "name": "List Entities",
+      "description":
+        "List product hierarchy entities (features, components, initiatives, releases, etc.)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.productboard.com/v2/entities",
+        "params": {
+          "type": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Entity type filter: product, component, feature, subfeature, initiative, objective, keyResult, release, releaseGroup, user, or company",
+            "queryName": "type[]",
+          },
+          "name": { "type": "string", "in": "query", "description": "Filter by entity name" },
+          "archived": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Filter by archived status",
+          },
+          "pageCursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from the previous response's links.next URL",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "entities",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "type" },
+              { "name": "fields", "kind": "object" },
+              { "name": "createdAt" },
+              { "name": "updatedAt" },
+              { "name": "links", "kind": "object" },
+            ],
+            "outputFields": [{ "name": "links", "kind": "object" }],
+            "omitted": "entity relationships, custom fields, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_entity",
+      "name": "Get Entity",
+      "description": "Get a hierarchy entity (e.g. a feature) by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.productboard.com/v2/entities/{entityId}",
+        "params": {
+          "entityId": {
+            "type": "string",
+            "in": "path",
+            "description": "Entity UUID",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "create_entity",
+      "name": "Create Entity",
+      "description": "Create a hierarchy entity such as a feature or initiative",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.productboard.com/v2/entities",
+        "body": {
+          "data": {
+            "type": "object",
+            "description":
+              'Entity payload, e.g. { "type": "feature", "fields": { "name": "New feature" }, "relationships": { "data": [{ "type": "parent", "target": { "id": "<component-uuid>" } }] } }',
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "update_entity",
+      "name": "Update Entity",
+      "description":
+        "Update fields of a hierarchy entity (e.g. rename a feature or change its status)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://api.productboard.com/v2/entities/{entityId}",
+        "params": {
+          "entityId": {
+            "type": "string",
+            "in": "path",
+            "description": "Entity UUID",
+            "required": true,
+          },
+        },
+        "body": {
+          "data": {
+            "type": "object",
+            "description":
+              'Partial entity payload with the fields to change, e.g. { "fields": { "name": "Renamed feature" } }',
+            "required": true,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "capture_feedback",
+      "title": "Capture feedback",
+      "prompt": "Create a Productboard note capturing this customer feedback with a clear title.",
+      "category": "product",
+      "icon": "plus",
+    }, {
+      "id": "feature_overview",
+      "title": "Feature overview",
+      "prompt": "List the features in my Productboard workspace and summarize their statuses.",
+      "category": "product",
+      "icon": "list",
+    }],
+    "suggestedWith": ["jira", "slack", "zendesk"],
+  },
+  {
+    "name": "razorpay",
+    "displayName": "Razorpay",
+    "icon": "razorpay.svg",
+    "description": "Read payments, orders, refunds, and settlements from Razorpay",
+    "auth": {
+      "type": "basic",
+      "requiredApis": [{
+        "name": "Razorpay API Keys",
+        "enableUrl": "https://dashboard.razorpay.com/app/website-app-settings/api-keys",
+      }],
+      "usernameKey": "RAZORPAY_KEY_ID",
+      "passwordKey": "RAZORPAY_KEY_SECRET",
+      "docsUrl": "https://razorpay.com/docs/api/authentication/",
+    },
+    "envVars": [{
+      "name": "RAZORPAY_KEY_ID",
+      "description": "Razorpay Key ID (rzp_test_... or rzp_live_...)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://razorpay.com/docs/api/authentication/",
+    }, {
+      "name": "RAZORPAY_KEY_SECRET",
+      "description": "Razorpay Key Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://razorpay.com/docs/api/authentication/",
+    }],
+    "tools": [{
+      "id": "list_payments",
+      "name": "List Payments",
+      "description": "List payments, optionally within a Unix-timestamp window",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.razorpay.com/v1/payments",
+        "params": {
+          "from": {
+            "type": "number",
+            "in": "query",
+            "description": "Unix timestamp (seconds) for the start of the window",
+          },
+          "to": {
+            "type": "number",
+            "in": "query",
+            "description": "Unix timestamp (seconds) for the end of the window",
+          },
+          "count": {
+            "type": "number",
+            "in": "query",
+            "description": "Payments to return (max 100)",
+            "default": 25,
+          },
+          "skip": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of payments to skip",
+            "default": 0,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["items", "payments"],
+            "collectionName": "payments",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "amount" },
+              { "name": "currency" },
+              { "name": "status" },
+              { "name": "method" },
+              { "name": "order_id" },
+              { "name": "email" },
+              { "name": "contact" },
+              { "name": "created_at" },
+            ],
+            "outputFields": [{ "name": "count" }],
+            "omitted": "card/UPI instrument details and acquirer data",
+          },
+        },
+      },
+    }, {
+      "id": "get_payment",
+      "name": "Get Payment",
+      "description": "Get details of a payment",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.razorpay.com/v1/payments/{paymentId}",
+        "params": {
+          "paymentId": {
+            "type": "string",
+            "in": "path",
+            "description": "Payment ID, e.g. pay_XXXXXXXXXXXXXX",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "list_orders",
+      "name": "List Orders",
+      "description": "List orders",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.razorpay.com/v1/orders",
+        "params": {
+          "from": {
+            "type": "number",
+            "in": "query",
+            "description": "Unix timestamp (seconds) for the start of the window",
+          },
+          "to": {
+            "type": "number",
+            "in": "query",
+            "description": "Unix timestamp (seconds) for the end of the window",
+          },
+          "authorized": {
+            "type": "number",
+            "in": "query",
+            "description": "Filter: 1 for orders with authorized payments, 0 without",
+          },
+          "receipt": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by your receipt identifier",
+          },
+          "count": {
+            "type": "number",
+            "in": "query",
+            "description": "Orders to return (max 100)",
+            "default": 25,
+          },
+          "skip": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of orders to skip",
+            "default": 0,
+          },
+        },
+      },
+    }, {
+      "id": "get_order",
+      "name": "Get Order",
+      "description": "Get details of an order",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.razorpay.com/v1/orders/{orderId}",
+        "params": {
+          "orderId": {
+            "type": "string",
+            "in": "path",
+            "description": "Order ID, e.g. order_XXXXXXXXXXXXXX",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "list_refunds",
+      "name": "List Refunds",
+      "description": "List refunds",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.razorpay.com/v1/refunds",
+        "params": {
+          "from": {
+            "type": "number",
+            "in": "query",
+            "description": "Unix timestamp (seconds) for the start of the window",
+          },
+          "to": {
+            "type": "number",
+            "in": "query",
+            "description": "Unix timestamp (seconds) for the end of the window",
+          },
+          "count": {
+            "type": "number",
+            "in": "query",
+            "description": "Refunds to return (max 100)",
+            "default": 25,
+          },
+          "skip": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of refunds to skip",
+            "default": 0,
+          },
+        },
+      },
+    }, {
+      "id": "list_settlements",
+      "name": "List Settlements",
+      "description": "List settlements paid out to your bank account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.razorpay.com/v1/settlements",
+        "params": {
+          "from": {
+            "type": "number",
+            "in": "query",
+            "description": "Unix timestamp (seconds) for the start of the window",
+          },
+          "to": {
+            "type": "number",
+            "in": "query",
+            "description": "Unix timestamp (seconds) for the end of the window",
+          },
+          "count": {
+            "type": "number",
+            "in": "query",
+            "description": "Settlements to return (max 100)",
+            "default": 25,
+          },
+          "skip": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of settlements to skip",
+            "default": 0,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "recent_payments",
+      "title": "Recent payments",
+      "prompt":
+        "List my Razorpay payments from the last 7 days and summarize totals by status and method.",
+      "category": "finance",
+      "icon": "payment",
+    }, {
+      "id": "settlement_summary",
+      "title": "Settlement summary",
+      "prompt": "Show my recent Razorpay settlements with amounts and statuses.",
+      "category": "finance",
+      "icon": "currency",
+    }],
+    "suggestedWith": ["stripe", "paypal", "sheets"],
+  },
+  {
+    "name": "resend",
+    "displayName": "Resend",
+    "icon": "resend.svg",
+    "description": "Send email and manage domains, audiences, and contacts with Resend",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{ "name": "Resend API Keys", "enableUrl": "https://resend.com/api-keys" }],
+      "keyName": "RESEND_API_KEY",
+      "headerPrefix": "Bearer",
+      "docsUrl": "https://resend.com/docs/api-reference/introduction",
+    },
+    "envVars": [{
+      "name": "RESEND_API_KEY",
+      "description": "Resend API key (starts with re_)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://resend.com/docs/dashboard/api-keys/introduction",
+    }],
+    "tools": [{
+      "id": "send_email",
+      "name": "Send Email",
+      "description": "Send an email",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "body": {
+          "from": {
+            "type": "string",
+            "description":
+              "Sender address from a verified domain, e.g. 'Your Name <sender@yourdomain.com>'",
+            "required": true,
+          },
+          "to": {
+            "type": "array",
+            "description": "Recipient email addresses (max 50)",
+            "required": true,
+          },
+          "subject": { "type": "string", "description": "Email subject line", "required": true },
+          "html": { "type": "string", "description": "HTML body of the email" },
+          "text": { "type": "string", "description": "Plain-text body of the email" },
+          "cc": { "type": "array", "description": "CC recipients" },
+          "bcc": { "type": "array", "description": "BCC recipients" },
+          "reply_to": { "type": "array", "description": "Reply-to addresses" },
+        },
+      },
+    }, {
+      "id": "get_email",
+      "name": "Get Email",
+      "description": "Get a sent email and its delivery status by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.resend.com/emails/{emailId}",
+        "params": {
+          "emailId": {
+            "type": "string",
+            "in": "path",
+            "description": "Email ID returned by Send Email",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "list_domains",
+      "name": "List Domains",
+      "description": "List sending domains and their verification status",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.resend.com/domains",
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data", "domains"],
+            "collectionName": "domains",
+            "itemFields": [{ "name": "id" }, { "name": "name" }, { "name": "status" }, {
+              "name": "region",
+            }, { "name": "created_at" }],
+            "outputFields": [{ "name": "next" }],
+            "omitted": "DNS records and tracking settings",
+          },
+        },
+      },
+    }, {
+      "id": "list_audiences",
+      "name": "List Audiences",
+      "description": "List audiences (contact groups)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.resend.com/audiences",
+        "response": { "transform": "data" },
+      },
+    }, {
+      "id": "list_contacts",
+      "name": "List Contacts",
+      "description": "List contacts in an audience",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.resend.com/audiences/{audienceId}/contacts",
+        "params": {
+          "audienceId": {
+            "type": "string",
+            "in": "path",
+            "description": "Audience ID (from List Audiences)",
+            "required": true,
+          },
+        },
+        "response": { "transform": "data" },
+      },
+    }, {
+      "id": "create_contact",
+      "name": "Create Contact",
+      "description": "Add a contact to an audience",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.resend.com/audiences/{audienceId}/contacts",
+        "params": {
+          "audienceId": {
+            "type": "string",
+            "in": "path",
+            "description": "Audience ID to add the contact to",
+            "required": true,
+          },
+        },
+        "body": {
+          "email": { "type": "string", "description": "Contact email address", "required": true },
+          "first_name": { "type": "string", "description": "Contact first name" },
+          "last_name": { "type": "string", "description": "Contact last name" },
+          "unsubscribed": {
+            "type": "boolean",
+            "description": "Whether the contact is unsubscribed",
+            "default": false,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "send_email",
+      "title": "Send an email",
+      "prompt": "Send an email via Resend with a subject, recipient, and HTML body.",
+      "category": "communication",
+      "icon": "mail",
+    }, {
+      "id": "domain_status",
+      "title": "Check domain status",
+      "prompt": "List my Resend domains and tell me which ones are verified for sending.",
+      "category": "communication",
+      "icon": "check",
+    }],
+    "suggestedWith": ["stripe", "supabase", "neon"],
+  },
+  {
+    "name": "salesflare",
+    "displayName": "Salesflare",
+    "icon": "salesflare.svg",
+    "description": "Manage contacts, accounts, and opportunities in Salesflare CRM",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Salesflare API Keys",
+        "enableUrl": "https://app.salesflare.com/#/settings/apikeys",
+      }],
+      "keyName": "SALESFLARE_API_KEY",
+      "headerPrefix": "Bearer",
+      "docsUrl": "https://api.salesflare.com/docs",
+    },
+    "envVars": [{
+      "name": "SALESFLARE_API_KEY",
+      "description":
+        "Salesflare API key (sent as Authorization: Bearer), created under Settings → API Keys",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://howto.salesflare.com/en/articles/1017460-do-you-have-an-api",
+    }],
+    "tools": [{
+      "id": "list_contacts",
+      "name": "List Contacts",
+      "description": "List or search contacts in Salesflare",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.salesflare.com/contacts",
+        "params": {
+          "search": {
+            "type": "string",
+            "in": "query",
+            "description": "Search contacts by name or email",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum contacts to return",
+            "default": 50,
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of contacts to skip for pagination",
+            "default": 0,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["items", "data"],
+            "collectionName": "contacts",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "firstname" },
+              { "name": "lastname" },
+              { "name": "email" },
+              { "name": "phone_number" },
+              { "name": "organisation" },
+            ],
+            "omitted": "social profiles, addresses, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_contact",
+      "name": "Get Contact",
+      "description": "Get details of a Salesflare contact",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.salesflare.com/contacts/{contactId}",
+        "params": {
+          "contactId": {
+            "type": "string",
+            "in": "path",
+            "description": "Salesflare contact ID",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "create_contact",
+      "name": "Create Contact",
+      "description": "Create a new contact in Salesflare",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.salesflare.com/contacts",
+        "body": {
+          "email": { "type": "string", "description": "Contact email address", "required": true },
+          "firstname": { "type": "string", "description": "First name" },
+          "lastname": { "type": "string", "description": "Last name" },
+          "phone_number": { "type": "string", "description": "Phone number" },
+          "organisation": { "type": "string", "description": "Company name" },
+          "position": { "type": "object", "description": 'Role, e.g. { "role": "CEO" }' },
+        },
+      },
+    }, {
+      "id": "update_contact",
+      "name": "Update Contact",
+      "description": "Update an existing Salesflare contact",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://api.salesflare.com/contacts/{contactId}",
+        "params": {
+          "contactId": {
+            "type": "string",
+            "in": "path",
+            "description": "Salesflare contact ID",
+            "required": true,
+          },
+        },
+        "body": {
+          "email": { "type": "string", "description": "Contact email address" },
+          "firstname": { "type": "string", "description": "First name" },
+          "lastname": { "type": "string", "description": "Last name" },
+          "phone_number": { "type": "string", "description": "Phone number" },
+        },
+      },
+    }, {
+      "id": "list_accounts",
+      "name": "List Accounts",
+      "description": "List or search accounts (companies) in Salesflare",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.salesflare.com/accounts",
+        "params": {
+          "search": { "type": "string", "in": "query", "description": "Search accounts by name" },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum accounts to return",
+            "default": 50,
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of accounts to skip for pagination",
+            "default": 0,
+          },
+        },
+      },
+    }, {
+      "id": "create_account",
+      "name": "Create Account",
+      "description": "Create a new account (company) in Salesflare",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.salesflare.com/accounts",
+        "body": {
+          "name": { "type": "string", "description": "Account / company name", "required": true },
+          "website": { "type": "string", "description": "Company website URL" },
+          "description": { "type": "string", "description": "Account description" },
+          "phone_number": { "type": "string", "description": "Company phone number" },
+        },
+      },
+    }, {
+      "id": "list_opportunities",
+      "name": "List Opportunities",
+      "description": "List or search opportunities in Salesflare",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.salesflare.com/opportunities",
+        "params": {
+          "search": {
+            "type": "string",
+            "in": "query",
+            "description": "Search opportunities by name",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum opportunities to return",
+            "default": 50,
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of opportunities to skip for pagination",
+            "default": 0,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "pipeline_overview",
+      "title": "Pipeline overview",
+      "prompt": "List my open opportunities in Salesflare with their values and stages.",
+      "category": "sales",
+      "icon": "chart",
+    }, {
+      "id": "add_contact",
+      "title": "Add a contact",
+      "prompt": "Create a new contact in Salesflare with their name, email, and company.",
+      "category": "sales",
+      "icon": "plus",
+    }],
+    "suggestedWith": ["gmail", "slack", "stripe"],
   },
   {
     "name": "salesforce",
@@ -11331,6 +18134,486 @@ export const connectors: IntegrationConfig[] = [
     }],
     "suggestedWith": ["sharepoint", "gmail", "slack"],
     "category": "finance",
+  },
+  {
+    "name": "segment",
+    "displayName": "Segment",
+    "icon": "segment.svg",
+    "description": "Manage sources and destinations in a Twilio Segment workspace",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Segment Public API Tokens (Settings > Access Management > Tokens)",
+        "enableUrl": "https://app.segment.com/goto-my-workspace/settings/access-management",
+      }],
+      "keyName": "SEGMENT_PUBLIC_API_TOKEN",
+      "headerPrefix": "Bearer",
+      "docsUrl": "https://docs.segmentapis.com/tag/Getting-Started",
+    },
+    "envVars": [{
+      "name": "SEGMENT_PUBLIC_API_TOKEN",
+      "description":
+        "Twilio Segment Public API token (Workspace Settings > Access Management > Tokens)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.segmentapis.com/tag/Getting-Started",
+    }],
+    "tools": [{
+      "id": "list_sources",
+      "name": "List Sources",
+      "description": "List sources in the Segment workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/sources",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Segment Public API host: api.segmentapis.com (US, default) or eu1.api.segmentapis.com (EU workspaces)",
+            "default": "api.segmentapis.com",
+          },
+          "count": {
+            "type": "number",
+            "in": "query",
+            "description": "Results per page (max 200)",
+            "default": 50,
+            "queryName": "pagination.count",
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response's data.pagination.next",
+            "queryName": "pagination.cursor",
+          },
+        },
+        "response": {
+          "transform": "data",
+          "historicalSummary": {
+            "collectionKeys": ["data.sources", "sources"],
+            "collectionName": "sources",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "slug" },
+              { "name": "name" },
+              { "name": "enabled" },
+              { "name": "workspaceId" },
+              { "name": "metadata", "kind": "object" },
+            ],
+            "outputFields": [{ "name": "pagination", "kind": "object" }],
+            "omitted": "source settings, write keys, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_source",
+      "name": "Get Source",
+      "description": "Get a source by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/sources/{sourceId}",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Segment Public API host (api.segmentapis.com or eu1.api.segmentapis.com)",
+            "default": "api.segmentapis.com",
+          },
+          "sourceId": {
+            "type": "string",
+            "in": "path",
+            "description": "Source ID",
+            "required": true,
+          },
+        },
+        "response": { "transform": "data" },
+      },
+    }, {
+      "id": "create_source",
+      "name": "Create Source",
+      "description": "Create a new source in the workspace",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{host}/sources",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Segment Public API host (api.segmentapis.com or eu1.api.segmentapis.com)",
+            "default": "api.segmentapis.com",
+          },
+        },
+        "body": {
+          "slug": {
+            "type": "string",
+            "description": "URL-friendly slug for the source",
+            "required": true,
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether the source is enabled",
+            "required": true,
+          },
+          "metadataId": {
+            "type": "string",
+            "description": "Source catalog metadata ID (look up under /catalog/sources)",
+            "required": true,
+          },
+          "settings": {
+            "type": "object",
+            "description": "Source settings required by the chosen catalog metadata",
+          },
+        },
+        "response": { "transform": "data" },
+      },
+    }, {
+      "id": "update_source",
+      "name": "Update Source",
+      "description": "Update a source's name, slug, enabled state, or settings",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://{host}/sources/{sourceId}",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Segment Public API host (api.segmentapis.com or eu1.api.segmentapis.com)",
+            "default": "api.segmentapis.com",
+          },
+          "sourceId": {
+            "type": "string",
+            "in": "path",
+            "description": "Source ID",
+            "required": true,
+          },
+        },
+        "body": {
+          "name": { "type": "string", "description": "New display name" },
+          "slug": { "type": "string", "description": "New slug" },
+          "enabled": { "type": "boolean", "description": "Enable or disable the source" },
+          "settings": { "type": "object", "description": "Updated source settings" },
+        },
+        "response": { "transform": "data" },
+      },
+    }, {
+      "id": "list_destinations",
+      "name": "List Destinations",
+      "description": "List destinations in the Segment workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/destinations",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Segment Public API host (api.segmentapis.com or eu1.api.segmentapis.com)",
+            "default": "api.segmentapis.com",
+          },
+          "count": {
+            "type": "number",
+            "in": "query",
+            "description": "Results per page (max 200)",
+            "default": 50,
+            "queryName": "pagination.count",
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response's data.pagination.next",
+            "queryName": "pagination.cursor",
+          },
+        },
+        "response": {
+          "transform": "data",
+          "historicalSummary": {
+            "collectionKeys": ["data.destinations", "destinations"],
+            "collectionName": "destinations",
+            "itemFields": [{ "name": "id" }, { "name": "name" }, { "name": "enabled" }, {
+              "name": "sourceId",
+            }, { "name": "metadata", "kind": "object" }],
+            "outputFields": [{ "name": "pagination", "kind": "object" }],
+            "omitted": "destination settings and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_destination",
+      "name": "Get Destination",
+      "description": "Get a destination by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/destinations/{destinationId}",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Segment Public API host (api.segmentapis.com or eu1.api.segmentapis.com)",
+            "default": "api.segmentapis.com",
+          },
+          "destinationId": {
+            "type": "string",
+            "in": "path",
+            "description": "Destination ID",
+            "required": true,
+          },
+        },
+        "response": { "transform": "data" },
+      },
+    }, {
+      "id": "create_destination",
+      "name": "Create Destination",
+      "description": "Connect a new destination to a source",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{host}/destinations",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Segment Public API host (api.segmentapis.com or eu1.api.segmentapis.com)",
+            "default": "api.segmentapis.com",
+          },
+        },
+        "body": {
+          "sourceId": {
+            "type": "string",
+            "description": "Source ID to connect the destination to",
+            "required": true,
+          },
+          "metadataId": {
+            "type": "string",
+            "description": "Destination catalog metadata ID (look up under /catalog/destinations)",
+            "required": true,
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether the destination starts enabled",
+            "default": false,
+          },
+          "name": { "type": "string", "description": "Display name for the destination" },
+          "settings": {
+            "type": "object",
+            "description": "Destination settings required by the chosen catalog metadata",
+          },
+        },
+        "response": { "transform": "data" },
+      },
+    }],
+    "prompts": [{
+      "id": "workspace_overview",
+      "title": "Workspace overview",
+      "prompt":
+        "List my Segment sources and destinations and show which destinations each source feeds.",
+      "category": "analytics",
+      "icon": "list",
+    }, {
+      "id": "disable_destination",
+      "title": "Toggle a destination",
+      "prompt": "Find a Segment destination by name and disable it after confirming with me.",
+      "category": "analytics",
+      "icon": "settings",
+    }],
+    "suggestedWith": ["mixpanel", "google-analytics", "hubspot"],
+  },
+  {
+    "name": "sendgrid",
+    "displayName": "SendGrid",
+    "icon": "sendgrid.svg",
+    "description": "Send transactional email and manage marketing contacts with Twilio SendGrid",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "SendGrid API Keys",
+        "enableUrl": "https://app.sendgrid.com/settings/api_keys",
+      }],
+      "keyName": "SENDGRID_API_KEY",
+      "headerPrefix": "Bearer",
+      "docsUrl":
+        "https://www.twilio.com/docs/sendgrid/api-reference/how-to-use-the-sendgrid-v3-api/authentication",
+    },
+    "envVars": [{
+      "name": "SENDGRID_API_KEY",
+      "description": "SendGrid API key (starts with SG.)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://www.twilio.com/docs/sendgrid/ui/account-and-settings/api-keys",
+    }],
+    "tools": [{
+      "id": "send_email",
+      "name": "Send Email",
+      "description": "Send an email via the SendGrid v3 Mail Send API",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.sendgrid.com/v3/mail/send",
+        "body": {
+          "personalizations": {
+            "type": "array",
+            "description":
+              'Array of personalization objects, each with a \'to\' array of {email, name} recipients, e.g. [{"to":[{"email":"a@b.com"}]}]',
+            "required": true,
+          },
+          "from": {
+            "type": "object",
+            "description": 'Verified sender as {"email":"sender@yourdomain.com","name":"..."}',
+            "required": true,
+          },
+          "subject": { "type": "string", "description": "Email subject line", "required": true },
+          "content": {
+            "type": "array",
+            "description":
+              'Content blocks, e.g. [{"type":"text/plain","value":"..."}] or text/html',
+            "required": true,
+          },
+          "reply_to": { "type": "object", "description": 'Optional reply-to as {"email":"..."}' },
+        },
+      },
+    }, {
+      "id": "list_contacts",
+      "name": "List Contacts",
+      "description": "List marketing contacts in the account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.sendgrid.com/v3/marketing/contacts",
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["result", "contacts"],
+            "collectionName": "contacts",
+            "itemFields": [{ "name": "id" }, { "name": "email" }, { "name": "first_name" }, {
+              "name": "last_name",
+            }, { "name": "updated_at" }],
+            "outputFields": [{ "name": "contact_count" }, {
+              "name": "_metadata",
+              "kind": "object",
+            }],
+            "omitted": "address, custom fields, and list membership details",
+          },
+        },
+      },
+    }, {
+      "id": "search_contacts",
+      "name": "Search Contacts",
+      "description": "Search marketing contacts with an SGQL query (read-only search via POST)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.sendgrid.com/v3/marketing/contacts/search",
+        "body": {
+          "query": {
+            "type": "string",
+            "description": "SGQL query, e.g. email LIKE 'a@b.com'",
+            "required": true,
+          },
+        },
+        "response": { "transform": "result" },
+      },
+    }, {
+      "id": "upsert_contacts",
+      "name": "Upsert Contacts",
+      "description": "Add or update marketing contacts (asynchronous; returns a job_id)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://api.sendgrid.com/v3/marketing/contacts",
+        "body": {
+          "contacts": {
+            "type": "array",
+            "description": 'Contacts to upsert, e.g. [{"email":"a@b.com","first_name":"..."}]',
+            "required": true,
+          },
+          "list_ids": {
+            "type": "array",
+            "description": "Optional list IDs to add the contacts to",
+          },
+        },
+      },
+    }, {
+      "id": "list_templates",
+      "name": "List Templates",
+      "description": "List transactional email templates",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.sendgrid.com/v3/templates",
+        "params": {
+          "generations": {
+            "type": "string",
+            "in": "query",
+            "description": "Template generations to include: legacy, dynamic, or legacy,dynamic",
+            "default": "dynamic",
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Templates per page (max 200)",
+            "default": 50,
+          },
+          "page_token": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination token from a previous response",
+          },
+        },
+      },
+    }, {
+      "id": "get_email_stats",
+      "name": "Get Email Stats",
+      "description":
+        "Get global email statistics (delivered, opens, clicks, bounces) for a date range",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.sendgrid.com/v3/stats",
+        "params": {
+          "start_date": {
+            "type": "string",
+            "in": "query",
+            "description": "Start date YYYY-MM-DD",
+            "required": true,
+          },
+          "end_date": {
+            "type": "string",
+            "in": "query",
+            "description": "End date YYYY-MM-DD (defaults to today)",
+          },
+          "aggregated_by": {
+            "type": "string",
+            "in": "query",
+            "description": "Aggregation period: day, week, or month",
+            "default": "day",
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "send_email",
+      "title": "Send an email",
+      "prompt": "Send an email via SendGrid with a subject, recipient, and HTML body.",
+      "category": "communication",
+      "icon": "mail",
+    }, {
+      "id": "email_performance",
+      "title": "Email performance",
+      "prompt":
+        "Show my SendGrid email stats for the last 30 days and summarize delivery, open, and bounce rates.",
+      "category": "marketing",
+      "icon": "chart",
+    }],
+    "suggestedWith": ["klaviyo", "hubspot", "sheets"],
   },
   {
     "name": "sentry",
@@ -12540,6 +19823,215 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["stripe", "analytics"],
   },
   {
+    "name": "shortcut",
+    "displayName": "Shortcut",
+    "icon": "shortcut.svg",
+    "description": "Manage stories, epics, and workflows in Shortcut",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Shortcut API Tokens",
+        "enableUrl": "https://app.shortcut.com/settings/account/api-tokens",
+      }],
+      "keyName": "SHORTCUT_API_TOKEN",
+      "headerName": "Shortcut-Token",
+      "docsUrl": "https://developer.shortcut.com/api/rest/v3",
+    },
+    "envVars": [{
+      "name": "SHORTCUT_API_TOKEN",
+      "description": "Shortcut API token (Settings > Account > API Tokens)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.shortcut.com/api/rest/v3#Authentication",
+    }],
+    "tools": [{
+      "id": "search_stories",
+      "name": "Search Stories",
+      "description": "Search Shortcut stories with the Shortcut search syntax",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.app.shortcut.com/api/v3/search/stories",
+        "params": {
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Search query using Shortcut operators, e.g. 'state:\"In Progress\" owner:jane'",
+            "required": true,
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Results per page (1-25)",
+            "default": 25,
+          },
+          "next": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination token from a previous response's next field",
+          },
+          "detail": {
+            "type": "string",
+            "in": "query",
+            "description": "Response detail level: slim or full",
+            "default": "slim",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "stories",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "story_type" },
+              { "name": "workflow_state_id" },
+              { "name": "epic_id" },
+              { "name": "app_url" },
+              { "name": "created_at" },
+              { "name": "updated_at" },
+              { "name": "owner_ids", "kind": "string-array" },
+            ],
+            "outputFields": [{ "name": "next" }, { "name": "total" }],
+            "omitted": "story descriptions, tasks, comments, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_story",
+      "name": "Get Story",
+      "description": "Get a Shortcut story by its public ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.app.shortcut.com/api/v3/stories/{storyPublicId}",
+        "params": {
+          "storyPublicId": {
+            "type": "string",
+            "in": "path",
+            "description": "Story public ID (the number in the story URL)",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "create_story",
+      "name": "Create Story",
+      "description": "Create a new story in Shortcut",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.app.shortcut.com/api/v3/stories",
+        "body": {
+          "name": { "type": "string", "description": "Story title", "required": true },
+          "description": { "type": "string", "description": "Story description (Markdown)" },
+          "story_type": {
+            "type": "string",
+            "description": "feature, bug, or chore",
+            "default": "feature",
+          },
+          "workflow_state_id": {
+            "type": "number",
+            "description": "Workflow state ID (see List Workflows)",
+          },
+          "epic_id": { "type": "number", "description": "Epic ID to attach the story to" },
+          "owner_ids": { "type": "array", "description": "Array of member UUIDs to own the story" },
+          "deadline": { "type": "string", "description": "Due date as ISO 8601 timestamp" },
+        },
+      },
+    }, {
+      "id": "update_story",
+      "name": "Update Story",
+      "description": "Update an existing Shortcut story",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://api.app.shortcut.com/api/v3/stories/{storyPublicId}",
+        "params": {
+          "storyPublicId": {
+            "type": "string",
+            "in": "path",
+            "description": "Story public ID",
+            "required": true,
+          },
+        },
+        "body": {
+          "name": { "type": "string", "description": "New story title" },
+          "description": { "type": "string", "description": "New story description (Markdown)" },
+          "story_type": { "type": "string", "description": "feature, bug, or chore" },
+          "workflow_state_id": {
+            "type": "number",
+            "description": "Workflow state ID to move the story to",
+          },
+          "epic_id": { "type": "number", "description": "Epic ID to attach the story to" },
+          "owner_ids": { "type": "array", "description": "Array of member UUIDs to own the story" },
+          "archived": { "type": "boolean", "description": "Whether the story is archived" },
+        },
+      },
+    }, {
+      "id": "list_epics",
+      "name": "List Epics",
+      "description": "List epics in the Shortcut workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.app.shortcut.com/api/v3/epics",
+        "params": {
+          "includes_description": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include epic descriptions in the response",
+            "default": false,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["epics"],
+            "collectionName": "epics",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "state" },
+              { "name": "app_url" },
+              { "name": "created_at" },
+              { "name": "updated_at" },
+              { "name": "owner_ids", "kind": "string-array" },
+            ],
+            "outputFields": [],
+            "omitted": "epic stats, milestone links, and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "list_members",
+      "name": "List Members",
+      "description": "List members of the Shortcut workspace (use member UUIDs as owner_ids)",
+      "requiresWrite": false,
+      "endpoint": { "method": "GET", "url": "https://api.app.shortcut.com/api/v3/members" },
+    }, {
+      "id": "list_workflows",
+      "name": "List Workflows",
+      "description": "List workflows and their states (use state IDs as workflow_state_id)",
+      "requiresWrite": false,
+      "endpoint": { "method": "GET", "url": "https://api.app.shortcut.com/api/v3/workflows" },
+    }],
+    "prompts": [{
+      "id": "my_stories",
+      "title": "My in-progress stories",
+      "prompt": "Search Shortcut for stories owned by me that are in progress and summarize them.",
+      "category": "productivity",
+      "icon": "list",
+    }, {
+      "id": "file_bug",
+      "title": "File a bug",
+      "prompt": "Create a bug story in Shortcut with a clear title and reproduction steps.",
+      "category": "productivity",
+      "icon": "plus",
+    }],
+    "suggestedWith": ["github", "slack", "sentry"],
+  },
+  {
     "name": "slack",
     "displayName": "Slack",
     "icon": "slack.svg",
@@ -12823,6 +20315,275 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["github", "slack", "notion"],
   },
   {
+    "name": "square",
+    "displayName": "Square",
+    "icon": "square.svg",
+    "description": "Read payments, orders, customers, catalog, and locations from Square",
+    "auth": {
+      "type": "oauth2",
+      "provider": "square",
+      "authorizationUrl": "https://connect.squareup.com/oauth2/authorize",
+      "tokenUrl": "https://connect.squareup.com/oauth2/token",
+      "scopes": [
+        "MERCHANT_PROFILE_READ",
+        "PAYMENTS_READ",
+        "ORDERS_READ",
+        "CUSTOMERS_READ",
+        "ITEMS_READ",
+      ],
+      "requiredApis": [{
+        "name": "Square Developer Console",
+        "enableUrl": "https://developer.squareup.com/apps",
+      }],
+      "docsUrl": "https://developer.squareup.com/docs/oauth-api/overview",
+    },
+    "envVars": [{
+      "name": "SQUARE_CLIENT_ID",
+      "description": "Square application ID (OAuth client ID)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.squareup.com/apps",
+    }, {
+      "name": "SQUARE_CLIENT_SECRET",
+      "description": "Square OAuth application secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.squareup.com/apps",
+    }],
+    "tools": [{
+      "id": "list_payments",
+      "name": "List Payments",
+      "description": "List payments taken by the seller account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://connect.squareup.com/v2/payments",
+        "params": {
+          "square_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Square API version",
+            "default": "2026-05-20",
+            "headerName": "Square-Version",
+          },
+          "begin_time": {
+            "type": "string",
+            "in": "query",
+            "description": "RFC 3339 start of the time window (defaults to one year ago)",
+          },
+          "end_time": {
+            "type": "string",
+            "in": "query",
+            "description": "RFC 3339 end of the time window (defaults to now)",
+          },
+          "location_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Limit results to a specific location ID",
+          },
+          "sort_order": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort by created time: ASC or DESC",
+            "default": "DESC",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Payments per page (max 100)",
+            "default": 50,
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["payments"],
+            "collectionName": "payments",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "status" },
+              { "name": "amount_money", "kind": "object" },
+              { "name": "source_type" },
+              { "name": "order_id" },
+              { "name": "customer_id" },
+              { "name": "created_at" },
+              { "name": "updated_at" },
+            ],
+            "outputFields": [{ "name": "cursor" }],
+            "omitted": "card details, processing fees, and risk evaluation blocks",
+          },
+        },
+      },
+    }, {
+      "id": "get_payment",
+      "name": "Get Payment",
+      "description": "Get details of a payment",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://connect.squareup.com/v2/payments/{paymentId}",
+        "params": {
+          "paymentId": {
+            "type": "string",
+            "in": "path",
+            "description": "Square payment ID",
+            "required": true,
+          },
+          "square_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Square API version",
+            "default": "2026-05-20",
+            "headerName": "Square-Version",
+          },
+        },
+        "response": { "transform": "payment" },
+      },
+    }, {
+      "id": "search_orders",
+      "name": "Search Orders",
+      "description": "Search orders across locations (read-only search via POST)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://connect.squareup.com/v2/orders/search",
+        "params": {
+          "square_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Square API version",
+            "default": "2026-05-20",
+            "headerName": "Square-Version",
+          },
+        },
+        "body": {
+          "location_ids": {
+            "type": "array",
+            "description": "Location IDs to search (from List Locations), max 10",
+            "required": true,
+          },
+          "query": {
+            "type": "object",
+            "description":
+              "Optional search query with filter (date_time_filter, state_filter) and sort",
+          },
+          "limit": { "type": "number", "description": "Orders per page", "default": 50 },
+          "cursor": {
+            "type": "string",
+            "description": "Pagination cursor from a previous response",
+          },
+        },
+      },
+    }, {
+      "id": "list_customers",
+      "name": "List Customers",
+      "description": "List customer profiles",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://connect.squareup.com/v2/customers",
+        "params": {
+          "square_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Square API version",
+            "default": "2026-05-20",
+            "headerName": "Square-Version",
+          },
+          "sort_field": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort field: DEFAULT or CREATED_AT",
+            "default": "DEFAULT",
+          },
+          "sort_order": {
+            "type": "string",
+            "in": "query",
+            "description": "ASC or DESC",
+            "default": "ASC",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Customers per page (max 100)",
+            "default": 50,
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response",
+          },
+        },
+      },
+    }, {
+      "id": "list_locations",
+      "name": "List Locations",
+      "description": "List the seller's business locations",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://connect.squareup.com/v2/locations",
+        "params": {
+          "square_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Square API version",
+            "default": "2026-05-20",
+            "headerName": "Square-Version",
+          },
+        },
+        "response": { "transform": "locations" },
+      },
+    }, {
+      "id": "list_catalog",
+      "name": "List Catalog",
+      "description": "List catalog objects such as items and categories",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://connect.squareup.com/v2/catalog/list",
+        "params": {
+          "square_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Square API version",
+            "default": "2026-05-20",
+            "headerName": "Square-Version",
+          },
+          "types": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated object types, e.g. ITEM,CATEGORY",
+            "default": "ITEM",
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response",
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "recent_payments",
+      "title": "Recent payments",
+      "prompt": "List my Square payments from the last 7 days and summarize totals by status.",
+      "category": "finance",
+      "icon": "payment",
+    }, {
+      "id": "open_orders",
+      "title": "Open orders",
+      "prompt": "Search my Square orders in the OPEN state across all locations.",
+      "category": "commerce",
+      "icon": "cart",
+    }],
+    "suggestedWith": ["stripe", "paypal", "sheets"],
+  },
+  {
     "name": "stripe",
     "displayName": "Stripe",
     "icon": "stripe.svg",
@@ -12989,6 +20750,171 @@ export const connectors: IntegrationConfig[] = [
       "icon": "chart",
     }],
     "suggestedWith": ["github", "slack", "linear"],
+  },
+  {
+    "name": "tavily",
+    "displayName": "Tavily",
+    "icon": "tavily.svg",
+    "description":
+      "Web search, content extraction, site crawling, and URL mapping built for AI agents via the Tavily API",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{ "name": "Tavily API Keys", "enableUrl": "https://app.tavily.com/home" }],
+      "keyName": "TAVILY_API_KEY",
+      "headerPrefix": "Bearer",
+      "docsUrl": "https://docs.tavily.com/documentation/api-reference/endpoint/search",
+    },
+    "envVars": [{
+      "name": "TAVILY_API_KEY",
+      "description": "Tavily API key (starts with tvly-)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.tavily.com/documentation/quickstart",
+    }],
+    "tools": [{
+      "id": "search",
+      "name": "Search",
+      "description": "Search the web and get ranked results with optional LLM answer",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.tavily.com/search",
+        "body": {
+          "query": { "type": "string", "description": "Search query text", "required": true },
+          "search_depth": {
+            "type": "string",
+            "description": "Depth vs latency tradeoff: basic, advanced, fast, or ultra-fast",
+            "default": "basic",
+          },
+          "topic": {
+            "type": "string",
+            "description": "Search category: general or news",
+            "default": "general",
+          },
+          "max_results": {
+            "type": "number",
+            "description": "Maximum results to return (0-20)",
+            "default": 5,
+          },
+          "include_answer": {
+            "type": "boolean",
+            "description": "Include an LLM-generated answer to the query",
+            "default": false,
+          },
+          "time_range": {
+            "type": "string",
+            "description": "Filter by publish date: day, week, month, or year",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["results"],
+            "collectionName": "results",
+            "itemFields": [
+              { "name": "title" },
+              { "name": "url" },
+              { "name": "content", "maxLength": 300 },
+              { "name": "score" },
+              { "name": "published_date" },
+            ],
+            "omitted": "raw page content and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "extract",
+      "name": "Extract",
+      "description": "Extract clean page content from one or more URLs",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.tavily.com/extract",
+        "body": {
+          "urls": {
+            "type": "array",
+            "description": 'URLs to extract content from, e.g. ["https://example.com"]',
+            "required": true,
+          },
+          "extract_depth": {
+            "type": "string",
+            "description": "Extraction depth: basic or advanced (advanced costs more)",
+            "default": "basic",
+          },
+          "format": {
+            "type": "string",
+            "description": "Output format: markdown or text",
+            "default": "markdown",
+          },
+        },
+      },
+    }, {
+      "id": "crawl",
+      "name": "Crawl",
+      "description": "Crawl a website from a root URL and extract content from discovered pages",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.tavily.com/crawl",
+        "body": {
+          "url": {
+            "type": "string",
+            "description": "Root URL to begin the crawl",
+            "required": true,
+          },
+          "instructions": {
+            "type": "string",
+            "description":
+              "Natural language directions for targeted crawling, e.g. 'find all pricing pages'",
+          },
+          "max_depth": {
+            "type": "number",
+            "description": "How far from the root URL the crawler explores (max 5)",
+            "default": 1,
+          },
+          "limit": {
+            "type": "number",
+            "description": "Total number of links processed before stopping",
+            "default": 50,
+          },
+        },
+      },
+    }, {
+      "id": "map",
+      "name": "Map",
+      "description": "Get a list of URLs discovered on a website without extracting content",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.tavily.com/map",
+        "body": {
+          "url": { "type": "string", "description": "Root URL to map", "required": true },
+          "max_depth": {
+            "type": "number",
+            "description": "How far from the root URL the mapper explores",
+            "default": 1,
+          },
+          "limit": {
+            "type": "number",
+            "description": "Total number of links processed before stopping",
+            "default": 50,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "web_search",
+      "title": "Search the web",
+      "prompt": "Search the web with Tavily for a query I provide and summarize the top results.",
+      "category": "search",
+      "icon": "search",
+    }, {
+      "id": "extract_page",
+      "title": "Extract a page",
+      "prompt": "Extract the content of a URL I provide with Tavily and summarize it.",
+      "category": "search",
+      "icon": "document",
+    }],
+    "suggestedWith": ["openai", "anthropic", "slack"],
   },
   {
     "name": "teams",
@@ -13561,6 +21487,197 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["slack", "gmail", "calendar"],
   },
   {
+    "name": "typeform",
+    "displayName": "Typeform",
+    "icon": "typeform.svg",
+    "description": "Read forms and collect responses from Typeform",
+    "auth": {
+      "type": "oauth2",
+      "provider": "typeform",
+      "authorizationUrl": "https://api.typeform.com/oauth/authorize",
+      "tokenUrl": "https://api.typeform.com/oauth/token",
+      "scopes": ["accounts:read", "forms:read", "responses:read", "workspaces:read", "offline"],
+      "requiredApis": [{
+        "name": "Typeform Developer Apps",
+        "enableUrl": "https://admin.typeform.com/account#/section/tokens",
+      }],
+      "docsUrl": "https://www.typeform.com/developers/get-started/applications/",
+    },
+    "envVars": [{
+      "name": "TYPEFORM_CLIENT_ID",
+      "description": "Typeform OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://www.typeform.com/developers/get-started/applications/",
+    }, {
+      "name": "TYPEFORM_CLIENT_SECRET",
+      "description": "Typeform OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://www.typeform.com/developers/get-started/applications/",
+    }],
+    "tools": [{
+      "id": "list_forms",
+      "name": "List Forms",
+      "description": "List forms in the account or a workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.typeform.com/forms",
+        "params": {
+          "search": { "type": "string", "in": "query", "description": "Search forms by title" },
+          "workspace_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Limit results to a workspace ID",
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1,
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Forms per page (max 200)",
+            "default": 25,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["items", "forms"],
+            "collectionName": "forms",
+            "itemFields": [{ "name": "id" }, { "name": "title" }, { "name": "type" }, {
+              "name": "last_updated_at",
+            }, { "name": "_links", "kind": "object" }],
+            "outputFields": [{ "name": "total_items" }, { "name": "page_count" }],
+            "omitted": "form settings and theme details",
+          },
+        },
+      },
+    }, {
+      "id": "get_form",
+      "name": "Get Form",
+      "description": "Get a form definition including its fields",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.typeform.com/forms/{formId}",
+        "params": {
+          "formId": {
+            "type": "string",
+            "in": "path",
+            "description": "Form ID (from the form URL or List Forms)",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "list_responses",
+      "name": "List Responses",
+      "description": "List responses submitted to a form",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.typeform.com/forms/{formId}/responses",
+        "params": {
+          "formId": {
+            "type": "string",
+            "in": "path",
+            "description": "Form ID to fetch responses for",
+            "required": true,
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Responses per page (max 1000)",
+            "default": 25,
+          },
+          "since": {
+            "type": "string",
+            "in": "query",
+            "description": "Only responses submitted after this ISO 8601 timestamp",
+          },
+          "until": {
+            "type": "string",
+            "in": "query",
+            "description": "Only responses submitted before this ISO 8601 timestamp",
+          },
+          "after": {
+            "type": "string",
+            "in": "query",
+            "description": "Cursor: return responses after this response token",
+          },
+          "completed": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Filter by completed (true) or partial (false) submissions",
+          },
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "Full-text search across answer values",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["items", "responses"],
+            "collectionName": "responses",
+            "itemFields": [
+              { "name": "response_id" },
+              { "name": "token" },
+              { "name": "submitted_at" },
+              { "name": "landed_at" },
+              { "name": "answers", "kind": "object" },
+            ],
+            "outputFields": [{ "name": "total_items" }, { "name": "page_count" }],
+            "omitted": "hidden fields, calculated scores, and metadata blocks",
+          },
+        },
+      },
+    }, {
+      "id": "list_workspaces",
+      "name": "List Workspaces",
+      "description": "List workspaces in the account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.typeform.com/workspaces",
+        "params": {
+          "search": { "type": "string", "in": "query", "description": "Search workspaces by name" },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1,
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Workspaces per page (max 200)",
+            "default": 25,
+          },
+        },
+      },
+    }, {
+      "id": "get_me",
+      "name": "Get Me",
+      "description": "Get the authenticated Typeform account profile",
+      "requiresWrite": false,
+      "endpoint": { "method": "GET", "url": "https://api.typeform.com/me" },
+    }],
+    "prompts": [{
+      "id": "latest_responses",
+      "title": "Latest responses",
+      "prompt":
+        "List my Typeform forms, then show the most recent responses for the one I pick and summarize the answers.",
+      "category": "productivity",
+      "icon": "list",
+    }],
+    "suggestedWith": ["sheets", "slack", "hubspot"],
+  },
+  {
     "name": "zendesk",
     "displayName": "Zendesk",
     "icon": "zendesk.svg",
@@ -13713,48 +21830,102 @@ export const connectors: IntegrationConfig[] = [
 ];
 
 export const icons: Record<string, string> = {
+  "activecampaign":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#356AE6"/>\n  <path d="M48 28l40 32a5 5 0 0 1 0 8L48 100V86l28-22-28-22z" fill="#FFFFFF"/>\n  <path d="M48 56l14 10-14 10z" fill="#FFFFFF"/>\n</svg>\n',
   "airtable":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_309)">\n<path d="M57.1183 11.8136L9.51971 31.5412C6.88172 32.6882 6.88172 36.3584 9.51971 37.5054L57.3477 56.5448C61.5914 58.1505 66.1792 58.1505 70.4229 56.5448L118.366 37.5054C121.004 36.3584 121.118 32.6882 118.366 31.5412L70.767 11.8136C66.4086 9.97849 61.4767 9.97849 57.1183 11.8136Z" fill="#FCB400"/>\n<path d="M68.2437 66.8674V114.351C68.2437 116.645 70.5376 118.251 72.6022 117.333L126.05 96.6882C127.312 96.2294 128 95.0824 128 93.7061V46.2222C128 43.9283 125.706 42.3226 123.642 43.2401L70.1936 63.8853C68.9319 64.3441 68.2437 65.491 68.2437 66.8674Z" fill="#18BFFF"/>\n<path d="M0 46.3369V90.9534C0 93.362 2.75269 94.853 4.8172 93.8208L38.1936 77.7634L39.7993 76.9606L1.03226 44.1577C0.458781 44.7312 0 45.4193 0 46.3369Z" fill="#F82B60"/>\n<path d="M55.5125 63.5412L4.7025 43.3548C3.67024 43.0108 2.63799 43.1254 1.83512 43.5842C1.60573 43.6989 1.26164 43.9283 0.917557 44.1577L39.7993 76.9606L55.6272 69.3907C58.2652 68.129 58.0358 64.4588 55.5125 63.5412Z" fill="#BA1E45"/>\n</g>\n<defs>\n<clipPath id="clip0_0_309">\n<rect width="128" height="107.125" fill="white" transform="translate(0 10.4373)"/>\n</clipPath>\n</defs>\n</svg>\n',
+  "algolia":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#003DFF"/>\n  <circle cx="62" cy="60" r="26" fill="none" stroke="#fff" stroke-width="8"/>\n  <path d="M80 80l18 18" stroke="#fff" stroke-width="10" stroke-linecap="round"/>\n  <path d="M62 46v14h14" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>\n</svg>\n',
+  "amplitude":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#1E61F0"/>\n  <path d="M20 76c8 0 10-32 22-32s10 48 22 48 10-64 22-64 14 48 22 48" fill="none" stroke="#fff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>\n</svg>\n',
   "anthropic":
     '<svg role="img" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><title>Anthropic</title><path d="M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z"/></svg>',
+  "apollo":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#1C1C28"/>\n  <path d="M64 28 92 96h-14l-5.5-14h-25L42 96H28z" fill="#FFFFFF"/>\n  <path d="M64 52l7.5 19h-15z" fill="#1C1C28"/>\n  <circle cx="96" cy="34" r="7" fill="#FDB022"/>\n</svg>\n',
   "asana":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<mask id="mask0_60_20503" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="0" y="4" width="128" height="120">\n<path d="M91.8356 32.7671C91.8356 48.1096 79.3425 60.6027 64 60.6027C48.6575 60.6027 36.1644 48.1096 36.1644 32.7671C36.1644 17.4246 48.6575 4.93149 64 4.93149C79.5616 4.93149 91.8356 17.2055 91.8356 32.7671ZM27.8356 67.3972C12.4931 67.3972 0 79.8904 0 95.2328C0 110.575 12.4931 123.068 27.8356 123.068C43.1781 123.068 55.6712 110.575 55.6712 95.2328C55.6712 79.8904 43.3973 67.3972 27.8356 67.3972ZM100.164 67.3972C84.8219 67.3972 72.3288 79.8904 72.3288 95.2328C72.3288 110.575 84.8219 123.068 100.164 123.068C115.507 123.068 128 110.575 128 95.2328C128 79.8904 115.726 67.3972 100.164 67.3972Z" fill="white"/>\n</mask>\n<g mask="url(#mask0_60_20503)">\n<path d="M64.0003 3.61646C102.795 3.61646 134.137 34.9589 134.137 73.7534C134.137 112.548 102.795 143.89 64.0003 143.89C25.2057 143.89 -6.13672 112.548 -6.13672 73.7534C-5.91754 34.9589 25.4249 3.61646 64.0003 3.61646Z" fill="url(#paint0_radial_60_20503)"/>\n</g>\n<defs>\n<radialGradient id="paint0_radial_60_20503" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(64.0834 73.692) rotate(-90) scale(70.1091)">\n<stop stop-color="#FFB900"/>\n<stop offset="0.6" stop-color="#F95D8F"/>\n<stop offset="0.9991" stop-color="#F95353"/>\n</radialGradient>\n</defs>\n</svg>\n',
+  "ashby":
+    '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#3E2BCB"/>\n<path d="M64 26 98 102H82.5l-7-16.5h-23L45.5 102H30L64 26Zm0 31-7.7 18.5h15.4L64 57Z" fill="#FFFFFF"/>\n</svg>\n',
+  "attio":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#18181B"/>\n  <circle cx="48" cy="48" r="14" fill="none" stroke="#FFFFFF" stroke-width="9"/>\n  <circle cx="80" cy="80" r="14" fill="none" stroke="#FFFFFF" stroke-width="9"/>\n  <rect x="58" y="58" width="12" height="12" fill="#FFFFFF" transform="rotate(45 64 64)"/>\n</svg>\n',
   "aws":
     '<svg role="img" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><title>Amazon AWS</title><path d="M6.763 10.036c0 .296.032.535.088.71.064.176.144.368.256.576.04.063.056.127.056.183 0 .08-.048.16-.152.24l-.503.335a.383.383 0 0 1-.208.072c-.08 0-.16-.04-.239-.112a2.47 2.47 0 0 1-.287-.375 6.18 6.18 0 0 1-.248-.471c-.622.734-1.405 1.101-2.347 1.101-.67 0-1.205-.191-1.596-.574-.391-.384-.59-.894-.59-1.533 0-.678.239-1.23.726-1.644.487-.415 1.133-.623 1.955-.623.272 0 .551.024.846.064.296.04.6.104.918.176v-.583c0-.607-.127-1.03-.375-1.277-.255-.248-.686-.367-1.3-.367-.28 0-.568.031-.863.103-.295.072-.583.16-.862.272a2.287 2.287 0 0 1-.28.104.488.488 0 0 1-.127.023c-.112 0-.168-.08-.168-.247v-.391c0-.128.016-.224.056-.28a.597.597 0 0 1 .224-.167c.279-.144.614-.264 1.005-.36a4.84 4.84 0 0 1 1.246-.151c.95 0 1.644.216 2.091.647.439.43.662 1.085.662 1.963v2.586zm-3.24 1.214c.263 0 .534-.048.822-.144.287-.096.543-.271.758-.51.128-.152.224-.32.272-.512.047-.191.08-.423.08-.694v-.335a6.66 6.66 0 0 0-.735-.136 6.02 6.02 0 0 0-.75-.048c-.535 0-.926.104-1.19.32-.263.215-.39.518-.39.917 0 .375.095.655.295.846.191.2.47.296.838.296zm6.41.862c-.144 0-.24-.024-.304-.08-.064-.048-.12-.16-.168-.311L7.586 5.55a1.398 1.398 0 0 1-.072-.32c0-.128.064-.2.191-.2h.783c.151 0 .255.025.31.08.065.048.113.16.16.312l1.342 5.284 1.245-5.284c.04-.16.088-.264.151-.312a.549.549 0 0 1 .32-.08h.638c.152 0 .256.025.32.08.063.048.12.16.151.312l1.261 5.348 1.381-5.348c.048-.16.104-.264.16-.312a.52.52 0 0 1 .311-.08h.743c.127 0 .2.065.2.2 0 .04-.009.08-.017.128a1.137 1.137 0 0 1-.056.2l-1.923 6.17c-.048.16-.104.263-.168.311a.51.51 0 0 1-.303.08h-.687c-.151 0-.255-.024-.32-.08-.063-.056-.119-.16-.15-.32l-1.238-5.148-1.23 5.14c-.04.16-.087.264-.15.32-.065.056-.177.08-.32.08zm10.256.215c-.415 0-.83-.048-1.229-.143-.399-.096-.71-.2-.918-.32-.128-.071-.215-.151-.247-.223a.563.563 0 0 1-.048-.224v-.407c0-.167.064-.247.183-.247.048 0 .096.008.144.024.048.016.12.048.2.08.271.12.566.215.878.279.319.064.63.096.95.096.502 0 .894-.088 1.165-.264a.86.86 0 0 0 .415-.758.777.777 0 0 0-.215-.559c-.144-.151-.416-.287-.807-.415l-1.157-.36c-.583-.183-1.014-.454-1.277-.813a1.902 1.902 0 0 1-.4-1.158c0-.335.073-.63.216-.886.144-.255.335-.479.575-.654.24-.184.51-.32.83-.415.32-.096.655-.136 1.006-.136.175 0 .359.008.535.032.183.024.35.056.518.088.16.04.312.08.455.127.144.048.256.096.336.144a.69.69 0 0 1 .24.2.43.43 0 0 1 .071.263v.375c0 .168-.064.256-.184.256a.83.83 0 0 1-.303-.096 3.652 3.652 0 0 0-1.532-.311c-.455 0-.815.071-1.062.223-.248.152-.375.383-.375.71 0 .224.08.416.24.567.159.152.454.304.877.44l1.134.358c.574.184.99.44 1.237.767.247.327.367.702.367 1.117 0 .343-.072.655-.207.926-.144.272-.336.511-.583.703-.248.2-.543.343-.886.447-.36.111-.734.167-1.142.167zM21.698 16.207c-2.626 1.94-6.442 2.969-9.722 2.969-4.598 0-8.74-1.7-11.87-4.526-.247-.223-.024-.527.272-.351 3.384 1.963 7.559 3.153 11.877 3.153 2.914 0 6.114-.607 9.06-1.852.439-.2.814.287.383.607zM22.792 14.961c-.336-.43-2.22-.207-3.074-.103-.255.032-.295-.192-.063-.36 1.5-1.053 3.967-.75 4.254-.399.287.36-.08 2.826-1.485 4.007-.215.184-.423.088-.327-.151.32-.79 1.03-2.57.695-2.994z"/></svg>',
+  "basecamp":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#1D2D35"/>\n  <path d="M64 30c-19 0-33 16.6-36 42.4 8.1 9.6 19.8 17.6 36 17.6s27.9-8 36-17.6C97 46.6 83 30 64 30zm0 48.6c-10.9 0-19.3-4.6-25.6-10.5C41.6 51.4 51 41.4 64 41.4c8.1 0 14.9 3.9 19.8 10.6l-8.7 8.4c-3.1-4.4-6.7-7.6-11.1-7.6-6.1 0-11.2 6-13.2 14.9 4 3 8.4 5 13.2 5 9.4 0 16.1-5.4 21.6-11.7 1.2 3.4 2.1 7.1 2.7 11.1C82 77.3 74.1 78.6 64 78.6z" fill="#fff"/>\n</svg>\n',
   "bitbucket":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<path d="M4.15271 6.00034C3.55438 5.99262 2.96162 6.11597 2.41604 6.36173C1.87046 6.60748 1.38528 6.96967 0.994579 7.42289C0.603876 7.8761 0.317116 8.40935 0.154432 8.98519C-0.00825225 9.56102 -0.0429162 10.1655 0.0528736 10.7561L17.4567 116.409C17.6735 117.702 18.339 118.877 19.3362 119.728C20.3334 120.579 21.5985 121.051 22.9094 121.062H106.403C107.385 121.075 108.34 120.734 109.092 120.102C109.845 119.47 110.345 118.588 110.502 117.618L127.947 10.7971C128.043 10.2065 128.008 9.60202 127.846 9.02618C127.683 8.45035 127.396 7.9171 127.005 7.46389C126.615 7.01067 126.13 6.64848 125.584 6.40272C125.038 6.15697 124.446 6.03362 123.847 6.04134L4.15271 6.00034ZM77.4372 82.3597H50.7883L43.5726 44.6822H83.8944L77.4372 82.3597Z" fill="#2684FF"/>\n<path d="M122.371 44.6822H83.8944L77.4371 82.3597H50.7882L19.322 119.73C20.3194 120.592 21.5909 121.072 22.9094 121.083H106.423C107.406 121.095 108.36 120.754 109.113 120.122C109.865 119.49 110.366 118.609 110.523 117.639L122.371 44.6822Z" fill="url(#paint0_linear_0_425)"/>\n<defs>\n<linearGradient id="paint0_linear_0_425" x1="131.268" y1="55.2188" x2="67.6795" y2="104.868" gradientUnits="userSpaceOnUse">\n<stop offset="0.18" stop-color="#0052CC"/>\n<stop offset="1" stop-color="#2684FF"/>\n</linearGradient>\n</defs>\n</svg>\n',
+  "brevo":
+    '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#0B996E"/>\n<path d="M40 30h30c12.2 0 22 8.3 22 19 0 6.4-3.6 11.9-9.2 15.3C90.6 67.8 95 74.5 95 82c0 12.7-11.6 23-26 23-10.4 0-19.8-5.6-24-13.6l9.4-5.2c2.7 5.1 8.3 8.6 14.6 8.6 8.6 0 15.5-5.9 15.5-13s-6.9-13-15.5-13H52v37H40V30Zm12 11v27h17.5c6.9 0 12.5-5.4 12.5-12s-5.6-12-12.5-12H52v-3Z" fill="#FFFFFF"/>\n</svg>\n',
   "calendar":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_64)">\n<g clip-path="url(#clip1_0_64)">\n<path d="M97.6844 30.3155L67.3689 26.9472L30.3161 30.3155L26.9471 64L30.3155 97.6845L63.9999 101.895L97.6844 97.6845L101.053 63.1584L97.6844 30.3155Z" fill="white"/>\n<path d="M44.135 82.5766C41.6173 80.8755 39.8739 78.3917 38.9222 75.1072L44.7667 72.6989C45.2973 74.72 46.2234 76.2861 47.5456 77.3978C48.8595 78.5094 50.4595 79.0566 52.329 79.0566C54.2406 79.0566 55.8829 78.4755 57.255 77.3133C58.6272 76.151 59.3184 74.6688 59.3184 72.8755C59.3184 71.04 58.5939 69.5405 57.1456 68.3789C55.6973 67.2173 53.8784 66.6355 51.7056 66.6355H48.329V60.8506H51.36C53.2294 60.8506 54.8045 60.3456 56.0845 59.335C57.3645 58.3245 58.0045 56.9434 58.0045 55.1834C58.0045 53.6173 57.4317 52.3706 56.2867 51.4362C55.1418 50.5018 53.6928 50.0301 51.9328 50.0301C50.215 50.0301 48.8506 50.4851 47.84 51.4029C46.8294 52.3206 46.0966 53.449 45.6339 54.7795L39.849 52.3712C40.615 50.1984 42.0218 48.2784 44.0845 46.6195C46.1478 44.9606 48.7834 44.1267 51.9834 44.1267C54.3494 44.1267 56.48 44.5818 58.3667 45.4995C60.2528 46.4173 61.735 47.689 62.8045 49.3056C63.8739 50.9306 64.4045 52.7501 64.4045 54.7706C64.4045 56.8339 63.9078 58.5766 62.9139 60.0083C61.92 61.44 60.6989 62.5344 59.2506 63.3011V63.6461C61.1622 64.4461 62.72 65.6672 63.9494 67.3094C65.1706 68.9517 65.785 70.9139 65.785 73.2045C65.785 75.495 65.2038 77.5411 64.0416 79.335C62.8794 81.129 61.271 82.5434 59.2333 83.5706C57.1872 84.5978 54.8883 85.12 52.3366 85.12C49.3811 85.1283 46.6528 84.2778 44.135 82.5766Z" fill="#1A73E8"/>\n<path d="M80 53.575L73.6166 58.215L70.4083 53.3478L81.92 45.0445H86.3328V84.2106H80V53.575Z" fill="#1A73E8"/>\n<path d="M97.6844 128L128 97.6845L112.842 90.9478L97.6844 97.6845L90.9478 112.842L97.6844 128Z" fill="#EA4335"/>\n<path d="M23.5789 112.842L30.3155 128H97.6838V97.6845H30.3155L23.5789 112.842Z" fill="#34A853"/>\n<path d="M10.105 0C4.52224 0 0 4.52224 0 10.105V97.6838L15.1578 104.42L30.3155 97.6838V30.3155H97.6838L104.42 15.1578L97.6845 0H10.105Z" fill="#4285F4"/>\n<path d="M0 97.6845V117.895C0 123.478 4.52224 128 10.105 128H30.3155V97.6845H0Z" fill="#188038"/>\n<path d="M97.6844 30.3155V97.6838H128V30.3155L112.842 23.5789L97.6844 30.3155Z" fill="#FBBC04"/>\n<path d="M128 30.3155V10.105C128 4.5216 123.478 0 117.895 0H97.6844V30.3155H128Z" fill="#1967D2"/>\n</g>\n</g>\n<defs>\n<clipPath id="clip0_0_64">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n<clipPath id="clip1_0_64">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n</defs>\n</svg>\n',
   "calendly":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#FFFFFF"/>\n<path d="M64 24c22.1 0 40 17.9 40 40s-17.9 40-40 40-40-17.9-40-40 17.9-40 40-40Zm0 14c-14.4 0-26 11.6-26 26s11.6 26 26 26c8.9 0 16.8-4.5 21.5-11.3l-11.9-7.2C71.5 75.3 68 77 64 77c-7.2 0-13-5.8-13-13s5.8-13 13-13c4 0 7.5 1.7 9.6 4.5l11.9-7.2C80.8 41.5 72.9 38 64 38Z" fill="#006BFF"/>\n</svg>\n',
+  "circleci":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#343434"/>\n  <g fill="#fff">\n    <path d="M64 24c18.6 0 34.2 12.7 38.7 29.9.1.3.1.6.1.8 0 1.7-1.4 3.1-3.1 3.1H86.5c-1.2 0-2.3-.7-2.8-1.8C80.1 48.6 72.6 44 64 44c-11 0-20 9-20 20s9 20 20 20c8.6 0 16.1-4.6 19.7-12 .5-1.1 1.6-1.8 2.8-1.8h13.2c1.7 0 3.1 1.4 3.1 3.1 0 .3 0 .6-.1.8C98.2 91.3 82.6 104 64 104c-22.1 0-40-17.9-40-40s17.9-40 40-40z"/>\n    <circle cx="64" cy="64" r="9.5"/>\n  </g>\n</svg>\n',
+  "close":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#1463FF"/>\n  <circle cx="64" cy="64" r="32" fill="none" stroke="#FFFFFF" stroke-width="10"/>\n  <path d="M64 48l18 16-18 16v-10H46v-12h18z" fill="#FFFFFF"/>\n</svg>\n',
+  "cloudflare":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#F38020"/>\n  <path d="M86.5 82H32.9c-1.4 0-2.2-1.7-1.3-2.8l2.7-3.4c2.3-2.9 5.8-4.6 9.5-4.6h.6l8.1-20.1C55.7 43.5 62.9 39 70.8 39c9.4 0 17.4 6.4 19.7 15.2 5.9 1.5 10.7 6 12.5 11.8 2.4 7.6-1.7 13.6-3.7 16.1-.6.7-1.4 1.1-2.3 1.1h-7.2c2.4-3.2 3.1-6.6 2.1-9.8-1.1-3.6-4.3-6.3-8.1-6.8l-4.6-.6-1.2-4.5c-1.4-5.4-6.3-9.2-11.9-9.2-4.8 0-9.2 2.8-11.2 7.2l-9 22.5z" fill="#fff"/>\n</svg>\n',
+  "coda":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#F46A54"/>\n  <path d="M88 36c-4.4-4.9-10.8-8-17.9-8C56.8 28 46 38.7 46 52v24c0 13.3 10.8 24 24.1 24 7.1 0 13.5-3.1 17.9-8v-14.7C84.6 84.3 78 88.7 70.1 88.7 60.4 88.7 52.5 81 52.5 64s7.9-24.7 17.6-24.7c7.9 0 14.5 4.4 17.9 11.4V36z" fill="#fff"/>\n</svg>\n',
   "confluence":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_240_6563)">\n<g clip-path="url(#clip1_240_6563)">\n<path d="M38.0146 59.1266C36.0729 56.9907 33.1606 57.1849 31.8012 59.7093L0.344616 122.622C-0.820405 125.147 0.927179 128.059 3.64561 128.059H47.3352C48.6948 128.059 50.0538 127.283 50.6365 125.923C60.1508 106.506 54.5199 76.7967 38.0146 59.1266Z" fill="url(#paint0_linear_240_6563)"/>\n<path d="M60.9302 2.03887C43.4544 29.8061 44.6197 60.6804 56.0757 83.7872C67.7264 106.894 76.4643 124.758 77.2412 125.924C77.8239 127.283 79.1829 128.059 80.542 128.059H124.232C126.95 128.059 128.892 125.147 127.533 122.622C127.533 122.622 68.6975 4.95152 67.1437 2.03887C65.9789 -0.679622 62.6777 -0.679622 60.9302 2.03887Z" fill="#2684FF"/>\n</g>\n</g>\n<defs>\n<linearGradient id="paint0_linear_240_6563" x1="55.1799" y1="68.8586" x2="22.028" y2="126.28" gradientUnits="userSpaceOnUse">\n<stop stop-color="#0052CC"/>\n<stop offset="0.9228" stop-color="#2684FF"/>\n</linearGradient>\n<clipPath id="clip0_240_6563">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n<clipPath id="clip1_240_6563">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n</defs>\n</svg>\n',
   "datadog":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#632CA6"/>\n<g fill="#FFFFFF">\n<path d="M40 36h24c17.7 0 32 12.5 32 28s-14.3 28-32 28H40V36Zm14 12v32h10c10.5 0 19-7.2 19-16s-8.5-16-19-16H54Z"/>\n<circle cx="97" cy="35" r="7"/>\n</g>\n</svg>\n',
+  "dialpad":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#6C3DFF"/>\n  <circle cx="44" cy="40" r="8" fill="#FFFFFF"/>\n  <circle cx="64" cy="40" r="8" fill="#FFFFFF"/>\n  <circle cx="84" cy="40" r="8" fill="#FFFFFF"/>\n  <circle cx="44" cy="64" r="8" fill="#FFFFFF"/>\n  <circle cx="64" cy="64" r="8" fill="#FFFFFF"/>\n  <circle cx="84" cy="64" r="8" fill="#FFFFFF"/>\n  <circle cx="64" cy="88" r="8" fill="#FFFFFF"/>\n</svg>\n',
+  "digitalocean":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#0080FF"/>\n  <g fill="#fff">\n    <path d="M64 96V81.6c15.3 0 27.1-15.1 21.2-31.2-2.1-5.9-6.9-10.7-12.9-12.9C56.2 31.7 41 43.5 41 58.7H26.7C26.7 34.6 50 15.8 75.3 23.7c11 3.5 19.8 12.2 23.2 23.2C106.4 72.2 87.7 96 64 96z"/>\n    <path d="M64.1 81.7H49.9V67.5h14.2zM49.9 92.6H39V81.7h10.9zM39 81.7h-9.1v-9.1H39z"/>\n  </g>\n</svg>\n',
   "docs-google":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_239)">\n<mask id="mask0_0_239" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="18" y="0" width="93" height="128">\n<path d="M75.8462 0H26.6769C21.9046 0 18 3.92727 18 8.72727V119.273C18 124.073 21.9046 128 26.6769 128H101.877C106.649 128 110.554 124.073 110.554 119.273V34.9091L75.8462 0Z" fill="white"/>\n</mask>\n<g mask="url(#mask0_0_239)">\n<path d="M75.8462 0H26.6769C21.9046 0 18 3.92727 18 8.72727V119.273C18 124.073 21.9046 128 26.6769 128H101.877C106.649 128 110.554 124.073 110.554 119.273V34.9091L90.3077 20.3636L75.8462 0Z" fill="#4285F4"/>\n</g>\n<mask id="mask1_0_239" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="18" y="0" width="93" height="128">\n<path d="M75.8462 0H26.6769C21.9046 0 18 3.92727 18 8.72727V119.273C18 124.073 21.9046 128 26.6769 128H101.877C106.649 128 110.554 124.073 110.554 119.273V34.9091L75.8462 0Z" fill="white"/>\n</mask>\n<g mask="url(#mask1_0_239)">\n<path d="M78.3848 32.3564L110.554 64.7055V34.9091L78.3848 32.3564Z" fill="url(#paint0_linear_0_239)"/>\n</g>\n<mask id="mask2_0_239" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="18" y="0" width="93" height="128">\n<path d="M75.8462 0H26.6769C21.9046 0 18 3.92727 18 8.72727V119.273C18 124.073 21.9046 128 26.6769 128H101.877C106.649 128 110.554 124.073 110.554 119.273V34.9091L75.8462 0Z" fill="white"/>\n</mask>\n<g mask="url(#mask2_0_239)">\n<path d="M41.1382 93.0909H87.4151V87.2727H41.1382V93.0909ZM41.1382 104.727H75.8459V98.9091H41.1382V104.727ZM41.1382 64V69.8182H87.4151V64H41.1382ZM41.1382 81.4545H87.4151V75.6364H41.1382V81.4545Z" fill="#F1F1F1"/>\n</g>\n<mask id="mask3_0_239" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="18" y="0" width="93" height="128">\n<path d="M75.8462 0H26.6769C21.9046 0 18 3.92727 18 8.72727V119.273C18 124.073 21.9046 128 26.6769 128H101.877C106.649 128 110.554 124.073 110.554 119.273V34.9091L75.8462 0Z" fill="white"/>\n</mask>\n<g mask="url(#mask3_0_239)">\n<path d="M75.8462 0V26.1818C75.8462 31.0036 79.7291 34.9091 84.5231 34.9091H110.554L75.8462 0Z" fill="#A1C2FA"/>\n</g>\n<mask id="mask4_0_239" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="18" y="0" width="93" height="128">\n<path d="M75.8462 0H26.6769C21.9046 0 18 3.92727 18 8.72727V119.273C18 124.073 21.9046 128 26.6769 128H101.877C106.649 128 110.554 124.073 110.554 119.273V34.9091L75.8462 0Z" fill="white"/>\n</mask>\n<g mask="url(#mask4_0_239)">\n<path d="M26.6769 0C21.9046 0 18 3.92727 18 8.72727V9.45455C18 4.65455 21.9046 0.727273 26.6769 0.727273H75.8462V0H26.6769Z" fill="white" fill-opacity="0.2"/>\n</g>\n<mask id="mask5_0_239" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="18" y="0" width="93" height="128">\n<path d="M75.8462 0H26.6769C21.9046 0 18 3.92727 18 8.72727V119.273C18 124.073 21.9046 128 26.6769 128H101.877C106.649 128 110.554 124.073 110.554 119.273V34.9091L75.8462 0Z" fill="white"/>\n</mask>\n<g mask="url(#mask5_0_239)">\n<path d="M101.877 127.273H26.6769C21.9046 127.273 18 123.345 18 118.545V119.273C18 124.073 21.9046 128 26.6769 128H101.877C106.649 128 110.554 124.073 110.554 119.273V118.545C110.554 123.345 106.649 127.273 101.877 127.273Z" fill="#1A237E" fill-opacity="0.2"/>\n</g>\n<mask id="mask6_0_239" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="18" y="0" width="93" height="128">\n<path d="M75.8462 0H26.6769C21.9046 0 18 3.92727 18 8.72727V119.273C18 124.073 21.9046 128 26.6769 128H101.877C106.649 128 110.554 124.073 110.554 119.273V34.9091L75.8462 0Z" fill="white"/>\n</mask>\n<g mask="url(#mask6_0_239)">\n<path d="M84.5231 34.9091C79.7291 34.9091 75.8462 31.0036 75.8462 26.1818V26.9091C75.8462 31.7309 79.7291 35.6364 84.5231 35.6364H110.554V34.9091H84.5231Z" fill="#1A237E" fill-opacity="0.1"/>\n</g>\n<path d="M75.8462 0H26.6769C21.9046 0 18 3.92727 18 8.72727V119.273C18 124.073 21.9046 128 26.6769 128H101.877C106.649 128 110.554 124.073 110.554 119.273V34.9091L75.8462 0Z" fill="url(#paint1_radial_0_239)"/>\n</g>\n<defs>\n<linearGradient id="paint0_linear_0_239" x1="1687.04" y1="310.109" x2="1687.04" y2="3267.72" gradientUnits="userSpaceOnUse">\n<stop stop-color="#1A237E" stop-opacity="0.2"/>\n<stop offset="1" stop-color="#1A237E" stop-opacity="0.02"/>\n</linearGradient>\n<radialGradient id="paint1_radial_0_239" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(311.215 251.525) scale(14924.2 14924.2)">\n<stop stop-color="white" stop-opacity="0.1"/>\n<stop offset="1" stop-color="white" stop-opacity="0"/>\n</radialGradient>\n<clipPath id="clip0_0_239">\n<rect width="92.5538" height="128" fill="white" transform="translate(18)"/>\n</clipPath>\n</defs>\n</svg>\n',
   "drive":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_185)">\n<g clip-path="url(#clip1_0_185)">\n<path d="M9.32688 104.834L14.9718 114.584C16.1447 116.637 17.8309 118.25 19.8103 119.423L39.9706 84.5269H-0.350098C-0.350098 86.7995 0.236386 89.0722 1.40935 91.1249L9.32688 104.834Z" fill="#0066DA"/>\n<path d="M63.6499 43.4731L43.4895 8.57732C41.5102 9.75029 39.824 11.3631 38.651 13.4158L1.40935 77.929C0.257958 79.9374 -0.348565 82.2119 -0.350098 84.5269H39.9706L63.6499 43.4731Z" fill="#00AC47"/>\n<path d="M107.489 119.423C109.469 118.25 111.155 116.637 112.328 114.584L114.674 110.552L125.89 91.1249C127.063 89.0722 127.65 86.7995 127.65 84.5269H87.3262L95.9064 101.388L107.489 119.423Z" fill="#EA4335"/>\n<path d="M63.6496 43.4731L83.81 8.57732C81.8306 7.40435 79.558 6.81787 77.2121 6.81787H50.0872C47.7413 6.81787 45.4686 7.47767 43.4893 8.57732L63.6496 43.4731Z" fill="#00832D"/>\n<path d="M87.3294 84.5269H39.9709L19.8105 119.423C21.7899 120.596 24.0626 121.182 26.4085 121.182H100.892C103.238 121.182 105.51 120.522 107.49 119.423L87.3294 84.5269Z" fill="#2684FC"/>\n<path d="M107.27 45.6724L88.6488 13.4158C87.4758 11.3631 85.7896 9.75029 83.8103 8.57732L63.6499 43.4731L87.3292 84.5269H127.577C127.577 82.2543 126.99 79.9817 125.817 77.929L107.27 45.6724Z" fill="#FFBA00"/>\n</g>\n</g>\n<defs>\n<clipPath id="clip0_0_185">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n<clipPath id="clip1_0_185">\n<rect width="128" height="114.364" fill="white" transform="translate(-0.350098 6.81787)"/>\n</clipPath>\n</defs>\n</svg>\n',
+  "exa":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#254BF1"/>\n  <g fill="#fff">\n    <rect x="34" y="30" width="60" height="12" rx="6"/>\n    <rect x="34" y="58" width="44" height="12" rx="6"/>\n    <rect x="34" y="86" width="60" height="12" rx="6"/>\n  </g>\n</svg>\n',
+  "fathom":
+    '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#7B5CFF"/>\n<g fill="#FFFFFF">\n<rect x="30" y="50" width="10" height="28" rx="5"/>\n<rect x="48" y="36" width="10" height="56" rx="5"/>\n<rect x="66" y="44" width="10" height="40" rx="5"/>\n<rect x="84" y="30" width="10" height="68" rx="5"/>\n</g>\n</svg>\n',
   "figma":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_460)">\n<path d="M64 64C64 52.3381 73.4539 42.8839 85.1161 42.8839C96.7781 42.8839 106.232 52.3381 106.232 64C106.232 75.6622 96.7781 85.1161 85.1161 85.1161C73.4539 85.1161 64 75.6622 64 64Z" fill="#1ABCFE"/>\n<path d="M21.7681 106.232C21.7681 94.5704 31.2221 85.1161 42.8842 85.1161H64.0004V106.232C64.0004 117.895 54.5464 127.348 42.8842 127.348C31.2221 127.348 21.7681 117.895 21.7681 106.232Z" fill="#0ACF83"/>\n<path d="M64 0.651688V42.8838H85.1161C96.7784 42.8838 106.232 33.4299 106.232 21.7678C106.232 10.1057 96.7784 0.651688 85.1161 0.651688H64Z" fill="#FF7262"/>\n<path d="M21.7681 21.7678C21.7681 33.4299 31.2221 42.8838 42.8842 42.8838H64.0004V0.651672H42.8842C31.2221 0.651672 21.7681 10.1057 21.7681 21.7678Z" fill="#F24E1E"/>\n<path d="M21.7681 64C21.7681 75.6622 31.2221 85.1161 42.8842 85.1161H64.0004V42.8839H42.8842C31.2221 42.8839 21.7681 52.3381 21.7681 64Z" fill="#A259FF"/>\n</g>\n<defs>\n<clipPath id="clip0_0_460">\n<rect width="85.3333" height="128" fill="white" transform="translate(21.3335)"/>\n</clipPath>\n</defs>\n</svg>\n',
+  "firecrawl":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#FF4D00"/>\n  <path d="M64 22c4 14-12 20-12 34 0-8-8-10-8-20-10 10-16 22-16 34 0 20 16 36 36 36s36-16 36-36c0-16-10-28-20-40 0 12-12 16-16-8z" fill="#fff"/>\n  <circle cx="64" cy="88" r="14" fill="#FF4D00"/>\n</svg>\n',
+  "fireflies":
+    '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#3B0764"/>\n<g fill="#FFFFFF">\n<circle cx="64" cy="44" r="14"/>\n<path d="M64 62c-15.5 0-28 9.4-28 21v9h56v-9c0-11.6-12.5-21-28-21Z" opacity="0.85"/>\n<circle cx="96" cy="32" r="6" opacity="0.6"/>\n<circle cx="32" cy="32" r="6" opacity="0.6"/>\n</g>\n</svg>\n',
+  "folk":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#111111"/>\n  <circle cx="46" cy="46" r="12" fill="#FFFFFF"/>\n  <circle cx="82" cy="46" r="12" fill="#FFFFFF"/>\n  <path d="M32 92c0-14 14-22 32-22s32 8 32 22a4 4 0 0 1-4 4H36a4 4 0 0 1-4-4z" fill="#FFFFFF"/>\n</svg>\n',
+  "gemini":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#1B72E8"/>\n  <path d="M64 24c2.4 14.6 5.8 24.6 12.4 31.4C83 62 93 65.5 107.6 68c-14.6 2.5-24.6 6-31.2 12.6C69.8 87.4 66.4 97.4 64 112c-2.4-14.6-5.8-24.6-12.4-31.4C45 74 35 70.5 20.4 68c14.6-2.5 24.6-6 31.2-12.6C58.2 48.6 61.6 38.6 64 24z" fill="#fff"/>\n</svg>\n',
   "github":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_48)">\n<path fill-rule="evenodd" clip-rule="evenodd" d="M63.8093 1.30612C28.5244 1.30612 0 30.0408 0 65.5895C0 94.0055 18.2766 118.059 43.631 126.572C46.801 127.212 47.9621 125.189 47.9621 123.487C47.9621 121.997 47.8576 116.889 47.8576 111.566C30.1074 115.399 26.4111 103.903 26.4111 103.903C23.5585 96.4532 19.3319 94.5384 19.3319 94.5384C13.5223 90.6005 19.7551 90.6005 19.7551 90.6005C26.1995 91.0263 29.5811 97.199 29.5811 97.199C35.2849 106.99 44.4761 104.223 48.1737 102.52C48.7014 98.3693 50.3928 95.4958 52.1887 93.8997C38.0317 92.4095 23.1367 86.8754 23.1367 62.1832C23.1367 55.1589 25.6705 49.4119 29.6856 44.9424C29.0521 43.3463 26.833 36.7464 30.3203 27.9131C30.3203 27.9131 35.7081 26.21 47.8563 34.5117C53.0574 33.1045 58.4212 32.3887 63.8093 32.3827C69.1971 32.3827 74.6893 33.1285 79.761 34.5117C91.9105 26.21 97.2983 27.9131 97.2983 27.9131C100.786 36.7464 98.5652 43.3463 97.9318 44.9424C102.053 49.4119 104.482 55.1589 104.482 62.1832C104.482 86.8754 89.5869 92.3024 75.3241 93.8997C77.649 95.9216 79.6552 99.7525 79.6552 105.819C79.6552 114.44 79.5507 121.358 79.5507 123.486C79.5507 125.189 80.7132 127.212 83.8818 126.574C109.236 118.058 127.513 94.0055 127.513 65.5895C127.617 30.0408 98.9884 1.30612 63.8093 1.30612Z" fill="#24292F"/>\n</g>\n<defs>\n<clipPath id="clip0_0_48">\n<rect width="128" height="125.388" fill="white" transform="translate(0 1.30612)"/>\n</clipPath>\n</defs>\n</svg>\n',
   "gitlab":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_240_6238)">\n<g clip-path="url(#clip1_240_6238)">\n<path d="M125.848 51.1162L125.668 50.6562L108.268 5.25622C107.915 4.3644 107.289 3.60698 106.48 3.09222C105.665 2.57734 104.711 2.32811 103.749 2.37899C102.786 2.42986 101.864 2.77832 101.108 3.37622C100.36 3.97622 99.82 4.80022 99.564 5.72422L87.804 41.7282H40.204L28.44 5.72822C28.1887 4.79778 27.6485 3.97111 26.8973 3.36729C26.1462 2.76346 25.2227 2.41365 24.26 2.36822C23.3004 2.3176 22.3491 2.56794 21.5387 3.08427C20.7283 3.6006 20.0995 4.35714 19.74 5.24822L2.31598 50.7202L2.13598 51.1722C-0.364414 57.7204 -0.671054 64.9035 1.26218 71.6409C3.19542 78.3784 7.264 84.306 12.856 88.5322L12.92 88.5802L13.072 88.7002L39.612 108.568L52.732 118.504L60.708 124.544C61.6452 125.252 62.7876 125.635 63.962 125.635C65.1364 125.635 66.2788 125.252 67.216 124.544L75.192 118.504L88.32 108.568L115.012 88.5802L115.084 88.5282C120.694 84.3053 124.778 78.3718 126.719 71.6235C128.66 64.8752 128.353 57.6786 125.844 51.1202L125.848 51.1162Z" fill="#E24329"/>\n<path d="M125.848 51.1158L125.668 50.6558C117.181 52.4047 109.183 56.002 102.244 61.1918L64.032 90.1518C72.1526 96.2905 80.2752 102.427 88.4 108.56L115.092 88.5718L115.168 88.5198C120.763 84.2854 124.831 78.3471 126.757 71.5998C128.683 64.8525 128.364 57.662 125.848 51.1118V51.1158Z" fill="#FC6D26"/>\n<path d="M39.632 108.56L52.732 118.5L60.708 124.54C61.6452 125.248 62.7876 125.63 63.962 125.63C65.1364 125.63 66.2788 125.248 67.216 124.54L75.192 118.5L88.32 108.564C88.32 108.564 76.98 100.004 63.952 90.1519L39.632 108.564V108.56Z" fill="#FCA326"/>\n<path d="M25.74 61.22C18.8038 56.0281 10.8068 52.4318 2.32001 50.688L2.14001 51.14C-0.367146 57.6918 -0.677348 64.8809 1.25614 71.6242C3.18962 78.3676 7.26208 84.3001 12.86 88.528L12.924 88.576L13.076 88.696L39.616 108.564L64.036 90.152L25.74 61.22Z" fill="#FC6D26"/>\n</g>\n</g>\n<defs>\n<clipPath id="clip0_240_6238">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n<clipPath id="clip1_240_6238">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n</defs>\n</svg>\n',
   "gmail":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_12)">\n<path d="M8.7275 113.854H29.091V64.4L0 42.5817V105.127C0 109.949 3.9055 113.855 8.7275 113.855V113.854Z" fill="#4285F4"/>\n<path d="M98.909 113.854H119.273C124.095 113.854 128 109.949 128 105.127V42.5817L98.909 64.4V113.854Z" fill="#34A853"/>\n<path d="M98.909 26.5817V64.4L128 42.5817V30.9455C128 20.16 115.687 14 107.054 20.4727L98.909 26.5817Z" fill="#FBBC04"/>\n<path fill-rule="evenodd" clip-rule="evenodd" d="M29.091 64.4V26.5817L64 52.7638L98.909 26.5817V64.4L64 90.5817L29.091 64.4Z" fill="#EA4335"/>\n<path d="M0 30.9455V42.5817L29.091 64.4V26.5817L20.9455 20.4727C12.3125 14 0 20.16 0 30.945V30.9455Z" fill="#C5221F"/>\n</g>\n<defs>\n<clipPath id="clip0_0_12">\n<rect width="128" height="99.855" fill="white" transform="translate(0 14)"/>\n</clipPath>\n</defs>\n</svg>\n',
+  "gong":
+    '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#8039DF"/>\n<g fill="#FFFFFF">\n<path d="M64 26c-21 0-38 17-38 38s17 38 38 38 38-17 38-38h-14c0 13.3-10.7 24-24 24S40 77.3 40 64s10.7-24 24-24c6.6 0 12.6 2.7 17 7l10-10c-7-7-16.5-11-27-11Z"/>\n<rect x="60" y="58" width="42" height="13" rx="6.5"/>\n</g>\n</svg>\n',
   "google-analytics":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect x="84" y="20" width="24" height="88" rx="12" fill="#F9AB00"/>\n<rect x="52" y="52" width="24" height="56" rx="12" fill="#E37400"/>\n<circle cx="32" cy="96" r="12" fill="#E37400"/>\n</svg>\n',
+  "google-chat":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#00AC47"/>\n  <path d="M36 34h56a6 6 0 0 1 6 6v34a6 6 0 0 1-6 6H52L36 94a2 2 0 0 1-3.4-1.4V40a6 6 0 0 1 3.4-6z" fill="#FFFFFF" fill-rule="evenodd"/>\n  <rect x="46" y="48" width="36" height="6" rx="3" fill="#00AC47"/>\n  <rect x="46" y="60" width="26" height="6" rx="3" fill="#00AC47"/>\n</svg>\n',
+  "gusto":
+    '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#F45D48"/>\n<path d="M64 26c-21 0-38 17-38 38s17 38 38 38 38-17 38-38v-7H64v14h23.2C84.1 84.1 74.9 92 64 92c-15.5 0-28-12.5-28-28s12.5-28 28-28c7.7 0 14.7 3.1 19.8 8.2l9.9-9.9C86.1 26.7 75.6 26 64 26Z" fill="#FFFFFF"/>\n</svg>\n',
   "harvest":
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">\n  <circle cx="50" cy="50" r="50" fill="#FA5B35"/>\n  <path d="M24 28h10v18h24V28h10v44H58V54H34v18H24V28z" fill="#fff"/>\n</svg>\n',
   "hubspot":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n  <rect width="128" height="128" rx="20" fill="#FF5C35"/>\n  <path d="M86 51.5V39.2C91.7 37.2 95.8 31.8 95.8 25.4C95.8 17.3 89.3 10.8 81.2 10.8C73.1 10.8 66.6 17.3 66.6 25.4C66.6 31.8 70.7 37.2 76.4 39.2V51.5C70.8 52.4 65.9 55.2 62.1 59.2L39.3 41.4C40.2 39.5 40.7 37.4 40.7 35.2C40.7 27.1 34.2 20.6 26.1 20.6C18 20.6 11.5 27.1 11.5 35.2C11.5 43.3 18 49.8 26.1 49.8C28.9 49.8 31.5 49 33.7 47.7L56.2 65.3C54.7 68.4 53.8 71.9 53.8 75.6C53.8 77.9 54.1 80.1 54.8 82.2L38.2 92.6C35.5 90.2 32 88.7 28.1 88.7C20 88.7 13.5 95.2 13.5 103.3C13.5 111.4 20 117.9 28.1 117.9C36.2 117.9 42.7 111.4 42.7 103.3C42.7 102 42.5 100.8 42.2 99.6L58.9 89.1C63.4 95.4 70.7 99.5 79 99.5C92.7 99.5 103.8 88.4 103.8 74.7C103.8 62.2 94.7 52 86 51.5ZM79 89.2C71 89.2 64.5 82.7 64.5 74.7C64.5 66.7 71 60.2 79 60.2C87 60.2 93.5 66.7 93.5 74.7C93.5 82.7 87 89.2 79 89.2Z" fill="white"/>\n</svg>\n',
   "jira":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_328)">\n<path d="M44.5144 60.3244C43.0588 58.7232 40.8756 58.8688 39.8565 60.7612L16.275 107.924C15.4016 109.816 16.7117 112 18.7496 112H51.5016C52.5208 112 53.5396 111.418 53.9764 110.399C61.1088 95.8424 56.8876 73.5708 44.5144 60.3244Z" fill="url(#paint0_linear_0_328)"/>\n<path d="M61.6932 17.5284C48.5924 38.3442 49.466 61.4892 58.054 78.8112C66.788 96.1336 73.3384 109.525 73.9208 110.399C74.3576 111.418 75.3764 112 76.3952 112H109.148C111.185 112 112.641 109.816 111.622 107.924C111.622 107.924 67.516 19.7119 66.3512 17.5284C65.478 15.4905 63.0032 15.4905 61.6932 17.5284Z" fill="#2684FF"/>\n</g>\n<defs>\n<linearGradient id="paint0_linear_0_328" x1="57.3824" y1="67.62" x2="32.53" y2="110.666" gradientUnits="userSpaceOnUse">\n<stop stop-color="#0052CC"/>\n<stop offset="0.9228" stop-color="#2684FF"/>\n</linearGradient>\n<clipPath id="clip0_0_328">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n</defs>\n</svg>\n',
+  "jotform":
+    '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#FF6100"/>\n<g fill="#FFFFFF">\n<rect x="32" y="34" width="64" height="12" rx="6"/>\n<rect x="32" y="58" width="48" height="12" rx="6"/>\n<rect x="32" y="82" width="56" height="12" rx="6"/>\n</g>\n</svg>\n',
   "klaviyo":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#0E1015"/>\n<path d="M30 34h68v60H30V34Zm10 8 24 22 24-22H40Zm48 44V51L64 73 40 51v35h48Z" fill="#FFFFFF"/>\n</svg>\n',
+  "lever":
+    '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#1E1E2F"/>\n<g fill="#FFFFFF">\n<path d="M40 28h16v56h36v16H40V28Z"/>\n<circle cx="88" cy="40" r="10" opacity="0.8"/>\n</g>\n</svg>\n',
   "linear":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_298)">\n<g clip-path="url(#clip1_0_298)">\n<path d="M1.56852 78.7492C1.28372 77.5351 2.7301 76.7704 3.61189 77.6522L50.3478 124.388C51.2296 125.27 50.4649 126.716 49.2508 126.431C25.6659 120.899 7.10117 102.334 1.56852 78.7492ZM0.00242092 60.018C-0.0201631 60.3806 0.116177 60.7347 0.373073 60.9916L67.0084 127.627C67.2653 127.884 67.6193 128.02 67.9819 127.998C71.0145 127.809 73.99 127.409 76.8938 126.812C77.8724 126.611 78.2123 125.409 77.5059 124.703L3.29722 50.4941C2.59084 49.7876 1.38852 50.1276 1.18755 51.1062C0.591182 54.01 0.191304 56.9854 0.00242092 60.018ZM5.38999 38.0229C5.17688 38.5014 5.28543 39.0605 5.65578 39.4309L88.5691 122.344C88.9395 122.715 89.4986 122.823 89.9771 122.61C92.2633 121.592 94.479 120.443 96.6145 119.174C97.3212 118.755 97.4303 117.784 96.849 117.202L10.7976 31.151C10.2164 30.5697 9.24538 30.6788 8.8255 31.3855C7.55661 33.521 6.40831 35.7367 5.38999 38.0229ZM16.2031 23.1347C15.7294 22.661 15.7001 21.9012 16.1464 21.4015C27.8778 8.26791 44.9426 0 63.9384 0C99.3187 0 128 28.6813 128 64.0615C128 83.0574 119.732 100.122 106.599 111.854C106.099 112.3 105.339 112.271 104.865 111.797L16.2031 23.1347Z" fill="#222326"/>\n</g>\n</g>\n<defs>\n<clipPath id="clip0_0_298">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n<clipPath id="clip1_0_298">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n</defs>\n</svg>\n',
+  "metabase":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#509EE3"/>\n  <g fill="#fff">\n    <circle cx="40" cy="32" r="6"/>\n    <circle cx="64" cy="32" r="6" opacity="0.5"/>\n    <circle cx="88" cy="32" r="6"/>\n    <circle cx="40" cy="53" r="6"/>\n    <circle cx="64" cy="53" r="6"/>\n    <circle cx="88" cy="53" r="6"/>\n    <circle cx="40" cy="74" r="6" opacity="0.5"/>\n    <circle cx="64" cy="74" r="6"/>\n    <circle cx="88" cy="74" r="6" opacity="0.5"/>\n    <circle cx="40" cy="95" r="6"/>\n    <circle cx="64" cy="95" r="6"/>\n    <circle cx="88" cy="95" r="6"/>\n  </g>\n</svg>\n',
+  "mistral":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#FA520F"/>\n  <g fill="#fff">\n    <rect x="24" y="32" width="16" height="16"/>\n    <rect x="88" y="32" width="16" height="16"/>\n    <rect x="24" y="48" width="32" height="16"/>\n    <rect x="72" y="48" width="32" height="16"/>\n    <rect x="24" y="64" width="80" height="16"/>\n    <rect x="24" y="80" width="16" height="16"/>\n    <rect x="56" y="80" width="16" height="16"/>\n    <rect x="88" y="80" width="16" height="16"/>\n  </g>\n</svg>\n',
   "mixpanel":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_993)">\n<path d="M37.1571 53.3247H53.4279C49.3537 50.772 47.8324 47.2135 45.7953 40.6124L39.6841 17.9726C36.8993 7.78728 34.6044 2.93958 23.4134 2.93958H0.0257857V9.05078H3.35214C10.2111 9.05078 10.9847 11.6036 13.0218 19.2361L18.3594 39.0911C21.1442 48.7349 25.4762 53.3247 37.1571 53.3247ZM74.8042 53.3247H91.0749C102.782 53.3247 106.83 48.7349 109.641 39.0911L114.978 19.2361C117.015 11.6036 118.021 9.05078 124.648 9.05078H127.974V2.93958H104.819C93.3699 2.93958 91.075 7.52942 88.5222 17.9468L82.411 40.5866C80.4255 47.4456 78.8783 50.772 74.8042 53.3247ZM53.4279 74.6753H74.8042V53.299H53.4279V74.6753ZM0.0257857 125.06H23.4134C34.6044 125.06 36.8993 120.213 39.6841 110.053L45.7953 87.4134C47.8324 80.8123 49.3537 77.2281 53.4279 74.7011H37.1571C25.4504 74.7011 21.1185 79.2909 18.3336 88.9347L12.996 108.79C10.9331 116.396 10.1853 118.949 3.32635 118.949H0L0.0257857 125.06ZM104.819 125.06H127.974V118.949H124.648C118.047 118.949 117.015 116.396 114.978 108.764L109.641 88.909C106.856 79.2393 102.782 74.6753 91.0749 74.6753H74.83C78.9041 77.2281 80.3739 80.5286 82.411 87.3876L88.5222 110.027C91.0492 120.471 93.3441 125.06 104.819 125.06Z" fill="#1B0B3B"/>\n</g>\n<defs>\n<clipPath id="clip0_0_993">\n<rect width="128" height="122.121" fill="white" transform="translate(0 2.93958)"/>\n</clipPath>\n</defs>\n</svg>\n',
   "neon":
@@ -13767,16 +21938,32 @@ export const icons: Record<string, string> = {
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#000000"/>\n<g stroke="#FFFFFF" stroke-width="7" stroke-linejoin="round" fill="none">\n<path d="M64 22 L98 41 L98 64 L64 45 L30 64 L30 41 Z"/>\n<path d="M98 64 L98 87 L64 106 L30 87 L30 64 L64 83 Z"/>\n<path d="M64 45 L64 83" stroke-linecap="round"/>\n</g>\n</svg>\n',
   "outlook":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_142)">\n<g clip-path="url(#clip1_0_142)">\n<path d="M127.542 66.6442C127.549 65.6433 127.032 64.7117 126.179 64.1884H126.164L126.11 64.1586L81.7569 37.9037C81.5653 37.7743 81.3666 37.6561 81.1615 37.5495C79.449 36.666 77.4147 36.666 75.7021 37.5495C75.4971 37.6561 75.2983 37.7743 75.1068 37.9037L30.7534 64.1586L30.6999 64.1884C29.3443 65.0313 28.9287 66.8137 29.7717 68.1693C30.0201 68.5687 30.3622 68.9014 30.7683 69.1387L75.1218 95.3936C75.314 95.5218 75.5127 95.6401 75.7172 95.7478C77.4297 96.6313 79.464 96.6313 81.1765 95.7478C81.381 95.6401 81.5797 95.5219 81.7719 95.3936L126.125 69.1387C127.011 68.6221 127.552 67.6699 127.542 66.6442Z" fill="#0A2767"/>\n<path d="M35.924 49.1141H65.0306V75.7947H35.924V49.1141ZM121.589 21.993V9.78838C121.659 6.73693 119.243 4.20571 116.192 4.13259H40.6601C37.6086 4.20571 35.1933 6.73693 35.2632 9.78838V21.993L79.9143 33.9L121.589 21.993Z" fill="#0364B8"/>\n<path d="M35.2634 21.993H65.0308V48.7837H35.2634V21.993Z" fill="#0078D4"/>\n<path d="M94.7982 21.993H65.0308V48.7837L94.7982 75.5744H121.589V48.7837L94.7982 21.993Z" fill="#28A8EA"/>\n<path d="M65.0308 48.7837H94.7982V75.5744H65.0308V48.7837Z" fill="#0078D4"/>\n<path d="M65.0308 75.5744H94.7982V102.365H65.0308V75.5744Z" fill="#0364B8"/>\n<path d="M35.9243 75.7947H65.0309V100.049H35.9243V75.7947Z" fill="#14447D"/>\n<path d="M94.7983 75.5744H121.589V102.365H94.7983V75.5744Z" fill="#0078D4"/>\n<path d="M126.179 68.975L126.122 69.0047L81.7687 93.9498C81.5752 94.0689 81.3788 94.182 81.1733 94.2832C80.42 94.6419 79.6018 94.8444 78.7681 94.8786L76.345 93.4616C76.1403 93.3589 75.9415 93.2446 75.7497 93.1193L30.8009 67.4657H30.7801L29.3096 66.6442V117.142C29.3325 120.511 32.0815 123.224 35.4506 123.202H121.496C121.547 123.202 121.592 123.178 121.645 123.178C122.357 123.133 123.058 122.987 123.729 122.744C124.019 122.621 124.298 122.476 124.565 122.309C124.765 122.196 125.107 121.949 125.107 121.949C126.632 120.821 127.534 119.039 127.542 117.142V66.6442C127.541 67.61 127.02 68.5006 126.179 68.975Z" fill="url(#paint0_linear_0_142)"/>\n<path opacity="0.5" d="M125.161 66.4447V69.5406L78.7832 101.472L30.7683 67.4866C30.7683 67.4702 30.755 67.4568 30.7386 67.4568L26.333 64.8075V62.5749L28.1488 62.5451L31.9888 64.748L32.0781 64.7777L32.4055 64.9861C32.4055 64.9861 77.5329 90.7349 77.652 90.7944L79.3785 91.8065C79.5273 91.747 79.6761 91.6875 79.8547 91.6279C79.9441 91.5683 124.655 66.4149 124.655 66.4149L125.161 66.4447Z" fill="#0A2767"/>\n<path d="M126.179 68.975L126.123 69.0077L81.7691 93.9528C81.5756 94.0718 81.3792 94.1849 81.1737 94.2861C79.4512 95.1276 77.4369 95.1276 75.7144 94.2861C75.5104 94.1851 75.3117 94.0738 75.119 93.9528L30.7657 69.0077L30.7121 68.975C29.8558 68.5107 29.3189 67.6182 29.3101 66.6442V117.142C29.3314 120.51 32.0794 123.224 35.4478 123.202C35.4478 123.202 35.448 123.202 35.4481 123.202H121.404C124.773 123.224 127.521 120.51 127.543 117.142C127.543 117.142 127.543 117.142 127.543 117.142V66.6442C127.541 67.61 127.02 68.5006 126.179 68.975Z" fill="#1490DF"/>\n<path opacity="0.1" d="M82.4148 93.5837L81.751 93.9558C81.5586 94.0782 81.3599 94.1906 81.1556 94.2921C80.4243 94.6511 79.629 94.8616 78.8159 94.9113L95.6911 114.867L125.128 121.961C125.935 121.352 126.576 120.55 126.995 119.63L82.4148 93.5837Z" fill="black"/>\n<path opacity="0.05" d="M85.4213 91.8929L81.751 93.9558C81.5586 94.0782 81.3599 94.1906 81.1556 94.2921C80.4243 94.6511 79.629 94.8616 78.8159 94.9113L86.7221 116.71L125.137 121.952C126.65 120.816 127.541 119.034 127.542 117.142V116.49L85.4213 91.8929Z" fill="black"/>\n<path d="M35.5314 123.202H121.396C122.717 123.209 124.005 122.792 125.072 122.012L76.3425 93.4676C76.1378 93.3649 75.939 93.2506 75.7472 93.1253L30.7984 67.4717H30.7776L29.3101 66.6442V116.969C29.3067 120.408 32.0921 123.199 35.5314 123.202Z" fill="#28A8EA"/>\n<path opacity="0.1" d="M70.984 33.4029V96.8968C70.9787 99.123 69.625 101.124 67.5607 101.957C66.9212 102.232 66.2325 102.374 65.5365 102.374H29.3096V30.9233H35.2631V27.9465H65.5366C68.5438 27.9579 70.9775 30.3956 70.984 33.4029Z" fill="black"/>\n<path opacity="0.2" d="M68.0073 36.3796V99.8735C68.0147 100.593 67.8623 101.304 67.5607 101.957C66.734 103.995 64.7588 105.332 62.5598 105.342H29.3096V30.9233H62.5598C63.4235 30.9146 64.2747 31.13 65.0305 31.5484C66.8552 32.4677 68.0066 34.3364 68.0073 36.3796Z" fill="black"/>\n<path opacity="0.2" d="M68.0073 36.3796V93.92C67.9927 96.9259 65.5657 99.3623 62.5599 99.3883H29.3096V30.9233H62.5598C63.4235 30.9146 64.2747 31.13 65.0305 31.5484C66.8552 32.4677 68.0066 34.3364 68.0073 36.3796Z" fill="black"/>\n<path opacity="0.2" d="M65.0305 36.3796V93.92C65.0273 96.9306 62.5935 99.3736 59.5831 99.3883H29.3096V30.9233H59.583C62.5932 30.9249 65.0321 33.3665 65.0304 36.3767C65.0305 36.3777 65.0305 36.3786 65.0305 36.3796Z" fill="black"/>\n<path d="M4.99883 30.9233H59.5744C62.5879 30.9233 65.0308 33.3662 65.0308 36.3796V90.9552C65.0308 93.9687 62.5879 96.4116 59.5744 96.4116H4.99883C1.98534 96.4116 -0.45752 93.9686 -0.45752 90.9552V36.3796C-0.45752 33.3662 1.98541 30.9233 4.99883 30.9233Z" fill="url(#paint1_linear_0_142)"/>\n<path d="M16.5963 53.8085C17.9411 50.9433 20.1118 48.5455 22.8296 46.9233C25.8395 45.2001 29.2665 44.341 32.7333 44.4406C35.9464 44.371 39.117 45.1855 41.8987 46.7952C44.5141 48.3549 46.6205 50.6402 47.9623 53.3738C49.4235 56.386 50.1518 59.701 50.0877 63.0482C50.1585 66.5464 49.4092 70.0126 47.8998 73.1691C46.526 76.0005 44.3528 78.3672 41.6486 79.9769C38.7597 81.636 35.4714 82.4719 32.1409 82.3941C28.8591 82.4733 25.6187 81.6495 22.7731 80.0127C20.1351 78.4509 18.0022 76.163 16.6291 73.4221C15.1592 70.4535 14.4222 67.1759 14.4799 63.8638C14.4187 60.3954 15.1422 56.958 16.5963 53.8085ZM23.2404 69.9721C23.9574 71.7835 25.1733 73.3544 26.747 74.5028C28.3499 75.623 30.2692 76.201 32.2242 76.1519C34.3061 76.2342 36.3583 75.6365 38.0705 74.4491C39.6243 73.3045 40.8082 71.7293 41.4759 69.9185C42.2222 67.8964 42.5906 65.7542 42.5624 63.5989C42.5855 61.423 42.2392 59.259 41.5384 57.199C40.9194 55.339 39.7736 53.6989 38.2402 52.4779C36.5709 51.2343 34.5242 50.6035 32.4444 50.6918C30.4471 50.6401 28.4848 51.2226 26.8393 52.3558C25.239 53.5089 24 55.0938 23.2672 56.9251C21.6416 61.1227 21.6331 65.7746 23.2433 69.9781L23.2404 69.9721Z" fill="white"/>\n<path d="M94.7983 21.993H121.589V48.7837H94.7983V21.993Z" fill="#50D9FF"/>\n</g>\n</g>\n<defs>\n<linearGradient id="paint0_linear_0_142" x1="78.4258" y1="66.6442" x2="78.4258" y2="123.202" gradientUnits="userSpaceOnUse">\n<stop stop-color="#35B8F1"/>\n<stop offset="1" stop-color="#28A8EA"/>\n</linearGradient>\n<linearGradient id="paint1_linear_0_142" x1="10.9191" y1="26.6598" x2="53.6542" y2="100.675" gradientUnits="userSpaceOnUse">\n<stop stop-color="#1784D9"/>\n<stop offset="0.5" stop-color="#107AD5"/>\n<stop offset="1" stop-color="#0A63C9"/>\n</linearGradient>\n<clipPath id="clip0_0_142">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n<clipPath id="clip1_0_142">\n<rect width="128" height="119.07" fill="white" transform="translate(-0.45752 4.13259)"/>\n</clipPath>\n</defs>\n</svg>\n',
+  "pagerduty":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#06AC38"/>\n  <g fill="#fff">\n    <path d="M44 28h26c14.4 0 24 9.8 24 24s-9.6 24-24 24H58v-13h11c7.3 0 11.5-4.3 11.5-11S76.3 41 69 41H57v35H44z"/>\n    <rect x="44" y="84" width="13" height="16"/>\n  </g>\n</svg>\n',
   "paypal":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#FFFFFF"/>\n<path d="M42 100 53 28h25c12 0 20 7 18.5 18.5C94.7 60 85 66 72.5 66H59l-5 34H42Z" fill="#003087"/>\n<path d="M56 108l10-66h23c11 0 18 6.5 16.5 17.5C103.7 73 95 79 83.5 79H70l-4.4 29H56Z" fill="#009CDE" fill-opacity="0.9"/>\n</svg>\n',
+  "perplexity":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#20808D"/>\n  <g fill="none" stroke="#fff" stroke-width="6" stroke-linejoin="round">\n    <path d="M64 24v80"/>\n    <path d="M64 48L34 24v36h60V24L64 48z"/>\n    <path d="M64 80l30 24V68H34v36l30-24z"/>\n  </g>\n</svg>\n',
   "persona":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<path d="M112.152 115.656V122.68C112.152 126.088 110.254 128 106.828 128H20.3232C16.9128 128 15 126.103 15 122.68V115.656C15 112.248 16.898 110.336 20.3232 110.336H106.843C110.254 110.336 112.166 112.233 112.166 115.656H112.152ZM106.25 62.5179L83.6972 49.5077C82.9556 49.0779 82.9556 48.0258 83.6972 47.5962L106.25 34.5858C108.801 33.1187 109.66 29.8587 108.193 27.3248L104.679 21.2494C103.211 18.7006 99.9632 17.8412 97.4132 19.3082L74.8597 32.3185C74.1187 32.7483 73.1991 32.2148 73.1991 31.3702V5.31976C73.1991 2.38573 70.8119 0 67.8759 0H60.8476C57.9116 0 55.5244 2.38573 55.5244 5.31976V31.3554C55.5244 32.2 54.6051 32.7334 53.8637 32.3038L31.3106 19.2933C28.7602 17.8263 25.5129 18.7006 24.045 21.2345L20.5308 27.31C19.0628 29.8587 19.9377 33.1039 22.4732 34.5709L45.0263 47.5813C45.7677 48.0111 45.7677 49.0632 45.0263 49.4929L22.4732 62.5031C19.9228 63.9702 19.0628 67.2155 20.5308 69.7644L24.045 75.8395C25.5129 78.3884 28.7602 79.2481 31.3106 77.781L53.8637 64.7705C54.6051 64.3407 55.5244 64.8744 55.5244 65.7187V91.7545C55.5244 94.6887 57.9116 97.0743 60.8476 97.0743H67.8759C70.8119 97.0743 73.1991 94.6887 73.1991 91.7545V65.7187C73.1991 64.8744 74.1187 64.3407 74.8597 64.7705L97.4132 77.781C99.9632 79.2481 103.211 78.3735 104.679 75.8395L108.193 69.7644C109.66 67.2155 108.786 63.9702 106.25 62.5031V62.5179Z" fill="#7379FD"/>\n</svg>\n',
   "posthog":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<path d="M27.8824 69.6467C26.939 71.5336 24.2464 71.5336 23.3029 69.6467L21.0466 65.1342C20.6863 64.4135 20.6863 63.5651 21.0466 62.8445L23.3029 58.332C24.2464 56.445 26.939 56.445 27.8824 58.332L30.1387 62.8445C30.4989 63.5651 30.4989 64.4135 30.1387 65.1342L27.8824 69.6467ZM27.8824 95.2392C26.939 97.126 24.2464 97.126 23.3029 95.2392L21.0466 90.7265C20.6863 90.0058 20.6863 89.1575 21.0466 88.4368L23.3029 83.9243C24.2464 82.0373 26.939 82.0373 27.8824 83.9243L30.1387 88.4368C30.4989 89.1575 30.4989 90.0058 30.1387 90.7265L27.8824 95.2392Z" fill="#1D4AFF"/>\n<path d="M0 85.5251C0 83.2444 2.75748 82.1021 4.3702 83.7149L16.1037 95.4484C17.7164 97.0612 16.5742 99.8186 14.2935 99.8186H2.56C1.14615 99.8186 0 98.6725 0 97.2586V85.5251ZM0 73.1659C0 73.8448 0.269714 74.4961 0.749806 74.9761L24.8425 99.0687C25.3226 99.5488 25.9738 99.8186 26.6527 99.8186H39.8858C42.1665 99.8186 43.3088 97.0612 41.696 95.4484L4.3702 58.1226C2.75748 56.5098 0 57.6521 0 59.9328V73.1659ZM0 47.5736C0 48.2525 0.269714 48.9037 0.749806 49.3837L50.4348 99.0687C50.9148 99.5488 51.5661 99.8186 52.245 99.8186H65.4781C67.7589 99.8186 68.9011 97.0612 67.2883 95.4484L4.3702 32.5303C2.7575 30.9176 0 32.0598 0 34.3405V47.5736ZM25.5923 47.5736C25.5923 48.2525 25.8621 48.9037 26.3421 49.3837L72.4068 95.4484C74.0196 97.0612 76.777 95.9189 76.777 93.6382V80.4051C76.777 79.7262 76.5071 79.0749 76.0271 78.5949L29.9625 32.5303C28.3497 30.9176 25.5923 32.0598 25.5923 34.3405V47.5736ZM55.5548 32.5303C53.942 30.9176 51.1846 32.0598 51.1846 34.3405V47.5736C51.1846 48.2525 51.4545 48.9037 51.9345 49.3837L72.4068 69.8561C74.0196 71.4689 76.777 70.3266 76.777 68.0459V54.8128C76.777 54.1338 76.5071 53.4826 76.0271 53.0026L55.5548 32.5303Z" fill="#F9BD2B"/>\n<path d="M108.863 85.8389L84.7667 61.7423C83.1539 60.1295 80.3965 61.2718 80.3965 63.5525V97.2585C80.3965 98.6724 81.5426 99.8185 82.9565 99.8185H120.283C121.697 99.8185 122.843 98.6724 122.843 97.2585V94.1891C122.843 92.7752 121.692 91.646 120.29 91.4634C115.987 90.9033 111.963 88.9382 108.863 85.8389ZM92.6806 91.6291C90.4204 91.6291 88.5859 89.7946 88.5859 87.5341C88.5859 85.2739 90.4204 83.4394 92.6806 83.4394C94.9411 83.4394 96.7756 85.2739 96.7756 87.5341C96.7756 89.7946 94.9411 91.6291 92.6806 91.6291Z" fill="black"/>\n<path d="M0 97.2586C0 98.6725 1.14615 99.8186 2.56 99.8186H14.2935C16.5742 99.8186 17.7164 97.0612 16.1037 95.4484L4.3702 83.7149C2.75748 82.1021 0 83.2444 0 85.5251V97.2586ZM25.5923 53.7524L4.3702 32.5303C2.75748 30.9176 0 32.0597 0 34.3405V47.5736C0 48.2525 0.269714 48.9037 0.749806 49.3837L25.5923 74.2262V53.7524ZM4.3702 58.1226C2.75748 56.5098 0 57.652 0 59.9327V73.1659C0 73.8448 0.269714 74.4961 0.749806 74.9761L25.5923 99.8186V79.3447L4.3702 58.1226Z" fill="#1D4AFF"/>\n<path d="M51.1846 54.8127C51.1846 54.1338 50.915 53.4826 50.4348 53.0026L29.9624 32.5303C28.3499 30.9176 25.5923 32.0597 25.5923 34.3405V47.5736C25.5923 48.2525 25.8621 48.9037 26.3421 49.3837L51.1846 74.2262V54.8127ZM25.5923 99.8186H39.8858C42.1665 99.8186 43.3087 97.0612 41.6959 95.4484L25.5923 79.3447V99.8186ZM25.5923 53.7524V73.1659C25.5923 73.8448 25.8621 74.4961 26.3421 74.9761L51.1846 99.8186V80.4051C51.1846 79.7262 50.915 79.0749 50.4348 78.5949L25.5923 53.7524Z" fill="#F54E00"/>\n</svg>\n',
+  "productboard":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#1E6BFF"/>\n  <g fill="#fff">\n    <path d="M28 36h36L46 54H28z" opacity="0.7"/>\n    <path d="M64 36h36L82 54H64z"/>\n    <path d="M46 54h36L64 72H46z" opacity="0.85"/>\n    <path d="M64 72h36L82 90H64z" opacity="0.7"/>\n    <path d="M28 72h36L46 90H28z"/>\n  </g>\n</svg>\n',
+  "razorpay":
+    '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#072654"/>\n<g fill="#FFFFFF">\n<path d="M84 26 52 70l22-8-14 40h12l26-76z" opacity="0.95"/>\n<path d="M44 58 30 102h12l16-46z"/>\n</g>\n</svg>\n',
+  "resend":
+    '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#000000"/>\n<path d="M42 30h28c13.8 0 25 10.1 25 22.5 0 9.3-6.3 17.3-15.3 20.7L98 105H80.5L63.4 75H58v30H42V30Zm16 14v17h12c5.5 0 10-3.8 10-8.5S75.5 44 70 44H58Z" fill="#FFFFFF"/>\n</svg>\n',
+  "salesflare":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#009FE3"/>\n  <path d="M30 36h68l-24 28v26l-20 10V64z" fill="#FFFFFF"/>\n</svg>\n',
   "salesforce":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_60_20651)">\n<mask id="mask0_60_20651" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="0" y="19" width="128" height="90">\n<path d="M0.0281372 19.4579H127.608V108.748H0.0281372V19.4579Z" fill="white"/>\n</mask>\n<g mask="url(#mask0_60_20651)">\n<path fill-rule="evenodd" clip-rule="evenodd" d="M53.1027 29.1995C57.2179 24.9122 62.9479 22.2518 69.2846 22.2518C77.7077 22.2518 85.0576 26.9489 88.9703 33.9228C92.4712 32.3585 96.2634 31.5522 100.098 31.5569C115.291 31.5569 127.608 43.9814 127.608 59.3086C127.608 74.6357 115.291 87.0606 100.098 87.0606C98.2426 87.0606 96.4309 86.874 94.6783 86.5205C91.2326 92.6669 84.6638 96.8205 77.1263 96.8205C74.0776 96.8247 71.0682 96.1321 68.3281 94.7955C64.8351 103.014 56.6937 108.777 47.2081 108.777C37.3277 108.777 28.9069 102.526 25.6769 93.7588C24.2373 94.0626 22.7699 94.2153 21.2986 94.2146C9.5353 94.2146 0 84.5794 0 72.6942C0 64.7282 4.28355 57.7735 10.6503 54.0531C9.30134 50.9469 8.6072 47.5961 8.61116 44.2097C8.61116 30.54 19.7078 19.4579 33.3958 19.4579C41.4321 19.4579 48.5744 23.2782 53.1027 29.1995Z" fill="#00A1E0"/>\n</g>\n<path fill-rule="evenodd" clip-rule="evenodd" d="M18.4826 65.7765C18.4024 65.9856 18.5112 66.0292 18.537 66.0663C18.7766 66.2398 19.0199 66.3654 19.2656 66.5065C20.5667 67.1953 21.7965 67.3974 23.0812 67.3974C25.6989 67.3974 27.3249 66.0058 27.3249 63.7646V63.7206C27.3249 61.6482 25.4893 60.8952 23.7691 60.3518L23.5445 60.2791C22.2471 59.858 21.1275 59.4937 21.1275 58.639V58.5954C21.1275 57.8635 21.782 57.3257 22.7962 57.3257C23.9238 57.3257 25.26 57.7003 26.1218 58.1762C26.1218 58.1762 26.3759 58.3403 26.4683 58.0951C26.5185 57.9624 26.9541 56.7893 27.0005 56.6623C27.0502 56.5249 26.963 56.4213 26.8734 56.3678C25.8893 55.7681 24.53 55.3602 23.123 55.3602L22.8618 55.3612C20.4659 55.3612 18.793 56.81 18.793 58.8833V58.9278C18.793 61.1127 20.6385 61.8231 22.3672 62.3168L22.6447 62.403C23.9036 62.7894 24.9909 63.1232 24.9909 64.0089V64.053C24.9909 64.8641 24.2843 65.4666 23.1464 65.4666C22.7052 65.4666 21.2967 65.4591 19.7748 64.4965C19.5905 64.3892 19.4855 64.3118 19.3434 64.2251C19.2684 64.1796 19.0809 64.0975 18.9993 64.3432L18.4826 65.7765ZM56.8029 65.7765C56.7227 65.9856 56.8315 66.0292 56.8582 66.0663C57.0969 66.2398 57.3407 66.3654 57.5859 66.5065C58.8875 67.1953 60.1173 67.3974 61.4015 67.3974C64.0192 67.3974 65.6457 66.0058 65.6457 63.7646V63.7206C65.6457 61.6482 63.8105 60.8952 62.0898 60.3518L61.8652 60.2791C60.5679 59.858 59.4478 59.4937 59.4478 58.639V58.5954C59.4478 57.8635 60.1028 57.3257 61.1174 57.3257C62.2445 57.3257 63.5803 57.7003 64.4421 58.1762C64.4421 58.1762 64.6962 58.3403 64.7891 58.0951C64.8388 57.9624 65.2748 56.7893 65.3208 56.6623C65.3709 56.5249 65.2833 56.4213 65.1942 56.3678C64.2096 55.7681 62.8508 55.3602 61.4437 55.3602L61.1821 55.3612C58.7867 55.3612 57.1138 56.81 57.1138 58.8833V58.9278C57.1138 61.1127 58.9587 61.8231 60.6879 62.3168L60.965 62.403C62.2244 62.7894 63.3117 63.1232 63.3117 64.0089V64.053C63.3117 64.8641 62.6046 65.4666 61.4676 65.4666C61.0255 65.4666 59.617 65.4591 58.0956 64.4965C57.9113 64.3892 57.8035 64.3151 57.6637 64.2251C57.6164 64.195 57.3955 64.1088 57.3201 64.3432L56.8029 65.7765ZM82.9632 61.3861C82.9632 62.652 82.7269 63.6516 82.2627 64.3563C81.8013 65.0549 81.1051 65.3949 80.1341 65.3949C79.163 65.3949 78.4705 65.0554 78.0167 64.3573C77.5586 63.6521 77.326 62.652 77.326 61.3861C77.326 60.1211 77.5586 59.1247 78.0167 58.4271C78.4705 57.7355 79.163 57.3998 80.1341 57.3998C81.1051 57.3998 81.8013 57.736 82.2627 58.4275C82.7278 59.1247 82.9632 60.1211 82.9632 61.3861ZM85.149 59.0385C84.9338 58.3122 84.5995 57.6731 84.1546 57.14C83.7087 56.6055 83.1446 56.1756 82.476 55.8643C81.8084 55.5525 81.0207 55.3945 80.1341 55.3945C79.2474 55.3945 78.4593 55.5525 77.7911 55.8643C77.1235 56.1756 76.559 56.6055 76.1131 57.141C75.6686 57.675 75.3334 58.3131 75.1191 59.0385C74.9058 59.7591 74.7975 60.5492 74.7975 61.3861C74.7975 62.2235 74.9058 63.014 75.1191 63.7337C75.3334 64.4585 75.6677 65.0971 76.1136 65.6321C76.5594 66.1676 77.1254 66.5938 77.7921 66.8976C78.4607 67.2014 79.2484 67.3561 80.1341 67.3561C81.0202 67.3561 81.807 67.2014 82.4751 66.8976C83.1428 66.5938 83.7077 66.1676 84.1546 65.6321C84.5995 65.099 84.9338 64.4595 85.149 63.7337C85.3619 63.0126 85.4702 62.2225 85.4702 61.3861C85.4702 60.5501 85.3619 59.7596 85.149 59.0385ZM103.091 65.0559C103.019 64.8435 102.812 64.9237 102.812 64.9237C102.495 65.0451 102.157 65.1576 101.796 65.2139C101.432 65.2711 101.029 65.2997 100.599 65.2997C99.5422 65.2997 98.7006 64.9851 98.1 64.3634C97.4966 63.7412 97.1576 62.7359 97.1613 61.3762C97.1646 60.1403 97.4638 59.2091 98.0001 58.4993C98.5318 57.7941 99.3439 57.4321 100.424 57.4321C101.325 57.4321 102.013 57.5367 102.734 57.7627C102.734 57.7627 102.905 57.8372 102.987 57.6117C103.179 57.0805 103.32 56.7026 103.525 56.1189C103.583 55.9524 103.44 55.8821 103.388 55.8619C103.105 55.7513 102.436 55.5698 101.931 55.4934C101.459 55.4212 100.907 55.3837 100.291 55.3837C99.3739 55.3837 98.5557 55.5407 97.8562 55.8521C97.1581 56.1629 96.5659 56.5924 96.0965 57.1264C95.6272 57.6614 95.2699 58.3005 95.0336 59.0253C94.7969 59.7465 94.6773 60.5379 94.6773 61.3772C94.6773 63.1893 95.1663 64.6536 96.1308 65.7264C97.0985 66.8029 98.5501 67.3496 100.445 67.3496C101.564 67.3496 102.712 67.1231 103.539 66.7977C103.539 66.7977 103.697 66.7218 103.628 66.538L103.091 65.0559ZM106.914 60.1722C107.019 59.4684 107.211 58.8837 107.512 58.4271C107.965 57.7355 108.656 57.3543 109.627 57.3543C110.598 57.3543 111.238 57.736 111.699 58.4275C112.004 58.8847 112.137 59.4937 112.189 60.1731L106.914 60.1722ZM114.27 58.6263C114.084 57.9259 113.626 57.2183 113.324 56.8948C112.848 56.3819 112.382 56.0227 111.919 55.8244C111.25 55.5398 110.529 55.3935 109.801 55.3945C108.878 55.3945 108.039 55.5506 107.359 55.8694C106.678 56.1892 106.105 56.6262 105.657 57.1691C105.207 57.7116 104.87 58.3572 104.655 59.0896C104.439 59.8177 104.33 60.6115 104.33 61.4498C104.33 62.3022 104.443 63.097 104.666 63.8115C104.89 64.5322 105.251 65.1647 105.737 65.6912C106.224 66.2196 106.849 66.6341 107.597 66.9229C108.341 67.2113 109.245 67.3608 110.282 67.3575C112.419 67.3505 113.543 66.8741 114.007 66.6177C114.089 66.5717 114.167 66.4925 114.07 66.2641L113.586 64.9101C113.512 64.708 113.308 64.7811 113.308 64.7811C112.777 64.979 112.027 65.332 110.271 65.3283C109.124 65.3264 108.275 64.9874 107.741 64.4581C107.195 63.9165 106.926 63.1213 106.881 61.9979L114.276 62.0036C114.276 62.0036 114.471 62.0017 114.491 61.8113C114.499 61.7326 114.745 60.2922 114.27 58.6263ZM47.6783 60.1722C47.7829 59.4684 47.9761 58.8837 48.2761 58.4271C48.73 57.7355 49.4192 57.3543 50.3912 57.3543C51.3627 57.3543 52.0027 57.736 52.464 58.4275C52.7683 58.8847 52.9015 59.4937 52.9535 60.1731L47.6783 60.1722ZM55.0343 58.6263C54.8487 57.9259 54.3897 57.2183 54.0886 56.8948C53.6127 56.3819 53.1472 56.0227 52.6839 55.8244C52.0141 55.5399 51.2938 55.3937 50.5661 55.3945C49.6429 55.3945 48.8041 55.5506 48.1238 55.8694C47.4425 56.1892 46.87 56.6262 46.4204 57.1691C45.9717 57.7116 45.6346 58.3572 45.4184 59.0896C45.2032 59.8177 45.0949 60.6115 45.0949 61.4498C45.0949 62.3022 45.2069 63.097 45.4306 63.8115C45.6547 64.5322 46.0157 65.1647 46.5015 65.6912C46.9882 66.2196 47.6136 66.6341 48.3615 66.9229C49.106 67.2113 50.0091 67.3608 51.0467 67.3575C53.1833 67.3505 54.3076 66.8741 54.7718 66.6177C54.8534 66.5717 54.9312 66.4925 54.8341 66.2641L54.3507 64.9101C54.2762 64.708 54.0718 64.7811 54.0718 64.7811C53.5419 64.979 52.7913 65.332 51.0354 65.3283C49.889 65.3264 49.039 64.9874 48.5049 64.4581C47.9592 63.9165 47.6905 63.1213 47.645 61.9979L55.0404 62.0036C55.0404 62.0036 55.2355 62.0017 55.2556 61.8113C55.2636 61.7326 55.5093 60.2922 55.0343 58.6263ZM31.6915 65.0156C31.4012 64.7839 31.3609 64.7272 31.2648 64.5767C31.118 64.3502 31.043 64.0277 31.043 63.6146C31.043 62.9652 31.2587 62.4973 31.7032 62.1831C31.6985 62.1841 32.3408 61.6289 33.8482 61.6486C34.5207 61.6606 35.1916 61.7178 35.8564 61.8198V65.1815H35.8573C35.8573 65.1815 34.9172 65.3836 33.859 65.4474C32.3549 65.5379 31.6868 65.0142 31.6915 65.0156ZM34.6345 59.8177C34.3345 59.7957 33.9458 59.7849 33.4797 59.7849C32.8463 59.7849 32.2335 59.8637 31.6582 60.0184C31.0805 60.1741 30.561 60.4151 30.1142 60.7344C29.6677 61.0534 29.3004 61.4708 29.041 61.9543C28.7789 62.4424 28.6452 63.0159 28.6452 63.6587C28.6452 64.3146 28.7592 64.8829 28.9842 65.347C29.2044 65.8073 29.5359 66.2053 29.9487 66.5051C30.3599 66.8043 30.8672 67.0237 31.4556 67.1578C32.0365 67.2905 32.6948 67.3575 33.4141 67.3575C34.1736 67.3575 34.929 67.2938 35.6609 67.1705C36.2843 67.063 36.9054 66.9424 37.5237 66.8085C37.7703 66.7518 38.0422 66.6772 38.0422 66.6772C38.2251 66.6308 38.211 66.4353 38.211 66.4353L38.2068 59.6714C38.2068 58.188 37.8111 57.0889 37.0314 56.4063C36.2554 55.7269 35.1128 55.3837 33.6344 55.3837C33.0793 55.3837 32.1875 55.4587 31.6521 55.5661C31.6521 55.5661 30.0373 55.8793 29.3725 56.4002C29.3725 56.4002 29.2262 56.4902 29.3059 56.6941L29.8296 58.1007C29.8948 58.2831 30.0725 58.2208 30.0725 58.2208C30.0725 58.2208 30.1283 58.1987 30.1939 58.1598C31.6164 57.3862 33.4164 57.4092 33.4164 57.4092C34.2154 57.4092 34.831 57.5709 35.2445 57.8874C35.6482 58.1973 35.8531 58.6638 35.8531 59.6499V59.9626C35.2187 59.8707 34.6345 59.8177 34.6345 59.8177ZM94.2905 56.0073C94.3011 55.9825 94.3067 55.9559 94.3069 55.929C94.307 55.9021 94.3018 55.8754 94.2914 55.8505C94.281 55.8257 94.2658 55.8032 94.2465 55.7844C94.2273 55.7655 94.2044 55.7508 94.1794 55.7409C94.0532 55.6931 93.4245 55.5604 92.9397 55.5304C92.0099 55.4723 91.4947 55.6289 91.0323 55.8371C90.5738 56.0438 90.066 56.3781 89.7828 56.7593L89.7819 55.8572C89.7819 55.7334 89.6942 55.6336 89.5695 55.6336H87.6734C87.5506 55.6336 87.4615 55.7334 87.4615 55.8572V66.8905C87.4616 66.9501 87.4853 67.0071 87.5274 67.0492C87.5695 67.0913 87.6265 67.115 87.6861 67.1151H89.6295C89.689 67.115 89.746 67.0913 89.788 67.0492C89.83 67.0071 89.8536 66.95 89.8536 66.8905V61.379C89.8536 60.6387 89.9352 59.9012 90.0979 59.4375C90.2583 58.9785 90.4763 58.6127 90.7463 58.3497C91.0022 58.0958 91.3155 57.9074 91.6597 57.8002C91.9823 57.7076 92.3162 57.6606 92.6518 57.6605C93.0386 57.6605 93.4643 57.7599 93.4643 57.7599C93.6069 57.7758 93.6861 57.6886 93.7344 57.5601C93.8615 57.2221 94.2216 56.2089 94.2905 56.0073Z" fill="#FFFFFE"/>\n<path fill-rule="evenodd" clip-rule="evenodd" d="M76.0503 50.8943C75.8104 50.8218 75.5663 50.7638 75.3193 50.7208C74.9872 50.6654 74.6508 50.6393 74.3141 50.643C72.9764 50.643 71.9219 51.0209 71.1816 51.7673C70.4464 52.5081 69.9461 53.6367 69.6953 55.1216L69.6048 55.6228H67.9258C67.9258 55.6228 67.7209 55.6143 67.6778 55.838L67.4021 57.3759C67.3829 57.5231 67.4462 57.615 67.6431 57.6141H69.2775L67.6192 66.8708C67.4893 67.6163 67.3407 68.2296 67.1761 68.6943C67.0139 69.1528 66.8554 69.4965 66.6603 69.7459C66.4714 69.9874 66.2923 70.1651 65.9833 70.2687C65.7282 70.3545 65.4347 70.3939 65.1131 70.3939C64.934 70.3939 64.6958 70.3639 64.52 70.3287C64.3441 70.294 64.2527 70.2546 64.121 70.1993C64.121 70.1993 63.9292 70.1262 63.8537 70.3184C63.7923 70.4755 63.3567 71.6734 63.3051 71.8216C63.2526 71.9679 63.3262 72.0832 63.4191 72.1165C63.6366 72.1943 63.7984 72.244 64.0947 72.3139C64.5064 72.4109 64.8533 72.417 65.1783 72.417C65.859 72.417 66.4794 72.3214 66.9937 72.1357C67.5113 71.9486 67.9619 71.6228 68.3604 71.1816C68.7913 70.7057 69.0623 70.2073 69.3216 69.5274C69.5781 68.8537 69.7966 68.0172 69.9715 67.0424L71.6378 57.6141H74.074C74.074 57.6141 74.2794 57.6216 74.3221 57.3988L74.5977 55.861C74.617 55.7137 74.5541 55.6218 74.3563 55.6228H71.9918C72.0035 55.5693 72.1109 54.7376 72.3824 53.9546C72.4982 53.6203 72.7162 53.3507 72.9009 53.1655C73.0734 52.9891 73.2859 52.8569 73.5203 52.7801C73.7773 52.7006 74.0451 52.662 74.3141 52.6657C74.5368 52.6657 74.7553 52.6924 74.9217 52.7271C75.151 52.7758 75.2401 52.8016 75.3001 52.8194C75.5411 52.8931 75.5735 52.8218 75.6208 52.705L76.1863 51.1522C76.2444 50.9852 76.1028 50.9149 76.0503 50.8943ZM43.0075 66.8905C43.0075 67.0143 42.9194 67.1151 42.7956 67.1151H40.8343C40.7101 67.1151 40.6219 67.0143 40.6219 66.8905V51.1048C40.6219 50.9815 40.7101 50.8816 40.8343 50.8816H42.7956C42.9194 50.8816 43.0075 50.9815 43.0075 51.1048V66.8905Z" fill="#FFFFFE"/>\n</g>\n<defs>\n<clipPath id="clip0_60_20651">\n<rect width="128" height="89.5531" fill="white" transform="translate(0 19.2234)"/>\n</clipPath>\n</defs>\n</svg>\n',
   "sap":
     '<svg width="130" height="128" viewBox="0 0 130 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_8608_80109)">\n<path fill-rule="evenodd" clip-rule="evenodd" d="M0 96H65.3845L129.374 32H0V96Z" fill="url(#paint0_linear_8608_80109)"/>\n<path fill-rule="evenodd" clip-rule="evenodd" d="M76.7751 44.0305L64.04 44.0226V74.3028L52.9153 44.0226H41.8847L32.386 69.3453C31.3746 62.9603 24.7697 60.7555 19.5735 59.1025C16.1423 58.0007 12.5018 56.38 12.5354 54.5889C12.5639 53.1185 14.4883 51.7528 18.3007 51.9583C20.8638 52.0942 23.1236 52.3009 27.6215 54.47L32.0456 46.7658C27.9396 44.6771 22.2671 43.3566 17.619 43.3516H17.592C12.1718 43.3516 7.65412 45.1078 4.85412 48.0022C2.90243 50.0236 1.85114 52.5908 1.80722 55.4309C1.736 59.3381 3.1691 62.1108 6.17992 64.3213C8.72235 66.1861 11.9738 67.3939 14.8397 68.2824C18.3754 69.3779 21.2607 70.3298 21.2271 72.3614C21.2011 73.1003 20.9206 73.7895 20.3892 74.3495C19.5086 75.2584 18.1542 75.6 16.2844 75.6352C12.6775 75.7114 10.0017 75.1461 5.74008 72.6281L1.80722 80.4408C6.05694 82.8581 11.0891 84.2755 16.2235 84.2755L16.8842 84.268C21.3539 84.1876 24.9611 82.9139 27.8424 80.5936C28.0077 80.4631 28.1564 80.3285 28.3092 80.193L27.0314 83.6044H38.6L40.5416 77.6995C42.5736 78.3941 44.8858 78.7778 47.342 78.7778C49.7319 78.7778 51.9835 78.4107 53.9791 77.7575L55.8505 83.6044H74.717V71.3789H78.8309C88.7779 71.3789 94.6602 66.3131 94.6602 57.8253C94.6602 48.3699 88.9445 44.0311 76.7744 44.0311L76.7751 44.0305ZM47.3426 69.9401C45.8565 69.9401 44.4635 69.6803 43.2623 69.2264L47.2987 56.4913H47.3752L51.3417 69.2625C50.1492 69.6857 48.7886 69.9401 47.3429 69.9401H47.3426ZM77.5227 62.6228H74.7177V52.3605H77.5227C81.2645 52.3605 84.248 53.6032 84.248 57.4237C84.248 61.3773 81.2645 62.6228 77.5227 62.6228Z" fill="white"/>\n</g>\n<defs>\n<linearGradient id="paint0_linear_8608_80109" x1="64.6871" y1="32" x2="64.6871" y2="96" gradientUnits="userSpaceOnUse">\n<stop stop-color="#00B1EB"/>\n<stop offset="0.212" stop-color="#009AD9"/>\n<stop offset="0.519" stop-color="#007FC4"/>\n<stop offset="0.792" stop-color="#006EB8"/>\n<stop offset="1" stop-color="#0069B4"/>\n</linearGradient>\n<clipPath id="clip0_8608_80109">\n<rect width="129.374" height="64" fill="white" transform="translate(0 32)"/>\n</clipPath>\n</defs>\n</svg>\n',
+  "segment":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#52BD95"/>\n  <g fill="#fff">\n    <path d="M30 58h47a4 4 0 0 1 4 4v6a4 4 0 0 1-4 4H30a4 4 0 0 1-4-4v-6a4 4 0 0 1 4-4z"/>\n    <path d="M51 86h47a4 4 0 0 1 4 4v6a4 4 0 0 1-4 4H51a4 4 0 0 1-4-4v-6a4 4 0 0 1 4-4z"/>\n    <circle cx="91" cy="36" r="8"/>\n    <circle cx="37" cy="102" r="8"/>\n  </g>\n</svg>\n',
+  "sendgrid":
+    '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#1A82E2"/>\n<g fill="#FFFFFF">\n<rect x="32" y="32" width="22" height="22" opacity="0.7"/>\n<rect x="54" y="32" width="22" height="22"/>\n<rect x="32" y="54" width="22" height="22"/>\n<rect x="54" y="54" width="22" height="22" opacity="0.7"/>\n<rect x="76" y="54" width="22" height="22"/>\n<rect x="54" y="76" width="22" height="22"/>\n<rect x="76" y="76" width="22" height="22" opacity="0.7"/>\n</g>\n</svg>\n',
   "sentry":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_240_7110)">\n<path d="M74.2302 13.7912C73.1656 12.0243 71.6623 10.5626 69.8663 9.54791C68.0702 8.53321 66.0424 8 63.9795 8C61.9167 8 59.8889 8.53321 58.0928 9.54791C56.2968 10.5626 54.7935 12.0243 53.7289 13.7912L36.8665 42.6725C49.7487 49.104 60.7244 58.7933 68.7039 70.7783C76.6835 82.7634 81.3892 96.6272 82.3539 110.993H70.5144C69.5514 98.6788 65.3897 86.8294 58.4408 76.6174C51.492 66.4054 41.997 58.1849 30.8955 52.7694L15.2888 79.7543C21.5298 82.5533 26.9669 86.8764 31.1001 92.3262C35.2333 97.7759 37.93 104.177 38.9423 110.942H11.7524C11.4299 110.919 11.1182 110.816 10.8453 110.643C10.5725 110.47 10.3471 110.231 10.1894 109.949C10.0318 109.667 9.94687 109.35 9.94235 109.026C9.93782 108.703 10.0138 108.384 10.1635 108.097L17.6978 95.2841C15.1452 93.1544 12.2279 91.5047 9.08718 90.415L1.62982 103.228C0.85347 104.56 0.34947 106.033 0.147096 107.561C-0.055277 109.089 0.0480115 110.642 0.450962 112.13C0.853912 113.617 1.54849 115.01 2.49435 116.227C3.4402 117.445 4.61848 118.462 5.96073 119.219C7.72922 120.216 9.72251 120.745 11.7524 120.757H48.9879C49.6795 112.223 48.1556 103.656 44.5638 95.8843C40.9721 88.1126 35.4342 81.4002 28.4866 76.3972L34.4064 66.1465C43.1744 72.1686 50.2205 80.3729 54.8494 89.9498C59.4783 99.5267 61.5299 110.145 60.8018 120.757H92.3483C93.0829 104.681 89.5857 88.6944 82.206 74.3938C74.8264 60.0932 63.8228 47.9798 50.2949 39.2641L62.2626 18.7628C62.5292 18.316 62.9616 17.9926 63.4655 17.863C63.9695 17.7334 64.5042 17.8081 64.9534 18.0709C66.3116 18.814 116.95 107.175 117.898 108.2C118.065 108.499 118.15 108.838 118.144 109.181C118.139 109.524 118.043 109.859 117.866 110.153C117.689 110.447 117.438 110.689 117.137 110.854C116.837 111.02 116.498 111.103 116.155 111.096H103.957C104.111 114.359 104.111 117.613 103.957 120.86H116.207C117.762 120.87 119.304 120.571 120.744 119.981C122.183 119.392 123.491 118.522 124.592 117.424C125.693 116.325 126.566 115.019 127.158 113.581C127.751 112.142 128.053 110.601 128.046 109.046C128.048 106.991 127.499 104.974 126.457 103.203L74.2302 13.7912Z" fill="#362D59"/>\n</g>\n<defs>\n<clipPath id="clip0_240_7110">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n</defs>\n</svg>\n',
   "servicenow":
@@ -13787,14 +21974,20 @@ export const icons: Record<string, string> = {
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_93)">\n<path d="M78.091 0L110.091 32L94.091 34.9091L78.091 32L75.1819 16L78.091 0Z" fill="#188038"/>\n<path d="M78.0909 32V0H25.7273C20.9055 0 17 3.90545 17 8.72727V119.273C17 124.095 20.9055 128 25.7273 128H101.364C106.185 128 110.091 124.095 110.091 119.273V32H78.0909Z" fill="#34A853"/>\n<path d="M34.4546 49.4545V91.6364H92.6364V49.4545H34.4546ZM59.9091 84.3636H41.7273V74.1818H59.9091V84.3636ZM59.9091 66.9091H41.7273V56.7273H59.9091V66.9091ZM85.3637 84.3636H67.1819V74.1818H85.3637V84.3636ZM85.3637 66.9091H67.1819V56.7273H85.3637V66.9091Z" fill="white"/>\n</g>\n<defs>\n<clipPath id="clip0_0_93">\n<rect width="93.0909" height="128" fill="white" transform="translate(17)"/>\n</clipPath>\n</defs>\n</svg>\n',
   "shopify":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<path fill-rule="evenodd" clip-rule="evenodd" d="M87.0912 125.74L86.8059 16.0619C86.0672 15.3232 84.6263 15.5463 84.0631 15.7109L80.3108 16.8738C79.8477 15.3497 79.2466 13.871 78.5152 12.456C75.8528 7.37257 71.9616 4.68457 67.2512 4.67725H67.2366C66.922 4.67725 66.6112 4.70651 66.2967 4.73211L66.2601 4.73577C66.1239 4.56799 65.9824 4.40455 65.8359 4.24571C63.7879 2.05143 61.1547 0.979883 58.0023 1.07131C51.9241 1.24685 45.8715 5.64274 40.96 13.4507C37.504 18.9474 34.8818 25.8485 34.1321 31.1915L22.1623 34.9035C18.6404 36.0117 18.5307 36.1214 18.0663 39.4457C17.7188 41.9618 8.49918 113.346 8.49918 113.346L85.7673 126.723L87.0912 125.74ZM61.7764 6.08525C60.7488 5.40868 59.5456 5.09417 58.1193 5.12343C48.7351 5.39405 40.5504 20.0702 38.4621 29.8494L47.4514 27.0626L49.0569 26.5653C50.2345 20.3554 53.1895 13.9115 57.0551 9.76434C58.4067 8.27828 60.0022 7.03403 61.7728 6.08525H61.7764ZM53.5003 25.1865L66.4027 21.1856C66.4429 17.821 66.0772 12.8473 64.395 9.33645C62.603 10.0752 61.0962 11.3698 60.0137 12.5291C57.1136 15.6487 54.7474 20.4066 53.504 25.1865H53.5003ZM70.4439 19.9349L76.4416 18.0734C75.4834 14.9575 73.2087 9.73508 68.597 8.85737C70.0306 12.5621 70.4 16.8519 70.4439 19.9349Z" fill="#95BF47"/>\n<path d="M104.404 24.2214C103.943 24.1848 95.0126 24.0459 95.0126 24.0459C95.0126 24.0459 87.541 16.7828 86.8023 16.0404C86.5163 15.7764 86.1539 15.6099 85.7673 15.5649V126.706L119.248 118.371C119.248 118.371 105.585 25.8781 105.498 25.2454C105.455 24.9767 105.324 24.7299 105.125 24.5443C104.927 24.3587 104.675 24.2451 104.404 24.2214Z" fill="#5E8E3E"/>\n<path d="M67.211 41.4794L63.3198 56.0494C63.3198 56.0494 58.9824 54.0709 53.8368 54.3964C46.2957 54.8718 46.2153 59.6371 46.2921 60.833C46.7017 67.3427 63.8208 68.769 64.7826 84.0302C65.5396 96.0366 58.4228 104.254 48.1682 104.898C35.8619 105.677 29.0852 98.4065 29.0852 98.4065L31.6928 87.2961C31.6928 87.2961 38.5133 92.449 43.9698 92.1016C47.5392 91.8785 48.8119 88.9747 48.6839 86.9194C48.1463 78.4238 34.2052 78.9212 33.3239 64.9582C32.5851 53.2005 40.2907 41.2965 57.3001 40.2213C63.8537 39.8044 67.211 41.483 67.211 41.483" fill="white"/>\n</svg>\n',
+  "shortcut":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#5850EC"/>\n  <g fill="#fff">\n    <rect x="28" y="70" width="56" height="14" rx="7" transform="rotate(-45 56 77)"/>\n    <rect x="44" y="86" width="56" height="14" rx="7" transform="rotate(-45 72 93)"/>\n    <rect x="36" y="36" width="14" height="14" rx="7"/>\n    <rect x="78" y="78" width="14" height="14" rx="7"/>\n  </g>\n</svg>\n',
   "slack":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_113)">\n<g clip-path="url(#clip1_0_113)">\n<path d="M26.8925 80.886C26.8925 88.2866 20.8469 94.3323 13.4463 94.3323C6.04561 94.3323 0 88.2866 0 80.886C0 73.4853 6.04561 67.4397 13.4463 67.4397H26.8925V80.886Z" fill="#E01E5A"/>\n<path d="M33.6675 80.886C33.6675 73.4853 39.7131 67.4397 47.1137 67.4397C54.5144 67.4397 60.56 73.4853 60.56 80.886V114.554C60.56 121.954 54.5144 128 47.1137 128C39.7131 128 33.6675 121.954 33.6675 114.554V80.886Z" fill="#E01E5A"/>\n<path d="M47.1137 26.8925C39.7131 26.8925 33.6675 20.8469 33.6675 13.4463C33.6675 6.0456 39.7131 -3.8147e-06 47.1137 -3.8147e-06C54.5144 -3.8147e-06 60.56 6.0456 60.56 13.4463V26.8925H47.1137Z" fill="#36C5F0"/>\n<path d="M47.114 33.6678C54.5147 33.6678 60.5603 39.7134 60.5603 47.114C60.5603 54.5147 54.5147 60.5603 47.114 60.5603H13.4463C6.0456 60.5603 0 54.5147 0 47.114C0 39.7134 6.0456 33.6678 13.4463 33.6678H47.114Z" fill="#36C5F0"/>\n<path d="M101.107 47.114C101.107 39.7134 107.153 33.6678 114.554 33.6678C121.954 33.6678 128 39.7134 128 47.114C128 54.5147 121.954 60.5603 114.554 60.5603H101.107V47.114Z" fill="#2EB67D"/>\n<path d="M94.3322 47.114C94.3322 54.5147 88.2866 60.5603 80.8859 60.5603C73.4853 60.5603 67.4397 54.5147 67.4397 47.114V13.4463C67.4397 6.0456 73.4853 -3.8147e-06 80.8859 -3.8147e-06C88.2866 -3.8147e-06 94.3322 6.0456 94.3322 13.4463V47.114Z" fill="#2EB67D"/>\n<path d="M80.8859 101.107C88.2866 101.107 94.3322 107.153 94.3322 114.554C94.3322 121.954 88.2866 128 80.8859 128C73.4853 128 67.4397 121.954 67.4397 114.554V101.107H80.8859Z" fill="#ECB22E"/>\n<path d="M80.8859 94.3323C73.4853 94.3323 67.4397 88.2866 67.4397 80.886C67.4397 73.4853 73.4853 67.4397 80.8859 67.4397H114.554C121.954 67.4397 128 73.4853 128 80.886C128 88.2866 121.954 94.3323 114.554 94.3323H80.8859Z" fill="#ECB22E"/>\n</g>\n</g>\n<defs>\n<clipPath id="clip0_0_113">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n<clipPath id="clip1_0_113">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n</defs>\n</svg>\n',
   "snowflake":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_58_7704)">\n<path fill-rule="evenodd" clip-rule="evenodd" d="M117.899 55.7094L103.495 64.009L117.899 72.2385C118.76 72.7364 119.515 73.3991 120.12 74.1887C120.726 74.9782 121.169 75.8793 121.427 76.8405C121.684 77.8016 121.749 78.8039 121.618 79.7902C121.488 80.7766 121.165 81.7275 120.667 82.5889C120.169 83.4503 119.506 84.2051 118.717 84.8104C117.927 85.4157 117.026 85.8595 116.065 86.1165C115.104 86.3736 114.101 86.4388 113.115 86.3084C112.129 86.1781 111.178 85.8547 110.316 85.3569L84.5083 70.4894C83.3255 69.8051 82.3494 68.8142 81.6829 67.6213C81.0164 66.4283 80.6842 65.0776 80.7215 63.7116C80.7417 63.1198 80.8328 62.5326 80.9926 61.9625C81.5209 60.0506 82.7766 58.4214 84.4909 57.4236L110.299 42.6086C111.164 42.1086 112.119 41.7842 113.11 41.6539C114.101 41.5235 115.107 41.5898 116.072 41.8489C117.037 42.108 117.942 42.5549 118.734 43.164C119.526 43.7731 120.19 44.5323 120.689 45.3984C121.189 46.257 121.514 47.2063 121.645 48.1915C121.775 49.1766 121.709 50.1779 121.449 51.1371C121.19 52.0964 120.742 52.9945 120.133 53.7794C119.523 54.5643 118.764 55.2204 117.899 55.7094ZM104.265 95.939L78.4652 81.0978C77.3109 80.4354 76.0034 80.0865 74.6726 80.086C73.3417 80.0854 72.0339 80.4331 70.8791 81.0945C69.7243 81.7559 68.7626 82.708 68.0897 83.8562C67.4168 85.0044 67.0561 86.3087 67.0435 87.6395V117.287C67.1103 119.257 67.9398 121.124 69.357 122.493C70.7741 123.863 72.668 124.629 74.639 124.629C76.61 124.629 78.5039 123.863 79.921 122.493C81.3381 121.124 82.1676 119.257 82.2345 117.287V100.67L96.6734 108.97C97.5348 109.468 98.4859 109.792 99.4724 109.923C100.459 110.054 101.462 109.989 102.423 109.733C103.385 109.476 104.286 109.033 105.076 108.427C105.866 107.822 106.53 107.068 107.028 106.206C107.527 105.345 107.851 104.394 107.981 103.407C108.112 102.421 108.048 101.418 107.791 100.457C107.534 99.495 107.091 98.5935 106.486 97.8033C105.881 97.0132 105.126 96.35 104.265 95.8515V95.939ZM74.5297 66.9387L63.7726 77.5646C63.4046 77.9067 62.9277 78.108 62.4258 78.133H59.2687C58.768 78.103 58.2927 77.9024 57.9218 77.5646L47.226 66.9037C46.8914 66.5386 46.6937 66.0689 46.6663 65.5744V62.426C46.6952 61.9293 46.8926 61.4573 47.226 61.0879L57.9218 50.4271C58.2935 50.0919 58.7689 49.8943 59.2687 49.8674H62.4258C62.9264 49.8907 63.403 50.0888 63.7726 50.4271L74.4947 61.0879C74.8255 61.4581 75.0199 61.9302 75.0456 62.426V65.5744C75.0214 66.068 74.8267 66.5378 74.4947 66.9037L74.5297 66.9387ZM65.959 63.9827C65.9177 63.4729 65.705 62.992 65.3556 62.6184L62.2509 59.5487C61.8789 59.2141 61.4037 59.0166 60.9041 58.989H60.7904C60.293 59.0151 59.8201 59.2129 59.4523 59.5487L56.3476 62.6184C56.0144 62.994 55.8199 63.4724 55.7967 63.974V64.0877C55.8187 64.5817 56.0137 65.0522 56.3476 65.417L59.4698 68.4779C59.8384 68.8125 60.3108 69.0102 60.8079 69.0377H60.9216C61.4212 69.01 61.8964 68.8126 62.2684 68.4779L65.3731 65.3908C65.7084 65.0253 65.909 64.5564 65.9415 64.0614L65.959 63.9827ZM17.4299 32.0789L43.2381 46.8764C44.3936 47.5386 45.7023 47.8869 47.0341 47.8869C48.3659 47.8869 49.6746 47.5385 50.8301 46.8763C51.9857 46.2141 52.9479 45.2611 53.6212 44.1121C54.2946 42.963 54.6556 41.6578 54.6685 40.326V10.7048C54.6017 8.73493 53.7721 6.8681 52.355 5.49824C50.9379 4.12839 49.044 3.36266 47.073 3.36266C45.102 3.36266 43.2081 4.12839 41.791 5.49824C40.3738 6.8681 39.5443 8.73493 39.4775 10.7048V27.3213L25.0211 19.0131C24.1597 18.5146 23.2086 18.1907 22.222 18.0598C21.2355 17.929 20.2329 17.9937 19.2713 18.2503C18.3098 18.5069 17.4082 18.9504 16.6181 19.5555C15.828 20.1605 15.1648 20.9153 14.6663 21.7767C14.1679 22.638 13.844 23.5891 13.7131 24.5757C13.5822 25.5622 13.647 26.5649 13.9036 27.5264C14.1602 28.4879 14.6037 29.3895 15.2087 30.1796C15.8138 30.9697 16.5685 31.633 17.4299 32.1314V32.0789ZM74.0661 47.8909C75.5902 48.0114 77.1149 47.6668 78.4389 46.9026L104.238 32.0352C105.1 31.5368 105.854 30.8735 106.459 30.0834C107.065 29.2933 107.508 28.3917 107.765 27.4302C108.021 26.4687 108.086 25.466 107.955 24.4795C107.824 23.4929 107.5 22.5418 107.002 21.6805C106.503 20.8191 105.84 20.0643 105.05 19.4593C104.26 18.8542 103.358 18.4107 102.397 18.1541C100.455 17.6358 98.3868 17.9102 96.6472 18.9169L82.2083 27.2951V10.6785C82.1414 8.7087 81.3119 6.84186 79.8948 5.47201C78.4776 4.10215 76.5837 3.33643 74.6127 3.33643C72.6418 3.33643 70.7479 4.10215 69.3307 5.47201C67.9136 6.84186 67.0841 8.7087 67.0172 10.6785V40.326C67.0148 42.2454 67.7413 44.0942 69.0499 45.4985C70.3584 46.9028 72.1513 47.7579 74.0661 47.8909ZM47.6458 80.1095C46.1216 79.9857 44.5959 80.3305 43.273 81.0978L17.4299 95.904C15.6903 96.9107 14.4219 98.5671 13.9036 100.509C13.3853 102.451 13.6597 104.519 14.6663 106.259C15.673 107.998 17.3294 109.267 19.2713 109.785C21.2132 110.303 23.2815 110.029 25.0211 109.022L39.4775 100.723V117.339C39.5443 119.309 40.3738 121.176 41.791 122.546C43.2081 123.916 45.102 124.681 47.073 124.681C49.044 124.681 50.9379 123.916 52.355 122.546C53.7721 121.176 54.6017 119.309 54.6685 117.339V87.6395C54.6646 85.7297 53.9385 83.892 52.6359 82.4954C51.3333 81.0987 49.5507 80.2464 47.6458 80.1095ZM40.6494 66.2303C41.1476 64.5921 41.0725 62.8329 40.4365 61.243C39.8006 59.6532 38.6417 58.3275 37.1511 57.4848L11.3692 42.6261C9.62803 41.6287 7.56307 41.3605 5.62485 41.8799C3.68663 42.3993 2.03247 43.6641 1.02324 45.3984C0.523605 46.2567 0.199114 47.2056 0.0685393 48.1901C-0.0620352 49.1746 0.00389896 50.1753 0.262528 51.1342C0.521157 52.093 0.967347 52.9911 1.57529 53.7764C2.18323 54.5618 2.94085 55.2188 3.80433 55.7094L18.2083 64.009L3.80433 72.2385C2.94297 72.7353 2.18788 73.3968 1.58217 74.1853C0.976458 74.9738 0.531994 75.874 0.274153 76.8343C0.0163107 77.7946 -0.0498595 78.7963 0.0794199 79.7822C0.208699 80.768 0.530896 81.7188 1.02762 82.5802C1.52433 83.4415 2.18585 84.1966 2.97439 84.8023C3.76292 85.408 4.66304 85.8525 5.62335 86.1103C6.58366 86.3682 7.58535 86.4343 8.57123 86.3051C9.55711 86.1758 10.5079 85.8536 11.3692 85.3569L37.1511 70.4894C38.8114 69.5625 40.0584 68.0405 40.6406 66.2303H40.6494ZM122.114 17.0628H120.951V18.4883H122.106C122.639 18.4883 122.98 18.2435 122.98 17.7887C122.98 17.3339 122.665 17.0628 122.106 17.0628H122.114ZM119.543 15.751H122.167C123.584 15.751 124.528 16.5293 124.528 17.7362C124.533 18.0722 124.447 18.4032 124.281 18.6953C124.115 18.9874 123.874 19.2299 123.584 19.3979L124.607 20.8671V21.1645H123.129L122.106 19.7652H120.951V21.1645H119.534L119.543 15.751ZM126.802 18.567C126.844 17.905 126.749 17.2413 126.522 16.618C126.294 15.9947 125.94 15.4254 125.481 14.9461C125.023 14.4669 124.469 14.088 123.857 13.8337C123.244 13.5793 122.585 13.4549 121.922 13.4684C119.027 13.4684 117.103 15.5586 117.103 18.567C117.103 21.4356 119.027 23.657 121.922 23.657C122.585 23.6729 123.245 23.5505 123.859 23.2977C124.473 23.0449 125.027 22.6671 125.487 22.1883C125.947 21.7096 126.302 21.1404 126.53 20.517C126.758 19.8935 126.853 19.2295 126.811 18.567H126.802ZM128.009 18.567C128.009 21.9691 125.735 24.8114 121.887 24.8114C118.039 24.8114 115.861 21.9428 115.861 18.567C115.861 15.1913 118.109 12.3227 121.887 12.3227C125.665 12.3227 128 15.1563 128 18.567H128.009Z" fill="#29B5E8"/>\n</g>\n<defs>\n<clipPath id="clip0_58_7704">\n<rect width="128" height="121.703" fill="white" transform="translate(0 3.14844)"/>\n</clipPath>\n</defs>\n</svg>\n',
+  "square":
+    '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#000000"/>\n<path d="M40 28h48c6.6 0 12 5.4 12 12v48c0 6.6-5.4 12-12 12H40c-6.6 0-12-5.4-12-12V40c0-6.6 5.4-12 12-12Zm4 16c-2.2 0-4 1.8-4 4v32c0 2.2 1.8 4 4 4h40c2.2 0 4-1.8 4-4V48c0-2.2-1.8-4-4-4H44Zm12 12h16c1.1 0 2 .9 2 2v16c0 1.1-.9 2-2 2H56c-1.1 0-2-.9-2-2V58c0-1.1.9-2 2-2Z" fill="#FFFFFF"/>\n</svg>\n',
   "stripe":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_794)">\n<path fill-rule="evenodd" clip-rule="evenodd" d="M54.5868 38.5631C54.5868 33.0774 59.0879 30.9675 66.5429 30.9675C77.233 30.9675 90.7363 34.2027 101.426 39.9697V6.91478C89.7516 2.27303 78.2176 0.444458 66.5429 0.444458C37.989 0.444458 19 15.3544 19 40.2511C19 79.073 72.4505 72.884 72.4505 89.6225C72.4505 96.0928 66.8242 98.2027 58.9473 98.2027C47.2725 98.2027 32.3626 93.4203 20.5473 86.95V120.427C33.6286 126.053 46.8505 128.444 58.9473 128.444C88.2044 128.444 108.319 113.957 108.319 88.7785C108.178 46.862 54.5868 54.317 54.5868 38.5631Z" fill="#635BFF"/>\n</g>\n<defs>\n<clipPath id="clip0_0_794">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n</defs>\n</svg>\n',
   "supabase":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_132)">\n<path d="M74.8244 125.802C71.5544 129.92 64.9243 127.664 64.8455 122.406L63.6934 45.501H115.404C124.77 45.501 129.994 56.3191 124.17 63.6545L74.8244 125.802Z" fill="url(#paint0_linear_0_132)"/>\n<path d="M74.8244 125.802C71.5544 129.92 64.9243 127.664 64.8455 122.406L63.6934 45.501H115.404C124.77 45.501 129.994 56.3191 124.17 63.6545L74.8244 125.802Z" fill="url(#paint1_linear_0_132)" fill-opacity="0.2"/>\n<path d="M53.7939 2.05576C57.0639 -2.06261 63.6942 0.193957 63.773 5.45206L64.2778 82.3569H13.2142C3.84765 82.3569 -1.37622 71.5389 4.44815 64.2035L53.7939 2.05576Z" fill="#3ECF8E"/>\n</g>\n<defs>\n<linearGradient id="paint0_linear_0_132" x1="63.6934" y1="62.5528" x2="109.652" y2="81.8278" gradientUnits="userSpaceOnUse">\n<stop stop-color="#249361"/>\n<stop offset="1" stop-color="#3ECF8E"/>\n</linearGradient>\n<linearGradient id="paint1_linear_0_132" x1="43.3176" y1="34.6548" x2="64.2773" y2="74.1101" gradientUnits="userSpaceOnUse">\n<stop/>\n<stop offset="1" stop-opacity="0"/>\n</linearGradient>\n<clipPath id="clip0_0_132">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n</defs>\n</svg>\n',
+  "tavily":
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">\n  <rect width="128" height="128" rx="24" fill="#468BFF"/>\n  <g fill="#fff">\n    <path d="M64 20l14 28H50l14-28z"/>\n    <path d="M64 108L50 80h28l-14 28z"/>\n    <path d="M20 64l28-14v28L20 64z"/>\n    <path d="M108 64L80 78V50l28 14z"/>\n    <circle cx="64" cy="64" r="9"/>\n  </g>\n</svg>\n',
   "teams":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_168_571)">\n<g clip-path="url(#clip1_168_571)">\n<path d="M89.6979 48.7828H122.761C125.884 48.7828 128.416 51.3149 128.416 54.4386V84.5543C128.416 96.0345 119.11 105.341 107.63 105.341H107.532C96.0514 105.343 86.7436 96.0374 86.7419 84.5572C86.7419 84.5563 86.7419 84.5553 86.7419 84.5542V51.7387C86.742 50.1062 88.0654 48.7828 89.6979 48.7828Z" fill="#5059C9"/>\n<path d="M112.045 42.8293C119.443 42.8293 125.44 36.832 125.44 29.4339C125.44 22.0359 119.443 16.0386 112.045 16.0386C104.646 16.0386 98.6492 22.0359 98.6492 29.4339C98.6492 36.832 104.646 42.8293 112.045 42.8293Z" fill="#5059C9"/>\n<path d="M70.3701 42.8293C81.0562 42.8293 89.719 34.1666 89.719 23.4805C89.719 12.7944 81.0562 4.13162 70.3701 4.13162C59.684 4.13162 51.0212 12.7944 51.0212 23.4805C51.0212 34.1666 59.684 42.8293 70.3701 42.8293Z" fill="#7B83EB"/>\n<path d="M96.1695 48.7828H41.5938C38.5074 48.8592 36.0658 51.4206 36.1374 54.5071V88.8558C35.7064 107.378 50.3602 122.748 68.8817 123.201C87.4031 122.748 102.057 107.378 101.626 88.8558V54.5071C101.697 51.4206 99.2559 48.8592 96.1695 48.7828Z" fill="#7B83EB"/>\n<path opacity="0.1" d="M71.8583 48.7828V96.9167C71.8435 99.124 70.5059 101.107 68.4648 101.947C67.8149 102.222 67.1165 102.364 66.4108 102.364H38.7568C38.3699 101.382 38.0127 100.4 37.715 99.3875C36.673 95.9717 36.1413 92.4209 36.1373 88.8498V54.4981C36.0657 51.4165 38.5032 48.8592 41.5847 48.7828H71.8583Z" fill="black"/>\n<path opacity="0.2" d="M68.8815 48.7828V99.8935C68.8814 100.599 68.7397 101.298 68.4648 101.947C67.6244 103.989 65.6414 105.326 63.4341 105.341H40.1559C39.6499 104.359 39.1736 103.376 38.7568 102.364C38.3401 101.352 38.0127 100.4 37.715 99.3875C36.673 95.9718 36.1413 92.4209 36.1373 88.8498V54.4981C36.0657 51.4165 38.5032 48.8592 41.5847 48.7828H68.8815Z" fill="black"/>\n<path opacity="0.2" d="M68.8817 48.7828V93.94C68.859 96.9391 66.4334 99.3648 63.4343 99.3875H37.7152C36.6732 95.9718 36.1415 92.4209 36.1375 88.8498V54.4981C36.066 51.4165 38.5035 48.8592 41.585 48.7828H68.8817Z" fill="black"/>\n<path opacity="0.2" d="M65.9049 48.7828V93.94C65.8823 96.9391 63.4566 99.3648 60.4575 99.3875H37.7152C36.6732 95.9718 36.1415 92.4209 36.1375 88.8498V54.4981C36.066 51.4165 38.5035 48.8592 41.585 48.7828H65.9049Z" fill="black"/>\n<path opacity="0.1" d="M71.8583 33.393V42.7698C71.3523 42.7995 70.876 42.8293 70.3699 42.8293C69.8639 42.8293 69.3876 42.7996 68.8815 42.7698C67.8768 42.7031 66.8802 42.5437 65.9048 42.2935C59.8769 40.866 54.8969 36.6385 52.5095 30.9224C52.0987 29.9624 51.7798 28.9657 51.5569 27.9456H66.4108C69.4147 27.957 71.8469 30.3892 71.8583 33.393Z" fill="black"/>\n<path opacity="0.2" d="M68.8816 36.3698V42.7698C67.8768 42.7031 66.8803 42.5437 65.9049 42.2935C59.8769 40.866 54.8969 36.6385 52.5095 30.9224H63.4342C66.4379 30.9338 68.8702 33.366 68.8816 36.3698Z" fill="black"/>\n<path opacity="0.2" d="M68.8816 36.3698V42.7698C67.8768 42.7031 66.8803 42.5437 65.9049 42.2935C59.8769 40.866 54.8969 36.6385 52.5095 30.9224H63.4342C66.4379 30.9338 68.8702 33.366 68.8816 36.3698Z" fill="black"/>\n<path opacity="0.2" d="M65.9049 36.3698V42.2935C59.8769 40.866 54.8969 36.6385 52.5095 30.9223H60.4574C63.4613 30.9338 65.8934 33.366 65.9049 36.3698Z" fill="black"/>\n<path d="M5.87285 30.9223H60.4485C63.4619 30.9223 65.9048 33.3653 65.9048 36.3787V90.9543C65.9048 93.9678 63.4619 96.4106 60.4485 96.4106H5.87285C2.85937 96.4106 0.416504 93.9677 0.416504 90.9543V36.3787C0.416504 33.3653 2.85943 30.9223 5.87285 30.9223Z" fill="url(#paint0_linear_168_571)"/>\n<path d="M47.5204 51.694H36.6106V81.402H29.6599V51.694H18.8008V45.9311H47.5204V51.694Z" fill="white"/>\n</g>\n</g>\n<defs>\n<linearGradient id="paint0_linear_168_571" x1="11.7932" y1="26.6588" x2="54.5282" y2="100.674" gradientUnits="userSpaceOnUse">\n<stop stop-color="#5A62C3"/>\n<stop offset="0.5" stop-color="#4D55BD"/>\n<stop offset="1" stop-color="#3940AB"/>\n</linearGradient>\n<clipPath id="clip0_168_571">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n<clipPath id="clip1_168_571">\n<rect width="128" height="119.07" fill="white" transform="translate(0.416504 4.13162)"/>\n</clipPath>\n</defs>\n</svg>\n',
   "todoist":
@@ -13803,6 +21996,8 @@ export const icons: Record<string, string> = {
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_240_7025)">\n<g clip-path="url(#clip1_240_7025)">\n<path fill-rule="evenodd" clip-rule="evenodd" d="M112.867 0H15.133C6.72578 0 0 6.72578 0 15.133V112.657C0 121.064 6.72578 127.79 15.133 127.79H112.657C121.064 127.79 127.79 121.064 127.79 112.657V15.3432C128 6.72578 121.274 0 112.867 0ZM55.0673 92.2693C55.0673 95.0016 52.7553 97.3136 50.023 97.3136H28.7947C26.0624 97.3136 23.7504 95.0016 23.7504 92.2693V28.7947C23.7504 26.0624 26.0624 23.7504 28.7947 23.7504H50.2332C52.9655 23.7504 55.2775 26.0624 55.2775 28.7947V92.2693H55.0673ZM104.46 63.0542C104.46 65.7865 102.358 68.0985 99.4154 68.3087C99.4154 68.3087 99.4154 68.3087 99.2053 68.3087H77.977C75.2447 68.3087 72.9327 65.9967 72.9327 63.2644V28.7947C72.9327 26.0624 75.2447 23.7504 77.977 23.7504H99.4154C102.148 23.7504 104.46 26.0624 104.46 28.7947V63.0542Z" fill="url(#paint0_linear_240_7025)"/>\n</g>\n</g>\n<defs>\n<linearGradient id="paint0_linear_240_7025" x1="64.042" y1="128.084" x2="64.042" y2="0" gradientUnits="userSpaceOnUse">\n<stop stop-color="#0052CC"/>\n<stop offset="1" stop-color="#2684FF"/>\n</linearGradient>\n<clipPath id="clip0_240_7025">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n<clipPath id="clip1_240_7025">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n</defs>\n</svg>\n',
   "twilio":
     '<svg role="img" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><title>Twilio</title><path d="M12 0C5.381-.008.008 5.352 0 11.971V12c0 6.64 5.359 12 12 12 6.64 0 12-5.36 12-12 0-6.641-5.36-12-12-12zm0 20.801c-4.846.015-8.786-3.904-8.801-8.75V12c-.014-4.846 3.904-8.786 8.75-8.801H12c4.847-.014 8.786 3.904 8.801 8.75V12c.015 4.847-3.904 8.786-8.75 8.801H12zm5.44-11.76c0 1.359-1.12 2.479-2.481 2.479-1.366-.007-2.472-1.113-2.479-2.479 0-1.361 1.12-2.481 2.479-2.481 1.361 0 2.481 1.12 2.481 2.481zm0 5.919c0 1.36-1.12 2.48-2.481 2.48-1.367-.008-2.473-1.114-2.479-2.48 0-1.359 1.12-2.479 2.479-2.479 1.361-.001 2.481 1.12 2.481 2.479zm-5.919 0c0 1.36-1.12 2.48-2.479 2.48-1.368-.007-2.475-1.113-2.481-2.48 0-1.359 1.12-2.479 2.481-2.479 1.358-.001 2.479 1.12 2.479 2.479zm0-5.919c0 1.359-1.12 2.479-2.479 2.479-1.367-.007-2.475-1.112-2.481-2.479 0-1.361 1.12-2.481 2.481-2.481 1.358 0 2.479 1.12 2.479 2.481z"/></svg>',
+  "typeform":
+    '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#262627"/>\n<g fill="#FFFFFF">\n<rect x="30" y="38" width="68" height="12" rx="6"/>\n<rect x="52" y="50" width="12" height="44" rx="6"/>\n</g>\n</svg>\n',
   "zendesk":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<path d="M59.1236 40.6152V111.996H0L59.1236 40.6152ZM59.1236 15C59.1236 22.8403 56.0091 30.3594 50.4652 35.9034C44.9213 41.4473 37.4021 44.5618 29.5618 44.5618C21.7215 44.5618 14.2024 41.4473 8.65846 35.9034C3.11454 30.3594 0 22.8403 0 15L59.1236 15ZM68.8637 112.002C68.8637 104.162 71.9783 96.643 77.5222 91.0991C83.0661 85.5552 90.5853 82.4407 98.4255 82.4407C106.266 82.4407 113.785 85.5552 119.329 91.0991C124.873 96.643 127.987 104.162 127.987 112.002H68.8637ZM68.8637 86.3873V15H128L68.8637 86.381V86.3873Z" fill="#03363D"/>\n</svg>\n',
 };

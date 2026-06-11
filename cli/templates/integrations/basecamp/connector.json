@@ -1,0 +1,433 @@
+{
+  "name": "basecamp",
+  "displayName": "Basecamp",
+  "icon": "basecamp.svg",
+  "description": "Manage projects, to-do lists, and to-dos in Basecamp",
+  "auth": {
+    "type": "oauth2",
+    "provider": "basecamp",
+    "authorizationUrl": "https://launchpad.37signals.com/authorization/new",
+    "tokenUrl": "https://launchpad.37signals.com/authorization/token",
+    "scopes": [],
+    "callbackPath": "/api/auth/basecamp/callback",
+    "docsUrl": "https://github.com/basecamp/bc3-api/blob/master/sections/authentication.md",
+    "requiredApis": [
+      {
+        "name": "37signals Launchpad App Registration",
+        "enableUrl": "https://launchpad.37signals.com/integrations"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "BASECAMP_CLIENT_ID",
+      "description": "Basecamp (37signals Launchpad) OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://github.com/basecamp/bc3-api/blob/master/sections/authentication.md"
+    },
+    {
+      "name": "BASECAMP_CLIENT_SECRET",
+      "description": "Basecamp (37signals Launchpad) OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://github.com/basecamp/bc3-api/blob/master/sections/authentication.md"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_projects",
+      "name": "List Projects",
+      "description": "List active projects in a Basecamp account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://3.basecampapi.com/{accountId}/projects.json",
+        "params": {
+          "accountId": {
+            "type": "string",
+            "in": "path",
+            "description": "Basecamp account ID — the number after 3.basecamp.com/ in the app URL, e.g. 5899981",
+            "required": true
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by status: archived or trashed (omit for active projects)"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (Basecamp uses geared per-page sizes)",
+            "default": 1
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "projects"
+            ],
+            "collectionName": "projects",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "description"
+              },
+              {
+                "name": "status"
+              },
+              {
+                "name": "app_url"
+              },
+              {
+                "name": "created_at"
+              },
+              {
+                "name": "updated_at"
+              }
+            ],
+            "omitted": "project dock tool references and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "page"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_project",
+      "name": "Get Project",
+      "description": "Get a project including its dock (the todoset ID needed for to-do tools is in the dock entry named 'todoset')",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://3.basecampapi.com/{accountId}/projects/{projectId}.json",
+        "params": {
+          "accountId": {
+            "type": "string",
+            "in": "path",
+            "description": "Basecamp account ID",
+            "required": true
+          },
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "Basecamp project ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_project",
+      "name": "Create Project",
+      "description": "Create a new Basecamp project",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://3.basecampapi.com/{accountId}/projects.json",
+        "params": {
+          "accountId": {
+            "type": "string",
+            "in": "path",
+            "description": "Basecamp account ID",
+            "required": true
+          }
+        },
+        "body": {
+          "name": {
+            "type": "string",
+            "description": "Project name",
+            "required": true
+          },
+          "description": {
+            "type": "string",
+            "description": "Project description"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_todolists",
+      "name": "List To-do Lists",
+      "description": "List to-do lists in a project's todoset (get the todoset ID from Get Project's dock)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://3.basecampapi.com/{accountId}/todosets/{todosetId}/todolists.json",
+        "params": {
+          "accountId": {
+            "type": "string",
+            "in": "path",
+            "description": "Basecamp account ID",
+            "required": true
+          },
+          "todosetId": {
+            "type": "string",
+            "in": "path",
+            "description": "Todoset ID from the project dock",
+            "required": true
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by status: archived or trashed (omit for active lists)"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number",
+            "default": 1
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "todolists"
+            ],
+            "collectionName": "todolists",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "title"
+              },
+              {
+                "name": "completed"
+              },
+              {
+                "name": "completed_ratio"
+              },
+              {
+                "name": "app_url"
+              },
+              {
+                "name": "created_at"
+              },
+              {
+                "name": "updated_at"
+              }
+            ],
+            "omitted": "list descriptions and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "page"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "list_todos",
+      "name": "List To-dos",
+      "description": "List to-dos in a to-do list",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://3.basecampapi.com/{accountId}/todolists/{todolistId}/todos.json",
+        "params": {
+          "accountId": {
+            "type": "string",
+            "in": "path",
+            "description": "Basecamp account ID",
+            "required": true
+          },
+          "todolistId": {
+            "type": "string",
+            "in": "path",
+            "description": "To-do list ID",
+            "required": true
+          },
+          "completed": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Set true to include only completed to-dos"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number",
+            "default": 1
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "todos"
+            ],
+            "collectionName": "todos",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "content"
+              },
+              {
+                "name": "completed"
+              },
+              {
+                "name": "due_on"
+              },
+              {
+                "name": "app_url"
+              },
+              {
+                "name": "created_at"
+              },
+              {
+                "name": "updated_at"
+              },
+              {
+                "name": "assignees",
+                "kind": "contact-array"
+              }
+            ],
+            "omitted": "to-do descriptions, comment counts, and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "page"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "create_todo",
+      "name": "Create To-do",
+      "description": "Create a to-do in a to-do list",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://3.basecampapi.com/{accountId}/todolists/{todolistId}/todos.json",
+        "params": {
+          "accountId": {
+            "type": "string",
+            "in": "path",
+            "description": "Basecamp account ID",
+            "required": true
+          },
+          "todolistId": {
+            "type": "string",
+            "in": "path",
+            "description": "To-do list ID",
+            "required": true
+          }
+        },
+        "body": {
+          "content": {
+            "type": "string",
+            "description": "What the to-do is for",
+            "required": true
+          },
+          "description": {
+            "type": "string",
+            "description": "Details about the to-do (HTML allowed)"
+          },
+          "due_on": {
+            "type": "string",
+            "description": "Due date (YYYY-MM-DD)"
+          },
+          "starts_on": {
+            "type": "string",
+            "description": "Start date (YYYY-MM-DD)"
+          },
+          "assignee_ids": {
+            "type": "array",
+            "description": "Array of person IDs to assign"
+          },
+          "notify": {
+            "type": "boolean",
+            "description": "Whether to notify assignees"
+          }
+        }
+      }
+    },
+    {
+      "id": "complete_todo",
+      "name": "Complete To-do",
+      "description": "Mark a Basecamp to-do as completed",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://3.basecampapi.com/{accountId}/todos/{todoId}/completion.json",
+        "params": {
+          "accountId": {
+            "type": "string",
+            "in": "path",
+            "description": "Basecamp account ID",
+            "required": true
+          },
+          "todoId": {
+            "type": "string",
+            "in": "path",
+            "description": "To-do ID",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "project_status",
+      "title": "Project status",
+      "prompt": "List my Basecamp projects and summarize the open to-dos in one of them.",
+      "category": "productivity",
+      "icon": "list"
+    },
+    {
+      "id": "add_todo",
+      "title": "Add a to-do",
+      "prompt": "Add a to-do to a Basecamp to-do list with a due date and assignee.",
+      "category": "productivity",
+      "icon": "plus"
+    }
+  ],
+  "suggestedWith": [
+    "slack",
+    "github",
+    "harvest"
+  ],
+  "SETUP_GUIDE": {
+    "title": "Basecamp OAuth Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Basecamp account",
+        "description": "Sign up at https://basecamp.com (a free trial works for testing). Note your account ID — it's the number in the app URL, e.g. https://3.basecamp.com/5899981."
+      },
+      {
+        "step": 2,
+        "title": "Register an app on 37signals Launchpad",
+        "description": "Go to https://launchpad.37signals.com/integrations and register a new app. Check 'Basecamp 4' as the product and set your redirect URI to your app's /api/auth/basecamp/callback URL."
+      },
+      {
+        "step": 3,
+        "title": "Set environment variables",
+        "description": "Copy the Client ID and Client Secret into your .env as BASECAMP_CLIENT_ID and BASECAMP_CLIENT_SECRET."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Complete the OAuth flow, then run List Projects with your account ID."
+      }
+    ],
+    "notes": [
+      "Every API URL includes the account ID: https://3.basecampapi.com/{accountId}/... — tools take it as a required accountId parameter",
+      "Basecamp OAuth has no scopes; tokens carry the user's full access. Access tokens expire after two weeks and are renewed with the refresh token",
+      "Basecamp requires a User-Agent identifying your app with contact info, and rate-limits to ~50 requests per 10 seconds"
+    ],
+    "documentation": "https://github.com/basecamp/bc3-api"
+  }
+}

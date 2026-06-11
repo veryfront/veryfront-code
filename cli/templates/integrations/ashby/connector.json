@@ -1,0 +1,263 @@
+{
+  "name": "ashby",
+  "displayName": "Ashby",
+  "icon": "ashby.svg",
+  "description": "Read candidates, jobs, and applications from the Ashby ATS",
+  "auth": {
+    "type": "basic",
+    "usernameKey": "ASHBY_API_KEY",
+    "passwordKey": "ASHBY_API_PASSWORD",
+    "docsUrl": "https://developers.ashbyhq.com/docs/authentication",
+    "requiredApis": [
+      {
+        "name": "Ashby API Keys",
+        "enableUrl": "https://app.ashbyhq.com/admin/api/keys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "ASHBY_API_KEY",
+      "description": "Ashby API key (used as the HTTP Basic username; the password is blank)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developers.ashbyhq.com/docs/authentication"
+    },
+    {
+      "name": "ASHBY_API_PASSWORD",
+      "description": "Leave empty — Ashby Basic auth uses the API key as username with a blank password",
+      "required": false,
+      "sensitive": true,
+      "default": "",
+      "docsUrl": "https://developers.ashbyhq.com/docs/authentication"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_candidates",
+      "name": "List Candidates",
+      "description": "List all candidates in the organization (read-only RPC via POST)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.ashbyhq.com/candidate.list",
+        "body": {
+          "limit": {
+            "type": "number",
+            "description": "Candidates to return per page (max 100)",
+            "default": 50
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Pagination cursor from nextCursor in a previous response"
+          }
+        },
+        "response": {
+          "transform": "results",
+          "historicalSummary": {
+            "collectionKeys": ["results", "candidates"],
+            "collectionName": "candidates",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "primaryEmailAddress", "kind": "object" },
+              { "name": "position" },
+              { "name": "company" },
+              { "name": "createdAt" },
+              { "name": "updatedAt" }
+            ],
+            "omitted": "resume file handles, social links, and custom field values",
+            "outputFields": [{ "name": "nextCursor" }, { "name": "moreDataAvailable" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_candidate",
+      "name": "Get Candidate",
+      "description": "Get a candidate by ID (read-only RPC via POST)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.ashbyhq.com/candidate.info",
+        "body": {
+          "id": {
+            "type": "string",
+            "description": "Candidate ID",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "results"
+        }
+      }
+    },
+    {
+      "id": "search_candidates",
+      "name": "Search Candidates",
+      "description": "Search candidates by email or name (read-only RPC via POST)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.ashbyhq.com/candidate.search",
+        "body": {
+          "email": {
+            "type": "string",
+            "description": "Candidate email address to search for"
+          },
+          "name": {
+            "type": "string",
+            "description": "Candidate name to search for"
+          }
+        },
+        "response": {
+          "transform": "results"
+        }
+      }
+    },
+    {
+      "id": "create_candidate",
+      "name": "Create Candidate",
+      "description": "Create a new candidate",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.ashbyhq.com/candidate.create",
+        "body": {
+          "name": {
+            "type": "string",
+            "description": "Candidate full name",
+            "required": true
+          },
+          "email": {
+            "type": "string",
+            "description": "Candidate email address"
+          },
+          "phoneNumber": {
+            "type": "string",
+            "description": "Candidate phone number"
+          },
+          "linkedInUrl": {
+            "type": "string",
+            "description": "LinkedIn profile URL"
+          }
+        },
+        "response": {
+          "transform": "results"
+        }
+      }
+    },
+    {
+      "id": "list_jobs",
+      "name": "List Jobs",
+      "description": "List jobs, optionally filtered by status (read-only RPC via POST)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.ashbyhq.com/job.list",
+        "body": {
+          "status": {
+            "type": "string",
+            "description": "Filter by status: Open, Closed, Archived, or Draft"
+          },
+          "limit": {
+            "type": "number",
+            "description": "Jobs to return per page (max 100)",
+            "default": 50
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Pagination cursor from nextCursor in a previous response"
+          }
+        },
+        "response": {
+          "transform": "results"
+        }
+      }
+    },
+    {
+      "id": "list_applications",
+      "name": "List Applications",
+      "description": "List applications, optionally filtered by job or status (read-only RPC via POST)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.ashbyhq.com/application.list",
+        "body": {
+          "jobId": {
+            "type": "string",
+            "description": "Only applications for this job ID"
+          },
+          "status": {
+            "type": "string",
+            "description": "Filter by status: Active, Hired, or Archived"
+          },
+          "createdAfter": {
+            "type": "number",
+            "description": "Only applications created after this Unix timestamp in milliseconds"
+          },
+          "limit": {
+            "type": "number",
+            "description": "Applications to return per page (max 100)",
+            "default": 50
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Pagination cursor from nextCursor in a previous response"
+          }
+        },
+        "response": {
+          "transform": "results"
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "pipeline_overview",
+      "title": "Pipeline overview",
+      "prompt": "List my open Ashby jobs and the active applications for each, grouped by stage.",
+      "category": "hr",
+      "icon": "list"
+    },
+    {
+      "id": "find_candidate",
+      "title": "Find a candidate",
+      "prompt": "Search Ashby for a candidate by email and show their profile and applications.",
+      "category": "hr",
+      "icon": "search"
+    }
+  ],
+  "suggestedWith": ["slack", "calendar", "notion"],
+  "SETUP_GUIDE": {
+    "title": "Ashby API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Sign in to Ashby",
+        "description": "Go to https://app.ashbyhq.com and sign in as an organization admin. Ashby is a paid product — use your company workspace or request a sandbox from Ashby support."
+      },
+      {
+        "step": 2,
+        "title": "Create an API key",
+        "description": "Open Admin → API → API Keys and create a key. Grant read permissions for Candidates, Jobs, and Applications (plus candidate write if you will use Create Candidate)."
+      },
+      {
+        "step": 3,
+        "title": "Set environment variables",
+        "description": "Add ASHBY_API_KEY=<your key> to your .env. Leave ASHBY_API_PASSWORD unset or empty — Ashby uses the key as the Basic auth username with a blank password."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Jobs to confirm the key works."
+      }
+    ],
+    "notes": [
+      "All Ashby endpoints are POST-based RPC calls (e.g. candidate.list) with JSON bodies; list/info/search calls do not modify data",
+      "Authentication is HTTP Basic with the API key as username and an empty password",
+      "Responses are wrapped as {success, results, moreDataAvailable, nextCursor}; tools unwrap 'results'"
+    ],
+    "documentation": "https://developers.ashbyhq.com/reference"
+  }
+}

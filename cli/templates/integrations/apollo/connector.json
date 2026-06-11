@@ -1,0 +1,346 @@
+{
+  "name": "apollo",
+  "displayName": "Apollo.io",
+  "icon": "apollo.svg",
+  "description": "Search and enrich people, companies, and contacts in Apollo.io",
+  "auth": {
+    "type": "api-key",
+    "keyName": "APOLLO_API_KEY",
+    "headerName": "X-Api-Key",
+    "docsUrl": "https://docs.apollo.io/reference/authentication",
+    "requiredApis": [
+      {
+        "name": "Apollo API Keys",
+        "enableUrl": "https://app.apollo.io/#/settings/integrations/api"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "APOLLO_API_KEY",
+      "description": "Apollo.io API key (sent as the X-Api-Key header)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.apollo.io/docs/create-api-key"
+    }
+  ],
+  "tools": [
+    {
+      "id": "search_people",
+      "name": "Search People",
+      "description": "Search the Apollo database for people by keywords, titles, and locations",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.apollo.io/api/v1/mixed_people/search",
+        "body": {
+          "q_keywords": {
+            "type": "string",
+            "description": "Keywords to match against names, titles, and companies"
+          },
+          "person_titles": {
+            "type": "array",
+            "description": "Job titles to match, e.g. [\"sales manager\"]"
+          },
+          "person_locations": {
+            "type": "array",
+            "description": "Locations to match, e.g. [\"california, us\"]"
+          },
+          "organization_domains": {
+            "type": "array",
+            "description": "Company domains to match, e.g. [\"apollo.io\"]"
+          },
+          "page": {
+            "type": "number",
+            "description": "Page number (1-based)",
+            "default": 1
+          },
+          "per_page": {
+            "type": "number",
+            "description": "Results per page (max 100)",
+            "default": 25
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["people", "contacts"],
+            "collectionName": "people",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "title" },
+              { "name": "email" },
+              { "name": "linkedin_url" },
+              { "name": "organization", "kind": "object" }
+            ],
+            "omitted": "employment history and provider-specific payload fields",
+            "outputFields": [{ "name": "pagination", "kind": "object" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "search_organizations",
+      "name": "Search Organizations",
+      "description": "Search the Apollo database for companies; consumes Apollo credits",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.apollo.io/api/v1/mixed_companies/search",
+        "body": {
+          "q_organization_name": {
+            "type": "string",
+            "description": "Company name to match"
+          },
+          "organization_locations": {
+            "type": "array",
+            "description": "Company HQ locations, e.g. [\"germany\"]"
+          },
+          "organization_num_employees_ranges": {
+            "type": "array",
+            "description": "Employee count ranges, e.g. [\"1,10\", \"11,50\"]"
+          },
+          "page": {
+            "type": "number",
+            "description": "Page number (1-based)",
+            "default": 1
+          },
+          "per_page": {
+            "type": "number",
+            "description": "Results per page (max 100)",
+            "default": 25
+          }
+        }
+      }
+    },
+    {
+      "id": "enrich_person",
+      "name": "Enrich Person",
+      "description": "Enrich a person's profile by name, email, domain, or LinkedIn URL; consumes Apollo credits",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.apollo.io/api/v1/people/match",
+        "params": {
+          "reveal_personal_emails": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Reveal personal emails (consumes additional credits)",
+            "default": false
+          }
+        },
+        "body": {
+          "first_name": {
+            "type": "string",
+            "description": "First name"
+          },
+          "last_name": {
+            "type": "string",
+            "description": "Last name"
+          },
+          "email": {
+            "type": "string",
+            "description": "Known email address"
+          },
+          "domain": {
+            "type": "string",
+            "description": "Company domain, e.g. apollo.io"
+          },
+          "organization_name": {
+            "type": "string",
+            "description": "Company name"
+          },
+          "linkedin_url": {
+            "type": "string",
+            "description": "LinkedIn profile URL"
+          }
+        },
+        "response": {
+          "transform": "person"
+        }
+      }
+    },
+    {
+      "id": "enrich_organization",
+      "name": "Enrich Organization",
+      "description": "Enrich a company profile from its domain; consumes Apollo credits",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.apollo.io/api/v1/organizations/enrich",
+        "params": {
+          "domain": {
+            "type": "string",
+            "in": "query",
+            "description": "Company domain to enrich, e.g. apollo.io",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "organization"
+        }
+      }
+    },
+    {
+      "id": "search_contacts",
+      "name": "Search Contacts",
+      "description": "Search contacts already saved to your Apollo account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.apollo.io/api/v1/contacts/search",
+        "body": {
+          "q_keywords": {
+            "type": "string",
+            "description": "Keywords to match against contact names, titles, and companies"
+          },
+          "sort_by_field": {
+            "type": "string",
+            "description": "Sort field, e.g. contact_last_activity_date or contact_created_at"
+          },
+          "page": {
+            "type": "number",
+            "description": "Page number (1-based)",
+            "default": 1
+          },
+          "per_page": {
+            "type": "number",
+            "description": "Results per page (max 100)",
+            "default": 25
+          }
+        }
+      }
+    },
+    {
+      "id": "create_contact",
+      "name": "Create Contact",
+      "description": "Create a new contact in your Apollo account",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.apollo.io/api/v1/contacts",
+        "body": {
+          "first_name": {
+            "type": "string",
+            "description": "Contact first name",
+            "required": true
+          },
+          "last_name": {
+            "type": "string",
+            "description": "Contact last name"
+          },
+          "email": {
+            "type": "string",
+            "description": "Contact email address"
+          },
+          "title": {
+            "type": "string",
+            "description": "Job title"
+          },
+          "organization_name": {
+            "type": "string",
+            "description": "Company name"
+          },
+          "label_names": {
+            "type": "array",
+            "description": "Apollo list names to add the contact to"
+          }
+        },
+        "response": {
+          "transform": "contact"
+        }
+      }
+    },
+    {
+      "id": "update_contact",
+      "name": "Update Contact",
+      "description": "Update an existing contact in your Apollo account",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://api.apollo.io/api/v1/contacts/{contactId}",
+        "params": {
+          "contactId": {
+            "type": "string",
+            "in": "path",
+            "description": "Apollo contact ID",
+            "required": true
+          }
+        },
+        "body": {
+          "first_name": {
+            "type": "string",
+            "description": "Contact first name"
+          },
+          "last_name": {
+            "type": "string",
+            "description": "Contact last name"
+          },
+          "email": {
+            "type": "string",
+            "description": "Contact email address"
+          },
+          "title": {
+            "type": "string",
+            "description": "Job title"
+          },
+          "organization_name": {
+            "type": "string",
+            "description": "Company name"
+          }
+        },
+        "response": {
+          "transform": "contact"
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "prospect_list",
+      "title": "Build a prospect list",
+      "prompt": "Search Apollo for heads of sales at SaaS companies in the US and list their names, titles, and companies.",
+      "category": "sales",
+      "icon": "search"
+    },
+    {
+      "id": "enrich_lead",
+      "title": "Enrich a lead",
+      "prompt": "Enrich this person in Apollo using their email address and summarize their role and company.",
+      "category": "sales",
+      "icon": "sparkles"
+    }
+  ],
+  "suggestedWith": ["hubspot", "salesforce", "gmail"],
+  "SETUP_GUIDE": {
+    "title": "Apollo.io API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create an API key",
+        "description": "In Apollo, go to Settings → Integrations → API (https://app.apollo.io/#/settings/integrations/api) and click Create new key. Select the endpoints the key may access, or toggle 'Set as master key' for full access (some endpoints, like listing users, require a master key)."
+      },
+      {
+        "step": 2,
+        "title": "Check your plan's API access",
+        "description": "API access and hourly/daily rate limits depend on your Apollo plan; free accounts have limited API quotas. Search endpoints are free to call, but enrichment and organization search consume Apollo credits."
+      },
+      {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add APOLLO_API_KEY to your .env."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the Search People tool with a simple keyword query."
+      }
+    ],
+    "notes": [
+      "The API key is sent in the X-Api-Key header; since September 2024 Apollo no longer accepts keys in query or body parameters",
+      "Enrich Person, Enrich Organization, and Search Organizations consume Apollo credits",
+      "Email addresses in search results may be locked unless your plan/credits allow revealing them"
+    ],
+    "documentation": "https://docs.apollo.io/reference/authentication"
+  }
+}
