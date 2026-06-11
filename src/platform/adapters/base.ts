@@ -193,6 +193,13 @@ export interface FileChangeEvent {
 
 export interface FileWatcher extends AsyncIterable<FileChangeEvent> {
   close(): void;
+  /**
+   * Resolves once the watcher's internal loop has fully stopped, including
+   * any in-flight filesystem operations. close() only signals shutdown;
+   * await this to guarantee no pending async ops remain (e.g. before test
+   * sanitizer checks or process exit).
+   */
+  done?: Promise<void>;
 }
 
 export interface ShellAdapter {

@@ -85,11 +85,18 @@ describe("rendering/orchestrator/MDXCompiler singleflight", () => {
       const bothHashing = new Promise<void>((resolve) => {
         releaseHashes = resolve;
       });
-      adapter.computeHash = async (content: string) => {
+      adapter.computeHash = async (_content: string) => {
         hashCalls++;
         if (hashCalls >= 2) releaseHashes();
         await bothHashing;
-        return sha256Hex(content);
+        // A fixed hash, NOT sha256Hex: real crypto.subtle work runs on a
+        // thread pool with unbounded latency, so under CI load one caller
+        // could still finish its whole compile before the other left this
+        // function — re-introducing the race the gate above exists to close.
+        // After this synchronous return both callers reach the flight map
+        // within their own microtask, before the test's macrotask resolves
+        // the compile.
+        return "fixed-concurrent-test-hash";
       };
 
       const compiler = new MDXCompiler({

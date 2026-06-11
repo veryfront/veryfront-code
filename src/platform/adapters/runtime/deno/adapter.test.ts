@@ -341,7 +341,7 @@ if (!isDeno) {
   });
 
   describe("diffSnapshots helper (via file watcher)", () => {
-    it("should create a file watcher", () => {
+    it("should create a file watcher", async () => {
       const tmpDir = Deno.makeTempDirSync({ prefix: "test-watch-" });
 
       try {
@@ -352,9 +352,14 @@ if (!isDeno) {
         });
 
         assertExists(watcher);
+        assertExists(watcher.done);
 
         watcher.close();
         controller.abort();
+        // close() only signals shutdown; the initial directory snapshot
+        // (Deno.readDir) may still be in flight. Await full loop termination
+        // so the op sanitizer never sees a pending read-dir op.
+        await watcher.done;
       } finally {
         Deno.removeSync(tmpDir, { recursive: true });
       }
