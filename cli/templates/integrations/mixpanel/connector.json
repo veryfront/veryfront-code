@@ -35,7 +35,7 @@
       "description": "Mixpanel Project Token for event tracking",
       "required": false,
       "sensitive": true,
-      "docsUrl": "https://docs.mixpanel.com/docs/tracking-methods/id-management/authentication"
+      "docsUrl": "https://docs.mixpanel.com/docs/tracking/how-tos/api-credentials"
     },
     {
       "name": "MIXPANEL_API_SECRET",

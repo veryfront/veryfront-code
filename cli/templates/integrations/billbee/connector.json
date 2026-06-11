@@ -1,0 +1,333 @@
+{
+  "name": "billbee",
+  "displayName": "Billbee",
+  "icon": "billbee.svg",
+  "description": "Access Billbee multichannel orders, products, and customers, and update order states for e-commerce order management",
+  "category": "ecommerce",
+  "auth": {
+    "type": "basic",
+    "usernameKey": "BILLBEE_USERNAME",
+    "passwordKey": "BILLBEE_API_PASSWORD",
+    "additionalHeaders": {
+      "X-Billbee-Api-Key": "BILLBEE_API_KEY"
+    },
+    "docsUrl": "https://app.billbee.io/swagger/ui/index",
+    "requiredApis": [
+      {
+        "name": "Billbee API module",
+        "enableUrl": "https://app.billbee.io/app_v2/settings/api/general"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "BILLBEE_USERNAME",
+      "description": "Billbee account username (email), used as the HTTP Basic username",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://app.billbee.io/swagger/ui/index"
+    },
+    {
+      "name": "BILLBEE_API_PASSWORD",
+      "description": "Billbee API password set under Settings → API (not the account login password), used as the HTTP Basic password",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://app.billbee.io/app_v2/settings/api/general"
+    },
+    {
+      "name": "BILLBEE_API_KEY",
+      "description": "Billbee developer API key identifying your application, sent in the X-Billbee-Api-Key header (request via support@billbee.io)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://app.billbee.io/swagger/ui/index"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_orders",
+      "name": "List Orders",
+      "description": "List orders across all connected shops, optionally filtered by date range, modification time, or order state",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.billbee.io/api/v1/orders",
+        "params": {
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number to request (1-based)",
+            "default": 1
+          },
+          "pageSize": {
+            "type": "number",
+            "in": "query",
+            "description": "Orders per page (max 250)",
+            "default": 50
+          },
+          "minOrderDate": {
+            "type": "string",
+            "in": "query",
+            "description": "Oldest order date to include, ISO 8601, e.g. 2026-06-01T00:00:00Z"
+          },
+          "maxOrderDate": {
+            "type": "string",
+            "in": "query",
+            "description": "Newest order date to include, ISO 8601"
+          },
+          "modifiedAtMin": {
+            "type": "string",
+            "in": "query",
+            "description": "Only orders modified after this date, ISO 8601"
+          },
+          "orderStateId": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Only orders in these states (one or more state IDs), e.g. 1=ordered, 2=confirmed, 3=paid, 4=shipped (full list via the order states enum endpoint)"
+          },
+          "tag": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Only orders with one of these tags attached"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_order",
+      "name": "Get Order",
+      "description": "Get a single order with positions, addresses, and payment details by its internal Billbee ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.billbee.io/api/v1/orders/{orderId}",
+        "params": {
+          "orderId": {
+            "type": "number",
+            "in": "path",
+            "description": "Internal Billbee ID of the order",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "update_order_state",
+      "name": "Update Order State",
+      "description": "Change the main state of an order, e.g. mark it as confirmed, paid, or shipped",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://api.billbee.io/api/v1/orders/{orderId}/orderstate",
+        "params": {
+          "orderId": {
+            "type": "number",
+            "in": "path",
+            "description": "Internal Billbee ID of the order",
+            "required": true
+          }
+        },
+        "body": {
+          "NewStateId": {
+            "type": "number",
+            "description": "New order state ID, e.g. 1=ordered, 2=confirmed, 3=paid, 4=shipped (full list via the order states enum endpoint)",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_products",
+      "name": "List Products",
+      "description": "List products (articles) in the Billbee account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.billbee.io/api/v1/products",
+        "params": {
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number to request (1-based)",
+            "default": 1
+          },
+          "pageSize": {
+            "type": "number",
+            "in": "query",
+            "description": "Products per page (1-250)",
+            "default": 50
+          },
+          "minCreatedAt": {
+            "type": "string",
+            "in": "query",
+            "description": "Only products created after this date, ISO 8601"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_customers",
+      "name": "List Customers",
+      "description": "List customers in the Billbee account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.billbee.io/api/v1/customers",
+        "params": {
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number to request (1-based)",
+            "default": 1
+          },
+          "pageSize": {
+            "type": "number",
+            "in": "query",
+            "description": "Customers per page (1-250)",
+            "default": 50
+          }
+        }
+      }
+    },
+    {
+      "id": "list_invoices",
+      "name": "List Invoices",
+      "description": "List invoices with positions and amounts over a date range — the export feed into accounting tools. Throttled to 1 request per minute for the same page and minInvoiceDate.",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.billbee.io/api/v1/orders/invoices",
+        "params": {
+          "minInvoiceDate": {
+            "type": "string",
+            "in": "query",
+            "description": "Oldest invoice date to include, ISO 8601"
+          },
+          "maxInvoiceDate": {
+            "type": "string",
+            "in": "query",
+            "description": "Newest invoice date to include, ISO 8601"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number to request (1-based)",
+            "default": 1
+          },
+          "pageSize": {
+            "type": "number",
+            "in": "query",
+            "description": "Invoices per page (1-250)",
+            "default": 50
+          },
+          "includePositions": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include invoice line items in the response"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_order_states",
+      "name": "Get Order States",
+      "description": "List all defined order state IDs and names — resolves the NewStateId values used by Update Order State",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.billbee.io/api/v1/enums/orderstates"
+      }
+    },
+    {
+      "id": "update_stock",
+      "name": "Update Stock",
+      "description": "Set the absolute stock quantity of a product by SKU or Billbee product ID — the most common multichannel write; the change is pushed to connected shops",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.billbee.io/api/v1/products/updatestock",
+        "body": {
+          "Sku": {
+            "type": "string",
+            "description": "SKU of the product to update (alternative to BillbeeId)"
+          },
+          "BillbeeId": {
+            "type": "number",
+            "description": "Billbee product ID to update (alternative to Sku)"
+          },
+          "NewQuantity": {
+            "type": "number",
+            "description": "New absolute stock quantity to set",
+            "required": true
+          },
+          "StockId": {
+            "type": "number",
+            "description": "Stock ID if the multi-stock feature is activated"
+          },
+          "Reason": {
+            "type": "string",
+            "description": "Optional reason text for the stock update"
+          },
+          "AutosubtractReservedAmount": {
+            "type": "boolean",
+            "description": "Automatically reduce NewQuantity by the currently unfulfilled (reserved) amount"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "open_orders",
+      "title": "Review open orders",
+      "prompt": "List my recent Billbee orders that are not yet shipped and summarize them by state and shop.",
+      "category": "ecommerce",
+      "icon": "list"
+    },
+    {
+      "id": "mark_paid",
+      "title": "Mark order as paid",
+      "prompt": "Look up a Billbee order I specify and update its state to paid.",
+      "category": "ecommerce",
+      "icon": "check"
+    },
+    {
+      "id": "customer_lookup",
+      "title": "Customer lookup",
+      "prompt": "Find a Billbee customer and summarize their recent orders.",
+      "category": "ecommerce",
+      "icon": "users"
+    }
+  ],
+  "suggestedWith": ["shopify", "woocommerce", "sendcloud"],
+  "SETUP_GUIDE": {
+    "title": "Billbee API setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Billbee account",
+        "description": "Sign up at https://app.billbee.io — a free trial is available for testing."
+      },
+      {
+        "step": 2,
+        "title": "Activate the API and set an API password",
+        "description": "In Billbee open Settings → API (https://app.billbee.io/app_v2/settings/api/general), activate the API module, and set a dedicated API password. This is separate from your account login password."
+      },
+      {
+        "step": 3,
+        "title": "Request an API key",
+        "description": "Email support@billbee.io with a short note about what you are building to receive a developer API key. This key identifies your application and is sent as the X-Billbee-Api-Key header."
+      },
+      {
+        "step": 4,
+        "title": "Store the credentials",
+        "description": "Add BILLBEE_USERNAME (your Billbee login email), BILLBEE_API_PASSWORD, and BILLBEE_API_KEY to your .env file, then run the List Orders tool to verify access."
+      }
+    ],
+    "notes": [
+      "Every request needs BOTH HTTP Basic auth (username + API password) AND the X-Billbee-Api-Key header",
+      "Rate limit: max 2 requests per second per API key + user combination; some endpoints have stricter per-call throttles",
+      "Responses wrap payloads in a Data field alongside Paging and ErrorMessage fields"
+    ],
+    "documentation": "https://app.billbee.io/swagger/ui/index"
+  }
+}

@@ -1,0 +1,248 @@
+{
+  "name": "wix",
+  "displayName": "Wix",
+  "icon": "wix.svg",
+  "description": "Access Wix site data - store products, eCommerce orders, and CRM contacts via the Wix REST API",
+  "category": "ecommerce",
+  "auth": {
+    "type": "api-key",
+    "keyName": "WIX_API_KEY",
+    "headerName": "Authorization",
+    "additionalHeaders": {
+      "wix-site-id": "WIX_SITE_ID"
+    },
+    "docsUrl": "https://dev.wix.com/docs/rest/articles/getting-started/api-keys",
+    "requiredApis": [
+      {
+        "name": "Wix API Keys Manager",
+        "enableUrl": "https://manage.wix.com/account/api-keys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "WIX_API_KEY",
+      "description": "Wix API key from the API Keys Manager (sent raw in the Authorization header, no Bearer prefix)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://dev.wix.com/docs/rest/articles/getting-started/api-keys"
+    },
+    {
+      "name": "WIX_SITE_ID",
+      "description": "ID of the Wix site to operate on (visible in the site dashboard URL after /dashboard/)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://dev.wix.com/docs/rest/articles/getting-started/api-keys"
+    }
+  ],
+  "tools": [
+    {
+      "id": "query_products",
+      "name": "Query Products",
+      "description": "Query Wix Stores catalog products with filtering, sorting, and paging",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://www.wixapis.com/stores/v1/products/query",
+        "body": {
+          "query": {
+            "type": "object",
+            "description": "Query options, e.g. {\"filter\":\"{\\\"name\\\":{\\\"$contains\\\":\\\"shirt\\\"}}\",\"paging\":{\"limit\":25,\"offset\":0}} (filter is a stringified JSON object)"
+          },
+          "includeVariants": {
+            "type": "boolean",
+            "description": "Whether to include product variants in the response"
+          }
+        },
+        "response": {
+          "transform": "products"
+        }
+      }
+    },
+    {
+      "id": "search_orders",
+      "name": "Search Orders",
+      "description": "Search Wix eCommerce orders with filtering, sorting, and cursor paging",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://www.wixapis.com/ecom/v1/orders/search",
+        "body": {
+          "search": {
+            "type": "object",
+            "description": "Search options, e.g. {\"filter\":{\"status\":{\"$eq\":\"APPROVED\"}},\"sort\":[{\"fieldName\":\"createdDate\",\"order\":\"DESC\"}],\"cursorPaging\":{\"limit\":25}}"
+          }
+        },
+        "response": {
+          "transform": "orders"
+        }
+      }
+    },
+    {
+      "id": "get_order",
+      "name": "Get Order",
+      "description": "Get full details of a single eCommerce order, including line items, totals, and buyer info",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://www.wixapis.com/ecom/v1/orders/{orderId}",
+        "params": {
+          "orderId": {
+            "type": "string",
+            "in": "path",
+            "description": "Wix order ID (GUID)",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "order"
+        }
+      }
+    },
+    {
+      "id": "query_contacts",
+      "name": "Query Contacts",
+      "description": "Query CRM contacts with filtering, sorting, and paging (up to 1000 per request)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://www.wixapis.com/contacts/v4/contacts/query",
+        "body": {
+          "query": {
+            "type": "object",
+            "description": "Query options, e.g. {\"filter\":{\"info.name.last\":{\"$eq\":\"Smith\"}},\"paging\":{\"limit\":25,\"offset\":0}}"
+          }
+        },
+        "response": {
+          "transform": "contacts"
+        }
+      }
+    },
+    {
+      "id": "create_fulfillment",
+      "name": "Create Fulfillment",
+      "description": "Mark eCommerce order line items as fulfilled, optionally with shipping tracking info",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://www.wixapis.com/ecom/v1/fulfillments/orders/{orderId}/create-fulfillment",
+        "params": {
+          "orderId": {
+            "type": "string",
+            "in": "path",
+            "description": "Wix order ID (GUID) to fulfill",
+            "required": true
+          }
+        },
+        "body": {
+          "fulfillment": {
+            "type": "object",
+            "description": "Fulfillment to create, e.g. {\"lineItems\":[{\"id\":\"<line item id>\",\"quantity\":1}],\"trackingInfo\":{\"trackingNumber\":\"...\",\"shippingProvider\":\"ups\"}} (lineItems required; line item IDs come from Get Order)",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_contact",
+      "name": "Create Contact",
+      "description": "Create a new CRM contact with at least a name, email address, or phone number",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://www.wixapis.com/contacts/v4/contacts",
+        "body": {
+          "info": {
+            "type": "object",
+            "description": "Contact info with at least one of name, email, or phone, e.g. {\"name\":{\"first\":\"Jane\",\"last\":\"Doe\"},\"emails\":{\"items\":[{\"email\":\"jane@example.com\"}]}}",
+            "required": true
+          },
+          "allowDuplicates": {
+            "type": "boolean",
+            "description": "Create the contact even if the email is already in use by another contact (defaults to false)"
+          }
+        },
+        "response": {
+          "transform": "contact"
+        }
+      }
+    },
+    {
+      "id": "create_product",
+      "name": "Create Product",
+      "description": "Create a new product in the Wix Stores catalog",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://www.wixapis.com/stores/v1/products",
+        "body": {
+          "product": {
+            "type": "object",
+            "description": "Product to create, e.g. {\"name\":\"T-shirt\",\"productType\":\"physical\",\"priceData\":{\"price\":19.99},\"description\":\"...\",\"visible\":true}",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "product"
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "recent_orders",
+      "title": "Recent orders",
+      "prompt": "Search my Wix store for the most recent orders and summarize their statuses and totals.",
+      "category": "ecommerce",
+      "icon": "cart"
+    },
+    {
+      "id": "catalog_overview",
+      "title": "Catalog overview",
+      "prompt": "Query my Wix Stores products and give me an overview of the catalog including prices and visibility.",
+      "category": "ecommerce",
+      "icon": "package"
+    },
+    {
+      "id": "contact_lookup",
+      "title": "Find a contact",
+      "prompt": "Query my Wix contacts to find a customer by name or email.",
+      "category": "crm",
+      "icon": "users"
+    }
+  ],
+  "suggestedWith": ["stripe", "slack", "mailchimp"],
+  "SETUP_GUIDE": {
+    "title": "Wix setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Get a Wix site",
+        "description": "Use an existing Wix site or create a free one at https://www.wix.com - add the Wix Stores app if you want to use the product and order tools. Note: the product tools target Stores Catalog V1; sites created from Q2 2025 onward typically use Catalog V3, where the stores/v1 endpoints do not work (a site supports either V1 or V3, never both)."
+      },
+      {
+        "step": 2,
+        "title": "Create an API key",
+        "description": "As the account owner or co-owner, open the API Keys Manager (https://manage.wix.com/account/api-keys), create a key, and grant it the permissions you need (e.g. Wix Stores, eCommerce, Contacts). Set the key as WIX_API_KEY."
+      },
+      {
+        "step": 3,
+        "title": "Find your site ID",
+        "description": "Open the site's dashboard - the site ID is the GUID in the URL after /dashboard/ (or use the Query Sites API). Set it as WIX_SITE_ID."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the Query Products tool (empty body works) to confirm the key and site ID are wired correctly."
+      }
+    ],
+    "notes": [
+      "The API key goes in the Authorization header as a raw value - no Bearer prefix",
+      "Every site-level call also requires the wix-site-id header, which this connector sends automatically from WIX_SITE_ID",
+      "Site-level calls only work with API keys generated from the site owner's account",
+      "Stores v1 query endpoints take the filter as a stringified JSON value inside the query object",
+      "The Query Products and Create Product tools use the Stores Catalog V1 API - on newer sites running Catalog V3 these endpoints fail; see the Catalog V1-to-V3 migration guide at https://dev.wix.com/docs/api-reference for the stores/v3 equivalents"
+    ],
+    "documentation": "https://dev.wix.com/docs/rest"
+  }
+}

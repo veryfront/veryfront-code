@@ -1,0 +1,345 @@
+{
+  "name": "qonto",
+  "displayName": "Qonto",
+  "icon": "qonto.svg",
+  "description": "Read Qonto business banking data: organization bank accounts with balances, transactions, and transaction attachments",
+  "category": "finance",
+  "auth": {
+    "type": "api-key",
+    "keyName": "QONTO_API_KEY",
+    "headerName": "Authorization",
+    "docsUrl": "https://docs.qonto.com/get-started/business-api/authentication/api-key",
+    "requiredApis": [
+      {
+        "name": "Qonto Business API key",
+        "enableUrl": "https://app.qonto.com"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "QONTO_API_KEY",
+      "description": "Qonto API credential in the form organization-slug:secret-key — your organization slug (login) and API secret key joined by a colon. Sent as the raw Authorization header value (no Bearer prefix, no Base64 encoding).",
+      "required": true,
+      "sensitive": true,
+      "placeholder": "organization-slug:secret-key",
+      "docsUrl": "https://docs.qonto.com/get-started/business-api/authentication/api-key"
+    }
+  ],
+  "tools": [
+    {
+      "id": "get_organization",
+      "name": "Get Organization",
+      "description": "Retrieve the authenticated organization with its bank accounts, including IBAN, BIC, currency, status, and current/authorized balances",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://thirdparty.qonto.com/v2/organization",
+        "params": {
+          "include_external_accounts": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Set to true to also include connected external accounts",
+            "default": false
+          }
+        }
+      }
+    },
+    {
+      "id": "list_transactions",
+      "name": "List Transactions",
+      "description": "List transactions for one bank account (identified by bank_account_id or IBAN) with status, side, and date filtering",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://thirdparty.qonto.com/v2/transactions",
+        "params": {
+          "bank_account_id": {
+            "type": "string",
+            "in": "query",
+            "description": "UUID of the bank account (from Get Organization). Provide this or iban; bank_account_id takes precedence if both are set"
+          },
+          "iban": {
+            "type": "string",
+            "in": "query",
+            "description": "IBAN of the bank account, as an alternative to bank_account_id"
+          },
+          "status[]": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Filter by status: pending, declined, completed (default: completed)"
+          },
+          "side": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by direction: credit or debit"
+          },
+          "settled_at_from": {
+            "type": "string",
+            "in": "query",
+            "description": "Only transactions settled at or after this ISO 8601 timestamp"
+          },
+          "settled_at_to": {
+            "type": "string",
+            "in": "query",
+            "description": "Only transactions settled at or before this ISO 8601 timestamp"
+          },
+          "emitted_at_from": {
+            "type": "string",
+            "in": "query",
+            "description": "Only transactions emitted at or after this ISO 8601 timestamp"
+          },
+          "emitted_at_to": {
+            "type": "string",
+            "in": "query",
+            "description": "Only transactions emitted at or before this ISO 8601 timestamp"
+          },
+          "with_attachments": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Filter by attachment presence: true for transactions with receipts, false for those without"
+          },
+          "includes[]": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Embed associated resources: vat_details, labels, attachments"
+          },
+          "sort_by": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort as property:order, where property is created_at, updated_at, settled_at, or emitted_at and order is asc or desc",
+            "default": "settled_at:desc"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)"
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of transactions per page"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["transactions"],
+            "collectionName": "transactions",
+            "itemFields": [
+              { "name": "transaction_id" },
+              { "name": "amount" },
+              { "name": "currency" },
+              { "name": "side" },
+              { "name": "operation_type" },
+              { "name": "status" },
+              { "name": "label" },
+              { "name": "settled_at" }
+            ],
+            "omitted": "VAT details, counterparty enrichment, and attachment metadata",
+            "outputFields": [{ "name": "meta", "kind": "object" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_transaction",
+      "name": "Get Transaction",
+      "description": "Retrieve a single transaction by its UUID, optionally embedding VAT details, labels, or attachments",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://thirdparty.qonto.com/v2/transactions/{transactionId}",
+        "params": {
+          "transactionId": {
+            "type": "string",
+            "in": "path",
+            "description": "Transaction UUID, e.g. 7b7a5ed6-3903-4782-889d-b4f64bd7bef9",
+            "required": true
+          },
+          "includes[]": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Embed associated resources: vat_details, labels, attachments"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_transaction_attachments",
+      "name": "List Transaction Attachments",
+      "description": "List the attachments (receipts, invoices) of a transaction with download URLs",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://thirdparty.qonto.com/v2/transactions/{transactionId}/attachments",
+        "params": {
+          "transactionId": {
+            "type": "string",
+            "in": "path",
+            "description": "Transaction UUID",
+            "required": true
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)"
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of attachments per page"
+          }
+        }
+      }
+    },
+    {
+      "id": "upload_transaction_attachment",
+      "name": "Upload Transaction Attachment",
+      "description": "Upload a receipt or invoice (JPEG, PNG, or PDF) onto a transaction to justify it for bookkeeping; the file is processed in the background, so the attachment is not visible immediately",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://thirdparty.qonto.com/v2/transactions/{transactionId}/attachments",
+        "contentType": "multipart/form-data",
+        "bodyMode": "form-data",
+        "params": {
+          "transactionId": {
+            "type": "string",
+            "in": "path",
+            "description": "Transaction UUID to attach the file to",
+            "required": true
+          }
+        },
+        "body": {
+          "file": {
+            "type": "string",
+            "description": "Base64-encoded file content (JPEG, PNG, or PDF), sent decoded as the binary multipart 'file' part",
+            "required": true,
+            "encoding": "base64",
+            "partFilenameField": "file_name"
+          },
+          "file_name": {
+            "type": "string",
+            "description": "Filename for the uploaded attachment, e.g. receipt.pdf",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "get_attachment",
+      "name": "Get Attachment",
+      "description": "Retrieve an attachment by id to get a fresh download URL — URLs returned by the attachment endpoints expire after 30 minutes, so re-fetch before any delayed download",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://thirdparty.qonto.com/v2/attachments/{attachmentId}",
+        "params": {
+          "attachmentId": {
+            "type": "string",
+            "in": "path",
+            "description": "Attachment UUID from a transaction's attachment_ids or List Transaction Attachments",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_supplier_invoices",
+      "name": "List Supplier Invoices",
+      "description": "List the organization's supplier invoices (accounts payable inbox) with status and payment matching; available on all price plans except Solo Basic",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://thirdparty.qonto.com/v2/supplier_invoices",
+        "params": {
+          "filter[status]": {
+            "type": "string",
+            "in": "query",
+            "description": "Status to filter on: to_review, to_approve, awaiting_payment, pending, scheduled, paid, or archived"
+          },
+          "filter[created_at_from]": {
+            "type": "string",
+            "in": "query",
+            "description": "Only invoices created at or after this time (RFC 3339, e.g. 2026-01-01T00:00:00Z)"
+          },
+          "filter[created_at_to]": {
+            "type": "string",
+            "in": "query",
+            "description": "Only invoices created at or before this time (RFC 3339)"
+          },
+          "sort_by": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort property and direction, e.g. created_at:desc"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)"
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of supplier invoices per page"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "account_balances",
+      "title": "Account balances",
+      "prompt": "Show my Qonto bank accounts with their current and authorized balances.",
+      "category": "finance",
+      "icon": "currency"
+    },
+    {
+      "id": "recent_transactions",
+      "title": "Recent transactions",
+      "prompt": "List the most recent completed transactions on my main Qonto account and summarize debits vs credits.",
+      "category": "finance",
+      "icon": "payment"
+    },
+    {
+      "id": "missing_receipts",
+      "title": "Missing receipts",
+      "prompt": "Find recent Qonto transactions that have no attachment so I can chase missing receipts.",
+      "category": "finance",
+      "icon": "document"
+    }
+  ],
+  "suggestedWith": ["stripe", "sheets", "slack"],
+  "SETUP_GUIDE": {
+    "title": "Qonto setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Open your Qonto organization",
+        "description": "Log in to the Qonto web app at https://app.qonto.com. For testing without a live account, create a sandbox organization through the Qonto Developer Portal toolkit at https://developers.qonto.com."
+      },
+      {
+        "step": 2,
+        "title": "Generate an API key",
+        "description": "In the web app, go to Integrations and Partnerships > API key and click Generate. Note both your organization slug (the login, e.g. my-company-1234) and the generated secret key."
+      },
+      {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Set QONTO_API_KEY to the organization slug and secret key joined by a colon, e.g. my-company-1234:62885d39f3a0ddedd3d3ee0432a43ccr. The value is sent as-is in the Authorization header — no Bearer prefix and no Base64 encoding."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run Get Organization. A successful response confirms the credential; a 401 means the Authorization value is malformed."
+      }
+    ],
+    "notes": [
+      "The Authorization header is the raw 'organization-slug:secret-key' string — unlike most APIs there is no Bearer prefix and no encoding.",
+      "This connector targets the production API (thirdparty.qonto.com/v2). The sandbox uses a different host (thirdparty-sandbox.staging.qonto.co) and additionally requires an X-Qonto-Staging-Token header.",
+      "Uploading an attachment to a transaction (POST /v2/transactions/{id}/attachments) requires a multipart/form-data file part, which this connector's JSON endpoint executor does not support yet — only listing attachments is included."
+    ],
+    "documentation": "https://docs.qonto.com"
+  }
+}

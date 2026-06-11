@@ -73,22 +73,44 @@ GITHUB_CLIENT_SECRET=<GITHUB_CLIENT_SECRET>
 When these are set in the backing API environment, the OAuth handlers use them
 directly.
 
+### Credential-based integrations
+
+Most catalog connectors authenticate with static credentials instead of a user
+OAuth flow: API keys, HTTP Basic pairs, or OAuth client-credentials apps. These
+read their secrets from the project's environment variables, named by each
+connector's setup guide:
+
+```bash
+# .env
+STRIPE_SECRET_KEY=sk_test_...
+TELEGRAM_BOT_TOKEN=123456789:ABC...
+PERSONIO_CLIENT_ID=...
+PERSONIO_CLIENT_SECRET=...
+```
+
+No connect step is needed; tools work as soon as the variables are set. Each
+connector declares how its credential is sent (header, query parameter, Basic
+pair, or minted client-credentials token), so agents never handle raw secrets.
+
 ## Available integrations
 
-The built-in connector catalog shows the supported end-user surface by default:
-Google Workspace (including Google Calendar), Microsoft 365, Atlassian, Slack,
-GitHub, GitLab, Asana, Linear, Notion, Figma, Airtable, and Sentry.
+The built-in connector catalog contains 204 connectors. The supported set is
+visible by default in the CLI, MCP catalog tools, and runtime connector list:
 
-Additional connector templates remain in the source tree but are hidden from the
-CLI, MCP catalog tools, and runtime connector list unless they are explicitly
-enabled with `VERYFRONT_EXPERIMENTAL_INTEGRATIONS`. Set it to a comma-separated
-list such as `salesforce,stripe`, or to `all` for local experimentation. These
-feature-gated templates are Anthropic, AWS, Bitbucket, Mixpanel, Neon, PostHog,
-Salesforce, ServiceNow, Shopify, Snowflake, Stripe, Supabase, Trello, and
-Twilio.
+`airtable`, `asana`, `calendar`, `confluence`, `docs-google`, `drive`, `figma`,
+`github`, `gitlab`, `gmail`, `harvest`, `hubspot`, `jira`, `linear`, `notion`,
+`onedrive`, `outlook`, `sentry`, `sharepoint`, `sheets`, `slack`, and `teams`.
 
-Use the generated integration metadata reference when you need exact exported
-names or icon metadata:
+The rest of the catalog ships as feature-gated integrations: the connector
+templates are in the source tree but stay hidden until you enable them with the
+`VERYFRONT_EXPERIMENTAL_INTEGRATIONS` environment variable. Set it to a
+comma-separated list of connector names such as `salesforce,stripe` (to enable
+Salesforce and Stripe), or to `all` for local experimentation.
+
+The supported and feature-gated name lists are defined in
+`src/integrations/feature-flags.ts` (`SUPPORTED_INTEGRATION_NAMES` and
+`DECLARED_INTEGRATION_NAMES`). Use the generated integration metadata reference
+when you need exact exported names or icon metadata:
 
 - [`veryfront/integrations`](../api-reference/veryfront/integrations.md)
 

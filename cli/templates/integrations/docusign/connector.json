@@ -1,0 +1,407 @@
+{
+  "name": "docusign",
+  "displayName": "DocuSign",
+  "icon": "docusign.svg",
+  "description": "Send documents for e-signature and track DocuSign envelopes, recipients, and signed documents",
+  "category": "legal",
+  "auth": {
+    "type": "oauth2",
+    "provider": "docusign",
+    "authorizationUrl": "https://account.docusign.com/oauth/auth",
+    "tokenUrl": "https://account.docusign.com/oauth/token",
+    "scopes": ["signature"],
+    "optionalScopes": ["extended"],
+    "callbackPath": "/oauth/callback/docusign",
+    "tokenAuthMethod": "basic",
+    "supportsRefreshToken": true,
+    "docsUrl": "https://developers.docusign.com/platform/auth/authcode/",
+    "requiredApis": [
+      {
+        "name": "DocuSign app (integration key)",
+        "enableUrl": "https://admindemo.docusign.com/apps-and-keys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "DOCUSIGN_CLIENT_ID",
+      "description": "DocuSign integration key (OAuth client ID) from Apps and Keys",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developers.docusign.com/platform/auth/authcode/"
+    },
+    {
+      "name": "DOCUSIGN_CLIENT_SECRET",
+      "description": "DocuSign OAuth secret key generated for the integration key",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developers.docusign.com/platform/auth/authcode/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "get_user_info",
+      "name": "Get User Info",
+      "description": "Get the connected user's accounts from the OAuth userinfo endpoint - the source of the accountServer (base_uri host) and accountId values every other tool needs",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://account.docusign.com/oauth/userinfo"
+      }
+    },
+    {
+      "id": "list_envelopes",
+      "name": "List Envelopes",
+      "description": "List envelope status changes in an account to track what is sent, delivered, or completed",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{accountServer}/restapi/v2.1/accounts/{accountId}/envelopes",
+        "params": {
+          "accountServer": {
+            "type": "string",
+            "in": "path",
+            "description": "Account base host from the base_uri returned by /oauth/userinfo, e.g. na3.docusign.net (production) or demo.docusign.net (developer)",
+            "required": true
+          },
+          "accountId": {
+            "type": "string",
+            "in": "path",
+            "description": "DocuSign API account ID (GUID) from /oauth/userinfo",
+            "required": true
+          },
+          "from_date": {
+            "type": "string",
+            "in": "query",
+            "description": "Only envelopes with status changes on or after this ISO 8601 date, e.g. 2026-05-01. The API requires from_date, envelope_ids, or transaction_ids.",
+            "required": true
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated statuses to include: created, sent, delivered, signed, completed, declined, voided, deleted, or timedout"
+          },
+          "search_text": {
+            "type": "string",
+            "in": "query",
+            "description": "Free-text search across sender, recipient, subject, and envelope ID"
+          },
+          "count": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum envelopes to return (up to 100)",
+            "default": 25
+          },
+          "start_position": {
+            "type": "number",
+            "in": "query",
+            "description": "Zero-based index of the first record to return, for pagination"
+          }
+        },
+        "response": {
+          "transform": "envelopes"
+        }
+      }
+    },
+    {
+      "id": "get_envelope",
+      "name": "Get Envelope",
+      "description": "Get the status and details of a single envelope by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{accountServer}/restapi/v2.1/accounts/{accountId}/envelopes/{envelopeId}",
+        "params": {
+          "accountServer": {
+            "type": "string",
+            "in": "path",
+            "description": "Account base host from the base_uri returned by /oauth/userinfo, e.g. na3.docusign.net (production) or demo.docusign.net (developer)",
+            "required": true
+          },
+          "accountId": {
+            "type": "string",
+            "in": "path",
+            "description": "DocuSign API account ID (GUID) from /oauth/userinfo",
+            "required": true
+          },
+          "envelopeId": {
+            "type": "string",
+            "in": "path",
+            "description": "Envelope ID (GUID)",
+            "required": true
+          },
+          "include": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated extra data to include, such as recipients, documents, custom_fields, or tabs"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_envelope_recipients",
+      "name": "List Envelope Recipients",
+      "description": "List the recipients of an envelope and their signing status",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{accountServer}/restapi/v2.1/accounts/{accountId}/envelopes/{envelopeId}/recipients",
+        "params": {
+          "accountServer": {
+            "type": "string",
+            "in": "path",
+            "description": "Account base host from the base_uri returned by /oauth/userinfo, e.g. na3.docusign.net (production) or demo.docusign.net (developer)",
+            "required": true
+          },
+          "accountId": {
+            "type": "string",
+            "in": "path",
+            "description": "DocuSign API account ID (GUID) from /oauth/userinfo",
+            "required": true
+          },
+          "envelopeId": {
+            "type": "string",
+            "in": "path",
+            "description": "Envelope ID (GUID)",
+            "required": true
+          },
+          "include_tabs": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Whether to include each recipient's tabs (signature fields) in the response"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_envelope",
+      "name": "Create and Send Envelope",
+      "description": "Create an envelope with documents and recipients and send it for signature",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{accountServer}/restapi/v2.1/accounts/{accountId}/envelopes",
+        "params": {
+          "accountServer": {
+            "type": "string",
+            "in": "path",
+            "description": "Account base host from the base_uri returned by /oauth/userinfo, e.g. na3.docusign.net (production) or demo.docusign.net (developer)",
+            "required": true
+          },
+          "accountId": {
+            "type": "string",
+            "in": "path",
+            "description": "DocuSign API account ID (GUID) from /oauth/userinfo",
+            "required": true
+          }
+        },
+        "body": {
+          "emailSubject": {
+            "type": "string",
+            "description": "Subject line of the signing request email",
+            "required": true
+          },
+          "documents": {
+            "type": "array",
+            "description": "Documents to sign, each with documentBase64 (base64-encoded file content), name, fileExtension (e.g. pdf), and documentId (e.g. \"1\")",
+            "required": true
+          },
+          "recipients": {
+            "type": "object",
+            "description": "Recipients object, e.g. {\"signers\": [{\"email\": \"a@example.com\", \"name\": \"Ada\", \"recipientId\": \"1\", \"routingOrder\": \"1\", \"tabs\": {\"signHereTabs\": [{\"anchorString\": \"/sig1/\"}]}}]}",
+            "required": true
+          },
+          "status": {
+            "type": "string",
+            "description": "Set to \"sent\" to send immediately or \"created\" to save as a draft",
+            "default": "sent"
+          },
+          "emailBlurb": {
+            "type": "string",
+            "description": "Optional message included in the signing request email"
+          }
+        }
+      }
+    },
+    {
+      "id": "resend_envelope",
+      "name": "Resend Envelope",
+      "description": "Resend the signing request email to an in-progress envelope's pending recipients, e.g. to chase outstanding signers",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://{accountServer}/restapi/v2.1/accounts/{accountId}/envelopes/{envelopeId}",
+        "params": {
+          "accountServer": {
+            "type": "string",
+            "in": "path",
+            "description": "Account base host from the base_uri returned by /oauth/userinfo, e.g. na3.docusign.net (production) or demo.docusign.net (developer)",
+            "required": true
+          },
+          "accountId": {
+            "type": "string",
+            "in": "path",
+            "description": "DocuSign API account ID (GUID) from /oauth/userinfo",
+            "required": true
+          },
+          "envelopeId": {
+            "type": "string",
+            "in": "path",
+            "description": "Envelope ID (GUID) to resend; the envelope must be in progress (not draft, voided, or completed)",
+            "required": true
+          },
+          "resend_envelope": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Keep true to resend the envelope to recipients who have not yet completed signing",
+            "required": true,
+            "default": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_templates",
+      "name": "List Templates",
+      "description": "List the reusable envelope templates in an account, e.g. to find a template before sending from it",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{accountServer}/restapi/v2.1/accounts/{accountId}/templates",
+        "params": {
+          "accountServer": {
+            "type": "string",
+            "in": "path",
+            "description": "Account base host from the base_uri returned by /oauth/userinfo, e.g. na3.docusign.net (production) or demo.docusign.net (developer)",
+            "required": true
+          },
+          "accountId": {
+            "type": "string",
+            "in": "path",
+            "description": "DocuSign API account ID (GUID) from /oauth/userinfo",
+            "required": true
+          },
+          "search_text": {
+            "type": "string",
+            "in": "query",
+            "description": "Search template names for this text (max 48 characters)"
+          },
+          "order_by": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort order: name, modified, or used"
+          },
+          "count": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum templates to return; use start_position to page",
+            "default": 25
+          },
+          "start_position": {
+            "type": "number",
+            "in": "query",
+            "description": "Zero-based index of the first record to return, for pagination"
+          }
+        },
+        "response": {
+          "transform": "envelopeTemplates"
+        }
+      }
+    },
+    {
+      "id": "download_envelope_documents",
+      "name": "Download Envelope Documents",
+      "description": "Download all documents of an envelope as a single combined PDF",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{accountServer}/restapi/v2.1/accounts/{accountId}/envelopes/{envelopeId}/documents/combined",
+        "params": {
+          "accountServer": {
+            "type": "string",
+            "in": "path",
+            "description": "Account base host from the base_uri returned by /oauth/userinfo, e.g. na3.docusign.net (production) or demo.docusign.net (developer)",
+            "required": true
+          },
+          "accountId": {
+            "type": "string",
+            "in": "path",
+            "description": "DocuSign API account ID (GUID) from /oauth/userinfo",
+            "required": true
+          },
+          "envelopeId": {
+            "type": "string",
+            "in": "path",
+            "description": "Envelope ID (GUID)",
+            "required": true
+          },
+          "certificate": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Whether to include the certificate of completion in the combined PDF"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "envelope_status",
+      "title": "Check envelope status",
+      "prompt": "List my recent DocuSign envelopes and summarize which are completed, awaiting signature, declined, or voided.",
+      "category": "legal",
+      "icon": "list"
+    },
+    {
+      "id": "send_for_signature",
+      "title": "Send a document for signature",
+      "prompt": "Send a document I provide for signature via DocuSign to a recipient I specify, then confirm the envelope was sent.",
+      "category": "legal",
+      "icon": "send"
+    },
+    {
+      "id": "chase_signers",
+      "title": "Chase outstanding signers",
+      "prompt": "Find DocuSign envelopes still awaiting signature, list who has not signed yet, and draft follow-up messages.",
+      "category": "legal",
+      "icon": "users"
+    }
+  ],
+  "suggestedWith": ["gmail", "slack", "drive"],
+  "SETUP_GUIDE": {
+    "title": "DocuSign setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a free developer account",
+        "description": "Sign up at https://developers.docusign.com (free developer sandbox). Developer accounts authenticate via https://account-d.docusign.com and use the demo API host https://demo.docusign.net; production uses https://account.docusign.com and your account's own base host. This connector is configured for production - for sandbox testing, swap the auth URLs to account-d.docusign.com."
+      },
+      {
+        "step": 2,
+        "title": "Create an app and integration key",
+        "description": "In the developer account, open Settings (Admin), then Apps and Keys, and create a new app. Copy the integration key (this is DOCUSIGN_CLIENT_ID), generate a secret key (DOCUSIGN_CLIENT_SECRET), and add your redirect URI ending in /oauth/callback/docusign."
+      },
+      {
+        "step": 3,
+        "title": "Find your account server and account ID",
+        "description": "After connecting, call GET https://account.docusign.com/oauth/userinfo (or account-d.docusign.com for developer accounts) with your access token. The response lists your accounts, each with an account_id (GUID) and a base_uri such as https://na3.docusign.net. Use the base_uri host as the accountServer parameter (e.g. na3.docusign.net, or demo.docusign.net for developer accounts) and account_id as accountId. Admins can also see the API Account ID under Settings, then Apps and Keys."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Envelopes tool with your accountServer, accountId, and a from_date such as the first day of last month."
+      },
+      {
+        "step": 5,
+        "title": "Go live for production",
+        "description": "Apps built in the developer sandbox must pass DocuSign's go-live review before they can use production accounts. Until then, keep using the developer environment."
+      }
+    ],
+    "notes": [
+      "The eSignature REST base URL is account-specific: https://{base_uri host}/restapi/v2.1/accounts/{accountId}/... - both values come from /oauth/userinfo",
+      "The signature scope covers sending and tracking envelopes; the optional extended scope lets refresh tokens be renewed beyond 30 days",
+      "List Envelopes requires from_date (or specific envelope IDs); Download Envelope Documents returns raw PDF bytes"
+    ],
+    "documentation": "https://developers.docusign.com/docs/esign-rest-api/reference/"
+  }
+}

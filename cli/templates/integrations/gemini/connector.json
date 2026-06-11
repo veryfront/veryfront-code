@@ -2,7 +2,7 @@
   "name": "gemini",
   "displayName": "Google Gemini",
   "icon": "gemini.svg",
-  "description": "Generate text, embeddings, and token counts with Google Gemini models via the Gemini API",
+  "description": "Generate text, images, embeddings, and token counts and manage uploaded files with Google Gemini models via the Gemini API",
   "auth": {
     "type": "api-key",
     "keyName": "GEMINI_API_KEY",
@@ -170,6 +170,203 @@
           }
         }
       }
+    },
+    {
+      "id": "generate_image",
+      "name": "Generate Image",
+      "description": "Generate or edit an image with a Nano Banana model via generateContent; the response returns image parts as base64 inlineData",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+        "params": {
+          "model": {
+            "type": "string",
+            "in": "path",
+            "description": "Image model ID without the models/ prefix: gemini-3.1-flash-image (Nano Banana 2, fast), gemini-3-pro-image (Nano Banana Pro, highest quality), or gemini-2.5-flash-image (Nano Banana, legacy)",
+            "required": true
+          }
+        },
+        "body": {
+          "contents": {
+            "type": "array",
+            "description": "Prompt contents, e.g. [{\"role\":\"user\",\"parts\":[{\"text\":\"A watercolor fox in a forest\"}]}]; include reference images as inlineData parts for editing",
+            "required": true
+          },
+          "generationConfig": {
+            "type": "object",
+            "description": "Must set responseModalities to receive images, e.g. {\"responseModalities\":[\"TEXT\",\"IMAGE\"],\"imageConfig\":{\"aspectRatio\":\"1:1\"}}",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "edit_image",
+      "name": "Edit Image",
+      "description": "Edit an existing image with a Nano Banana model: send the source image as a base64 inlineData part plus a text instruction (add/remove/modify elements, change style, adjust color grading); the edited image is returned as base64 inlineData",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+        "params": {
+          "model": {
+            "type": "string",
+            "in": "path",
+            "description": "Image model ID without the models/ prefix: gemini-3.1-flash-image (Nano Banana 2, fast), gemini-3-pro-image (Nano Banana Pro, highest quality), or gemini-2.5-flash-image (Nano Banana, legacy)",
+            "required": true
+          }
+        },
+        "body": {
+          "contents": {
+            "type": "array",
+            "description": "One user turn with the source image and the edit instruction, e.g. [{\"role\":\"user\",\"parts\":[{\"inlineData\":{\"mimeType\":\"image/png\",\"data\":\"<base64>\"}},{\"text\":\"Remove the background and make it a sunset\"}]}]; add more turns to iterate on the same image",
+            "required": true
+          },
+          "generationConfig": {
+            "type": "object",
+            "description": "Must set responseModalities to receive images, e.g. {\"responseModalities\":[\"TEXT\",\"IMAGE\"]}",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "imagen_generate",
+      "name": "Generate Image (Imagen)",
+      "description": "Generate text-to-image samples with an Imagen 4 model via the predict endpoint; returns base64-encoded images in predictions",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/{model}:predict",
+        "params": {
+          "model": {
+            "type": "string",
+            "in": "path",
+            "description": "Imagen model ID without the models/ prefix: imagen-4.0-generate-001 (standard), imagen-4.0-ultra-generate-001 (ultra), or imagen-4.0-fast-generate-001 (fast)",
+            "required": true
+          }
+        },
+        "body": {
+          "instances": {
+            "type": "array",
+            "description": "Prompt instances, e.g. [{\"prompt\":\"A photorealistic lighthouse at dawn\"}]",
+            "required": true
+          },
+          "parameters": {
+            "type": "object",
+            "description": "Generation parameters, e.g. {\"sampleCount\":1,\"aspectRatio\":\"1:1\",\"sampleImageSize\":\"1K\",\"personGeneration\":\"allow_adult\"}; sampleCount 1-4, aspectRatio 1:1|3:4|4:3|9:16|16:9"
+          }
+        }
+      }
+    },
+    {
+      "id": "upload_file",
+      "name": "Upload File",
+      "description": "Upload content to the Files API for use in later generateContent calls via its file URI; this simple media upload sends the decoded bytes directly as the request body (a custom displayName requires the multipart or resumable X-Goog-Upload protocol), and files expire after 48 hours",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/upload/v1beta/files",
+        "params": {
+          "uploadType": {
+            "type": "string",
+            "in": "query",
+            "description": "Upload protocol; 'media' sends the request body directly as the file content",
+            "default": "media"
+          },
+          "contentType": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Content-Type",
+            "description": "MIME type of the uploaded content",
+            "default": "text/plain"
+          }
+        },
+        "body": {
+          "content": {
+            "type": "string",
+            "description": "Base64-encoded file content; the decoded bytes are sent as the request body",
+            "required": true,
+            "encoding": "base64"
+          }
+        },
+        "bodyMode": "raw"
+      }
+    },
+    {
+      "id": "list_files",
+      "name": "List Files",
+      "description": "List files uploaded to the Files API for this project",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://generativelanguage.googleapis.com/v1beta/files",
+        "params": {
+          "pageSize": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum files to return per page (max 100)",
+            "default": 10
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Page token from a previous list call"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["files"],
+            "collectionName": "files",
+            "itemFields": [
+              { "name": "name" },
+              { "name": "displayName" },
+              { "name": "mimeType" },
+              { "name": "sizeBytes" },
+              { "name": "state" }
+            ],
+            "omitted": "file hashes, timestamps, and provider-specific payload fields",
+            "outputFields": [{ "name": "nextPageToken" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_file",
+      "name": "Get File",
+      "description": "Get metadata for an uploaded file, including its uri and processing state",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://generativelanguage.googleapis.com/v1beta/files/{fileId}",
+        "params": {
+          "fileId": {
+            "type": "string",
+            "in": "path",
+            "description": "File ID without the files/ prefix, e.g. abc-123",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "delete_file",
+      "name": "Delete File",
+      "description": "Delete an uploaded file before its automatic 48-hour expiry",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "DELETE",
+        "url": "https://generativelanguage.googleapis.com/v1beta/files/{fileId}",
+        "params": {
+          "fileId": {
+            "type": "string",
+            "in": "path",
+            "description": "File ID without the files/ prefix, e.g. abc-123",
+            "required": true
+          }
+        }
+      }
     }
   ],
   "prompts": [
@@ -186,6 +383,13 @@
       "prompt": "Use Gemini to generate a response to a prompt I provide.",
       "category": "ai",
       "icon": "sparkles"
+    },
+    {
+      "id": "generate_image",
+      "title": "Generate an image",
+      "prompt": "Generate an image with a Nano Banana model from a description I provide.",
+      "category": "ai",
+      "icon": "image"
     }
   ],
   "suggestedWith": ["openai", "anthropic", "slack"],

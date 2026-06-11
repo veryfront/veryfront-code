@@ -92,9 +92,7 @@ function WorkflowStatus({ runId }: { runId: string }) {
   return (
     <div>
       <p>Status: {status}</p>
-      {Object.entries(nodeStates).map(([id, state]) => (
-        <div key={id}>{id}: {state.status}</div>
-      ))}
+      {Object.entries(nodeStates).map(([id, state]) => <div key={id}>{id}: {state.status}</div>)}
     </div>
   );
 }

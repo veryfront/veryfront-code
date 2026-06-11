@@ -1,0 +1,292 @@
+{
+  "name": "ionos",
+  "displayName": "IONOS Cloud",
+  "icon": "ionos.svg",
+  "description": "Inspect IONOS Cloud virtual data centers and servers, and start or stop servers via the Cloud API",
+  "category": "devops",
+  "auth": {
+    "type": "api-key",
+    "keyName": "IONOS_TOKEN",
+    "headerName": "Authorization",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://docs.ionos.com/cloud/reference/get-started",
+    "requiredApis": [
+      {
+        "name": "IONOS Cloud API (Token Manager)",
+        "enableUrl": "https://dcd.ionos.com/"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "IONOS_TOKEN",
+      "description": "IONOS Cloud bearer token, generated via the Token Manager in the DCD or GET https://api.ionos.com/auth/v1/tokens/generate; same env var used by ionosctl and the IONOS SDKs",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.ionos.com/cloud/reference/get-started"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_datacenters",
+      "name": "List Data Centers",
+      "description": "List virtual data centers in the account; each data center contains servers, volumes, and networks",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.ionos.com/cloudapi/v6/datacenters",
+        "params": {
+          "depth": {
+            "type": "number",
+            "in": "query",
+            "description": "Detail level 0-10; higher values expand nested resources in the response",
+            "default": 1
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum number of elements to return",
+            "default": 25
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "First element to include (pagination offset)",
+            "default": 0
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["items"],
+            "collectionName": "datacenters",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "type" },
+              { "name": "properties", "kind": "object" }
+            ],
+            "omitted": "entity sub-collections, hrefs, and provider-specific payload fields",
+            "outputFields": []
+          }
+        }
+      }
+    },
+    {
+      "id": "list_servers",
+      "name": "List Servers",
+      "description": "List servers inside a virtual data center",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.ionos.com/cloudapi/v6/datacenters/{datacenterId}/servers",
+        "params": {
+          "datacenterId": {
+            "type": "string",
+            "in": "path",
+            "description": "Virtual data center UUID",
+            "required": true
+          },
+          "depth": {
+            "type": "number",
+            "in": "query",
+            "description": "Detail level 0-10; use 1+ to include server properties like name, state, cores, and RAM",
+            "default": 1
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum number of elements to return",
+            "default": 25
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "First element to include (pagination offset)",
+            "default": 0
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["items"],
+            "collectionName": "servers",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "type" },
+              { "name": "properties", "kind": "object" }
+            ],
+            "omitted": "attached volumes, NICs, hrefs, and provider-specific payload fields",
+            "outputFields": []
+          }
+        }
+      }
+    },
+    {
+      "id": "get_server",
+      "name": "Get Server",
+      "description": "Get a server in a data center, including name, vmState, cores, RAM, and boot device",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.ionos.com/cloudapi/v6/datacenters/{datacenterId}/servers/{serverId}",
+        "params": {
+          "datacenterId": {
+            "type": "string",
+            "in": "path",
+            "description": "Virtual data center UUID",
+            "required": true
+          },
+          "serverId": {
+            "type": "string",
+            "in": "path",
+            "description": "Server UUID",
+            "required": true
+          },
+          "depth": {
+            "type": "number",
+            "in": "query",
+            "description": "Detail level 0-10; use 2 to expand attached volumes and NICs",
+            "default": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "start_server",
+      "name": "Start Server",
+      "description": "Start (power on) an Enterprise server; CUBE servers cannot be started with this endpoint (they use suspend/resume instead)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.ionos.com/cloudapi/v6/datacenters/{datacenterId}/servers/{serverId}/start",
+        "params": {
+          "datacenterId": {
+            "type": "string",
+            "in": "path",
+            "description": "Virtual data center UUID",
+            "required": true
+          },
+          "serverId": {
+            "type": "string",
+            "in": "path",
+            "description": "Server UUID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "stop_server",
+      "name": "Stop Server",
+      "description": "Stop (power off) an Enterprise server; the server is forcefully powered off and billing for compute stops; public IPv4 addresses that are not reserved are returned to the IPv4 pool (reserved IPs are kept). CUBE servers cannot be stopped with this endpoint (they use suspend/resume instead)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.ionos.com/cloudapi/v6/datacenters/{datacenterId}/servers/{serverId}/stop",
+        "params": {
+          "datacenterId": {
+            "type": "string",
+            "in": "path",
+            "description": "Virtual data center UUID",
+            "required": true
+          },
+          "serverId": {
+            "type": "string",
+            "in": "path",
+            "description": "Server UUID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "reboot_server",
+      "name": "Reboot Server",
+      "description": "Force a hard reboot of a server (equivalent to powering it down and back on) — recovers hung servers without a separate stop/start cycle; not a graceful OS reboot",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.ionos.com/cloudapi/v6/datacenters/{datacenterId}/servers/{serverId}/reboot",
+        "params": {
+          "datacenterId": {
+            "type": "string",
+            "in": "path",
+            "description": "Virtual data center UUID",
+            "required": true
+          },
+          "serverId": {
+            "type": "string",
+            "in": "path",
+            "description": "Server UUID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "get_request_status",
+      "name": "Get Request Status",
+      "description": "Poll the status of an asynchronous write operation (202 Accepted responses) until it reports DONE or FAILED; the request ID comes from the Location response header of the write call",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.ionos.com/cloudapi/v6/requests/{requestId}/status",
+        "params": {
+          "requestId": {
+            "type": "string",
+            "in": "path",
+            "description": "Request UUID from the Location header of an asynchronous write response",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "dc_overview",
+      "title": "Data center overview",
+      "prompt": "List my IONOS Cloud virtual data centers and the servers inside each, with their power state.",
+      "category": "devops",
+      "icon": "list"
+    },
+    {
+      "id": "stop_idle_server",
+      "title": "Stop a server",
+      "prompt": "Find the IONOS server I name and stop it after confirming with me.",
+      "category": "devops",
+      "icon": "stop"
+    }
+  ],
+  "suggestedWith": ["github", "cloudflare", "slack"],
+  "SETUP_GUIDE": {
+    "title": "IONOS Cloud setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Get an IONOS Cloud account",
+        "description": "Sign up at https://cloud.ionos.com — new accounts typically include trial credit. Log into the Data Center Designer (DCD) at https://dcd.ionos.com."
+      },
+      {
+        "step": 2,
+        "title": "Generate a bearer token",
+        "description": "In the DCD open Management > Token Manager and generate a token, or call GET https://api.ionos.com/auth/v1/tokens/generate with Basic auth (Base64 of username:password). Tokens are required if 2FA is enabled."
+      },
+      {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Copy the token into your .env as IONOS_TOKEN."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Data Centers (depth=1), then List Servers for one of the returned data center IDs."
+      }
+    ],
+    "notes": [
+      "All Cloud API v6 paths live under https://api.ionos.com/cloudapi/v6",
+      "The depth query parameter (0-10) controls how deeply nested resources are expanded; depth=0 returns only IDs",
+      "Stopping a server is a forceful power-off; shut down the OS first for clean stops",
+      "Write requests return 202 Accepted and complete asynchronously — check the server's vmState afterwards"
+    ],
+    "documentation": "https://api.ionos.com/docs/cloud/v6/"
+  }
+}

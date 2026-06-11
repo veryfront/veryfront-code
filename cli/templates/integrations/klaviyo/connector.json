@@ -22,7 +22,7 @@
       "description": "Klaviyo private API key (starts with pk_)",
       "required": true,
       "sensitive": true,
-      "docsUrl": "https://developers.klaviyo.com/en/docs/retrieve_api_credentials"
+      "docsUrl": "https://developers.klaviyo.com/en/docs/authenticate_"
     }
   ],
   "tools": [

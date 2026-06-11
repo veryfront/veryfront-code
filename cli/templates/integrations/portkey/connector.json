@@ -1,0 +1,394 @@
+{
+  "name": "portkey",
+  "displayName": "Portkey",
+  "icon": "portkey.svg",
+  "description": "Read LLM gateway analytics from Portkey — cost, request, and token usage over time, per-user summaries, virtual keys, and log exports",
+  "category": "ai",
+  "auth": {
+    "type": "api-key",
+    "keyName": "PORTKEY_API_KEY",
+    "headerName": "x-portkey-api-key",
+    "docsUrl": "https://portkey.ai/docs/api-reference/admin-api/introduction",
+    "requiredApis": [
+      {
+        "name": "Portkey API Keys",
+        "enableUrl": "https://app.portkey.ai/api-keys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "PORTKEY_API_KEY",
+      "description": "Portkey API key — analytics endpoints require an Admin API key (organization-wide) rather than a workspace key",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://portkey.ai/docs/api-reference/admin-api/introduction"
+    }
+  ],
+  "tools": [
+    {
+      "id": "get_cost_analytics",
+      "name": "Get Cost Analytics",
+      "description": "Get time-series LLM spend data for a workspace over a date range, optionally filtered by model, status, or metadata",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.portkey.ai/v1/analytics/graphs/cost",
+        "params": {
+          "workspace_slug": {
+            "type": "string",
+            "in": "query",
+            "description": "Slug of the workspace to report on",
+            "required": true
+          },
+          "time_of_generation_min": {
+            "type": "string",
+            "in": "query",
+            "description": "Start of the time range (ISO8601), e.g. 2026-06-01T00:00:00Z",
+            "required": true
+          },
+          "time_of_generation_max": {
+            "type": "string",
+            "in": "query",
+            "description": "End of the time range (ISO8601), e.g. 2026-06-11T00:00:00Z",
+            "required": true
+          },
+          "ai_org_model": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by provider__model combinations, comma-separated, e.g. openai__gpt-4o"
+          },
+          "status_code": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by response status codes, comma-separated"
+          },
+          "metadata": {
+            "type": "string",
+            "in": "query",
+            "description": "Stringified JSON object of metadata filters"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_request_analytics",
+      "name": "Get Request Analytics",
+      "description": "Get time-series request volume data for a workspace over a date range to spot traffic spikes and error trends",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.portkey.ai/v1/analytics/graphs/requests",
+        "params": {
+          "workspace_slug": {
+            "type": "string",
+            "in": "query",
+            "description": "Slug of the workspace to report on",
+            "required": true
+          },
+          "time_of_generation_min": {
+            "type": "string",
+            "in": "query",
+            "description": "Start of the time range (ISO8601), e.g. 2026-06-01T00:00:00Z",
+            "required": true
+          },
+          "time_of_generation_max": {
+            "type": "string",
+            "in": "query",
+            "description": "End of the time range (ISO8601), e.g. 2026-06-11T00:00:00Z",
+            "required": true
+          },
+          "ai_org_model": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by provider__model combinations, comma-separated, e.g. openai__gpt-4o"
+          },
+          "status_code": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by response status codes, comma-separated"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_token_analytics",
+      "name": "Get Token Analytics",
+      "description": "Get time-series token consumption data for a workspace over a date range",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.portkey.ai/v1/analytics/graphs/tokens",
+        "params": {
+          "workspace_slug": {
+            "type": "string",
+            "in": "query",
+            "description": "Slug of the workspace to report on",
+            "required": true
+          },
+          "time_of_generation_min": {
+            "type": "string",
+            "in": "query",
+            "description": "Start of the time range (ISO8601), e.g. 2026-06-01T00:00:00Z",
+            "required": true
+          },
+          "time_of_generation_max": {
+            "type": "string",
+            "in": "query",
+            "description": "End of the time range (ISO8601), e.g. 2026-06-11T00:00:00Z",
+            "required": true
+          },
+          "ai_org_model": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by provider__model combinations, comma-separated, e.g. openai__gpt-4o"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_user_analytics_summary",
+      "name": "Get User Analytics Summary",
+      "description": "Get per-user grouped analytics (request counts and cost) for a workspace over a date range",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.portkey.ai/v1/analytics/groups/users",
+        "params": {
+          "workspace_slug": {
+            "type": "string",
+            "in": "query",
+            "description": "Slug of the workspace to report on",
+            "required": true
+          },
+          "time_of_generation_min": {
+            "type": "string",
+            "in": "query",
+            "description": "Start of the time range (ISO8601), e.g. 2026-06-01T00:00:00Z",
+            "required": true
+          },
+          "time_of_generation_max": {
+            "type": "string",
+            "in": "query",
+            "description": "End of the time range (ISO8601), e.g. 2026-06-11T00:00:00Z",
+            "required": true
+          },
+          "current_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number for pagination",
+            "default": 0
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Results per page",
+            "default": 50
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "get_model_analytics_summary",
+      "name": "Get Model Analytics Summary",
+      "description": "Get per-model grouped analytics (request counts) for a workspace over a date range — spend and traffic by model",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.portkey.ai/v1/analytics/groups/ai-models",
+        "params": {
+          "workspace_slug": {
+            "type": "string",
+            "in": "query",
+            "description": "Slug of the workspace to report on",
+            "required": true
+          },
+          "time_of_generation_min": {
+            "type": "string",
+            "in": "query",
+            "description": "Start of the time range (ISO8601), e.g. 2026-06-01T00:00:00Z",
+            "required": true
+          },
+          "time_of_generation_max": {
+            "type": "string",
+            "in": "query",
+            "description": "End of the time range (ISO8601), e.g. 2026-06-11T00:00:00Z",
+            "required": true
+          },
+          "current_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number for pagination",
+            "default": 0
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Results per page",
+            "default": 50
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "list_workspaces",
+      "name": "List Workspaces",
+      "description": "List the organization's workspaces with their IDs and slugs — feeds the workspace_slug every analytics tool needs",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.portkey.ai/v1/admin/workspaces",
+        "params": {
+          "current_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number for pagination",
+            "default": 0
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Results per page",
+            "default": 50
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "workspaces",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "slug" },
+              { "name": "name" },
+              { "name": "created_at" }
+            ],
+            "omitted": "defaults, usage limit, and rate limit policy details",
+            "outputFields": [{ "name": "total" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "list_virtual_keys",
+      "name": "List Virtual Keys",
+      "description": "List virtual keys (managed provider credentials) with their status, usage limits, and expiry",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.portkey.ai/v1/virtual-keys",
+        "params": {
+          "current_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number for pagination",
+            "default": 0
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Results per page",
+            "default": 50
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "virtual_keys",
+            "itemFields": [
+              { "name": "name" },
+              { "name": "slug" },
+              { "name": "status" },
+              { "name": "created_at" },
+              { "name": "expires_at" }
+            ],
+            "omitted": "usage limit details and provider-specific payload fields",
+            "outputFields": [{ "name": "total" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "list_log_exports",
+      "name": "List Log Exports",
+      "description": "List log export tasks for a workspace (Portkey exposes gateway logs via exports rather than a direct list endpoint)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.portkey.ai/v1/logs/exports",
+        "params": {
+          "workspace_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Optional ID of the workspace whose log exports to list; omit to list exports across the organization"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "llm_spend_report",
+      "title": "LLM spend report",
+      "prompt": "Pull my Portkey cost analytics for the last 30 days and summarize spend trends by model.",
+      "category": "analytics",
+      "icon": "currency"
+    },
+    {
+      "id": "traffic_overview",
+      "title": "Gateway traffic overview",
+      "prompt": "Show me Portkey request and token usage for the last week and flag any unusual spikes or error rates.",
+      "category": "analytics",
+      "icon": "chart"
+    },
+    {
+      "id": "key_audit",
+      "title": "Virtual key audit",
+      "prompt": "List my Portkey virtual keys and flag any that are exhausted or close to expiry.",
+      "category": "analytics",
+      "icon": "key"
+    }
+  ],
+  "suggestedWith": ["openai", "anthropic", "slack"],
+  "SETUP_GUIDE": {
+    "title": "Portkey setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Portkey account",
+        "description": "Go to https://app.portkey.ai and sign up — the free developer plan is enough to test the gateway and analytics."
+      },
+      {
+        "step": 2,
+        "title": "Create an Admin API key",
+        "description": "In the Portkey dashboard, open API Keys (https://app.portkey.ai/api-keys) and create an Admin API key. Admin keys grant organization-wide access; workspace keys cannot call the analytics endpoints. You need the Organization Owner or Admin role."
+      },
+      {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Add it to your .env file as PORTKEY_API_KEY=..."
+      },
+      {
+        "step": 4,
+        "title": "Find your workspace slug",
+        "description": "The workspace slug is visible in the Portkey dashboard URL and workspace settings; analytics tools require it as the workspace_slug parameter."
+      },
+      {
+        "step": 5,
+        "title": "Verify access",
+        "description": "Run Get Cost Analytics with a recent date range. A 401 means the key is invalid; a 403 usually means you used a workspace key instead of an Admin key."
+      }
+    ],
+    "notes": [
+      "Analytics only covers traffic routed through the Portkey gateway — direct provider calls won't appear",
+      "Time range parameters (time_of_generation_min/max) are required on all analytics endpoints and must be ISO8601 timestamps",
+      "The virtual keys API is deprecated in favor of the newer Providers API, but existing virtual keys still work and remain listable"
+    ],
+    "documentation": "https://portkey.ai/docs/api-reference/admin-api/introduction"
+  }
+}

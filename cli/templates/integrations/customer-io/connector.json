@@ -1,0 +1,314 @@
+{
+  "name": "customer-io",
+  "displayName": "Customer.io",
+  "icon": "customer-io.svg",
+  "description": "Search Customer.io people, inspect campaigns, segments, and metrics, and send transactional email",
+  "category": "marketing",
+  "auth": {
+    "type": "api-key",
+    "keyName": "CUSTOMERIO_APP_API_KEY",
+    "headerName": "Authorization",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://docs.customer.io/integrations/api/app/",
+    "requiredApis": [
+      {
+        "name": "Customer.io App API key",
+        "enableUrl": "https://fly.customer.io/settings/api_credentials"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "CUSTOMERIO_APP_API_KEY",
+      "description": "Customer.io App API Key (Bearer token for api.customer.io)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.customer.io/integrations/api/app/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "search_customers",
+      "name": "Search Customers",
+      "description": "Search Customer.io people by attribute or segment filter conditions",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.customer.io/v1/customers",
+        "params": {
+          "start": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination token from the previous page's next field"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum people to return (max 1000)",
+            "default": 50
+          }
+        },
+        "body": {
+          "filter": {
+            "type": "object",
+            "description": "Filter conditions, e.g. {\"and\":[{\"attribute\":{\"field\":\"email\",\"operator\":\"eq\",\"value\":\"user@example.com\"}}]} or {\"segment\":{\"id\":7}}",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "identifiers"
+        }
+      }
+    },
+    {
+      "id": "list_campaigns",
+      "name": "List Campaigns",
+      "description": "List campaigns in the Customer.io workspace with their state and goals",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.customer.io/v1/campaigns",
+        "response": {
+          "transform": "campaigns"
+        }
+      }
+    },
+    {
+      "id": "get_campaign_metrics",
+      "name": "Get Campaign Metrics",
+      "description": "Get delivery and conversion metrics for a Customer.io campaign over a time period",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.customer.io/v1/campaigns/{campaignId}/metrics",
+        "params": {
+          "campaignId": {
+            "type": "number",
+            "in": "path",
+            "description": "Customer.io campaign ID (from List Campaigns)",
+            "required": true
+          },
+          "version": {
+            "type": "string",
+            "in": "query",
+            "description": "Version of the metrics API to use: \"1\" or \"2\" (required; the period and steps parameters only apply to version 1)",
+            "required": true,
+            "default": "1"
+          },
+          "period": {
+            "type": "string",
+            "in": "query",
+            "description": "Bucket size for the series: hours, days, weeks, or months (version 1 only)",
+            "default": "days"
+          },
+          "steps": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of periods to return (version 1 only; defaults to the maximum available, or 12 if the period is in months; maximums are 24 hours, 45 days, 12 weeks, or 120 months)"
+          },
+          "type": {
+            "type": "string",
+            "in": "query",
+            "description": "Restrict metrics to a message type: email, webhook, twilio, whatsapp, slack, push, or in_app"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_person_attributes",
+      "name": "Get Person Attributes",
+      "description": "Get a person's full attribute profile by ID, email, or cio_id (Search Customers returns only identifiers)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.customer.io/v1/customers/{customerId}/attributes",
+        "params": {
+          "customerId": {
+            "type": "string",
+            "in": "path",
+            "description": "The person's identifier - an id, email address, or cio_id depending on id_type",
+            "required": true
+          },
+          "id_type": {
+            "type": "string",
+            "in": "query",
+            "description": "Type of identifier in customerId: id (default), email, or cio_id"
+          }
+        },
+        "response": {
+          "transform": "customer"
+        }
+      }
+    },
+    {
+      "id": "list_transactional_messages",
+      "name": "List Transactional Messages",
+      "description": "List the workspace's transactional message templates so agents can find a valid transactional_message_id before sending",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.customer.io/v1/transactional",
+        "response": {
+          "transform": "messages"
+        }
+      }
+    },
+    {
+      "id": "trigger_broadcast",
+      "name": "Trigger Broadcast",
+      "description": "Trigger an API-triggered broadcast campaign, optionally overriding the recipients and passing liquid data into the messages",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.customer.io/v1/campaigns/{broadcastId}/triggers",
+        "params": {
+          "broadcastId": {
+            "type": "number",
+            "in": "path",
+            "description": "ID of the API-triggered broadcast to trigger (from List Campaigns; the campaign must be of the API-triggered broadcast type)",
+            "required": true
+          }
+        },
+        "body": {
+          "data": {
+            "type": "object",
+            "description": "Key-value data merged into the broadcast messages via liquid, e.g. {\"headline\": \"...\"}"
+          },
+          "recipients": {
+            "type": "object",
+            "description": "Optional audience filter overriding the broadcast's default recipients, e.g. {\"segment\": {\"id\": 7}} or and/or/not condition arrays"
+          },
+          "emails": {
+            "type": "array",
+            "description": "Optional array of existing people's email addresses to send the broadcast to (alternative to recipients)"
+          },
+          "ids": {
+            "type": "array",
+            "description": "Optional array of existing people's IDs to send the broadcast to (alternative to recipients)"
+          },
+          "email_ignore_missing": {
+            "type": "boolean",
+            "description": "If true, skip missing email addresses instead of failing the broadcast"
+          },
+          "id_ignore_missing": {
+            "type": "boolean",
+            "description": "If true, skip missing person IDs instead of failing the broadcast"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_segments",
+      "name": "List Segments",
+      "description": "List segments in the Customer.io workspace so agents can target or filter people",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.customer.io/v1/segments",
+        "response": {
+          "transform": "segments"
+        }
+      }
+    },
+    {
+      "id": "send_transactional_email",
+      "name": "Send Transactional Email",
+      "description": "Send a transactional email to a recipient, using a transactional message template or inline subject and body",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.customer.io/v1/send/email",
+        "body": {
+          "to": {
+            "type": "string",
+            "description": "Recipient email address",
+            "required": true
+          },
+          "identifiers": {
+            "type": "object",
+            "description": "Person the message belongs to: one of, and only one of, {\"id\":\"42\"}, {\"email\":\"user@example.com\"}, or {\"cio_id\":\"...\"} (optional, e.g. for non-person sends)"
+          },
+          "transactional_message_id": {
+            "type": "string",
+            "description": "ID or trigger name of the transactional message template (omit when sending inline subject and body)"
+          },
+          "message_data": {
+            "type": "object",
+            "description": "Key-value data merged into the message template via liquid"
+          },
+          "subject": {
+            "type": "string",
+            "description": "Inline subject line (when not using a transactional message template)"
+          },
+          "body": {
+            "type": "string",
+            "description": "Inline HTML body (when not using a transactional message template)"
+          },
+          "from": {
+            "type": "string",
+            "description": "Optional from address override"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "campaign_report",
+      "title": "Campaign report",
+      "prompt": "List my Customer.io campaigns and summarize the recent metrics for the active ones.",
+      "category": "marketing",
+      "icon": "chart"
+    },
+    {
+      "id": "find_person",
+      "title": "Find a person",
+      "prompt": "Search Customer.io for a person by email and show their identifiers.",
+      "category": "marketing",
+      "icon": "user"
+    },
+    {
+      "id": "send_transactional",
+      "title": "Send a transactional email",
+      "prompt": "Send a transactional email via Customer.io to the recipient I specify.",
+      "category": "communication",
+      "icon": "mail"
+    }
+  ],
+  "suggestedWith": [
+    "slack",
+    "stripe",
+    "sheets"
+  ],
+  "SETUP_GUIDE": {
+    "title": "Customer.io setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Customer.io account",
+        "description": "Sign up at https://customer.io/ — the free trial includes a full workspace suitable for development and testing."
+      },
+      {
+        "step": 2,
+        "title": "Create an App API key",
+        "description": "In Customer.io go to Settings > Account Settings > API Credentials, open the App API Keys tab, and create a key. Scope it to the workspace and permissions your agents need (read access plus transactional send if you use the email tool)."
+      },
+      {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Copy the key into CUSTOMERIO_APP_API_KEY. It is sent as a Bearer token in the Authorization header on every request."
+      },
+      {
+        "step": 4,
+        "title": "Optional: set up a transactional message",
+        "description": "To send templated transactional email, create a Transactional message in Customer.io and use its ID or trigger name as transactional_message_id."
+      }
+    ],
+    "notes": [
+      "Customer.io has US and EU regions. This connector targets the US host api.customer.io; if your workspace is in the EU data center, replace the host with api-eu.customer.io in the tool URLs.",
+      "These tools use the App API (Bearer App API key). The separate Track API (track.customer.io) for identifying people and sending events uses HTTP Basic auth with a site ID and Track API key and is not covered by this connector.",
+      "App API rate limits: most endpoints allow 10 requests per second; transactional sends allow 100 requests per second."
+    ],
+    "documentation": "https://docs.customer.io/integrations/api/app/"
+  }
+}

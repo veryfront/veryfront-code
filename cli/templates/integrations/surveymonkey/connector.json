@@ -1,0 +1,318 @@
+{
+  "name": "surveymonkey",
+  "displayName": "SurveyMonkey",
+  "icon": "surveymonkey.svg",
+  "description": "Access SurveyMonkey surveys, collectors, and response data for analysis and reporting",
+  "category": "analytics",
+  "auth": {
+    "type": "api-key",
+    "keyName": "SURVEYMONKEY_ACCESS_TOKEN",
+    "headerName": "Authorization",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://api.surveymonkey.com/v3/docs#authentication",
+    "requiredApis": [
+      {
+        "name": "SurveyMonkey App",
+        "enableUrl": "https://developer.surveymonkey.com/apps/"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "SURVEYMONKEY_ACCESS_TOKEN",
+      "description": "SurveyMonkey access token from a private app (My Apps)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.surveymonkey.com/apps/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_surveys",
+      "name": "List Surveys",
+      "description": "List surveys owned by or shared with the authenticated account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.surveymonkey.com/v3/surveys",
+        "params": {
+          "title": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter surveys by title (substring match)"
+          },
+          "include": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated extra fields to include, e.g. response_count,date_created,date_modified,question_count,preview"
+          },
+          "sort_by": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort field: title, date_modified, or num_responses",
+            "default": "date_modified"
+          },
+          "sort_order": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort order: ASC or DESC",
+            "default": "DESC"
+          },
+          "folder_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return surveys in this folder"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page of results to return",
+            "default": 1
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of surveys per page (max 1000)",
+            "default": 25
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "get_survey_details",
+      "name": "Get Survey Details",
+      "description": "Get a survey's full design, including pages, questions, and answer option IDs needed to interpret responses",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.surveymonkey.com/v3/surveys/{surveyId}/details",
+        "params": {
+          "surveyId": {
+            "type": "string",
+            "in": "path",
+            "description": "Survey ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_survey_responses",
+      "name": "List Survey Responses",
+      "description": "List full responses for a survey, including each answer keyed by question and choice IDs",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.surveymonkey.com/v3/surveys/{surveyId}/responses/bulk",
+        "params": {
+          "surveyId": {
+            "type": "string",
+            "in": "path",
+            "description": "Survey ID",
+            "required": true
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page of results to return",
+            "default": 1
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of responses per page (max 100)",
+            "default": 25
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "get_response_details",
+      "name": "Get Response Details",
+      "description": "Get a single survey response with all answers expanded",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.surveymonkey.com/v3/surveys/{surveyId}/responses/{responseId}/details",
+        "params": {
+          "surveyId": {
+            "type": "string",
+            "in": "path",
+            "description": "Survey ID",
+            "required": true
+          },
+          "responseId": {
+            "type": "string",
+            "in": "path",
+            "description": "Response ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "get_survey_rollups",
+      "name": "Get Survey Rollups",
+      "description": "Get aggregated answer counts and statistics per question — summarize results without paging every response",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.surveymonkey.com/v3/surveys/{surveyId}/rollups",
+        "params": {
+          "surveyId": {
+            "type": "string",
+            "in": "path",
+            "description": "Survey ID",
+            "required": true
+          },
+          "collector_ids": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated collector IDs to restrict the rollup to"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page of results to return",
+            "default": 1
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of rollups per page",
+            "default": 25
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "list_survey_folders",
+      "name": "List Survey Folders",
+      "description": "List the survey folders in the account to find folder IDs for filtering surveys",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.surveymonkey.com/v3/survey_folders",
+        "params": {
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page of results to return",
+            "default": 1
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of folders per page",
+            "default": 25
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "list_collectors",
+      "name": "List Collectors",
+      "description": "List the collectors (web links, email invitations, etc.) that gather responses for a survey",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.surveymonkey.com/v3/surveys/{surveyId}/collectors",
+        "params": {
+          "surveyId": {
+            "type": "string",
+            "in": "path",
+            "description": "Survey ID",
+            "required": true
+          },
+          "include": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated extra fields to include, e.g. type,status,response_count,date_created,date_modified,url"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page of results to return",
+            "default": 1
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of collectors per page",
+            "default": 25
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "summarize_responses",
+      "title": "Summarize survey responses",
+      "prompt": "Pick one of my SurveyMonkey surveys, pull its latest responses, and summarize the key findings and trends.",
+      "category": "analytics",
+      "icon": "chart"
+    },
+    {
+      "id": "survey_inventory",
+      "title": "Survey inventory",
+      "prompt": "List my SurveyMonkey surveys with their response counts and last modified dates.",
+      "category": "analytics",
+      "icon": "list"
+    },
+    {
+      "id": "collector_status",
+      "title": "Collector status",
+      "prompt": "Show me the collectors for my most recent survey and how many responses each has gathered.",
+      "category": "analytics",
+      "icon": "inbox"
+    }
+  ],
+  "suggestedWith": ["sheets", "slack"],
+  "SETUP_GUIDE": {
+    "title": "SurveyMonkey setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a SurveyMonkey account",
+        "description": "Sign up at https://www.surveymonkey.com and create at least one survey so the API has data to return. A free Basic plan is enough for the survey and collector tools, but retrieving response details via the API requires a paid plan."
+      },
+      {
+        "step": 2,
+        "title": "Register a developer app",
+        "description": "Go to https://developer.surveymonkey.com/apps/, sign in with your SurveyMonkey account, and create a new app. Private apps are tied to your own account and are the simplest option."
+      },
+      {
+        "step": 3,
+        "title": "Set scopes and copy the access token",
+        "description": "In the app's settings, enable the scopes you need (View Surveys, View Collectors, View Response Details) and deploy the app. Copy the access token shown on the app's credentials page."
+      },
+      {
+        "step": 4,
+        "title": "Configure the environment variable",
+        "description": "Set SURVEYMONKEY_ACCESS_TOKEN to the access token. It is sent as 'Authorization: Bearer <token>' on every request."
+      }
+    ],
+    "notes": [
+      "This connector uses the US data center base URL (api.surveymonkey.com). Accounts in the EU or Canada data centers use api.eu.surveymonkey.com or api.surveymonkey.ca instead.",
+      "The 'View Response Details' scope (responses_read_detail) requires a paid SurveyMonkey plan — on a free Basic plan the List Survey Responses and Get Response Details tools will be denied. Free accounts are also capped at 40 responses per survey overall.",
+      "Viewing full response answers requires the 'View Response Details' scope on your app."
+    ],
+    "documentation": "https://api.surveymonkey.com/v3/docs"
+  }
+}

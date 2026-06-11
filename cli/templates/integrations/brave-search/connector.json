@@ -1,0 +1,352 @@
+{
+  "name": "brave-search",
+  "displayName": "Brave Search",
+  "icon": "brave-search.svg",
+  "description": "Search the web, news, and images with the privacy-focused Brave Search API, including local business and point-of-interest lookups",
+  "category": "search",
+  "auth": {
+    "type": "api-key",
+    "keyName": "BRAVE_SEARCH_API_KEY",
+    "headerName": "X-Subscription-Token",
+    "docsUrl": "https://api-dashboard.search.brave.com/app/documentation",
+    "requiredApis": [
+      {
+        "name": "Brave Search API Keys",
+        "enableUrl": "https://api-dashboard.search.brave.com/app/keys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "BRAVE_SEARCH_API_KEY",
+      "description": "Brave Search API subscription token from the API dashboard",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://api-dashboard.search.brave.com/app/keys"
+    }
+  ],
+  "tools": [
+    {
+      "id": "web_search",
+      "name": "Web Search",
+      "description": "Search the web and get ranked results from Brave's independent index",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.search.brave.com/res/v1/web/search",
+        "params": {
+          "q": {
+            "type": "string",
+            "in": "query",
+            "description": "Search query (max 400 characters, 50 words)",
+            "required": true
+          },
+          "count": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of results to return (1-20)",
+            "default": 10
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Page offset for pagination (0-9)",
+            "default": 0
+          },
+          "country": {
+            "type": "string",
+            "in": "query",
+            "description": "2-letter country code for result localization, e.g. US, DE",
+            "default": "US"
+          },
+          "search_lang": {
+            "type": "string",
+            "in": "query",
+            "description": "Language code for results, e.g. en",
+            "default": "en"
+          },
+          "freshness": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by discovery time: pd (24h), pw (7d), pm (31d), py (365d), or a YYYY-MM-DDtoYYYY-MM-DD range"
+          },
+          "result_filter": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-delimited result types to include, e.g. web,news,videos,locations"
+          },
+          "safesearch": {
+            "type": "string",
+            "in": "query",
+            "description": "Adult content filter: off, moderate, or strict",
+            "default": "moderate"
+          }
+        }
+      }
+    },
+    {
+      "id": "news_search",
+      "name": "News Search",
+      "description": "Search recent and historical news articles from trusted outlets worldwide",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.search.brave.com/res/v1/news/search",
+        "params": {
+          "q": {
+            "type": "string",
+            "in": "query",
+            "description": "News search query (max 400 characters, 50 words)",
+            "required": true
+          },
+          "count": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of articles to return (max 50)",
+            "default": 10
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Page offset for pagination (0-9)",
+            "default": 0
+          },
+          "country": {
+            "type": "string",
+            "in": "query",
+            "description": "2-letter country code, or ALL for worldwide",
+            "default": "US"
+          },
+          "search_lang": {
+            "type": "string",
+            "in": "query",
+            "description": "Language code for results, e.g. en",
+            "default": "en"
+          },
+          "freshness": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by article age: pd (24h), pw (7d), pm (31d), py (365d), or a YYYY-MM-DDtoYYYY-MM-DD range"
+          },
+          "safesearch": {
+            "type": "string",
+            "in": "query",
+            "description": "Adult content filter: off, moderate, or strict (the news endpoint's API default is strict)",
+            "default": "strict"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["results"],
+            "collectionName": "articles",
+            "itemFields": [
+              { "name": "title" },
+              { "name": "url" },
+              { "name": "description", "maxLength": 300 },
+              { "name": "age" },
+              { "name": "page_age" }
+            ],
+            "omitted": "thumbnails, meta_url details, and provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "image_search",
+      "name": "Image Search",
+      "description": "Search Brave's image index and get image URLs with source page metadata",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.search.brave.com/res/v1/images/search",
+        "params": {
+          "q": {
+            "type": "string",
+            "in": "query",
+            "description": "Image search query (max 400 characters, 50 words)",
+            "required": true
+          },
+          "count": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of images to return (max 200)",
+            "default": 20
+          },
+          "country": {
+            "type": "string",
+            "in": "query",
+            "description": "2-letter country code, or ALL for worldwide",
+            "default": "US"
+          },
+          "search_lang": {
+            "type": "string",
+            "in": "query",
+            "description": "Language code for results, e.g. en",
+            "default": "en"
+          },
+          "safesearch": {
+            "type": "string",
+            "in": "query",
+            "description": "Adult content filter: off or strict",
+            "default": "strict"
+          }
+        }
+      }
+    },
+    {
+      "id": "video_search",
+      "name": "Video Search",
+      "description": "Search for videos and get results with titles, creators, durations, and thumbnails",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.search.brave.com/res/v1/videos/search",
+        "params": {
+          "q": {
+            "type": "string",
+            "in": "query",
+            "description": "Search query (max 400 characters, 50 words)",
+            "required": true
+          },
+          "count": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of results to return (1-50)",
+            "default": 20
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Page offset for pagination (0-9)",
+            "default": 0
+          },
+          "country": {
+            "type": "string",
+            "in": "query",
+            "description": "2-letter country code for result localization, e.g. US, DE",
+            "default": "US"
+          },
+          "search_lang": {
+            "type": "string",
+            "in": "query",
+            "description": "Language code for results, e.g. en",
+            "default": "en"
+          },
+          "freshness": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by discovery date: pd (24h), pw (7d), pm (31d), py (year), or a range like 2026-04-01to2026-06-30"
+          },
+          "safesearch": {
+            "type": "string",
+            "in": "query",
+            "description": "Adult content filter: off, moderate, or strict (API default moderate)"
+          }
+        }
+      }
+    },
+    {
+      "id": "local_descriptions",
+      "name": "Get Local Descriptions",
+      "description": "Get AI-generated text descriptions for up to 20 locations using location IDs returned in a Web Search response's locations results",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.search.brave.com/res/v1/local/descriptions",
+        "params": {
+          "ids": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Location IDs from a Web Search response's locations.results[].id (up to 20; IDs are valid for 8 hours)",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "local_pois",
+      "name": "Get Local Places",
+      "description": "Get rich details (address, hours, ratings, pictures) for up to 20 locations using location IDs returned in a Web Search response's locations results",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.search.brave.com/res/v1/local/pois",
+        "params": {
+          "ids": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Location IDs from a Web Search response's locations.results[].id (up to 20)",
+            "required": true
+          },
+          "search_lang": {
+            "type": "string",
+            "in": "query",
+            "description": "Language code for results, e.g. en",
+            "default": "en"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "web_lookup",
+      "title": "Search the web",
+      "prompt": "Search the web with Brave for a topic I provide and summarize the top results with links.",
+      "category": "search",
+      "icon": "search"
+    },
+    {
+      "id": "news_briefing",
+      "title": "News briefing",
+      "prompt": "Search Brave News for the latest articles on a topic I provide and give me a short briefing.",
+      "category": "search",
+      "icon": "news"
+    },
+    {
+      "id": "find_places",
+      "title": "Find local places",
+      "prompt": "Search Brave for a type of business near a location I provide and show details for the top matches.",
+      "category": "search",
+      "icon": "map"
+    }
+  ],
+  "suggestedWith": ["openai", "anthropic", "slack"],
+  "SETUP_GUIDE": {
+    "title": "Brave Search setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create an API account",
+        "description": "Go to https://api-dashboard.search.brave.com and register (separate from a regular Brave account). Adding a payment method is required to activate a subscription."
+      },
+      {
+        "step": 2,
+        "title": "Choose a plan and get credits",
+        "description": "Pick a plan in the dashboard. The API is credit-based — you purchase request credits rather than getting a permanent free tier; new accounts may receive a small trial credit."
+      },
+      {
+        "step": 3,
+        "title": "Create an API key",
+        "description": "Open https://api-dashboard.search.brave.com/app/keys and generate a subscription token for your plan."
+      },
+      {
+        "step": 4,
+        "title": "Store the key",
+        "description": "Add it to your .env file as BRAVE_SEARCH_API_KEY=..."
+      },
+      {
+        "step": 5,
+        "title": "Verify access",
+        "description": "Run the Web Search tool with a simple query. A 401 means the token is invalid or sent in the wrong header (it must be X-Subscription-Token, not Authorization); a 429 means you exceeded your plan's rate limit."
+      }
+    ],
+    "notes": [
+      "The API is credit/usage-based with no permanent free tier — monitor remaining credits in the dashboard",
+      "The API key goes in the X-Subscription-Token header; Authorization: Bearer will be rejected",
+      "Some endpoints (e.g. Local/POI details) are only available on higher-tier (Pro) plans",
+      "Web Search pagination is limited: count max 20 per request, offset max 9"
+    ],
+    "documentation": "https://api-dashboard.search.brave.com/app/documentation"
+  }
+}

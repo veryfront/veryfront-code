@@ -1,0 +1,357 @@
+{
+  "name": "polygon",
+  "displayName": "Polygon.io",
+  "icon": "polygon.svg",
+  "description": "Stock market price history, daily open/close, previous close, and ticker reference data from the Polygon.io (Massive) market data API",
+  "category": "finance",
+  "auth": {
+    "type": "api-key",
+    "keyName": "POLYGON_API_KEY",
+    "headerName": "Authorization",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://massive.com/docs/rest/quickstart",
+    "requiredApis": [
+      {
+        "name": "Massive (formerly Polygon.io) API key",
+        "enableUrl": "https://massive.com/dashboard/keys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "POLYGON_API_KEY",
+      "description": "API key from the Massive (formerly Polygon.io) dashboard, sent as an Authorization: Bearer header",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://massive.com/dashboard/keys"
+    }
+  ],
+  "tools": [
+    {
+      "id": "get_aggregates",
+      "name": "Get Aggregate Bars",
+      "description": "Get OHLCV aggregate bars (candles) for a stock ticker over a custom date range and time window",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.polygon.io/v2/aggs/ticker/{stocksTicker}/range/{multiplier}/{timespan}/{from}/{to}",
+        "params": {
+          "stocksTicker": {
+            "type": "string",
+            "in": "path",
+            "description": "Case-sensitive stock ticker symbol, e.g. AAPL",
+            "required": true
+          },
+          "multiplier": {
+            "type": "number",
+            "in": "path",
+            "description": "Size of the timespan multiplier, e.g. 1 with timespan 'day' for daily bars",
+            "required": true
+          },
+          "timespan": {
+            "type": "string",
+            "in": "path",
+            "description": "Size of the time window: second, minute, hour, day, week, month, quarter, or year",
+            "required": true
+          },
+          "from": {
+            "type": "string",
+            "in": "path",
+            "description": "Start of the range, as YYYY-MM-DD or a millisecond timestamp",
+            "required": true
+          },
+          "to": {
+            "type": "string",
+            "in": "path",
+            "description": "End of the range, as YYYY-MM-DD or a millisecond timestamp",
+            "required": true
+          },
+          "adjusted": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Whether results are adjusted for stock splits",
+            "default": true
+          },
+          "sort": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort bars by timestamp: asc or desc",
+            "default": "asc"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum number of base aggregates used to create the results (max 50000)",
+            "default": 5000
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["results"],
+            "collectionName": "bars",
+            "itemFields": [
+              { "name": "t" },
+              { "name": "o" },
+              { "name": "h" },
+              { "name": "l" },
+              { "name": "c" },
+              { "name": "v" },
+              { "name": "vw" }
+            ],
+            "omitted": "per-bar transaction counts and provider-specific payload fields",
+            "outputFields": [
+              { "name": "ticker" },
+              { "name": "resultsCount" },
+              { "name": "next_url" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_previous_close",
+      "name": "Get Previous Close",
+      "description": "Get the previous trading day's open, high, low, close, and volume for a stock ticker",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.polygon.io/v2/aggs/ticker/{stocksTicker}/prev",
+        "params": {
+          "stocksTicker": {
+            "type": "string",
+            "in": "path",
+            "description": "Case-sensitive stock ticker symbol, e.g. AAPL",
+            "required": true
+          },
+          "adjusted": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Whether results are adjusted for stock splits",
+            "default": true
+          }
+        }
+      }
+    },
+    {
+      "id": "get_daily_open_close",
+      "name": "Get Daily Open/Close",
+      "description": "Get the open, close, high, low, volume, and pre-market/after-hours prices for a stock ticker on a specific date",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.polygon.io/v1/open-close/{stocksTicker}/{date}",
+        "params": {
+          "stocksTicker": {
+            "type": "string",
+            "in": "path",
+            "description": "Case-sensitive stock ticker symbol, e.g. AAPL",
+            "required": true
+          },
+          "date": {
+            "type": "string",
+            "in": "path",
+            "description": "Trading date in YYYY-MM-DD format",
+            "required": true
+          },
+          "adjusted": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Whether results are adjusted for stock splits",
+            "default": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_tickers",
+      "name": "Search Tickers",
+      "description": "Search and list ticker symbols across stocks, indices, forex, and crypto reference data",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.polygon.io/v3/reference/tickers",
+        "params": {
+          "search": {
+            "type": "string",
+            "in": "query",
+            "description": "Search ticker symbols and company names, e.g. 'apple'"
+          },
+          "ticker": {
+            "type": "string",
+            "in": "query",
+            "description": "Return only this exact ticker symbol"
+          },
+          "market": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by market: stocks, crypto, fx, otc, or indices"
+          },
+          "type": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by asset type code, e.g. CS (common stock), ETF"
+          },
+          "active": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Only return tickers actively traded as of the request",
+            "default": true
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of results to return (max 1000)",
+            "default": 100
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["results"],
+            "collectionName": "tickers",
+            "itemFields": [
+              { "name": "ticker" },
+              { "name": "name" },
+              { "name": "market" },
+              { "name": "primary_exchange" },
+              { "name": "type" },
+              { "name": "active" },
+              { "name": "currency_name" }
+            ],
+            "omitted": "identifiers such as CIK and FIGI codes and provider-specific payload fields",
+            "outputFields": [
+              { "name": "count" },
+              { "name": "next_url" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_ticker_details",
+      "name": "Get Ticker Details",
+      "description": "Get reference details for a single ticker: company name, market, exchange, market cap, description, and identifiers",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.polygon.io/v3/reference/tickers/{ticker}",
+        "params": {
+          "ticker": {
+            "type": "string",
+            "in": "path",
+            "description": "Case-sensitive ticker symbol, e.g. AAPL",
+            "required": true
+          },
+          "date": {
+            "type": "string",
+            "in": "query",
+            "description": "Point-in-time date (YYYY-MM-DD) for historical ticker information"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_market_status",
+      "name": "Get Market Status",
+      "description": "Get the current trading status of US exchanges and market-wide sessions (open, closed, early hours, after hours) — a cheap check before quoting prices",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.polygon.io/v1/marketstatus/now"
+      }
+    },
+    {
+      "id": "get_ticker_news",
+      "name": "Get Ticker News",
+      "description": "Get recent news articles for a ticker, including publisher, summary, and per-ticker sentiment insights",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.polygon.io/v2/reference/news",
+        "params": {
+          "ticker": {
+            "type": "string",
+            "in": "query",
+            "description": "Case-sensitive ticker symbol to fetch news for, e.g. AAPL"
+          },
+          "published_utc.gte": {
+            "type": "string",
+            "in": "query",
+            "description": "Only articles published at or after this date/time (YYYY-MM-DD or ISO 8601)"
+          },
+          "published_utc.lte": {
+            "type": "string",
+            "in": "query",
+            "description": "Only articles published at or before this date/time (YYYY-MM-DD or ISO 8601)"
+          },
+          "order": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort order by published_utc: asc or desc",
+            "default": "desc"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum articles to return (max 1000)",
+            "default": 10
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "price_history",
+      "title": "Price history",
+      "prompt": "Get daily price bars for a ticker I provide over the last month using Polygon.io and summarize the trend.",
+      "category": "finance",
+      "icon": "chart"
+    },
+    {
+      "id": "previous_close",
+      "title": "Previous close",
+      "prompt": "Look up the previous trading day's open, high, low, and close for a ticker I provide.",
+      "category": "finance",
+      "icon": "currency"
+    },
+    {
+      "id": "find_ticker",
+      "title": "Find a ticker",
+      "prompt": "Search Polygon.io reference data for a company name I provide and show the matching ticker symbols with their exchanges.",
+      "category": "search",
+      "icon": "search"
+    }
+  ],
+  "suggestedWith": ["slack", "analytics"],
+  "SETUP_GUIDE": {
+    "title": "Polygon.io setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create an account",
+        "description": "Sign up at https://massive.com (Polygon.io is now Massive). The free Basic plan works for testing: it includes end-of-day stock data, 2 years of history, and 5 API calls per minute."
+      },
+      {
+        "step": 2,
+        "title": "Copy your API key",
+        "description": "Open https://massive.com/dashboard/keys and copy the API key shown for your account. Existing Polygon.io keys keep working."
+      },
+      {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Set the key as POLYGON_API_KEY. It is sent as an Authorization: Bearer header on every request."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Call the Get Previous Close tool with a ticker like AAPL. A 401 means the key is invalid; a 429 means you hit the 5 requests/minute limit on the free plan."
+      }
+    ],
+    "notes": [
+      "Polygon.io was renamed to Massive in October 2025; api.polygon.io and api.massive.com run in parallel and accept the same keys, so this connector's api.polygon.io endpoints continue to work.",
+      "All five tools are available on the free Basic plan; data recency depends on your plan (end-of-day on Basic, 15-minute delayed on Starter/Developer, real-time on Advanced).",
+      "The free Basic plan is limited to 5 API calls per minute; exceeding it returns HTTP 429."
+    ],
+    "documentation": "https://massive.com/docs/rest/quickstart"
+  }
+}

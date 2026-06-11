@@ -97,6 +97,19 @@
       }
     },
     {
+      "id": "get_key",
+      "name": "Get Current Key",
+      "description": "Get the current API key's label, credit usage (total/daily/weekly/monthly in USD), spend limit, remaining limit, and free-tier status — works with the regular inference key",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://openrouter.ai/api/v1/key",
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
       "id": "get_credits",
       "name": "Get Credits",
       "description": "Get total credits purchased and used for the account (OpenRouter requires a management key for this endpoint)",

@@ -1,0 +1,337 @@
+{
+  "name": "trusted-shops",
+  "displayName": "Trusted Shops",
+  "icon": "trusted-shops.svg",
+  "description": "Read Trusted Shops (eTrusted) reviews, channels, and aggregate ratings, and schedule review invites",
+  "auth": {
+    "type": "oauth2",
+    "grantType": "client_credentials",
+    "tokenUrl": "https://login.etrusted.com/oauth/token",
+    "tokenAuthMethod": "request_body",
+    "additionalParams": { "audience": "https://api.etrusted.com" },
+    "docsUrl": "https://developers.etrusted.com/docs/authentication",
+    "requiredApis": [
+      {
+        "name": "eTrusted API credentials",
+        "enableUrl": "https://app.etrusted.com/"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "ETRUSTED_CLIENT_ID",
+      "description": "eTrusted API client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developers.etrusted.com/docs/generating-api-credentials"
+    },
+    {
+      "name": "ETRUSTED_CLIENT_SECRET",
+      "description": "eTrusted API client secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developers.etrusted.com/docs/generating-api-credentials"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_reviews",
+      "name": "List Reviews",
+      "description": "List service and product reviews for the whole account or specific channels, with filters and cursor pagination",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.etrusted.com/reviews",
+        "params": {
+          "channels": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated channel IDs (chl-...) to filter by; omit for all channels"
+          },
+          "count": {
+            "type": "number",
+            "in": "query",
+            "description": "Reviews per page (1-1000)",
+            "default": 50
+          },
+          "rating": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated star ratings to include (1-5), e.g. 1,2"
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated review states: APPROVED, MODERATION, REJECTED"
+          },
+          "type": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated review types: SERVICE_REVIEW, PRODUCT_REVIEW"
+          },
+          "submittedAfter": {
+            "type": "string",
+            "in": "query",
+            "description": "Only reviews submitted after this ISO 8601 timestamp"
+          },
+          "submittedBefore": {
+            "type": "string",
+            "in": "query",
+            "description": "Only reviews submitted before this ISO 8601 timestamp"
+          },
+          "hasReply": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Filter by whether the review has a reply"
+          },
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "Full-text search on order reference and customer email"
+          },
+          "orderBy": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort field: submittedAt (default), editedAt, or updatedAt"
+          },
+          "after": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor: review ID to start after"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["items", "reviews"],
+            "collectionName": "reviews",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "rating" },
+              { "name": "title" },
+              { "name": "state" },
+              { "name": "type" },
+              { "name": "submittedAt" }
+            ],
+            "omitted": "review comment bodies, customer contact details, and survey payloads",
+            "outputFields": [{ "name": "totalElements" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_review",
+      "name": "Get Review",
+      "description": "Get a single review with full comment, customer, transaction, product, and reply details",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.etrusted.com/reviews/{reviewId}",
+        "params": {
+          "reviewId": {
+            "type": "string",
+            "in": "path",
+            "description": "Review ID, e.g. rev-xxxxxxxx-yyyy-xxxx-yyyy-xxxxxxxxxxxx",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_channels",
+      "name": "List Channels",
+      "description": "List all review channels (shops/touchpoints) of the account with their IDs, names, URLs, and locales",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.etrusted.com/channels"
+      }
+    },
+    {
+      "id": "get_channel_rating",
+      "name": "Get Channel Aggregate Rating",
+      "description": "Get aggregate service review ratings for a channel across 7-day, 30-day, 90-day, 365-day, and overall periods, including star distribution",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.etrusted.com/channels/{channelId}/service-reviews/aggregate-rating",
+        "params": {
+          "channelId": {
+            "type": "string",
+            "in": "path",
+            "description": "Channel ID, e.g. chl-xxxxxxxx-yyyy-xxxx-yyyy-xxxxxxxxxxxx",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_review_invites",
+      "name": "Create Review Invites",
+      "description": "Schedule review invite emails for one or more customers of a channel after a transaction",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.etrusted.com/invites",
+        "body": {
+          "channel": {
+            "type": "object",
+            "description": "Channel to send invites from, e.g. {\"id\": \"chl-...\", \"type\": \"user_defined\"}",
+            "required": true
+          },
+          "system": {
+            "type": "string",
+            "description": "Name of the system issuing the invites, e.g. your shop or CRM name",
+            "required": true
+          },
+          "systemVersion": {
+            "type": "string",
+            "description": "Version of the issuing system, e.g. 1.0",
+            "required": true
+          },
+          "invites": {
+            "type": "array",
+            "description": "1-10000 invite objects, each with customer.email (required), template.id (required), questionnaireTemplate.id (required), transaction.reference (required), transaction.date, and optional products and preferredSendTime",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "get_reviews_count",
+      "name": "Get Reviews Count",
+      "description": "Get the total number of reviews matching a filter — cheap KPI queries without paging through review lists",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.etrusted.com/reviews/count",
+        "params": {
+          "channels": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Channel IDs to count reviews for, e.g. chl-...",
+            "required": true
+          },
+          "rating": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Star ratings to include (1-5)"
+          },
+          "status": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Review statuses: APPROVED, MODERATION, REJECTED"
+          },
+          "type": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Review types: SERVICE_REVIEW, PRODUCT_REVIEW"
+          },
+          "submittedAfter": {
+            "type": "string",
+            "in": "query",
+            "description": "Only reviews submitted after this ISO 8601 timestamp"
+          },
+          "submittedBefore": {
+            "type": "string",
+            "in": "query",
+            "description": "Only reviews submitted before this ISO 8601 timestamp"
+          },
+          "hasReply": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Only count reviews with (true) or without (false) a reply"
+          },
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "Full-text search across order reference and customer email"
+          }
+        }
+      }
+    },
+    {
+      "id": "reply_to_review",
+      "name": "Reply to Review",
+      "description": "Save a public reply on a review — the natural follow-up to negative reviews",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.etrusted.com/reviews/{reviewId}/reply",
+        "params": {
+          "reviewId": {
+            "type": "string",
+            "in": "path",
+            "description": "Review ID, e.g. rev-...",
+            "required": true
+          }
+        },
+        "body": {
+          "comment": {
+            "type": "string",
+            "description": "Reply text shown with the review",
+            "required": true
+          },
+          "sendNotification": {
+            "type": "boolean",
+            "description": "Notify the reviewer about the reply (default false)"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "recent_reviews",
+      "title": "Recent reviews",
+      "prompt": "List my most recent Trusted Shops reviews and summarize ratings and common themes.",
+      "category": "analytics",
+      "icon": "star"
+    },
+    {
+      "id": "negative_reviews",
+      "title": "Negative reviews",
+      "prompt": "Show Trusted Shops reviews with 1 or 2 stars from the last 30 days that have no reply yet.",
+      "category": "support",
+      "icon": "alert"
+    },
+    {
+      "id": "channel_rating",
+      "title": "Channel rating overview",
+      "prompt": "List my Trusted Shops channels and show the 365-day aggregate rating for each.",
+      "category": "analytics",
+      "icon": "chart"
+    }
+  ],
+  "suggestedWith": ["shopify", "shopware", "email"],
+  "SETUP_GUIDE": {
+    "title": "Trusted Shops (eTrusted) API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Get an eTrusted account",
+        "description": "You need a Trusted Shops membership with access to the eTrusted Control Centre at https://app.etrusted.com/."
+      },
+      {
+        "step": 2,
+        "title": "Generate API credentials",
+        "description": "Follow https://developers.etrusted.com/docs/generating-api-credentials to create an API client in the Control Centre. You receive a client ID and a client secret."
+      },
+      {
+        "step": 3,
+        "title": "Set environment variables",
+        "description": "Add ETRUSTED_CLIENT_ID and ETRUSTED_CLIENT_SECRET to your .env. Access tokens are minted automatically from https://login.etrusted.com/oauth/token via the OAuth2 client_credentials grant with audience https://api.etrusted.com."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Channels — it requires no parameters and returns the channels (chl-... IDs) you will use to filter reviews and send invites."
+      }
+    ],
+    "notes": [
+      "Access tokens expire after 300 seconds (5 minutes); they are refreshed automatically per request session.",
+      "The token request must include audience=https://api.etrusted.com alongside client_id, client_secret, and grant_type=client_credentials.",
+      "Review invites require an invite template and questionnaire template configured in the Control Centre; every invite must include both template.id and questionnaireTemplate.id."
+    ],
+    "documentation": "https://developers.etrusted.com/"
+  }
+}

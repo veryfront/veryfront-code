@@ -1,0 +1,473 @@
+{
+  "name": "gorgias",
+  "displayName": "Gorgias",
+  "icon": "gorgias.svg",
+  "description": "Read and act on Gorgias helpdesk tickets, messages, and statuses for e-commerce customer support",
+  "category": "support",
+  "auth": {
+    "type": "basic",
+    "usernameKey": "GORGIAS_USERNAME",
+    "passwordKey": "GORGIAS_API_KEY",
+    "docsUrl": "https://developers.gorgias.com/reference/authentication",
+    "requiredApis": [
+      {
+        "name": "Gorgias REST API key",
+        "enableUrl": "https://app.gorgias.com"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "GORGIAS_USERNAME",
+      "description": "Email address of the Gorgias account the API key belongs to (HTTP Basic username)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developers.gorgias.com/reference/authentication"
+    },
+    {
+      "name": "GORGIAS_API_KEY",
+      "description": "Gorgias REST API key (HTTP Basic password), created under Settings → REST API",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developers.gorgias.com/reference/authentication"
+    },
+    {
+      "name": "GORGIAS_ACCOUNT_DOMAIN",
+      "description": "Your Gorgias account subdomain, e.g. 'acme' for acme.gorgias.com — passed as the accountDomain parameter on every tool",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developers.gorgias.com/reference/authentication"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_tickets",
+      "name": "List Tickets",
+      "description": "List helpdesk tickets, optionally filtered by customer or ordered by creation/update time",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{accountDomain}.gorgias.com/api/tickets",
+        "params": {
+          "accountDomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Gorgias account subdomain (the 'acme' in acme.gorgias.com); use the GORGIAS_ACCOUNT_DOMAIN value",
+            "required": true
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum number of tickets to return (1-100)",
+            "default": 30
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from the previous response's meta.next_cursor"
+          },
+          "customer_id": {
+            "type": "number",
+            "in": "query",
+            "description": "Only return tickets belonging to this customer ID"
+          },
+          "order_by": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort order: created_datetime:asc, created_datetime:desc, updated_datetime:asc, or updated_datetime:desc",
+            "default": "created_datetime:desc"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "tickets",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "subject" },
+              { "name": "status" },
+              { "name": "channel" },
+              { "name": "created_datetime" },
+              { "name": "updated_datetime" }
+            ],
+            "omitted": "full customer objects, message bodies, tags, and provider-specific payload fields",
+            "outputFields": [{ "name": "meta", "kind": "object" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_ticket",
+      "name": "Get Ticket",
+      "description": "Retrieve a single ticket with its full details (customer, assignee, status, tags)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{accountDomain}.gorgias.com/api/tickets/{ticketId}",
+        "params": {
+          "accountDomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Gorgias account subdomain (the 'acme' in acme.gorgias.com); use the GORGIAS_ACCOUNT_DOMAIN value",
+            "required": true
+          },
+          "ticketId": {
+            "type": "number",
+            "in": "path",
+            "description": "Ticket ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_ticket_messages",
+      "name": "List Ticket Messages",
+      "description": "List the messages (customer and agent) in a ticket's conversation thread",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{accountDomain}.gorgias.com/api/messages",
+        "params": {
+          "accountDomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Gorgias account subdomain (the 'acme' in acme.gorgias.com); use the GORGIAS_ACCOUNT_DOMAIN value",
+            "required": true
+          },
+          "ticket_id": {
+            "type": "number",
+            "in": "query",
+            "description": "Ticket ID to list messages for",
+            "required": true
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum number of messages to return (1-100)",
+            "default": 30
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from the previous response's meta.next_cursor"
+          },
+          "order_by": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort order: created_datetime:asc or created_datetime:desc"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "messages",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "channel" },
+              { "name": "from_agent" },
+              { "name": "subject" },
+              { "name": "created_datetime" }
+            ],
+            "omitted": "full HTML bodies, attachments, and provider-specific payload fields",
+            "outputFields": [{ "name": "meta", "kind": "object" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "create_ticket_message",
+      "name": "Create Ticket Message",
+      "description": "Add a message to a ticket, e.g. an agent reply to the customer or an internal note",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{accountDomain}.gorgias.com/api/tickets/{ticketId}/messages",
+        "params": {
+          "accountDomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Gorgias account subdomain (the 'acme' in acme.gorgias.com); use the GORGIAS_ACCOUNT_DOMAIN value",
+            "required": true
+          },
+          "ticketId": {
+            "type": "number",
+            "in": "path",
+            "description": "Ticket ID to add the message to",
+            "required": true
+          }
+        },
+        "body": {
+          "channel": {
+            "type": "string",
+            "description": "Channel used to send the message, e.g. email, chat, sms, internal-note",
+            "required": true
+          },
+          "from_agent": {
+            "type": "boolean",
+            "description": "Whether the message was sent by your company (true for agent replies)",
+            "required": true
+          },
+          "body_text": {
+            "type": "string",
+            "description": "Plain-text body of the message"
+          },
+          "body_html": {
+            "type": "string",
+            "description": "HTML body of the message"
+          },
+          "sender": {
+            "type": "object",
+            "description": "Sender of the message, e.g. { \"id\": <agent user id> }"
+          },
+          "source": {
+            "type": "object",
+            "description": "Channel-specific routing, e.g. for email: { \"to\": [{ \"address\": \"customer@example.com\" }], \"from\": { \"address\": \"support@yourstore.com\" } }"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_ticket",
+      "name": "Create Ticket",
+      "description": "Create a new helpdesk ticket with an initial message, e.g. to open an issue on behalf of a customer",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{accountDomain}.gorgias.com/api/tickets",
+        "params": {
+          "accountDomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Gorgias account subdomain (the 'acme' in acme.gorgias.com); use the GORGIAS_ACCOUNT_DOMAIN value",
+            "required": true
+          }
+        },
+        "body": {
+          "messages": {
+            "type": "array",
+            "description": "Initial messages of the ticket (1-500). Each message needs at least channel and from_agent, e.g. [{ \"channel\": \"email\", \"from_agent\": false, \"body_text\": \"...\", \"sender\": { \"id\": <customer id> } }]",
+            "required": true
+          },
+          "customer": {
+            "type": "object",
+            "description": "Customer the ticket belongs to, e.g. { \"id\": <customer id> } or { \"email\": \"customer@example.com\" }"
+          },
+          "channel": {
+            "type": "string",
+            "description": "Channel the ticket was created from, e.g. email, chat, sms, api"
+          },
+          "subject": {
+            "type": "string",
+            "description": "Subject of the ticket (max 998 characters)"
+          },
+          "status": {
+            "type": "string",
+            "description": "Initial ticket status: open or closed (defaults to open)"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_customers",
+      "name": "List Customers",
+      "description": "List or search helpdesk customers, e.g. to find a customer ID by email for ticket filtering",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{accountDomain}.gorgias.com/api/customers",
+        "params": {
+          "accountDomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Gorgias account subdomain (the 'acme' in acme.gorgias.com); use the GORGIAS_ACCOUNT_DOMAIN value",
+            "required": true
+          },
+          "email": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return the customer with this primary email address"
+          },
+          "name": {
+            "type": "string",
+            "in": "query",
+            "description": "Search customers by full name"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum number of customers to return (1-100)",
+            "default": 30
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from the previous response's meta.next_cursor"
+          },
+          "order_by": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort order: created_datetime:asc, created_datetime:desc, updated_datetime:asc, or updated_datetime:desc",
+            "default": "created_datetime:desc"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "customers",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "email" },
+              { "name": "name" },
+              { "name": "created_datetime" }
+            ],
+            "omitted": "channels, integrations data, custom fields, and provider-specific payload fields",
+            "outputFields": [{ "name": "meta", "kind": "object" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "list_users",
+      "name": "List Users",
+      "description": "List helpdesk agents/users, e.g. to find the user IDs needed for ticket assignment and message senders",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{accountDomain}.gorgias.com/api/users",
+        "params": {
+          "accountDomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Gorgias account subdomain (the 'acme' in acme.gorgias.com); use the GORGIAS_ACCOUNT_DOMAIN value",
+            "required": true
+          },
+          "email": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return the user with this email address"
+          },
+          "search": {
+            "type": "string",
+            "in": "query",
+            "description": "Search users by name or email"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum number of users to return (1-100)",
+            "default": 30
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from the previous response's meta.next_cursor"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "users",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "email" },
+              { "name": "name" },
+              { "name": "active" }
+            ],
+            "omitted": "role objects, meta fields, and provider-specific payload fields",
+            "outputFields": [{ "name": "meta", "kind": "object" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "update_ticket_status",
+      "name": "Update Ticket Status",
+      "description": "Update a ticket, e.g. close or reopen it, or change its assignee",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://{accountDomain}.gorgias.com/api/tickets/{ticketId}",
+        "params": {
+          "accountDomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Gorgias account subdomain (the 'acme' in acme.gorgias.com); use the GORGIAS_ACCOUNT_DOMAIN value",
+            "required": true
+          },
+          "ticketId": {
+            "type": "number",
+            "in": "path",
+            "description": "Ticket ID to update",
+            "required": true
+          }
+        },
+        "body": {
+          "status": {
+            "type": "string",
+            "description": "New ticket status: open or closed (optional; any subset of ticket fields may be updated)"
+          },
+          "assignee_user": {
+            "type": "object",
+            "description": "Agent to assign the ticket to, e.g. { \"id\": <user id> }"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "open_tickets",
+      "title": "Review open tickets",
+      "prompt": "List my most recent Gorgias tickets and summarize which are still open and what the customers are asking about.",
+      "category": "support",
+      "icon": "inbox"
+    },
+    {
+      "id": "draft_reply",
+      "title": "Draft a customer reply",
+      "prompt": "Read the messages in a Gorgias ticket I specify and draft a friendly agent reply addressing the customer's issue.",
+      "category": "support",
+      "icon": "reply"
+    },
+    {
+      "id": "close_resolved",
+      "title": "Close a resolved ticket",
+      "prompt": "Check a Gorgias ticket I specify; if the issue looks resolved, post a closing reply and set the ticket status to closed.",
+      "category": "support",
+      "icon": "check"
+    }
+  ],
+  "suggestedWith": ["shopify", "stripe", "slack"],
+  "SETUP_GUIDE": {
+    "title": "Gorgias setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Get a Gorgias account",
+        "description": "Sign up at https://www.gorgias.com — new accounts start with a free trial you can use for testing. Note your account subdomain (the 'acme' in acme.gorgias.com)."
+      },
+      {
+        "step": 2,
+        "title": "Create a REST API key",
+        "description": "In your Gorgias dashboard, open Settings → REST API. Copy the Base API URL (https://<your-domain>.gorgias.com/api), your username (your account email), and create/copy the API key (password)."
+      },
+      {
+        "step": 3,
+        "title": "Store the credentials",
+        "description": "Add GORGIAS_USERNAME=<your account email>, GORGIAS_API_KEY=<your API key>, and GORGIAS_ACCOUNT_DOMAIN=<your subdomain> to your .env file. The API uses HTTP Basic auth with email as username and API key as password."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Tickets tool with your account subdomain as accountDomain. You should get back a page of tickets (empty data array on a fresh account)."
+      }
+    ],
+    "notes": [
+      "Every tool takes an accountDomain path parameter — pass the value stored in GORGIAS_ACCOUNT_DOMAIN",
+      "API keys inherit the permissions of the user they belong to; create the key from an account with access to the tickets you need",
+      "Creating a message with channel 'email' actually emails the customer — use channel 'internal-note' for private notes"
+    ],
+    "documentation": "https://developers.gorgias.com/reference"
+  }
+}

@@ -1,0 +1,418 @@
+{
+  "name": "sevdesk",
+  "displayName": "sevdesk",
+  "icon": "sevdesk.svg",
+  "description": "Manage contacts, invoices, vouchers, and receipt uploads in sevdesk bookkeeping",
+  "category": "finance",
+  "auth": {
+    "type": "api-key",
+    "keyName": "SEVDESK_API_KEY",
+    "headerName": "Authorization",
+    "docsUrl": "https://api.sevdesk.de/",
+    "requiredApis": [
+      {
+        "name": "sevdesk API token",
+        "enableUrl": "https://my.sevdesk.de/admin/userManagement"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "SEVDESK_API_KEY",
+      "description": "sevdesk API token (32-character hexadecimal string), found in your sevdesk user settings. Sent raw in the Authorization header without a prefix.",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://api.sevdesk.de/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_contacts",
+      "name": "List Contacts",
+      "description": "List sevdesk contacts (organizations and persons), e.g. to find a contact id before creating an invoice",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://my.sevdesk.de/api/v1/Contact",
+        "params": {
+          "depth": {
+            "type": "string",
+            "in": "query",
+            "description": "'0' returns only organizations, '1' returns organizations and persons",
+            "default": "1"
+          },
+          "customerNumber": {
+            "type": "string",
+            "in": "query",
+            "description": "Only contacts with this customer number"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum entries to return",
+            "default": 100
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Offset for pagination"
+          }
+        },
+        "response": {
+          "transform": "objects"
+        }
+      }
+    },
+    {
+      "id": "list_invoices",
+      "name": "List Invoices",
+      "description": "List sevdesk invoices with optional status, number, date, and contact filters",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://my.sevdesk.de/api/v1/Invoice",
+        "params": {
+          "status": {
+            "type": "number",
+            "in": "query",
+            "description": "Invoice status code filter; the API accepts 100 draft, 200 open/due, or 1000 paid (other model statuses such as 50 and 750 are not valid filter values)"
+          },
+          "invoiceNumber": {
+            "type": "string",
+            "in": "query",
+            "description": "Only invoices with this invoice number"
+          },
+          "startDate": {
+            "type": "number",
+            "in": "query",
+            "description": "Only invoices with a date equal or higher (Unix timestamp)"
+          },
+          "endDate": {
+            "type": "number",
+            "in": "query",
+            "description": "Only invoices with a date equal or lower (Unix timestamp)"
+          },
+          "contact[id]": {
+            "type": "number",
+            "in": "query",
+            "description": "Only invoices for this contact id; must be combined with contact[objectName]"
+          },
+          "contact[objectName]": {
+            "type": "string",
+            "in": "query",
+            "description": "Required when contact[id] is set; use the value 'Contact'"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum entries to return",
+            "default": 100
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Offset for pagination"
+          }
+        },
+        "response": {
+          "transform": "objects"
+        }
+      }
+    },
+    {
+      "id": "get_invoice",
+      "name": "Get Invoice",
+      "description": "Retrieve a single sevdesk invoice by its id",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://my.sevdesk.de/api/v1/Invoice/{invoiceId}",
+        "params": {
+          "invoiceId": {
+            "type": "number",
+            "in": "path",
+            "description": "ID of the invoice to return",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "objects"
+        }
+      }
+    },
+    {
+      "id": "create_invoice",
+      "name": "Create Invoice",
+      "description": "Create a sevdesk invoice with positions via the saveInvoice factory endpoint; create with status 100 for an editable draft",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://my.sevdesk.de/api/v1/Invoice/Factory/saveInvoice",
+        "body": {
+          "invoice": {
+            "type": "object",
+            "description": "Invoice model. Required fields: objectName 'Invoice', mapAll true, contact ({ id, objectName: 'Contact' }), invoiceDate, status ('100' for draft), invoiceType ('RE'), currency ('EUR'), taxRate, taxRule ({ id, objectName: 'TaxRule' }), taxText, discount (0), addressCountry ({ id, objectName: 'StaticCountry' }), contactPerson ({ id, objectName: 'SevUser' }).",
+            "required": true
+          },
+          "invoicePosSave": {
+            "type": "array",
+            "description": "Invoice positions to create, each with objectName 'InvoicePos', mapAll true, name, quantity, price, taxRate, and unity ({ id, objectName: 'Unity' })",
+            "required": true
+          },
+          "invoicePosDelete": {
+            "type": "object",
+            "description": "Positions to delete when updating an existing invoice; null on create"
+          },
+          "discountSave": {
+            "type": "array",
+            "description": "Optional discounts to apply, each with objectName 'Discounts' and mapAll true"
+          },
+          "filename": {
+            "type": "string",
+            "description": "Filename of a previously uploaded file to attach to the invoice"
+          },
+          "takeDefaultAddress": {
+            "type": "boolean",
+            "description": "Use the contact's default address for the invoice address"
+          }
+        }
+      }
+    },
+    {
+      "id": "upload_voucher_file",
+      "name": "Upload Voucher File",
+      "description": "Upload a receipt or invoice file to sevdesk; returns an internal filename that can be attached when creating a voucher",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://my.sevdesk.de/api/v1/Voucher/Factory/uploadTempFile",
+        "contentType": "multipart/form-data",
+        "bodyMode": "form-data",
+        "body": {
+          "file": {
+            "type": "string",
+            "description": "Base64-encoded content of the file to upload, sent decoded as the binary multipart 'file' part",
+            "required": true,
+            "encoding": "base64",
+            "partFilenameField": "file_name"
+          },
+          "file_name": {
+            "type": "string",
+            "description": "Filename for the uploaded file, e.g. receipt.pdf",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "objects"
+        }
+      }
+    },
+    {
+      "id": "list_vouchers",
+      "name": "List Vouchers",
+      "description": "List sevdesk accounting vouchers (receipts) with optional status, type, date, and description filters",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://my.sevdesk.de/api/v1/Voucher",
+        "params": {
+          "status": {
+            "type": "number",
+            "in": "query",
+            "description": "Voucher status code: 50 draft, 100 unpaid/due, 1000 paid"
+          },
+          "creditDebit": {
+            "type": "string",
+            "in": "query",
+            "description": "'C' for credit vouchers only, 'D' for debit vouchers only"
+          },
+          "descriptionLike": {
+            "type": "string",
+            "in": "query",
+            "description": "Only vouchers with a description like this"
+          },
+          "startDate": {
+            "type": "number",
+            "in": "query",
+            "description": "Only vouchers with a date equal or higher (Unix timestamp)"
+          },
+          "endDate": {
+            "type": "number",
+            "in": "query",
+            "description": "Only vouchers with a date equal or lower (Unix timestamp)"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum entries to return",
+            "default": 100
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Offset for pagination"
+          }
+        },
+        "response": {
+          "transform": "objects"
+        }
+      }
+    },
+    {
+      "id": "create_voucher",
+      "name": "Create Voucher",
+      "description": "Create a bookable voucher (receipt) with positions via the saveVoucher factory endpoint — the step that turns a file staged with Upload Voucher File into an actual accounting record",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://my.sevdesk.de/api/v1/Voucher/Factory/saveVoucher",
+        "body": {
+          "voucher": {
+            "type": "object",
+            "description": "Voucher model. Required fields: objectName 'Voucher', mapAll true, status (50 draft, 100 unpaid, 1000 paid), creditDebit ('C' credit or 'D' debit), voucherType ('VOU' normal or 'RV' recurring), taxRule ({ id, objectName: 'TaxRule' }, sevdesk-Update 2.0) or legacy taxType. Recommended: voucherDate, supplier ({ id, objectName: 'Contact' }) or supplierName, description (voucher number).",
+            "required": true
+          },
+          "voucherPosSave": {
+            "type": "array",
+            "description": "Voucher positions to create, each with objectName 'VoucherPos', mapAll true, accountingType ({ id, objectName: 'AccountingType' }) or accountDatev, taxRate, net (boolean), sumNet, and sumGross",
+            "required": true
+          },
+          "voucherPosDelete": {
+            "type": "object",
+            "description": "Positions to delete when updating an existing voucher; null on create"
+          },
+          "filename": {
+            "type": "string",
+            "description": "Internal filename returned by Upload Voucher File to attach the uploaded document to this voucher"
+          }
+        },
+        "response": {
+          "transform": "objects"
+        }
+      }
+    },
+    {
+      "id": "get_invoice_pdf",
+      "name": "Get Invoice PDF",
+      "description": "Retrieve the rendered PDF document of an invoice for sending or archiving",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://my.sevdesk.de/api/v1/Invoice/{invoiceId}/getPdf",
+        "params": {
+          "invoiceId": {
+            "type": "number",
+            "in": "path",
+            "description": "Invoice id",
+            "required": true
+          },
+          "download": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Return the PDF as a download"
+          },
+          "preventSendBy": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Do not mark the invoice as sent when fetching the PDF"
+          }
+        },
+        "response": {
+          "transform": "objects"
+        }
+      }
+    },
+    {
+      "id": "book_invoice_amount",
+      "name": "Book Invoice Amount",
+      "description": "Register a (partial) payment on an invoice and mark it paid when settled — closes the reconciliation loop after money arrives",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://my.sevdesk.de/api/v1/Invoice/{invoiceId}/bookAmount",
+        "params": {
+          "invoiceId": {
+            "type": "number",
+            "in": "path",
+            "description": "Invoice id to book the amount on",
+            "required": true
+          }
+        },
+        "body": {
+          "amount": {
+            "type": "number",
+            "description": "Amount to book; can be a partial amount",
+            "required": true
+          },
+          "date": {
+            "type": "number",
+            "description": "Booking date as Unix timestamp (most likely the payment date)",
+            "required": true
+          },
+          "type": {
+            "type": "string",
+            "description": "Booking type: FULL_PAYMENT (normal), N (partial), CB (discount/skonto), O (other reduction/increase), OF (reminder charges), MTC (monetary traffic costs)",
+            "required": true
+          },
+          "checkAccount": {
+            "type": "object",
+            "description": "Check account the payment was received on: { \"id\": <checkAccountId>, \"objectName\": \"CheckAccount\" }",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "open_invoices",
+      "title": "Open invoices",
+      "prompt": "List my open sevdesk invoices and summarize who owes what.",
+      "category": "finance",
+      "icon": "currency"
+    },
+    {
+      "id": "file_receipt",
+      "title": "File a receipt",
+      "prompt": "Upload this receipt to sevdesk so it can be booked as a voucher.",
+      "category": "finance",
+      "icon": "upload"
+    },
+    {
+      "id": "draft_invoice",
+      "title": "Draft an invoice",
+      "prompt": "Create a draft invoice in sevdesk for a customer; ask me for the positions first.",
+      "category": "finance",
+      "icon": "document"
+    }
+  ],
+  "suggestedWith": ["gmail", "drive", "slack"],
+  "SETUP_GUIDE": {
+    "title": "sevdesk setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a sevdesk account",
+        "description": "Sign up at https://sevdesk.de — a free trial account works for testing the API; there is no separate sandbox environment."
+      },
+      {
+        "step": 2,
+        "title": "Find your API token",
+        "description": "Log in to https://my.sevdesk.de and open Settings > Users. Every administrator has one API token, a 32-character hexadecimal string. Copy it and set it as SEVDESK_API_KEY."
+      },
+      {
+        "step": 3,
+        "title": "Verify access",
+        "description": "The token is sent as the raw value of the Authorization header on every request (no 'Bearer' prefix). Test with: curl https://my.sevdesk.de/api/v1/Contact -H \"Authorization: <token>\"."
+      }
+    ],
+    "notes": [
+      "sevdesk API tokens have an infinite lifetime and grant the full permissions of the user they belong to; rotate them from the user settings if leaked.",
+      "The REST base URL is https://my.sevdesk.de/api/v1 (the docs are hosted at api.sevdesk.de).",
+      "List responses wrap results in an 'objects' array; pagination uses limit and offset query parameters.",
+      "The saveInvoice and saveVoucher factory endpoints require fully specified models: every embedded object needs objectName and mapAll fields, and references use { id, objectName } pairs.",
+      "Voucher/Factory/uploadTempFile is a multipart/form-data upload; the returned internal filename is referenced in the 'filename' field when saving an invoice or voucher."
+    ],
+    "documentation": "https://api.sevdesk.de/"
+  }
+}

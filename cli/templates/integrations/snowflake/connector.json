@@ -64,7 +64,7 @@
       "description": "Default schema to use for queries (defaults to PUBLIC)",
       "required": false,
       "sensitive": false,
-      "docsUrl": "https://docs.snowflake.com/en/user-guide/schemas"
+      "docsUrl": "https://docs.snowflake.com/en/user-guide/databases"
     }
   ],
   "tools": [

@@ -1,0 +1,292 @@
+{
+  "name": "personio",
+  "displayName": "Personio",
+  "icon": "personio.svg",
+  "description": "Read Personio employees, absence periods, and attendance data, and create absence periods in the DACH-focused HR platform",
+  "auth": {
+    "type": "oauth2",
+    "provider": "personio",
+    "grantType": "client_credentials",
+    "tokenUrl": "https://api.personio.de/v2/auth/token",
+    "tokenAuthMethod": "request_body",
+    "docsUrl": "https://developer.personio.de/reference/authentication",
+    "requiredApis": [
+      {
+        "name": "Personio API credentials",
+        "enableUrl": "https://support.personio.de/hc/en-us/articles/4404623630993-Generate-and-manage-API-credentials"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "PERSONIO_CLIENT_ID",
+      "description": "Personio API credentials Client ID (generated in Personio under Settings > Integrations > API credentials)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://support.personio.de/hc/en-us/articles/4404623630993-Generate-and-manage-API-credentials"
+    },
+    {
+      "name": "PERSONIO_CLIENT_SECRET",
+      "description": "Personio API credentials Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://support.personio.de/hc/en-us/articles/4404623630993-Generate-and-manage-API-credentials"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_persons",
+      "name": "List Persons",
+      "description": "List employees (persons) in the Personio account with optional email filtering",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.personio.de/v2/persons",
+        "params": {
+          "email": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by employee email address"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of persons per page (1-50)",
+            "default": 10
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_person",
+      "name": "Get Person",
+      "description": "Retrieve a single employee (person) by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.personio.de/v2/persons/{personId}",
+        "params": {
+          "personId": {
+            "type": "string",
+            "in": "path",
+            "description": "Personio person ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_employments",
+      "name": "List Employments",
+      "description": "List a person's employment records (position, department, supervisor, status), most recent first",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.personio.de/v2/persons/{personId}/employments",
+        "params": {
+          "personId": {
+            "type": "string",
+            "in": "path",
+            "description": "Personio person ID",
+            "required": true
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of employments per page (1-50)",
+            "default": 10
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_absence_types",
+      "name": "List Absence Types",
+      "description": "List the account's absence types (vacation, sick leave, ...) to find the absence_type IDs needed to create absences",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.personio.de/v2/absence-types",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of absence types per page (1-100)",
+            "default": 100
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_absence_periods",
+      "name": "List Absence Periods",
+      "description": "List absence periods (vacation, sick leave, etc.) with person and date-range filters",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.personio.de/v2/absence-periods",
+        "params": {
+          "person.id": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by person ID(s)"
+          },
+          "absence_type.id": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by absence type ID(s)"
+          },
+          "starts_from.date_time.gte": {
+            "type": "string",
+            "in": "query",
+            "description": "Only periods starting at or after this date-time (ISO 8601, local time)"
+          },
+          "ends_at.date_time.lte": {
+            "type": "string",
+            "in": "query",
+            "description": "Only periods ending at or before this date-time (ISO 8601, local time)"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of absence periods per page (1-100)",
+            "default": 100
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_attendance_periods",
+      "name": "List Attendance Periods",
+      "description": "List attendance periods (work and break times) with person and update-date filters",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.personio.de/v2/attendance-periods",
+        "params": {
+          "person.id": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by person ID(s)"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of attendance periods per page",
+            "default": 100
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_absence_period",
+      "name": "Create Absence Period",
+      "description": "Create an absence period (e.g. vacation or sick leave) for an employee",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.personio.de/v2/absence-periods",
+        "params": {
+          "skip_approval": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Set to true to bypass the approval workflow (if permitted)"
+          }
+        },
+        "body": {
+          "person": {
+            "type": "object",
+            "description": "Reference to the person the absence belongs to, e.g. { \"id\": \"<person id>\" }",
+            "required": true
+          },
+          "absence_type": {
+            "type": "object",
+            "description": "Reference to the absence type, e.g. { \"id\": \"<absence type id>\" }",
+            "required": true
+          },
+          "starts_from": {
+            "type": "object",
+            "description": "Start of the absence period; structure depends on the absence type unit (daily or hourly), using local time without timezone offset",
+            "required": true
+          },
+          "ends_at": {
+            "type": "object",
+            "description": "End of the absence period; may be omitted for ongoing absences without a defined end"
+          },
+          "comment": {
+            "type": "string",
+            "description": "Optional comment attached to the absence period"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "who_is_absent",
+      "title": "Who is absent",
+      "prompt": "List the absence periods in Personio that overlap with this week and tell me who is out and why.",
+      "category": "hr",
+      "icon": "calendar"
+    },
+    {
+      "id": "employee_lookup",
+      "title": "Employee lookup",
+      "prompt": "Find an employee in Personio by email and show their profile details.",
+      "category": "hr",
+      "icon": "users"
+    }
+  ],
+  "suggestedWith": ["slack", "calendar"],
+  "SETUP_GUIDE": {
+    "title": "Personio API setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Generate API credentials",
+        "description": "In Personio, go to Settings > Integrations > API credentials and click 'Generate new credentials'. Grant the credential read access to Persons, Absences, and Attendances (and write access to Absences if you want to create absence periods). Copy the Client ID and Client Secret. If you do not have a Personio account, request a trial/demo account at https://www.personio.com."
+      },
+      {
+        "step": 2,
+        "title": "Set environment variables",
+        "description": "Add PERSONIO_CLIENT_ID and PERSONIO_CLIENT_SECRET to your .env."
+      },
+      {
+        "step": 3,
+        "title": "Verify access",
+        "description": "Run List Persons. Access tokens are minted automatically from https://api.personio.de/v2/auth/token via the OAuth2 client_credentials grant (form-encoded client_id and client_secret) — no user login is involved."
+      }
+    ],
+    "notes": [
+      "This connector uses the Personio v2 API. The legacy v1 token endpoint (https://api.personio.de/v1/auth) is a different flow and is not used here.",
+      "Access tokens are valid for 24 hours.",
+      "API credentials are scoped: a 403 from a tool usually means the credential is missing the corresponding permission (e.g. personio:persons:read, personio:absences:read)."
+    ],
+    "documentation": "https://developer.personio.de"
+  }
+}

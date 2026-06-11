@@ -1,0 +1,253 @@
+{
+  "name": "guru",
+  "displayName": "Guru",
+  "icon": "guru.svg",
+  "description": "Search and read Guru knowledge-base cards and collections, and create or verify cards",
+  "category": "productivity",
+  "auth": {
+    "type": "basic",
+    "usernameKey": "GURU_USERNAME",
+    "passwordKey": "GURU_USER_TOKEN",
+    "docsUrl": "https://developer.getguru.com/docs/getting-started",
+    "requiredApis": [
+      {
+        "name": "Guru API token",
+        "enableUrl": "https://app.getguru.com/settings/api-access"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "GURU_USERNAME",
+      "description": "HTTP Basic username: your Guru user email (for a User token) or the collection ID (for a Collection token)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.getguru.com/docs/getting-started"
+    },
+    {
+      "name": "GURU_USER_TOKEN",
+      "description": "HTTP Basic password: the Guru User or Collection API token generated in API Access settings",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.getguru.com/docs/getting-started"
+    }
+  ],
+  "tools": [
+    {
+      "id": "search_cards",
+      "name": "Search Cards",
+      "description": "Search the knowledge base for cards matching search terms",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.getguru.com/api/v1/search/query",
+        "params": {
+          "searchTerms": {
+            "type": "string",
+            "in": "query",
+            "description": "Search terms to match against card titles and content"
+          },
+          "maxResults": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum number of cards to return (up to 50; more results are paginated via the Link header)",
+            "default": 25
+          },
+          "showArchived": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include archived cards in the results",
+            "default": false
+          },
+          "sortField": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort field, e.g. lastModified, dateCreated, popularity (default is relevancy)"
+          },
+          "sortOrder": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort order: ASC or DESC"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_card",
+      "name": "Get Card",
+      "description": "Get a single card with its full content and additional details (collection, verifiers, collaborators)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.getguru.com/api/v1/cards/{cardId}/extended",
+        "params": {
+          "cardId": {
+            "type": "string",
+            "in": "path",
+            "description": "The ID (or slug) of the card",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_collections",
+      "name": "List Collections",
+      "description": "List the collections in the team to find collection IDs, names, and stats",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.getguru.com/api/v1/collections"
+      }
+    },
+    {
+      "id": "create_card",
+      "name": "Create Card",
+      "description": "Create a new knowledge-base card in a collection",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.getguru.com/api/v1/cards/extended",
+        "body": {
+          "preferredPhrase": {
+            "type": "string",
+            "description": "The title of the card",
+            "required": true
+          },
+          "content": {
+            "type": "string",
+            "description": "The card's HTML or Markdown content",
+            "required": true
+          },
+          "collection": {
+            "type": "object",
+            "description": "Collection to create the card in, e.g. { \"id\": \"<collection id>\" } (optional, but shared cards live in a collection)"
+          },
+          "shareStatus": {
+            "type": "string",
+            "description": "Card visibility: PRIVATE, TEAM, or PUBLIC (the API defaults to PRIVATE when omitted, making the card visible only to the owner)"
+          },
+          "verificationInterval": {
+            "type": "number",
+            "description": "Time interval in days indicating how often the card needs re-verification"
+          }
+        }
+      }
+    },
+    {
+      "id": "update_card",
+      "name": "Update Card",
+      "description": "Update an existing card's title, content, or visibility to keep knowledge current",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://api.getguru.com/api/v1/cards/{cardId}/extended",
+        "params": {
+          "cardId": {
+            "type": "string",
+            "in": "path",
+            "description": "The ID of the card to update",
+            "required": true
+          }
+        },
+        "body": {
+          "preferredPhrase": {
+            "type": "string",
+            "description": "The title of the card",
+            "required": true
+          },
+          "content": {
+            "type": "string",
+            "description": "The card's full HTML or Markdown content (replaces the existing content)",
+            "required": true
+          },
+          "shareStatus": {
+            "type": "string",
+            "description": "Card visibility: PRIVATE, TEAM, or PUBLIC (omitting it restricts the card to the owner)"
+          },
+          "verificationInterval": {
+            "type": "number",
+            "description": "Time interval in days indicating how often the card needs re-verification (defaults to 30 when omitted)"
+          },
+          "tags": {
+            "type": "array",
+            "description": "Tag objects to keep on the card — omitting tags or passing an empty list removes all existing tags"
+          }
+        }
+      }
+    },
+    {
+      "id": "verify_card",
+      "name": "Verify Card",
+      "description": "Mark a card as verified, confirming its content is accurate and up to date",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://api.getguru.com/api/v1/cards/{cardId}/verify",
+        "params": {
+          "cardId": {
+            "type": "string",
+            "in": "path",
+            "description": "The ID of the card to verify",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "find_answer",
+      "title": "Find an answer",
+      "prompt": "Search my Guru knowledge base for cards about a topic I specify and summarize the verified answer.",
+      "category": "productivity",
+      "icon": "search"
+    },
+    {
+      "id": "capture_knowledge",
+      "title": "Capture new knowledge",
+      "prompt": "Turn the information I give you into a well-structured Guru card and create it in the collection I specify.",
+      "category": "productivity",
+      "icon": "document"
+    },
+    {
+      "id": "verify_stale",
+      "title": "Verify a card",
+      "prompt": "Look up a Guru card I specify, check whether its content still looks accurate, and verify it if so.",
+      "category": "productivity",
+      "icon": "check"
+    }
+  ],
+  "suggestedWith": ["slack", "notion", "confluence"],
+  "SETUP_GUIDE": {
+    "title": "Guru setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Get a Guru account",
+        "description": "Sign up at https://www.getguru.com — a free trial workspace is enough for testing the API."
+      },
+      {
+        "step": 2,
+        "title": "Generate an API token",
+        "description": "In Guru, open Settings → API Access and generate a token. A User token (username = your email) acts as you across the knowledge base; a Collection token (username = collection ID) gives read-only access to one collection. Admins can issue tokens for other users."
+      },
+      {
+        "step": 3,
+        "title": "Store the credentials",
+        "description": "Add GURU_USERNAME=<your email or collection ID> and GURU_USER_TOKEN=<your token> to your .env file. The API uses HTTP Basic auth against https://api.getguru.com/api/v1."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Collections tool (or GET /api/v1/teams with curl) — a successful response confirms your credentials work."
+      }
+    ],
+    "notes": [
+      "Collection tokens are read-only and scoped to a single collection — use a User token for the Create Card and Verify Card tools",
+      "Card search returns at most 50 results per page; narrow your search terms instead of paging when possible",
+      "shareStatus must be TEAM for a card to be visible to the whole team"
+    ],
+    "documentation": "https://developer.getguru.com/reference"
+  }
+}

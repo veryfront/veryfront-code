@@ -2,7 +2,7 @@
   "name": "xero",
   "displayName": "Xero",
   "icon": "xero.svg",
-  "description": "Manage invoices, contacts, and accounts in Xero accounting",
+  "description": "Manage invoices, bills, purchase orders, contacts, and accounts in Xero accounting",
   "auth": {
     "type": "oauth2",
     "provider": "xero",
@@ -12,7 +12,8 @@
       "offline_access",
       "accounting.transactions",
       "accounting.contacts",
-      "accounting.settings"
+      "accounting.settings",
+      "accounting.attachments"
     ],
     "callbackPath": "/api/auth/xero/callback",
     "tokenAuthMethod": "basic",
@@ -132,7 +133,7 @@
     {
       "id": "get_invoice",
       "name": "Get Invoice",
-      "description": "Get a Xero invoice with its line items",
+      "description": "Get a Xero sales invoice or supplier bill with its line items",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -198,6 +199,195 @@
         },
         "response": {
           "transform": "Invoices"
+        }
+      }
+    },
+    {
+      "id": "list_bills",
+      "name": "List Bills",
+      "description": "List supplier bills (accounts payable) in a Xero organisation — bills are Invoices with Type ACCPAY",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.xero.com/api.xro/2.0/Invoices",
+        "params": {
+          "tenant_id": {
+            "type": "string",
+            "in": "header",
+            "headerName": "xero-tenant-id",
+            "description": "Xero tenant ID (from the List Connections tool)",
+            "required": true
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Accept",
+            "description": "Response format — keep application/json",
+            "default": "application/json"
+          },
+          "where": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter — keep Type==\"ACCPAY\" to select bills; combine with e.g. Type==\"ACCPAY\" AND Status==\"AUTHORISED\"",
+            "default": "Type==\"ACCPAY\""
+          },
+          "order": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort order, e.g. UpdatedDateUTC DESC"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (100 invoices per page)",
+            "default": 1
+          }
+        },
+        "response": {
+          "transform": "Invoices",
+          "historicalSummary": {
+            "collectionKeys": ["Invoices", "data"],
+            "collectionName": "bills",
+            "itemFields": [
+              { "name": "InvoiceID" },
+              { "name": "InvoiceNumber" },
+              { "name": "Type" },
+              { "name": "Status" },
+              { "name": "Date" },
+              { "name": "DueDate" },
+              { "name": "Total" },
+              { "name": "AmountDue" },
+              { "name": "UpdatedDateUTC" },
+              { "name": "Contact", "kind": "object" }
+            ],
+            "omitted": "bill line items, payments, and provider-specific payload fields",
+            "outputFields": []
+          }
+        }
+      }
+    },
+    {
+      "id": "create_bill",
+      "name": "Create Bill",
+      "description": "Create a supplier bill (accounts payable) in a Xero organisation — a bill is an Invoice with Type \"ACCPAY\"",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.xero.com/api.xro/2.0/Invoices",
+        "params": {
+          "tenant_id": {
+            "type": "string",
+            "in": "header",
+            "headerName": "xero-tenant-id",
+            "description": "Xero tenant ID (from the List Connections tool)",
+            "required": true
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Accept",
+            "description": "Response format — keep application/json",
+            "default": "application/json"
+          }
+        },
+        "bodyMode": "passthrough",
+        "body": {
+          "bill": {
+            "type": "object",
+            "description": "Bill payload — Type must be \"ACCPAY\", e.g. { \"Type\": \"ACCPAY\", \"Contact\": { \"ContactID\": \"...\" }, \"LineItems\": [{ \"Description\": \"Office supplies\", \"Quantity\": 1, \"UnitAmount\": 100, \"AccountCode\": \"400\" }], \"DueDate\": \"2026-07-01\" }",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "Invoices"
+        }
+      }
+    },
+    {
+      "id": "create_invoice_attachment",
+      "name": "Create Invoice Attachment",
+      "description": "Attach a file to a Xero sales invoice or supplier bill (max 10 MB per attachment)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://api.xero.com/api.xro/2.0/Invoices/{invoiceId}/Attachments/{fileName}",
+        "contentType": "application/octet-stream",
+        "params": {
+          "invoiceId": {
+            "type": "string",
+            "in": "path",
+            "description": "Xero InvoiceID (GUID) of the invoice or bill to attach to",
+            "required": true
+          },
+          "fileName": {
+            "type": "string",
+            "in": "path",
+            "description": "File name for the attachment, e.g. receipt.pdf",
+            "required": true
+          },
+          "tenant_id": {
+            "type": "string",
+            "in": "header",
+            "headerName": "xero-tenant-id",
+            "description": "Xero tenant ID (from the List Connections tool)",
+            "required": true
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Accept",
+            "description": "Response format — keep application/json",
+            "default": "application/json"
+          }
+        },
+        "bodyMode": "raw",
+        "body": {
+          "content": {
+            "type": "string",
+            "description": "Base64-encoded file content; the decoded bytes are sent as the raw request body",
+            "required": true,
+            "encoding": "base64"
+          }
+        },
+        "response": {
+          "transform": "Attachments"
+        }
+      }
+    },
+    {
+      "id": "create_purchase_order",
+      "name": "Create Purchase Order",
+      "description": "Create a purchase order in a Xero organisation",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.xero.com/api.xro/2.0/PurchaseOrders",
+        "params": {
+          "tenant_id": {
+            "type": "string",
+            "in": "header",
+            "headerName": "xero-tenant-id",
+            "description": "Xero tenant ID (from the List Connections tool)",
+            "required": true
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Accept",
+            "description": "Response format — keep application/json",
+            "default": "application/json"
+          }
+        },
+        "bodyMode": "passthrough",
+        "body": {
+          "purchaseOrder": {
+            "type": "object",
+            "description": "Purchase order payload, e.g. { \"Contact\": { \"ContactID\": \"...\" }, \"LineItems\": [{ \"Description\": \"Widgets\", \"Quantity\": 10, \"UnitAmount\": 25, \"AccountCode\": \"400\" }], \"Date\": \"2026-06-11\", \"DeliveryDate\": \"2026-06-30\" }",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "PurchaseOrders"
         }
       }
     },
@@ -279,6 +469,96 @@
           "transform": "Accounts"
         }
       }
+    },
+    {
+      "id": "list_invoice_attachments",
+      "name": "List Invoice Attachments",
+      "description": "List the attachments on an invoice or bill (AttachmentID, FileName, MimeType, ContentLength) — see what Create Invoice Attachment uploaded",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.xero.com/api.xro/2.0/Invoices/{invoiceId}/Attachments",
+        "params": {
+          "tenant_id": {
+            "type": "string",
+            "in": "header",
+            "headerName": "xero-tenant-id",
+            "description": "Xero tenant ID (from the List Connections tool)",
+            "required": true
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Accept",
+            "description": "Response format — keep application/json",
+            "default": "application/json"
+          },
+          "invoiceId": {
+            "type": "string",
+            "in": "path",
+            "description": "InvoiceID (GUID) of the invoice or bill",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "Attachments"
+        }
+      }
+    },
+    {
+      "id": "list_purchase_orders",
+      "name": "List Purchase Orders",
+      "description": "List purchase orders in a Xero organisation — the read counterpart to Create Purchase Order",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.xero.com/api.xro/2.0/PurchaseOrders",
+        "params": {
+          "tenant_id": {
+            "type": "string",
+            "in": "header",
+            "headerName": "xero-tenant-id",
+            "description": "Xero tenant ID (from the List Connections tool)",
+            "required": true
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Accept",
+            "description": "Response format — keep application/json",
+            "default": "application/json"
+          },
+          "Status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by status: DRAFT, SUBMITTED, AUTHORISED, BILLED, or DELETED"
+          },
+          "DateFrom": {
+            "type": "string",
+            "in": "query",
+            "description": "Only purchase orders dated on or after this date (YYYY-MM-DD)"
+          },
+          "DateTo": {
+            "type": "string",
+            "in": "query",
+            "description": "Only purchase orders dated on or before this date (YYYY-MM-DD)"
+          },
+          "order": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort order, e.g. PurchaseOrderNumber ASC"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (100 purchase orders per page)",
+            "default": 1
+          }
+        },
+        "response": {
+          "transform": "PurchaseOrders"
+        }
+      }
     }
   ],
   "prompts": [
@@ -327,6 +607,7 @@
       "Refresh tokens are single-use and expire after 60 days of inactivity",
       "The token endpoint authenticates with HTTP Basic (client_id:client_secret base64-encoded)",
       "Every Accounting API call must include the xero-tenant-id header; use List Connections to find it",
+      "The accounting.attachments scope is required for the Create Invoice Attachment tool; attachment bodies are raw file bytes (max 10 MB)",
       "Uncertified apps are limited to 25 connected organisations"
     ],
     "documentation": "https://developer.xero.com/documentation/guides/oauth2/auth-flow/"

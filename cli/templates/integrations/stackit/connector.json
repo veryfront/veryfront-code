@@ -1,0 +1,360 @@
+{
+  "name": "stackit",
+  "displayName": "STACKIT",
+  "icon": "stackit.svg",
+  "description": "Inspect resources on STACKIT, the sovereign German cloud — list projects, servers, and machine types via the Resource Manager and IaaS APIs",
+  "category": "devops",
+  "auth": {
+    "type": "api-key",
+    "keyName": "STACKIT_SERVICE_ACCOUNT_TOKEN",
+    "headerName": "Authorization",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://docs.stackit.cloud/platform/access-and-identity/service-accounts/authentication-flows/",
+    "requiredApis": [
+      {
+        "name": "STACKIT Portal service accounts",
+        "enableUrl": "https://portal.stackit.cloud/"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "STACKIT_SERVICE_ACCOUNT_TOKEN",
+      "description": "Access token for a STACKIT service account, sent as Authorization: Bearer. Obtained via the key flow (signed JWT exchanged at the service-account token endpoint) or the STACKIT CLI; tokens are short-lived and must be refreshed",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.stackit.cloud/platform/access-and-identity/service-accounts/how-tos/get-access-token/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_projects",
+      "name": "List Projects",
+      "description": "List STACKIT projects visible to the service account via the Resource Manager. At least one of containerParentId or member must be provided (use the service account's email as member).",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://resource-manager.api.stackit.cloud/v2/projects",
+        "params": {
+          "containerParentId": {
+            "type": "string",
+            "in": "query",
+            "description": "Identifier of the parent resource container (organization or folder); containerId or UUID"
+          },
+          "member": {
+            "type": "string",
+            "in": "query",
+            "description": "Email address of the user or service account whose visible projects should be listed"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum number of projects to return",
+            "default": 50
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Offset of the first item to return",
+            "default": 0
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["items"],
+            "collectionName": "projects",
+            "itemFields": [
+              { "name": "projectId" },
+              { "name": "containerId" },
+              { "name": "name" },
+              { "name": "lifecycleState" },
+              { "name": "creationTime" }
+            ],
+            "omitted": "labels, parent container details, and provider-specific payload fields",
+            "outputFields": [{ "name": "limit" }, { "name": "offset" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "list_servers",
+      "name": "List Servers",
+      "description": "List IaaS servers in a STACKIT project and region",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://iaas.api.stackit.cloud/v2/projects/{projectId}/regions/{region}/servers",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "STACKIT project ID (UUID)",
+            "required": true
+          },
+          "region": {
+            "type": "string",
+            "in": "path",
+            "description": "STACKIT region, e.g. eu01",
+            "required": true
+          },
+          "details": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include detailed server information",
+            "default": false
+          },
+          "label_selector": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter servers by labels"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["items"],
+            "collectionName": "servers",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "status" },
+              { "name": "machineType" },
+              { "name": "availabilityZone" },
+              { "name": "createdAt" }
+            ],
+            "omitted": "NICs, volume attachments, and provider-specific payload fields",
+            "outputFields": []
+          }
+        }
+      }
+    },
+    {
+      "id": "get_server",
+      "name": "Get Server",
+      "description": "Get a single IaaS server in a project and region, including status, machine type, and availability zone",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://iaas.api.stackit.cloud/v2/projects/{projectId}/regions/{region}/servers/{serverId}",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "STACKIT project ID (UUID)",
+            "required": true
+          },
+          "region": {
+            "type": "string",
+            "in": "path",
+            "description": "STACKIT region, e.g. eu01",
+            "required": true
+          },
+          "serverId": {
+            "type": "string",
+            "in": "path",
+            "description": "Server ID (UUID)",
+            "required": true
+          },
+          "details": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include detailed server information",
+            "default": false
+          }
+        }
+      }
+    },
+    {
+      "id": "list_machine_types",
+      "name": "List Machine Types",
+      "description": "List available machine types (server flavors) in a project and region, useful before creating or resizing servers",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://iaas.api.stackit.cloud/v2/projects/{projectId}/regions/{region}/machine-types",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "STACKIT project ID (UUID)",
+            "required": true
+          },
+          "region": {
+            "type": "string",
+            "in": "path",
+            "description": "STACKIT region, e.g. eu01",
+            "required": true
+          },
+          "filter": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter expression over machine type fields, e.g. vcpus >= 4"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["items"],
+            "collectionName": "machine_types",
+            "itemFields": [
+              { "name": "name" },
+              { "name": "vcpus" },
+              { "name": "ram" },
+              { "name": "disk" }
+            ],
+            "omitted": "extra specs and provider-specific payload fields",
+            "outputFields": []
+          }
+        }
+      }
+    },
+    {
+      "id": "start_server",
+      "name": "Start Server",
+      "description": "Boot up a stopped server, or allocate it again if it was deallocated (returns 202 Accepted; completes asynchronously)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://iaas.api.stackit.cloud/v2/projects/{projectId}/regions/{region}/servers/{serverId}/start",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "STACKIT project ID (UUID)",
+            "required": true
+          },
+          "region": {
+            "type": "string",
+            "in": "path",
+            "description": "STACKIT region, e.g. eu01",
+            "required": true
+          },
+          "serverId": {
+            "type": "string",
+            "in": "path",
+            "description": "Server ID (UUID)",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "stop_server",
+      "name": "Stop Server",
+      "description": "Stop a server (returns 202 Accepted; completes asynchronously). Note: a stopped server remains on the hypervisor and is still charged full price for its attached resources",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://iaas.api.stackit.cloud/v2/projects/{projectId}/regions/{region}/servers/{serverId}/stop",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "STACKIT project ID (UUID)",
+            "required": true
+          },
+          "region": {
+            "type": "string",
+            "in": "path",
+            "description": "STACKIT region, e.g. eu01",
+            "required": true
+          },
+          "serverId": {
+            "type": "string",
+            "in": "path",
+            "description": "Server ID (UUID)",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "reboot_server",
+      "name": "Reboot Server",
+      "description": "Reboot a server (returns 202 Accepted; completes asynchronously); soft reboots ask the OS to shut down gracefully, hard reboots power-cycle",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://iaas.api.stackit.cloud/v2/projects/{projectId}/regions/{region}/servers/{serverId}/reboot",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "STACKIT project ID (UUID)",
+            "required": true
+          },
+          "region": {
+            "type": "string",
+            "in": "path",
+            "description": "STACKIT region, e.g. eu01",
+            "required": true
+          },
+          "serverId": {
+            "type": "string",
+            "in": "path",
+            "description": "Server ID (UUID)",
+            "required": true
+          },
+          "action": {
+            "type": "string",
+            "in": "query",
+            "description": "Reboot type: soft (graceful, default) or hard (power cycle)",
+            "default": "soft"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "project_overview",
+      "title": "Project overview",
+      "prompt": "List my STACKIT projects, then list the servers in the project and region I name, with status and machine type.",
+      "category": "devops",
+      "icon": "list"
+    },
+    {
+      "id": "sizing_check",
+      "title": "Machine type sizing",
+      "prompt": "Show me the STACKIT machine types available in my project and region and recommend one for a small web service.",
+      "category": "devops",
+      "icon": "search"
+    }
+  ],
+  "suggestedWith": ["github", "hetzner", "slack"],
+  "SETUP_GUIDE": {
+    "title": "STACKIT setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Get a STACKIT account and project",
+        "description": "STACKIT is a B2B cloud by Schwarz Digital — request an organization at https://www.stackit.de, then create a project in the STACKIT Portal (https://portal.stackit.cloud)."
+      },
+      {
+        "step": 2,
+        "title": "Create a service account with a key",
+        "description": "In the Portal, open your project > Service Accounts, create one, assign it a role (e.g. reader), and create a service account key (key flow). The legacy static token flow was removed on 17 December 2025."
+      },
+      {
+        "step": 3,
+        "title": "Obtain a short-lived access token",
+        "description": "Exchange a self-signed JWT (signed with the key's private RSA key) at the service account token endpoint, or simply run the STACKIT CLI: 'stackit auth activate-service-account --service-account-key-path key.json' and export the resulting access token."
+      },
+      {
+        "step": 4,
+        "title": "Set the environment variable",
+        "description": "Put the access token into your .env as STACKIT_SERVICE_ACCOUNT_TOKEN."
+      },
+      {
+        "step": 5,
+        "title": "Verify access",
+        "description": "Run List Projects with member set to the service account's email, then List Servers for a returned projectId in your region (e.g. eu01)."
+      }
+    ],
+    "notes": [
+      "Access tokens from the key flow are short-lived (refresh roughly every 10 minutes) — automate token renewal for long-running agents",
+      "List Projects requires at least one filter: containerParentId (organization/folder) or member (email)",
+      "The IaaS API v2 is the stable release; v1 is deprecated and will be removed after 1 March 2027",
+      "IaaS URLs are region-scoped via the {region} path segment, e.g. eu01"
+    ],
+    "documentation": "https://docs.stackit.cloud/developer-tools/stackit-api/"
+  }
+}

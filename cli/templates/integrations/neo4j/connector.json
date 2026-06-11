@@ -1,0 +1,170 @@
+{
+  "name": "neo4j",
+  "displayName": "Neo4j",
+  "icon": "neo4j.svg",
+  "description": "Run Cypher queries against a Neo4j Aura or self-hosted graph database via the Query API for graph data and GraphRAG workloads",
+  "auth": {
+    "type": "basic",
+    "usernameKey": "NEO4J_USERNAME",
+    "passwordKey": "NEO4J_PASSWORD",
+    "docsUrl": "https://neo4j.com/docs/query-api/current/authentication-authorization/",
+    "requiredApis": [
+      {
+        "name": "Neo4j Aura Console",
+        "enableUrl": "https://console.neo4j.io"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "NEO4J_USERNAME",
+      "description": "Neo4j database username (Aura instances default to 'neo4j'), used as the HTTP Basic username",
+      "required": true,
+      "sensitive": false,
+      "placeholder": "neo4j",
+      "docsUrl": "https://neo4j.com/docs/query-api/current/authentication-authorization/"
+    },
+    {
+      "name": "NEO4J_PASSWORD",
+      "description": "Neo4j database password (shown once when an Aura instance is created), used as the HTTP Basic password",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://neo4j.com/docs/query-api/current/authentication-authorization/"
+    },
+    {
+      "name": "NEO4J_HOST",
+      "description": "Neo4j host serving the Query API, e.g. xxxxxxxx.databases.neo4j.io for Aura or your-server:7474 for self-hosted — pass it as the host parameter of each tool",
+      "required": false,
+      "sensitive": false,
+      "placeholder": "xxxxxxxx.databases.neo4j.io",
+      "docsUrl": "https://neo4j.com/docs/query-api/current/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "run_cypher_query",
+      "name": "Run Cypher Query",
+      "description": "Execute a read-only Cypher query (MATCH ... RETURN) in an implicit transaction and get back fields and result rows — use for lookups, traversals, and GraphRAG retrieval. Note: the Query API does not enforce read-only access, so only submit read statements here (use a read-only database user to guarantee no writes)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{host}/db/{databaseName}/query/v2",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Neo4j host, e.g. xxxxxxxx.databases.neo4j.io for Aura (HTTPS on port 443) or your self-hosted server host",
+            "required": true
+          },
+          "databaseName": {
+            "type": "string",
+            "in": "path",
+            "description": "Database to query (Aura and default installs use 'neo4j')",
+            "default": "neo4j"
+          }
+        },
+        "body": {
+          "statement": {
+            "type": "string",
+            "description": "Cypher statement to execute, e.g. MATCH (n:Person {name: $name})-[:KNOWS]->(m) RETURN m.name — use $placeholders with the parameters field instead of inlining values",
+            "required": true
+          },
+          "parameters": {
+            "type": "object",
+            "description": "Values for $placeholders in the statement, e.g. { \"name\": \"Alice\" }"
+          }
+        },
+        "response": { "transform": "data" }
+      }
+    },
+    {
+      "id": "run_cypher_write",
+      "name": "Run Cypher Write",
+      "description": "Execute a Cypher statement that modifies the graph (CREATE, MERGE, SET, DELETE) in an implicit transaction",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{host}/db/{databaseName}/query/v2",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Neo4j host, e.g. xxxxxxxx.databases.neo4j.io for Aura (HTTPS on port 443) or your self-hosted server host",
+            "required": true
+          },
+          "databaseName": {
+            "type": "string",
+            "in": "path",
+            "description": "Database to write to (Aura and default installs use 'neo4j')",
+            "default": "neo4j"
+          }
+        },
+        "body": {
+          "statement": {
+            "type": "string",
+            "description": "Cypher write statement, e.g. MERGE (n:Person {name: $name, age: $age}) RETURN n — use $placeholders with the parameters field instead of inlining values",
+            "required": true
+          },
+          "parameters": {
+            "type": "object",
+            "description": "Values for $placeholders in the statement, e.g. { \"name\": \"Alice\", \"age\": 42 }"
+          },
+          "includeCounters": {
+            "type": "boolean",
+            "description": "Set true to include counters (nodes/relationships created, properties set) in the response"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "explore_graph",
+      "title": "Explore the graph",
+      "prompt": "Query my Neo4j database to show the node labels, relationship types, and a few sample nodes so I understand the graph model.",
+      "category": "data",
+      "icon": "search"
+    },
+    {
+      "id": "graph_question",
+      "title": "Answer from the graph",
+      "prompt": "Answer my question by writing and running a parameterized Cypher query against my Neo4j database, then explain the result.",
+      "category": "data",
+      "icon": "sparkles"
+    }
+  ],
+  "suggestedWith": ["openai", "anthropic", "voyage-ai"],
+  "SETUP_GUIDE": {
+    "title": "Neo4j Query API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Neo4j Aura instance",
+        "description": "Sign up at https://console.neo4j.io and create an AuraDB Free instance (no credit card required). Download or copy the generated password — it is shown only once. Self-hosted Neo4j 5.19+ also exposes the Query API."
+      },
+      {
+        "step": 2,
+        "title": "Find your host",
+        "description": "From the Aura console, copy the instance's connection URI (neo4j+s://xxxxxxxx.databases.neo4j.io). The host part (xxxxxxxx.databases.neo4j.io) is what tools take as the host parameter; store it in NEO4J_HOST for reference."
+      },
+      {
+        "step": 3,
+        "title": "Store credentials",
+        "description": "Add NEO4J_USERNAME=neo4j and NEO4J_PASSWORD=... to your .env file. The Query API authenticates with HTTP Basic auth using these values."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the Run Cypher Query tool with statement 'RETURN 1 AS ok' against database 'neo4j'. A 401 means wrong credentials; a connection error usually means the wrong host."
+      }
+    ],
+    "notes": [
+      "The Query API requires Neo4j 5.19+ (all Aura instances qualify); on self-managed instances below 5.25 it is disabled by default and must be enabled in the server configuration. Aura serves it over HTTPS on port 443",
+      "Self-hosted instances must expose HTTPS (port 7473 by default) for these tools, since tool URLs use https:// — include the port in the host parameter, e.g. my-server:7473",
+      "Always pass Cypher values via the parameters object ($placeholders) rather than string-concatenating them into the statement — this enables plan caching and prevents Cypher injection",
+      "Both tools run implicit (auto-commit) transactions; explicit multi-request transactions are not exposed",
+      "The Query API has no server-side read-only mode: Run Cypher Query is read-only by convention only, and write statements sent through it would execute. Connect with a read-only database user if you need a hard guarantee"
+    ],
+    "documentation": "https://neo4j.com/docs/query-api/current/"
+  }
+}

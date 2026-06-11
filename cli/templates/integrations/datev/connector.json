@@ -1,0 +1,150 @@
+{
+  "name": "datev",
+  "displayName": "DATEV",
+  "icon": "datev.svg",
+  "description": "Upload receipts and invoices to DATEV Unternehmen online (Belege online) and look up accessible clients via the DATEV accounting:documents API",
+  "category": "finance",
+  "auth": {
+    "type": "oauth2",
+    "provider": "datev",
+    "authorizationUrl": "https://login.datev.de/openid/authorize",
+    "tokenUrl": "https://api.datev.de/token",
+    "scopes": ["openid"],
+    "callbackPath": "/oauth/callback/datev",
+    "tokenAuthMethod": "basic",
+    "pkce": true,
+    "supportsRefreshToken": true,
+    "docsUrl": "https://developer.datev.de/en/",
+    "requiredApis": [
+      {
+        "name": "DATEV accounting:documents API (app registration in the DATEV Developer Portal)",
+        "enableUrl": "https://developer.datev.de/en/products"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "DATEV_CLIENT_ID",
+      "description": "OAuth client ID of your registered DATEV app",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.datev.de/en/"
+    },
+    {
+      "name": "DATEV_CLIENT_SECRET",
+      "description": "OAuth client secret of your registered DATEV app",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.datev.de/en/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_clients",
+      "name": "List Clients",
+      "description": "List the DATEV clients (Mandanten) the connected user may upload documents for, including each client's ID needed by the other tools",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://accounting-documents.api.datev.de/platform/v2/clients"
+      }
+    },
+    {
+      "id": "list_document_types",
+      "name": "List Document Types",
+      "description": "List the document types (e.g. incoming invoices, outgoing invoices, cash receipts) available in Belege online for a specific DATEV client, used to classify uploads",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://accounting-documents.api.datev.de/platform/v2/clients/{clientId}/document-types",
+        "params": {
+          "clientId": {
+            "type": "string",
+            "in": "path",
+            "description": "DATEV client ID from List Clients",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "upload_document",
+      "name": "Upload Document",
+      "description": "Upload a receipt or invoice file to DATEV Unternehmen online (Belege online) for a client so the tax advisor can process it for bookkeeping",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://accounting-documents.api.datev.de/platform/v2/clients/{clientId}/documents",
+        "contentType": "multipart/form-data",
+        "params": {
+          "clientId": {
+            "type": "string",
+            "in": "path",
+            "description": "DATEV client ID from List Clients",
+            "required": true
+          }
+        },
+        "body": {
+          "file": {
+            "type": "string",
+            "description": "Binary content of the document to upload (e.g. a PDF invoice), sent as the multipart 'file' part",
+            "required": true
+          },
+          "metadata": {
+            "type": "object",
+            "description": "Optional JSON metadata part, e.g. { \"document_type\": \"Rechnungseingang\", \"note\": \"...\" }. Use List Document Types to find valid document types."
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "upload_receipt",
+      "title": "Upload a receipt",
+      "prompt": "Upload this receipt to DATEV Unternehmen online for the right client so my tax advisor can book it.",
+      "category": "finance",
+      "icon": "upload"
+    },
+    {
+      "id": "list_datev_clients",
+      "title": "List DATEV clients",
+      "prompt": "Show me the DATEV clients I can upload documents for.",
+      "category": "finance",
+      "icon": "users"
+    }
+  ],
+  "suggestedWith": ["gmail", "drive", "slack"],
+  "SETUP_GUIDE": {
+    "title": "DATEV setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Register in the DATEV Developer Portal",
+        "description": "Create an account at https://developer.datev.de and register as a developer. DATEV API access is gated through their developer/partner program: browse the API catalog under 'Products', request access to the 'accounting:documents' API, and accept the DATEV interface agreement. DATEV reviews the request before granting credentials."
+      },
+      {
+        "step": 2,
+        "title": "Create an app and get OAuth credentials",
+        "description": "In the Developer Portal, create an app for the accounting:documents API. Register your redirect URI (your deployment URL + /oauth/callback/datev) and note the client ID and client secret. Set them as DATEV_CLIENT_ID and DATEV_CLIENT_SECRET. The API entitlements (which DATEV APIs your app may call) are bound to the app registration rather than to free-form OAuth scopes."
+      },
+      {
+        "step": 3,
+        "title": "Test against the DATEV sandbox",
+        "description": "The Developer Portal provides a sandbox environment with demo clients. The sandbox uses separate endpoints: authorization at https://login.datev.de/openidsandbox/authorize, tokens at https://sandbox-api.datev.de/token, and the documents API at https://accounting-documents.api.datev.de/platform-sandbox/v2. Sandbox access is granted with your developer registration, so you can develop without a production DATEV account."
+      },
+      {
+        "step": 4,
+        "title": "Go live",
+        "description": "Production use requires a completed DATEV go-live/approval process and an end user with DATEV Unternehmen online plus a DATEV login (DATEV SmartLogin or SmartCard). The end user authorizes your app via the OAuth consent flow; tokens are then issued for their DATEV clients."
+      }
+    ],
+    "notes": [
+      "DATEV's OAuth endpoints follow OpenID Connect; the discovery document is at https://login.datev.de/openid/.well-known/openid-configuration. The token endpoint expects HTTP Basic client authentication and PKCE (S256) is supported.",
+      "Most DATEV accounting interfaces (e.g. accounting:extf-files / Buchungsdatenservice) are XML/batch oriented and exchange EXTF format files rather than JSON. This connector deliberately covers only the small JSON/multipart REST surface of the accounting:documents API (client lookup, document types, document upload).",
+      "DATEV access tokens are short-lived; refresh tokens are issued and the session is bound to the DATEV user's login. Re-authorization is required when the refresh token expires.",
+      "The full accounting:documents API reference is only visible after logging in to the DATEV Developer Portal."
+    ],
+    "documentation": "https://developer.datev.de/en/"
+  }
+}

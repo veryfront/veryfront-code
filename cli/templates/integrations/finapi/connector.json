@@ -1,0 +1,212 @@
+{
+  "name": "finapi",
+  "displayName": "finAPI",
+  "icon": "finapi.svg",
+  "description": "Search finAPI's bank catalog, inspect client configuration, and provision end users for BaFin-regulated open banking access",
+  "category": "finance",
+  "auth": {
+    "type": "oauth2",
+    "grantType": "client_credentials",
+    "tokenUrl": "https://live.finapi.io/api/v2/oauth/token",
+    "tokenAuthMethod": "request_body",
+    "docsUrl": "https://docs.finapi.io/",
+    "requiredApis": [
+      {
+        "name": "finAPI Access client credentials",
+        "enableUrl": "https://www.finapi.io/en/contact-us/"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "FINAPI_CLIENT_ID",
+      "description": "finAPI Access client identifier issued with your license or sandbox registration",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://docs.finapi.io/"
+    },
+    {
+      "name": "FINAPI_CLIENT_SECRET",
+      "description": "finAPI Access client secret paired with the client identifier",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.finapi.io/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "search_banks",
+      "name": "Search Banks",
+      "description": "Search finAPI's database of supported banks by name, BLZ, BIC, or city, with interface and location filters",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://live.finapi.io/api/v2/banks",
+        "params": {
+          "search": {
+            "type": "string",
+            "in": "query",
+            "description": "Only banks whose name, BLZ, BIC, or city matches this search term"
+          },
+          "ids": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated list of bank identifiers to fetch"
+          },
+          "location": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated two-letter ISO 3166-1 country codes, e.g. DE,AT"
+          },
+          "supportedBankingInterfaces": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated banking interfaces to require: FINTS_SERVER, WEB_SCRAPER, XS2A"
+          },
+          "isTestBank": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Filter to test banks (true) or real banks (false)"
+          },
+          "order": {
+            "type": "string",
+            "in": "query",
+            "description": "Order results by id, name, blz, bic, or popularity, e.g. name,asc"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Result page (1-based)",
+            "default": 1
+          },
+          "perPage": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum number of records per page (max 500)",
+            "default": 20
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["banks"],
+            "collectionName": "banks",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "blz" },
+              { "name": "bic" },
+              { "name": "location" },
+              { "name": "city" },
+              { "name": "popularity" }
+            ],
+            "omitted": "interface capability details, TPP authentication groups, and login hint texts",
+            "outputFields": [{ "name": "paging", "kind": "object" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_bank",
+      "name": "Get Bank",
+      "description": "Retrieve a single bank from finAPI's catalog by its identifier, including supported interfaces and login requirements",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://live.finapi.io/api/v2/banks/{bankId}",
+        "params": {
+          "bankId": {
+            "type": "number",
+            "in": "path",
+            "description": "Identifier of the requested bank",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "get_client_configuration",
+      "name": "Get Client Configuration",
+      "description": "Get your finAPI client's configuration: token validity periods, callback URLs, enabled bank sets, and consent settings",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://live.finapi.io/api/v2/clientConfiguration"
+      }
+    },
+    {
+      "id": "create_user",
+      "name": "Create User",
+      "description": "Provision a new finAPI end user (one per application end user); user-level operations then authenticate with that user's own token",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://live.finapi.io/api/v2/users",
+        "body": {
+          "id": {
+            "type": "string",
+            "description": "User identifier (max 36 chars, letters, digits and -). Auto-generated if omitted"
+          },
+          "password": {
+            "type": "string",
+            "description": "User password (min 6, max 36 chars). A unique random value is generated if omitted"
+          },
+          "email": {
+            "type": "string",
+            "description": "User's email address"
+          },
+          "phone": {
+            "type": "string",
+            "description": "User's phone number"
+          },
+          "isAutoUpdateEnabled": {
+            "type": "boolean",
+            "description": "Whether the user's bank connections get updated by finAPI's automatic batch update"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "find_bank",
+      "title": "Find a bank",
+      "prompt": "Search finAPI for a German bank by name or BLZ and show which banking interfaces it supports.",
+      "category": "finance",
+      "icon": "search"
+    },
+    {
+      "id": "client_settings",
+      "title": "Client configuration",
+      "prompt": "Show my finAPI client configuration and summarize token validity periods and enabled bank sets.",
+      "category": "finance",
+      "icon": "settings"
+    }
+  ],
+  "suggestedWith": ["qonto", "sheets", "slack"],
+  "SETUP_GUIDE": {
+    "title": "finAPI setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Get client credentials",
+        "description": "Request finAPI Access credentials (client_id and client_secret) from finAPI at https://www.finapi.io/en/contact-us/. New customers start with a free sandbox client; the Live environment requires a license agreement."
+      },
+      {
+        "step": 2,
+        "title": "Set environment variables",
+        "description": "Add FINAPI_CLIENT_ID and FINAPI_CLIENT_SECRET to your .env."
+      },
+      {
+        "step": 3,
+        "title": "Verify access",
+        "description": "Run Get Client Configuration. Access tokens are minted automatically via the OAuth2 client_credentials grant against https://live.finapi.io/api/v2/oauth/token — no user login is involved."
+      }
+    ],
+    "notes": [
+      "This connector pins the Live environment (live.finapi.io). For sandbox testing, point a copy of the connector at sandbox.finapi.io — the token and API paths are identical. Live access may additionally be IP-restricted.",
+      "Most finAPI data endpoints (bank connections, accounts, transactions, securities) require a USER access token obtained per end user via the password grant. The client_credentials token used here only covers client-level endpoints: bank catalog search, client configuration, and user provisioning.",
+      "Users created on the Live instance count towards your finAPI license agreement."
+    ],
+    "documentation": "https://docs.finapi.io/"
+  }
+}

@@ -1,0 +1,140 @@
+{
+  "name": "mindee",
+  "displayName": "Mindee",
+  "icon": "mindee.svg",
+  "description": "Extract structured data from invoices, receipts, and other financial documents with Mindee's OCR API",
+  "category": "ai",
+  "auth": {
+    "type": "api-key",
+    "keyName": "MINDEE_API_KEY",
+    "headerName": "Authorization",
+    "headerPrefix": "Token",
+    "docsUrl": "https://docs.mindee.com/integrations/api-keys",
+    "requiredApis": [
+      {
+        "name": "Mindee API key",
+        "enableUrl": "https://platform.mindee.com"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "MINDEE_API_KEY",
+      "description": "Mindee API key from the Mindee platform (sent as 'Authorization: Token <key>')",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.mindee.com/integrations/api-keys"
+    }
+  ],
+  "tools": [
+    {
+      "id": "parse_invoice",
+      "name": "Parse Invoice",
+      "description": "Extract structured fields (supplier, customer, line items, totals, taxes, dates, payment details) from an invoice PDF or image using the Invoice OCR model. Consumes a page of your Mindee quota per call.",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.mindee.net/v1/products/mindee/invoices/v4/predict",
+        "contentType": "multipart/form-data",
+        "bodyMode": "form-data",
+        "body": {
+          "document": {
+            "type": "string",
+            "description": "The invoice to parse: either a publicly accessible HTTPS URL of the file, or the file's base64-encoded contents (PDF, JPEG, PNG, WEBP, TIFF, or HEIC)",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "document"
+        }
+      }
+    },
+    {
+      "id": "parse_receipt",
+      "name": "Parse Receipt",
+      "description": "Extract structured fields (merchant, date, time, category, line items, taxes, total amounts, tip) from an expense receipt photo or PDF using the Receipt OCR model. Consumes a page of your Mindee quota per call.",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.mindee.net/v1/products/mindee/expense_receipts/v5/predict",
+        "contentType": "multipart/form-data",
+        "bodyMode": "form-data",
+        "body": {
+          "document": {
+            "type": "string",
+            "description": "The receipt to parse: either a publicly accessible HTTPS URL of the file, or the file's base64-encoded contents (PDF, JPEG, PNG, WEBP, TIFF, or HEIC)",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "document"
+        }
+      }
+    },
+    {
+      "id": "parse_financial_document",
+      "name": "Parse Financial Document",
+      "description": "Parse a document that may be either an invoice or a receipt: the Financial Document model classifies it and returns the union of invoice and receipt fields. Use this when the document type is unknown. Consumes a page of your Mindee quota per call.",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.mindee.net/v1/products/mindee/financial_document/v1/predict",
+        "contentType": "multipart/form-data",
+        "bodyMode": "form-data",
+        "body": {
+          "document": {
+            "type": "string",
+            "description": "The document to parse: either a publicly accessible HTTPS URL of the file, or the file's base64-encoded contents (PDF, JPEG, PNG, WEBP, TIFF, or HEIC)",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "document"
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "extract_invoice",
+      "title": "Extract invoice data",
+      "prompt": "Parse this invoice with Mindee and summarize the supplier, invoice number, due date, line items, and total amount.",
+      "category": "finance",
+      "icon": "document"
+    },
+    {
+      "id": "log_receipt",
+      "title": "Log an expense receipt",
+      "prompt": "Parse this receipt with Mindee and give me the merchant, date, category, and total so I can log the expense.",
+      "category": "finance",
+      "icon": "receipt"
+    }
+  ],
+  "suggestedWith": ["quickbooks", "xero", "stripe"],
+  "SETUP_GUIDE": {
+    "title": "Mindee setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a free Mindee account",
+        "description": "Sign up at https://platform.mindee.com — no payment details required. The free plan includes a monthly page allowance, so you can start parsing documents immediately."
+      },
+      {
+        "step": 2,
+        "title": "Get your API key",
+        "description": "A development API key is generated for you as soon as your account exists. Find it in the Mindee platform under API Keys, and store it as MINDEE_API_KEY. It is sent on every request as 'Authorization: Token <key>'."
+      },
+      {
+        "step": 3,
+        "title": "Test with a sample document",
+        "description": "Run the Parse Invoice tool with a publicly accessible URL of a sample invoice PDF, or the file's base64-encoded contents, and check that structured fields come back."
+      }
+    ],
+    "notes": [
+      "The 'document' field accepts either a base64-encoded file or a publicly accessible HTTPS URL; URL inputs must be reachable without authentication",
+      "These tools call Mindee's V1 product APIs (api.mindee.net): Invoice v4, Receipt v5, and Financial Document v1; Mindee's newer model-based V2 platform (api-v2.mindee.net) uses per-account model IDs and is not covered here",
+      "Each predict call consumes pages from your plan's quota (multi-page PDFs consume one page per parsed page)"
+    ],
+    "documentation": "https://docs.mindee.com"
+  }
+}

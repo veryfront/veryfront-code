@@ -1,0 +1,466 @@
+{
+  "name": "woocommerce",
+  "displayName": "WooCommerce",
+  "icon": "woocommerce.svg",
+  "description": "Manage WooCommerce store orders, products, and customers through the WooCommerce REST API v3",
+  "category": "ecommerce",
+  "auth": {
+    "type": "basic",
+    "usernameKey": "WOOCOMMERCE_CONSUMER_KEY",
+    "passwordKey": "WOOCOMMERCE_CONSUMER_SECRET",
+    "docsUrl": "https://woocommerce.github.io/woocommerce-rest-api-docs/#authentication",
+    "requiredApis": [
+      {
+        "name": "WooCommerce REST API",
+        "enableUrl": "https://woocommerce.com/document/woocommerce-rest-api/"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "WOOCOMMERCE_CONSUMER_KEY",
+      "description": "WooCommerce REST API consumer key (starts with ck_), used as the HTTP Basic username",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://woocommerce.github.io/woocommerce-rest-api-docs/#rest-api-keys"
+    },
+    {
+      "name": "WOOCOMMERCE_CONSUMER_SECRET",
+      "description": "WooCommerce REST API consumer secret (starts with cs_), used as the HTTP Basic password",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://woocommerce.github.io/woocommerce-rest-api-docs/#rest-api-keys"
+    },
+    {
+      "name": "WOOCOMMERCE_STORE_DOMAIN",
+      "description": "Domain of the WordPress site hosting your WooCommerce store (e.g. shop.example.com); the REST API lives at https://<domain>/wp-json/wc/v3",
+      "required": true,
+      "sensitive": false,
+      "placeholder": "shop.example.com"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_orders",
+      "name": "List Orders",
+      "description": "List orders in the store with optional status, search, and date filters",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{storeDomain}/wp-json/wc/v3/orders",
+        "params": {
+          "storeDomain": {
+            "type": "string",
+            "in": "path",
+            "description": "WooCommerce store domain, e.g. shop.example.com",
+            "required": true
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by order status: any, pending, processing, on-hold, completed, cancelled, refunded, failed, or trash",
+            "default": "any"
+          },
+          "search": {
+            "type": "string",
+            "in": "query",
+            "description": "Limit results to orders matching a search string"
+          },
+          "after": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return orders created after this ISO 8601 date, e.g. 2026-01-01T00:00:00"
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of orders per page (1-100)",
+            "default": 25
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page of results to return",
+            "default": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "get_order",
+      "name": "Get Order",
+      "description": "Retrieve full details of a specific order, including line items, totals, and shipping",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{storeDomain}/wp-json/wc/v3/orders/{orderId}",
+        "params": {
+          "storeDomain": {
+            "type": "string",
+            "in": "path",
+            "description": "WooCommerce store domain, e.g. shop.example.com",
+            "required": true
+          },
+          "orderId": {
+            "type": "number",
+            "in": "path",
+            "description": "Numeric order ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "update_order_status",
+      "name": "Update Order Status",
+      "description": "Update an order's status (e.g. mark as completed) and optionally add a customer note",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://{storeDomain}/wp-json/wc/v3/orders/{orderId}",
+        "params": {
+          "storeDomain": {
+            "type": "string",
+            "in": "path",
+            "description": "WooCommerce store domain, e.g. shop.example.com",
+            "required": true
+          },
+          "orderId": {
+            "type": "number",
+            "in": "path",
+            "description": "Numeric order ID",
+            "required": true
+          }
+        },
+        "body": {
+          "status": {
+            "type": "string",
+            "description": "New order status: pending, processing, on-hold, completed, cancelled, refunded, or failed",
+            "required": true
+          },
+          "customer_note": {
+            "type": "string",
+            "description": "Optional note shown to the customer"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_products",
+      "name": "List Products",
+      "description": "List products in the catalog with optional search, status, and SKU filters",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{storeDomain}/wp-json/wc/v3/products",
+        "params": {
+          "storeDomain": {
+            "type": "string",
+            "in": "path",
+            "description": "WooCommerce store domain, e.g. shop.example.com",
+            "required": true
+          },
+          "search": {
+            "type": "string",
+            "in": "query",
+            "description": "Limit results to products matching a search string"
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by product status: any, draft, pending, private, or publish",
+            "default": "any"
+          },
+          "sku": {
+            "type": "string",
+            "in": "query",
+            "description": "Limit results to products with a specific SKU"
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of products per page (1-100)",
+            "default": 25
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page of results to return",
+            "default": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "create_product",
+      "name": "Create Product",
+      "description": "Create a new product in the store catalog",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{storeDomain}/wp-json/wc/v3/products",
+        "params": {
+          "storeDomain": {
+            "type": "string",
+            "in": "path",
+            "description": "WooCommerce store domain, e.g. shop.example.com",
+            "required": true
+          }
+        },
+        "body": {
+          "name": {
+            "type": "string",
+            "description": "Product name",
+            "required": true
+          },
+          "type": {
+            "type": "string",
+            "description": "Product type: simple, grouped, external, or variable (defaults to simple)"
+          },
+          "regular_price": {
+            "type": "string",
+            "description": "Regular price as a decimal string, e.g. \"19.99\""
+          },
+          "description": {
+            "type": "string",
+            "description": "Full product description (HTML allowed)"
+          },
+          "short_description": {
+            "type": "string",
+            "description": "Short product description shown in listings"
+          },
+          "sku": {
+            "type": "string",
+            "description": "Unique stock keeping unit"
+          },
+          "status": {
+            "type": "string",
+            "description": "Product status: draft, pending, private, or publish (defaults to publish)"
+          },
+          "categories": {
+            "type": "array",
+            "description": "Category assignments as objects with category id, e.g. [{\"id\": 9}]"
+          },
+          "images": {
+            "type": "array",
+            "description": "Product images as objects with src URL, e.g. [{\"src\": \"https://example.com/image.jpg\"}]"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_product",
+      "name": "Get Product",
+      "description": "Retrieve full details of a specific product, including price, stock, and categories",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{storeDomain}/wp-json/wc/v3/products/{productId}",
+        "params": {
+          "storeDomain": {
+            "type": "string",
+            "in": "path",
+            "description": "WooCommerce store domain, e.g. shop.example.com",
+            "required": true
+          },
+          "productId": {
+            "type": "number",
+            "in": "path",
+            "description": "Numeric product ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "update_product",
+      "name": "Update Product",
+      "description": "Update an existing product's price, stock, status, or descriptions",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://{storeDomain}/wp-json/wc/v3/products/{productId}",
+        "params": {
+          "storeDomain": {
+            "type": "string",
+            "in": "path",
+            "description": "WooCommerce store domain, e.g. shop.example.com",
+            "required": true
+          },
+          "productId": {
+            "type": "number",
+            "in": "path",
+            "description": "Numeric product ID to update",
+            "required": true
+          }
+        },
+        "body": {
+          "name": {
+            "type": "string",
+            "description": "Updated product name"
+          },
+          "regular_price": {
+            "type": "string",
+            "description": "Regular price as a decimal string, e.g. \"19.99\""
+          },
+          "sale_price": {
+            "type": "string",
+            "description": "Sale price as a decimal string; set to an empty string to remove the sale"
+          },
+          "manage_stock": {
+            "type": "boolean",
+            "description": "Enable stock management at the product level (required for stock_quantity to apply)"
+          },
+          "stock_quantity": {
+            "type": "number",
+            "description": "Stock quantity (only used when manage_stock is true)"
+          },
+          "status": {
+            "type": "string",
+            "description": "Product status: draft, pending, private, or publish"
+          },
+          "description": {
+            "type": "string",
+            "description": "Full product description (HTML allowed)"
+          },
+          "short_description": {
+            "type": "string",
+            "description": "Short product description shown in listings"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_sales_report",
+      "name": "Get Sales Report",
+      "description": "Get a sales report with totals for revenue, orders, items, and customers over a period or date range",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{storeDomain}/wp-json/wc/v3/reports/sales",
+        "params": {
+          "storeDomain": {
+            "type": "string",
+            "in": "path",
+            "description": "WooCommerce store domain, e.g. shop.example.com",
+            "required": true
+          },
+          "period": {
+            "type": "string",
+            "in": "query",
+            "description": "Report period: week, month, last_month, or year (defaults to today; ignored when date_min/date_max are set)"
+          },
+          "date_min": {
+            "type": "string",
+            "in": "query",
+            "description": "Return sales for a specific start date, YYYY-MM-DD"
+          },
+          "date_max": {
+            "type": "string",
+            "in": "query",
+            "description": "Return sales for a specific end date, YYYY-MM-DD"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_customers",
+      "name": "List Customers",
+      "description": "List store customers with optional email, role, and search filters",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{storeDomain}/wp-json/wc/v3/customers",
+        "params": {
+          "storeDomain": {
+            "type": "string",
+            "in": "path",
+            "description": "WooCommerce store domain, e.g. shop.example.com",
+            "required": true
+          },
+          "email": {
+            "type": "string",
+            "in": "query",
+            "description": "Limit results to the customer with this exact email address"
+          },
+          "search": {
+            "type": "string",
+            "in": "query",
+            "description": "Limit results to customers matching a search string"
+          },
+          "role": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by user role, e.g. customer, subscriber, or all",
+            "default": "customer"
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of customers per page (1-100)",
+            "default": 25
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page of results to return",
+            "default": 1
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "recent_orders",
+      "title": "Recent orders",
+      "prompt": "Show me the most recent orders in my WooCommerce store and flag any that are still pending or on hold.",
+      "category": "ecommerce"
+    },
+    {
+      "id": "fulfill_order",
+      "title": "Mark order completed",
+      "prompt": "Find an order by its number in my WooCommerce store and mark it as completed.",
+      "category": "ecommerce"
+    },
+    {
+      "id": "catalog_overview",
+      "title": "Catalog overview",
+      "prompt": "Give me an overview of my WooCommerce product catalog, including drafts that are not yet published.",
+      "category": "analytics"
+    }
+  ],
+  "suggestedWith": ["stripe", "slack", "email"],
+  "SETUP_GUIDE": {
+    "title": "WooCommerce setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Get a WooCommerce store",
+        "description": "You need a WordPress site with the WooCommerce plugin active and HTTPS enabled. For testing, spin up a free local site with WordPress Studio or a hosted trial (e.g. WooExpress) and install WooCommerce from Plugins > Add New."
+      },
+      {
+        "step": 2,
+        "title": "Open the REST API key screen",
+        "description": "In the WordPress admin, go to WooCommerce > Settings > Advanced > REST API and click Add key."
+      },
+      {
+        "step": 3,
+        "title": "Generate the key pair",
+        "description": "Enter a description, pick the owning user, and choose the permission level: Read for read-only access, or Read/Write if the agent should update orders and create products. Click Generate API key."
+      },
+      {
+        "step": 4,
+        "title": "Copy the credentials",
+        "description": "Copy the Consumer key (ck_...) into WOOCOMMERCE_CONSUMER_KEY and the Consumer secret (cs_...) into WOOCOMMERCE_CONSUMER_SECRET. The secret is shown only once. Set WOOCOMMERCE_STORE_DOMAIN to your store's domain, e.g. shop.example.com."
+      }
+    ],
+    "notes": [
+      "The REST API is served from your own store domain at https://<store-domain>/wp-json/wc/v3; every tool takes the store domain as the storeDomain parameter.",
+      "Keys generated with Read permission will receive 401 errors on write tools like update_order_status and create_product.",
+      "Credentials are sent via HTTP Basic auth, so the store must be served over HTTPS.",
+      "If your site uses non-pretty permalinks, the wp-json route may be unavailable; enable pretty permalinks under Settings > Permalinks."
+    ],
+    "documentation": "https://woocommerce.github.io/woocommerce-rest-api-docs/"
+  }
+}

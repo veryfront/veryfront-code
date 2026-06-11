@@ -254,6 +254,6 @@
       "Permissions are configured on the app in the Developer Hub; the authorize URL carries no scope parameter",
       "Requests default to the API version pinned on your app; you can override per-request with the Intercom-Version header"
     ],
-    "documentation": "https://developers.intercom.com/docs/references/rest-api/"
+    "documentation": "https://developers.intercom.com/docs/references/introduction"
   }
 }

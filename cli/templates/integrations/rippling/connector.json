@@ -1,0 +1,227 @@
+{
+  "name": "rippling",
+  "displayName": "Rippling",
+  "icon": "rippling.svg",
+  "description": "Access Rippling HR data — employees, departments, teams, and leave requests — via the Rippling platform API",
+  "category": "hr",
+  "auth": {
+    "type": "api-key",
+    "keyName": "RIPPLING_API_TOKEN",
+    "headerName": "Authorization",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://developer.rippling.com/documentation/base-api",
+    "requiredApis": [
+      {
+        "name": "Rippling API Access",
+        "enableUrl": "https://developer.rippling.com"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "RIPPLING_API_TOKEN",
+      "description": "Rippling API token (Bearer). Issued for custom API integrations by your Rippling admin, or as an app access token for approved Rippling apps",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.rippling.com/documentation/base-api"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_employees",
+      "name": "List Employees",
+      "description": "List active employees in the Rippling company with pagination",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.rippling.com/platform/api/employees",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of employees to return per page (max 100)",
+            "default": 25
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of records to skip for pagination",
+            "default": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "get_employee",
+      "name": "Get Employee",
+      "description": "Get a single employee's record (title, department, work location, employment type) by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.rippling.com/platform/api/employees/{employeeId}",
+        "params": {
+          "employeeId": {
+            "type": "string",
+            "in": "path",
+            "description": "The employee's Rippling role ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_departments",
+      "name": "List Departments",
+      "description": "List the company's departments",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.rippling.com/platform/api/departments",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of departments to return per page (max 100)",
+            "default": 25
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of records to skip for pagination",
+            "default": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "list_teams",
+      "name": "List Teams",
+      "description": "List the company's teams",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.rippling.com/platform/api/teams",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of teams to return per page (max 100)",
+            "default": 25
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of records to skip for pagination",
+            "default": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "list_leave_requests",
+      "name": "List Leave Requests",
+      "description": "List leave (time off) requests with optional status and date filtering",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.rippling.com/platform/api/leave_requests",
+        "params": {
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by request status, e.g. PENDING, APPROVED, or REJECTED"
+          },
+          "startDate": {
+            "type": "string",
+            "in": "query",
+            "description": "Only requests starting on or after this date (YYYY-MM-DD)"
+          },
+          "endDate": {
+            "type": "string",
+            "in": "query",
+            "description": "Only requests ending on or before this date (YYYY-MM-DD)"
+          }
+        }
+      }
+    },
+    {
+      "id": "process_leave_request",
+      "name": "Process Leave Request",
+      "description": "Approve or decline a pending leave request",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.rippling.com/platform/api/leave_requests/{leaveRequestId}/process",
+        "params": {
+          "leaveRequestId": {
+            "type": "string",
+            "in": "path",
+            "description": "ID of the leave request to process (from List Leave Requests)",
+            "required": true
+          },
+          "action": {
+            "type": "string",
+            "in": "query",
+            "description": "Decision to apply: approve or decline",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "headcount_overview",
+      "title": "Headcount overview",
+      "prompt": "List employees from Rippling and summarize headcount by department and team.",
+      "category": "hr",
+      "icon": "users"
+    },
+    {
+      "id": "who_is_out",
+      "title": "Who is out",
+      "prompt": "Check Rippling for approved leave requests overlapping this week and tell me who is out of office.",
+      "category": "hr",
+      "icon": "calendar"
+    },
+    {
+      "id": "employee_lookup",
+      "title": "Employee lookup",
+      "prompt": "Look up an employee I specify in Rippling and summarize their role, department, and work location.",
+      "category": "hr",
+      "icon": "user"
+    }
+  ],
+  "suggestedWith": ["slack", "gmail"],
+  "SETUP_GUIDE": {
+    "title": "Rippling API setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Confirm API access",
+        "description": "Rippling API access is not open by default. Customers can obtain an API token for custom integrations through their Rippling account (API access may require a plan add-on); software vendors register an app at https://developer.rippling.com and receive tokens once approved."
+      },
+      {
+        "step": 2,
+        "title": "Get your API token",
+        "description": "As a Rippling admin, create or retrieve your company API token from the Rippling admin console (Settings → Company API / custom integration settings), or use the access token issued for your approved app integration."
+      },
+      {
+        "step": 3,
+        "title": "Store the token",
+        "description": "Add RIPPLING_API_TOKEN=<your token> to your .env file. Requests are sent to https://api.rippling.com/platform/api with an Authorization: Bearer header."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Employees tool. The token's scopes (granted at creation/approval) determine which resources are readable; a 403 means the token lacks the scope for that endpoint."
+      }
+    ],
+    "notes": [
+      "This connector targets the token-authenticated platform API (api.rippling.com/platform/api); Rippling's newer REST API for App Shop partners uses OAuth app installs and is not covered here",
+      "List endpoints paginate with limit/offset (recommended max limit 100)",
+      "Returned data is limited by the scopes granted to your token or app"
+    ],
+    "documentation": "https://developer.rippling.com/documentation/base-api"
+  }
+}

@@ -1,0 +1,303 @@
+{
+  "name": "north-data",
+  "displayName": "North Data",
+  "icon": "north-data.svg",
+  "description": "Search and retrieve company, Handelsregister, and financial data for firms in Germany, Austria, Switzerland, and other European countries via the North Data Data API",
+  "category": "data",
+  "auth": {
+    "type": "api-key",
+    "keyName": "NORTHDATA_API_KEY",
+    "headerName": "X-Api-Key",
+    "docsUrl": "https://northdata.github.io/doc/api/",
+    "requiredApis": [
+      {
+        "name": "North Data Data API (Premium)",
+        "enableUrl": "https://www.northdata.de/_data"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "NORTHDATA_API_KEY",
+      "description": "North Data API key (format XXXX-XXXX), sent as the X-Api-Key header",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://github.com/northdata/api/blob/master/doc/data-api-userguide/data-api-userguide.md"
+    }
+  ],
+  "tools": [
+    {
+      "id": "search_companies",
+      "name": "Search Companies",
+      "description": "Fuzzy universal search for companies (and optionally persons) by free-text query, e.g. 'Siemens, München'. Use this to find a company before fetching its details.",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://www.northdata.de/_api/search/v1/universal",
+        "params": {
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "Search string; may combine name and city, e.g. 'Müller GmbH, Hamburg'",
+            "required": true
+          },
+          "domain": {
+            "type": "string",
+            "in": "query",
+            "description": "Restrict result domain: 'company' or 'person'; leave empty for both"
+          },
+          "countries": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Two-letter ISO country codes to search in, e.g. DE, AT, CH"
+          },
+          "status": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Company status filter: active, terminated, liquidation"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["results"],
+            "collectionName": "results",
+            "itemFields": [
+              { "name": "company", "kind": "object" },
+              { "name": "person", "kind": "object" }
+            ],
+            "omitted": "match scores and provider-specific payload fields",
+            "outputFields": []
+          }
+        }
+      }
+    },
+    {
+      "id": "get_company",
+      "name": "Get Company",
+      "description": "Retrieve a single company's profile (register info, address, status, financial indicators). Identify it either by name + address (city), or by registerId + registerCity, or by companyId from a previous search.",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://www.northdata.de/_api/company/v1/company",
+        "params": {
+          "name": {
+            "type": "string",
+            "in": "query",
+            "description": "Full company name including legal form, e.g. 'Beispiel GmbH' (combine with address)"
+          },
+          "address": {
+            "type": "string",
+            "in": "query",
+            "description": "Company address; specifying just the city is sufficient (combine with name)"
+          },
+          "registerId": {
+            "type": "string",
+            "in": "query",
+            "description": "Commercial register ID, e.g. 'HRB 12345' (combine with registerCity)"
+          },
+          "registerCity": {
+            "type": "string",
+            "in": "query",
+            "description": "City of the register court, e.g. 'Hamburg' (combine with registerId)"
+          },
+          "companyId": {
+            "type": "string",
+            "in": "query",
+            "description": "North Data internal company ID from a previous search result"
+          },
+          "fuzzyMatch": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Enable approximate name matching",
+            "default": false
+          }
+        }
+      }
+    },
+    {
+      "id": "power_search",
+      "name": "Power Search",
+      "description": "Structured company search with filters for location radius, industry segment, legal form, status, and countries. Billed per unique company returned, so keep filters narrow.",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://www.northdata.de/_api/search/v1/power",
+        "params": {
+          "keywords": {
+            "type": "string",
+            "in": "query",
+            "description": "Keywords matched against company name, subject, and segment"
+          },
+          "address": {
+            "type": "string",
+            "in": "query",
+            "description": "Address at any precision (city, street, ...) as the geographic center"
+          },
+          "maxDistanceKm": {
+            "type": "number",
+            "in": "query",
+            "description": "Search radius in km around the given address"
+          },
+          "countries": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Two-letter ISO country codes, e.g. DE, AT, CH"
+          },
+          "status": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Company status filter: active, terminated, liquidation"
+          },
+          "segmentCodes": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Industry segment classification codes"
+          },
+          "legalForm": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Legal form filter, e.g. GmbH, AG, UG"
+          }
+        }
+      }
+    },
+    {
+      "id": "suggest",
+      "name": "Suggest Companies",
+      "description": "Auto-complete suggestions for a partial company or person name. Free of charge — suggested companies do not count toward the monthly quota, so use this as a cheap first pass before Get Company.",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://www.northdata.de/_api/search/v1/suggest",
+        "params": {
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "Partial name to auto-complete, e.g. 'Siemen'",
+            "required": true
+          },
+          "domain": {
+            "type": "string",
+            "in": "query",
+            "description": "Restrict suggestions to 'company' or 'person'; omit for both"
+          },
+          "countries": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Two-letter ISO country codes, e.g. DE, AT, CH"
+          },
+          "status": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Company status filter: active, terminated, liquidation"
+          },
+          "history": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Also match former company names"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum suggestions to return"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_person",
+      "name": "Get Person",
+      "description": "Look up a person (officer, shareholder, representative) by name and address or by a person ID from a previous search result. Billed like company lookups.",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://www.northdata.de/_api/person/v1/person",
+        "params": {
+          "firstName": {
+            "type": "string",
+            "in": "query",
+            "description": "First name (combine with lastName)"
+          },
+          "lastName": {
+            "type": "string",
+            "in": "query",
+            "description": "Last name (combine with firstName)"
+          },
+          "address": {
+            "type": "string",
+            "in": "query",
+            "description": "Address or city to disambiguate common names"
+          },
+          "birthDate": {
+            "type": "string",
+            "in": "query",
+            "description": "Birth date (YYYY-MM-DD) to disambiguate"
+          },
+          "personId": {
+            "type": "string",
+            "in": "query",
+            "description": "North Data internal person ID from a previous search result (alternative to name lookup)"
+          },
+          "history": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include historical data"
+          },
+          "relations": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include company relations (roles, shareholdings)"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "company_lookup",
+      "title": "Look up a company",
+      "prompt": "Look up the company '<name>, <city>' in North Data and summarize its register entry, status, and key financial indicators.",
+      "category": "research",
+      "icon": "search"
+    },
+    {
+      "id": "regional_industry_scan",
+      "title": "Regional industry scan",
+      "prompt": "Use North Data power search to find active companies of a given industry within 25 km of a city and list name, city, and legal form.",
+      "category": "research",
+      "icon": "map"
+    }
+  ],
+  "suggestedWith": ["hubspot", "notion", "sheets"],
+  "SETUP_GUIDE": {
+    "title": "North Data API setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Get a North Data Premium account with API access",
+        "description": "The Data API is part of North Data's paid Data Services. Request access (a trial can be arranged) at https://www.northdata.de/_data or via sales."
+      },
+      {
+        "step": 2,
+        "title": "Obtain your API key",
+        "description": "After activation you receive an API key in the format XXXX-XXXX from North Data."
+      },
+      {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Set NORTHDATA_API_KEY in your .env. The key is sent as the X-Api-Key HTTP header on every request."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run Get Company with name='<a known company>' and address='<its city>' and confirm a JSON profile is returned."
+      }
+    ],
+    "notes": [
+      "Only successful queries are billed; search endpoints are billed per unique company returned — keep power search filters narrow",
+      "In Germany, company name plus city uniquely identify a company; alternatively use registerId + registerCity (e.g. 'HRB 12345' + 'Hamburg')",
+      "The API serves JSON by default and is also reachable under www.northdata.com with the same paths"
+    ],
+    "documentation": "https://northdata.github.io/doc/api/"
+  }
+}

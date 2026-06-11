@@ -108,16 +108,16 @@ const extension: ExtensionFactory = () => ({
 
 Common capability types:
 
-| Type | Scope field | Deno permission |
-| --- | --- | --- |
-| `fs:read` | `paths: string[]` | `--allow-read[=paths]` |
-| `fs:write` | `paths: string[]` | `--allow-write[=paths]` |
-| `net:outbound` | `hosts: string[]` | `--allow-net[=hosts]` |
-| `net:listen` | `host`, `ports[]` | `--allow-net=host:port,...` |
-| `env:read` | `keys: string[]` | `--allow-env[=keys]` |
-| `process:spawn` | `commands: string[]` | `--allow-run[=commands]` |
-| `native:ffi` | none | `--allow-ffi` |
-| `sandbox:execute` | `tools: string[]` | Audit only |
+| Type              | Scope field          | Deno permission             |
+| ----------------- | -------------------- | --------------------------- |
+| `fs:read`         | `paths: string[]`    | `--allow-read[=paths]`      |
+| `fs:write`        | `paths: string[]`    | `--allow-write[=paths]`     |
+| `net:outbound`    | `hosts: string[]`    | `--allow-net[=hosts]`       |
+| `net:listen`      | `host`, `ports[]`    | `--allow-net=host:port,...` |
+| `env:read`        | `keys: string[]`     | `--allow-env[=keys]`        |
+| `process:spawn`   | `commands: string[]` | `--allow-run[=commands]`    |
+| `native:ffi`      | none                 | `--allow-ffi`               |
+| `sandbox:execute` | `tools: string[]`    | Audit only                  |
 
 For first-party extensions, mirror the same `capabilities` array in `deno.json`
 under `veryfront.capabilities`.

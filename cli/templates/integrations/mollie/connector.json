@@ -1,0 +1,337 @@
+{
+  "name": "mollie",
+  "displayName": "Mollie",
+  "icon": "mollie.svg",
+  "description": "Access Mollie payments, customers, and refunds to monitor and operate payment flows",
+  "category": "finance",
+  "auth": {
+    "type": "api-key",
+    "keyName": "MOLLIE_API_KEY",
+    "headerName": "Authorization",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://docs.mollie.com/reference/authentication",
+    "requiredApis": [
+      {
+        "name": "Mollie Dashboard API keys",
+        "enableUrl": "https://my.mollie.com/dashboard/developers/api-keys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "MOLLIE_API_KEY",
+      "description": "Mollie API key (starts with live_ for production or test_ for test mode)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.mollie.com/reference/authentication",
+      "placeholder": "test_..."
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_payments",
+      "name": "List Payments",
+      "description": "List Mollie payments in reverse chronological order to review recent transactions",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.mollie.com/v2/payments",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of payments to return (1-250)",
+            "default": 50
+          },
+          "from": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination offset: payment ID (tr_...) to start the result set from"
+          },
+          "sort": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort order by creation date: asc or desc (default desc)"
+          }
+        },
+        "response": {
+          "transform": "_embedded.payments"
+        }
+      }
+    },
+    {
+      "id": "get_payment",
+      "name": "Get Payment",
+      "description": "Retrieve a single Mollie payment with its current status and details",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.mollie.com/v2/payments/{paymentId}",
+        "params": {
+          "paymentId": {
+            "type": "string",
+            "in": "path",
+            "description": "Mollie payment ID, e.g. tr_xxx",
+            "required": true
+          },
+          "embed": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated related resources to embed, such as refunds or chargebacks"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_payment",
+      "name": "Create Payment",
+      "description": "Create a Mollie payment and get a checkout URL to send to the customer",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.mollie.com/v2/payments",
+        "body": {
+          "amount": {
+            "type": "object",
+            "description": "Amount object with currency (ISO 4217 code) and value as a string with exact decimals, e.g. {\"currency\": \"EUR\", \"value\": \"10.00\"}",
+            "required": true
+          },
+          "description": {
+            "type": "string",
+            "description": "Payment description shown on the customer's statement where possible (max 255 characters)",
+            "required": true
+          },
+          "redirectUrl": {
+            "type": "string",
+            "description": "URL the customer is redirected to after completing the payment",
+            "required": true
+          },
+          "webhookUrl": {
+            "type": "string",
+            "description": "Webhook URL Mollie calls with payment status changes"
+          },
+          "method": {
+            "type": "string",
+            "description": "Specific payment method to use, such as ideal, creditcard, or paypal; omit to let the customer choose"
+          },
+          "customerId": {
+            "type": "string",
+            "description": "Mollie customer ID (cst_...) to attach the payment to"
+          },
+          "metadata": {
+            "type": "object",
+            "description": "Custom metadata stored with the payment (about 1 kB max)"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_customers",
+      "name": "List Customers",
+      "description": "List Mollie customers to find customer IDs for payments or refund context",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.mollie.com/v2/customers",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of customers to return (1-250)",
+            "default": 50
+          },
+          "from": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination offset: customer ID (cst_...) to start the result set from"
+          }
+        },
+        "response": {
+          "transform": "_embedded.customers"
+        }
+      }
+    },
+    {
+      "id": "list_payment_methods",
+      "name": "List Payment Methods",
+      "description": "List the payment methods enabled on your Mollie profile, e.g. to pick a valid method for a new payment",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.mollie.com/v2/methods",
+        "params": {
+          "sequenceType": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter methods by payment sequence: oneoff, first, or recurring"
+          },
+          "locale": {
+            "type": "string",
+            "in": "query",
+            "description": "Locale used to order methods by country preference and translate names, e.g. nl_NL"
+          },
+          "include": {
+            "type": "string",
+            "in": "query",
+            "description": "Additional data to include, e.g. issuers for iDEAL banks"
+          }
+        },
+        "response": {
+          "transform": "_embedded.methods"
+        }
+      }
+    },
+    {
+      "id": "create_payment_link",
+      "name": "Create Payment Link",
+      "description": "Create a shareable hosted payment link the customer can open to pay, without building a checkout",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.mollie.com/v2/payment-links",
+        "body": {
+          "description": {
+            "type": "string",
+            "description": "Short description of the payment link, visible in the Dashboard (max 255 characters)",
+            "required": true
+          },
+          "amount": {
+            "type": "object",
+            "description": "Fixed amount with currency and value as a string, e.g. {\"currency\": \"EUR\", \"value\": \"25.00\"}; omit to let the customer enter an amount"
+          },
+          "redirectUrl": {
+            "type": "string",
+            "description": "URL the customer is redirected to after completing the payment"
+          },
+          "webhookUrl": {
+            "type": "string",
+            "description": "Webhook URL Mollie calls with payment status changes"
+          },
+          "expiresAt": {
+            "type": "string",
+            "description": "ISO 8601 timestamp when the link expires; omit to keep it valid indefinitely"
+          },
+          "reusable": {
+            "type": "boolean",
+            "description": "Whether the link can be paid multiple times (defaults to false: a single payment)"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_payment_refunds",
+      "name": "List Payment Refunds",
+      "description": "List the refunds created for a payment to review refund status and history",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.mollie.com/v2/payments/{paymentId}/refunds",
+        "params": {
+          "paymentId": {
+            "type": "string",
+            "in": "path",
+            "description": "Mollie payment ID (tr_...) whose refunds to list",
+            "required": true
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of refunds to return (1-250)",
+            "default": 50
+          },
+          "from": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination offset: refund ID (re_...) to start the result set from"
+          }
+        },
+        "response": {
+          "transform": "_embedded.refunds"
+        }
+      }
+    },
+    {
+      "id": "create_refund",
+      "name": "Create Refund",
+      "description": "Refund all or part of a Mollie payment back to the customer",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.mollie.com/v2/payments/{paymentId}/refunds",
+        "params": {
+          "paymentId": {
+            "type": "string",
+            "in": "path",
+            "description": "Mollie payment ID (tr_...) to refund",
+            "required": true
+          }
+        },
+        "body": {
+          "amount": {
+            "type": "object",
+            "description": "Amount to refund with currency and value as a string, e.g. {\"currency\": \"EUR\", \"value\": \"5.00\"}",
+            "required": true
+          },
+          "description": {
+            "type": "string",
+            "description": "Refund description that may be shown to the customer (max 255 characters)"
+          },
+          "metadata": {
+            "type": "object",
+            "description": "Custom metadata stored with the refund"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "recent_payments",
+      "title": "Recent payments",
+      "prompt": "List my most recent Mollie payments and summarize their statuses and amounts.",
+      "category": "finance",
+      "icon": "payment"
+    },
+    {
+      "id": "payment_status",
+      "title": "Check payment status",
+      "prompt": "Look up a Mollie payment by ID and tell me its current status, amount, and method.",
+      "category": "finance",
+      "icon": "search"
+    },
+    {
+      "id": "issue_refund",
+      "title": "Issue a refund",
+      "prompt": "Refund a Mollie payment: confirm the payment details with me first, then create the refund.",
+      "category": "finance",
+      "icon": "currency"
+    }
+  ],
+  "suggestedWith": ["slack", "sheets", "gmail"],
+  "SETUP_GUIDE": {
+    "title": "Mollie setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Mollie account",
+        "description": "Sign up at https://www.mollie.com. You can use test mode immediately after signup, before your account is fully activated for live payments."
+      },
+      {
+        "step": 2,
+        "title": "Get your API key",
+        "description": "In the Mollie Dashboard, go to Developers > API keys. Each website profile has a paired test key (test_...) and live key (live_...). Copy the key right away; treat it as a secret."
+      },
+      {
+        "step": 3,
+        "title": "Configure the environment variable",
+        "description": "Set MOLLIE_API_KEY to your test_ key while developing. Payments made with a test_ key are simulated and never charge real money. Switch to your live_ key once your account is approved for live payments."
+      }
+    ],
+    "notes": [
+      "Test mode and live mode are selected by the key prefix: test_ keys hit the same https://api.mollie.com/v2 endpoints but operate on simulated data.",
+      "Amounts are strings with the exact number of decimals for the currency, e.g. \"10.00\" for EUR.",
+      "Set a webhookUrl on payments in production so you receive status changes; polling get_payment also works for agent workflows."
+    ],
+    "documentation": "https://docs.mollie.com/reference"
+  }
+}

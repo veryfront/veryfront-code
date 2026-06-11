@@ -136,6 +136,77 @@ const integrationNames = [
   "together-ai",
   "vercel",
   "weaviate",
+  "bamboohr",
+  "cal-com",
+  "customer-io",
+  "discord",
+  "docusign",
+  "gocardless",
+  "google-bigquery",
+  "google-contacts",
+  "help-scout",
+  "telegram",
+  "whatsapp",
+  "woocommerce",
+  "zoho-crm",
+  "adyen",
+  "azure-blob-storage",
+  "bigcommerce",
+  "brave-search",
+  "chargebee",
+  "databricks",
+  "deel",
+  "front",
+  "google-cloud-storage",
+  "google-forms",
+  "gorgias",
+  "greenhouse",
+  "guru",
+  "mollie",
+  "paddle",
+  "pandadoc",
+  "personio",
+  "portkey",
+  "power-bi",
+  "ramp",
+  "rippling",
+  "serpapi",
+  "shopware",
+  "surveymonkey",
+  "tally",
+  "wix",
+  "workable",
+  "azure",
+  "azure-document-intelligence",
+  "billbee",
+  "cleverreach",
+  "datev",
+  "factorial",
+  "finapi",
+  "gcp",
+  "hetzner",
+  "ionos",
+  "klarna",
+  "lexoffice",
+  "mindee",
+  "moss",
+  "neo4j",
+  "north-data",
+  "qonto",
+  "sendcloud",
+  "sevdesk",
+  "skribble",
+  "stackit",
+  "trusted-shops",
+  "unstructured",
+  "unzer",
+  "voyage-ai",
+  "xentral",
+  "alphavantage",
+  "daytona",
+  "e2b",
+  "polygon",
+  "sprites",
 ] as const;
 
 export const getIntegrationNameSchema = defineSchema((v) => v.enum(integrationNames));
@@ -213,6 +284,11 @@ export const getOAuthConfigSchema = defineSchema((v) =>
      * DD-APPLICATION-KEY → DD_APP_KEY).
      */
     additionalHeaders: v.record(v.string(), v.string()).optional(),
+    /**
+     * api-key: send the credential as this query parameter instead of a header,
+     * for providers without header auth (e.g. SerpApi's api_key).
+     */
+    queryParamName: v.string().optional(),
     /** basic: project env vars holding the HTTP Basic username and password. */
     usernameKey: v.string().optional(),
     passwordKey: v.string().optional(),
@@ -250,6 +326,13 @@ export const getIntegrationEndpointBodyFieldSchema = defineSchema((v) =>
     description: v.string(),
     required: v.boolean().optional(),
     default: v.unknown().optional(),
+    // "base64": the string value is base64-decoded before sending. With
+    // bodyMode "form-data" the field becomes a binary part; with "raw" the
+    // decoded bytes become the request body.
+    encoding: v.enum(["base64"]).optional(),
+    // For form-data binary parts: the name of the body field that holds the
+    // part's filename. That field is consumed (not sent as its own part).
+    partFilenameField: v.string().optional(),
   })
 );
 export const IntegrationEndpointBodyFieldSchema = lazySchema(getIntegrationEndpointBodyFieldSchema);
@@ -304,7 +387,11 @@ export const getIntegrationEndpointSchema = defineSchema((v) =>
     // sent as the entire request body. For APIs that take arbitrary flat payloads
     // (e.g. Salesforce sObject writes, ServiceNow table records). Default: each
     // body field becomes a key of a JSON object.
-    bodyMode: v.enum(["passthrough"]).optional(),
+    // "form-data": body fields are sent as multipart/form-data parts in
+    // declaration order; fields with encoding "base64" become binary parts.
+    // "raw": body declares exactly one field whose value is sent verbatim as
+    // the request body (base64-decoded when encoding is set), with contentType.
+    bodyMode: v.enum(["passthrough", "form-data", "raw"]).optional(),
     contentType: v.string().optional(),
     response: v.object({
       transform: v.string().optional(),

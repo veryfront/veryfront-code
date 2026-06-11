@@ -1,0 +1,353 @@
+{
+  "name": "cleverreach",
+  "displayName": "CleverReach",
+  "icon": "cleverreach.svg",
+  "description": "Manage CleverReach recipient groups, subscribers, and email mailings for newsletter campaigns",
+  "category": "marketing",
+  "auth": {
+    "type": "oauth2",
+    "provider": "cleverreach",
+    "authorizationUrl": "https://rest.cleverreach.com/oauth/authorize.php",
+    "tokenUrl": "https://rest.cleverreach.com/oauth/token.php",
+    "additionalAuthParams": {
+      "grant": "basic"
+    },
+    "callbackPath": "/oauth/callback/cleverreach",
+    "tokenAuthMethod": "request_body",
+    "supportsRefreshToken": true,
+    "docsUrl": "https://developers.cleverreach.com/api/authentication/",
+    "requiredApis": [
+      {
+        "name": "CleverReach OAuth app (Account > Extras > REST API)",
+        "enableUrl": "https://eu.cleverreach.com/admin/"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "CLEVERREACH_CLIENT_ID",
+      "description": "CleverReach OAuth app Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developers.cleverreach.com/api/authentication/"
+    },
+    {
+      "name": "CLEVERREACH_CLIENT_SECRET",
+      "description": "CleverReach OAuth app Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developers.cleverreach.com/api/authentication/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_groups",
+      "name": "List Groups",
+      "description": "List CleverReach groups (recipient lists) so agents can find a group ID before reading or adding recipients",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://rest.cleverreach.com/v3/groups",
+        "params": {
+          "order": {
+            "type": "string",
+            "in": "query",
+            "description": "Order-by statement, such as 'created ASC', 'created DESC', 'changed ASC', or 'changed DESC'"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_group_receivers",
+      "name": "List Group Receivers",
+      "description": "List the receivers (recipients) of a CleverReach group, with paging and email filters",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://rest.cleverreach.com/v3/groups/{groupId}/receivers",
+        "params": {
+          "groupId": {
+            "type": "string",
+            "in": "path",
+            "description": "CleverReach group (recipient list) ID",
+            "required": true
+          },
+          "pagesize": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of receivers per page (max 5000)",
+            "default": 50
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number, zero-based",
+            "default": 0
+          },
+          "detail": {
+            "type": "number",
+            "in": "query",
+            "description": "Detail depth, bitwise combinable (0: none, 1: events, 2: orders, 4: tags)"
+          },
+          "email_list": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated receiver emails to filter for, such as 'foo@bar.com,bar@foo.com'"
+          },
+          "order_by": {
+            "type": "string",
+            "in": "query",
+            "description": "Field to order by, append 'asc' or 'desc' with a space"
+          }
+        }
+      }
+    },
+    {
+      "id": "add_receiver",
+      "name": "Add Receiver",
+      "description": "Add (subscribe) a new receiver to a CleverReach group",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://rest.cleverreach.com/v3/groups/{groupId}/receivers",
+        "params": {
+          "groupId": {
+            "type": "string",
+            "in": "path",
+            "description": "CleverReach group (recipient list) ID to add the receiver to",
+            "required": true
+          }
+        },
+        "body": {
+          "email": {
+            "type": "string",
+            "description": "Email address of the receiver",
+            "required": true
+          },
+          "registered": {
+            "type": "number",
+            "description": "Unix timestamp of registration; provide the current time for a new receiver"
+          },
+          "activated": {
+            "type": "number",
+            "description": "Unix timestamp of activation; set to mark the receiver as active (for example after double opt-in)"
+          },
+          "source": {
+            "type": "string",
+            "description": "Origin identifier describing where the receiver came from"
+          },
+          "attributes": {
+            "type": "object",
+            "description": "Group-local attribute values keyed by attribute name"
+          },
+          "global_attributes": {
+            "type": "object",
+            "description": "Account-global attribute values keyed by attribute name, such as firstname and lastname"
+          },
+          "tags": {
+            "type": "array",
+            "description": "Tags to attach to the receiver"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_mailings",
+      "name": "List Mailings",
+      "description": "List CleverReach mailings (email campaigns) filtered by state, such as drafts or finished mailings",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://rest.cleverreach.com/v3/mailings",
+        "params": {
+          "state": {
+            "type": "string",
+            "in": "query",
+            "description": "State of the mailings to return, such as all, draft, running, or finished"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of mailings to return (max 1000; max 100 when state is not 'all')",
+            "default": 25
+          },
+          "channel_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return mailings of this channel"
+          },
+          "start": {
+            "type": "number",
+            "in": "query",
+            "description": "Filter by start time (Unix timestamp; interpretation depends on state)"
+          },
+          "end": {
+            "type": "number",
+            "in": "query",
+            "description": "Filter by end time (Unix timestamp; interpretation depends on state)"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number, zero-based; only effective when state is not 'all'"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_mailing",
+      "name": "Create Mailing Draft",
+      "description": "Create a new CleverReach mailing as a draft with subject, sender, and HTML/text content; sending is triggered separately",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://rest.cleverreach.com/v3/mailings",
+        "body": {
+          "name": {
+            "type": "string",
+            "description": "Internal name of the mailing",
+            "required": true
+          },
+          "subject": {
+            "type": "string",
+            "description": "Subject line of the email",
+            "required": true
+          },
+          "sender_name": {
+            "type": "string",
+            "description": "Name of the sender",
+            "required": true
+          },
+          "sender_email": {
+            "type": "string",
+            "description": "Sender email address",
+            "required": true
+          },
+          "content": {
+            "type": "object",
+            "description": "Mail content definition, such as { \"type\": \"html/text\", \"html\": \"<html>...\", \"text\": \"...\" }"
+          },
+          "receivers": {
+            "type": "object",
+            "description": "Receiver definition, such as { \"groups\": [\"<groupId>\"] } and optional filter"
+          },
+          "settings": {
+            "type": "object",
+            "description": "Mailing settings, such as editor, open/link tracking, and unsubscribe options"
+          },
+          "tags": {
+            "type": "array",
+            "description": "Tags for the mailing"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_mailing",
+      "name": "Get Mailing",
+      "description": "Get a single mailing by ID, e.g. to inspect a draft created with Create Mailing Draft",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://rest.cleverreach.com/v3/mailings/{mailingId}",
+        "params": {
+          "mailingId": {
+            "type": "string",
+            "in": "path",
+            "description": "Mailing ID from List Mailings or Create Mailing Draft",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "deactivate_receiver",
+      "name": "Deactivate Receiver",
+      "description": "Deactivate (unsubscribe) a receiver in a group by ID or email — the counterpart to Add Receiver for unsubscribe handling",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://rest.cleverreach.com/v3/groups/{groupId}/receivers/{receiverId}/deactivate",
+        "params": {
+          "groupId": {
+            "type": "string",
+            "in": "path",
+            "description": "Group (list) ID the receiver belongs to",
+            "required": true
+          },
+          "receiverId": {
+            "type": "string",
+            "in": "path",
+            "description": "Receiver ID or email address",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "get_group_stats",
+      "name": "Get Group Stats",
+      "description": "Get list health statistics for a group: active, inactive, and bounced receiver counts",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://rest.cleverreach.com/v3/groups/{groupId}/stats",
+        "params": {
+          "groupId": {
+            "type": "string",
+            "in": "path",
+            "description": "Group (list) ID",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "subscriber_overview",
+      "title": "Subscriber overview",
+      "prompt": "List my CleverReach groups and summarize each list, then show the most recent receivers of the largest group.",
+      "category": "marketing",
+      "icon": "users"
+    },
+    {
+      "id": "draft_newsletter",
+      "title": "Draft a newsletter",
+      "prompt": "Create a CleverReach mailing draft for my main recipient group with a subject and HTML content I describe, and report the draft ID.",
+      "category": "marketing",
+      "icon": "mail"
+    }
+  ],
+  "suggestedWith": [
+    "hubspot",
+    "sheets",
+    "slack"
+  ],
+  "SETUP_GUIDE": {
+    "title": "CleverReach setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a CleverReach account",
+        "description": "Sign up at cleverreach.com — the free Lite plan (up to 250 recipients) is enough for development and testing."
+      },
+      {
+        "step": 2,
+        "title": "Create an OAuth app",
+        "description": "In your CleverReach account go to Account > Extras > REST API and create an OAuth app. Note the Client ID and Client Secret it contains, and register your redirect (callback) URL."
+      },
+      {
+        "step": 3,
+        "title": "Store the credentials and connect",
+        "description": "Set CLEVERREACH_CLIENT_ID and CLEVERREACH_CLIENT_SECRET, then complete the OAuth authorization-code flow: the user logs in at the CleverReach consent screen and the returned code is exchanged for an access token."
+      }
+    ],
+    "notes": [
+      "The authorization request must include the extra parameter grant=basic alongside client_id, response_type=code, and redirect_uri.",
+      "Access tokens are long-lived (expires_in in the token response, for example 31536000 seconds) and a refresh_token is issued for renewing them via grant_type=refresh_token.",
+      "Each OAuth token is scoped to the CleverReach account that authorized the app; the app's permissions are configured on the OAuth app itself rather than via per-request scopes."
+    ],
+    "documentation": "https://developers.cleverreach.com/"
+  }
+}

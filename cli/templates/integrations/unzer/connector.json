@@ -1,0 +1,295 @@
+{
+  "name": "unzer",
+  "displayName": "Unzer",
+  "icon": "unzer.svg",
+  "description": "Inspect Unzer payments and charges and create direct charges and refunds via the Unzer Payment API",
+  "auth": {
+    "type": "basic",
+    "usernameKey": "UNZER_PRIVATE_KEY",
+    "passwordKey": "UNZER_API_PASSWORD",
+    "docsUrl": "https://docs.unzer.com/server-side-integration/api-basics/authentication/",
+    "requiredApis": [
+      {
+        "name": "Unzer Insights (API keys)",
+        "enableUrl": "https://insights.unzer.com/"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "UNZER_PRIVATE_KEY",
+      "description": "Unzer private API key (s-priv-... for sandbox, p-priv-... for production), used as the HTTP Basic username",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.unzer.com/server-side-integration/api-basics/authentication/"
+    },
+    {
+      "name": "UNZER_API_PASSWORD",
+      "description": "HTTP Basic password for the Unzer API — always empty, leave as the default empty string",
+      "required": false,
+      "sensitive": false,
+      "default": "",
+      "docsUrl": "https://docs.unzer.com/server-side-integration/api-basics/authentication/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "get_payment",
+      "name": "Get Payment",
+      "description": "Retrieve a payment resource with its state, amounts (total, charged, canceled, remaining), and linked transactions",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.unzer.com/v1/payments/{paymentId}",
+        "params": {
+          "paymentId": {
+            "type": "string",
+            "in": "path",
+            "description": "Payment ID (e.g. s-pay-1) or your order ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "get_charge",
+      "name": "Get Charge",
+      "description": "Retrieve a specific charge transaction of a payment, including amount, status, and processing details",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.unzer.com/v1/payments/{paymentId}/charges/{chargeId}",
+        "params": {
+          "paymentId": {
+            "type": "string",
+            "in": "path",
+            "description": "Payment ID (e.g. s-pay-1)",
+            "required": true
+          },
+          "chargeId": {
+            "type": "string",
+            "in": "path",
+            "description": "Charge ID within the payment (e.g. s-chg-1)",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_charge",
+      "name": "Create Charge",
+      "description": "Directly charge a payment type (one-step payment without prior authorization) using a payment type ID",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.unzer.com/v1/payments/charges",
+        "body": {
+          "amount": {
+            "type": "number",
+            "description": "Charge amount in the currency's major units, e.g. 49.99",
+            "required": true
+          },
+          "currency": {
+            "type": "string",
+            "description": "ISO 4217 currency code, e.g. EUR",
+            "required": true
+          },
+          "resources": {
+            "type": "object",
+            "description": "Linked resources; must contain the payment type ID, e.g. {\"typeId\": \"s-crd-...\"}, and may include customerId",
+            "required": true
+          },
+          "returnUrl": {
+            "type": "string",
+            "description": "URL the customer is redirected to after completing the payment (required for redirect payment methods)"
+          },
+          "orderId": {
+            "type": "string",
+            "description": "Your own order ID to correlate the payment"
+          },
+          "paymentReference": {
+            "type": "string",
+            "description": "Reference text shown on the customer's statement"
+          }
+        }
+      }
+    },
+    {
+      "id": "refund_charge",
+      "name": "Refund Charge",
+      "description": "Cancel (refund) a charge fully or partially, returning money to the customer",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.unzer.com/v1/payments/{paymentId}/charges/{chargeId}/cancels",
+        "params": {
+          "paymentId": {
+            "type": "string",
+            "in": "path",
+            "description": "Payment ID (e.g. s-pay-1)",
+            "required": true
+          },
+          "chargeId": {
+            "type": "string",
+            "in": "path",
+            "description": "Charge ID to refund (e.g. s-chg-1)",
+            "required": true
+          }
+        },
+        "body": {
+          "amount": {
+            "type": "number",
+            "description": "Amount to refund in major units; omit to refund the full charge"
+          },
+          "paymentReference": {
+            "type": "string",
+            "description": "Reference text for the refund shown to the customer"
+          }
+        }
+      }
+    },
+    {
+      "id": "authorize_payment",
+      "name": "Authorize Payment",
+      "description": "Reserve funds on a payment type without charging yet (first step of the two-step authorize-then-charge flow, e.g. charge on shipment); reservations are held for about 7 days",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.unzer.com/v1/payments/authorize",
+        "body": {
+          "amount": {
+            "type": "number",
+            "description": "Authorization amount in the currency's major units, e.g. 49.99",
+            "required": true
+          },
+          "currency": {
+            "type": "string",
+            "description": "ISO 4217 currency code, e.g. EUR",
+            "required": true
+          },
+          "resources": {
+            "type": "object",
+            "description": "Linked resources; must contain the payment type ID, e.g. {\"typeId\": \"s-crd-...\"}, and may include customerId",
+            "required": true
+          },
+          "returnUrl": {
+            "type": "string",
+            "description": "URL the customer is redirected to after completing the payment (required for redirect payment methods)"
+          },
+          "orderId": {
+            "type": "string",
+            "description": "Your own order ID to correlate the payment"
+          },
+          "paymentReference": {
+            "type": "string",
+            "description": "Reference text shown on the customer's statement"
+          }
+        }
+      }
+    },
+    {
+      "id": "charge_authorization",
+      "name": "Charge Authorization",
+      "description": "Capture a previously authorized payment, fully (empty body) or partially (with amount) — the second step of the authorize-then-charge flow",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.unzer.com/v1/payments/{paymentId}/charges",
+        "params": {
+          "paymentId": {
+            "type": "string",
+            "in": "path",
+            "description": "Payment ID of the authorized payment (e.g. s-pay-1)",
+            "required": true
+          }
+        },
+        "body": {
+          "amount": {
+            "type": "number",
+            "description": "Amount to capture in major units; omit to capture the full authorized amount"
+          },
+          "paymentReference": {
+            "type": "string",
+            "description": "Reference text shown on the customer's statement"
+          }
+        }
+      }
+    },
+    {
+      "id": "cancel_authorization",
+      "name": "Cancel Authorization",
+      "description": "Cancel (reverse) an uncaptured authorization fully or partially, releasing the reserved funds — distinct from refunding a charge",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.unzer.com/v1/payments/{paymentId}/authorize/cancels",
+        "params": {
+          "paymentId": {
+            "type": "string",
+            "in": "path",
+            "description": "Payment ID of the authorized payment (e.g. s-pay-1)",
+            "required": true
+          }
+        },
+        "body": {
+          "amount": {
+            "type": "number",
+            "description": "Amount to reverse in major units; omit to cancel the entire authorization"
+          },
+          "paymentReference": {
+            "type": "string",
+            "description": "Reference text for the reversal"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "payment_status",
+      "title": "Check payment status",
+      "prompt": "Look up an Unzer payment I specify and summarize its state and the total, charged, canceled, and remaining amounts.",
+      "category": "finance",
+      "icon": "payment"
+    },
+    {
+      "id": "refund_payment",
+      "title": "Refund a charge",
+      "prompt": "Refund a charge on an Unzer payment I specify and confirm the refunded amount.",
+      "category": "finance",
+      "icon": "currency"
+    }
+  ],
+  "suggestedWith": ["stripe", "paypal", "klarna"],
+  "SETUP_GUIDE": {
+    "title": "Unzer Payment API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Get Unzer API keys",
+        "description": "Request a free test account at https://docs.unzer.com/ (or sign an Unzer contract for production). You receive a key pair per environment: a public key (s-pub-... / p-pub-...) and a private key (s-priv-... / p-priv-...)."
+      },
+      {
+        "step": 2,
+        "title": "Set environment variables",
+        "description": "Add UNZER_PRIVATE_KEY=s-priv-... (sandbox) or p-priv-... (production) to your .env. Leave UNZER_API_PASSWORD empty — the API authenticates with HTTP Basic using the private key as the username and an empty password."
+      },
+      {
+        "step": 3,
+        "title": "Create a payment type",
+        "description": "Charges require a payment type ID (e.g. s-crd-... for a card) created client-side via Unzer UI components or the payment types API, so that raw card data never touches your server."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run Get Payment with a known payment ID, or create a small test charge in sandbox with a test payment type ID."
+      }
+    ],
+    "notes": [
+      "Never use the public key (s-pub-/p-pub-) for server-side calls; only the private key authenticates this API. Keep it secret.",
+      "Sandbox keys (s-priv-...) and production keys (p-priv-...) both target https://api.unzer.com — the key prefix determines the environment.",
+      "Amounts are in the currency's major units (e.g. 49.99 EUR)."
+    ],
+    "documentation": "https://docs.unzer.com/server-side-integration/api-basics/"
+  }
+}

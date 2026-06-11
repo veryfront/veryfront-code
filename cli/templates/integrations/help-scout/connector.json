@@ -1,0 +1,448 @@
+{
+  "name": "help-scout",
+  "displayName": "Help Scout",
+  "icon": "help-scout.svg",
+  "description": "Read Help Scout mailboxes, conversations, and customers, and reply to or create support conversations",
+  "category": "support",
+  "auth": {
+    "type": "oauth2",
+    "provider": "help-scout",
+    "authorizationUrl": "https://secure.helpscout.net/authentication/authorizeClientApplication",
+    "tokenUrl": "https://api.helpscout.net/v2/oauth2/token",
+    "scopes": [],
+    "callbackPath": "/oauth/callback/help-scout",
+    "tokenAuthMethod": "request_body",
+    "supportsRefreshToken": true,
+    "docsUrl": "https://developer.helpscout.com/mailbox-api/overview/authentication/",
+    "requiredApis": [
+      {
+        "name": "Help Scout My Apps OAuth application",
+        "enableUrl": "https://secure.helpscout.net/"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "HELPSCOUT_CLIENT_ID",
+      "description": "Help Scout OAuth App ID (from My Apps)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.helpscout.com/mailbox-api/overview/authentication/"
+    },
+    {
+      "name": "HELPSCOUT_CLIENT_SECRET",
+      "description": "Help Scout OAuth App Secret (from My Apps)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.helpscout.com/mailbox-api/overview/authentication/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_mailboxes",
+      "name": "List Mailboxes",
+      "description": "List Help Scout mailboxes (inboxes) so agents can find a mailbox ID before reading conversations",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.helpscout.net/v2/mailboxes",
+        "params": {
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number to fetch",
+            "default": 1
+          }
+        },
+        "response": {
+          "transform": "_embedded.mailboxes"
+        }
+      }
+    },
+    {
+      "id": "list_conversations",
+      "name": "List Conversations",
+      "description": "List Help Scout conversations, optionally filtered by mailbox, status, tag, or assignee",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.helpscout.net/v2/conversations",
+        "params": {
+          "mailbox": {
+            "type": "number",
+            "in": "query",
+            "description": "Filter by mailbox (inbox) ID"
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by status: active (default), open, pending, closed, spam, or all"
+          },
+          "tag": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by tag name; comma-separate multiple tags"
+          },
+          "assigned_to": {
+            "type": "number",
+            "in": "query",
+            "description": "Filter by assigned Help Scout user ID"
+          },
+          "modifiedSince": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return conversations modified after this ISO 8601 timestamp, e.g. 2026-05-04T12:00:03Z"
+          },
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "Advanced search query, e.g. (subject:\"refund\")"
+          },
+          "sortField": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort field, such as createdAt, modifiedAt, or number"
+          },
+          "sortOrder": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort direction: asc or desc"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number to fetch",
+            "default": 1
+          }
+        },
+        "response": {
+          "transform": "_embedded.conversations"
+        }
+      }
+    },
+    {
+      "id": "get_conversation",
+      "name": "Get Conversation",
+      "description": "Get a Help Scout conversation by ID, including its message threads",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.helpscout.net/v2/conversations/{conversationId}",
+        "params": {
+          "conversationId": {
+            "type": "string",
+            "in": "path",
+            "description": "Help Scout conversation ID",
+            "required": true
+          },
+          "embed": {
+            "type": "string",
+            "in": "query",
+            "description": "Sub-entities to include; set to threads to return the full message history",
+            "default": "threads"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_customers",
+      "name": "List Customers",
+      "description": "List Help Scout customers, optionally filtered by mailbox, name, or a search query",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.helpscout.net/v2/customers",
+        "params": {
+          "mailbox": {
+            "type": "number",
+            "in": "query",
+            "description": "Filter customers by mailbox (inbox) ID"
+          },
+          "firstName": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by customer first name"
+          },
+          "lastName": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by customer last name"
+          },
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "Advanced customer search query, e.g. (email:\"user@example.com\")"
+          },
+          "sortField": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort field, such as createdAt, modifiedAt, firstName, or lastName"
+          },
+          "sortOrder": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort direction: asc or desc"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number to fetch",
+            "default": 1
+          }
+        },
+        "response": {
+          "transform": "_embedded.customers"
+        }
+      }
+    },
+    {
+      "id": "list_users",
+      "name": "List Users",
+      "description": "List Help Scout users (team members) so agents can find user IDs for assignment and reply attribution",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.helpscout.net/v2/users",
+        "params": {
+          "email": {
+            "type": "string",
+            "in": "query",
+            "description": "Look up a user by email address (exact match)"
+          },
+          "mailbox": {
+            "type": "number",
+            "in": "query",
+            "description": "Only return users with access to this mailbox (inbox) ID"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number to fetch",
+            "default": 1
+          }
+        },
+        "response": {
+          "transform": "_embedded.users"
+        }
+      }
+    },
+    {
+      "id": "add_note",
+      "name": "Add Note",
+      "description": "Add an internal note to a conversation - visible to the team only, never emailed to the customer",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.helpscout.net/v2/conversations/{conversationId}/notes",
+        "params": {
+          "conversationId": {
+            "type": "string",
+            "in": "path",
+            "description": "Help Scout conversation ID to add the note to",
+            "required": true
+          }
+        },
+        "body": {
+          "text": {
+            "type": "string",
+            "description": "Note text",
+            "required": true
+          },
+          "user": {
+            "type": "number",
+            "description": "ID of the Help Scout user adding the note (defaults to the authorizing user)"
+          }
+        }
+      }
+    },
+    {
+      "id": "update_tags",
+      "name": "Update Tags",
+      "description": "Replace the tag list of a conversation, e.g. to label it during triage. Send the full list: tags omitted from the payload are removed.",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://api.helpscout.net/v2/conversations/{conversationId}/tags",
+        "params": {
+          "conversationId": {
+            "type": "string",
+            "in": "path",
+            "description": "Help Scout conversation ID to tag",
+            "required": true
+          }
+        },
+        "body": {
+          "tags": {
+            "type": "array",
+            "description": "Complete list of tag names for the conversation, e.g. [\"billing\", \"vip\"]. New tags are created automatically; an empty array removes all tags.",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_reply",
+      "name": "Reply to Conversation",
+      "description": "Send a reply on an existing Help Scout conversation, optionally changing its status",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.helpscout.net/v2/conversations/{conversationId}/reply",
+        "params": {
+          "conversationId": {
+            "type": "string",
+            "in": "path",
+            "description": "Help Scout conversation ID to reply on",
+            "required": true
+          }
+        },
+        "body": {
+          "customer": {
+            "type": "object",
+            "description": "Customer being replied to, identified by id or email, e.g. {\"email\":\"user@example.com\"}",
+            "required": true
+          },
+          "text": {
+            "type": "string",
+            "description": "Reply body text",
+            "required": true
+          },
+          "user": {
+            "type": "number",
+            "description": "ID of the Help Scout user sending the reply (defaults to the authorizing user)"
+          },
+          "status": {
+            "type": "string",
+            "description": "Optionally set the conversation status after replying: active, open, pending, closed, or spam"
+          },
+          "draft": {
+            "type": "boolean",
+            "description": "Create the reply as a draft instead of sending it"
+          },
+          "cc": {
+            "type": "array",
+            "description": "Email addresses to CC"
+          },
+          "bcc": {
+            "type": "array",
+            "description": "Email addresses to BCC"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_conversation",
+      "name": "Create Conversation",
+      "description": "Create a new Help Scout conversation in a mailbox with an initial thread",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.helpscout.net/v2/conversations",
+        "body": {
+          "subject": {
+            "type": "string",
+            "description": "Conversation subject",
+            "required": true
+          },
+          "mailboxId": {
+            "type": "number",
+            "description": "ID of the mailbox (inbox) to create the conversation in",
+            "required": true
+          },
+          "type": {
+            "type": "string",
+            "description": "Conversation type: email, chat, or phone",
+            "required": true
+          },
+          "status": {
+            "type": "string",
+            "description": "Conversation status: active, pending, or closed",
+            "required": true
+          },
+          "customer": {
+            "type": "object",
+            "description": "Customer the conversation is with, identified by id or email, e.g. {\"email\":\"user@example.com\"}",
+            "required": true
+          },
+          "threads": {
+            "type": "array",
+            "description": "At least one thread, e.g. [{\"type\":\"reply\",\"customer\":{\"email\":\"user@example.com\"},\"text\":\"Hello\"}]",
+            "required": true
+          },
+          "tags": {
+            "type": "array",
+            "description": "Tags to apply to the conversation"
+          },
+          "assignTo": {
+            "type": "number",
+            "description": "Help Scout user ID to assign the conversation to"
+          },
+          "autoReply": {
+            "type": "boolean",
+            "description": "Send the mailbox auto-reply to the customer (requires a customer thread)"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "triage_inbox",
+      "title": "Triage the inbox",
+      "prompt": "List active Help Scout conversations, group them by topic, and suggest which need attention first.",
+      "category": "support",
+      "icon": "search"
+    },
+    {
+      "id": "draft_replies",
+      "title": "Draft replies",
+      "prompt": "Read the latest open Help Scout conversations and draft suggested replies for each.",
+      "category": "support",
+      "icon": "message"
+    },
+    {
+      "id": "customer_history",
+      "title": "Customer history",
+      "prompt": "Find a Help Scout customer by email and summarize their recent conversations.",
+      "category": "support",
+      "icon": "user"
+    }
+  ],
+  "suggestedWith": [
+    "slack",
+    "gmail",
+    "linear"
+  ],
+  "SETUP_GUIDE": {
+    "title": "Help Scout setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Help Scout account",
+        "description": "Sign up at https://www.helpscout.com/ — a free trial works for development. Create at least one Inbox (mailbox) so the API has data to return."
+      },
+      {
+        "step": 2,
+        "title": "Create an OAuth app",
+        "description": "In Help Scout, go to Your Profile > My Apps (sign in at https://secure.helpscout.net/) and choose Create My App. Set the Redirection URL to your app's callback URL (the /oauth/callback/help-scout path on your deployment)."
+      },
+      {
+        "step": 3,
+        "title": "Copy the app credentials",
+        "description": "Copy the App ID into HELPSCOUT_CLIENT_ID and the App Secret into HELPSCOUT_CLIENT_SECRET."
+      },
+      {
+        "step": 4,
+        "title": "Connect and authorize",
+        "description": "Complete the OAuth flow with a Help Scout user who has access to the mailboxes you want agents to read. Access is granted at the app level — the Mailbox API does not use granular scopes."
+      }
+    ],
+    "notes": [
+      "Access tokens expire after 2 days (172,800 seconds); the refresh token returned by the Authorization Code flow is used to obtain new ones automatically.",
+      "The Mailbox API has no scope system — the connected user's permissions determine which mailboxes and conversations are visible.",
+      "List endpoints return HAL+JSON with results under _embedded and page-based pagination via the page query parameter.",
+      "Replies sent via the API are delivered to the customer as real emails — use the draft flag while testing."
+    ],
+    "documentation": "https://developer.helpscout.com/mailbox-api/"
+  }
+}
