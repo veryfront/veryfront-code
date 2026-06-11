@@ -7,12 +7,25 @@
 import {
   CIRCULAR_DEPENDENCY_ERROR,
   EXTENSION_CONFLICT_ERROR,
+  EXTENSION_SETUP_TIMEOUT_ERROR,
   EXTENSION_VALIDATION_ERROR,
 } from "./errors.ts";
 import { register, reset, resolve as resolveContract, tryResolve } from "./contracts.ts";
 import { auditCapabilities } from "./capabilities.ts";
 import { detectConflicts, selectContractProviders, validateExtension } from "./validation.ts";
 import type { Extension, ExtensionContext, ExtensionLogger, ResolvedExtension } from "./types.ts";
+
+const DEFAULT_SETUP_TIMEOUT_MS = 30_000;
+const SETUP_TIMEOUT_SENTINEL = Symbol("extension-setup-timeout");
+
+/** Options for {@link ExtensionLoader.setupAll}. */
+export interface SetupAllOptions {
+  /**
+   * Per-extension setup() timeout in milliseconds.
+   * Defaults to 30 000 ms. Pass `0` to disable.
+   */
+  setupTimeoutMs?: number;
+}
 
 /** Implement extension loader. */
 export class ExtensionLoader {
@@ -156,7 +169,11 @@ export class ExtensionLoader {
   async setupAll(
     extensions: ResolvedExtension[],
     projectConfig: Record<string, unknown>,
+    options?: SetupAllOptions,
   ): Promise<void> {
+    const timeoutMs = options?.setupTimeoutMs === 0
+      ? 0
+      : (options?.setupTimeoutMs ?? DEFAULT_SETUP_TIMEOUT_MS);
     // Idempotent: teardownAll clears setupOrder and resets the contract
     // registry even when nothing is loaded yet.
     await this.teardownAll();
@@ -205,10 +222,20 @@ export class ExtensionLoader {
       }
 
       if (ext.setup) {
+        // Once setup fails (notably on timeout, where the losing promise may
+        // resume later), the context must stop mutating the contract registry,
+        // or a late provide() would poison state after teardownAll() rollback.
+        let ctxRevoked = false;
         const ctx: ExtensionContext = {
           get: <T>(contract: string) => tryResolve<T>(contract),
           require: <T>(contract: string) => resolveContract<T>(contract),
           provide: <T>(contract: string, impl: T) => {
+            if (ctxRevoked) {
+              this.logger.warn(
+                `Ignoring provide("${contract}") from "${ext.name}": its setup() already failed or timed out`,
+              );
+              return;
+            }
             const winner = contractWinner.get(contract);
             if (!winner || winner === resolved) {
               register(contract, impl);
@@ -218,8 +245,27 @@ export class ExtensionLoader {
           logger: this.logger,
         };
         try {
-          await ext.setup(ctx);
+          if (timeoutMs > 0) {
+            let timerId: ReturnType<typeof setTimeout> | undefined;
+            const timeoutPromise = new Promise<never>((_, reject) => {
+              timerId = setTimeout(() => reject(SETUP_TIMEOUT_SENTINEL), timeoutMs);
+            });
+            try {
+              await Promise.race([ext.setup(ctx), timeoutPromise]);
+            } finally {
+              clearTimeout(timerId);
+            }
+          } else {
+            await ext.setup(ctx);
+          }
         } catch (err) {
+          ctxRevoked = true;
+          const normalized = err === SETUP_TIMEOUT_SENTINEL
+            ? EXTENSION_SETUP_TIMEOUT_ERROR.create({
+              message: `Extension "${ext.name}" setup() timed out after ${timeoutMs}ms`,
+              detail: `Extension "${ext.name}" setup() did not complete within ${timeoutMs}ms`,
+            })
+            : err;
           // Best-effort teardown of the partially-initialized extension so
           // any resources it opened before throwing get a chance to close.
           if (ext.teardown) {
@@ -234,7 +280,7 @@ export class ExtensionLoader {
           }
           // Roll back everything loaded so far and clear the registry.
           await this.teardownAll();
-          throw err;
+          throw normalized;
         }
       }
 

@@ -43,6 +43,7 @@ export interface EnvironmentConfig {
   port: number;
   requestTimeoutMs: number | undefined;
   httpFetchTimeoutMs: number | undefined;
+  extensionSetupTimeoutMs: number | undefined;
   ssrMaxConcurrentTransforms: number;
 
   otelEnabled: boolean;
@@ -103,6 +104,7 @@ function readEnvSnapshot(): EnvironmentConfig {
 
   const requestTimeoutRaw = getEnv("REQUEST_TIMEOUT_MS");
   const httpFetchTimeoutRaw = getEnv("VF_HTTP_FETCH_TIMEOUT");
+  const extensionSetupTimeoutRaw = getEnv("VF_EXTENSION_SETUP_TIMEOUT_MS");
   const v8MaxOldSpaceSizeRaw = getEnv("V8_MAX_OLD_SPACE_SIZE");
 
   const apiUrl = getEnv("VERYFRONT_API_URL") || undefined;
@@ -152,6 +154,9 @@ function readEnvSnapshot(): EnvironmentConfig {
       : undefined,
     httpFetchTimeoutMs: httpFetchTimeoutRaw
       ? parseNumber(httpFetchTimeoutRaw, DEFAULT_HTTP_FETCH_TIMEOUT_MS)
+      : undefined,
+    extensionSetupTimeoutMs: extensionSetupTimeoutRaw
+      ? parseNumber(extensionSetupTimeoutRaw, 30_000)
       : undefined,
     ssrMaxConcurrentTransforms: parseNumber(
       getEnv("SSR_MAX_CONCURRENT_TRANSFORMS"),
