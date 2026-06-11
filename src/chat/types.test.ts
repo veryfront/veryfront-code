@@ -5,7 +5,7 @@ import {
   chatRequestContextSchema,
   chatUiMessageSchema,
   messageMetadataSchema,
-} from "veryfront/chat/compat";
+} from "#veryfront/chat/compat";
 import {
   buildDataFileAnnotation,
   imageFileTypes,

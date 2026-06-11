@@ -8,7 +8,7 @@ import {
   conversationTypeSchema,
   messagePartSchema,
   messageStatusSchema,
-} from "veryfront/chat/compat";
+} from "#veryfront/chat/compat";
 import {
   convertUiMessagesToProviderModelMessages,
   extractTextFromMessage,
@@ -22,7 +22,7 @@ import {
   pushToolParts,
   stringifyUnknown,
   toConversationPartsFromUiMessage,
-} from "veryfront/chat/conversation";
+} from "#veryfront/chat/conversation";
 
 describe("chat/conversation schemas", () => {
   it("validates API conversation and message payloads", () => {
