@@ -13,6 +13,22 @@ export function createRuntimeAgentFromMarkdownDefinition(
     ? buildAgentDelegateTools({ delegates: definition.delegates, selfId: definition.id })
     : undefined;
 
+  // `tools:` is a binding selector resolved at invocation time by the
+  // owner-aware resolver: `true` binds all visible tools; a list binds each
+  // entry (own short name first, then exact global id). Delegate tools merge
+  // on top; on key collision the delegate tool wins (keys never overlap in
+  // practice: selectors use tool ids, delegates use `agent_{id}`).
+  const selectedTools: true | Record<string, true> | undefined = definition.tools === true
+    ? true
+    : definition.tools
+    ? Object.fromEntries(definition.tools.map((name) => [name, true as const]))
+    : undefined;
+  const mergedTools = selectedTools === true
+    ? true
+    : selectedTools || delegateTools
+    ? { ...(selectedTools ?? {}), ...(delegateTools ?? {}) }
+    : undefined;
+
   const runtimeAgent = agent({
     id: definition.id,
     name: definition.name,
@@ -22,7 +38,11 @@ export function createRuntimeAgentFromMarkdownDefinition(
     ...(definition.temperature === undefined ? {} : { temperature: definition.temperature }),
     ...(definition.maxSteps === undefined ? {} : { maxSteps: definition.maxSteps }),
     ...(definition.providerTools ? { providerTools: definition.providerTools } : {}),
-    ...(delegateTools && Object.keys(delegateTools).length > 0 ? { tools: delegateTools } : {}),
+    ...(definition.skills === undefined ? {} : { skills: definition.skills }),
+    ...(mergedTools !== undefined &&
+        (mergedTools === true || Object.keys(mergedTools).length > 0)
+      ? { tools: mergedTools }
+      : {}),
   });
 
   markdownDefinitionByAgent.set(runtimeAgent, definition);

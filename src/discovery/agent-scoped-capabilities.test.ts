@@ -1,0 +1,215 @@
+/**
+ * Directory-agent discovery tests: colocated capabilities register with owner
+ * metadata (pure registration), and the owner-aware resolver keeps agents
+ * isolated — including coordinators from their delegates (plan tests 14, 15).
+ */
+
+import "#veryfront/schemas/_test-setup.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import {
+  isProviderSafeToolName,
+  isSafePathSegment,
+  namespaceAgentCapability,
+} from "./agent-scoped-capabilities.ts";
+import { discoverRuntimeAgentMarkdownDefinitions } from "./handlers/runtime-agent-markdown-handler.ts";
+import type { DiscoveryResult, FileDiscoveryContext } from "./types.ts";
+import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
+import { agentRegistry } from "../agent/composition/index.ts";
+
+function emptyResult(): DiscoveryResult {
+  return {
+    tools: new Map(),
+    agents: new Map(),
+    skills: new Map(),
+    resources: new Map(),
+    prompts: new Map(),
+    workflows: new Map(),
+    tasks: new Map(),
+    errors: [],
+  };
+}
+
+const context: FileDiscoveryContext = { platform: "node" };
+
+async function writeFixtureProject(root: string): Promise<string> {
+  const agentsDir = `${root}/agents`;
+  await Deno.mkdir(`${agentsDir}/researcher/skills/cite`, { recursive: true });
+  await Deno.writeTextFile(
+    `${agentsDir}/lead.md`,
+    `---\nname: Lead\nskills: true\ndelegates: [researcher]\n---\nCoordinate the work.\n`,
+  );
+  await Deno.writeTextFile(
+    `${agentsDir}/researcher/AGENT.md`,
+    `---\nname: Researcher\nskills: true\n---\nResearch thoroughly.\n`,
+  );
+  await Deno.writeTextFile(
+    `${agentsDir}/researcher/SKILL.md`,
+    `---\nname: researcher\ndescription: Research methodology\n---\nFollow the method.\n`,
+  );
+  await Deno.writeTextFile(
+    `${agentsDir}/researcher/skills/cite/SKILL.md`,
+    `---\nname: cite\ndescription: Cite sources\n---\nCite primary sources.\n`,
+  );
+  return agentsDir;
+}
+
+function cleanupAgents(ids: string[]): void {
+  for (const id of ids) {
+    agentRegistry.delete(id);
+  }
+}
+
+Deno.test("namespaceAgentCapability uses the -- separator and provider-safe names", () => {
+  assertEquals(namespaceAgentCapability("researcher", "cite"), "researcher--cite");
+  assertEquals(namespaceAgentCapability("a.b", "x"), "a_b--x");
+  assertEquals(isProviderSafeToolName("researcher--fetch-paper"), true);
+  assertEquals(isProviderSafeToolName("researcher__fetch"), true);
+  assertEquals(isProviderSafeToolName("bad.name"), false);
+  assertEquals(isProviderSafeToolName("a".repeat(65)), false);
+});
+
+Deno.test("isSafePathSegment rejects traversal segments", () => {
+  assertEquals(isSafePathSegment("."), false);
+  assertEquals(isSafePathSegment(".."), false);
+  assertEquals(isSafePathSegment("researcher"), true);
+  assertEquals(isSafePathSegment("a/b"), false);
+});
+
+Deno.test("directory and flat agents discover side by side with owned skills registered", async () => {
+  const root = await Deno.makeTempDir();
+  skillRegistry.clearAll();
+  try {
+    const agentsDir = await writeFixtureProject(root);
+    const result = emptyResult();
+
+    await discoverRuntimeAgentMarkdownDefinitions(agentsDir, result, context);
+
+    assertEquals(result.errors, []);
+    assertEquals([...result.agents.keys()].sort(), ["lead", "researcher"]);
+
+    const own = skillRegistry.get("researcher");
+    assertEquals(own?.ownerAgentId, "researcher");
+    assertEquals(own?.shortName, "researcher");
+
+    const nested = skillRegistry.get("researcher--cite");
+    assertEquals(nested?.ownerAgentId, "researcher");
+    assertEquals(nested?.shortName, "cite");
+  } finally {
+    skillRegistry.clearAll();
+    cleanupAgents(["lead", "researcher"]);
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("a coordinator's skills: true does not include its delegate's owned skills", async () => {
+  const root = await Deno.makeTempDir();
+  skillRegistry.clearAll();
+  try {
+    const agentsDir = await writeFixtureProject(root);
+    const result = emptyResult();
+    await discoverRuntimeAgentMarkdownDefinitions(agentsDir, result, context);
+
+    // Lead delegates to researcher but must not see researcher's owned skills.
+    const leadSkills = skillRegistry.resolveForAgent(true, { agentId: "lead" });
+    assertEquals([...leadSkills.keys()], []);
+
+    // The specialist sees its own skills.
+    const researcherSkills = skillRegistry.resolveForAgent(true, { agentId: "researcher" });
+    assertEquals([...researcherSkills.keys()].sort(), ["researcher", "researcher--cite"]);
+
+    // And the delegate tool exists on the coordinator (delegation unaffected).
+    // skills: true also merges the shared skill tools into config.tools.
+    const lead = result.agents.get("lead");
+    const tools = lead?.config.tools as Record<string, unknown> | undefined;
+    assertEquals(Object.keys(tools ?? {}).includes("agent_researcher"), true);
+  } finally {
+    skillRegistry.clearAll();
+    cleanupAgents(["lead", "researcher"]);
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("duplicate flat and directory agent ids report a discovery error", async () => {
+  const root = await Deno.makeTempDir();
+  skillRegistry.clearAll();
+  try {
+    const agentsDir = `${root}/agents`;
+    await Deno.mkdir(`${agentsDir}/writer`, { recursive: true });
+    await Deno.writeTextFile(`${agentsDir}/writer.md`, `---\nname: Writer Flat\n---\nA.\n`);
+    await Deno.writeTextFile(
+      `${agentsDir}/writer/AGENT.md`,
+      `---\nname: Writer Dir\n---\nB.\n`,
+    );
+
+    const result = emptyResult();
+    await discoverRuntimeAgentMarkdownDefinitions(agentsDir, result, context);
+
+    assertEquals(result.agents.size, 1);
+    assertEquals(result.errors.length, 1);
+    assertEquals(String(result.errors[0]?.error).includes('Duplicate agent id "writer"'), true);
+  } finally {
+    skillRegistry.clearAll();
+    cleanupAgents(["writer"]);
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("owned short name shadowing a global skill id reports a diagnostic", async () => {
+  const root = await Deno.makeTempDir();
+  skillRegistry.clearAll();
+  try {
+    // Pre-existing global skill with the id "cite".
+    registerSkill("cite", {
+      id: "cite",
+      metadata: { name: "cite", description: "Global cite skill" },
+      rootPath: "/nonexistent/cite",
+    });
+
+    const agentsDir = await writeFixtureProject(root);
+    const result = emptyResult();
+    await discoverRuntimeAgentMarkdownDefinitions(agentsDir, result, context);
+
+    const shadowing = result.errors.filter((entry) =>
+      String(entry.error).includes('shadows the global skill id "cite"')
+    );
+    assertEquals(shadowing.length, 1);
+
+    // Both skills remain registered; resolution stays owner-aware.
+    const own = skillRegistry.resolveForAgent(["cite"], { agentId: "researcher" });
+    assertEquals([...own.keys()], ["researcher--cite"]);
+    const other = skillRegistry.resolveForAgent(["cite"], { agentId: "lead" });
+    assertEquals([...other.keys()], ["cite"]);
+  } finally {
+    skillRegistry.clearAll();
+    cleanupAgents(["lead", "researcher"]);
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("agent ids that sanitize to the same namespace report a collision error", async () => {
+  const root = await Deno.makeTempDir();
+  skillRegistry.clearAll();
+  try {
+    const agentsDir = `${root}/agents`;
+    await Deno.mkdir(`${agentsDir}/a.b`, { recursive: true });
+    await Deno.mkdir(`${agentsDir}/a_b`, { recursive: true });
+    await Deno.writeTextFile(`${agentsDir}/a.b/AGENT.md`, `---\nname: AB1\n---\nOne.\n`);
+    await Deno.writeTextFile(
+      `${agentsDir}/a.b/SKILL.md`,
+      `---\nname: ab\ndescription: d\n---\nX.\n`,
+    );
+    await Deno.writeTextFile(`${agentsDir}/a_b/AGENT.md`, `---\nname: AB2\n---\nTwo.\n`);
+
+    const result = emptyResult();
+    await discoverRuntimeAgentMarkdownDefinitions(agentsDir, result, context);
+
+    const collisions = result.errors.filter((entry) =>
+      String(entry.error).includes("shares the sanitized capability namespace")
+    );
+    assertEquals(collisions.length, 1);
+  } finally {
+    skillRegistry.clearAll();
+    cleanupAgents(["a.b", "a_b"]);
+    await Deno.remove(root, { recursive: true });
+  }
+});

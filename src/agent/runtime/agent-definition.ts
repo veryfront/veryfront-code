@@ -37,6 +37,8 @@ export const getRuntimeAgentMarkdownDefinitionSchema = defineSchema((v) =>
     temperature: v.number().min(0).max(2).optional(),
     maxSteps: v.number().optional(),
     providerTools: v.array(v.string().min(1)).optional(),
+    skills: v.union([v.literal(true), v.array(v.string().min(1))]).optional(),
+    tools: v.union([v.literal(true), v.array(v.string().min(1))]).optional(),
     delegates: v.array(v.string().min(1)).optional(),
   })
 );
@@ -106,6 +108,19 @@ function parseProviderTools(value: unknown): unknown[] | undefined {
   return value;
 }
 
+function parseCapabilitySelector(value: unknown): true | string[] | undefined {
+  if (value === true) {
+    return true;
+  }
+  if (Array.isArray(value)) {
+    const ids = value
+      .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+      .map((entry) => entry.trim());
+    return ids.length > 0 ? ids : undefined;
+  }
+  return undefined;
+}
+
 function parseDelegates(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) {
     return undefined;
@@ -146,6 +161,8 @@ export function parseRuntimeAgentMarkdownDefinition(
   const temperature = typeof attrs.temperature === "number" ? attrs.temperature : undefined;
   const maxSteps = typeof attrs["max-steps"] === "number" ? attrs["max-steps"] : undefined;
   const providerTools = parseProviderTools(attrs["provider-tools"]);
+  const skills = parseCapabilitySelector(attrs.skills);
+  const tools = parseCapabilitySelector(attrs.tools);
   const delegates = parseDelegates(attrs.delegates);
   validateDelegates(parsedInput.id, delegates);
 
@@ -159,6 +176,8 @@ export function parseRuntimeAgentMarkdownDefinition(
     ...(temperature === undefined ? {} : { temperature }),
     ...(maxSteps === undefined ? {} : { maxSteps }),
     ...(providerTools ? { providerTools } : {}),
+    ...(skills === undefined ? {} : { skills }),
+    ...(tools === undefined ? {} : { tools }),
     ...(delegates === undefined ? {} : { delegates }),
   });
 }
