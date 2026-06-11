@@ -36,6 +36,8 @@ export const getRuntimeAgentMarkdownDefinitionSchema = defineSchema((v) =>
     temperature: v.number().min(0).max(2).optional(),
     maxSteps: v.number().optional(),
     providerTools: v.array(v.string().min(1)).optional(),
+    skills: v.union([v.literal(true), v.array(v.string().min(1))]).optional(),
+    delegates: v.array(v.string().min(1)).optional(),
   })
 );
 
@@ -104,6 +106,29 @@ function parseProviderTools(value: unknown): unknown[] | undefined {
   return value;
 }
 
+function parseSkills(value: unknown): true | string[] | undefined {
+  if (value === true) {
+    return true;
+  }
+  if (Array.isArray(value)) {
+    const ids = value.filter((entry): entry is string =>
+      typeof entry === "string" && entry.trim().length > 0
+    );
+    return ids.length > 0 ? ids : undefined;
+  }
+  return undefined;
+}
+
+function parseDelegates(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const ids = value.filter((entry): entry is string =>
+    typeof entry === "string" && entry.trim().length > 0
+  );
+  return ids.length > 0 ? ids : undefined;
+}
+
 /** Definition for parse runtime agent markdown. */
 export function parseRuntimeAgentMarkdownDefinition(
   input: ParseRuntimeAgentMarkdownDefinitionInput,
@@ -117,6 +142,8 @@ export function parseRuntimeAgentMarkdownDefinition(
   const temperature = typeof attrs.temperature === "number" ? attrs.temperature : undefined;
   const maxSteps = typeof attrs["max-steps"] === "number" ? attrs["max-steps"] : undefined;
   const providerTools = parseProviderTools(attrs["provider-tools"]);
+  const skills = parseSkills(attrs.skills);
+  const delegates = parseDelegates(attrs.delegates);
 
   return getRuntimeAgentMarkdownDefinitionSchema().parse({
     id: parsedInput.id,
@@ -128,6 +155,8 @@ export function parseRuntimeAgentMarkdownDefinition(
     ...(temperature === undefined ? {} : { temperature }),
     ...(maxSteps === undefined ? {} : { maxSteps }),
     ...(providerTools ? { providerTools } : {}),
+    ...(skills === undefined ? {} : { skills }),
+    ...(delegates === undefined ? {} : { delegates }),
   });
 }
 

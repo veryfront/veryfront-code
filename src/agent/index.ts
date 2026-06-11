@@ -219,9 +219,25 @@ export {
 
 export {
   createRuntimeAgentFromMarkdownDefinition,
+  type CreateRuntimeAgentFromMarkdownDefinitionInput,
   getRuntimeAgentMarkdownDefinition,
+  getRuntimeAgentMarkdownMeta,
+  getRuntimeAgentMarkdownRootPath,
   isRuntimeAgentMarkdownAgent,
+  type RuntimeAgentMarkdownAgentMeta,
 } from "./runtime/agent-markdown-adapter.ts";
+
+export {
+  AGENT_DELEGATE_TOOL_PREFIX,
+  buildAgentDelegateTools,
+  type BuildAgentDelegateToolsInput,
+  type DelegateAgentResolver,
+} from "./runtime/agent-delegation.ts";
+
+export {
+  loadAgentScopedSkillCatalog,
+  type LoadAgentScopedSkillCatalogInput,
+} from "./runtime/agent-scoped-skill-catalog.ts";
 
 export {
   loadRuntimeAgentMarkdownDefinitionFromFile,

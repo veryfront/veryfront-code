@@ -69,6 +69,55 @@ Create a plan.
   );
 });
 
+Deno.test("parseRuntimeAgentMarkdownDefinition parses skills selector and delegates", () => {
+  const listResult = parseRuntimeAgentMarkdownDefinition({
+    id: "researcher",
+    content: `---
+name: Researcher
+skills:
+  - cite
+  - search
+delegates:
+  - writer
+  - editor
+---
+Research thoroughly.
+`,
+  });
+
+  assertEquals(listResult.skills, ["cite", "search"]);
+  assertEquals(listResult.delegates, ["writer", "editor"]);
+
+  const allResult = parseRuntimeAgentMarkdownDefinition({
+    id: "lead",
+    content: `---
+name: Lead
+skills: true
+---
+Coordinate.
+`,
+  });
+
+  assertEquals(allResult.skills, true);
+  assertEquals(allResult.delegates, undefined);
+});
+
+Deno.test("parseRuntimeAgentMarkdownDefinition ignores empty/invalid skills and delegates", () => {
+  const result = parseRuntimeAgentMarkdownDefinition({
+    id: "writer",
+    content: `---
+name: Writer
+skills: []
+delegates: ["", "  "]
+---
+Write copy.
+`,
+  });
+
+  assertEquals(result.skills, undefined);
+  assertEquals(result.delegates, undefined);
+});
+
 Deno.test("createRuntimeAgentSystemMessages inserts runtime blocks at marker", () => {
   const result = createRuntimeAgentSystemMessages({
     agent: {
