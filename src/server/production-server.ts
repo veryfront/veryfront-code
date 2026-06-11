@@ -26,6 +26,7 @@ import {
 } from "#veryfront/html/styles-builder/css-pregeneration.ts";
 import { createStyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
 import { setServerInitialized } from "./handlers/monitoring/health.handler.ts";
+import { markServerShuttingDown } from "./shutdown-state.ts";
 import {
   enableSSRClientOnlyFetching,
   enableSSRFetchInterception,
@@ -412,7 +413,12 @@ if (import.meta.main) {
         drainTimeoutMs,
       });
 
-      // Phase 1: Mark server as not ready to stop K8s from routing new requests
+      // Phase 1: Enter lame-duck mode. markServerShuttingDown() makes the
+      // agent-work handlers reject NEW requests with 503 (before any side
+      // effects) so the API can retry against another instance, even while the
+      // pod IP is still directly reachable. setServerInitialized(false) flips
+      // /readyz to not-ready so K8s stops routing Service traffic.
+      markServerShuttingDown();
       setServerInitialized(false);
       logger.info("Server marked as not ready, waiting for in-flight requests to drain...");
 

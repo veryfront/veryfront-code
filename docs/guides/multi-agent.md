@@ -104,7 +104,7 @@ const researchTool = agentAsTool(researcher, "Research a topic using web search"
 A markdown agent can opt into orchestration by listing the specialists it may
 call in its `delegates` frontmatter. The runtime gives the agent one
 `agent_{id}` tool per delegate; each delegate runs with its own settings,
-skills, and tools — capability ownership does not cross the delegation
+skills, and tools - capability ownership does not cross the delegation
 boundary in either direction.
 
 ```md

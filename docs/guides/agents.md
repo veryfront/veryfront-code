@@ -77,7 +77,7 @@ for agents that do not own skills or tools, and both layouts can coexist.
 
 Colocated capabilities are registered with owner metadata and namespaced
 `{agentId}--{name}`. Ownership controls visibility everywhere: an agent only
-ever sees unowned (project-global) capabilities plus its own — never another
+ever sees unowned (project-global) capabilities plus its own - never another
 agent's. This one rule applies to `skills:` and `tools:` for every agent kind
 (TypeScript, flat markdown, and directory markdown):
 
@@ -92,8 +92,8 @@ tools: [fetch-paper] # own short names resolve first, then global tool ids
 Research the question and cite every claim.
 ```
 
-- `skills: true` / `tools: true` — every capability visible to the agent.
-- `skills: [..]` / `tools: [..]` — each entry resolves as the agent's own
+- `skills: true` / `tools: true` - every capability visible to the agent.
+- `skills: [..]` / `tools: [..]` - each entry resolves as the agent's own
   short name first, then as a global id. A colocated short name that shadows a
   global id is reported at discovery so the reference stays unambiguous.
 - Duplicate agent ids (flat file + directory) and agent ids whose sanitized

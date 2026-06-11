@@ -8,6 +8,8 @@ import {
 } from "../../../channels/invoke.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 import { readSignedChannelDispatchRequest } from "./channel-dispatch-request.ts";
+import { buildRuntimeShuttingDownResponse } from "./runtime-shutdown-response.ts";
+import { isServerShuttingDown } from "../../shutdown-state.ts";
 
 export class ChannelInvokeHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -23,6 +25,13 @@ export class ChannelInvokeHandler extends BaseHandler {
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     if (!this.shouldHandle(req, ctx)) {
       return this.continue();
+    }
+
+    // Lame-duck: reject NEW agent work during graceful shutdown before any
+    // dispatch verification or agent execution, so the API gets a clean
+    // pre-side-effect failure it can retry against another instance.
+    if (isServerShuttingDown()) {
+      return this.respond(buildRuntimeShuttingDownResponse(this.createResponseBuilder(ctx)));
     }
 
     return this.withProxyContext(ctx, async () => {

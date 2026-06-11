@@ -23,6 +23,7 @@ import {
   createNoopFsAdapter,
   TrackingSessionManager,
 } from "./agent-stream.handler.test-helpers.ts";
+import { __resetServerShuttingDownForTests, markServerShuttingDown } from "../../shutdown-state.ts";
 
 function createRuntimeAgentRunInvocationBody() {
   return JSON.stringify({
@@ -1653,5 +1654,64 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(sessionManager.stats.completeCalls, 1);
     assertEquals(sessionManager.stats.cancelCalls, 0);
     assertEquals(sessionManager.stats.failCalls, 0);
+  });
+
+  it("rejects new agent stream requests with 503 while the runtime is shutting down", async () => {
+    let discoveryCalls = 0;
+    let resolveOwnerCalls = 0;
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => {
+        discoveryCalls += 1;
+      },
+      getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+      resolveRuntimeOwnerInvokeUrl: async () => {
+        resolveOwnerCalls += 1;
+        return "http://10.0.0.7:20000/channels/invoke";
+      },
+      createRuntime: () => ({
+        stream: async () =>
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.close();
+            },
+          }),
+      }),
+    });
+
+    const body = createAgentStreamRequestBody();
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+
+    markServerShuttingDown();
+    try {
+      const result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        createCtx(publicKeyPem),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 503);
+      assertEquals(result.response.headers.get("connection"), "close");
+      assertEquals(
+        result.response.headers.get("x-veryfront-runtime-owner-invoke-url"),
+        null,
+      );
+      const responseBody = await result.response.json();
+      assertEquals(responseBody.code, "RUNTIME_SHUTTING_DOWN");
+      assertEquals(typeof responseBody.message, "string");
+      // Rejection must happen before discovery / runtime-owner resolution.
+      assertEquals(discoveryCalls, 0);
+      assertEquals(resolveOwnerCalls, 0);
+    } finally {
+      __resetServerShuttingDownForTests();
+    }
   });
 });

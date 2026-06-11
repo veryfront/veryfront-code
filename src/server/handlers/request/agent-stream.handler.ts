@@ -42,6 +42,8 @@ import {
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
+import { buildRuntimeShuttingDownResponse } from "./runtime-shutdown-response.ts";
+import { isServerShuttingDown } from "../../shutdown-state.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { serverLogger } from "#veryfront/utils";
 import {
@@ -392,6 +394,15 @@ export class AgentStreamHandler extends BaseHandler {
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     if (!this.shouldHandle(req, ctx)) {
       return this.continue();
+    }
+
+    // Lame-duck: reject NEW agent streams during graceful shutdown before any
+    // control-plane verification, discovery, or runtime-owner resolution, so the
+    // API gets a clean pre-side-effect failure (without the runtime-owner header
+    // that would otherwise re-pin the run to this terminating pod) and can retry
+    // against another instance. In-flight streams are unaffected.
+    if (isServerShuttingDown()) {
+      return this.respond(buildRuntimeShuttingDownResponse(this.createResponseBuilder(ctx)));
     }
 
     return this.withProxyContext(ctx, async () => {
