@@ -1905,6 +1905,263 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["jira", "slack", "notion"],
   },
   {
+    "name": "datadog",
+    "displayName": "Datadog",
+    "icon": "datadog.svg",
+    "description": "Query Datadog monitors, dashboards, metrics, and logs",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Datadog API Keys",
+        "enableUrl": "https://app.datadoghq.com/organization-settings/api-keys",
+      }, {
+        "name": "Datadog Application Keys",
+        "enableUrl": "https://app.datadoghq.com/organization-settings/application-keys",
+      }],
+      "keyName": "DD_API_KEY",
+      "headerName": "DD-API-KEY",
+      "additionalHeaders": { "DD-APPLICATION-KEY": "DD_APP_KEY" },
+      "docsUrl": "https://docs.datadoghq.com/api/latest/authentication/",
+    },
+    "envVars": [{
+      "name": "DD_API_KEY",
+      "description": "Datadog API key",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.datadoghq.com/account_management/api-app-keys/",
+    }, {
+      "name": "DD_APP_KEY",
+      "description": "Datadog application key (scoped to the user who created it)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.datadoghq.com/account_management/api-app-keys/",
+    }],
+    "tools": [{
+      "id": "validate_api_key",
+      "name": "Validate API Key",
+      "description": "Check that the configured Datadog API key is valid",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.{site}/api/v1/validate",
+        "params": {
+          "site": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Datadog site domain, e.g. datadoghq.com, datadoghq.eu, us3.datadoghq.com",
+            "default": "datadoghq.com",
+          },
+        },
+      },
+    }, {
+      "id": "list_monitors",
+      "name": "List Monitors",
+      "description": "List monitors with optional name or tag filtering",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.{site}/api/v1/monitor",
+        "params": {
+          "site": {
+            "type": "string",
+            "in": "path",
+            "description": "Datadog site domain, e.g. datadoghq.com, datadoghq.eu",
+            "default": "datadoghq.com",
+          },
+          "name": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter monitors by name substring",
+          },
+          "monitor_tags": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated monitor tags to filter by, e.g. service:web",
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (0-based)",
+            "default": 0,
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Monitors per page (max 1000)",
+            "default": 50,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["monitors"],
+            "collectionName": "monitors",
+            "itemFields": [{ "name": "id" }, { "name": "name" }, { "name": "type" }, {
+              "name": "overall_state",
+            }, { "name": "tags", "kind": "string-array" }],
+            "omitted": "monitor query definitions and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_monitor",
+      "name": "Get Monitor",
+      "description": "Get details and current state of a monitor",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.{site}/api/v1/monitor/{monitorId}",
+        "params": {
+          "site": {
+            "type": "string",
+            "in": "path",
+            "description": "Datadog site domain",
+            "default": "datadoghq.com",
+          },
+          "monitorId": {
+            "type": "string",
+            "in": "path",
+            "description": "Monitor ID",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "mute_monitor",
+      "name": "Mute Monitor",
+      "description": "Mute notifications for a monitor",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.{site}/api/v1/monitor/{monitorId}/mute",
+        "params": {
+          "site": {
+            "type": "string",
+            "in": "path",
+            "description": "Datadog site domain",
+            "default": "datadoghq.com",
+          },
+          "monitorId": {
+            "type": "string",
+            "in": "path",
+            "description": "Monitor ID",
+            "required": true,
+          },
+          "end": {
+            "type": "number",
+            "in": "query",
+            "description": "POSIX timestamp when the mute should end (omit to mute indefinitely)",
+          },
+        },
+      },
+    }, {
+      "id": "list_dashboards",
+      "name": "List Dashboards",
+      "description": "List all dashboards",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.{site}/api/v1/dashboard",
+        "params": {
+          "site": {
+            "type": "string",
+            "in": "path",
+            "description": "Datadog site domain",
+            "default": "datadoghq.com",
+          },
+        },
+        "response": {
+          "transform": "dashboards",
+          "historicalSummary": {
+            "collectionKeys": ["dashboards"],
+            "collectionName": "dashboards",
+            "itemFields": [{ "name": "id" }, { "name": "title" }, { "name": "url" }, {
+              "name": "layout_type",
+            }, { "name": "modified_at" }],
+            "omitted": "dashboard widget definitions and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "query_timeseries",
+      "name": "Query Timeseries Metrics",
+      "description": "Query timeseries metric data over a time window",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.{site}/api/v1/query",
+        "params": {
+          "site": {
+            "type": "string",
+            "in": "path",
+            "description": "Datadog site domain",
+            "default": "datadoghq.com",
+          },
+          "from": {
+            "type": "number",
+            "in": "query",
+            "description": "Start of the window as a POSIX timestamp (seconds)",
+            "required": true,
+          },
+          "to": {
+            "type": "number",
+            "in": "query",
+            "description": "End of the window as a POSIX timestamp (seconds)",
+            "required": true,
+          },
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "Datadog metric query, e.g. avg:system.cpu.user{*}",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "search_logs",
+      "name": "Search Logs",
+      "description": "Search log events with a Datadog log query",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.{site}/api/v2/logs/events/search",
+        "params": {
+          "site": {
+            "type": "string",
+            "in": "path",
+            "description": "Datadog site domain",
+            "default": "datadoghq.com",
+          },
+        },
+        "body": {
+          "filter": {
+            "type": "object",
+            "description":
+              'Log filter, e.g. {"query":"service:web status:error","from":"now-15m","to":"now"}',
+            "required": true,
+          },
+          "page": { "type": "object", "description": 'Pagination, e.g. {"limit":25}' },
+          "sort": { "type": "string", "description": "Sort order: timestamp or -timestamp" },
+        },
+        "response": { "transform": "data" },
+      },
+    }],
+    "prompts": [{
+      "id": "alerting_monitors",
+      "title": "What's alerting?",
+      "prompt": "List my Datadog monitors that are currently in Alert state.",
+      "category": "observability",
+      "icon": "alert",
+    }, {
+      "id": "error_logs",
+      "title": "Recent error logs",
+      "prompt": "Search Datadog logs for errors in the last 15 minutes and summarize them.",
+      "category": "observability",
+      "icon": "search",
+    }],
+    "suggestedWith": ["sentry", "slack", "github"],
+  },
+  {
     "name": "docs-google",
     "displayName": "Google Docs",
     "icon": "docs-google.svg",
@@ -6952,6 +7209,236 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["github", "slack", "confluence"],
   },
   {
+    "name": "klaviyo",
+    "displayName": "Klaviyo",
+    "icon": "klaviyo.svg",
+    "description": "Manage profiles, lists, and events in Klaviyo for email and SMS marketing",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Klaviyo API Keys",
+        "enableUrl": "https://www.klaviyo.com/settings/account/api-keys",
+      }],
+      "keyName": "KLAVIYO_API_KEY",
+      "headerName": "Authorization",
+      "headerPrefix": "Klaviyo-API-Key",
+      "docsUrl": "https://developers.klaviyo.com/en/reference/api_overview",
+    },
+    "envVars": [{
+      "name": "KLAVIYO_API_KEY",
+      "description": "Klaviyo private API key (starts with pk_)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developers.klaviyo.com/en/docs/retrieve_api_credentials",
+    }],
+    "tools": [{
+      "id": "list_profiles",
+      "name": "List Profiles",
+      "description": "List customer profiles",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://a.klaviyo.com/api/profiles",
+        "params": {
+          "revision": {
+            "type": "string",
+            "in": "header",
+            "description": "Klaviyo API revision",
+            "default": "2026-04-15",
+          },
+          "filter": {
+            "type": "string",
+            "in": "query",
+            "description": 'Klaviyo filter expression, e.g. equals(email,"a@b.com")',
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Profiles per page (max 100)",
+            "default": 20,
+            "queryName": "page[size]",
+          },
+          "page_cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response",
+            "queryName": "page[cursor]",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data", "profiles"],
+            "collectionName": "profiles",
+            "itemFields": [{ "name": "id" }, { "name": "attributes", "kind": "object" }],
+            "outputFields": [{ "name": "next" }],
+            "omitted": "profile location/subscription detail fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_profile",
+      "name": "Get Profile",
+      "description": "Get a customer profile by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://a.klaviyo.com/api/profiles/{profileId}",
+        "params": {
+          "profileId": {
+            "type": "string",
+            "in": "path",
+            "description": "Klaviyo profile ID",
+            "required": true,
+          },
+          "revision": {
+            "type": "string",
+            "in": "header",
+            "description": "Klaviyo API revision",
+            "default": "2026-04-15",
+          },
+        },
+        "response": { "transform": "data" },
+      },
+    }, {
+      "id": "create_profile",
+      "name": "Create Profile",
+      "description": "Create a new customer profile",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://a.klaviyo.com/api/profiles",
+        "params": {
+          "revision": {
+            "type": "string",
+            "in": "header",
+            "description": "Klaviyo API revision",
+            "default": "2026-04-15",
+          },
+        },
+        "body": {
+          "data": {
+            "type": "object",
+            "description":
+              'Profile payload: {"type":"profile","attributes":{"email":"a@b.com","first_name":"..."}}',
+            "required": true,
+          },
+        },
+        "response": { "transform": "data" },
+      },
+    }, {
+      "id": "list_lists",
+      "name": "List Lists",
+      "description": "List marketing lists",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://a.klaviyo.com/api/lists",
+        "params": {
+          "revision": {
+            "type": "string",
+            "in": "header",
+            "description": "Klaviyo API revision",
+            "default": "2026-04-15",
+          },
+          "page_cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response",
+            "queryName": "page[cursor]",
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data", "lists"],
+            "collectionName": "lists",
+            "itemFields": [{ "name": "id" }, { "name": "attributes", "kind": "object" }],
+            "outputFields": [{ "name": "next" }],
+            "omitted": "list metadata beyond name and created/updated timestamps",
+          },
+        },
+      },
+    }, {
+      "id": "list_segments",
+      "name": "List Segments",
+      "description": "List audience segments",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://a.klaviyo.com/api/segments",
+        "params": {
+          "revision": {
+            "type": "string",
+            "in": "header",
+            "description": "Klaviyo API revision",
+            "default": "2026-04-15",
+          },
+          "page_cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response",
+            "queryName": "page[cursor]",
+          },
+        },
+      },
+    }, {
+      "id": "list_metrics",
+      "name": "List Metrics",
+      "description": "List tracked event metrics (e.g. Placed Order, Opened Email)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://a.klaviyo.com/api/metrics",
+        "params": {
+          "revision": {
+            "type": "string",
+            "in": "header",
+            "description": "Klaviyo API revision",
+            "default": "2026-04-15",
+          },
+          "page_cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response",
+            "queryName": "page[cursor]",
+          },
+        },
+      },
+    }, {
+      "id": "create_event",
+      "name": "Create Event",
+      "description": "Track a custom event for a profile",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://a.klaviyo.com/api/events",
+        "params": {
+          "revision": {
+            "type": "string",
+            "in": "header",
+            "description": "Klaviyo API revision",
+            "default": "2026-04-15",
+          },
+        },
+        "body": {
+          "data": {
+            "type": "object",
+            "description":
+              "Event payload with metric name, profile identifiers, and properties per the Klaviyo Create Event schema",
+            "required": true,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "find_profile",
+      "title": "Find a customer",
+      "prompt": "Look up a Klaviyo profile by email address and show their details.",
+      "category": "marketing",
+      "icon": "search",
+    }],
+    "suggestedWith": ["shopify", "stripe", "sheets"],
+  },
+  {
     "name": "linear",
     "displayName": "Linear",
     "icon": "linear.svg",
@@ -10179,6 +10666,194 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["teams", "calendar", "gmail"],
   },
   {
+    "name": "paypal",
+    "displayName": "PayPal",
+    "icon": "paypal.svg",
+    "description": "Read PayPal transactions, balances, invoices, and orders",
+    "auth": {
+      "type": "oauth2",
+      "tokenUrl": "https://api-m.paypal.com/v1/oauth2/token",
+      "grantType": "client_credentials",
+      "tokenAuthMethod": "basic",
+      "requiredApis": [{
+        "name": "PayPal Developer Dashboard",
+        "enableUrl": "https://developer.paypal.com/dashboard/applications/live",
+      }],
+      "docsUrl": "https://developer.paypal.com/api/rest/authentication/",
+    },
+    "envVars": [{
+      "name": "PAYPAL_CLIENT_ID",
+      "description": "PayPal REST app Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.paypal.com/dashboard/applications/live",
+    }, {
+      "name": "PAYPAL_CLIENT_SECRET",
+      "description": "PayPal REST app Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.paypal.com/dashboard/applications/live",
+    }],
+    "tools": [{
+      "id": "list_transactions",
+      "name": "List Transactions",
+      "description": "Search account transactions in a date window (max 31 days per request)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api-m.paypal.com/v1/reporting/transactions",
+        "params": {
+          "start_date": {
+            "type": "string",
+            "in": "query",
+            "description": "Window start, ISO 8601 with timezone, e.g. 2026-06-01T00:00:00-0000",
+            "required": true,
+          },
+          "end_date": {
+            "type": "string",
+            "in": "query",
+            "description": "Window end, ISO 8601 with timezone (within 31 days of start_date)",
+            "required": true,
+          },
+          "transaction_status": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Filter by status code: D (denied), P (pending), S (success), V (refund/reversal)",
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Transactions per page (max 500)",
+            "default": 100,
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["transaction_details", "transactions"],
+            "collectionName": "transactions",
+            "itemFields": [{ "name": "transaction_info", "kind": "object" }],
+            "outputFields": [{ "name": "total_items" }, { "name": "total_pages" }, {
+              "name": "page",
+            }],
+            "omitted": "payer, cart, and shipping detail blocks",
+          },
+        },
+      },
+    }, {
+      "id": "list_balances",
+      "name": "List Balances",
+      "description": "Get current account balances by currency",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api-m.paypal.com/v1/reporting/balances",
+        "params": {
+          "currency_code": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter to a single currency, e.g. USD",
+          },
+        },
+      },
+    }, {
+      "id": "list_invoices",
+      "name": "List Invoices",
+      "description": "List invoices",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api-m.paypal.com/v2/invoicing/invoices",
+        "params": {
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1,
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Invoices per page (max 100)",
+            "default": 20,
+          },
+          "total_required": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include the total count in the response",
+            "default": true,
+          },
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["items", "invoices"],
+            "collectionName": "invoices",
+            "itemFields": [{ "name": "id" }, { "name": "status" }, {
+              "name": "detail",
+              "kind": "object",
+            }],
+            "outputFields": [{ "name": "total_items" }, { "name": "total_pages" }],
+            "omitted": "line items and amount breakdowns",
+          },
+        },
+      },
+    }, {
+      "id": "get_invoice",
+      "name": "Get Invoice",
+      "description": "Get details of an invoice",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api-m.paypal.com/v2/invoicing/invoices/{invoiceId}",
+        "params": {
+          "invoiceId": {
+            "type": "string",
+            "in": "path",
+            "description": "Invoice ID, e.g. INV2-XXXX-XXXX-XXXX-XXXX",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "get_order",
+      "name": "Get Order",
+      "description": "Get details of a checkout order",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api-m.paypal.com/v2/checkout/orders/{orderId}",
+        "params": {
+          "orderId": {
+            "type": "string",
+            "in": "path",
+            "description": "Order ID",
+            "required": true,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "recent_transactions",
+      "title": "Recent transactions",
+      "prompt": "List my PayPal transactions from the last 7 days and summarize totals by status.",
+      "category": "finance",
+      "icon": "payment",
+    }, {
+      "id": "account_balance",
+      "title": "Account balance",
+      "prompt": "Show my current PayPal balances by currency.",
+      "category": "finance",
+      "icon": "currency",
+    }],
+    "suggestedWith": ["stripe", "sheets", "slack"],
+  },
+  {
     "name": "persona",
     "displayName": "Persona",
     "icon": "persona.svg",
@@ -13054,6 +13729,8 @@ export const icons: Record<string, string> = {
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#FFFFFF"/>\n<path d="M64 24c22.1 0 40 17.9 40 40s-17.9 40-40 40-40-17.9-40-40 17.9-40 40-40Zm0 14c-14.4 0-26 11.6-26 26s11.6 26 26 26c8.9 0 16.8-4.5 21.5-11.3l-11.9-7.2C71.5 75.3 68 77 64 77c-7.2 0-13-5.8-13-13s5.8-13 13-13c4 0 7.5 1.7 9.6 4.5l11.9-7.2C80.8 41.5 72.9 38 64 38Z" fill="#006BFF"/>\n</svg>\n',
   "confluence":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_240_6563)">\n<g clip-path="url(#clip1_240_6563)">\n<path d="M38.0146 59.1266C36.0729 56.9907 33.1606 57.1849 31.8012 59.7093L0.344616 122.622C-0.820405 125.147 0.927179 128.059 3.64561 128.059H47.3352C48.6948 128.059 50.0538 127.283 50.6365 125.923C60.1508 106.506 54.5199 76.7967 38.0146 59.1266Z" fill="url(#paint0_linear_240_6563)"/>\n<path d="M60.9302 2.03887C43.4544 29.8061 44.6197 60.6804 56.0757 83.7872C67.7264 106.894 76.4643 124.758 77.2412 125.924C77.8239 127.283 79.1829 128.059 80.542 128.059H124.232C126.95 128.059 128.892 125.147 127.533 122.622C127.533 122.622 68.6975 4.95152 67.1437 2.03887C65.9789 -0.679622 62.6777 -0.679622 60.9302 2.03887Z" fill="#2684FF"/>\n</g>\n</g>\n<defs>\n<linearGradient id="paint0_linear_240_6563" x1="55.1799" y1="68.8586" x2="22.028" y2="126.28" gradientUnits="userSpaceOnUse">\n<stop stop-color="#0052CC"/>\n<stop offset="0.9228" stop-color="#2684FF"/>\n</linearGradient>\n<clipPath id="clip0_240_6563">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n<clipPath id="clip1_240_6563">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n</defs>\n</svg>\n',
+  "datadog":
+    '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#632CA6"/>\n<g fill="#FFFFFF">\n<path d="M40 36h24c17.7 0 32 12.5 32 28s-14.3 28-32 28H40V36Zm14 12v32h10c10.5 0 19-7.2 19-16s-8.5-16-19-16H54Z"/>\n<circle cx="97" cy="35" r="7"/>\n</g>\n</svg>\n',
   "docs-google":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_239)">\n<mask id="mask0_0_239" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="18" y="0" width="93" height="128">\n<path d="M75.8462 0H26.6769C21.9046 0 18 3.92727 18 8.72727V119.273C18 124.073 21.9046 128 26.6769 128H101.877C106.649 128 110.554 124.073 110.554 119.273V34.9091L75.8462 0Z" fill="white"/>\n</mask>\n<g mask="url(#mask0_0_239)">\n<path d="M75.8462 0H26.6769C21.9046 0 18 3.92727 18 8.72727V119.273C18 124.073 21.9046 128 26.6769 128H101.877C106.649 128 110.554 124.073 110.554 119.273V34.9091L90.3077 20.3636L75.8462 0Z" fill="#4285F4"/>\n</g>\n<mask id="mask1_0_239" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="18" y="0" width="93" height="128">\n<path d="M75.8462 0H26.6769C21.9046 0 18 3.92727 18 8.72727V119.273C18 124.073 21.9046 128 26.6769 128H101.877C106.649 128 110.554 124.073 110.554 119.273V34.9091L75.8462 0Z" fill="white"/>\n</mask>\n<g mask="url(#mask1_0_239)">\n<path d="M78.3848 32.3564L110.554 64.7055V34.9091L78.3848 32.3564Z" fill="url(#paint0_linear_0_239)"/>\n</g>\n<mask id="mask2_0_239" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="18" y="0" width="93" height="128">\n<path d="M75.8462 0H26.6769C21.9046 0 18 3.92727 18 8.72727V119.273C18 124.073 21.9046 128 26.6769 128H101.877C106.649 128 110.554 124.073 110.554 119.273V34.9091L75.8462 0Z" fill="white"/>\n</mask>\n<g mask="url(#mask2_0_239)">\n<path d="M41.1382 93.0909H87.4151V87.2727H41.1382V93.0909ZM41.1382 104.727H75.8459V98.9091H41.1382V104.727ZM41.1382 64V69.8182H87.4151V64H41.1382ZM41.1382 81.4545H87.4151V75.6364H41.1382V81.4545Z" fill="#F1F1F1"/>\n</g>\n<mask id="mask3_0_239" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="18" y="0" width="93" height="128">\n<path d="M75.8462 0H26.6769C21.9046 0 18 3.92727 18 8.72727V119.273C18 124.073 21.9046 128 26.6769 128H101.877C106.649 128 110.554 124.073 110.554 119.273V34.9091L75.8462 0Z" fill="white"/>\n</mask>\n<g mask="url(#mask3_0_239)">\n<path d="M75.8462 0V26.1818C75.8462 31.0036 79.7291 34.9091 84.5231 34.9091H110.554L75.8462 0Z" fill="#A1C2FA"/>\n</g>\n<mask id="mask4_0_239" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="18" y="0" width="93" height="128">\n<path d="M75.8462 0H26.6769C21.9046 0 18 3.92727 18 8.72727V119.273C18 124.073 21.9046 128 26.6769 128H101.877C106.649 128 110.554 124.073 110.554 119.273V34.9091L75.8462 0Z" fill="white"/>\n</mask>\n<g mask="url(#mask4_0_239)">\n<path d="M26.6769 0C21.9046 0 18 3.92727 18 8.72727V9.45455C18 4.65455 21.9046 0.727273 26.6769 0.727273H75.8462V0H26.6769Z" fill="white" fill-opacity="0.2"/>\n</g>\n<mask id="mask5_0_239" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="18" y="0" width="93" height="128">\n<path d="M75.8462 0H26.6769C21.9046 0 18 3.92727 18 8.72727V119.273C18 124.073 21.9046 128 26.6769 128H101.877C106.649 128 110.554 124.073 110.554 119.273V34.9091L75.8462 0Z" fill="white"/>\n</mask>\n<g mask="url(#mask5_0_239)">\n<path d="M101.877 127.273H26.6769C21.9046 127.273 18 123.345 18 118.545V119.273C18 124.073 21.9046 128 26.6769 128H101.877C106.649 128 110.554 124.073 110.554 119.273V118.545C110.554 123.345 106.649 127.273 101.877 127.273Z" fill="#1A237E" fill-opacity="0.2"/>\n</g>\n<mask id="mask6_0_239" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="18" y="0" width="93" height="128">\n<path d="M75.8462 0H26.6769C21.9046 0 18 3.92727 18 8.72727V119.273C18 124.073 21.9046 128 26.6769 128H101.877C106.649 128 110.554 124.073 110.554 119.273V34.9091L75.8462 0Z" fill="white"/>\n</mask>\n<g mask="url(#mask6_0_239)">\n<path d="M84.5231 34.9091C79.7291 34.9091 75.8462 31.0036 75.8462 26.1818V26.9091C75.8462 31.7309 79.7291 35.6364 84.5231 35.6364H110.554V34.9091H84.5231Z" fill="#1A237E" fill-opacity="0.1"/>\n</g>\n<path d="M75.8462 0H26.6769C21.9046 0 18 3.92727 18 8.72727V119.273C18 124.073 21.9046 128 26.6769 128H101.877C106.649 128 110.554 124.073 110.554 119.273V34.9091L75.8462 0Z" fill="url(#paint1_radial_0_239)"/>\n</g>\n<defs>\n<linearGradient id="paint0_linear_0_239" x1="1687.04" y1="310.109" x2="1687.04" y2="3267.72" gradientUnits="userSpaceOnUse">\n<stop stop-color="#1A237E" stop-opacity="0.2"/>\n<stop offset="1" stop-color="#1A237E" stop-opacity="0.02"/>\n</linearGradient>\n<radialGradient id="paint1_radial_0_239" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(311.215 251.525) scale(14924.2 14924.2)">\n<stop stop-color="white" stop-opacity="0.1"/>\n<stop offset="1" stop-color="white" stop-opacity="0"/>\n</radialGradient>\n<clipPath id="clip0_0_239">\n<rect width="92.5538" height="128" fill="white" transform="translate(18)"/>\n</clipPath>\n</defs>\n</svg>\n',
   "drive":
@@ -13074,6 +13751,8 @@ export const icons: Record<string, string> = {
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n  <rect width="128" height="128" rx="20" fill="#FF5C35"/>\n  <path d="M86 51.5V39.2C91.7 37.2 95.8 31.8 95.8 25.4C95.8 17.3 89.3 10.8 81.2 10.8C73.1 10.8 66.6 17.3 66.6 25.4C66.6 31.8 70.7 37.2 76.4 39.2V51.5C70.8 52.4 65.9 55.2 62.1 59.2L39.3 41.4C40.2 39.5 40.7 37.4 40.7 35.2C40.7 27.1 34.2 20.6 26.1 20.6C18 20.6 11.5 27.1 11.5 35.2C11.5 43.3 18 49.8 26.1 49.8C28.9 49.8 31.5 49 33.7 47.7L56.2 65.3C54.7 68.4 53.8 71.9 53.8 75.6C53.8 77.9 54.1 80.1 54.8 82.2L38.2 92.6C35.5 90.2 32 88.7 28.1 88.7C20 88.7 13.5 95.2 13.5 103.3C13.5 111.4 20 117.9 28.1 117.9C36.2 117.9 42.7 111.4 42.7 103.3C42.7 102 42.5 100.8 42.2 99.6L58.9 89.1C63.4 95.4 70.7 99.5 79 99.5C92.7 99.5 103.8 88.4 103.8 74.7C103.8 62.2 94.7 52 86 51.5ZM79 89.2C71 89.2 64.5 82.7 64.5 74.7C64.5 66.7 71 60.2 79 60.2C87 60.2 93.5 66.7 93.5 74.7C93.5 82.7 87 89.2 79 89.2Z" fill="white"/>\n</svg>\n',
   "jira":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_328)">\n<path d="M44.5144 60.3244C43.0588 58.7232 40.8756 58.8688 39.8565 60.7612L16.275 107.924C15.4016 109.816 16.7117 112 18.7496 112H51.5016C52.5208 112 53.5396 111.418 53.9764 110.399C61.1088 95.8424 56.8876 73.5708 44.5144 60.3244Z" fill="url(#paint0_linear_0_328)"/>\n<path d="M61.6932 17.5284C48.5924 38.3442 49.466 61.4892 58.054 78.8112C66.788 96.1336 73.3384 109.525 73.9208 110.399C74.3576 111.418 75.3764 112 76.3952 112H109.148C111.185 112 112.641 109.816 111.622 107.924C111.622 107.924 67.516 19.7119 66.3512 17.5284C65.478 15.4905 63.0032 15.4905 61.6932 17.5284Z" fill="#2684FF"/>\n</g>\n<defs>\n<linearGradient id="paint0_linear_0_328" x1="57.3824" y1="67.62" x2="32.53" y2="110.666" gradientUnits="userSpaceOnUse">\n<stop stop-color="#0052CC"/>\n<stop offset="0.9228" stop-color="#2684FF"/>\n</linearGradient>\n<clipPath id="clip0_0_328">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n</defs>\n</svg>\n',
+  "klaviyo":
+    '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#0E1015"/>\n<path d="M30 34h68v60H30V34Zm10 8 24 22 24-22H40Zm48 44V51L64 73 40 51v35h48Z" fill="#FFFFFF"/>\n</svg>\n',
   "linear":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_298)">\n<g clip-path="url(#clip1_0_298)">\n<path d="M1.56852 78.7492C1.28372 77.5351 2.7301 76.7704 3.61189 77.6522L50.3478 124.388C51.2296 125.27 50.4649 126.716 49.2508 126.431C25.6659 120.899 7.10117 102.334 1.56852 78.7492ZM0.00242092 60.018C-0.0201631 60.3806 0.116177 60.7347 0.373073 60.9916L67.0084 127.627C67.2653 127.884 67.6193 128.02 67.9819 127.998C71.0145 127.809 73.99 127.409 76.8938 126.812C77.8724 126.611 78.2123 125.409 77.5059 124.703L3.29722 50.4941C2.59084 49.7876 1.38852 50.1276 1.18755 51.1062C0.591182 54.01 0.191304 56.9854 0.00242092 60.018ZM5.38999 38.0229C5.17688 38.5014 5.28543 39.0605 5.65578 39.4309L88.5691 122.344C88.9395 122.715 89.4986 122.823 89.9771 122.61C92.2633 121.592 94.479 120.443 96.6145 119.174C97.3212 118.755 97.4303 117.784 96.849 117.202L10.7976 31.151C10.2164 30.5697 9.24538 30.6788 8.8255 31.3855C7.55661 33.521 6.40831 35.7367 5.38999 38.0229ZM16.2031 23.1347C15.7294 22.661 15.7001 21.9012 16.1464 21.4015C27.8778 8.26791 44.9426 0 63.9384 0C99.3187 0 128 28.6813 128 64.0615C128 83.0574 119.732 100.122 106.599 111.854C106.099 112.3 105.339 112.271 104.865 111.797L16.2031 23.1347Z" fill="#222326"/>\n</g>\n</g>\n<defs>\n<clipPath id="clip0_0_298">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n<clipPath id="clip1_0_298">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n</defs>\n</svg>\n',
   "mixpanel":
@@ -13088,6 +13767,8 @@ export const icons: Record<string, string> = {
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#000000"/>\n<g stroke="#FFFFFF" stroke-width="7" stroke-linejoin="round" fill="none">\n<path d="M64 22 L98 41 L98 64 L64 45 L30 64 L30 41 Z"/>\n<path d="M98 64 L98 87 L64 106 L30 87 L30 64 L64 83 Z"/>\n<path d="M64 45 L64 83" stroke-linecap="round"/>\n</g>\n</svg>\n',
   "outlook":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_142)">\n<g clip-path="url(#clip1_0_142)">\n<path d="M127.542 66.6442C127.549 65.6433 127.032 64.7117 126.179 64.1884H126.164L126.11 64.1586L81.7569 37.9037C81.5653 37.7743 81.3666 37.6561 81.1615 37.5495C79.449 36.666 77.4147 36.666 75.7021 37.5495C75.4971 37.6561 75.2983 37.7743 75.1068 37.9037L30.7534 64.1586L30.6999 64.1884C29.3443 65.0313 28.9287 66.8137 29.7717 68.1693C30.0201 68.5687 30.3622 68.9014 30.7683 69.1387L75.1218 95.3936C75.314 95.5218 75.5127 95.6401 75.7172 95.7478C77.4297 96.6313 79.464 96.6313 81.1765 95.7478C81.381 95.6401 81.5797 95.5219 81.7719 95.3936L126.125 69.1387C127.011 68.6221 127.552 67.6699 127.542 66.6442Z" fill="#0A2767"/>\n<path d="M35.924 49.1141H65.0306V75.7947H35.924V49.1141ZM121.589 21.993V9.78838C121.659 6.73693 119.243 4.20571 116.192 4.13259H40.6601C37.6086 4.20571 35.1933 6.73693 35.2632 9.78838V21.993L79.9143 33.9L121.589 21.993Z" fill="#0364B8"/>\n<path d="M35.2634 21.993H65.0308V48.7837H35.2634V21.993Z" fill="#0078D4"/>\n<path d="M94.7982 21.993H65.0308V48.7837L94.7982 75.5744H121.589V48.7837L94.7982 21.993Z" fill="#28A8EA"/>\n<path d="M65.0308 48.7837H94.7982V75.5744H65.0308V48.7837Z" fill="#0078D4"/>\n<path d="M65.0308 75.5744H94.7982V102.365H65.0308V75.5744Z" fill="#0364B8"/>\n<path d="M35.9243 75.7947H65.0309V100.049H35.9243V75.7947Z" fill="#14447D"/>\n<path d="M94.7983 75.5744H121.589V102.365H94.7983V75.5744Z" fill="#0078D4"/>\n<path d="M126.179 68.975L126.122 69.0047L81.7687 93.9498C81.5752 94.0689 81.3788 94.182 81.1733 94.2832C80.42 94.6419 79.6018 94.8444 78.7681 94.8786L76.345 93.4616C76.1403 93.3589 75.9415 93.2446 75.7497 93.1193L30.8009 67.4657H30.7801L29.3096 66.6442V117.142C29.3325 120.511 32.0815 123.224 35.4506 123.202H121.496C121.547 123.202 121.592 123.178 121.645 123.178C122.357 123.133 123.058 122.987 123.729 122.744C124.019 122.621 124.298 122.476 124.565 122.309C124.765 122.196 125.107 121.949 125.107 121.949C126.632 120.821 127.534 119.039 127.542 117.142V66.6442C127.541 67.61 127.02 68.5006 126.179 68.975Z" fill="url(#paint0_linear_0_142)"/>\n<path opacity="0.5" d="M125.161 66.4447V69.5406L78.7832 101.472L30.7683 67.4866C30.7683 67.4702 30.755 67.4568 30.7386 67.4568L26.333 64.8075V62.5749L28.1488 62.5451L31.9888 64.748L32.0781 64.7777L32.4055 64.9861C32.4055 64.9861 77.5329 90.7349 77.652 90.7944L79.3785 91.8065C79.5273 91.747 79.6761 91.6875 79.8547 91.6279C79.9441 91.5683 124.655 66.4149 124.655 66.4149L125.161 66.4447Z" fill="#0A2767"/>\n<path d="M126.179 68.975L126.123 69.0077L81.7691 93.9528C81.5756 94.0718 81.3792 94.1849 81.1737 94.2861C79.4512 95.1276 77.4369 95.1276 75.7144 94.2861C75.5104 94.1851 75.3117 94.0738 75.119 93.9528L30.7657 69.0077L30.7121 68.975C29.8558 68.5107 29.3189 67.6182 29.3101 66.6442V117.142C29.3314 120.51 32.0794 123.224 35.4478 123.202C35.4478 123.202 35.448 123.202 35.4481 123.202H121.404C124.773 123.224 127.521 120.51 127.543 117.142C127.543 117.142 127.543 117.142 127.543 117.142V66.6442C127.541 67.61 127.02 68.5006 126.179 68.975Z" fill="#1490DF"/>\n<path opacity="0.1" d="M82.4148 93.5837L81.751 93.9558C81.5586 94.0782 81.3599 94.1906 81.1556 94.2921C80.4243 94.6511 79.629 94.8616 78.8159 94.9113L95.6911 114.867L125.128 121.961C125.935 121.352 126.576 120.55 126.995 119.63L82.4148 93.5837Z" fill="black"/>\n<path opacity="0.05" d="M85.4213 91.8929L81.751 93.9558C81.5586 94.0782 81.3599 94.1906 81.1556 94.2921C80.4243 94.6511 79.629 94.8616 78.8159 94.9113L86.7221 116.71L125.137 121.952C126.65 120.816 127.541 119.034 127.542 117.142V116.49L85.4213 91.8929Z" fill="black"/>\n<path d="M35.5314 123.202H121.396C122.717 123.209 124.005 122.792 125.072 122.012L76.3425 93.4676C76.1378 93.3649 75.939 93.2506 75.7472 93.1253L30.7984 67.4717H30.7776L29.3101 66.6442V116.969C29.3067 120.408 32.0921 123.199 35.5314 123.202Z" fill="#28A8EA"/>\n<path opacity="0.1" d="M70.984 33.4029V96.8968C70.9787 99.123 69.625 101.124 67.5607 101.957C66.9212 102.232 66.2325 102.374 65.5365 102.374H29.3096V30.9233H35.2631V27.9465H65.5366C68.5438 27.9579 70.9775 30.3956 70.984 33.4029Z" fill="black"/>\n<path opacity="0.2" d="M68.0073 36.3796V99.8735C68.0147 100.593 67.8623 101.304 67.5607 101.957C66.734 103.995 64.7588 105.332 62.5598 105.342H29.3096V30.9233H62.5598C63.4235 30.9146 64.2747 31.13 65.0305 31.5484C66.8552 32.4677 68.0066 34.3364 68.0073 36.3796Z" fill="black"/>\n<path opacity="0.2" d="M68.0073 36.3796V93.92C67.9927 96.9259 65.5657 99.3623 62.5599 99.3883H29.3096V30.9233H62.5598C63.4235 30.9146 64.2747 31.13 65.0305 31.5484C66.8552 32.4677 68.0066 34.3364 68.0073 36.3796Z" fill="black"/>\n<path opacity="0.2" d="M65.0305 36.3796V93.92C65.0273 96.9306 62.5935 99.3736 59.5831 99.3883H29.3096V30.9233H59.583C62.5932 30.9249 65.0321 33.3665 65.0304 36.3767C65.0305 36.3777 65.0305 36.3786 65.0305 36.3796Z" fill="black"/>\n<path d="M4.99883 30.9233H59.5744C62.5879 30.9233 65.0308 33.3662 65.0308 36.3796V90.9552C65.0308 93.9687 62.5879 96.4116 59.5744 96.4116H4.99883C1.98534 96.4116 -0.45752 93.9686 -0.45752 90.9552V36.3796C-0.45752 33.3662 1.98541 30.9233 4.99883 30.9233Z" fill="url(#paint1_linear_0_142)"/>\n<path d="M16.5963 53.8085C17.9411 50.9433 20.1118 48.5455 22.8296 46.9233C25.8395 45.2001 29.2665 44.341 32.7333 44.4406C35.9464 44.371 39.117 45.1855 41.8987 46.7952C44.5141 48.3549 46.6205 50.6402 47.9623 53.3738C49.4235 56.386 50.1518 59.701 50.0877 63.0482C50.1585 66.5464 49.4092 70.0126 47.8998 73.1691C46.526 76.0005 44.3528 78.3672 41.6486 79.9769C38.7597 81.636 35.4714 82.4719 32.1409 82.3941C28.8591 82.4733 25.6187 81.6495 22.7731 80.0127C20.1351 78.4509 18.0022 76.163 16.6291 73.4221C15.1592 70.4535 14.4222 67.1759 14.4799 63.8638C14.4187 60.3954 15.1422 56.958 16.5963 53.8085ZM23.2404 69.9721C23.9574 71.7835 25.1733 73.3544 26.747 74.5028C28.3499 75.623 30.2692 76.201 32.2242 76.1519C34.3061 76.2342 36.3583 75.6365 38.0705 74.4491C39.6243 73.3045 40.8082 71.7293 41.4759 69.9185C42.2222 67.8964 42.5906 65.7542 42.5624 63.5989C42.5855 61.423 42.2392 59.259 41.5384 57.199C40.9194 55.339 39.7736 53.6989 38.2402 52.4779C36.5709 51.2343 34.5242 50.6035 32.4444 50.6918C30.4471 50.6401 28.4848 51.2226 26.8393 52.3558C25.239 53.5089 24 55.0938 23.2672 56.9251C21.6416 61.1227 21.6331 65.7746 23.2433 69.9781L23.2404 69.9721Z" fill="white"/>\n<path d="M94.7983 21.993H121.589V48.7837H94.7983V21.993Z" fill="#50D9FF"/>\n</g>\n</g>\n<defs>\n<linearGradient id="paint0_linear_0_142" x1="78.4258" y1="66.6442" x2="78.4258" y2="123.202" gradientUnits="userSpaceOnUse">\n<stop stop-color="#35B8F1"/>\n<stop offset="1" stop-color="#28A8EA"/>\n</linearGradient>\n<linearGradient id="paint1_linear_0_142" x1="10.9191" y1="26.6598" x2="53.6542" y2="100.675" gradientUnits="userSpaceOnUse">\n<stop stop-color="#1784D9"/>\n<stop offset="0.5" stop-color="#107AD5"/>\n<stop offset="1" stop-color="#0A63C9"/>\n</linearGradient>\n<clipPath id="clip0_0_142">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n<clipPath id="clip1_0_142">\n<rect width="128" height="119.07" fill="white" transform="translate(-0.45752 4.13259)"/>\n</clipPath>\n</defs>\n</svg>\n',
+  "paypal":
+    '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<rect width="128" height="128" rx="24" fill="#FFFFFF"/>\n<path d="M42 100 53 28h25c12 0 20 7 18.5 18.5C94.7 60 85 66 72.5 66H59l-5 34H42Z" fill="#003087"/>\n<path d="M56 108l10-66h23c11 0 18 6.5 16.5 17.5C103.7 73 95 79 83.5 79H70l-4.4 29H56Z" fill="#009CDE" fill-opacity="0.9"/>\n</svg>\n',
   "persona":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<path d="M112.152 115.656V122.68C112.152 126.088 110.254 128 106.828 128H20.3232C16.9128 128 15 126.103 15 122.68V115.656C15 112.248 16.898 110.336 20.3232 110.336H106.843C110.254 110.336 112.166 112.233 112.166 115.656H112.152ZM106.25 62.5179L83.6972 49.5077C82.9556 49.0779 82.9556 48.0258 83.6972 47.5962L106.25 34.5858C108.801 33.1187 109.66 29.8587 108.193 27.3248L104.679 21.2494C103.211 18.7006 99.9632 17.8412 97.4132 19.3082L74.8597 32.3185C74.1187 32.7483 73.1991 32.2148 73.1991 31.3702V5.31976C73.1991 2.38573 70.8119 0 67.8759 0H60.8476C57.9116 0 55.5244 2.38573 55.5244 5.31976V31.3554C55.5244 32.2 54.6051 32.7334 53.8637 32.3038L31.3106 19.2933C28.7602 17.8263 25.5129 18.7006 24.045 21.2345L20.5308 27.31C19.0628 29.8587 19.9377 33.1039 22.4732 34.5709L45.0263 47.5813C45.7677 48.0111 45.7677 49.0632 45.0263 49.4929L22.4732 62.5031C19.9228 63.9702 19.0628 67.2155 20.5308 69.7644L24.045 75.8395C25.5129 78.3884 28.7602 79.2481 31.3106 77.781L53.8637 64.7705C54.6051 64.3407 55.5244 64.8744 55.5244 65.7187V91.7545C55.5244 94.6887 57.9116 97.0743 60.8476 97.0743H67.8759C70.8119 97.0743 73.1991 94.6887 73.1991 91.7545V65.7187C73.1991 64.8744 74.1187 64.3407 74.8597 64.7705L97.4132 77.781C99.9632 79.2481 103.211 78.3735 104.679 75.8395L108.193 69.7644C109.66 67.2155 108.786 63.9702 106.25 62.5031V62.5179Z" fill="#7379FD"/>\n</svg>\n',
   "posthog":

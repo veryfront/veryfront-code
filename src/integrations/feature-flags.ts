@@ -81,6 +81,9 @@ export const DECLARED_INTEGRATION_NAMES = [
   "todoist",
   "calendly",
   "google-analytics",
+  "klaviyo",
+  "datadog",
+  "paypal",
 ] as const;
 
 const supportedIntegrations = new Set<string>(SUPPORTED_INTEGRATION_NAMES);

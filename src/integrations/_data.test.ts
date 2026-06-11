@@ -54,6 +54,7 @@ describe("integration endpoint specs", () => {
       "calendar",
       "calendly",
       "confluence",
+      "datadog",
       "docs-google",
       "drive",
       "figma",
@@ -64,6 +65,7 @@ describe("integration endpoint specs", () => {
       "harvest",
       "hubspot",
       "jira",
+      "klaviyo",
       "linear",
       "mixpanel",
       "neon",
@@ -71,6 +73,7 @@ describe("integration endpoint specs", () => {
       "onedrive",
       "openai",
       "outlook",
+      "paypal",
       "persona",
       "posthog",
       "salesforce",
@@ -107,7 +110,15 @@ describe("integration endpoint specs", () => {
   });
 
   it("registers the experimental wave-1 connectors behind the experimental flag", () => {
-    const waveConnectors = ["openai", "todoist", "calendly", "google-analytics"];
+    const waveConnectors = [
+      "openai",
+      "todoist",
+      "calendly",
+      "google-analytics",
+      "klaviyo",
+      "datadog",
+      "paypal",
+    ];
 
     for (const name of waveConnectors) {
       const connector = getConnector(name);
@@ -143,6 +154,22 @@ describe("integration endpoint specs", () => {
       true,
       "Expected google-analytics to be read-only",
     );
+
+    const klaviyo = getConnector("klaviyo");
+    assertEquals(klaviyo.auth.type, "api-key");
+    assertEquals(klaviyo.auth.keyName, "KLAVIYO_API_KEY");
+    assertEquals(klaviyo.auth.headerPrefix, "Klaviyo-API-Key");
+
+    const datadog = getConnector("datadog");
+    assertEquals(datadog.auth.type, "api-key");
+    assertEquals(datadog.auth.headerName, "DD-API-KEY");
+    assertEquals(datadog.auth.additionalHeaders, { "DD-APPLICATION-KEY": "DD_APP_KEY" });
+
+    const paypal = getConnector("paypal");
+    assertEquals(paypal.auth.type, "oauth2");
+    assertEquals(paypal.auth.grantType, "client_credentials");
+    assertEquals(paypal.auth.tokenUrl, "https://api-m.paypal.com/v1/oauth2/token");
+    assertEquals(paypal.auth.authorizationUrl, undefined);
   });
 
   it("does not expose retired integrations until they have verified working tool surfaces", () => {

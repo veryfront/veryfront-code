@@ -227,6 +227,22 @@ export const historicalToolSummaries: Record<string, IntegrationEndpointHistoric
     "outputFields": [{ "name": "next_page_token" }],
     "omitted": "location details and provider-specific payload fields",
   },
+  "datadog__list_dashboards": {
+    "collectionKeys": ["dashboards"],
+    "collectionName": "dashboards",
+    "itemFields": [{ "name": "id" }, { "name": "title" }, { "name": "url" }, {
+      "name": "layout_type",
+    }, { "name": "modified_at" }],
+    "omitted": "dashboard widget definitions and provider-specific payload fields",
+  },
+  "datadog__list_monitors": {
+    "collectionKeys": ["monitors"],
+    "collectionName": "monitors",
+    "itemFields": [{ "name": "id" }, { "name": "name" }, { "name": "type" }, {
+      "name": "overall_state",
+    }, { "name": "tags", "kind": "string-array" }],
+    "omitted": "monitor query definitions and provider-specific payload fields",
+  },
   "github__get_issue": {
     "collectionKeys": ["issue", "data"],
     "collectionName": "issues",
@@ -809,6 +825,20 @@ export const historicalToolSummaries: Record<string, IntegrationEndpointHistoric
     "outputFields": [{ "name": "total" }, { "name": "startAt" }, { "name": "maxResults" }],
     "omitted": "issue descriptions, comments, changelog, and provider-specific payload fields",
   },
+  "klaviyo__list_lists": {
+    "collectionKeys": ["data", "lists"],
+    "collectionName": "lists",
+    "itemFields": [{ "name": "id" }, { "name": "attributes", "kind": "object" }],
+    "outputFields": [{ "name": "next" }],
+    "omitted": "list metadata beyond name and created/updated timestamps",
+  },
+  "klaviyo__list_profiles": {
+    "collectionKeys": ["data", "profiles"],
+    "collectionName": "profiles",
+    "itemFields": [{ "name": "id" }, { "name": "attributes", "kind": "object" }],
+    "outputFields": [{ "name": "next" }],
+    "omitted": "profile location/subscription detail fields",
+  },
   "linear__list_projects": {
     "collectionKeys": ["projects", "nodes", "data"],
     "collectionName": "projects",
@@ -1301,6 +1331,20 @@ export const historicalToolSummaries: Record<string, IntegrationEndpointHistoric
     ],
     "outputFields": [{ "name": "@odata.nextLink" }, { "name": "@odata.count" }],
     "omitted": "large email bodies and provider-specific message fields",
+  },
+  "paypal__list_invoices": {
+    "collectionKeys": ["items", "invoices"],
+    "collectionName": "invoices",
+    "itemFields": [{ "name": "id" }, { "name": "status" }, { "name": "detail", "kind": "object" }],
+    "outputFields": [{ "name": "total_items" }, { "name": "total_pages" }],
+    "omitted": "line items and amount breakdowns",
+  },
+  "paypal__list_transactions": {
+    "collectionKeys": ["transaction_details", "transactions"],
+    "collectionName": "transactions",
+    "itemFields": [{ "name": "transaction_info", "kind": "object" }],
+    "outputFields": [{ "name": "total_items" }, { "name": "total_pages" }, { "name": "page" }],
+    "omitted": "payer, cart, and shipping detail blocks",
   },
   "slack__list_channels": {
     "collectionKeys": ["channels", "data"],
