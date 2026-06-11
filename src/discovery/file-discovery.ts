@@ -129,8 +129,8 @@ export async function listDiscoveryDirectoryEntries(
       for await (const entry of context.fsAdapter.readDir(dir)) {
         entries.push({
           name: entry.name,
-          isFile: Boolean(entry.isFile),
-          isDirectory: Boolean(entry.isDirectory),
+          isFile: entry.isFile,
+          isDirectory: entry.isDirectory,
         });
       }
 

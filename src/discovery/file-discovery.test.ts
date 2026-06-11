@@ -45,6 +45,26 @@ Deno.test("listDiscoveryDirectoryEntries returns empty for a missing dir via fsA
   assertEquals(await listDiscoveryDirectoryEntries("/missing", context), []);
 });
 
+Deno.test("listDiscoveryDirectoryEntries reads top-level entries through the Node fallback", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    await Deno.writeTextFile(`${root}/lead.md`, "Lead");
+    await Deno.mkdir(`${root}/writer`);
+    await Deno.writeTextFile(`${root}/writer/AGENT.md`, "Writer");
+    const context: FileDiscoveryContext = { platform: "node" };
+
+    const entries = (await listDiscoveryDirectoryEntries(root, context))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    assertEquals(entries, [
+      { name: "lead.md", isFile: true, isDirectory: false },
+      { name: "writer", isFile: false, isDirectory: true },
+    ]);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("discoveryFileExists resolves through an fsAdapter", async () => {
   const fsAdapter = fakeFsAdapter({}, new Set(["/agents/writer/AGENT.md"]));
   const context: FileDiscoveryContext = { platform: "node", fsAdapter };
