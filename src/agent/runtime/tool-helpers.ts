@@ -7,7 +7,7 @@
  */
 
 import type { RemoteToolSource, Tool, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
-import { executeTool, toolRegistry } from "#veryfront/tool";
+import { executeTool, isToolVisibleTo, toolRegistry } from "#veryfront/tool";
 import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
 import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 import { serverLogger } from "#veryfront/utils";
@@ -247,9 +247,11 @@ export async function executeConfiguredTool(
     return await configuredTool.execute(input, context);
   }
 
-  // Try local registry first
+  // Try local registry first. Owned tools are only executable by their
+  // owning agent (context.agentId is stamped by the runtime); invisible tools
+  // fall through and surface as "not found" via executeTool.
   const registryTool = toolRegistry.get(toolName);
-  if (registryTool) {
+  if (registryTool && isToolVisibleTo(registryTool, context)) {
     return await registryTool.execute(input, context);
   }
 
@@ -331,6 +333,8 @@ export async function getAvailableTools(
     forwardedRemoteToolDefinitions?: ToolDefinition[];
     remoteToolSources?: RemoteToolSource[];
     remoteToolContext?: ToolExecutionContext;
+    /** Calling agent id for owner-aware tool visibility. */
+    callerAgentId?: string;
   },
 ): Promise<ToolDefinition[]> {
   if (!toolsConfig) return [];
@@ -339,7 +343,10 @@ export async function getAvailableTools(
     const allTools = toolRegistry.getAll();
     logger.debug(`Loading all ${allTools.size} tools from registry`);
 
-    const tools = Array.from(allTools, ([name, tool]) => {
+    const visibleTools = Array.from(allTools.entries()).filter(([, tool]) =>
+      isToolVisibleTo(tool, { agentId: options?.callerAgentId })
+    );
+    const tools = visibleTools.map(([name, tool]) => {
       const def = toolToProviderDefinition(tool);
       logToolDefinition(name, def);
       return def;
@@ -378,8 +385,13 @@ export async function getAvailableTools(
   for (const [name, entry] of Object.entries(toolsConfig)) {
     if (entry === true) {
       const tool = toolRegistry.get(name);
-      if (tool) {
+      if (tool && isToolVisibleTo(tool, { agentId: options?.callerAgentId })) {
         addToolDefinition(tools, name, tool);
+        continue;
+      }
+      if (tool) {
+        // Owned by another agent: treat as unresolved rather than binding it.
+        unresolvedConfiguredToolNames.push(name);
         continue;
       }
 
@@ -413,9 +425,14 @@ export async function getAvailableTools(
   }
 
   if (unresolvedConfiguredToolNames.length > 0) {
+    // Enumerate only tools visible to the caller — never another agent's
+    // owned tool ids (error-message leak guard).
+    const visibleLocalToolNames = Array.from(toolRegistry.getAll().entries())
+      .filter(([, tool]) => isToolVisibleTo(tool, { agentId: options?.callerAgentId }))
+      .map(([name]) => name);
     throwUnknownConfiguredToolsError(
       unresolvedConfiguredToolNames,
-      toolRegistry.getAll().keys(),
+      visibleLocalToolNames,
       remoteToolNames,
     );
   }

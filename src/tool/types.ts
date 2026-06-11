@@ -152,6 +152,17 @@ export interface Tool<TInput = any, TOutput = any> {
 
   /** MCP configuration */
   mcp?: ToolConfig["mcp"];
+
+  /**
+   * Owning agent id for agent-scoped tools. Unowned (undefined) tools are
+   * project/global. Owned tools are invisible to other agents, excluded from
+   * MCP `tools/list`, and rejected by registry execution unless the execution
+   * context carries the owner's `agentId`.
+   */
+  ownerAgentId?: string;
+
+  /** Short name used by the owning agent's `tools:` selector (e.g. "fetch"). */
+  shortName?: string;
 }
 
 /**

@@ -348,6 +348,10 @@ export class MCPServer {
 
     for (const [id, tool] of registry.tools.entries()) {
       if (tool.mcp?.enabled === false) continue;
+      // Agent-owned tools are never listed to MCP clients: external callers
+      // have no agent identity, so owned capabilities are invisible here
+      // (and rejected at execution time by the registry executor).
+      if (tool.ownerAgentId !== undefined) continue;
 
       const entry: ToolListEntry = {
         name: id,

@@ -32,7 +32,14 @@ export {
 } from "./types.ts";
 
 // Registry
-export { getAllSkills, getSkill, registerSkill, skillRegistry } from "./registry.ts";
+export {
+  type AgentCapabilityScope,
+  getAllSkills,
+  getSkill,
+  isSkillVisibleTo,
+  registerSkill,
+  skillRegistry,
+} from "./registry.ts";
 
 // Parser
 export { parseSkillFrontmatter, validateSkillMetadata } from "./parser.ts";

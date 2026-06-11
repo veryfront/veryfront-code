@@ -556,6 +556,7 @@ export class AgentRuntime {
         const toolContext = { ...toolContextBase, ...currentRuntimeContext };
 
         let tools = isLocal ? [] : await getAvailableTools(this.config.tools, {
+          callerAgentId: this.id,
           includeSkillTools: Boolean(this.config.skills),
           allowedRemoteToolNames,
           forwardedRemoteToolDefinitions,
@@ -722,6 +723,9 @@ export class AgentRuntime {
                 toolCallId: tc.toolCallId,
                 ...toolContext,
                 projectId: cacheCtx?.projectId ?? toolContext?.projectId,
+                // Caller identity for capability scoping. Stamped after the
+                // spreads so caller-supplied context cannot spoof it.
+                agentId: this.id,
               };
               const result = await executeConfiguredTool(
                 tc.toolName,
@@ -863,6 +867,7 @@ export class AgentRuntime {
       const toolContext = { ...toolContextBase, ...currentRuntimeContext };
 
       let tools = isLocalStreaming ? [] : await getAvailableTools(this.config.tools, {
+        callerAgentId: this.id,
         includeSkillTools: Boolean(this.config.skills),
         allowedRemoteToolNames,
         forwardedRemoteToolDefinitions,
@@ -1133,6 +1138,9 @@ export class AgentRuntime {
           const executionContext = {
             toolCallId: tc.id,
             ...toolContext,
+            // Caller identity for capability scoping. Stamped after the
+            // spread so caller-supplied context cannot spoof it.
+            agentId: this.id,
           };
           const result = await executeConfiguredTool(
             tc.name,

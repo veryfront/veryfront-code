@@ -140,6 +140,6 @@ export type {
 
 export { toolRegistry } from "./registry.ts";
 
-export { executeTool } from "./executor.ts";
+export { executeTool, isToolVisibleTo } from "./executor.ts";
 
 export type { JsonSchema } from "./schema/index.ts";

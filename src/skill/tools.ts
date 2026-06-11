@@ -11,7 +11,7 @@
 
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { tool } from "#veryfront/tool/factory.ts";
-import type { Tool } from "#veryfront/tool";
+import type { Tool, ToolExecutionContext } from "#veryfront/tool";
 import { readTextFile } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
@@ -75,6 +75,33 @@ async function readSkillFile(skill: Skill, path: string): Promise<string> {
   return await readTextFile(path);
 }
 
+/**
+ * Resolve a requested skill for the calling agent, enforcing owner scope.
+ *
+ * Visibility follows the same owner-aware resolver as prompt manifests and
+ * selector resolution: unowned skills plus the caller's own (by short name or
+ * id). A skill outside the caller's scope behaves exactly like a missing
+ * skill, and the not-found error only enumerates skills visible to the
+ * caller — never another agent's owned skill ids.
+ */
+function resolveVisibleSkillOrThrow(
+  skillId: string,
+  context: ToolExecutionContext | undefined,
+): Skill {
+  const scope = { agentId: context?.agentId };
+  const skill = skillRegistry.resolveVisibleSkill(skillId, scope);
+  if (!skill) {
+    const visible = skillRegistry.getVisibleSkillIds(scope).join(", ");
+    throw toError(
+      createError({
+        type: "agent",
+        message: `Skill "${skillId}" not found. Available skills: ${visible || "none"}`,
+      }),
+    );
+  }
+  return skill;
+}
+
 function buildSkillAvailabilityNote(references: string[], scripts: string[]): string | undefined {
   if (scripts.length === 0 && references.length === 0) {
     return "This skill has no scripts or reference files. Do NOT call execute_skill_script or load_skill_reference.";
@@ -98,17 +125,8 @@ export function createLoadSkillTool(): Tool {
     description: "Load a skill's full instructions. Returns the skill's markdown instructions, " +
       "allowed tools policy, and lists of available reference files and scripts.",
     inputSchema: getLoadSkillInputSchema(),
-    execute: async (input): Promise<SkillContent> => {
-      const skill = skillRegistry.get(input.skillId);
-      if (!skill) {
-        const available = skillRegistry.getAllIds().join(", ");
-        throw toError(
-          createError({
-            type: "agent",
-            message: `Skill "${input.skillId}" not found. Available skills: ${available || "none"}`,
-          }),
-        );
-      }
+    execute: async (input, context): Promise<SkillContent> => {
+      const skill = resolveVisibleSkillOrThrow(input.skillId, context);
 
       // Read SKILL.md
       const skillMdPath = join(skill.rootPath, SKILL_MD_FILENAME);
@@ -159,16 +177,8 @@ export function createLoadSkillReferenceTool(): Tool {
     description: "Read a reference file from a skill. Only files in the skill's " +
       "references/, resources/, and assets/ directories are accessible.",
     inputSchema: getLoadSkillReferenceInputSchema(),
-    execute: async (input): Promise<{ content: string; path: string }> => {
-      const skill = skillRegistry.get(input.skillId);
-      if (!skill) {
-        throw toError(
-          createError({
-            type: "agent",
-            message: `Skill "${input.skillId}" not found`,
-          }),
-        );
-      }
+    execute: async (input, context): Promise<{ content: string; path: string }> => {
+      const skill = resolveVisibleSkillOrThrow(input.skillId, context);
 
       // Validate path safety before reading skill-provided context.
       const validatedPath = await validateSkillPath(
@@ -194,16 +204,8 @@ export function createExecuteSkillScriptTool(): Tool {
     description:
       "Execute a script from a skill's scripts/ directory. Returns stdout, stderr, and exit code.",
     inputSchema: getExecuteSkillScriptInputSchema(),
-    execute: async (input) => {
-      const skill = skillRegistry.get(input.skillId);
-      if (!skill) {
-        throw toError(
-          createError({
-            type: "agent",
-            message: `Skill "${input.skillId}" not found`,
-          }),
-        );
-      }
+    execute: async (input, context) => {
+      const skill = resolveVisibleSkillOrThrow(input.skillId, context);
 
       // Validate path safety (only scripts/ allowed)
       const validatedPath = await validateSkillPath(

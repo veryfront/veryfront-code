@@ -77,6 +77,14 @@ export interface Skill {
   rootPath: string;
   /** Optional filesystem adapter for VFS/cloud-backed projects */
   fsAdapter?: FileSystemAdapter;
+  /**
+   * Owning agent id for agent-scoped skills. Unowned (undefined) skills are
+   * project-global. Owned skills are invisible to other agents in selector
+   * resolution and skill tools.
+   */
+  ownerAgentId?: string;
+  /** Short name used by the owning agent's `skills:` selector (e.g. "cite"). */
+  shortName?: string;
 }
 
 /** Result from executing a skill script */
