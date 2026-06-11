@@ -54,6 +54,10 @@ function createLazyDelegateTool(
  * parsing rejects the latter two cases up front with an explicit diagnostic.
  * Returns an empty map when `delegates` is empty — i.e. an agent with no
  * `delegates` runs with no orchestration.
+ *
+ * Delegation chains are intentionally not cycle-detected here. Each delegated
+ * call is a separate agent run with its own maxSteps budget; keep delegate
+ * graphs acyclic until a runtime chain-depth cap exists.
  */
 export function buildAgentDelegateTools(
   input: BuildAgentDelegateToolsInput,
