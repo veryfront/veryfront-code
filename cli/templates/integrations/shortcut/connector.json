@@ -1,0 +1,343 @@
+{
+  "name": "shortcut",
+  "displayName": "Shortcut",
+  "icon": "shortcut.svg",
+  "description": "Manage stories, epics, and workflows in Shortcut",
+  "auth": {
+    "type": "api-key",
+    "keyName": "SHORTCUT_API_TOKEN",
+    "headerName": "Shortcut-Token",
+    "docsUrl": "https://developer.shortcut.com/api/rest/v3",
+    "requiredApis": [
+      {
+        "name": "Shortcut API Tokens",
+        "enableUrl": "https://app.shortcut.com/settings/account/api-tokens"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "SHORTCUT_API_TOKEN",
+      "description": "Shortcut API token (Settings > Account > API Tokens)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.shortcut.com/api/rest/v3#Authentication"
+    }
+  ],
+  "tools": [
+    {
+      "id": "search_stories",
+      "name": "Search Stories",
+      "description": "Search Shortcut stories with the Shortcut search syntax",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.app.shortcut.com/api/v3/search/stories",
+        "params": {
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "Search query using Shortcut operators, e.g. 'state:\"In Progress\" owner:jane'",
+            "required": true
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Results per page (1-25)",
+            "default": 25
+          },
+          "next": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination token from a previous response's next field"
+          },
+          "detail": {
+            "type": "string",
+            "in": "query",
+            "description": "Response detail level: slim or full",
+            "default": "slim"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "data"
+            ],
+            "collectionName": "stories",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "story_type"
+              },
+              {
+                "name": "workflow_state_id"
+              },
+              {
+                "name": "epic_id"
+              },
+              {
+                "name": "app_url"
+              },
+              {
+                "name": "created_at"
+              },
+              {
+                "name": "updated_at"
+              },
+              {
+                "name": "owner_ids",
+                "kind": "string-array"
+              }
+            ],
+            "omitted": "story descriptions, tasks, comments, and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "next"
+              },
+              {
+                "name": "total"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_story",
+      "name": "Get Story",
+      "description": "Get a Shortcut story by its public ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.app.shortcut.com/api/v3/stories/{storyPublicId}",
+        "params": {
+          "storyPublicId": {
+            "type": "string",
+            "in": "path",
+            "description": "Story public ID (the number in the story URL)",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_story",
+      "name": "Create Story",
+      "description": "Create a new story in Shortcut",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.app.shortcut.com/api/v3/stories",
+        "body": {
+          "name": {
+            "type": "string",
+            "description": "Story title",
+            "required": true
+          },
+          "description": {
+            "type": "string",
+            "description": "Story description (Markdown)"
+          },
+          "story_type": {
+            "type": "string",
+            "description": "feature, bug, or chore",
+            "default": "feature"
+          },
+          "workflow_state_id": {
+            "type": "number",
+            "description": "Workflow state ID (see List Workflows)"
+          },
+          "epic_id": {
+            "type": "number",
+            "description": "Epic ID to attach the story to"
+          },
+          "owner_ids": {
+            "type": "array",
+            "description": "Array of member UUIDs to own the story"
+          },
+          "deadline": {
+            "type": "string",
+            "description": "Due date as ISO 8601 timestamp"
+          }
+        }
+      }
+    },
+    {
+      "id": "update_story",
+      "name": "Update Story",
+      "description": "Update an existing Shortcut story",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://api.app.shortcut.com/api/v3/stories/{storyPublicId}",
+        "params": {
+          "storyPublicId": {
+            "type": "string",
+            "in": "path",
+            "description": "Story public ID",
+            "required": true
+          }
+        },
+        "body": {
+          "name": {
+            "type": "string",
+            "description": "New story title"
+          },
+          "description": {
+            "type": "string",
+            "description": "New story description (Markdown)"
+          },
+          "story_type": {
+            "type": "string",
+            "description": "feature, bug, or chore"
+          },
+          "workflow_state_id": {
+            "type": "number",
+            "description": "Workflow state ID to move the story to"
+          },
+          "epic_id": {
+            "type": "number",
+            "description": "Epic ID to attach the story to"
+          },
+          "owner_ids": {
+            "type": "array",
+            "description": "Array of member UUIDs to own the story"
+          },
+          "archived": {
+            "type": "boolean",
+            "description": "Whether the story is archived"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_epics",
+      "name": "List Epics",
+      "description": "List epics in the Shortcut workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.app.shortcut.com/api/v3/epics",
+        "params": {
+          "includes_description": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include epic descriptions in the response",
+            "default": false
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "epics"
+            ],
+            "collectionName": "epics",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "state"
+              },
+              {
+                "name": "app_url"
+              },
+              {
+                "name": "created_at"
+              },
+              {
+                "name": "updated_at"
+              },
+              {
+                "name": "owner_ids",
+                "kind": "string-array"
+              }
+            ],
+            "omitted": "epic stats, milestone links, and provider-specific payload fields",
+            "outputFields": []
+          }
+        }
+      }
+    },
+    {
+      "id": "list_members",
+      "name": "List Members",
+      "description": "List members of the Shortcut workspace (use member UUIDs as owner_ids)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.app.shortcut.com/api/v3/members"
+      }
+    },
+    {
+      "id": "list_workflows",
+      "name": "List Workflows",
+      "description": "List workflows and their states (use state IDs as workflow_state_id)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.app.shortcut.com/api/v3/workflows"
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "my_stories",
+      "title": "My in-progress stories",
+      "prompt": "Search Shortcut for stories owned by me that are in progress and summarize them.",
+      "category": "productivity",
+      "icon": "list"
+    },
+    {
+      "id": "file_bug",
+      "title": "File a bug",
+      "prompt": "Create a bug story in Shortcut with a clear title and reproduction steps.",
+      "category": "productivity",
+      "icon": "plus"
+    }
+  ],
+  "suggestedWith": [
+    "github",
+    "slack",
+    "sentry"
+  ],
+  "SETUP_GUIDE": {
+    "title": "Shortcut API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Sign in to Shortcut",
+        "description": "Go to https://app.shortcut.com and sign in. A free trial workspace is sufficient for testing."
+      },
+      {
+        "step": 2,
+        "title": "Generate an API token",
+        "description": "Open Settings > Account > API Tokens (https://app.shortcut.com/settings/account/api-tokens), name the token, and generate it. Tokens are scoped to the workspace you create them in."
+      },
+      {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the token to your .env as SHORTCUT_API_TOKEN=..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Workflows, then Search Stories with a simple query."
+      }
+    ],
+    "notes": [
+      "Shortcut authenticates with a 'Shortcut-Token' header, not Authorization",
+      "Creating stories needs a workflow_state_id — call List Workflows first",
+      "Rate limit is 200 requests per minute"
+    ],
+    "documentation": "https://developer.shortcut.com/api/rest/v3"
+  }
+}

@@ -1,0 +1,320 @@
+{
+  "name": "datadog",
+  "displayName": "Datadog",
+  "icon": "datadog.svg",
+  "description": "Query Datadog monitors, dashboards, metrics, and logs",
+  "auth": {
+    "type": "api-key",
+    "keyName": "DD_API_KEY",
+    "headerName": "DD-API-KEY",
+    "additionalHeaders": {
+      "DD-APPLICATION-KEY": "DD_APP_KEY"
+    },
+    "docsUrl": "https://docs.datadoghq.com/api/latest/authentication/",
+    "requiredApis": [
+      {
+        "name": "Datadog API Keys",
+        "enableUrl": "https://app.datadoghq.com/organization-settings/api-keys"
+      },
+      {
+        "name": "Datadog Application Keys",
+        "enableUrl": "https://app.datadoghq.com/organization-settings/application-keys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "DD_API_KEY",
+      "description": "Datadog API key",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.datadoghq.com/account_management/api-app-keys/"
+    },
+    {
+      "name": "DD_APP_KEY",
+      "description": "Datadog application key (scoped to the user who created it)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.datadoghq.com/account_management/api-app-keys/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "validate_api_key",
+      "name": "Validate API Key",
+      "description": "Check that the configured Datadog API key is valid",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.{site}/api/v1/validate",
+        "params": {
+          "site": {
+            "type": "string",
+            "in": "path",
+            "description": "Datadog site domain, e.g. datadoghq.com, datadoghq.eu, us3.datadoghq.com",
+            "default": "datadoghq.com"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_monitors",
+      "name": "List Monitors",
+      "description": "List monitors with optional name or tag filtering",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.{site}/api/v1/monitor",
+        "params": {
+          "site": {
+            "type": "string",
+            "in": "path",
+            "description": "Datadog site domain, e.g. datadoghq.com, datadoghq.eu",
+            "default": "datadoghq.com"
+          },
+          "name": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter monitors by name substring"
+          },
+          "monitor_tags": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated monitor tags to filter by, e.g. service:web"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (0-based)",
+            "default": 0
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Monitors per page (max 1000)",
+            "default": 50
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["monitors"],
+            "collectionName": "monitors",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "type" },
+              { "name": "overall_state" },
+              { "name": "tags", "kind": "string-array" }
+            ],
+            "omitted": "monitor query definitions and provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_monitor",
+      "name": "Get Monitor",
+      "description": "Get details and current state of a monitor",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.{site}/api/v1/monitor/{monitorId}",
+        "params": {
+          "site": {
+            "type": "string",
+            "in": "path",
+            "description": "Datadog site domain",
+            "default": "datadoghq.com"
+          },
+          "monitorId": {
+            "type": "string",
+            "in": "path",
+            "description": "Monitor ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "mute_monitor",
+      "name": "Mute Monitor",
+      "description": "Mute notifications for a monitor",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.{site}/api/v1/monitor/{monitorId}/mute",
+        "params": {
+          "site": {
+            "type": "string",
+            "in": "path",
+            "description": "Datadog site domain",
+            "default": "datadoghq.com"
+          },
+          "monitorId": {
+            "type": "string",
+            "in": "path",
+            "description": "Monitor ID",
+            "required": true
+          },
+          "end": {
+            "type": "number",
+            "in": "query",
+            "description": "POSIX timestamp when the mute should end (omit to mute indefinitely)"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_dashboards",
+      "name": "List Dashboards",
+      "description": "List all dashboards",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.{site}/api/v1/dashboard",
+        "params": {
+          "site": {
+            "type": "string",
+            "in": "path",
+            "description": "Datadog site domain",
+            "default": "datadoghq.com"
+          }
+        },
+        "response": {
+          "transform": "dashboards",
+          "historicalSummary": {
+            "collectionKeys": ["dashboards"],
+            "collectionName": "dashboards",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "title" },
+              { "name": "url" },
+              { "name": "layout_type" },
+              { "name": "modified_at" }
+            ],
+            "omitted": "dashboard widget definitions and provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "query_timeseries",
+      "name": "Query Timeseries Metrics",
+      "description": "Query timeseries metric data over a time window",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.{site}/api/v1/query",
+        "params": {
+          "site": {
+            "type": "string",
+            "in": "path",
+            "description": "Datadog site domain",
+            "default": "datadoghq.com"
+          },
+          "from": {
+            "type": "number",
+            "in": "query",
+            "description": "Start of the window as a POSIX timestamp (seconds)",
+            "required": true
+          },
+          "to": {
+            "type": "number",
+            "in": "query",
+            "description": "End of the window as a POSIX timestamp (seconds)",
+            "required": true
+          },
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "Datadog metric query, e.g. avg:system.cpu.user{*}",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "search_logs",
+      "name": "Search Logs",
+      "description": "Search log events with a Datadog log query",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.{site}/api/v2/logs/events/search",
+        "params": {
+          "site": {
+            "type": "string",
+            "in": "path",
+            "description": "Datadog site domain",
+            "default": "datadoghq.com"
+          }
+        },
+        "body": {
+          "filter": {
+            "type": "object",
+            "description": "Log filter, e.g. {\"query\":\"service:web status:error\",\"from\":\"now-15m\",\"to\":\"now\"}",
+            "required": true
+          },
+          "page": {
+            "type": "object",
+            "description": "Pagination, e.g. {\"limit\":25}"
+          },
+          "sort": {
+            "type": "string",
+            "description": "Sort order: timestamp or -timestamp"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "alerting_monitors",
+      "title": "What's alerting?",
+      "prompt": "List my Datadog monitors that are currently in Alert state.",
+      "category": "observability",
+      "icon": "alert"
+    },
+    {
+      "id": "error_logs",
+      "title": "Recent error logs",
+      "prompt": "Search Datadog logs for errors in the last 15 minutes and summarize them.",
+      "category": "observability",
+      "icon": "search"
+    }
+  ],
+  "suggestedWith": ["sentry", "slack", "github"],
+  "SETUP_GUIDE": {
+    "title": "Datadog API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Find your Datadog site",
+        "description": "Check the URL you use to access Datadog (e.g. app.datadoghq.com → site datadoghq.com, app.datadoghq.eu → datadoghq.eu). Tools take a 'site' parameter that defaults to datadoghq.com."
+      },
+      {
+        "step": 2,
+        "title": "Create an API key",
+        "description": "In Organization Settings → API Keys (https://app.datadoghq.com/organization-settings/api-keys), create a key and add it to your .env as DD_API_KEY."
+      },
+      {
+        "step": 3,
+        "title": "Create an application key",
+        "description": "In Organization Settings → Application Keys, create a key and add it as DD_APP_KEY. Application keys inherit the permissions of the user who created them; read access to monitors, dashboards, metrics, and logs is required."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the Validate API Key tool, then List Monitors."
+      }
+    ],
+    "notes": [
+      "Datadog authenticates with two headers: DD-API-KEY and DD-APPLICATION-KEY — both env vars are required",
+      "If your org is not on datadoghq.com, pass your site (e.g. datadoghq.eu) as the 'site' parameter on each tool call"
+    ],
+    "documentation": "https://docs.datadoghq.com/api/latest/"
+  }
+}

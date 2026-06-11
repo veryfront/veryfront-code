@@ -1,0 +1,171 @@
+{
+  "name": "mistral",
+  "displayName": "Mistral AI",
+  "icon": "mistral.svg",
+  "description": "Generate chat completions and embeddings with Mistral models via the Mistral AI API",
+  "auth": {
+    "type": "api-key",
+    "keyName": "MISTRAL_API_KEY",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://docs.mistral.ai/api/",
+    "requiredApis": [
+      {
+        "name": "Mistral API Keys",
+        "enableUrl": "https://console.mistral.ai/api-keys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "MISTRAL_API_KEY",
+      "description": "Mistral AI API key from the La Plateforme console",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.mistral.ai/getting-started/quickstart/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_models",
+      "name": "List Models",
+      "description": "List the Mistral models available to the API key",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.mistral.ai/v1/models",
+        "response": {
+          "transform": "data",
+          "historicalSummary": {
+            "collectionKeys": ["data", "models"],
+            "collectionName": "models",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "owned_by" },
+              { "name": "created" },
+              { "name": "max_context_length" }
+            ],
+            "omitted": "model capability details and provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_model",
+      "name": "Get Model",
+      "description": "Get details about a specific Mistral model",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.mistral.ai/v1/models/{model}",
+        "params": {
+          "model": {
+            "type": "string",
+            "in": "path",
+            "description": "Model ID, e.g. mistral-large-latest or mistral-small-latest",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_chat_completion",
+      "name": "Create Chat Completion",
+      "description": "Generate a chat completion from a list of messages",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.mistral.ai/v1/chat/completions",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Model ID to use, e.g. mistral-large-latest",
+            "required": true
+          },
+          "messages": {
+            "type": "array",
+            "description": "Chat messages, each with role (system|user|assistant) and content",
+            "required": true
+          },
+          "max_tokens": {
+            "type": "number",
+            "description": "Maximum tokens to generate"
+          },
+          "temperature": {
+            "type": "number",
+            "description": "Sampling temperature, recommended between 0 and 0.7"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_embedding",
+      "name": "Create Embedding",
+      "description": "Create embedding vectors for input text",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.mistral.ai/v1/embeddings",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Embedding model ID, e.g. mistral-embed",
+            "required": true,
+            "default": "mistral-embed"
+          },
+          "input": {
+            "type": "array",
+            "description": "Array of texts to embed, e.g. [\"Text to embed\"]",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "available_models",
+      "title": "List Mistral models",
+      "prompt": "List the Mistral models available to my API key and summarize what each is best for.",
+      "category": "ai",
+      "icon": "list"
+    },
+    {
+      "id": "generate_text",
+      "title": "Generate a response",
+      "prompt": "Use Mistral to generate a chat completion for a prompt I provide.",
+      "category": "ai",
+      "icon": "sparkles"
+    }
+  ],
+  "suggestedWith": ["openai", "anthropic", "notion"],
+  "SETUP_GUIDE": {
+    "title": "Mistral AI API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Mistral account",
+        "description": "Go to https://console.mistral.ai and sign up or sign in to La Plateforme. Activate a workspace and add billing under Billing, or use the free Experiment tier where available."
+      },
+      {
+        "step": 2,
+        "title": "Create an API key",
+        "description": "Open https://console.mistral.ai/api-keys, click 'Create new key', and give it a descriptive name (e.g. 'Veryfront Integration')."
+      },
+      {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Copy the key immediately — it is only shown once. Add it to your .env file as MISTRAL_API_KEY=..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Models tool to confirm the key works. A 401 means the key is invalid or the workspace is not activated."
+      }
+    ],
+    "notes": [
+      "API usage is billed per token — chat completion and embedding tools cost money on paid tiers",
+      "Keys are workspace-scoped; rotate them from the console at any time"
+    ],
+    "documentation": "https://docs.mistral.ai/api/"
+  }
+}

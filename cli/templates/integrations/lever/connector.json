@@ -1,0 +1,266 @@
+{
+  "name": "lever",
+  "displayName": "Lever",
+  "icon": "lever.svg",
+  "description": "Read opportunities, postings, and stages from the Lever ATS",
+  "auth": {
+    "type": "oauth2",
+    "provider": "lever",
+    "authorizationUrl": "https://auth.lever.co/authorize",
+    "tokenUrl": "https://auth.lever.co/oauth/token",
+    "scopes": [
+      "opportunities:read:admin",
+      "postings:read:admin",
+      "stages:read:admin",
+      "offline_access"
+    ],
+    "callbackPath": "/api/auth/lever/callback",
+    "additionalAuthParams": {
+      "audience": "https://api.lever.co/v1/",
+      "prompt": "consent"
+    },
+    "docsUrl": "https://hire.lever.co/developer/documentation",
+    "requiredApis": [
+      {
+        "name": "Lever Partner Integrations",
+        "enableUrl": "https://hire.lever.co/developer/oauth"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "LEVER_CLIENT_ID",
+      "description": "Lever OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://hire.lever.co/developer/documentation#authentication"
+    },
+    {
+      "name": "LEVER_CLIENT_SECRET",
+      "description": "Lever OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://hire.lever.co/developer/documentation#authentication"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_opportunities",
+      "name": "List Opportunities",
+      "description": "List candidate opportunities",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.lever.co/v1/opportunities",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Opportunities per page (max 100)",
+            "default": 50
+          },
+          "offset": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination offset token from next in a previous response"
+          },
+          "stage_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by stage ID (from List Stages)"
+          },
+          "posting_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by posting ID"
+          },
+          "email": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by candidate email address"
+          },
+          "tag": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by tag"
+          },
+          "archived": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Only archived (true) or active (false) opportunities"
+          },
+          "expand": {
+            "type": "string",
+            "in": "query",
+            "description": "Expand referenced fields, e.g. stage or owner"
+          }
+        },
+        "response": {
+          "transform": "data",
+          "historicalSummary": {
+            "collectionKeys": ["data", "opportunities"],
+            "collectionName": "opportunities",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "emails", "kind": "string-array" },
+              { "name": "stage" },
+              { "name": "origin" },
+              { "name": "tags", "kind": "string-array" },
+              { "name": "createdAt" },
+              { "name": "lastInteractionAt" },
+              { "name": "urls", "kind": "object" }
+            ],
+            "omitted": "applications, resumes, and contact metadata",
+            "outputFields": [{ "name": "hasNext" }, { "name": "next" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_opportunity",
+      "name": "Get Opportunity",
+      "description": "Get a single opportunity",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.lever.co/v1/opportunities/{opportunityId}",
+        "params": {
+          "opportunityId": {
+            "type": "string",
+            "in": "path",
+            "description": "Opportunity UID",
+            "required": true
+          },
+          "expand": {
+            "type": "string",
+            "in": "query",
+            "description": "Expand referenced fields, e.g. stage or owner"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "list_postings",
+      "name": "List Postings",
+      "description": "List job postings",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.lever.co/v1/postings",
+        "params": {
+          "state": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by state: published, internal, closed, draft, pending, or rejected",
+            "default": "published"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Postings per page (max 100)",
+            "default": 50
+          },
+          "offset": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination offset token from next in a previous response"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "get_posting",
+      "name": "Get Posting",
+      "description": "Get a single job posting",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.lever.co/v1/postings/{postingId}",
+        "params": {
+          "postingId": {
+            "type": "string",
+            "in": "path",
+            "description": "Posting UID",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "list_stages",
+      "name": "List Stages",
+      "description": "List pipeline stages",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.lever.co/v1/stages",
+        "response": {
+          "transform": "data"
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "pipeline_overview",
+      "title": "Pipeline overview",
+      "prompt": "List my active Lever opportunities grouped by stage with candidate names and tags.",
+      "category": "hr",
+      "icon": "list"
+    },
+    {
+      "id": "open_roles",
+      "title": "Open roles",
+      "prompt": "Show my published Lever postings with their teams and locations.",
+      "category": "hr",
+      "icon": "briefcase"
+    }
+  ],
+  "suggestedWith": ["slack", "calendar", "notion"],
+  "SETUP_GUIDE": {
+    "title": "Lever OAuth Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Register an OAuth app with Lever",
+        "description": "Lever OAuth apps are issued through the Lever partner process — request credentials at https://hire.lever.co/developer/oauth (or via partner support). For quick internal testing, Lever also offers API keys, but this connector uses OAuth."
+      },
+      {
+        "step": 2,
+        "title": "Use a sandbox environment",
+        "description": "Ask Lever for a sandbox account to test against before touching production hiring data."
+      },
+      {
+        "step": 3,
+        "title": "Set the redirect URI",
+        "description": "Register your deployment's /api/auth/lever/callback URL as an allowed redirect URI."
+      },
+      {
+        "step": 4,
+        "title": "Set environment variables",
+        "description": "Add LEVER_CLIENT_ID and LEVER_CLIENT_SECRET to your .env."
+      },
+      {
+        "step": 5,
+        "title": "Connect and verify",
+        "description": "Complete the OAuth consent flow as a Lever Super Admin, then run List Stages to confirm access."
+      }
+    ],
+    "notes": [
+      "The authorize request must include audience=https://api.lever.co/v1/ — the connector sends it automatically",
+      "offline_access (with prompt=consent) is required to receive a refresh token",
+      "Scopes are granular per resource; add more (e.g. users:read:admin) if you extend the tools"
+    ],
+    "documentation": "https://hire.lever.co/developer/documentation"
+  }
+}

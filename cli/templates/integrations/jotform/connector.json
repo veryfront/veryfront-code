@@ -1,0 +1,244 @@
+{
+  "name": "jotform",
+  "displayName": "Jotform",
+  "icon": "jotform.svg",
+  "description": "Read forms and submissions from Jotform",
+  "auth": {
+    "type": "api-key",
+    "keyName": "JOTFORM_API_KEY",
+    "headerName": "APIKEY",
+    "docsUrl": "https://api.jotform.com/docs/",
+    "requiredApis": [
+      {
+        "name": "Jotform API Keys",
+        "enableUrl": "https://www.jotform.com/myaccount/api"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "JOTFORM_API_KEY",
+      "description": "Jotform API key",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://api.jotform.com/docs/#gettingstarted"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_forms",
+      "name": "List Forms",
+      "description": "List forms owned by the account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.jotform.com/user/forms",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Forms to return (max 1000)",
+            "default": 25
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of forms to skip",
+            "default": 0
+          },
+          "orderby": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort field, e.g. created_at, title, last_submission",
+            "default": "created_at"
+          },
+          "filter": {
+            "type": "string",
+            "in": "query",
+            "description": "JSON filter, e.g. {\"status\":\"ENABLED\"}"
+          }
+        },
+        "response": {
+          "transform": "content",
+          "historicalSummary": {
+            "collectionKeys": ["content", "forms"],
+            "collectionName": "forms",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "title" },
+              { "name": "status" },
+              { "name": "count" },
+              { "name": "new" },
+              { "name": "created_at" },
+              { "name": "updated_at" },
+              { "name": "url" }
+            ],
+            "omitted": "form layout and per-form settings",
+            "outputFields": [{ "name": "resultSet", "kind": "object" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_form",
+      "name": "Get Form",
+      "description": "Get basic details of a form",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.jotform.com/form/{formId}",
+        "params": {
+          "formId": {
+            "type": "string",
+            "in": "path",
+            "description": "Jotform form ID",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "content"
+        }
+      }
+    },
+    {
+      "id": "get_form_questions",
+      "name": "Get Form Questions",
+      "description": "List the questions/fields on a form",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.jotform.com/form/{formId}/questions",
+        "params": {
+          "formId": {
+            "type": "string",
+            "in": "path",
+            "description": "Jotform form ID",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "content"
+        }
+      }
+    },
+    {
+      "id": "list_submissions",
+      "name": "List Submissions",
+      "description": "List submissions for a form",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.jotform.com/form/{formId}/submissions",
+        "params": {
+          "formId": {
+            "type": "string",
+            "in": "path",
+            "description": "Jotform form ID",
+            "required": true
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Submissions to return (max 1000)",
+            "default": 25
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of submissions to skip",
+            "default": 0
+          },
+          "orderby": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort field, e.g. created_at",
+            "default": "created_at"
+          },
+          "filter": {
+            "type": "string",
+            "in": "query",
+            "description": "JSON filter, e.g. {\"created_at:gt\":\"2026-01-01 00:00:00\"}"
+          }
+        },
+        "response": {
+          "transform": "content"
+        }
+      }
+    },
+    {
+      "id": "get_submission",
+      "name": "Get Submission",
+      "description": "Get a single submission with its answers",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.jotform.com/submission/{submissionId}",
+        "params": {
+          "submissionId": {
+            "type": "string",
+            "in": "path",
+            "description": "Submission ID",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "content"
+        }
+      }
+    },
+    {
+      "id": "get_user",
+      "name": "Get User",
+      "description": "Get the authenticated account profile and usage",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.jotform.com/user",
+        "response": {
+          "transform": "content"
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "latest_submissions",
+      "title": "Latest submissions",
+      "prompt": "List my Jotform forms, then show the latest submissions for the one I pick and summarize the answers.",
+      "category": "productivity",
+      "icon": "list"
+    }
+  ],
+  "suggestedWith": ["sheets", "slack", "airtable"],
+  "SETUP_GUIDE": {
+    "title": "Jotform API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Sign in to Jotform",
+        "description": "Go to https://www.jotform.com and sign in. The free Starter plan is sufficient for testing."
+      },
+      {
+        "step": 2,
+        "title": "Create an API key",
+        "description": "Open Settings → API (https://www.jotform.com/myaccount/api) and click 'Create New Key'. Set permissions to 'Full Access' for read tools to work across forms."
+      },
+      {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the key to your .env as JOTFORM_API_KEY=..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run Get User, then List Forms to confirm the key works."
+      }
+    ],
+    "notes": [
+      "Jotform authenticates with an 'APIKEY' request header",
+      "EU-hosted accounts must use https://eu-api.jotform.com and HIPAA accounts https://hipaa-api.jotform.com instead of api.jotform.com",
+      "Responses are wrapped in {responseCode, message, content}; tools unwrap 'content'"
+    ],
+    "documentation": "https://api.jotform.com/docs/"
+  }
+}

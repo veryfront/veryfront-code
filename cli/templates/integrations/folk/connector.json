@@ -1,0 +1,304 @@
+{
+  "name": "folk",
+  "displayName": "folk",
+  "icon": "folk.svg",
+  "description": "Manage people, companies, and groups in folk CRM",
+  "auth": {
+    "type": "api-key",
+    "keyName": "FOLK_API_KEY",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://developer.folk.app/api-reference/authentication",
+    "requiredApis": [
+      {
+        "name": "folk API Keys",
+        "enableUrl": "https://app.folk.app/apps/contacts/network/settings/api-keys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "FOLK_API_KEY",
+      "description": "folk API key (sent as Authorization: Bearer), generated in workspace settings → API",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.folk.app/api-reference/authentication"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_people",
+      "name": "List People",
+      "description": "List people in the folk workspace with optional filters",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.folk.app/v1/people",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of people to return (1-100)",
+            "default": 20
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Cursor from a previous response for pagination"
+          }
+        },
+        "response": {
+          "transform": "data",
+          "historicalSummary": {
+            "collectionKeys": ["items"],
+            "collectionName": "people",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "fullName" },
+              { "name": "firstName" },
+              { "name": "lastName" },
+              { "name": "jobTitle" },
+              { "name": "emails", "kind": "string-array" }
+            ],
+            "omitted": "custom fields, group memberships, and provider-specific payload fields",
+            "outputFields": [{ "name": "pagination", "kind": "object" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_person",
+      "name": "Get Person",
+      "description": "Get details of a person in folk",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.folk.app/v1/people/{personId}",
+        "params": {
+          "personId": {
+            "type": "string",
+            "in": "path",
+            "description": "folk person ID",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "create_person",
+      "name": "Create Person",
+      "description": "Create a new person in folk",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.folk.app/v1/people",
+        "body": {
+          "firstName": {
+            "type": "string",
+            "description": "First name"
+          },
+          "lastName": {
+            "type": "string",
+            "description": "Last name"
+          },
+          "emails": {
+            "type": "array",
+            "description": "Email addresses, e.g. [\"jane@acme.com\"]"
+          },
+          "jobTitle": {
+            "type": "string",
+            "description": "Job title"
+          },
+          "description": {
+            "type": "string",
+            "description": "Free-text description"
+          },
+          "groups": {
+            "type": "array",
+            "description": "Group IDs to add the person to, e.g. [{ \"id\": \"grp_...\" }]"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "update_person",
+      "name": "Update Person",
+      "description": "Update fields on an existing person in folk",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://api.folk.app/v1/people/{personId}",
+        "params": {
+          "personId": {
+            "type": "string",
+            "in": "path",
+            "description": "folk person ID",
+            "required": true
+          }
+        },
+        "body": {
+          "firstName": {
+            "type": "string",
+            "description": "First name"
+          },
+          "lastName": {
+            "type": "string",
+            "description": "Last name"
+          },
+          "emails": {
+            "type": "array",
+            "description": "Email addresses"
+          },
+          "jobTitle": {
+            "type": "string",
+            "description": "Job title"
+          },
+          "description": {
+            "type": "string",
+            "description": "Free-text description"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "list_companies",
+      "name": "List Companies",
+      "description": "List companies in the folk workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.folk.app/v1/companies",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of companies to return (1-100)",
+            "default": 20
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Cursor from a previous response for pagination"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "create_company",
+      "name": "Create Company",
+      "description": "Create a new company in folk",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.folk.app/v1/companies",
+        "body": {
+          "name": {
+            "type": "string",
+            "description": "Company name",
+            "required": true
+          },
+          "description": {
+            "type": "string",
+            "description": "Free-text description"
+          },
+          "urls": {
+            "type": "array",
+            "description": "Company URLs, e.g. [\"https://acme.com\"]"
+          },
+          "groups": {
+            "type": "array",
+            "description": "Group IDs to add the company to, e.g. [{ \"id\": \"grp_...\" }]"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "list_groups",
+      "name": "List Groups",
+      "description": "List groups (pipelines/segments) in the folk workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.folk.app/v1/groups",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of groups to return (1-100)",
+            "default": 20
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Cursor from a previous response for pagination"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "find_person",
+      "title": "Find a person",
+      "prompt": "List people in my folk workspace and find the one matching a given name or email.",
+      "category": "crm",
+      "icon": "search"
+    },
+    {
+      "id": "add_person",
+      "title": "Add a person",
+      "prompt": "Create a new person in folk with their name, email, and job title.",
+      "category": "crm",
+      "icon": "plus"
+    }
+  ],
+  "suggestedWith": ["gmail", "notion", "slack"],
+  "SETUP_GUIDE": {
+    "title": "folk API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a folk workspace",
+        "description": "Sign up at https://www.folk.app/ — the free plan is enough to test the API."
+      },
+      {
+        "step": 2,
+        "title": "Generate an API key",
+        "description": "In folk, open workspace settings → API (https://app.folk.app/apps/contacts/network/settings/api-keys) and generate a new API key (keys start with 'FOLK')."
+      },
+      {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add FOLK_API_KEY to your .env."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Groups tool, then List People."
+      }
+    ],
+    "notes": [
+      "The API key is sent as Authorization: Bearer <key>",
+      "List endpoints return { data: { items, pagination } } and paginate with limit/cursor; pass pagination.nextLink's cursor to continue",
+      "Rate limit headers (X-RateLimit-*) are returned on every response"
+    ],
+    "documentation": "https://developer.folk.app/"
+  }
+}

@@ -8,6 +8,7 @@
     "keyName": "POSTHOG_API_KEY",
     "headerName": "Authorization",
     "headerPrefix": "Bearer",
+    "docsUrl": "https://posthog.com/docs/api",
     "requiredApis": [
       {
         "name": "PostHog API",
@@ -25,7 +26,7 @@
     },
     {
       "name": "POSTHOG_HOST",
-      "description": "PostHog API host (defaults to https://app.posthog.com)",
+      "description": "PostHog API host (defaults to https://us.posthog.com; app.posthog.com is the legacy US alias)",
       "required": false,
       "sensitive": false,
       "docsUrl": "https://posthog.com/docs/self-host"
@@ -36,19 +37,142 @@
       "id": "get_trends",
       "name": "Get Trends",
       "description": "Retrieve event trends and analytics data",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{host}/api/projects/{projectId}/query/",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "PostHog API host: us.posthog.com for US Cloud, eu.posthog.com for EU Cloud",
+            "default": "us.posthog.com"
+          },
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "PostHog project ID",
+            "required": true
+          }
+        },
+        "body": {
+          "query": {
+            "type": "object",
+            "description": "PostHog query object, e.g. {\"kind\":\"HogQLQuery\",\"query\":\"SELECT event, count() FROM events WHERE timestamp > now() - INTERVAL 7 DAY GROUP BY event ORDER BY count() DESC LIMIT 20\"} or a TrendsQuery",
+            "required": true
+          },
+          "name": {
+            "type": "string",
+            "description": "Optional name to identify the query in logs"
+          }
+        }
+      }
     },
     {
       "id": "list_feature_flags",
       "name": "List Feature Flags",
       "description": "List all feature flags in your PostHog project",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/api/projects/{projectId}/feature_flags/",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "PostHog API host: us.posthog.com for US Cloud, eu.posthog.com for EU Cloud",
+            "default": "us.posthog.com"
+          },
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "PostHog project ID",
+            "required": true
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Feature flags per page",
+            "default": 50
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of feature flags to skip for pagination",
+            "default": 0
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["results"],
+            "collectionName": "feature_flags",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "key" },
+              { "name": "name" },
+              { "name": "active" },
+              { "name": "created_at" }
+            ],
+            "omitted": "rollout filters, variants, and provider-specific payload fields",
+            "outputFields": [{ "name": "count" }, { "name": "next" }]
+          }
+        }
+      }
     },
     {
       "id": "list_persons",
       "name": "List Persons",
       "description": "List persons/users tracked in PostHog",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/api/projects/{projectId}/persons/",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "PostHog API host: us.posthog.com for US Cloud, eu.posthog.com for EU Cloud",
+            "default": "us.posthog.com"
+          },
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "PostHog project ID",
+            "required": true
+          },
+          "search": {
+            "type": "string",
+            "in": "query",
+            "description": "Search persons by name, email, or distinct ID"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Persons per page",
+            "default": 20
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of persons to skip for pagination",
+            "default": 0
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["results"],
+            "collectionName": "persons",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "distinct_ids", "kind": "string-array" },
+              { "name": "created_at" }
+            ],
+            "omitted": "person properties and provider-specific payload fields",
+            "outputFields": [{ "name": "count" }, { "name": "next" }]
+          }
+        }
+      }
     },
     {
       "id": "capture_event",

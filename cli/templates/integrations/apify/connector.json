@@ -1,0 +1,261 @@
+{
+  "name": "apify",
+  "displayName": "Apify",
+  "icon": "apify.svg",
+  "description": "Run Apify actors for web scraping and automation and fetch their dataset results",
+  "auth": {
+    "type": "api-key",
+    "keyName": "APIFY_TOKEN",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://docs.apify.com/api/v2#authentication",
+    "requiredApis": [
+      {
+        "name": "Apify API Tokens",
+        "enableUrl": "https://console.apify.com/settings/integrations"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "APIFY_TOKEN",
+      "description": "Apify API token (starts with apify_api_)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.apify.com/platform/integrations/api"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_actors",
+      "name": "List Actors",
+      "description": "List actors in your Apify account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.apify.com/v2/actors",
+        "params": {
+          "my": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Only return actors owned by you (false includes actors you have access to)",
+            "default": true
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum actors to return (max 1000)",
+            "default": 25
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of actors to skip for pagination",
+            "default": 0
+          }
+        },
+        "response": {
+          "transform": "data",
+          "historicalSummary": {
+            "collectionKeys": ["items"],
+            "collectionName": "actors",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "username" },
+              { "name": "title" },
+              { "name": "modifiedAt" }
+            ],
+            "omitted": "actor stats, version details, and provider-specific payload fields",
+            "outputFields": [{ "name": "total" }, { "name": "offset" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "run_actor_sync",
+      "name": "Run Actor (Sync)",
+      "description": "Run an actor, wait for it to finish (up to 300s), and return its dataset items (consumes platform credits)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/{actorId}/run-sync-get-dataset-items",
+        "params": {
+          "actorId": {
+            "type": "string",
+            "in": "path",
+            "description": "Actor ID or username~actorname, e.g. apify~web-scraper",
+            "required": true
+          },
+          "timeout": {
+            "type": "number",
+            "in": "query",
+            "description": "Run timeout in seconds (overrides the actor default)"
+          },
+          "memory": {
+            "type": "number",
+            "in": "query",
+            "description": "Memory limit in megabytes (power of 2, e.g. 1024)"
+          },
+          "format": {
+            "type": "string",
+            "in": "query",
+            "description": "Result format: json, csv, xlsx, html, xml, or rss",
+            "default": "json"
+          }
+        },
+        "body": {
+          "input": {
+            "type": "object",
+            "description": "Actor input JSON sent as the request body — see the actor's input schema, e.g. {\"startUrls\":[{\"url\":\"https://example.com\"}]}",
+            "required": true
+          }
+        },
+        "bodyMode": "passthrough"
+      }
+    },
+    {
+      "id": "get_run",
+      "name": "Get Run",
+      "description": "Get the status and details of an actor run, including its defaultDatasetId",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.apify.com/v2/actor-runs/{runId}",
+        "params": {
+          "runId": {
+            "type": "string",
+            "in": "path",
+            "description": "Actor run ID",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "list_runs",
+      "name": "List Runs",
+      "description": "List recent actor runs in your account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.apify.com/v2/actor-runs",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum runs to return (max 1000)",
+            "default": 25
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of runs to skip for pagination",
+            "default": 0
+          },
+          "desc": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Sort newest first",
+            "default": true
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "get_dataset_items",
+      "name": "Get Dataset Items",
+      "description": "Fetch items from a dataset produced by an actor run",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.apify.com/v2/datasets/{datasetId}/items",
+        "params": {
+          "datasetId": {
+            "type": "string",
+            "in": "path",
+            "description": "Dataset ID (e.g. the run's defaultDatasetId)",
+            "required": true
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum items to return",
+            "default": 100
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of items to skip for pagination",
+            "default": 0
+          },
+          "clean": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Return only non-empty items and skip hidden fields",
+            "default": true
+          },
+          "format": {
+            "type": "string",
+            "in": "query",
+            "description": "Result format: json, csv, xlsx, html, xml, or rss",
+            "default": "json"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "scrape_site",
+      "title": "Scrape a website",
+      "prompt": "Run an Apify actor to scrape a website I specify and summarize the extracted data.",
+      "category": "automation",
+      "icon": "globe"
+    },
+    {
+      "id": "recent_runs",
+      "title": "Check recent runs",
+      "prompt": "List my recent Apify actor runs with their statuses and fetch the dataset items of the latest successful one.",
+      "category": "automation",
+      "icon": "list"
+    }
+  ],
+  "suggestedWith": ["tavily", "firecrawl", "openai"],
+  "SETUP_GUIDE": {
+    "title": "Apify API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create an Apify account",
+        "description": "Sign up at https://console.apify.com — the free plan includes monthly platform credits, enough for testing small actor runs."
+      },
+      {
+        "step": 2,
+        "title": "Copy your API token",
+        "description": "In the Apify Console go to Settings → API & Integrations (https://console.apify.com/settings/integrations) and copy your personal API token (apify_api_...)."
+      },
+      {
+        "step": 3,
+        "title": "Store the token",
+        "description": "Add it to your .env file as APIFY_TOKEN=apify_api_..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Actors tool. To run a store actor you have not used before, reference it as username~actorname (e.g. apify~web-scraper) — each actor's input schema is on its store page."
+      }
+    ],
+    "notes": [
+      "Actor runs consume platform credits based on compute, memory, and storage — check the actor's pricing on the Apify Store",
+      "Run Actor (Sync) waits up to 300 seconds; for longer scrapes start the run asynchronously in the Apify Console and fetch results with Get Dataset Items",
+      "Responses are wrapped in a 'data' property; dataset item responses are plain arrays"
+    ],
+    "documentation": "https://docs.apify.com/api/v2"
+  }
+}

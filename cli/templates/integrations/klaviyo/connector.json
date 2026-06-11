@@ -1,0 +1,282 @@
+{
+  "name": "klaviyo",
+  "displayName": "Klaviyo",
+  "icon": "klaviyo.svg",
+  "description": "Manage profiles, lists, and events in Klaviyo for email and SMS marketing",
+  "auth": {
+    "type": "api-key",
+    "keyName": "KLAVIYO_API_KEY",
+    "headerName": "Authorization",
+    "headerPrefix": "Klaviyo-API-Key",
+    "docsUrl": "https://developers.klaviyo.com/en/reference/api_overview",
+    "requiredApis": [
+      {
+        "name": "Klaviyo API Keys",
+        "enableUrl": "https://www.klaviyo.com/settings/account/api-keys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "KLAVIYO_API_KEY",
+      "description": "Klaviyo private API key (starts with pk_)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developers.klaviyo.com/en/docs/retrieve_api_credentials"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_profiles",
+      "name": "List Profiles",
+      "description": "List customer profiles",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://a.klaviyo.com/api/profiles",
+        "params": {
+          "revision": {
+            "type": "string",
+            "in": "header",
+            "description": "Klaviyo API revision",
+            "default": "2026-04-15"
+          },
+          "filter": {
+            "type": "string",
+            "in": "query",
+            "description": "Klaviyo filter expression, e.g. equals(email,\"a@b.com\")"
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Profiles per page (max 100)",
+            "default": 20,
+            "queryName": "page[size]"
+          },
+          "page_cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response",
+            "queryName": "page[cursor]"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data", "profiles"],
+            "collectionName": "profiles",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "attributes", "kind": "object" }
+            ],
+            "omitted": "profile location/subscription detail fields",
+            "outputFields": [{ "name": "next" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_profile",
+      "name": "Get Profile",
+      "description": "Get a customer profile by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://a.klaviyo.com/api/profiles/{profileId}",
+        "params": {
+          "profileId": {
+            "type": "string",
+            "in": "path",
+            "description": "Klaviyo profile ID",
+            "required": true
+          },
+          "revision": {
+            "type": "string",
+            "in": "header",
+            "description": "Klaviyo API revision",
+            "default": "2026-04-15"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "create_profile",
+      "name": "Create Profile",
+      "description": "Create a new customer profile",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://a.klaviyo.com/api/profiles",
+        "params": {
+          "revision": {
+            "type": "string",
+            "in": "header",
+            "description": "Klaviyo API revision",
+            "default": "2026-04-15"
+          }
+        },
+        "body": {
+          "data": {
+            "type": "object",
+            "description": "Profile payload: {\"type\":\"profile\",\"attributes\":{\"email\":\"a@b.com\",\"first_name\":\"...\"}}",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "list_lists",
+      "name": "List Lists",
+      "description": "List marketing lists",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://a.klaviyo.com/api/lists",
+        "params": {
+          "revision": {
+            "type": "string",
+            "in": "header",
+            "description": "Klaviyo API revision",
+            "default": "2026-04-15"
+          },
+          "page_cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response",
+            "queryName": "page[cursor]"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data", "lists"],
+            "collectionName": "lists",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "attributes", "kind": "object" }
+            ],
+            "omitted": "list metadata beyond name and created/updated timestamps",
+            "outputFields": [{ "name": "next" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "list_segments",
+      "name": "List Segments",
+      "description": "List audience segments",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://a.klaviyo.com/api/segments",
+        "params": {
+          "revision": {
+            "type": "string",
+            "in": "header",
+            "description": "Klaviyo API revision",
+            "default": "2026-04-15"
+          },
+          "page_cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response",
+            "queryName": "page[cursor]"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_metrics",
+      "name": "List Metrics",
+      "description": "List tracked event metrics (e.g. Placed Order, Opened Email)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://a.klaviyo.com/api/metrics",
+        "params": {
+          "revision": {
+            "type": "string",
+            "in": "header",
+            "description": "Klaviyo API revision",
+            "default": "2026-04-15"
+          },
+          "page_cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response",
+            "queryName": "page[cursor]"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_event",
+      "name": "Create Event",
+      "description": "Track a custom event for a profile",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://a.klaviyo.com/api/events",
+        "params": {
+          "revision": {
+            "type": "string",
+            "in": "header",
+            "description": "Klaviyo API revision",
+            "default": "2026-04-15"
+          }
+        },
+        "body": {
+          "data": {
+            "type": "object",
+            "description": "Event payload with metric name, profile identifiers, and properties per the Klaviyo Create Event schema",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "find_profile",
+      "title": "Find a customer",
+      "prompt": "Look up a Klaviyo profile by email address and show their details.",
+      "category": "marketing",
+      "icon": "search"
+    }
+  ],
+  "suggestedWith": ["shopify", "stripe", "sheets"],
+  "SETUP_GUIDE": {
+    "title": "Klaviyo API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Sign in to Klaviyo",
+        "description": "Go to https://www.klaviyo.com and sign in. A free account is sufficient for testing."
+      },
+      {
+        "step": 2,
+        "title": "Create a private API key",
+        "description": "Open Settings → Account → API Keys (https://www.klaviyo.com/settings/account/api-keys) and create a private key. Grant it read/write access to Profiles, Lists, Segments, Metrics, and Events."
+      },
+      {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the key to your .env as KLAVIYO_API_KEY=pk_..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Lists tool to confirm the key works."
+      }
+    ],
+    "notes": [
+      "Klaviyo authenticates with 'Authorization: Klaviyo-API-Key <key>' — not a Bearer token",
+      "Every request requires a 'revision' header; tools default it to 2026-04-15"
+    ],
+    "documentation": "https://developers.klaviyo.com/en/reference/api_overview"
+  }
+}

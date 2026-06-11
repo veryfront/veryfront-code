@@ -1,0 +1,314 @@
+{
+  "name": "heroku",
+  "displayName": "Heroku",
+  "icon": "heroku.svg",
+  "description": "Inspect and manage Heroku apps, dynos, config vars, and releases",
+  "auth": {
+    "type": "api-key",
+    "keyName": "HEROKU_API_KEY",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://devcenter.heroku.com/articles/platform-api-reference#authentication",
+    "requiredApis": [
+      {
+        "name": "Heroku Account Applications",
+        "enableUrl": "https://dashboard.heroku.com/account/applications"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "HEROKU_API_KEY",
+      "description": "Heroku API token (from 'heroku authorizations:create' or the Account page)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://devcenter.heroku.com/articles/platform-api-quickstart"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_apps",
+      "name": "List Apps",
+      "description": "List apps the authenticated user can access",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.heroku.com/apps",
+        "params": {
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Accept",
+            "description": "Heroku API version header",
+            "default": "application/vnd.heroku+json; version=3"
+          },
+          "range": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Range",
+            "description": "Pagination/sort range, e.g. 'name ..; order=asc; max=200;' (use the Next-Range response header to continue)"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["apps"],
+            "collectionName": "apps",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "web_url" },
+              { "name": "maintenance" },
+              { "name": "region", "kind": "object" },
+              { "name": "created_at" },
+              { "name": "updated_at" },
+              { "name": "owner", "kind": "contact" }
+            ],
+            "omitted": "stack, buildpack, and provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_app",
+      "name": "Get App",
+      "description": "Get details of an app",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.heroku.com/apps/{appIdOrName}",
+        "params": {
+          "appIdOrName": {
+            "type": "string",
+            "in": "path",
+            "description": "App name or UUID",
+            "required": true
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Accept",
+            "description": "Heroku API version header",
+            "default": "application/vnd.heroku+json; version=3"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_dynos",
+      "name": "List Dynos",
+      "description": "List the dynos of an app with their state",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.heroku.com/apps/{appIdOrName}/dynos",
+        "params": {
+          "appIdOrName": {
+            "type": "string",
+            "in": "path",
+            "description": "App name or UUID",
+            "required": true
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Accept",
+            "description": "Heroku API version header",
+            "default": "application/vnd.heroku+json; version=3"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["dynos"],
+            "collectionName": "dynos",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "type" },
+              { "name": "state" },
+              { "name": "size" },
+              { "name": "command", "maxLength": 200 },
+              { "name": "created_at" },
+              { "name": "updated_at" }
+            ],
+            "omitted": "release references and provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "restart_dyno",
+      "name": "Restart Dyno",
+      "description": "Restart a specific dyno of an app",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "DELETE",
+        "url": "https://api.heroku.com/apps/{appIdOrName}/dynos/{dynoIdOrName}",
+        "params": {
+          "appIdOrName": {
+            "type": "string",
+            "in": "path",
+            "description": "App name or UUID",
+            "required": true
+          },
+          "dynoIdOrName": {
+            "type": "string",
+            "in": "path",
+            "description": "Dyno name (e.g. web.1) or UUID",
+            "required": true
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Accept",
+            "description": "Heroku API version header",
+            "default": "application/vnd.heroku+json; version=3"
+          }
+        }
+      }
+    },
+    {
+      "id": "restart_all_dynos",
+      "name": "Restart All Dynos",
+      "description": "Restart every dyno of an app",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "DELETE",
+        "url": "https://api.heroku.com/apps/{appIdOrName}/dynos",
+        "params": {
+          "appIdOrName": {
+            "type": "string",
+            "in": "path",
+            "description": "App name or UUID",
+            "required": true
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Accept",
+            "description": "Heroku API version header",
+            "default": "application/vnd.heroku+json; version=3"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_config_vars",
+      "name": "Get Config Vars",
+      "description": "Get the config vars (environment variables) of an app",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.heroku.com/apps/{appIdOrName}/config-vars",
+        "params": {
+          "appIdOrName": {
+            "type": "string",
+            "in": "path",
+            "description": "App name or UUID",
+            "required": true
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Accept",
+            "description": "Heroku API version header",
+            "default": "application/vnd.heroku+json; version=3"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_releases",
+      "name": "List Releases",
+      "description": "List the release history of an app",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.heroku.com/apps/{appIdOrName}/releases",
+        "params": {
+          "appIdOrName": {
+            "type": "string",
+            "in": "path",
+            "description": "App name or UUID",
+            "required": true
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Accept",
+            "description": "Heroku API version header",
+            "default": "application/vnd.heroku+json; version=3"
+          },
+          "range": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Range",
+            "description": "Pagination/sort range, e.g. 'version ..; order=desc; max=25;'"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["releases"],
+            "collectionName": "releases",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "version" },
+              { "name": "status" },
+              { "name": "description", "maxLength": 200 },
+              { "name": "current" },
+              { "name": "created_at" },
+              { "name": "user", "kind": "contact" }
+            ],
+            "omitted": "slug references and provider-specific payload fields"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "dyno_health",
+      "title": "Dyno health check",
+      "prompt": "List the dynos of my Heroku app and tell me if any are crashed or not in the 'up' state.",
+      "category": "devops",
+      "icon": "list"
+    },
+    {
+      "id": "recent_releases",
+      "title": "Recent releases",
+      "prompt": "Show the latest releases of my Heroku app and who deployed them.",
+      "category": "devops",
+      "icon": "history"
+    }
+  ],
+  "suggestedWith": ["github", "slack", "sentry"],
+  "SETUP_GUIDE": {
+    "title": "Heroku Platform API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Sign in to Heroku",
+        "description": "Go to https://dashboard.heroku.com and sign in (an Eco/Basic app is enough for testing; SSO-federated users must use a separate non-federated account for API tokens)."
+      },
+      {
+        "step": 2,
+        "title": "Create an API token",
+        "description": "With the Heroku CLI, run 'heroku authorizations:create -d \"veryfront token\"' for a non-expiring OAuth token, or 'heroku auth:token' for a token valid up to one year."
+      },
+      {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the token to your .env as HEROKU_API_KEY=..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Apps, then List Dynos with one of your app names."
+      }
+    ],
+    "notes": [
+      "Every request must send 'Accept: application/vnd.heroku+json; version=3' — tools include this header by default",
+      "Restarting dynos uses the DELETE method (DELETE /apps/{app}/dynos restarts all dynos; it does not delete the app)",
+      "List endpoints paginate with Range/Next-Range headers (max 1000 items per page) and return 206 Partial Content when truncated"
+    ],
+    "documentation": "https://devcenter.heroku.com/articles/platform-api-reference"
+  }
+}

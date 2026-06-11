@@ -1,0 +1,250 @@
+{
+  "name": "fal",
+  "displayName": "fal",
+  "icon": "fal.svg",
+  "description": "Run hosted generative AI models synchronously or through the fal queue API",
+  "auth": {
+    "type": "api-key",
+    "keyName": "FAL_KEY",
+    "headerPrefix": "Key",
+    "docsUrl": "https://fal.ai/docs/model-apis/model-endpoints/queue",
+    "requiredApis": [
+      {
+        "name": "fal API Keys",
+        "enableUrl": "https://fal.ai/dashboard/keys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "FAL_KEY",
+      "description": "fal API key (sent as 'Authorization: Key <FAL_KEY>')",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://fal.ai/dashboard/keys"
+    }
+  ],
+  "tools": [
+    {
+      "id": "run_model",
+      "name": "Run Model",
+      "description": "Run a fal model synchronously and wait for the result (best for fast models; billed per run). The model endpoint ID is split into owner / app / variant segments, e.g. fal-ai/flux/schnell",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://fal.run/{app_owner}/{app_id}/{app_variant}",
+        "params": {
+          "app_owner": {
+            "type": "string",
+            "in": "path",
+            "description": "First segment of the model endpoint ID (the owner), e.g. fal-ai",
+            "default": "fal-ai"
+          },
+          "app_id": {
+            "type": "string",
+            "in": "path",
+            "description": "Second segment of the model endpoint ID (the app), e.g. flux or fast-sdxl",
+            "required": true
+          },
+          "app_variant": {
+            "type": "string",
+            "in": "path",
+            "description": "Third segment of the model endpoint ID when present (the variant), e.g. schnell or dev; leave empty for two-segment IDs like fal-ai/fast-sdxl",
+            "default": ""
+          }
+        },
+        "body": {
+          "input": {
+            "type": "object",
+            "description": "Model input payload sent as the request body, e.g. {\"prompt\": \"a red panda\"} — see the model's API page for its schema",
+            "required": true
+          }
+        },
+        "bodyMode": "passthrough"
+      }
+    },
+    {
+      "id": "queue_submit",
+      "name": "Submit Queue Request",
+      "description": "Submit a request to the fal queue and return immediately with a request_id (billed per run)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://queue.fal.run/{app_owner}/{app_id}/{app_variant}",
+        "params": {
+          "app_owner": {
+            "type": "string",
+            "in": "path",
+            "description": "First segment of the model endpoint ID (the owner), e.g. fal-ai",
+            "default": "fal-ai"
+          },
+          "app_id": {
+            "type": "string",
+            "in": "path",
+            "description": "Second segment of the model endpoint ID (the app), e.g. flux or fast-sdxl",
+            "required": true
+          },
+          "app_variant": {
+            "type": "string",
+            "in": "path",
+            "description": "Third segment of the model endpoint ID when present (the variant), e.g. schnell or dev; leave empty for two-segment IDs like fal-ai/fast-sdxl",
+            "default": ""
+          }
+        },
+        "body": {
+          "input": {
+            "type": "object",
+            "description": "Model input payload sent as the request body, e.g. {\"prompt\": \"a red panda\"} — see the model's API page for its schema",
+            "required": true
+          }
+        },
+        "bodyMode": "passthrough"
+      }
+    },
+    {
+      "id": "queue_status",
+      "name": "Get Queue Status",
+      "description": "Check the status of a queued request (IN_QUEUE, IN_PROGRESS, or COMPLETED). Use the base app ID without the variant segment, matching the status_url returned at submit time",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://queue.fal.run/{app_owner}/{app_id}/requests/{request_id}/status",
+        "params": {
+          "app_owner": {
+            "type": "string",
+            "in": "path",
+            "description": "Owner segment of the model endpoint ID, e.g. fal-ai",
+            "default": "fal-ai"
+          },
+          "app_id": {
+            "type": "string",
+            "in": "path",
+            "description": "Base app segment without the variant (for fal-ai/flux/schnell use flux), matching the status_url returned by Submit Queue Request",
+            "required": true
+          },
+          "request_id": {
+            "type": "string",
+            "in": "path",
+            "description": "Request ID returned by Submit Queue Request",
+            "required": true
+          },
+          "logs": {
+            "type": "number",
+            "in": "query",
+            "description": "Set to 1 to include execution logs in the status response",
+            "default": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "queue_result",
+      "name": "Get Queue Result",
+      "description": "Fetch the result of a completed queue request. Use the base app ID without the variant segment, matching the response_url returned at submit time",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://queue.fal.run/{app_owner}/{app_id}/requests/{request_id}/response",
+        "params": {
+          "app_owner": {
+            "type": "string",
+            "in": "path",
+            "description": "Owner segment of the model endpoint ID, e.g. fal-ai",
+            "default": "fal-ai"
+          },
+          "app_id": {
+            "type": "string",
+            "in": "path",
+            "description": "Base app segment without the variant (for fal-ai/flux/schnell use flux), matching the response_url returned by Submit Queue Request",
+            "required": true
+          },
+          "request_id": {
+            "type": "string",
+            "in": "path",
+            "description": "Request ID returned by Submit Queue Request",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "queue_cancel",
+      "name": "Cancel Queue Request",
+      "description": "Cancel a queued request that has not started running yet",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://queue.fal.run/{app_owner}/{app_id}/requests/{request_id}/cancel",
+        "params": {
+          "app_owner": {
+            "type": "string",
+            "in": "path",
+            "description": "Owner segment of the model endpoint ID, e.g. fal-ai",
+            "default": "fal-ai"
+          },
+          "app_id": {
+            "type": "string",
+            "in": "path",
+            "description": "Base app segment without the variant (for fal-ai/flux/schnell use flux)",
+            "required": true
+          },
+          "request_id": {
+            "type": "string",
+            "in": "path",
+            "description": "Request ID returned by Submit Queue Request",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "run_flux",
+      "title": "Generate an image",
+      "prompt": "Run the fal-ai/flux/schnell model on fal with a prompt I provide and show me the resulting image URL.",
+      "category": "ai",
+      "icon": "image"
+    },
+    {
+      "id": "queue_job",
+      "title": "Queue a long job",
+      "prompt": "Submit a request to a fal model via the queue, then poll its status and fetch the result when it completes.",
+      "category": "ai",
+      "icon": "clock"
+    }
+  ],
+  "suggestedWith": ["openai", "anthropic", "gemini"],
+  "SETUP_GUIDE": {
+    "title": "fal API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a fal account",
+        "description": "Sign up at https://fal.ai — new accounts get free credits to try models before adding billing."
+      },
+      {
+        "step": 2,
+        "title": "Create an API key",
+        "description": "Open https://fal.ai/dashboard/keys, create a key, and copy it immediately — it is only shown once."
+      },
+      {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Add it to your .env file as FAL_KEY=... — requests authenticate with the header 'Authorization: Key <FAL_KEY>'."
+      },
+      {
+        "step": 4,
+        "title": "Pick a model and verify",
+        "description": "Browse https://fal.ai/models and copy a model endpoint ID (e.g. fal-ai/flux/schnell). Pass its segments as app_owner=fal-ai, app_id=flux, app_variant=schnell to the Run Model tool with a small input payload."
+      }
+    ],
+    "notes": [
+      "Each model has its own input schema — check the model's API tab on fal.ai/models for required fields",
+      "Use the queue tools (submit → status → result) for slow models like video generation; synchronous fal.run requests can time out",
+      "Queue status/result/cancel URLs use the base app ID without the variant segment (fal returns ready-made status_url and response_url in the submit response)",
+      "Model runs are billed per inference — check the model page for pricing"
+    ],
+    "documentation": "https://fal.ai/docs"
+  }
+}

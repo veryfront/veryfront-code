@@ -1,0 +1,186 @@
+{
+  "name": "fireworks-ai",
+  "displayName": "Fireworks AI",
+  "icon": "fireworks-ai.svg",
+  "description": "Run chat completions, text completions, and embeddings on open models via the Fireworks AI inference API",
+  "auth": {
+    "type": "api-key",
+    "keyName": "FIREWORKS_API_KEY",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://docs.fireworks.ai/api-reference/introduction",
+    "requiredApis": [
+      {
+        "name": "Fireworks AI API Keys",
+        "enableUrl": "https://app.fireworks.ai/settings/users/api-keys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "FIREWORKS_API_KEY",
+      "description": "Fireworks AI API key from account settings",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.fireworks.ai/api-reference/introduction"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_models",
+      "name": "List Models",
+      "description": "List the models available on Fireworks AI",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.fireworks.ai/inference/v1/models",
+        "response": {
+          "transform": "data",
+          "historicalSummary": {
+            "collectionKeys": ["data", "models"],
+            "collectionName": "models",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "owned_by" },
+              { "name": "created" }
+            ],
+            "omitted": "model capability details and provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_chat_completion",
+      "name": "Create Chat Completion",
+      "description": "Generate a chat completion from a list of messages",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.fireworks.ai/inference/v1/chat/completions",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Model ID to use, e.g. accounts/fireworks/models/llama-v3p3-70b-instruct",
+            "required": true
+          },
+          "messages": {
+            "type": "array",
+            "description": "Chat messages, each with role (system|user|assistant) and content",
+            "required": true
+          },
+          "max_tokens": {
+            "type": "number",
+            "description": "Maximum tokens to generate"
+          },
+          "temperature": {
+            "type": "number",
+            "description": "Sampling temperature"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_completion",
+      "name": "Create Completion",
+      "description": "Generate a text completion from a raw prompt",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.fireworks.ai/inference/v1/completions",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Model ID to use, e.g. accounts/fireworks/models/llama-v3p3-70b-instruct",
+            "required": true
+          },
+          "prompt": {
+            "type": "string",
+            "description": "Prompt text to complete",
+            "required": true
+          },
+          "max_tokens": {
+            "type": "number",
+            "description": "Maximum tokens to generate"
+          },
+          "temperature": {
+            "type": "number",
+            "description": "Sampling temperature"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_embedding",
+      "name": "Create Embedding",
+      "description": "Create an embedding vector for input text",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.fireworks.ai/inference/v1/embeddings",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Embedding model ID, e.g. nomic-ai/nomic-embed-text-v1.5",
+            "required": true
+          },
+          "input": {
+            "type": "string",
+            "description": "Text to embed (or an array of strings)",
+            "required": true
+          },
+          "dimensions": {
+            "type": "number",
+            "description": "Number of output dimensions (supported models only)"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "available_models",
+      "title": "List Fireworks models",
+      "prompt": "List the models available on Fireworks AI for my account.",
+      "category": "ai",
+      "icon": "list"
+    },
+    {
+      "id": "generate_text",
+      "title": "Generate a response",
+      "prompt": "Use Fireworks AI to generate a chat response to a prompt I provide.",
+      "category": "ai",
+      "icon": "sparkles"
+    }
+  ],
+  "suggestedWith": ["openai", "anthropic", "mistral"],
+  "SETUP_GUIDE": {
+    "title": "Fireworks AI API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Fireworks AI account",
+        "description": "Go to https://app.fireworks.ai and sign up or sign in. New accounts include free credits for testing serverless models."
+      },
+      {
+        "step": 2,
+        "title": "Create an API key",
+        "description": "Open the API Keys page under account settings (https://app.fireworks.ai/settings/users/api-keys) and create a new key."
+      },
+      {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Copy the key and add it to your .env file as FIREWORKS_API_KEY=..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Models tool to confirm the key works. A 401 means the key is wrong or revoked."
+      }
+    ],
+    "notes": [
+      "The inference API is OpenAI-compatible under https://api.fireworks.ai/inference/v1",
+      "Serverless model IDs use the accounts/fireworks/models/<name> format",
+      "Inference is billed per token once free credits are exhausted"
+    ],
+    "documentation": "https://docs.fireworks.ai/api-reference/introduction"
+  }
+}

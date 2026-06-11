@@ -1,0 +1,220 @@
+{
+  "name": "checkly",
+  "displayName": "Checkly",
+  "icon": "checkly.svg",
+  "description": "Read Checkly checks, check results, and current statuses",
+  "auth": {
+    "type": "api-key",
+    "keyName": "CHECKLY_API_KEY",
+    "headerPrefix": "Bearer",
+    "additionalHeaders": {
+      "X-Checkly-Account": "CHECKLY_ACCOUNT_ID"
+    },
+    "docsUrl": "https://developers.checklyhq.com/reference/authentication",
+    "requiredApis": [
+      {
+        "name": "Checkly API Keys",
+        "enableUrl": "https://app.checklyhq.com/settings/user/api-keys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "CHECKLY_API_KEY",
+      "description": "Checkly user API key",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developers.checklyhq.com/reference/authentication"
+    },
+    {
+      "name": "CHECKLY_ACCOUNT_ID",
+      "description": "Checkly account ID (sent as the X-Checkly-Account header)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developers.checklyhq.com/reference/authentication"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_checks",
+      "name": "List Checks",
+      "description": "List API and browser checks in the account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.checklyhq.com/v1/checks",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Checks per page (max 100)",
+            "default": 50
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (starts at 1)"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["checks"],
+            "collectionName": "checks",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "checkType" },
+              { "name": "activated" },
+              { "name": "frequency" },
+              { "name": "tags", "kind": "string-array" }
+            ],
+            "omitted": "request/script definitions and alert channel settings"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_check",
+      "name": "Get Check",
+      "description": "Get a check's full configuration",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.checklyhq.com/v1/checks/{checkId}",
+        "params": {
+          "checkId": {
+            "type": "string",
+            "in": "path",
+            "description": "Check ID (from List Checks)",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_check_results",
+      "name": "List Check Results",
+      "description": "List raw results for a check within a time window (from/to must be at most 6 hours apart)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.checklyhq.com/v2/check-results/{checkId}",
+        "params": {
+          "checkId": {
+            "type": "string",
+            "in": "path",
+            "description": "Check ID",
+            "required": true
+          },
+          "from": {
+            "type": "number",
+            "in": "query",
+            "description": "Window start as a UNIX timestamp (seconds)"
+          },
+          "to": {
+            "type": "number",
+            "in": "query",
+            "description": "Window end as a UNIX timestamp (seconds); at most 6 hours after 'from'"
+          },
+          "hasFailures": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Only return results with failures"
+          },
+          "resultType": {
+            "type": "string",
+            "in": "query",
+            "description": "Result type filter: ALL, FINAL, or ATTEMPT"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Results per page (max 100)",
+            "default": 50
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (starts at 1)"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_check_statuses",
+      "name": "List Check Statuses",
+      "description": "Get the current status of every check in the account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.checklyhq.com/v1/check-statuses"
+      }
+    },
+    {
+      "id": "get_check_status",
+      "name": "Get Check Status",
+      "description": "Get the current status of a single check",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.checklyhq.com/v1/check-statuses/{checkId}",
+        "params": {
+          "checkId": {
+            "type": "string",
+            "in": "path",
+            "description": "Check ID",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "failing_checks",
+      "title": "Failing checks",
+      "prompt": "List my Checkly check statuses and tell me which checks are currently failing or degraded.",
+      "category": "observability",
+      "icon": "alert"
+    },
+    {
+      "id": "recent_failures",
+      "title": "Recent failures",
+      "prompt": "Get the results with failures for my main Checkly check over the last 6 hours and summarize the errors.",
+      "category": "observability",
+      "icon": "search"
+    }
+  ],
+  "suggestedWith": ["github", "pagerduty", "slack"],
+  "SETUP_GUIDE": {
+    "title": "Checkly API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Sign up for Checkly",
+        "description": "Create a free account at https://app.checklyhq.com (the free Hobby plan includes API access) and create at least one check."
+      },
+      {
+        "step": 2,
+        "title": "Create an API key",
+        "description": "Go to User Settings → API keys (https://app.checklyhq.com/settings/user/api-keys), create a key, and add it to your .env as CHECKLY_API_KEY."
+      },
+      {
+        "step": 3,
+        "title": "Copy your account ID",
+        "description": "Find the account ID under Account Settings → General and add it as CHECKLY_ACCOUNT_ID."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Checks, then List Check Statuses."
+      }
+    ],
+    "notes": [
+      "Every request needs both 'Authorization: Bearer <api key>' and the 'X-Checkly-Account: <account id>' header",
+      "Raw check results are kept for 30 days, and a results query window (from/to) may span at most 6 hours",
+      "Check results use the newer /v2 path; checks and statuses use /v1"
+    ],
+    "documentation": "https://developers.checklyhq.com/reference"
+  }
+}

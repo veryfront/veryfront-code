@@ -1,0 +1,236 @@
+{
+  "name": "paypal",
+  "displayName": "PayPal",
+  "icon": "paypal.svg",
+  "description": "Read PayPal transactions, balances, invoices, and orders",
+  "auth": {
+    "type": "oauth2",
+    "grantType": "client_credentials",
+    "tokenUrl": "https://api-m.paypal.com/v1/oauth2/token",
+    "tokenAuthMethod": "basic",
+    "docsUrl": "https://developer.paypal.com/api/rest/authentication/",
+    "requiredApis": [
+      {
+        "name": "PayPal Developer Dashboard",
+        "enableUrl": "https://developer.paypal.com/dashboard/applications/live"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "PAYPAL_CLIENT_ID",
+      "description": "PayPal REST app Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.paypal.com/dashboard/applications/live"
+    },
+    {
+      "name": "PAYPAL_CLIENT_SECRET",
+      "description": "PayPal REST app Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.paypal.com/dashboard/applications/live"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_transactions",
+      "name": "List Transactions",
+      "description": "Search account transactions in a date window (max 31 days per request)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api-m.paypal.com/v1/reporting/transactions",
+        "params": {
+          "start_date": {
+            "type": "string",
+            "in": "query",
+            "description": "Window start, ISO 8601 with timezone, e.g. 2026-06-01T00:00:00-0000",
+            "required": true
+          },
+          "end_date": {
+            "type": "string",
+            "in": "query",
+            "description": "Window end, ISO 8601 with timezone (within 31 days of start_date)",
+            "required": true
+          },
+          "transaction_status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by status code: D (denied), P (pending), S (success), V (refund/reversal)"
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Transactions per page (max 500)",
+            "default": 100
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["transaction_details", "transactions"],
+            "collectionName": "transactions",
+            "itemFields": [
+              { "name": "transaction_info", "kind": "object" }
+            ],
+            "omitted": "payer, cart, and shipping detail blocks",
+            "outputFields": [
+              { "name": "total_items" },
+              { "name": "total_pages" },
+              { "name": "page" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "list_balances",
+      "name": "List Balances",
+      "description": "Get current account balances by currency",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api-m.paypal.com/v1/reporting/balances",
+        "params": {
+          "currency_code": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter to a single currency, e.g. USD"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_invoices",
+      "name": "List Invoices",
+      "description": "List invoices",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api-m.paypal.com/v2/invoicing/invoices",
+        "params": {
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Invoices per page (max 100)",
+            "default": 20
+          },
+          "total_required": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include the total count in the response",
+            "default": true
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["items", "invoices"],
+            "collectionName": "invoices",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "status" },
+              { "name": "detail", "kind": "object" }
+            ],
+            "omitted": "line items and amount breakdowns",
+            "outputFields": [{ "name": "total_items" }, { "name": "total_pages" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_invoice",
+      "name": "Get Invoice",
+      "description": "Get details of an invoice",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api-m.paypal.com/v2/invoicing/invoices/{invoiceId}",
+        "params": {
+          "invoiceId": {
+            "type": "string",
+            "in": "path",
+            "description": "Invoice ID, e.g. INV2-XXXX-XXXX-XXXX-XXXX",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "get_order",
+      "name": "Get Order",
+      "description": "Get details of a checkout order",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api-m.paypal.com/v2/checkout/orders/{orderId}",
+        "params": {
+          "orderId": {
+            "type": "string",
+            "in": "path",
+            "description": "Order ID",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "recent_transactions",
+      "title": "Recent transactions",
+      "prompt": "List my PayPal transactions from the last 7 days and summarize totals by status.",
+      "category": "finance",
+      "icon": "payment"
+    },
+    {
+      "id": "account_balance",
+      "title": "Account balance",
+      "prompt": "Show my current PayPal balances by currency.",
+      "category": "finance",
+      "icon": "currency"
+    }
+  ],
+  "suggestedWith": ["stripe", "sheets", "slack"],
+  "SETUP_GUIDE": {
+    "title": "PayPal REST API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a REST app",
+        "description": "Go to https://developer.paypal.com/dashboard/applications/live (or /sandbox for testing) and create an app. Copy the Client ID and Secret."
+      },
+      {
+        "step": 2,
+        "title": "Enable required features",
+        "description": "In the app settings, enable 'Transaction Search' (required for List Transactions/Balances) and 'Invoicing'. Newly enabled features can take a few minutes to propagate."
+      },
+      {
+        "step": 3,
+        "title": "Set environment variables",
+        "description": "Add PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET to your .env."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Balances. Access tokens are minted automatically via the OAuth2 client_credentials grant — no user login is involved."
+      }
+    ],
+    "notes": [
+      "This connector targets the live API (api-m.paypal.com). For sandbox testing, point a copy of the connector at api-m.sandbox.paypal.com with sandbox app credentials.",
+      "Transaction data can lag up to a few hours behind real-time; the reporting window per request is limited to 31 days."
+    ],
+    "documentation": "https://developer.paypal.com/api/rest/"
+  }
+}

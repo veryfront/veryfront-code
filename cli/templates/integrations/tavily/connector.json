@@ -1,0 +1,216 @@
+{
+  "name": "tavily",
+  "displayName": "Tavily",
+  "icon": "tavily.svg",
+  "description": "Web search, content extraction, site crawling, and URL mapping built for AI agents via the Tavily API",
+  "auth": {
+    "type": "api-key",
+    "keyName": "TAVILY_API_KEY",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://docs.tavily.com/documentation/api-reference/endpoint/search",
+    "requiredApis": [
+      {
+        "name": "Tavily API Keys",
+        "enableUrl": "https://app.tavily.com/home"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "TAVILY_API_KEY",
+      "description": "Tavily API key (starts with tvly-)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.tavily.com/documentation/quickstart"
+    }
+  ],
+  "tools": [
+    {
+      "id": "search",
+      "name": "Search",
+      "description": "Search the web and get ranked results with optional LLM answer",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.tavily.com/search",
+        "body": {
+          "query": {
+            "type": "string",
+            "description": "Search query text",
+            "required": true
+          },
+          "search_depth": {
+            "type": "string",
+            "description": "Depth vs latency tradeoff: basic, advanced, fast, or ultra-fast",
+            "default": "basic"
+          },
+          "topic": {
+            "type": "string",
+            "description": "Search category: general or news",
+            "default": "general"
+          },
+          "max_results": {
+            "type": "number",
+            "description": "Maximum results to return (0-20)",
+            "default": 5
+          },
+          "include_answer": {
+            "type": "boolean",
+            "description": "Include an LLM-generated answer to the query",
+            "default": false
+          },
+          "time_range": {
+            "type": "string",
+            "description": "Filter by publish date: day, week, month, or year"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["results"],
+            "collectionName": "results",
+            "itemFields": [
+              { "name": "title" },
+              { "name": "url" },
+              { "name": "content", "maxLength": 300 },
+              { "name": "score" },
+              { "name": "published_date" }
+            ],
+            "omitted": "raw page content and provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "extract",
+      "name": "Extract",
+      "description": "Extract clean page content from one or more URLs",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.tavily.com/extract",
+        "body": {
+          "urls": {
+            "type": "array",
+            "description": "URLs to extract content from, e.g. [\"https://example.com\"]",
+            "required": true
+          },
+          "extract_depth": {
+            "type": "string",
+            "description": "Extraction depth: basic or advanced (advanced costs more)",
+            "default": "basic"
+          },
+          "format": {
+            "type": "string",
+            "description": "Output format: markdown or text",
+            "default": "markdown"
+          }
+        }
+      }
+    },
+    {
+      "id": "crawl",
+      "name": "Crawl",
+      "description": "Crawl a website from a root URL and extract content from discovered pages",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.tavily.com/crawl",
+        "body": {
+          "url": {
+            "type": "string",
+            "description": "Root URL to begin the crawl",
+            "required": true
+          },
+          "instructions": {
+            "type": "string",
+            "description": "Natural language directions for targeted crawling, e.g. 'find all pricing pages'"
+          },
+          "max_depth": {
+            "type": "number",
+            "description": "How far from the root URL the crawler explores (max 5)",
+            "default": 1
+          },
+          "limit": {
+            "type": "number",
+            "description": "Total number of links processed before stopping",
+            "default": 50
+          }
+        }
+      }
+    },
+    {
+      "id": "map",
+      "name": "Map",
+      "description": "Get a list of URLs discovered on a website without extracting content",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.tavily.com/map",
+        "body": {
+          "url": {
+            "type": "string",
+            "description": "Root URL to map",
+            "required": true
+          },
+          "max_depth": {
+            "type": "number",
+            "description": "How far from the root URL the mapper explores",
+            "default": 1
+          },
+          "limit": {
+            "type": "number",
+            "description": "Total number of links processed before stopping",
+            "default": 50
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "web_search",
+      "title": "Search the web",
+      "prompt": "Search the web with Tavily for a query I provide and summarize the top results.",
+      "category": "search",
+      "icon": "search"
+    },
+    {
+      "id": "extract_page",
+      "title": "Extract a page",
+      "prompt": "Extract the content of a URL I provide with Tavily and summarize it.",
+      "category": "search",
+      "icon": "document"
+    }
+  ],
+  "suggestedWith": ["openai", "anthropic", "slack"],
+  "SETUP_GUIDE": {
+    "title": "Tavily API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Tavily account",
+        "description": "Go to https://app.tavily.com and sign up — the free plan includes monthly API credits, enough for testing."
+      },
+      {
+        "step": 2,
+        "title": "Copy your API key",
+        "description": "Your default API key is shown on the dashboard home (https://app.tavily.com/home); create additional keys per project if needed."
+      },
+      {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Add it to your .env file as TAVILY_API_KEY=tvly-..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the Search tool with a simple query. A 401 means the key is invalid; a 432 means you exceeded your plan limit."
+      }
+    ],
+    "notes": [
+      "All endpoints consume API credits per request; advanced search/extract depth costs more than basic",
+      "Crawl runs synchronously and can take a while on large sites — keep max_depth and limit small"
+    ],
+    "documentation": "https://docs.tavily.com"
+  }
+}

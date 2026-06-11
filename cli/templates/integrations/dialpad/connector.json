@@ -1,0 +1,291 @@
+{
+  "name": "dialpad",
+  "displayName": "Dialpad",
+  "icon": "dialpad.svg",
+  "description": "Manage contacts, users, and SMS in Dialpad",
+  "auth": {
+    "type": "oauth2",
+    "provider": "dialpad",
+    "authorizationUrl": "https://dialpad.com/oauth2/authorize",
+    "tokenUrl": "https://dialpad.com/oauth2/token",
+    "scopes": ["offline_access"],
+    "callbackPath": "/api/auth/dialpad/callback",
+    "docsUrl": "https://developers.dialpad.com/docs/oauth",
+    "requiredApis": [
+      {
+        "name": "Dialpad OAuth App (request via Dialpad developer support)",
+        "enableUrl": "https://developers.dialpad.com/docs/oauth"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "DIALPAD_CLIENT_ID",
+      "description": "Dialpad OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developers.dialpad.com/docs/oauth"
+    },
+    {
+      "name": "DIALPAD_CLIENT_SECRET",
+      "description": "Dialpad OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developers.dialpad.com/docs/oauth"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_contacts",
+      "name": "List Contacts",
+      "description": "List Dialpad contacts visible to the authenticated user",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://dialpad.com/api/v2/contacts",
+        "params": {
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Cursor token from a previous response to fetch the next page"
+          },
+          "owner_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return contacts owned by this Dialpad user ID"
+          },
+          "include_local": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include company local contacts",
+            "default": false
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["items"],
+            "collectionName": "contacts",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "display_name" },
+              { "name": "first_name" },
+              { "name": "last_name" },
+              { "name": "emails", "kind": "string-array" },
+              { "name": "phones", "kind": "string-array" },
+              { "name": "company_name" }
+            ],
+            "omitted": "contact details and provider-specific payload fields",
+            "outputFields": [{ "name": "cursor" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_contact",
+      "name": "Get Contact",
+      "description": "Get details of a Dialpad contact",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://dialpad.com/api/v2/contacts/{contactId}",
+        "params": {
+          "contactId": {
+            "type": "string",
+            "in": "path",
+            "description": "Dialpad contact ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_contact",
+      "name": "Create Contact",
+      "description": "Create a new contact in Dialpad",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://dialpad.com/api/v2/contacts",
+        "body": {
+          "first_name": {
+            "type": "string",
+            "description": "Contact first name",
+            "required": true
+          },
+          "last_name": {
+            "type": "string",
+            "description": "Contact last name",
+            "required": true
+          },
+          "emails": {
+            "type": "array",
+            "description": "Email addresses, primary first"
+          },
+          "phones": {
+            "type": "array",
+            "description": "E.164 phone numbers, primary first"
+          },
+          "company_name": {
+            "type": "string",
+            "description": "Company name"
+          },
+          "job_title": {
+            "type": "string",
+            "description": "Job title"
+          }
+        }
+      }
+    },
+    {
+      "id": "update_contact",
+      "name": "Update Contact",
+      "description": "Update an existing Dialpad contact",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://dialpad.com/api/v2/contacts/{contactId}",
+        "params": {
+          "contactId": {
+            "type": "string",
+            "in": "path",
+            "description": "Dialpad contact ID",
+            "required": true
+          }
+        },
+        "body": {
+          "first_name": {
+            "type": "string",
+            "description": "Contact first name"
+          },
+          "last_name": {
+            "type": "string",
+            "description": "Contact last name"
+          },
+          "emails": {
+            "type": "array",
+            "description": "Email addresses, primary first"
+          },
+          "phones": {
+            "type": "array",
+            "description": "E.164 phone numbers, primary first"
+          },
+          "company_name": {
+            "type": "string",
+            "description": "Company name"
+          },
+          "job_title": {
+            "type": "string",
+            "description": "Job title"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_users",
+      "name": "List Users",
+      "description": "List Dialpad users in the company",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://dialpad.com/api/v2/users",
+        "params": {
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Cursor token from a previous response to fetch the next page"
+          },
+          "email": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter users by email address"
+          },
+          "state": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by user state, e.g. active, suspended, deleted"
+          }
+        }
+      }
+    },
+    {
+      "id": "send_sms",
+      "name": "Send SMS",
+      "description": "Send an SMS message on behalf of a Dialpad user",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://dialpad.com/api/v2/sms",
+        "body": {
+          "user_id": {
+            "type": "string",
+            "description": "Dialpad user ID the SMS is sent on behalf of",
+            "required": true
+          },
+          "to_numbers": {
+            "type": "array",
+            "description": "Recipient phone numbers in E.164 format (up to 10)",
+            "required": true
+          },
+          "text": {
+            "type": "string",
+            "description": "Message text",
+            "required": true
+          },
+          "infer_country_code": {
+            "type": "boolean",
+            "description": "Infer country code from the sending user's settings",
+            "default": false
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "find_contact",
+      "title": "Find a contact",
+      "prompt": "Search my Dialpad contacts for a person and show their phone numbers and emails.",
+      "category": "communication",
+      "icon": "search"
+    },
+    {
+      "id": "send_text",
+      "title": "Send an SMS",
+      "prompt": "Send an SMS from my Dialpad number to a contact with a short message.",
+      "category": "communication",
+      "icon": "send"
+    }
+  ],
+  "suggestedWith": ["hubspot", "slack", "twilio"],
+  "SETUP_GUIDE": {
+    "title": "Dialpad OAuth Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Request an OAuth app",
+        "description": "Dialpad OAuth clients are issued by Dialpad: contact api@dialpad.com (or your Dialpad account manager) to register an OAuth app with your redirect URI <your-app-url>/api/auth/dialpad/callback and the scopes you need (request offline_access for refresh tokens). See https://developers.dialpad.com/docs/oauth."
+      },
+      {
+        "step": 2,
+        "title": "Use the sandbox for testing",
+        "description": "Dialpad provides a free developer sandbox at https://sandbox.dialpad.com (see https://developers.dialpad.com/docs/sandbox). Sandbox OAuth uses https://sandbox.dialpad.com/oauth2/authorize and /oauth2/token."
+      },
+      {
+        "step": 3,
+        "title": "Set credentials",
+        "description": "Add DIALPAD_CLIENT_ID and DIALPAD_CLIENT_SECRET to your .env."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Complete the OAuth flow, then run the List Contacts tool."
+      }
+    ],
+    "notes": [
+      "Refresh tokens are only issued when the offline_access scope is requested and approved for your app",
+      "Scopes must be approved by Dialpad when the OAuth app is registered",
+      "This connector targets production (dialpad.com); point your OAuth app at the sandbox host for sandbox testing"
+    ],
+    "documentation": "https://developers.dialpad.com/docs/oauth"
+  }
+}

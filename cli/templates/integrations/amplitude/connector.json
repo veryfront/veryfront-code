@@ -1,0 +1,277 @@
+{
+  "name": "amplitude",
+  "displayName": "Amplitude",
+  "icon": "amplitude.svg",
+  "description": "Query Amplitude analytics events, segmentation, charts, and active users, and track events",
+  "auth": {
+    "type": "basic",
+    "usernameKey": "AMPLITUDE_API_KEY",
+    "passwordKey": "AMPLITUDE_SECRET_KEY",
+    "docsUrl": "https://amplitude.com/docs/apis/analytics/dashboard-rest",
+    "requiredApis": [
+      {
+        "name": "Amplitude Project API Keys",
+        "enableUrl": "https://app.amplitude.com/analytics/settings/projects"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "AMPLITUDE_API_KEY",
+      "description": "Amplitude project API key (basic auth username; also used by client SDKs)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://amplitude.com/docs/apis/authentication"
+    },
+    {
+      "name": "AMPLITUDE_SECRET_KEY",
+      "description": "Amplitude project secret key (basic auth password)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://amplitude.com/docs/apis/authentication"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_events",
+      "name": "List Events",
+      "description": "List event types visible in the project with current week totals",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/api/2/events/list",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Amplitude analytics host: amplitude.com (US) or analytics.eu.amplitude.com (EU residency)",
+            "default": "amplitude.com"
+          }
+        },
+        "response": {
+          "transform": "data",
+          "historicalSummary": {
+            "collectionKeys": ["data", "events"],
+            "collectionName": "events",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "value" },
+              { "name": "display" },
+              { "name": "totals" },
+              { "name": "non_active" }
+            ],
+            "omitted": "event property details and provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "query_event_segmentation",
+      "name": "Query Event Segmentation",
+      "description": "Get metrics for an event over a date range (Event Segmentation chart data)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/api/2/events/segmentation",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Amplitude analytics host: amplitude.com (US) or analytics.eu.amplitude.com (EU)",
+            "default": "amplitude.com"
+          },
+          "e": {
+            "type": "string",
+            "in": "query",
+            "description": "Event definition as JSON, e.g. {\"event_type\":\"sign_up\"}",
+            "required": true
+          },
+          "start": {
+            "type": "string",
+            "in": "query",
+            "description": "Start date in YYYYMMDD format",
+            "required": true
+          },
+          "end": {
+            "type": "string",
+            "in": "query",
+            "description": "End date in YYYYMMDD format",
+            "required": true
+          },
+          "m": {
+            "type": "string",
+            "in": "query",
+            "description": "Metric: uniques, totals, pct_dau, or average",
+            "default": "uniques"
+          },
+          "i": {
+            "type": "number",
+            "in": "query",
+            "description": "Interval in days: 1 (daily), 7 (weekly), or 30 (monthly)",
+            "default": 1
+          },
+          "g": {
+            "type": "string",
+            "in": "query",
+            "description": "Property to group by, e.g. country"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "query_active_users",
+      "name": "Query Active Users",
+      "description": "Get active or new user counts over a date range",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/api/2/users",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Amplitude analytics host: amplitude.com (US) or analytics.eu.amplitude.com (EU)",
+            "default": "amplitude.com"
+          },
+          "start": {
+            "type": "string",
+            "in": "query",
+            "description": "Start date in YYYYMMDD format",
+            "required": true
+          },
+          "end": {
+            "type": "string",
+            "in": "query",
+            "description": "End date in YYYYMMDD format",
+            "required": true
+          },
+          "m": {
+            "type": "string",
+            "in": "query",
+            "description": "User type: active or new",
+            "default": "active"
+          },
+          "i": {
+            "type": "number",
+            "in": "query",
+            "description": "Interval in days: 1 (daily), 7 (weekly), or 30 (monthly)",
+            "default": 1
+          },
+          "g": {
+            "type": "string",
+            "in": "query",
+            "description": "Property to group by, e.g. country (limit one)"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "get_chart_results",
+      "name": "Get Chart Results",
+      "description": "Get JSON results from a saved Amplitude chart by chart ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/api/3/chart/{chartId}/query",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Amplitude analytics host: amplitude.com (US) or analytics.eu.amplitude.com (EU)",
+            "default": "amplitude.com"
+          },
+          "chartId": {
+            "type": "string",
+            "in": "path",
+            "description": "Chart ID from the chart's URL in the Amplitude web app",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "track_event",
+      "name": "Track Event",
+      "description": "Send events to Amplitude via the HTTP V2 ingestion API",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{ingestHost}/2/httpapi",
+        "params": {
+          "ingestHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Amplitude ingestion host: api2.amplitude.com (US) or api.eu.amplitude.com (EU)",
+            "default": "api2.amplitude.com"
+          }
+        },
+        "body": {
+          "api_key": {
+            "type": "string",
+            "description": "Amplitude project API key — pass the same value as the AMPLITUDE_API_KEY env var (the ingestion API reads it from the body, not headers)",
+            "required": true
+          },
+          "events": {
+            "type": "array",
+            "description": "Events to upload; each needs event_type plus user_id (min 5 chars) or device_id, e.g. [{\"user_id\":\"user_123\",\"event_type\":\"sign_up\"}]",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "event_overview",
+      "title": "Event overview",
+      "prompt": "List my Amplitude event types and summarize which ones have the highest totals this week.",
+      "category": "analytics",
+      "icon": "list"
+    },
+    {
+      "id": "active_users_trend",
+      "title": "Active users trend",
+      "prompt": "Show my daily active users in Amplitude for the last 30 days and describe the trend.",
+      "category": "analytics",
+      "icon": "chart"
+    }
+  ],
+  "suggestedWith": ["mixpanel", "posthog", "slack"],
+  "SETUP_GUIDE": {
+    "title": "Amplitude API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Find your project credentials",
+        "description": "In Amplitude, go to Settings → Organization settings → Projects, pick your project, and copy the API Key and Secret Key. Free Starter plans include Dashboard REST API access for testing."
+      },
+      {
+        "step": 2,
+        "title": "Store the keys",
+        "description": "Add them to your .env file as AMPLITUDE_API_KEY=... and AMPLITUDE_SECRET_KEY=... — both are required because the analytics APIs use HTTP basic auth (api_key:secret_key)."
+      },
+      {
+        "step": 3,
+        "title": "Check your data residency",
+        "description": "If your org uses EU data residency, pass host=analytics.eu.amplitude.com on query tools and ingestHost=api.eu.amplitude.com on Track Event. US orgs can keep the defaults."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Events tool. A 401 means the key pair is wrong; a 403 can mean the keys belong to a different project or region."
+      }
+    ],
+    "notes": [
+      "Keys are per-project — use a test project's keys when experimenting, since Track Event writes real analytics data",
+      "The HTTP V2 ingestion API authenticates with the project API key inside the request body, so Track Event asks for api_key as a body field (same value as AMPLITUDE_API_KEY; the secret key is never sent)",
+      "Dashboard REST API endpoints are rate limited per project — keep date ranges modest"
+    ],
+    "documentation": "https://amplitude.com/docs/apis/analytics/dashboard-rest"
+  }
+}

@@ -53,11 +53,101 @@ const integrationNames = [
   "twilio",
   "anthropic",
   "aws",
+  "openai",
+  "todoist",
+  "calendly",
+  "google-analytics",
+  "klaviyo",
+  "datadog",
+  "paypal",
+  "activecampaign",
+  "algolia",
+  "amplitude",
+  "apollo",
+  "ashby",
+  "attio",
+  "basecamp",
+  "brevo",
+  "circleci",
+  "close",
+  "cloudflare",
+  "coda",
+  "dialpad",
+  "digitalocean",
+  "exa",
+  "fathom",
+  "firecrawl",
+  "fireflies",
+  "folk",
+  "gemini",
+  "gong",
+  "google-chat",
+  "gusto",
+  "jotform",
+  "lever",
+  "metabase",
+  "mistral",
+  "pagerduty",
+  "perplexity",
+  "productboard",
+  "razorpay",
+  "resend",
+  "salesflare",
+  "segment",
+  "sendgrid",
+  "shortcut",
+  "square",
+  "tavily",
+  "typeform",
+  "apify",
+  "assemblyai",
+  "axiom",
+  "betterstack",
+  "browserbase",
+  "buildkite",
+  "checkly",
+  "clickhouse",
+  "cohere",
+  "deepgram",
+  "elevenlabs",
+  "fal",
+  "fireworks-ai",
+  "fly-io",
+  "grafana-cloud",
+  "groq",
+  "heroku",
+  "huggingface",
+  "langfuse",
+  "langsmith",
+  "launchdarkly",
+  "mongodb-atlas",
+  "netlify",
+  "new-relic",
+  "openrouter",
+  "pinecone",
+  "planetscale",
+  "qdrant",
+  "railway",
+  "redis-cloud",
+  "render",
+  "replicate",
+  "snyk",
+  "stability-ai",
+  "together-ai",
+  "vercel",
+  "weaviate",
 ] as const;
 
 export const getIntegrationNameSchema = defineSchema((v) => v.enum(integrationNames));
 /** Zod schema for integration name. */
 export const IntegrationNameSchema = lazySchema(getIntegrationNameSchema);
+
+/**
+ * Every registered integration name. The single source of truth for catalog
+ * surfaces (CLI validation, MCP listings) — derive from this instead of
+ * maintaining parallel name lists.
+ */
+export const ALL_INTEGRATION_NAMES = integrationNames;
 
 export const getEnvVarSchema = defineSchema((v) =>
   v.object({
@@ -88,10 +178,16 @@ export const OAuthFieldSchema = lazySchema(getOAuthFieldSchema);
 
 export const getOAuthConfigSchema = defineSchema((v) =>
   v.object({
-    type: v.enum(["oauth2", "oauth1", "api-key"]),
+    type: v.enum(["oauth2", "oauth1", "api-key", "basic"]),
     provider: v.string().optional(),
     authorizationUrl: v.string().optional(),
     tokenUrl: v.string().optional(),
+    /**
+     * OAuth2 grant type. Defaults to the authorization-code user flow;
+     * machine-to-machine connectors set "client_credentials" (no user redirect,
+     * tokens minted from <NAME>_CLIENT_ID / <NAME>_CLIENT_SECRET project env vars).
+     */
+    grantType: v.enum(["authorization_code", "client_credentials"]).optional(),
     scopes: v.array(v.string()).optional(),
     optionalScopes: v.array(v.string()).optional(),
     callbackPath: v.string().optional(),
@@ -111,6 +207,15 @@ export const getOAuthConfigSchema = defineSchema((v) =>
     keyName: v.string().optional(),
     headerName: v.string().optional(),
     headerPrefix: v.string().optional(),
+    /**
+     * api-key: extra secret headers beyond the primary key, mapped from header
+     * name to the project env var holding the value (e.g. Datadog's
+     * DD-APPLICATION-KEY → DD_APP_KEY).
+     */
+    additionalHeaders: v.record(v.string(), v.string()).optional(),
+    /** basic: project env vars holding the HTTP Basic username and password. */
+    usernameKey: v.string().optional(),
+    passwordKey: v.string().optional(),
     tokenName: v.string().optional(),
     docsUrl: v.string().optional(),
   })
@@ -195,6 +300,11 @@ export const getIntegrationEndpointSchema = defineSchema((v) =>
     query: v.string().optional(),
     params: v.record(v.string(), getIntegrationEndpointParamSchema()).optional(),
     body: v.record(v.string(), getIntegrationEndpointBodyFieldSchema()).optional(),
+    // "passthrough": body declares exactly one object/array field whose value is
+    // sent as the entire request body. For APIs that take arbitrary flat payloads
+    // (e.g. Salesforce sObject writes, ServiceNow table records). Default: each
+    // body field becomes a key of a JSON object.
+    bodyMode: v.enum(["passthrough"]).optional(),
     contentType: v.string().optional(),
     response: v.object({
       transform: v.string().optional(),

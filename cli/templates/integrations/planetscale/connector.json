@@ -1,0 +1,314 @@
+{
+  "name": "planetscale",
+  "displayName": "PlanetScale",
+  "icon": "planetscale.svg",
+  "description": "Inspect PlanetScale organizations, databases, branches, and deploy requests",
+  "auth": {
+    "type": "api-key",
+    "keyName": "PLANETSCALE_SERVICE_TOKEN",
+    "docsUrl": "https://planetscale.com/docs/api/reference/service-tokens",
+    "requiredApis": [
+      {
+        "name": "PlanetScale Service Tokens",
+        "enableUrl": "https://app.planetscale.com"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "PLANETSCALE_SERVICE_TOKEN",
+      "description": "PlanetScale service token as the combined 'TOKEN_ID:TOKEN' value (e.g. abc123xyz:pscale_tkn_...) — the Authorization header is sent verbatim with no Bearer prefix",
+      "required": true,
+      "sensitive": true,
+      "placeholder": "TOKEN_ID:TOKEN",
+      "docsUrl": "https://planetscale.com/docs/api/reference/service-tokens"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_organizations",
+      "name": "List Organizations",
+      "description": "List organizations the service token can access",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.planetscale.com/v1/organizations",
+        "params": {
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Organizations per page",
+            "default": 25
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "organizations",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "created_at" },
+              { "name": "updated_at" }
+            ],
+            "omitted": "billing, plan, and provider-specific payload fields",
+            "outputFields": [
+              { "name": "current_page" },
+              { "name": "next_page" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "list_databases",
+      "name": "List Databases",
+      "description": "List databases in an organization",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.planetscale.com/v1/organizations/{organization}/databases",
+        "params": {
+          "organization": {
+            "type": "string",
+            "in": "path",
+            "description": "Organization name",
+            "required": true
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Databases per page",
+            "default": 25
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "databases",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "state" },
+              { "name": "html_url" },
+              { "name": "created_at" },
+              { "name": "updated_at" }
+            ],
+            "omitted": "region details, settings, and provider-specific payload fields",
+            "outputFields": [
+              { "name": "current_page" },
+              { "name": "next_page" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_database",
+      "name": "Get Database",
+      "description": "Get details of a database",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.planetscale.com/v1/organizations/{organization}/databases/{database}",
+        "params": {
+          "organization": {
+            "type": "string",
+            "in": "path",
+            "description": "Organization name",
+            "required": true
+          },
+          "database": {
+            "type": "string",
+            "in": "path",
+            "description": "Database name",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_branches",
+      "name": "List Branches",
+      "description": "List branches of a database",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.planetscale.com/v1/organizations/{organization}/databases/{database}/branches",
+        "params": {
+          "organization": {
+            "type": "string",
+            "in": "path",
+            "description": "Organization name",
+            "required": true
+          },
+          "database": {
+            "type": "string",
+            "in": "path",
+            "description": "Database name",
+            "required": true
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Branches per page",
+            "default": 25
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "branches",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "production" },
+              { "name": "ready" },
+              { "name": "parent_branch" },
+              { "name": "created_at" },
+              { "name": "updated_at" }
+            ],
+            "omitted": "restore metadata and provider-specific payload fields",
+            "outputFields": [
+              { "name": "current_page" },
+              { "name": "next_page" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "list_deploy_requests",
+      "name": "List Deploy Requests",
+      "description": "List deploy requests for a database",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.planetscale.com/v1/organizations/{organization}/databases/{database}/deploy-requests",
+        "params": {
+          "organization": {
+            "type": "string",
+            "in": "path",
+            "description": "Organization name",
+            "required": true
+          },
+          "database": {
+            "type": "string",
+            "in": "path",
+            "description": "Database name",
+            "required": true
+          },
+          "state": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by state: open or closed"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Deploy requests per page",
+            "default": 25
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "deploy_requests",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "number" },
+              { "name": "state" },
+              { "name": "branch" },
+              { "name": "into_branch" },
+              { "name": "approved" },
+              { "name": "created_at" },
+              { "name": "updated_at" }
+            ],
+            "omitted": "deployment operation details and provider-specific payload fields",
+            "outputFields": [
+              { "name": "current_page" },
+              { "name": "next_page" }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "database_overview",
+      "title": "Database overview",
+      "prompt": "List my PlanetScale databases and their branches, and flag any open deploy requests.",
+      "category": "data",
+      "icon": "list"
+    },
+    {
+      "id": "pending_deploys",
+      "title": "Pending deploy requests",
+      "prompt": "Show open PlanetScale deploy requests for my database and whether they are approved.",
+      "category": "data",
+      "icon": "alert"
+    }
+  ],
+  "suggestedWith": ["github", "slack", "sentry"],
+  "SETUP_GUIDE": {
+    "title": "PlanetScale API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Sign in to PlanetScale",
+        "description": "Go to https://app.planetscale.com and sign in to your organization."
+      },
+      {
+        "step": 2,
+        "title": "Create a service token",
+        "description": "Open your organization's Settings > Service tokens > New service token, name it, and copy both the token ID and the token secret immediately."
+      },
+      {
+        "step": 3,
+        "title": "Grant permissions",
+        "description": "On the token's page, grant organization-level read access (e.g. read_databases) and database-level permissions (e.g. read_branch, read_deploy_request) for the databases you want to inspect."
+      },
+      {
+        "step": 4,
+        "title": "Set the environment variable",
+        "description": "IMPORTANT: PlanetScale auth uses a composite value. Set PLANETSCALE_SERVICE_TOKEN to the token ID and token joined by a colon, e.g. PLANETSCALE_SERVICE_TOKEN=abc123xyz:pscale_tkn_... The connector sends this verbatim as the Authorization header."
+      },
+      {
+        "step": 5,
+        "title": "Verify access",
+        "description": "Run List Organizations, then List Databases with your organization name."
+      }
+    ],
+    "notes": [
+      "PlanetScale's Authorization header is '<TOKEN_ID>:<TOKEN>' with no Bearer prefix — the env var must contain both parts joined by a colon",
+      "Service token permissions are granular; missing database-level grants return 404s rather than 403s",
+      "List responses wrap items in a 'data' array with current_page/next_page pagination"
+    ],
+    "documentation": "https://planetscale.com/docs/api"
+  }
+}

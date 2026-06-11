@@ -1,0 +1,211 @@
+{
+  "name": "cohere",
+  "displayName": "Cohere",
+  "icon": "cohere.svg",
+  "description": "Chat with Cohere Command models, create embeddings, and rerank documents via the Cohere API",
+  "auth": {
+    "type": "api-key",
+    "keyName": "COHERE_API_KEY",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://docs.cohere.com/reference/about",
+    "requiredApis": [
+      {
+        "name": "Cohere Dashboard API Keys",
+        "enableUrl": "https://dashboard.cohere.com/api-keys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "COHERE_API_KEY",
+      "description": "Cohere API key from the Cohere dashboard",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://dashboard.cohere.com/api-keys"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_models",
+      "name": "List Models",
+      "description": "List the Cohere models available to the API key",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.cohere.com/v1/models",
+        "params": {
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum number of models per page (1-1000)",
+            "default": 50
+          },
+          "page_token": {
+            "type": "string",
+            "in": "query",
+            "description": "next_page_token from a previous list call"
+          },
+          "endpoint": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter to models compatible with an endpoint: chat, embed, classify, or rerank"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["models"],
+            "collectionName": "models",
+            "itemFields": [
+              { "name": "name" },
+              { "name": "context_length" },
+              { "name": "endpoints", "kind": "string-array" },
+              { "name": "is_deprecated" }
+            ],
+            "omitted": "tokenizer URLs, sampling defaults, and provider-specific payload fields",
+            "outputFields": [{ "name": "next_page_token" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "create_chat",
+      "name": "Create Chat",
+      "description": "Generate a chat response with a Cohere Command model (v2 Chat API)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.cohere.com/v2/chat",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Model ID to use, e.g. command-a-03-2025",
+            "required": true
+          },
+          "messages": {
+            "type": "array",
+            "description": "Chat messages, each with role (system|user|assistant) and content",
+            "required": true
+          },
+          "max_tokens": {
+            "type": "number",
+            "description": "Maximum tokens to generate"
+          },
+          "temperature": {
+            "type": "number",
+            "description": "Sampling temperature, typically between 0 and 1"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_embedding",
+      "name": "Create Embedding",
+      "description": "Create embedding vectors for input texts (v2 Embed API)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.cohere.com/v2/embed",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Embedding model ID, e.g. embed-v4.0",
+            "required": true
+          },
+          "texts": {
+            "type": "array",
+            "description": "Array of strings to embed (max 96 per call)",
+            "required": true
+          },
+          "input_type": {
+            "type": "string",
+            "description": "One of search_document, search_query, classification, clustering, or image",
+            "required": true
+          },
+          "embedding_types": {
+            "type": "array",
+            "description": "Output formats, e.g. [\"float\"]",
+            "default": ["float"]
+          }
+        }
+      }
+    },
+    {
+      "id": "rerank_documents",
+      "name": "Rerank Documents",
+      "description": "Rank a list of documents by relevance to a query (v2 Rerank API)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.cohere.com/v2/rerank",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Rerank model ID, e.g. rerank-v3.5",
+            "required": true
+          },
+          "query": {
+            "type": "string",
+            "description": "The search query to rank against",
+            "required": true
+          },
+          "documents": {
+            "type": "array",
+            "description": "Array of document texts to compare to the query",
+            "required": true
+          },
+          "top_n": {
+            "type": "number",
+            "description": "Limit results to the top N most relevant documents"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "available_models",
+      "title": "List Cohere models",
+      "prompt": "List the Cohere models available to my API key and note which endpoints each supports.",
+      "category": "ai",
+      "icon": "list"
+    },
+    {
+      "id": "rerank_results",
+      "title": "Rerank search results",
+      "prompt": "Use Cohere Rerank to order a list of documents I provide by relevance to my query.",
+      "category": "ai",
+      "icon": "sparkles"
+    }
+  ],
+  "suggestedWith": ["openai", "anthropic", "gemini"],
+  "SETUP_GUIDE": {
+    "title": "Cohere API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Cohere account",
+        "description": "Go to https://dashboard.cohere.com and sign up or sign in. New accounts get a free trial key that works for evaluation without billing."
+      },
+      {
+        "step": 2,
+        "title": "Create an API key",
+        "description": "Open https://dashboard.cohere.com/api-keys. Use the trial key for testing, or click 'New Production Key' for production use (requires billing details)."
+      },
+      {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Copy the key and add it to your .env file as COHERE_API_KEY=..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Models tool to confirm the key works. A 401 means the key is wrong or revoked."
+      }
+    ],
+    "notes": [
+      "Trial keys are free but heavily rate limited — switch to a production key for real workloads",
+      "Chat, Embed, and Rerank calls are billed per token/search unit on production keys"
+    ],
+    "documentation": "https://docs.cohere.com/reference/about"
+  }
+}

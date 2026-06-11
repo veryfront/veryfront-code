@@ -1,0 +1,314 @@
+{
+  "name": "calendly",
+  "displayName": "Calendly",
+  "icon": "calendly.svg",
+  "description": "Read scheduling links, scheduled events, and invitees from Calendly, and cancel events",
+  "auth": {
+    "type": "oauth2",
+    "provider": "calendly",
+    "authorizationUrl": "https://auth.calendly.com/oauth/authorize",
+    "tokenUrl": "https://auth.calendly.com/oauth/token",
+    "scopes": [],
+    "callbackPath": "/api/auth/calendly/callback",
+    "docsUrl": "https://developer.calendly.com/api-docs",
+    "requiredApis": [
+      {
+        "name": "Calendly Developer Portal",
+        "enableUrl": "https://developer.calendly.com/"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "CALENDLY_CLIENT_ID",
+      "description": "Calendly OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.calendly.com/create-a-developer-account"
+    },
+    {
+      "name": "CALENDLY_CLIENT_SECRET",
+      "description": "Calendly OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.calendly.com/create-a-developer-account"
+    }
+  ],
+  "tools": [
+    {
+      "id": "get_current_user",
+      "name": "Get Current User",
+      "description": "Get the connected Calendly user, including their user URI and organization URI (needed by the other tools)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.calendly.com/users/me",
+        "response": {
+          "transform": "resource"
+        }
+      }
+    },
+    {
+      "id": "list_event_types",
+      "name": "List Event Types",
+      "description": "List the user's or organization's event types (scheduling links)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.calendly.com/event_types",
+        "params": {
+          "user": {
+            "type": "string",
+            "in": "query",
+            "description": "User URI (from Get Current User); provide this or organization"
+          },
+          "organization": {
+            "type": "string",
+            "in": "query",
+            "description": "Organization URI (from Get Current User)"
+          },
+          "active": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Only return active event types"
+          },
+          "count": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of results per page (max 100)",
+            "default": 20
+          },
+          "page_token": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination token from a previous response"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["collection", "event_types"],
+            "collectionName": "event_types",
+            "itemFields": [
+              { "name": "uri" },
+              { "name": "name" },
+              { "name": "slug" },
+              { "name": "duration" },
+              { "name": "active" },
+              { "name": "scheduling_url" }
+            ],
+            "omitted": "event type descriptions and provider-specific payload fields",
+            "outputFields": [{ "name": "next_page_token" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "list_scheduled_events",
+      "name": "List Scheduled Events",
+      "description": "List scheduled events for a user or organization",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.calendly.com/scheduled_events",
+        "params": {
+          "user": {
+            "type": "string",
+            "in": "query",
+            "description": "User URI (from Get Current User); provide this or organization"
+          },
+          "organization": {
+            "type": "string",
+            "in": "query",
+            "description": "Organization URI (from Get Current User)"
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by status: active or canceled"
+          },
+          "min_start_time": {
+            "type": "string",
+            "in": "query",
+            "description": "Only events starting after this ISO timestamp"
+          },
+          "max_start_time": {
+            "type": "string",
+            "in": "query",
+            "description": "Only events starting before this ISO timestamp"
+          },
+          "count": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of results per page (max 100)",
+            "default": 20
+          },
+          "page_token": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination token from a previous response"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["collection", "events"],
+            "collectionName": "events",
+            "itemFields": [
+              { "name": "uri" },
+              { "name": "name" },
+              { "name": "status" },
+              { "name": "start_time" },
+              { "name": "end_time" },
+              { "name": "event_type" }
+            ],
+            "omitted": "location details and provider-specific payload fields",
+            "outputFields": [{ "name": "next_page_token" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_scheduled_event",
+      "name": "Get Scheduled Event",
+      "description": "Get details of a specific scheduled event",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.calendly.com/scheduled_events/{eventUuid}",
+        "params": {
+          "eventUuid": {
+            "type": "string",
+            "in": "path",
+            "description": "Scheduled event UUID (last path segment of the event URI)",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "resource"
+        }
+      }
+    },
+    {
+      "id": "list_event_invitees",
+      "name": "List Event Invitees",
+      "description": "List invitees of a scheduled event",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.calendly.com/scheduled_events/{eventUuid}/invitees",
+        "params": {
+          "eventUuid": {
+            "type": "string",
+            "in": "path",
+            "description": "Scheduled event UUID",
+            "required": true
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by status: active or canceled"
+          },
+          "count": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of results per page (max 100)",
+            "default": 20
+          },
+          "page_token": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination token from a previous response"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["collection", "invitees"],
+            "collectionName": "invitees",
+            "itemFields": [
+              { "name": "uri" },
+              { "name": "name" },
+              { "name": "email" },
+              { "name": "status" },
+              { "name": "created_at" }
+            ],
+            "omitted": "invitee questions/answers and provider-specific payload fields",
+            "outputFields": [{ "name": "next_page_token" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "cancel_event",
+      "name": "Cancel Event",
+      "description": "Cancel a scheduled event",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.calendly.com/scheduled_events/{eventUuid}/cancellation",
+        "params": {
+          "eventUuid": {
+            "type": "string",
+            "in": "path",
+            "description": "Scheduled event UUID",
+            "required": true
+          }
+        },
+        "body": {
+          "reason": {
+            "type": "string",
+            "description": "Reason for the cancellation shown to invitees"
+          }
+        },
+        "response": {
+          "transform": "resource"
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "upcoming_meetings",
+      "title": "Upcoming meetings",
+      "prompt": "List my upcoming Calendly events with their times and invitees.",
+      "category": "scheduling",
+      "icon": "calendar"
+    },
+    {
+      "id": "scheduling_links",
+      "title": "My scheduling links",
+      "prompt": "Show my active Calendly event types and their scheduling URLs.",
+      "category": "scheduling",
+      "icon": "link"
+    }
+  ],
+  "suggestedWith": ["calendar", "gmail", "slack"],
+  "SETUP_GUIDE": {
+    "title": "Calendly OAuth Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Calendly developer account",
+        "description": "Go to https://developer.calendly.com, sign in with your Calendly account, and create a developer account if you don't have one."
+      },
+      {
+        "step": 2,
+        "title": "Create an OAuth app",
+        "description": "Create a new OAuth application, choose the environment (sandbox or production), and set the redirect URI to your callback (e.g. https://your-app.example.com/api/auth/calendly/callback)."
+      },
+      {
+        "step": 3,
+        "title": "Set environment variables",
+        "description": "Copy the Client ID and Client Secret into your .env as CALENDLY_CLIENT_ID and CALENDLY_CLIENT_SECRET."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Connect your Calendly account and run the Get Current User tool — note the returned user and organization URIs, which the list tools take as parameters."
+      }
+    ],
+    "notes": [
+      "Calendly OAuth does not use granular scopes — an access token can access everything the user can",
+      "A free Calendly account works for testing; event cancellation requires the connected user to own the event"
+    ],
+    "documentation": "https://developer.calendly.com/api-docs"
+  }
+}

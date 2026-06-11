@@ -1,0 +1,258 @@
+{
+  "name": "attio",
+  "displayName": "Attio",
+  "icon": "attio.svg",
+  "description": "Query and manage records, objects, and lists in Attio CRM",
+  "auth": {
+    "type": "oauth2",
+    "provider": "attio",
+    "authorizationUrl": "https://app.attio.com/authorize",
+    "tokenUrl": "https://app.attio.com/oauth/token",
+    "scopes": [
+      "object_configuration:read",
+      "record_permission:read-write",
+      "list_configuration:read"
+    ],
+    "callbackPath": "/api/auth/attio/callback",
+    "docsUrl": "https://docs.attio.com/rest-api/tutorials/connect-an-app-through-oauth",
+    "requiredApis": [
+      {
+        "name": "Attio Developer Dashboard",
+        "enableUrl": "https://build.attio.com/"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "ATTIO_CLIENT_ID",
+      "description": "Attio OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://docs.attio.com/rest-api/tutorials/connect-an-app-through-oauth"
+    },
+    {
+      "name": "ATTIO_CLIENT_SECRET",
+      "description": "Attio OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.attio.com/rest-api/tutorials/connect-an-app-through-oauth"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_objects",
+      "name": "List Objects",
+      "description": "List object types in the Attio workspace (people, companies, deals, and custom objects)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.attio.com/v2/objects",
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "query_records",
+      "name": "Query Records",
+      "description": "Query records of an object with optional filters and sorts",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.attio.com/v2/objects/{object}/records/query",
+        "params": {
+          "object": {
+            "type": "string",
+            "in": "path",
+            "description": "Object slug or ID, e.g. people, companies, deals",
+            "required": true
+          }
+        },
+        "body": {
+          "filter": {
+            "type": "object",
+            "description": "Attio filter object, e.g. { \"name\": { \"$contains\": \"Acme\" } }"
+          },
+          "sorts": {
+            "type": "array",
+            "description": "Sort directives, e.g. [{ \"attribute\": \"created_at\", \"direction\": \"desc\" }]"
+          },
+          "limit": {
+            "type": "number",
+            "description": "Maximum records to return (max 500)",
+            "default": 25
+          },
+          "offset": {
+            "type": "number",
+            "description": "Number of records to skip for pagination",
+            "default": 0
+          }
+        },
+        "response": {
+          "transform": "data",
+          "historicalSummary": {
+            "collectionKeys": ["data", "records"],
+            "collectionName": "records",
+            "itemFields": [
+              { "name": "id", "kind": "object" },
+              { "name": "values", "kind": "object" },
+              { "name": "web_url" },
+              { "name": "created_at" }
+            ],
+            "omitted": "full attribute value histories and provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_record",
+      "name": "Get Record",
+      "description": "Get a single record of an object by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.attio.com/v2/objects/{object}/records/{recordId}",
+        "params": {
+          "object": {
+            "type": "string",
+            "in": "path",
+            "description": "Object slug or ID, e.g. people, companies, deals",
+            "required": true
+          },
+          "recordId": {
+            "type": "string",
+            "in": "path",
+            "description": "Attio record ID (UUID)",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "create_record",
+      "name": "Create Record",
+      "description": "Create a new record of an object (person, company, deal, or custom object)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.attio.com/v2/objects/{object}/records",
+        "params": {
+          "object": {
+            "type": "string",
+            "in": "path",
+            "description": "Object slug or ID, e.g. people, companies, deals",
+            "required": true
+          }
+        },
+        "body": {
+          "data": {
+            "type": "object",
+            "description": "Record payload, e.g. { \"values\": { \"name\": [{ \"value\": \"Acme\" }] } }",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "update_record",
+      "name": "Update Record",
+      "description": "Update attribute values on an existing record",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://api.attio.com/v2/objects/{object}/records/{recordId}",
+        "params": {
+          "object": {
+            "type": "string",
+            "in": "path",
+            "description": "Object slug or ID, e.g. people, companies, deals",
+            "required": true
+          },
+          "recordId": {
+            "type": "string",
+            "in": "path",
+            "description": "Attio record ID (UUID)",
+            "required": true
+          }
+        },
+        "body": {
+          "data": {
+            "type": "object",
+            "description": "Partial record payload with values to update, e.g. { \"values\": { ... } }",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "list_lists",
+      "name": "List Lists",
+      "description": "List all lists in the Attio workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.attio.com/v2/lists",
+        "response": {
+          "transform": "data"
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "find_company",
+      "title": "Find a company",
+      "prompt": "Query my Attio companies for a name and show the matching records with their key attributes.",
+      "category": "crm",
+      "icon": "search"
+    },
+    {
+      "id": "log_person",
+      "title": "Add a person",
+      "prompt": "Create a new person record in Attio with a name and email address.",
+      "category": "crm",
+      "icon": "plus"
+    }
+  ],
+  "suggestedWith": ["slack", "gmail", "notion"],
+  "SETUP_GUIDE": {
+    "title": "Attio OAuth Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create an Attio app",
+        "description": "Go to the Attio developer dashboard at https://build.attio.com/ and create a new app. Any Attio workspace (including the free plan) can be used for development."
+      },
+      {
+        "step": 2,
+        "title": "Configure OAuth",
+        "description": "In the app's OAuth settings, add the redirect URI <your-app-url>/api/auth/attio/callback and select the scopes object_configuration:read, record_permission:read-write, and list_configuration:read."
+      },
+      {
+        "step": 3,
+        "title": "Set credentials",
+        "description": "Copy the client ID and client secret from the app settings into your .env as ATTIO_CLIENT_ID and ATTIO_CLIENT_SECRET."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Complete the OAuth flow, then run the List Objects tool followed by Query Records on the people object."
+      }
+    ],
+    "notes": [
+      "Attio access tokens expire; refresh tokens are exchanged at https://app.attio.com/oauth/token with grant_type=refresh_token",
+      "Client credentials are sent in the POST body (application/x-www-form-urlencoded) at the token endpoint",
+      "Record values use Attio's attribute-value format: values are arrays of { value } entries keyed by attribute slug"
+    ],
+    "documentation": "https://docs.attio.com/rest-api/tutorials/connect-an-app-through-oauth"
+  }
+}

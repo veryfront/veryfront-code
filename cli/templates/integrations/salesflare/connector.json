@@ -1,0 +1,300 @@
+{
+  "name": "salesflare",
+  "displayName": "Salesflare",
+  "icon": "salesflare.svg",
+  "description": "Manage contacts, accounts, and opportunities in Salesflare CRM",
+  "auth": {
+    "type": "api-key",
+    "keyName": "SALESFLARE_API_KEY",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://api.salesflare.com/docs",
+    "requiredApis": [
+      {
+        "name": "Salesflare API Keys",
+        "enableUrl": "https://app.salesflare.com/#/settings/apikeys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "SALESFLARE_API_KEY",
+      "description": "Salesflare API key (sent as Authorization: Bearer), created under Settings → API Keys",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://howto.salesflare.com/en/articles/1017460-do-you-have-an-api"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_contacts",
+      "name": "List Contacts",
+      "description": "List or search contacts in Salesflare",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.salesflare.com/contacts",
+        "params": {
+          "search": {
+            "type": "string",
+            "in": "query",
+            "description": "Search contacts by name or email"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum contacts to return",
+            "default": 50
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of contacts to skip for pagination",
+            "default": 0
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["items", "data"],
+            "collectionName": "contacts",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "firstname" },
+              { "name": "lastname" },
+              { "name": "email" },
+              { "name": "phone_number" },
+              { "name": "organisation" }
+            ],
+            "omitted": "social profiles, addresses, and provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_contact",
+      "name": "Get Contact",
+      "description": "Get details of a Salesflare contact",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.salesflare.com/contacts/{contactId}",
+        "params": {
+          "contactId": {
+            "type": "string",
+            "in": "path",
+            "description": "Salesflare contact ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_contact",
+      "name": "Create Contact",
+      "description": "Create a new contact in Salesflare",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.salesflare.com/contacts",
+        "body": {
+          "email": {
+            "type": "string",
+            "description": "Contact email address",
+            "required": true
+          },
+          "firstname": {
+            "type": "string",
+            "description": "First name"
+          },
+          "lastname": {
+            "type": "string",
+            "description": "Last name"
+          },
+          "phone_number": {
+            "type": "string",
+            "description": "Phone number"
+          },
+          "organisation": {
+            "type": "string",
+            "description": "Company name"
+          },
+          "position": {
+            "type": "object",
+            "description": "Role, e.g. { \"role\": \"CEO\" }"
+          }
+        }
+      }
+    },
+    {
+      "id": "update_contact",
+      "name": "Update Contact",
+      "description": "Update an existing Salesflare contact",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://api.salesflare.com/contacts/{contactId}",
+        "params": {
+          "contactId": {
+            "type": "string",
+            "in": "path",
+            "description": "Salesflare contact ID",
+            "required": true
+          }
+        },
+        "body": {
+          "email": {
+            "type": "string",
+            "description": "Contact email address"
+          },
+          "firstname": {
+            "type": "string",
+            "description": "First name"
+          },
+          "lastname": {
+            "type": "string",
+            "description": "Last name"
+          },
+          "phone_number": {
+            "type": "string",
+            "description": "Phone number"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_accounts",
+      "name": "List Accounts",
+      "description": "List or search accounts (companies) in Salesflare",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.salesflare.com/accounts",
+        "params": {
+          "search": {
+            "type": "string",
+            "in": "query",
+            "description": "Search accounts by name"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum accounts to return",
+            "default": 50
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of accounts to skip for pagination",
+            "default": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "create_account",
+      "name": "Create Account",
+      "description": "Create a new account (company) in Salesflare",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.salesflare.com/accounts",
+        "body": {
+          "name": {
+            "type": "string",
+            "description": "Account / company name",
+            "required": true
+          },
+          "website": {
+            "type": "string",
+            "description": "Company website URL"
+          },
+          "description": {
+            "type": "string",
+            "description": "Account description"
+          },
+          "phone_number": {
+            "type": "string",
+            "description": "Company phone number"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_opportunities",
+      "name": "List Opportunities",
+      "description": "List or search opportunities in Salesflare",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.salesflare.com/opportunities",
+        "params": {
+          "search": {
+            "type": "string",
+            "in": "query",
+            "description": "Search opportunities by name"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum opportunities to return",
+            "default": 50
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of opportunities to skip for pagination",
+            "default": 0
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "pipeline_overview",
+      "title": "Pipeline overview",
+      "prompt": "List my open opportunities in Salesflare with their values and stages.",
+      "category": "sales",
+      "icon": "chart"
+    },
+    {
+      "id": "add_contact",
+      "title": "Add a contact",
+      "prompt": "Create a new contact in Salesflare with their name, email, and company.",
+      "category": "sales",
+      "icon": "plus"
+    }
+  ],
+  "suggestedWith": ["gmail", "slack", "stripe"],
+  "SETUP_GUIDE": {
+    "title": "Salesflare API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Salesflare account",
+        "description": "Sign up at https://salesflare.com/ — the free trial is sufficient to test the API."
+      },
+      {
+        "step": 2,
+        "title": "Create an API key",
+        "description": "In Salesflare, go to Settings → API Keys and create a new key."
+      },
+      {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add SALESFLARE_API_KEY to your .env."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Contacts tool."
+      }
+    ],
+    "notes": [
+      "The API key is sent as Authorization: Bearer <key>; Salesflare does not support OAuth",
+      "List endpoints return a JSON array and paginate with limit/offset query parameters",
+      "Full endpoint reference lives in the interactive docs at https://api.salesflare.com/docs"
+    ],
+    "documentation": "https://api.salesflare.com/docs"
+  }
+}

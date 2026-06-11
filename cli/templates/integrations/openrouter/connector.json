@@ -1,0 +1,158 @@
+{
+  "name": "openrouter",
+  "displayName": "OpenRouter",
+  "icon": "openrouter.svg",
+  "description": "Access hundreds of LLMs through one OpenAI-compatible API with per-generation cost tracking via OpenRouter",
+  "auth": {
+    "type": "api-key",
+    "keyName": "OPENROUTER_API_KEY",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://openrouter.ai/docs/api/reference/overview",
+    "requiredApis": [
+      {
+        "name": "OpenRouter API Keys",
+        "enableUrl": "https://openrouter.ai/settings/keys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "OPENROUTER_API_KEY",
+      "description": "OpenRouter API key (starts with sk-or-)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://openrouter.ai/settings/keys"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_models",
+      "name": "List Models",
+      "description": "List the models available through OpenRouter",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://openrouter.ai/api/v1/models",
+        "response": {
+          "transform": "data",
+          "historicalSummary": {
+            "collectionKeys": ["data", "models"],
+            "collectionName": "models",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "context_length" }
+            ],
+            "omitted": "pricing, architecture, and provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_chat_completion",
+      "name": "Create Chat Completion",
+      "description": "Generate a chat completion from any OpenRouter model",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Model ID to use, e.g. anthropic/claude-sonnet-4 or openai/gpt-4o",
+            "required": true
+          },
+          "messages": {
+            "type": "array",
+            "description": "Chat messages, each with role (system|user|assistant) and content",
+            "required": true
+          },
+          "max_tokens": {
+            "type": "number",
+            "description": "Maximum tokens to generate"
+          },
+          "temperature": {
+            "type": "number",
+            "description": "Sampling temperature between 0 and 2"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_generation",
+      "name": "Get Generation",
+      "description": "Get metadata, token counts, and cost for a past generation by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://openrouter.ai/api/v1/generation",
+        "params": {
+          "id": {
+            "type": "string",
+            "in": "query",
+            "description": "Generation ID returned by a chat completion (the response id field)",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "get_credits",
+      "name": "Get Credits",
+      "description": "Get total credits purchased and used for the account (OpenRouter requires a management key for this endpoint)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://openrouter.ai/api/v1/credits"
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "available_models",
+      "title": "List OpenRouter models",
+      "prompt": "List the models available through OpenRouter and highlight a few with large context windows.",
+      "category": "ai",
+      "icon": "list"
+    },
+    {
+      "id": "compare_models",
+      "title": "Compare model responses",
+      "prompt": "Use OpenRouter to send the same prompt to two different models and compare the responses.",
+      "category": "ai",
+      "icon": "sparkles"
+    }
+  ],
+  "suggestedWith": ["openai", "anthropic", "gemini"],
+  "SETUP_GUIDE": {
+    "title": "OpenRouter API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create an OpenRouter account",
+        "description": "Go to https://openrouter.ai and sign up or sign in. Some models offer free variants for testing; paid models require purchasing credits under Settings → Credits."
+      },
+      {
+        "step": 2,
+        "title": "Create an API key",
+        "description": "Open https://openrouter.ai/settings/keys, click 'Create Key', and optionally set a credit limit for the key."
+      },
+      {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Copy the key and add it to your .env file as OPENROUTER_API_KEY=sk-or-..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Models tool to confirm the key works, then try a chat completion with a model like openai/gpt-4o-mini."
+      }
+    ],
+    "notes": [
+      "Model IDs are namespaced as vendor/model, e.g. anthropic/claude-sonnet-4",
+      "Chat completions consume prepaid credits; use the Get Generation tool to inspect the exact cost of a request",
+      "The Get Credits endpoint requires a management key per OpenRouter's docs — a regular inference key may be rejected there"
+    ],
+    "documentation": "https://openrouter.ai/docs/api/reference/overview"
+  }
+}

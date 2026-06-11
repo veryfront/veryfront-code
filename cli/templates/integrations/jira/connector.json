@@ -537,8 +537,7 @@
             "description": "Maximum comments to return",
             "default": 50
           }
-        }
-      ,
+        },
         "response": {
           "historicalSummary": {
             "collectionKeys": [
@@ -578,7 +577,8 @@
               }
             ]
           }
-        }}
+        }
+      }
     },
     {
       "id": "add_comment",
@@ -670,6 +670,69 @@
           "comment": {
             "type": "object",
             "description": "Optional comment in Atlassian Document Format to add with the transition"
+          }
+        }
+      }
+    },
+    {
+      "id": "search_users",
+      "name": "Search Users",
+      "description": "Search Jira users by name or email to find the accountId needed for assigning issues",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/user/search",
+        "params": {
+          "cloudId": {
+            "type": "string",
+            "in": "path",
+            "description": "Atlassian cloud ID from OAuth accessible resources",
+            "required": true
+          },
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "Matches against display name and email address",
+            "required": true
+          },
+          "maxResults": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum users to return",
+            "default": 50
+          },
+          "startAt": {
+            "type": "number",
+            "in": "query",
+            "description": "Pagination offset",
+            "default": 0
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "users",
+              "values"
+            ],
+            "collectionName": "users",
+            "itemFields": [
+              {
+                "name": "accountId"
+              },
+              {
+                "name": "displayName"
+              },
+              {
+                "name": "emailAddress"
+              },
+              {
+                "name": "active"
+              },
+              {
+                "name": "accountType"
+              }
+            ],
+            "omitted": "avatar URLs, timezone, and provider-specific profile fields"
           }
         }
       }

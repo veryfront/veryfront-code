@@ -1,0 +1,193 @@
+{
+  "name": "redis-cloud",
+  "displayName": "Redis Cloud",
+  "icon": "redis-cloud.svg",
+  "description": "Inspect Redis Cloud subscriptions and databases across Pro and Essentials plans",
+  "auth": {
+    "type": "api-key",
+    "keyName": "REDIS_CLOUD_API_KEY",
+    "headerName": "x-api-key",
+    "additionalHeaders": {
+      "x-api-secret-key": "REDIS_CLOUD_SECRET_KEY"
+    },
+    "docsUrl": "https://redis.io/docs/latest/operate/rc/api/get-started/use-rest-api/",
+    "requiredApis": [
+      {
+        "name": "Redis Cloud API Keys",
+        "enableUrl": "https://cloud.redis.io/#/access-management/api-keys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "REDIS_CLOUD_API_KEY",
+      "description": "Redis Cloud account key (sent as x-api-key)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://redis.io/docs/latest/operate/rc/api/get-started/enable-the-api/"
+    },
+    {
+      "name": "REDIS_CLOUD_SECRET_KEY",
+      "description": "Redis Cloud user secret key (sent as x-api-secret-key)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://redis.io/docs/latest/operate/rc/api/get-started/manage-api-keys/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_subscriptions",
+      "name": "List Subscriptions",
+      "description": "List Redis Cloud Pro subscriptions in the account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.redislabs.com/v1/subscriptions",
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["subscriptions"],
+            "collectionName": "subscriptions",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "status" },
+              { "name": "numberOfDatabases" },
+              { "name": "paymentMethodType" }
+            ],
+            "omitted": "cloud provider deployment details and pricing fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_fixed_subscriptions",
+      "name": "List Essentials Subscriptions",
+      "description": "List Redis Cloud Essentials (fixed plan) subscriptions in the account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.redislabs.com/v1/fixed/subscriptions"
+      }
+    },
+    {
+      "id": "list_databases",
+      "name": "List Databases",
+      "description": "List databases in a Redis Cloud Pro subscription",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.redislabs.com/v1/subscriptions/{subscriptionId}/databases",
+        "params": {
+          "subscriptionId": {
+            "type": "string",
+            "in": "path",
+            "description": "Subscription ID (from List Subscriptions)",
+            "required": true
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of databases to skip for pagination",
+            "default": 0
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum databases to return",
+            "default": 50
+          }
+        }
+      }
+    },
+    {
+      "id": "get_database",
+      "name": "Get Database",
+      "description": "Get configuration and status of a database in a Pro subscription",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.redislabs.com/v1/subscriptions/{subscriptionId}/databases/{databaseId}",
+        "params": {
+          "subscriptionId": {
+            "type": "string",
+            "in": "path",
+            "description": "Subscription ID",
+            "required": true
+          },
+          "databaseId": {
+            "type": "string",
+            "in": "path",
+            "description": "Database ID (from List Databases)",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_fixed_databases",
+      "name": "List Essentials Databases",
+      "description": "List databases in a Redis Cloud Essentials subscription",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.redislabs.com/v1/fixed/subscriptions/{subscriptionId}/databases",
+        "params": {
+          "subscriptionId": {
+            "type": "string",
+            "in": "path",
+            "description": "Essentials subscription ID (from List Essentials Subscriptions)",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "database_inventory",
+      "title": "Database inventory",
+      "prompt": "List my Redis Cloud subscriptions and the databases in each, with their status and memory limits.",
+      "category": "devops",
+      "icon": "list"
+    },
+    {
+      "id": "database_status",
+      "title": "Check a database",
+      "prompt": "Get the details of my main Redis Cloud database and summarize its configuration.",
+      "category": "devops",
+      "icon": "search"
+    }
+  ],
+  "suggestedWith": ["digitalocean", "cloudflare", "datadog"],
+  "SETUP_GUIDE": {
+    "title": "Redis Cloud API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Enable the API",
+        "description": "Sign in to Redis Cloud (https://cloud.redis.io) as an account owner and go to Access Management → API Keys. Free accounts can sign up and create an Essentials subscription to test with. Enable the API if prompted."
+      },
+      {
+        "step": 2,
+        "title": "Copy the account key",
+        "description": "The account key identifies your account and is shown on the API Keys page. Add it to your .env as REDIS_CLOUD_API_KEY."
+      },
+      {
+        "step": 3,
+        "title": "Create a user secret key",
+        "description": "On the same page, add a new API user key. The secret is shown only once — copy it and add it as REDIS_CLOUD_SECRET_KEY."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Subscriptions (Pro) or List Essentials Subscriptions (fixed plans)."
+      }
+    ],
+    "notes": [
+      "Requests authenticate with two headers: x-api-key (account key) and x-api-secret-key (user secret key) — both env vars are required",
+      "Pro and Essentials subscriptions live under different paths: /v1/subscriptions vs /v1/fixed/subscriptions",
+      "The API is rate limited to 400 requests per minute per account key"
+    ],
+    "documentation": "https://redis.io/docs/latest/operate/rc/api/"
+  }
+}

@@ -259,6 +259,41 @@
           "transform": "results"
         }
       }
+    },
+    {
+      "id": "add_comment",
+      "name": "Add Comment",
+      "description": "Add a comment to a Confluence page (uses v1 content API)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.atlassian.com/ex/confluence/{cloudId}/wiki/rest/api/content",
+        "params": {
+          "cloudId": {
+            "type": "string",
+            "in": "path",
+            "description": "Atlassian cloud ID from accessible-resources",
+            "required": true
+          }
+        },
+        "body": {
+          "type": {
+            "type": "string",
+            "description": "Content type; must be 'comment'",
+            "default": "comment"
+          },
+          "container": {
+            "type": "object",
+            "description": "Parent content, e.g. {id: '<pageId>', type: 'page'}",
+            "required": true
+          },
+          "body": {
+            "type": "object",
+            "description": "Comment body, e.g. {storage: {value: '<p>comment</p>', representation: 'storage'}}",
+            "required": true
+          }
+        }
+      }
     }
   ],
   "prompts": [

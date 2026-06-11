@@ -1,0 +1,233 @@
+{
+  "name": "webex",
+  "displayName": "Webex",
+  "icon": "webex.svg",
+  "description": "Send messages and look up rooms and people in Webex",
+  "auth": {
+    "type": "oauth2",
+    "provider": "webex",
+    "authorizationUrl": "https://webexapis.com/v1/authorize",
+    "tokenUrl": "https://webexapis.com/v1/access_token",
+    "scopes": [
+      "spark:messages_read",
+      "spark:messages_write",
+      "spark:rooms_read",
+      "spark:people_read"
+    ],
+    "callbackPath": "/api/auth/webex/callback",
+    "tokenAuthMethod": "request_body",
+    "docsUrl": "https://developer.webex.com/docs/integrations",
+    "requiredApis": [
+      {
+        "name": "Webex Developer Portal (My Apps)",
+        "enableUrl": "https://developer.webex.com/my-apps"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "WEBEX_CLIENT_ID",
+      "description": "Webex Integration Client ID (from your integration in My Apps)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.webex.com/docs/integrations"
+    },
+    {
+      "name": "WEBEX_CLIENT_SECRET",
+      "description": "Webex Integration Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.webex.com/docs/integrations"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_rooms",
+      "name": "List Rooms",
+      "description": "List Webex rooms (spaces) the authenticated user belongs to",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://webexapis.com/v1/rooms",
+        "params": {
+          "type": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by room type: 'direct' or 'group'"
+          },
+          "sortBy": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort order: id, lastactivity, or created",
+            "default": "lastactivity"
+          },
+          "max": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum rooms to return (max 1000)",
+            "default": 50
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["items"],
+            "collectionName": "rooms",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "title" },
+              { "name": "type" },
+              { "name": "isLocked" },
+              { "name": "lastActivity" },
+              { "name": "created" }
+            ],
+            "omitted": "room metadata and provider-specific payload fields",
+            "outputFields": []
+          }
+        }
+      }
+    },
+    {
+      "id": "list_messages",
+      "name": "List Messages",
+      "description": "List recent messages in a Webex room",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://webexapis.com/v1/messages",
+        "params": {
+          "roomId": {
+            "type": "string",
+            "in": "query",
+            "description": "Room ID to list messages from",
+            "required": true
+          },
+          "max": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum messages to return",
+            "default": 50
+          },
+          "before": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return messages sent before this ISO 8601 timestamp"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_message",
+      "name": "Send Message",
+      "description": "Send a message to a Webex room or directly to a person",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://webexapis.com/v1/messages",
+        "body": {
+          "roomId": {
+            "type": "string",
+            "description": "Room ID to post the message to (omit when using toPersonEmail)"
+          },
+          "toPersonEmail": {
+            "type": "string",
+            "description": "Email address of a person to message directly (omit when using roomId)"
+          },
+          "text": {
+            "type": "string",
+            "description": "Plain-text message body"
+          },
+          "markdown": {
+            "type": "string",
+            "description": "Markdown message body (takes precedence over text)"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_my_details",
+      "name": "Get My Details",
+      "description": "Get the authenticated Webex user's profile",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://webexapis.com/v1/people/me"
+      }
+    },
+    {
+      "id": "list_people",
+      "name": "List People",
+      "description": "Look up people in the organization by email or display name",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://webexapis.com/v1/people",
+        "params": {
+          "email": {
+            "type": "string",
+            "in": "query",
+            "description": "Exact email address to look up"
+          },
+          "displayName": {
+            "type": "string",
+            "in": "query",
+            "description": "Display name prefix to search for"
+          },
+          "max": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum people to return",
+            "default": 25
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "room_digest",
+      "title": "Catch up on a room",
+      "prompt": "List the most recent messages in one of my Webex rooms and summarize the discussion.",
+      "category": "communication",
+      "icon": "list"
+    },
+    {
+      "id": "send_message",
+      "title": "Send a message",
+      "prompt": "Send a Webex message to a room or a person.",
+      "category": "communication",
+      "icon": "plus"
+    }
+  ],
+  "suggestedWith": ["calendar", "outlook", "gmail"],
+  "SETUP_GUIDE": {
+    "title": "Webex Integration Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Webex integration",
+        "description": "Sign in at https://developer.webex.com/ (a free Webex account works) and go to My Apps → Create a New App → Create an Integration."
+      },
+      {
+        "step": 2,
+        "title": "Set the redirect URI and scopes",
+        "description": "Set the Redirect URI to your app URL ending in /api/auth/webex/callback and select the scopes spark:messages_read, spark:messages_write, spark:rooms_read, and spark:people_read."
+      },
+      {
+        "step": 3,
+        "title": "Copy credentials",
+        "description": "Copy the integration's Client ID and Client Secret into WEBEX_CLIENT_ID and WEBEX_CLIENT_SECRET (the secret is shown only once)."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Connect your Webex account and run the Get My Details tool."
+      }
+    ],
+    "notes": [
+      "The token endpoint takes client_id and client_secret in the POST body",
+      "Access tokens last 14 days; refresh tokens last 90 days and their lifetime renews on each refresh",
+      "Webex automatically adds the spark:kms scope so the integration can read encrypted message content"
+    ],
+    "documentation": "https://developer.webex.com/docs/api/getting-started"
+  }
+}

@@ -1,0 +1,262 @@
+{
+  "name": "monday",
+  "displayName": "monday.com",
+  "icon": "monday.svg",
+  "description": "Manage boards, items, and column values in monday.com work management",
+  "auth": {
+    "type": "oauth2",
+    "provider": "monday",
+    "authorizationUrl": "https://auth.monday.com/oauth2/authorize",
+    "tokenUrl": "https://auth.monday.com/oauth2/token",
+    "scopes": ["boards:read", "boards:write"],
+    "callbackPath": "/api/auth/monday/callback",
+    "tokenAuthMethod": "request_body",
+    "docsUrl": "https://developer.monday.com/apps/docs/oauth",
+    "requiredApis": [
+      {
+        "name": "monday.com Developer Center",
+        "enableUrl": "https://monday.com/developers/apps"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "MONDAY_CLIENT_ID",
+      "description": "monday.com OAuth Client ID (from your app in the Developer Center)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.monday.com/apps/docs/oauth"
+    },
+    {
+      "name": "MONDAY_CLIENT_SECRET",
+      "description": "monday.com OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.monday.com/apps/docs/oauth"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_boards",
+      "name": "List Boards",
+      "description": "List boards in the monday.com account",
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.monday.com/v2",
+        "query": "query($limit: Int, $page: Int) { boards(limit: $limit, page: $page) { id name description state board_kind items_count workspace { id name } } }",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "body",
+            "description": "Maximum boards to return",
+            "default": 25
+          },
+          "page": {
+            "type": "number",
+            "in": "body",
+            "description": "Page number, starting at 1",
+            "default": 1
+          }
+        },
+        "response": {
+          "transform": "boards",
+          "historicalSummary": {
+            "collectionKeys": ["boards", "data"],
+            "collectionName": "boards",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "state" },
+              { "name": "board_kind" },
+              { "name": "items_count" },
+              { "name": "workspace", "kind": "object" }
+            ],
+            "omitted": "board descriptions, groups, and provider-specific payload fields",
+            "outputFields": [{ "name": "page" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "list_items",
+      "name": "List Items",
+      "description": "List items on a monday.com board with their column values",
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.monday.com/v2",
+        "query": "query($boardId: [ID!], $limit: Int, $cursor: String) { boards(ids: $boardId) { items_page(limit: $limit, cursor: $cursor) { cursor items { id name state created_at updated_at group { id title } column_values { id text type } } } } }",
+        "params": {
+          "boardId": {
+            "type": "string",
+            "in": "body",
+            "description": "Board ID to list items from",
+            "required": true
+          },
+          "limit": {
+            "type": "number",
+            "in": "body",
+            "description": "Maximum items to return (max 500)",
+            "default": 25
+          },
+          "cursor": {
+            "type": "string",
+            "in": "body",
+            "description": "Pagination cursor from a previous items_page response"
+          }
+        },
+        "response": {
+          "transform": "boards"
+        }
+      }
+    },
+    {
+      "id": "get_item",
+      "name": "Get Item",
+      "description": "Get a monday.com item by ID with its column values and updates",
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.monday.com/v2",
+        "query": "query($itemId: [ID!]) { items(ids: $itemId) { id name state created_at updated_at board { id name } group { id title } column_values { id text type value } updates { id body created_at } } }",
+        "params": {
+          "itemId": {
+            "type": "string",
+            "in": "body",
+            "description": "Item ID",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "items"
+        }
+      }
+    },
+    {
+      "id": "create_item",
+      "name": "Create Item",
+      "description": "Create a new item on a monday.com board",
+      "requiresWrite": true,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.monday.com/v2",
+        "query": "mutation($boardId: ID!, $groupId: String, $itemName: String!, $columnValues: JSON) { create_item(board_id: $boardId, group_id: $groupId, item_name: $itemName, column_values: $columnValues) { id name board { id } } }",
+        "params": {
+          "boardId": {
+            "type": "string",
+            "in": "body",
+            "description": "Board ID to create the item on",
+            "required": true
+          },
+          "groupId": {
+            "type": "string",
+            "in": "body",
+            "description": "Group ID within the board (defaults to the first group)"
+          },
+          "itemName": {
+            "type": "string",
+            "in": "body",
+            "description": "Name of the new item",
+            "required": true
+          },
+          "columnValues": {
+            "type": "string",
+            "in": "body",
+            "description": "JSON-encoded column values, e.g. \"{\\\"status\\\": {\\\"label\\\": \\\"Done\\\"}}\""
+          }
+        },
+        "response": {
+          "transform": "create_item"
+        }
+      }
+    },
+    {
+      "id": "update_column_values",
+      "name": "Update Column Values",
+      "description": "Update one or more column values on an existing monday.com item",
+      "requiresWrite": true,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.monday.com/v2",
+        "query": "mutation($boardId: ID!, $itemId: ID!, $columnValues: JSON!) { change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $columnValues) { id name column_values { id text } } }",
+        "params": {
+          "boardId": {
+            "type": "string",
+            "in": "body",
+            "description": "Board ID the item belongs to",
+            "required": true
+          },
+          "itemId": {
+            "type": "string",
+            "in": "body",
+            "description": "Item ID to update",
+            "required": true
+          },
+          "columnValues": {
+            "type": "string",
+            "in": "body",
+            "description": "JSON-encoded column values to set, e.g. \"{\\\"status\\\": {\\\"label\\\": \\\"Working on it\\\"}}\"",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "change_multiple_column_values"
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "board_overview",
+      "title": "Board overview",
+      "prompt": "List my monday.com boards and summarize the items on the most active one.",
+      "category": "productivity",
+      "icon": "list"
+    },
+    {
+      "id": "add_item",
+      "title": "Add an item",
+      "prompt": "Create a new item on a monday.com board with a name and status.",
+      "category": "productivity",
+      "icon": "plus"
+    }
+  ],
+  "suggestedWith": ["slack", "gmail", "notion"],
+  "SETUP_GUIDE": {
+    "title": "monday.com OAuth Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a monday.com app",
+        "description": "Sign in to monday.com (a free trial account works) and open the Developer Center via your avatar → Developers, or https://monday.com/developers/apps. Click Create App."
+      },
+      {
+        "step": 2,
+        "title": "Configure OAuth scopes and redirect URI",
+        "description": "In the app's OAuth section, enable the boards:read and boards:write scopes and add your redirect URI ending in /api/auth/monday/callback."
+      },
+      {
+        "step": 3,
+        "title": "Copy credentials",
+        "description": "Copy the Client ID and Client Secret from the app's Basic Information page into MONDAY_CLIENT_ID and MONDAY_CLIENT_SECRET."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Connect your monday.com account and run the List Boards tool."
+      }
+    ],
+    "notes": [
+      "monday.com OAuth access tokens do not expire and there are no refresh tokens; tokens stay valid until the user uninstalls the app",
+      "The API is GraphQL-only at https://api.monday.com/v2; OAuth tokens are sent as Authorization: Bearer <token>",
+      "Column values in mutations are passed as a JSON-encoded string"
+    ],
+    "documentation": "https://developer.monday.com/api-reference/docs/basics"
+  }
+}

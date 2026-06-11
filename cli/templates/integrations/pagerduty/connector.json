@@ -1,0 +1,376 @@
+{
+  "name": "pagerduty",
+  "displayName": "PagerDuty",
+  "icon": "pagerduty.svg",
+  "description": "Manage incidents, services, and on-call schedules in PagerDuty",
+  "auth": {
+    "type": "oauth2",
+    "provider": "pagerduty",
+    "authorizationUrl": "https://identity.pagerduty.com/oauth/authorize",
+    "tokenUrl": "https://identity.pagerduty.com/oauth/token",
+    "scopes": [
+      "incidents.read",
+      "incidents.write",
+      "services.read",
+      "oncalls.read",
+      "users.read"
+    ],
+    "callbackPath": "/api/auth/pagerduty/callback",
+    "docsUrl": "https://developer.pagerduty.com/docs/user-oauth-token-via-code-grant",
+    "requiredApis": [
+      {
+        "name": "PagerDuty App Registration (Scoped OAuth)",
+        "enableUrl": "https://app.pagerduty.com/developer/applications"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "PAGERDUTY_CLIENT_ID",
+      "description": "PagerDuty OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.pagerduty.com/docs/user-oauth-token-via-code-grant"
+    },
+    {
+      "name": "PAGERDUTY_CLIENT_SECRET",
+      "description": "PagerDuty OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.pagerduty.com/docs/user-oauth-token-via-code-grant"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_incidents",
+      "name": "List Incidents",
+      "description": "List PagerDuty incidents with optional status, service, and time filters",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.pagerduty.com/incidents",
+        "params": {
+          "statuses": {
+            "type": "string[]",
+            "in": "query",
+            "queryName": "statuses[]",
+            "description": "Filter by status: triggered, acknowledged, resolved"
+          },
+          "service_ids": {
+            "type": "string[]",
+            "in": "query",
+            "queryName": "service_ids[]",
+            "description": "Filter to incidents on these service IDs"
+          },
+          "since": {
+            "type": "string",
+            "in": "query",
+            "description": "Start of date range (ISO 8601)"
+          },
+          "until": {
+            "type": "string",
+            "in": "query",
+            "description": "End of date range (ISO 8601)"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Results per page (max 100)",
+            "default": 25
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Pagination offset"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "incidents"
+            ],
+            "collectionName": "incidents",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "incident_number"
+              },
+              {
+                "name": "title"
+              },
+              {
+                "name": "status"
+              },
+              {
+                "name": "urgency"
+              },
+              {
+                "name": "html_url"
+              },
+              {
+                "name": "created_at"
+              },
+              {
+                "name": "service",
+                "kind": "object"
+              }
+            ],
+            "omitted": "incident bodies, alert details, and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "offset"
+              },
+              {
+                "name": "limit"
+              },
+              {
+                "name": "more"
+              },
+              {
+                "name": "total"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_incident",
+      "name": "Get Incident",
+      "description": "Get a PagerDuty incident by ID or incident number",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.pagerduty.com/incidents/{incidentId}",
+        "params": {
+          "incidentId": {
+            "type": "string",
+            "in": "path",
+            "description": "Incident ID (e.g. PT4KHLK) or incident number",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_incident",
+      "name": "Create Incident",
+      "description": "Manually trigger a new incident on a service",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.pagerduty.com/incidents",
+        "params": {
+          "from": {
+            "type": "string",
+            "in": "header",
+            "headerName": "From",
+            "description": "Email address of a valid PagerDuty user on the account, required by PagerDuty for incident writes",
+            "required": true
+          }
+        },
+        "body": {
+          "incident": {
+            "type": "object",
+            "description": "Incident payload, e.g. { \"type\": \"incident\", \"title\": \"DB is down\", \"service\": { \"id\": \"PWIXJZS\", \"type\": \"service_reference\" }, \"urgency\": \"high\", \"body\": { \"type\": \"incident_body\", \"details\": \"...\" } }",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "manage_incident",
+      "name": "Manage Incident",
+      "description": "Acknowledge, resolve, reassign, or escalate an incident",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://api.pagerduty.com/incidents/{incidentId}",
+        "params": {
+          "incidentId": {
+            "type": "string",
+            "in": "path",
+            "description": "Incident ID",
+            "required": true
+          },
+          "from": {
+            "type": "string",
+            "in": "header",
+            "headerName": "From",
+            "description": "Email address of a valid PagerDuty user on the account, required by PagerDuty for incident writes",
+            "required": true
+          }
+        },
+        "body": {
+          "incident": {
+            "type": "object",
+            "description": "Incident update payload, e.g. { \"type\": \"incident_reference\", \"status\": \"resolved\" } or { \"type\": \"incident_reference\", \"status\": \"acknowledged\" }",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_services",
+      "name": "List Services",
+      "description": "List PagerDuty services",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.pagerduty.com/services",
+        "params": {
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter services by name"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Results per page (max 100)",
+            "default": 25
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Pagination offset"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "services"
+            ],
+            "collectionName": "services",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "status"
+              },
+              {
+                "name": "html_url"
+              },
+              {
+                "name": "created_at"
+              }
+            ],
+            "omitted": "integration configs, escalation policy details, and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "offset"
+              },
+              {
+                "name": "limit"
+              },
+              {
+                "name": "more"
+              },
+              {
+                "name": "total"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "list_oncalls",
+      "name": "List On-Calls",
+      "description": "List on-call entries for schedules, escalation policies, and users",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.pagerduty.com/oncalls",
+        "params": {
+          "user_ids": {
+            "type": "string[]",
+            "in": "query",
+            "queryName": "user_ids[]",
+            "description": "Filter to these user IDs"
+          },
+          "schedule_ids": {
+            "type": "string[]",
+            "in": "query",
+            "queryName": "schedule_ids[]",
+            "description": "Filter to these schedule IDs"
+          },
+          "since": {
+            "type": "string",
+            "in": "query",
+            "description": "Start of date range (ISO 8601)"
+          },
+          "until": {
+            "type": "string",
+            "in": "query",
+            "description": "End of date range (ISO 8601)"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Results per page (max 100)",
+            "default": 25
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "open_incidents",
+      "title": "Open incidents",
+      "prompt": "List my PagerDuty incidents that are triggered or acknowledged and summarize them by service.",
+      "category": "observability",
+      "icon": "alert"
+    },
+    {
+      "id": "whos_on_call",
+      "title": "Who's on call?",
+      "prompt": "Show who is currently on call in PagerDuty.",
+      "category": "observability",
+      "icon": "user"
+    }
+  ],
+  "suggestedWith": [
+    "datadog",
+    "sentry",
+    "slack"
+  ],
+  "SETUP_GUIDE": {
+    "title": "PagerDuty OAuth Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Get a PagerDuty account",
+        "description": "Sign up at https://www.pagerduty.com — a free trial or developer account is sufficient for testing."
+      },
+      {
+        "step": 2,
+        "title": "Register an app",
+        "description": "In PagerDuty go to Integrations > App Registration (https://app.pagerduty.com/developer/applications), create an app, and add Scoped OAuth functionality. Select the scopes incidents.read, incidents.write, services.read, oncalls.read, and users.read."
+      },
+      {
+        "step": 3,
+        "title": "Configure the redirect URI",
+        "description": "Set the redirect URI to your app's /api/auth/pagerduty/callback URL, then copy the Client ID and Client Secret into your .env as PAGERDUTY_CLIENT_ID and PAGERDUTY_CLIENT_SECRET."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Complete the OAuth flow, then run List Services and List Incidents."
+      }
+    ],
+    "notes": [
+      "OAuth endpoints live on identity.pagerduty.com; the REST API lives on api.pagerduty.com",
+      "Creating or updating incidents requires a From header containing the email of a valid PagerDuty user — the tools expose it as a required parameter",
+      "Scoped OAuth tokens expire and are renewed with the refresh token"
+    ],
+    "documentation": "https://developer.pagerduty.com/api-reference/"
+  }
+}

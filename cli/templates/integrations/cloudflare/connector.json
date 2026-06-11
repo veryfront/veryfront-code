@@ -1,0 +1,390 @@
+{
+  "name": "cloudflare",
+  "displayName": "Cloudflare",
+  "icon": "cloudflare.svg",
+  "description": "Manage zones and DNS records via the Cloudflare API",
+  "auth": {
+    "type": "api-key",
+    "keyName": "CLOUDFLARE_API_TOKEN",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://developers.cloudflare.com/fundamentals/api/get-started/create-token/",
+    "requiredApis": [
+      {
+        "name": "Cloudflare API Tokens",
+        "enableUrl": "https://dash.cloudflare.com/profile/api-tokens"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "CLOUDFLARE_API_TOKEN",
+      "description": "Cloudflare API token (scoped Bearer token, not the legacy Global API Key)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developers.cloudflare.com/fundamentals/api/get-started/create-token/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "verify_token",
+      "name": "Verify Token",
+      "description": "Check that the configured Cloudflare API token is valid and active",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.cloudflare.com/client/v4/user/tokens/verify",
+        "response": {
+          "transform": "result"
+        }
+      }
+    },
+    {
+      "id": "list_zones",
+      "name": "List Zones",
+      "description": "List zones (domains) the token can access",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.cloudflare.com/client/v4/zones",
+        "params": {
+          "name": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by zone name, e.g. example.com"
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by status: active, pending, initializing, moved, deleted"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number",
+            "default": 1
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Zones per page (max 50)",
+            "default": 20
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "result"
+            ],
+            "collectionName": "zones",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "status"
+              },
+              {
+                "name": "paused"
+              },
+              {
+                "name": "created_on"
+              },
+              {
+                "name": "modified_on"
+              }
+            ],
+            "omitted": "name servers, plan details, and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "result_info",
+                "kind": "object"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_zone",
+      "name": "Get Zone",
+      "description": "Get details of a zone by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.cloudflare.com/client/v4/zones/{zoneId}",
+        "params": {
+          "zoneId": {
+            "type": "string",
+            "in": "path",
+            "description": "Zone ID (32-hex identifier from List Zones or the dashboard Overview page)",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "result"
+        }
+      }
+    },
+    {
+      "id": "list_dns_records",
+      "name": "List DNS Records",
+      "description": "List DNS records in a zone",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.cloudflare.com/client/v4/zones/{zoneId}/dns_records",
+        "params": {
+          "zoneId": {
+            "type": "string",
+            "in": "path",
+            "description": "Zone ID",
+            "required": true
+          },
+          "type": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by record type, e.g. A, AAAA, CNAME, TXT, MX"
+          },
+          "name": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by record name, e.g. www.example.com"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number",
+            "default": 1
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Records per page (max 5000000)",
+            "default": 100
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "result"
+            ],
+            "collectionName": "dns_records",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "type"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "content"
+              },
+              {
+                "name": "proxied"
+              },
+              {
+                "name": "ttl"
+              },
+              {
+                "name": "modified_on"
+              }
+            ],
+            "omitted": "record metadata and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "result_info",
+                "kind": "object"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "create_dns_record",
+      "name": "Create DNS Record",
+      "description": "Create a DNS record in a zone",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.cloudflare.com/client/v4/zones/{zoneId}/dns_records",
+        "params": {
+          "zoneId": {
+            "type": "string",
+            "in": "path",
+            "description": "Zone ID",
+            "required": true
+          }
+        },
+        "body": {
+          "type": {
+            "type": "string",
+            "description": "Record type, e.g. A, AAAA, CNAME, TXT, MX",
+            "required": true
+          },
+          "name": {
+            "type": "string",
+            "description": "Record name, e.g. www.example.com or @ for the apex",
+            "required": true
+          },
+          "content": {
+            "type": "string",
+            "description": "Record content, e.g. an IP address for A records",
+            "required": true
+          },
+          "ttl": {
+            "type": "number",
+            "description": "TTL in seconds; 1 means automatic",
+            "default": 1
+          },
+          "proxied": {
+            "type": "boolean",
+            "description": "Whether Cloudflare proxies traffic for this record",
+            "default": false
+          },
+          "priority": {
+            "type": "number",
+            "description": "Priority (required for MX and SRV records)"
+          }
+        },
+        "response": {
+          "transform": "result"
+        }
+      }
+    },
+    {
+      "id": "update_dns_record",
+      "name": "Update DNS Record",
+      "description": "Update fields of an existing DNS record",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://api.cloudflare.com/client/v4/zones/{zoneId}/dns_records/{recordId}",
+        "params": {
+          "zoneId": {
+            "type": "string",
+            "in": "path",
+            "description": "Zone ID",
+            "required": true
+          },
+          "recordId": {
+            "type": "string",
+            "in": "path",
+            "description": "DNS record ID",
+            "required": true
+          }
+        },
+        "body": {
+          "type": {
+            "type": "string",
+            "description": "Record type, e.g. A, CNAME"
+          },
+          "name": {
+            "type": "string",
+            "description": "Record name"
+          },
+          "content": {
+            "type": "string",
+            "description": "Record content"
+          },
+          "ttl": {
+            "type": "number",
+            "description": "TTL in seconds; 1 means automatic"
+          },
+          "proxied": {
+            "type": "boolean",
+            "description": "Whether Cloudflare proxies traffic for this record"
+          }
+        },
+        "response": {
+          "transform": "result"
+        }
+      }
+    },
+    {
+      "id": "list_accounts",
+      "name": "List Accounts",
+      "description": "List Cloudflare accounts the token can access (account IDs are needed for account-scoped APIs)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.cloudflare.com/client/v4/accounts",
+        "params": {
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number",
+            "default": 1
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Accounts per page",
+            "default": 20
+          }
+        },
+        "response": {
+          "transform": "result"
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "dns_audit",
+      "title": "Audit DNS records",
+      "prompt": "List the DNS records for one of my Cloudflare zones and flag anything unusual.",
+      "category": "devops",
+      "icon": "search"
+    },
+    {
+      "id": "add_record",
+      "title": "Add a DNS record",
+      "prompt": "Create a DNS record in one of my Cloudflare zones after confirming the type, name, and content with me.",
+      "category": "devops",
+      "icon": "plus"
+    }
+  ],
+  "suggestedWith": [
+    "github",
+    "datadog",
+    "aws"
+  ],
+  "SETUP_GUIDE": {
+    "title": "Cloudflare API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Sign in to Cloudflare",
+        "description": "Go to https://dash.cloudflare.com and sign in. A free account with at least one zone added is sufficient for testing."
+      },
+      {
+        "step": 2,
+        "title": "Create an API token",
+        "description": "Open My Profile > API Tokens (https://dash.cloudflare.com/profile/api-tokens) and create a token. The 'Edit zone DNS' template covers the DNS tools; add Zone:Read and Account:Read permissions for listing."
+      },
+      {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the token to your .env as CLOUDFLARE_API_TOKEN=... (use a scoped API token, not the legacy Global API Key)."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the Verify Token tool, then List Zones."
+      }
+    ],
+    "notes": [
+      "Cloudflare authenticates with 'Authorization: Bearer <token>'",
+      "Account-scoped endpoints need an account ID — use List Accounts to find yours",
+      "Tokens can be scoped per zone; if List Zones returns nothing, widen the token's zone resources"
+    ],
+    "documentation": "https://developers.cloudflare.com/api/"
+  }
+}

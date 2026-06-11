@@ -1,0 +1,403 @@
+{
+  "name": "segment",
+  "displayName": "Segment",
+  "icon": "segment.svg",
+  "description": "Manage sources and destinations in a Twilio Segment workspace",
+  "auth": {
+    "type": "api-key",
+    "keyName": "SEGMENT_PUBLIC_API_TOKEN",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://docs.segmentapis.com/tag/Getting-Started",
+    "requiredApis": [
+      {
+        "name": "Segment Public API Tokens (Settings > Access Management > Tokens)",
+        "enableUrl": "https://app.segment.com/goto-my-workspace/settings/access-management"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "SEGMENT_PUBLIC_API_TOKEN",
+      "description": "Twilio Segment Public API token (Workspace Settings > Access Management > Tokens)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.segmentapis.com/tag/Getting-Started"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_sources",
+      "name": "List Sources",
+      "description": "List sources in the Segment workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/sources",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Segment Public API host: api.segmentapis.com (US, default) or eu1.api.segmentapis.com (EU workspaces)",
+            "default": "api.segmentapis.com"
+          },
+          "count": {
+            "type": "number",
+            "in": "query",
+            "queryName": "pagination.count",
+            "description": "Results per page (max 200)",
+            "default": 50
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "queryName": "pagination.cursor",
+            "description": "Pagination cursor from a previous response's data.pagination.next"
+          }
+        },
+        "response": {
+          "transform": "data",
+          "historicalSummary": {
+            "collectionKeys": [
+              "data.sources",
+              "sources"
+            ],
+            "collectionName": "sources",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "slug"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "enabled"
+              },
+              {
+                "name": "workspaceId"
+              },
+              {
+                "name": "metadata",
+                "kind": "object"
+              }
+            ],
+            "omitted": "source settings, write keys, and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "pagination",
+                "kind": "object"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_source",
+      "name": "Get Source",
+      "description": "Get a source by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/sources/{sourceId}",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Segment Public API host (api.segmentapis.com or eu1.api.segmentapis.com)",
+            "default": "api.segmentapis.com"
+          },
+          "sourceId": {
+            "type": "string",
+            "in": "path",
+            "description": "Source ID",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "create_source",
+      "name": "Create Source",
+      "description": "Create a new source in the workspace",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{host}/sources",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Segment Public API host (api.segmentapis.com or eu1.api.segmentapis.com)",
+            "default": "api.segmentapis.com"
+          }
+        },
+        "body": {
+          "slug": {
+            "type": "string",
+            "description": "URL-friendly slug for the source",
+            "required": true
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether the source is enabled",
+            "required": true
+          },
+          "metadataId": {
+            "type": "string",
+            "description": "Source catalog metadata ID (look up under /catalog/sources)",
+            "required": true
+          },
+          "settings": {
+            "type": "object",
+            "description": "Source settings required by the chosen catalog metadata"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "update_source",
+      "name": "Update Source",
+      "description": "Update a source's name, slug, enabled state, or settings",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://{host}/sources/{sourceId}",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Segment Public API host (api.segmentapis.com or eu1.api.segmentapis.com)",
+            "default": "api.segmentapis.com"
+          },
+          "sourceId": {
+            "type": "string",
+            "in": "path",
+            "description": "Source ID",
+            "required": true
+          }
+        },
+        "body": {
+          "name": {
+            "type": "string",
+            "description": "New display name"
+          },
+          "slug": {
+            "type": "string",
+            "description": "New slug"
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Enable or disable the source"
+          },
+          "settings": {
+            "type": "object",
+            "description": "Updated source settings"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "list_destinations",
+      "name": "List Destinations",
+      "description": "List destinations in the Segment workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/destinations",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Segment Public API host (api.segmentapis.com or eu1.api.segmentapis.com)",
+            "default": "api.segmentapis.com"
+          },
+          "count": {
+            "type": "number",
+            "in": "query",
+            "queryName": "pagination.count",
+            "description": "Results per page (max 200)",
+            "default": 50
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "queryName": "pagination.cursor",
+            "description": "Pagination cursor from a previous response's data.pagination.next"
+          }
+        },
+        "response": {
+          "transform": "data",
+          "historicalSummary": {
+            "collectionKeys": [
+              "data.destinations",
+              "destinations"
+            ],
+            "collectionName": "destinations",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "enabled"
+              },
+              {
+                "name": "sourceId"
+              },
+              {
+                "name": "metadata",
+                "kind": "object"
+              }
+            ],
+            "omitted": "destination settings and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "pagination",
+                "kind": "object"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_destination",
+      "name": "Get Destination",
+      "description": "Get a destination by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/destinations/{destinationId}",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Segment Public API host (api.segmentapis.com or eu1.api.segmentapis.com)",
+            "default": "api.segmentapis.com"
+          },
+          "destinationId": {
+            "type": "string",
+            "in": "path",
+            "description": "Destination ID",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "create_destination",
+      "name": "Create Destination",
+      "description": "Connect a new destination to a source",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{host}/destinations",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Segment Public API host (api.segmentapis.com or eu1.api.segmentapis.com)",
+            "default": "api.segmentapis.com"
+          }
+        },
+        "body": {
+          "sourceId": {
+            "type": "string",
+            "description": "Source ID to connect the destination to",
+            "required": true
+          },
+          "metadataId": {
+            "type": "string",
+            "description": "Destination catalog metadata ID (look up under /catalog/destinations)",
+            "required": true
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether the destination starts enabled",
+            "default": false
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name for the destination"
+          },
+          "settings": {
+            "type": "object",
+            "description": "Destination settings required by the chosen catalog metadata"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "workspace_overview",
+      "title": "Workspace overview",
+      "prompt": "List my Segment sources and destinations and show which destinations each source feeds.",
+      "category": "analytics",
+      "icon": "list"
+    },
+    {
+      "id": "disable_destination",
+      "title": "Toggle a destination",
+      "prompt": "Find a Segment destination by name and disable it after confirming with me.",
+      "category": "analytics",
+      "icon": "settings"
+    }
+  ],
+  "suggestedWith": [
+    "mixpanel",
+    "google-analytics",
+    "hubspot"
+  ],
+  "SETUP_GUIDE": {
+    "title": "Segment Public API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Sign in to Segment",
+        "description": "Go to https://app.segment.com and sign in. A free workspace is sufficient for testing."
+      },
+      {
+        "step": 2,
+        "title": "Create a Public API token",
+        "description": "Open Workspace Settings > Access Management > Tokens and click Create Token. Choose the Public API token type (not the legacy Config API) and grant Workspace Member or Owner scope as needed. Copy the token — it is shown only once."
+      },
+      {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the token to your .env as SEGMENT_PUBLIC_API_TOKEN=..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Sources. EU-hosted workspaces must pass host=eu1.api.segmentapis.com on each call."
+      }
+    ],
+    "notes": [
+      "The Public API authenticates with 'Authorization: Bearer <token>'",
+      "US workspaces use api.segmentapis.com (the default); EU workspaces use eu1.api.segmentapis.com via the host parameter",
+      "Creating sources/destinations needs a catalog metadataId from the /catalog endpoints"
+    ],
+    "documentation": "https://docs.segmentapis.com/"
+  }
+}

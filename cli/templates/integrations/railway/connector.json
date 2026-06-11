@@ -1,0 +1,267 @@
+{
+  "name": "railway",
+  "displayName": "Railway",
+  "icon": "railway.svg",
+  "description": "Inspect and control Railway projects, services, and deployments",
+  "auth": {
+    "type": "api-key",
+    "keyName": "RAILWAY_TOKEN",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://docs.railway.com/guides/public-api",
+    "requiredApis": [
+      {
+        "name": "Railway Account Tokens",
+        "enableUrl": "https://railway.com/account/tokens"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "RAILWAY_TOKEN",
+      "description": "Railway account or workspace token (Account Settings > Tokens)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.railway.com/guides/public-api#authentication"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_projects",
+      "name": "List Projects",
+      "description": "List Railway projects accessible to the token",
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://backboard.railway.com/graphql/v2",
+        "query": "query { projects { edges { node { id name description createdAt updatedAt } } } }",
+        "response": {
+          "transform": "projects.edges",
+          "historicalSummary": {
+            "collectionKeys": [
+              "edges",
+              "projects",
+              "nodes",
+              "data"
+            ],
+            "collectionName": "projects",
+            "itemFields": [
+              {
+                "name": "node",
+                "kind": "object"
+              }
+            ],
+            "omitted": "project settings and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "pageInfo",
+                "kind": "object"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_project",
+      "name": "Get Project",
+      "description": "Get a project with its services and environments",
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://backboard.railway.com/graphql/v2",
+        "query": "query($id: String!) { project(id: $id) { id name description createdAt services { edges { node { id name icon } } } environments { edges { node { id name } } } } }",
+        "params": {
+          "id": {
+            "type": "string",
+            "in": "body",
+            "description": "Project ID",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "project"
+        }
+      }
+    },
+    {
+      "id": "list_deployments",
+      "name": "List Deployments",
+      "description": "List deployments filtered by project, service, or environment",
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://backboard.railway.com/graphql/v2",
+        "query": "query($projectId: String, $serviceId: String, $environmentId: String, $first: Int) { deployments(input: { projectId: $projectId, serviceId: $serviceId, environmentId: $environmentId }, first: $first) { edges { node { id status createdAt url staticUrl } } } }",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "body",
+            "description": "Filter by project ID"
+          },
+          "serviceId": {
+            "type": "string",
+            "in": "body",
+            "description": "Filter by service ID"
+          },
+          "environmentId": {
+            "type": "string",
+            "in": "body",
+            "description": "Filter by environment ID"
+          },
+          "first": {
+            "type": "number",
+            "in": "body",
+            "description": "Maximum deployments to return",
+            "default": 20
+          }
+        },
+        "response": {
+          "transform": "deployments.edges",
+          "historicalSummary": {
+            "collectionKeys": [
+              "edges",
+              "deployments",
+              "nodes",
+              "data"
+            ],
+            "collectionName": "deployments",
+            "itemFields": [
+              {
+                "name": "node",
+                "kind": "object"
+              }
+            ],
+            "omitted": "deployment metadata and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "pageInfo",
+                "kind": "object"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_deployment",
+      "name": "Get Deployment",
+      "description": "Get a deployment by ID, including redeploy/rollback eligibility",
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://backboard.railway.com/graphql/v2",
+        "query": "query($id: String!) { deployment(id: $id) { id status createdAt url staticUrl meta canRedeploy canRollback } }",
+        "params": {
+          "id": {
+            "type": "string",
+            "in": "body",
+            "description": "Deployment ID",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "deployment"
+        }
+      }
+    },
+    {
+      "id": "restart_deployment",
+      "name": "Restart Deployment",
+      "description": "Restart a running deployment",
+      "requiresWrite": true,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://backboard.railway.com/graphql/v2",
+        "query": "mutation($id: String!) { deploymentRestart(id: $id) }",
+        "params": {
+          "id": {
+            "type": "string",
+            "in": "body",
+            "description": "Deployment ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "redeploy_deployment",
+      "name": "Redeploy Deployment",
+      "description": "Redeploy an existing deployment (creates a new deployment from it)",
+      "requiresWrite": true,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://backboard.railway.com/graphql/v2",
+        "query": "mutation($id: String!) { deploymentRedeploy(id: $id) { id status } }",
+        "params": {
+          "id": {
+            "type": "string",
+            "in": "body",
+            "description": "Deployment ID to redeploy",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "deploymentRedeploy"
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "deployment_health",
+      "title": "Deployment health",
+      "prompt": "List the latest Railway deployments for my project and summarize their statuses.",
+      "category": "devops",
+      "icon": "list"
+    },
+    {
+      "id": "restart_service",
+      "title": "Restart a deployment",
+      "prompt": "Find the active deployment of my Railway service and restart it.",
+      "category": "devops",
+      "icon": "refresh"
+    }
+  ],
+  "suggestedWith": [
+    "github",
+    "slack",
+    "sentry"
+  ],
+  "SETUP_GUIDE": {
+    "title": "Railway Public API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Sign in to Railway",
+        "description": "Go to https://railway.com and sign in (the trial/Hobby plan with one deployed project is sufficient for testing)."
+      },
+      {
+        "step": 2,
+        "title": "Create an API token",
+        "description": "Open Account Settings > Tokens (https://railway.com/account/tokens) and create an account token, or select a workspace to create a workspace-scoped token."
+      },
+      {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the token to your .env as RAILWAY_TOKEN=..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Projects, then use a project ID with Get Project to discover its service and environment IDs."
+      }
+    ],
+    "notes": [
+      "The API is GraphQL-only at https://backboard.railway.com/graphql/v2; account and workspace tokens are sent as 'Authorization: Bearer <token>'",
+      "Project tokens use a different header (Project-Access-Token) and are not supported by this connector — use an account or workspace token",
+      "Results use Relay-style connections; each item is wrapped in an edge with a node field"
+    ],
+    "documentation": "https://docs.railway.com/guides/public-api"
+  }
+}

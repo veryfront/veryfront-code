@@ -1,0 +1,299 @@
+{
+  "name": "box",
+  "displayName": "Box",
+  "icon": "box.svg",
+  "description": "Browse, search, and organize files and folders in Box cloud storage",
+  "auth": {
+    "type": "oauth2",
+    "provider": "box",
+    "authorizationUrl": "https://account.box.com/api/oauth2/authorize",
+    "tokenUrl": "https://api.box.com/oauth2/token",
+    "scopes": ["root_readwrite"],
+    "callbackPath": "/api/auth/box/callback",
+    "tokenAuthMethod": "request_body",
+    "docsUrl": "https://developer.box.com/guides/authentication/oauth2/",
+    "requiredApis": [
+      {
+        "name": "Box Developer Console",
+        "enableUrl": "https://app.box.com/developers/console"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "BOX_CLIENT_ID",
+      "description": "Box OAuth Client ID (from your Custom App in the Developer Console)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.box.com/guides/authentication/oauth2/oauth2-setup/"
+    },
+    {
+      "name": "BOX_CLIENT_SECRET",
+      "description": "Box OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.box.com/guides/authentication/oauth2/oauth2-setup/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_folder_items",
+      "name": "List Folder Items",
+      "description": "List files and subfolders inside a Box folder (folder 0 is the root)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.box.com/2.0/folders/{folderId}/items",
+        "params": {
+          "folderId": {
+            "type": "string",
+            "in": "path",
+            "description": "Box folder ID ('0' is the root folder)",
+            "default": "0"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum items to return (max 1000)",
+            "default": 100
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of items to skip for pagination",
+            "default": 0
+          },
+          "fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated attribute list to include, e.g. id,type,name,size,modified_at"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["entries"],
+            "collectionName": "items",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "type" },
+              { "name": "name" },
+              { "name": "size" },
+              { "name": "modified_at" },
+              { "name": "created_at" }
+            ],
+            "omitted": "file metadata, shared links, and provider-specific payload fields",
+            "outputFields": [
+              { "name": "total_count" },
+              { "name": "offset" },
+              { "name": "limit" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_file",
+      "name": "Get File",
+      "description": "Get metadata about a Box file",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.box.com/2.0/files/{fileId}",
+        "params": {
+          "fileId": {
+            "type": "string",
+            "in": "path",
+            "description": "Box file ID",
+            "required": true
+          },
+          "fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated attribute list to include"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_folder",
+      "name": "Get Folder",
+      "description": "Get metadata about a Box folder",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.box.com/2.0/folders/{folderId}",
+        "params": {
+          "folderId": {
+            "type": "string",
+            "in": "path",
+            "description": "Box folder ID ('0' is the root folder)",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "search",
+      "name": "Search",
+      "description": "Search for files and folders across the Box account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.box.com/2.0/search",
+        "params": {
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "Search string to match against item names and content",
+            "required": true
+          },
+          "type": {
+            "type": "string",
+            "in": "query",
+            "description": "Limit results to 'file', 'folder', or 'web_link'"
+          },
+          "ancestor_folder_ids": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated folder IDs to scope the search to"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum results to return (max 200)",
+            "default": 30
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of results to skip for pagination",
+            "default": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "create_folder",
+      "name": "Create Folder",
+      "description": "Create a new folder inside a Box parent folder",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.box.com/2.0/folders",
+        "body": {
+          "name": {
+            "type": "string",
+            "description": "Name of the new folder",
+            "required": true
+          },
+          "parent": {
+            "type": "object",
+            "description": "Parent folder reference, e.g. { \"id\": \"0\" } for the root folder",
+            "required": true,
+            "default": { "id": "0" }
+          }
+        }
+      }
+    },
+    {
+      "id": "list_file_comments",
+      "name": "List File Comments",
+      "description": "List comments on a Box file",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.box.com/2.0/files/{fileId}/comments",
+        "params": {
+          "fileId": {
+            "type": "string",
+            "in": "path",
+            "description": "Box file ID",
+            "required": true
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum comments to return",
+            "default": 50
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of comments to skip for pagination",
+            "default": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "add_comment",
+      "name": "Add Comment",
+      "description": "Add a comment to a Box file",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.box.com/2.0/comments",
+        "body": {
+          "item": {
+            "type": "object",
+            "description": "Item to comment on, e.g. { \"type\": \"file\", \"id\": \"12345\" }",
+            "required": true
+          },
+          "message": {
+            "type": "string",
+            "description": "Comment text (use @[userid:name] to mention users)",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "browse_root",
+      "title": "Browse my files",
+      "prompt": "List the files and folders in my Box root folder.",
+      "category": "files",
+      "icon": "list"
+    },
+    {
+      "id": "find_file",
+      "title": "Find a file",
+      "prompt": "Search my Box account for a file by name and show its details.",
+      "category": "files",
+      "icon": "search"
+    }
+  ],
+  "suggestedWith": ["slack", "gmail", "drive"],
+  "SETUP_GUIDE": {
+    "title": "Box OAuth Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Box app",
+        "description": "Sign in at https://app.box.com/developers/console (a free Individual Box account works) and create a Custom App with 'User Authentication (OAuth 2.0)'."
+      },
+      {
+        "step": 2,
+        "title": "Configure the redirect URI and scopes",
+        "description": "In the app's Configuration tab, add your redirect URI ending in /api/auth/box/callback and enable the 'Read and write all files and folders' application scope."
+      },
+      {
+        "step": 3,
+        "title": "Copy credentials",
+        "description": "Copy the Client ID and Client Secret from the Configuration tab into BOX_CLIENT_ID and BOX_CLIENT_SECRET."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Connect your Box account and run the List Folder Items tool against folder 0."
+      }
+    ],
+    "notes": [
+      "Authorization codes are only valid for 30 seconds; the client is authenticated with client_id/client_secret in the token request body",
+      "Refresh tokens are issued; access tokens are short-lived and refreshed automatically",
+      "File upload is not included: Box uploads go to upload.box.com and require multipart/form-data with a file part, which this connector's JSON endpoint executor does not support yet"
+    ],
+    "documentation": "https://developer.box.com/reference/"
+  }
+}

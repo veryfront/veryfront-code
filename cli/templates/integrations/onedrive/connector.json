@@ -137,6 +137,82 @@
           }
         }
       }
+    },
+    {
+      "id": "get_file",
+      "name": "Get File",
+      "description": "Get metadata for a OneDrive file or folder",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/me/drive/items/{itemId}",
+        "params": {
+          "itemId": {
+            "type": "string",
+            "in": "path",
+            "description": "OneDrive item ID",
+            "required": true
+          },
+          "$select": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated fields to return"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_folder",
+      "name": "Create Folder",
+      "description": "Create a new folder in OneDrive",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/me/drive/items/{parentFolderId}/children",
+        "params": {
+          "parentFolderId": {
+            "type": "string",
+            "in": "path",
+            "description": "Parent folder item ID, or root",
+            "default": "root"
+          }
+        },
+        "body": {
+          "name": {
+            "type": "string",
+            "description": "Folder name",
+            "required": true
+          },
+          "folder": {
+            "type": "object",
+            "description": "Empty folder facet marking the item as a folder",
+            "default": {}
+          },
+          "@microsoft.graph.conflictBehavior": {
+            "type": "string",
+            "description": "How to handle name conflicts: rename, replace, or fail",
+            "default": "rename"
+          }
+        }
+      }
+    },
+    {
+      "id": "delete_file",
+      "name": "Delete File",
+      "description": "Delete a file or folder from OneDrive (moves it to the recycle bin)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "DELETE",
+        "url": "https://graph.microsoft.com/v1.0/me/drive/items/{itemId}",
+        "params": {
+          "itemId": {
+            "type": "string",
+            "in": "path",
+            "description": "OneDrive item ID to delete",
+            "required": true
+          }
+        }
+      }
     }
   ],
   "prompts": [

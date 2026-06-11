@@ -1,0 +1,357 @@
+{
+  "name": "quickbooks",
+  "displayName": "QuickBooks",
+  "icon": "quickbooks.svg",
+  "description": "Manage invoices, customers, and accounts in QuickBooks Online",
+  "auth": {
+    "type": "oauth2",
+    "provider": "quickbooks",
+    "authorizationUrl": "https://appcenter.intuit.com/connect/oauth2",
+    "tokenUrl": "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
+    "scopes": ["com.intuit.quickbooks.accounting"],
+    "callbackPath": "/api/auth/quickbooks/callback",
+    "tokenAuthMethod": "basic",
+    "docsUrl": "https://developer.intuit.com/app/developer/qbo/docs/develop/authentication-and-authorization/oauth-2.0",
+    "requiredApis": [
+      {
+        "name": "Intuit Developer App",
+        "enableUrl": "https://developer.intuit.com/app/developer/dashboard"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "QUICKBOOKS_CLIENT_ID",
+      "description": "Intuit OAuth Client ID (from your app's Keys & credentials page)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.intuit.com/app/developer/qbo/docs/develop/authentication-and-authorization/oauth-2.0"
+    },
+    {
+      "name": "QUICKBOOKS_CLIENT_SECRET",
+      "description": "Intuit OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.intuit.com/app/developer/qbo/docs/develop/authentication-and-authorization/oauth-2.0"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_invoices",
+      "name": "List Invoices",
+      "description": "List recent invoices in a QuickBooks Online company",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/v3/company/{realmId}/query",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
+            "default": "quickbooks.api.intuit.com"
+          },
+          "realmId": {
+            "type": "string",
+            "in": "path",
+            "description": "QuickBooks company ID (realm ID) shown in the OAuth callback and under Settings → Additional Info in QuickBooks",
+            "required": true
+          },
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "QuickBooks SQL-like query for invoices",
+            "default": "SELECT * FROM Invoice ORDERBY MetaData.LastUpdatedTime DESC MAXRESULTS 50"
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Accept",
+            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "default": "application/json"
+          }
+        },
+        "response": {
+          "transform": "QueryResponse",
+          "historicalSummary": {
+            "collectionKeys": ["Invoice", "QueryResponse"],
+            "collectionName": "invoices",
+            "itemFields": [
+              { "name": "Id" },
+              { "name": "DocNumber" },
+              { "name": "TxnDate" },
+              { "name": "DueDate" },
+              { "name": "TotalAmt" },
+              { "name": "Balance" },
+              { "name": "EmailStatus" },
+              { "name": "CustomerRef", "kind": "object" }
+            ],
+            "omitted": "invoice line items, tax details, and provider-specific payload fields",
+            "outputFields": [
+              { "name": "startPosition" },
+              { "name": "maxResults" },
+              { "name": "totalCount" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "list_customers",
+      "name": "List Customers",
+      "description": "List customers in a QuickBooks Online company",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/v3/company/{realmId}/query",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
+            "default": "quickbooks.api.intuit.com"
+          },
+          "realmId": {
+            "type": "string",
+            "in": "path",
+            "description": "QuickBooks company ID (realm ID)",
+            "required": true
+          },
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "QuickBooks SQL-like query for customers",
+            "default": "SELECT * FROM Customer ORDERBY MetaData.LastUpdatedTime DESC MAXRESULTS 50"
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Accept",
+            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "default": "application/json"
+          }
+        },
+        "response": {
+          "transform": "QueryResponse"
+        }
+      }
+    },
+    {
+      "id": "list_accounts",
+      "name": "List Accounts",
+      "description": "List the chart of accounts in a QuickBooks Online company",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/v3/company/{realmId}/query",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
+            "default": "quickbooks.api.intuit.com"
+          },
+          "realmId": {
+            "type": "string",
+            "in": "path",
+            "description": "QuickBooks company ID (realm ID)",
+            "required": true
+          },
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "QuickBooks SQL-like query for accounts",
+            "default": "SELECT * FROM Account ORDERBY Name MAXRESULTS 100"
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Accept",
+            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "default": "application/json"
+          }
+        },
+        "response": {
+          "transform": "QueryResponse"
+        }
+      }
+    },
+    {
+      "id": "get_invoice",
+      "name": "Get Invoice",
+      "description": "Get a QuickBooks invoice with its line items",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/v3/company/{realmId}/invoice/{invoiceId}",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
+            "default": "quickbooks.api.intuit.com"
+          },
+          "realmId": {
+            "type": "string",
+            "in": "path",
+            "description": "QuickBooks company ID (realm ID)",
+            "required": true
+          },
+          "invoiceId": {
+            "type": "string",
+            "in": "path",
+            "description": "QuickBooks invoice Id",
+            "required": true
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Accept",
+            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "default": "application/json"
+          }
+        },
+        "response": {
+          "transform": "Invoice"
+        }
+      }
+    },
+    {
+      "id": "create_invoice",
+      "name": "Create Invoice",
+      "description": "Create an invoice in a QuickBooks Online company",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{host}/v3/company/{realmId}/invoice",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
+            "default": "quickbooks.api.intuit.com"
+          },
+          "realmId": {
+            "type": "string",
+            "in": "path",
+            "description": "QuickBooks company ID (realm ID)",
+            "required": true
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Accept",
+            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "default": "application/json"
+          }
+        },
+        "bodyMode": "passthrough",
+        "body": {
+          "invoice": {
+            "type": "object",
+            "description": "Invoice payload, e.g. { \"CustomerRef\": { \"value\": \"1\" }, \"Line\": [{ \"DetailType\": \"SalesItemLineDetail\", \"Amount\": 100, \"SalesItemLineDetail\": { \"ItemRef\": { \"value\": \"1\" } } }] }",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "Invoice"
+        }
+      }
+    },
+    {
+      "id": "run_query",
+      "name": "Run Query",
+      "description": "Run an arbitrary QuickBooks query against any entity (Invoice, Customer, Account, Payment, Bill, Item, ...)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/v3/company/{realmId}/query",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
+            "default": "quickbooks.api.intuit.com"
+          },
+          "realmId": {
+            "type": "string",
+            "in": "path",
+            "description": "QuickBooks company ID (realm ID)",
+            "required": true
+          },
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "QuickBooks SQL-like query, e.g. SELECT * FROM Payment WHERE TotalAmt > '100.00' MAXRESULTS 25",
+            "required": true
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Accept",
+            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "default": "application/json"
+          }
+        },
+        "response": {
+          "transform": "QueryResponse"
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "open_invoices",
+      "title": "Open invoices",
+      "prompt": "List my QuickBooks invoices with an outstanding balance, sorted by due date.",
+      "category": "finance",
+      "icon": "chart"
+    },
+    {
+      "id": "create_invoice",
+      "title": "Create an invoice",
+      "prompt": "Create an invoice in QuickBooks for a customer with the line items I provide.",
+      "category": "finance",
+      "icon": "plus"
+    }
+  ],
+  "suggestedWith": ["stripe", "gmail", "hubspot"],
+  "SETUP_GUIDE": {
+    "title": "QuickBooks Online OAuth Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create an Intuit developer account",
+        "description": "Sign up at https://developer.intuit.com/ — creating an app automatically provisions a QuickBooks Online sandbox company with sample data for testing."
+      },
+      {
+        "step": 2,
+        "title": "Create an app",
+        "description": "In the developer dashboard (https://developer.intuit.com/app/developer/dashboard), create an app for the QuickBooks Online and Payments platform with the com.intuit.quickbooks.accounting scope, and add your /api/auth/quickbooks/callback URL as a redirect URI."
+      },
+      {
+        "step": 3,
+        "title": "Copy credentials",
+        "description": "From the app's Keys & credentials page, copy the Client ID and Client Secret (Development keys work against the sandbox host; Production keys require app review). Set QUICKBOOKS_CLIENT_ID and QUICKBOOKS_CLIENT_SECRET in your .env."
+      },
+      {
+        "step": 4,
+        "title": "Note your realm ID",
+        "description": "The OAuth callback includes a realmId query parameter identifying the connected company — save it; every QuickBooks tool requires it as the realmId parameter. You can also find it under the gear icon → Additional Info in QuickBooks Online."
+      },
+      {
+        "step": 5,
+        "title": "Verify access",
+        "description": "Run the List Invoices tool with your realmId (set host to sandbox-quickbooks.api.intuit.com for a sandbox company)."
+      }
+    ],
+    "notes": [
+      "The token endpoint authenticates with HTTP Basic (client_id:client_secret base64-encoded)",
+      "Access tokens last 60 minutes; refresh tokens roll and remain valid for up to 100 days",
+      "The company realm ID arrives as a query parameter on the OAuth callback, not in the token response — it must be saved and passed to every tool",
+      "QuickBooks responds with XML unless the Accept: application/json header is sent (the tools set it by default)",
+      "Sandbox companies use the sandbox-quickbooks.api.intuit.com host"
+    ],
+    "documentation": "https://developer.intuit.com/app/developer/qbo/docs/develop/authentication-and-authorization/oauth-2.0"
+  }
+}

@@ -1,0 +1,293 @@
+{
+  "name": "gusto",
+  "displayName": "Gusto",
+  "icon": "gusto.svg",
+  "description": "Read companies, employees, and payrolls from Gusto",
+  "auth": {
+    "type": "oauth2",
+    "provider": "gusto",
+    "authorizationUrl": "https://api.gusto.com/oauth/authorize",
+    "tokenUrl": "https://api.gusto.com/oauth/token",
+    "scopes": [],
+    "callbackPath": "/api/auth/gusto/callback",
+    "docsUrl": "https://docs.gusto.com/app-integrations/docs/oauth2",
+    "requiredApis": [
+      {
+        "name": "Gusto Developer Portal",
+        "enableUrl": "https://dev.gusto.com"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "GUSTO_CLIENT_ID",
+      "description": "Gusto OAuth Client ID (from the Developer Portal application)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://docs.gusto.com/app-integrations/docs/introduction"
+    },
+    {
+      "name": "GUSTO_CLIENT_SECRET",
+      "description": "Gusto OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.gusto.com/app-integrations/docs/introduction"
+    }
+  ],
+  "tools": [
+    {
+      "id": "get_token_info",
+      "name": "Get Token Info",
+      "description": "Get the resource (company) and scope associated with the current access token",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.gusto.com/v1/token_info",
+        "params": {
+          "api_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Gusto API version",
+            "default": "2024-04-01",
+            "headerName": "X-Gusto-API-Version"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_company",
+      "name": "Get Company",
+      "description": "Get a company's profile, locations, and entity details",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.gusto.com/v1/companies/{companyId}",
+        "params": {
+          "companyId": {
+            "type": "string",
+            "in": "path",
+            "description": "Company UUID (from Get Token Info)",
+            "required": true
+          },
+          "api_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Gusto API version",
+            "default": "2024-04-01",
+            "headerName": "X-Gusto-API-Version"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_employees",
+      "name": "List Employees",
+      "description": "List employees of a company",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.gusto.com/v1/companies/{companyId}/employees",
+        "params": {
+          "companyId": {
+            "type": "string",
+            "in": "path",
+            "description": "Company UUID",
+            "required": true
+          },
+          "terminated": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include only terminated employees when true",
+            "default": false
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1
+          },
+          "per": {
+            "type": "number",
+            "in": "query",
+            "description": "Employees per page (max 100)",
+            "default": 25
+          },
+          "api_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Gusto API version",
+            "default": "2024-04-01",
+            "headerName": "X-Gusto-API-Version"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["employees", "data"],
+            "collectionName": "employees",
+            "itemFields": [
+              { "name": "uuid" },
+              { "name": "first_name" },
+              { "name": "last_name" },
+              { "name": "email" },
+              { "name": "department" },
+              { "name": "terminated" },
+              { "name": "manager_uuid" }
+            ],
+            "omitted": "compensation, home address, and job history details",
+            "outputFields": [{ "name": "page" }, { "name": "per" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_employee",
+      "name": "Get Employee",
+      "description": "Get a single employee",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.gusto.com/v1/employees/{employeeId}",
+        "params": {
+          "employeeId": {
+            "type": "string",
+            "in": "path",
+            "description": "Employee UUID",
+            "required": true
+          },
+          "api_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Gusto API version",
+            "default": "2024-04-01",
+            "headerName": "X-Gusto-API-Version"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_payrolls",
+      "name": "List Payrolls",
+      "description": "List payrolls for a company",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.gusto.com/v1/companies/{companyId}/payrolls",
+        "params": {
+          "companyId": {
+            "type": "string",
+            "in": "path",
+            "description": "Company UUID",
+            "required": true
+          },
+          "processing_statuses": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated statuses: unprocessed, processed"
+          },
+          "payroll_types": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated types: regular, off_cycle, external"
+          },
+          "start_date": {
+            "type": "string",
+            "in": "query",
+            "description": "Return payrolls whose pay period ends on/after this date (YYYY-MM-DD)"
+          },
+          "end_date": {
+            "type": "string",
+            "in": "query",
+            "description": "Return payrolls whose pay period ends on/before this date (YYYY-MM-DD)"
+          },
+          "api_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Gusto API version",
+            "default": "2024-04-01",
+            "headerName": "X-Gusto-API-Version"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_payroll",
+      "name": "Get Payroll",
+      "description": "Get a single payroll with totals",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.gusto.com/v1/companies/{companyId}/payrolls/{payrollId}",
+        "params": {
+          "companyId": {
+            "type": "string",
+            "in": "path",
+            "description": "Company UUID",
+            "required": true
+          },
+          "payrollId": {
+            "type": "string",
+            "in": "path",
+            "description": "Payroll UUID",
+            "required": true
+          },
+          "api_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Gusto API version",
+            "default": "2024-04-01",
+            "headerName": "X-Gusto-API-Version"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "team_roster",
+      "title": "Team roster",
+      "prompt": "List all active employees in my Gusto company with their departments and emails.",
+      "category": "hr",
+      "icon": "users"
+    },
+    {
+      "id": "payroll_history",
+      "title": "Payroll history",
+      "prompt": "Show my company's processed Gusto payrolls for this quarter with their pay periods and totals.",
+      "category": "hr",
+      "icon": "currency"
+    }
+  ],
+  "suggestedWith": ["sheets", "slack", "calendar"],
+  "SETUP_GUIDE": {
+    "title": "Gusto OAuth Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a developer application",
+        "description": "Sign up at https://dev.gusto.com and create an application. New apps start in the demo environment (api.gusto-demo.com) where you can create a free test company."
+      },
+      {
+        "step": 2,
+        "title": "Set the redirect URI",
+        "description": "Add your deployment's /api/auth/gusto/callback URL to the application's redirect URIs."
+      },
+      {
+        "step": 3,
+        "title": "Set environment variables",
+        "description": "Copy the application's client_id and secret into GUSTO_CLIENT_ID and GUSTO_CLIENT_SECRET in your .env."
+      },
+      {
+        "step": 4,
+        "title": "Connect and verify",
+        "description": "Complete the OAuth consent flow with a company admin account, then run Get Token Info to discover the company UUID and confirm access."
+      }
+    ],
+    "notes": [
+      "Scopes/permissions are configured on the application in the Developer Portal, not passed in the authorize URL",
+      "Access tokens expire after 2 hours; refresh tokens are single-use and rotate on every refresh",
+      "Production access (api.gusto.com) requires Gusto's app approval; until then use the demo environment",
+      "Tools pin X-Gusto-API-Version: 2024-04-01; raise the default to adopt newer versions"
+    ],
+    "documentation": "https://docs.gusto.com/app-integrations/docs/introduction"
+  }
+}

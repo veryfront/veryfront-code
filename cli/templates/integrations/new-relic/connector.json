@@ -1,0 +1,192 @@
+{
+  "name": "new-relic",
+  "displayName": "New Relic",
+  "icon": "new-relic.svg",
+  "description": "Run NRQL queries and inspect entities and issues via the New Relic NerdGraph API",
+  "auth": {
+    "type": "api-key",
+    "keyName": "NEW_RELIC_API_KEY",
+    "headerName": "API-Key",
+    "docsUrl": "https://docs.newrelic.com/docs/apis/nerdgraph/get-started/introduction-new-relic-nerdgraph/",
+    "requiredApis": [
+      {
+        "name": "New Relic API Keys",
+        "enableUrl": "https://one.newrelic.com/api-keys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "NEW_RELIC_API_KEY",
+      "description": "New Relic user API key (starts with NRAK-), sent as the API-Key header",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.newrelic.com/docs/apis/intro-apis/new-relic-api-keys/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "run_nrql_query",
+      "name": "Run NRQL Query",
+      "description": "Run an NRQL query against a New Relic account and return the results",
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.newrelic.com/graphql",
+        "query": "query($accountId: Int!, $nrql: Nrql!) { actor { account(id: $accountId) { nrql(query: $nrql) { results } } } }",
+        "params": {
+          "accountId": {
+            "type": "number",
+            "in": "body",
+            "description": "New Relic account ID",
+            "required": true
+          },
+          "nrql": {
+            "type": "string",
+            "in": "body",
+            "description": "NRQL query, e.g. SELECT count(*) FROM Transaction SINCE 1 hour ago",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "actor.account.nrql.results"
+        }
+      }
+    },
+    {
+      "id": "search_entities",
+      "name": "Search Entities",
+      "description": "Search monitored entities (apps, hosts, services) with an entity search query",
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.newrelic.com/graphql",
+        "query": "query($query: String!, $cursor: String) { actor { entitySearch(query: $query) { count results(cursor: $cursor) { entities { guid name entityType domain type } nextCursor } } } }",
+        "params": {
+          "query": {
+            "type": "string",
+            "in": "body",
+            "description": "Entity search query, e.g. name LIKE 'checkout' AND domain = 'APM'",
+            "required": true
+          },
+          "cursor": {
+            "type": "string",
+            "in": "body",
+            "description": "Pagination cursor from a previous response's nextCursor"
+          }
+        },
+        "response": {
+          "transform": "actor.entitySearch.results",
+          "historicalSummary": {
+            "collectionKeys": ["entities"],
+            "collectionName": "entities",
+            "itemFields": [
+              { "name": "guid" },
+              { "name": "name" },
+              { "name": "entityType" },
+              { "name": "domain" }
+            ],
+            "omitted": "entity tags and reporting metadata",
+            "outputFields": [{ "name": "nextCursor" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_entity",
+      "name": "Get Entity",
+      "description": "Get an entity's details and tags by GUID",
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.newrelic.com/graphql",
+        "query": "query($guid: EntityGuid!) { actor { entity(guid: $guid) { guid name entityType domain type tags { key values } } } }",
+        "params": {
+          "guid": {
+            "type": "string",
+            "in": "body",
+            "description": "Entity GUID (from Search Entities)",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "actor.entity"
+        }
+      }
+    },
+    {
+      "id": "list_issues",
+      "name": "List Issues",
+      "description": "List alert issues from the last day in an account (queries the NrAiIssue event type via NRQL)",
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.newrelic.com/graphql",
+        "query": "query($accountId: Int!) { actor { account(id: $accountId) { nrql(query: \"FROM NrAiIssue SELECT latest(title) AS title, latest(priority) AS priority, latest(event) AS lastEvent SINCE 1 day ago FACET issueId LIMIT 100\") { results } } } }",
+        "params": {
+          "accountId": {
+            "type": "number",
+            "in": "body",
+            "description": "New Relic account ID",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "actor.account.nrql.results"
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "error_rate",
+      "title": "Error rate check",
+      "prompt": "Run a New Relic NRQL query for the transaction error rate in the last hour and summarize the result.",
+      "category": "observability",
+      "icon": "search"
+    },
+    {
+      "id": "open_issues",
+      "title": "Open issues",
+      "prompt": "List the open New Relic issues in my account ordered by priority.",
+      "category": "observability",
+      "icon": "alert"
+    }
+  ],
+  "suggestedWith": ["pagerduty", "datadog", "github"],
+  "SETUP_GUIDE": {
+    "title": "New Relic NerdGraph Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Sign up for New Relic",
+        "description": "Free accounts at https://newrelic.com include full API access. Note your account ID from the account picker or the URL — NRQL and issue tools need it."
+      },
+      {
+        "step": 2,
+        "title": "Create a user API key",
+        "description": "Go to https://one.newrelic.com/api-keys and create a key of type 'User' (it starts with NRAK-). User keys are required for NerdGraph."
+      },
+      {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the key to your .env as NEW_RELIC_API_KEY=NRAK-..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run Search Entities with a query like \"domain = 'APM'\", or Run NRQL Query with your account ID."
+      }
+    ],
+    "notes": [
+      "All tools are GraphQL calls to https://api.newrelic.com/graphql with the key in the 'API-Key' header",
+      "EU-region accounts use api.eu.newrelic.com; these tools target the US endpoint",
+      "NRQL and issue tools take your numeric account ID as a parameter — find it under Administration → Access management → Accounts"
+    ],
+    "documentation": "https://docs.newrelic.com/docs/apis/nerdgraph/get-started/introduction-new-relic-nerdgraph/"
+  }
+}

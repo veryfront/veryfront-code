@@ -321,6 +321,77 @@
           }
         }
       }
+    },
+    {
+      "id": "create_database",
+      "name": "Create Database",
+      "description": "Create a new Notion database as a subpage with a property schema",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/databases",
+        "params": {
+          "Notion-Version": {
+            "type": "string",
+            "in": "header",
+            "description": "Notion API version",
+            "default": "2022-06-28"
+          }
+        },
+        "body": {
+          "parent": {
+            "type": "object",
+            "description": "Notion parent object, e.g. {type: 'page_id', page_id: '...'}",
+            "required": true
+          },
+          "title": {
+            "type": "array",
+            "description": "Database title as an array of rich text objects",
+            "required": true
+          },
+          "properties": {
+            "type": "object",
+            "description": "Database property schema, e.g. {Name: {title: {}}, Status: {select: {options: [...]}}}",
+            "required": true
+          },
+          "is_inline": {
+            "type": "boolean",
+            "description": "Whether the database appears inline in the parent page"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_users",
+      "name": "List Users",
+      "description": "List users in the Notion workspace so pages can mention or attribute the right person",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.notion.com/v1/users",
+        "params": {
+          "Notion-Version": {
+            "type": "string",
+            "in": "header",
+            "description": "Notion API version",
+            "default": "2022-06-28"
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum users to return",
+            "default": 100
+          },
+          "start_cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor"
+          }
+        },
+        "response": {
+          "transform": "results"
+        }
+      }
     }
   ],
   "prompts": [

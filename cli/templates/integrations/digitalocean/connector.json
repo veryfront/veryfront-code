@@ -1,0 +1,310 @@
+{
+  "name": "digitalocean",
+  "displayName": "DigitalOcean",
+  "icon": "digitalocean.svg",
+  "description": "Manage Droplets and managed databases on DigitalOcean",
+  "auth": {
+    "type": "oauth2",
+    "provider": "digitalocean",
+    "authorizationUrl": "https://cloud.digitalocean.com/v1/oauth/authorize",
+    "tokenUrl": "https://cloud.digitalocean.com/v1/oauth/token",
+    "scopes": [
+      "read",
+      "write"
+    ],
+    "callbackPath": "/api/auth/digitalocean/callback",
+    "docsUrl": "https://docs.digitalocean.com/reference/api/oauth/",
+    "requiredApis": [
+      {
+        "name": "DigitalOcean OAuth Applications",
+        "enableUrl": "https://cloud.digitalocean.com/account/api/applications"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "DIGITALOCEAN_CLIENT_ID",
+      "description": "DigitalOcean OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://docs.digitalocean.com/reference/api/oauth/"
+    },
+    {
+      "name": "DIGITALOCEAN_CLIENT_SECRET",
+      "description": "DigitalOcean OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.digitalocean.com/reference/api/oauth/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_droplets",
+      "name": "List Droplets",
+      "description": "List Droplets in the account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.digitalocean.com/v2/droplets",
+        "params": {
+          "tag_name": {
+            "type": "string",
+            "in": "query",
+            "description": "Only list Droplets with this tag"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number",
+            "default": 1
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Droplets per page (max 200)",
+            "default": 25
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "droplets"
+            ],
+            "collectionName": "droplets",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "status"
+              },
+              {
+                "name": "memory"
+              },
+              {
+                "name": "vcpus"
+              },
+              {
+                "name": "created_at"
+              },
+              {
+                "name": "tags",
+                "kind": "string-array"
+              }
+            ],
+            "omitted": "network interfaces, image details, and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "links",
+                "kind": "object"
+              },
+              {
+                "name": "meta",
+                "kind": "object"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_droplet",
+      "name": "Get Droplet",
+      "description": "Get a Droplet by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.digitalocean.com/v2/droplets/{dropletId}",
+        "params": {
+          "dropletId": {
+            "type": "string",
+            "in": "path",
+            "description": "Droplet ID",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "droplet"
+        }
+      }
+    },
+    {
+      "id": "create_droplet",
+      "name": "Create Droplet",
+      "description": "Create a new Droplet (provisions billable infrastructure)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.digitalocean.com/v2/droplets",
+        "body": {
+          "name": {
+            "type": "string",
+            "description": "Droplet hostname",
+            "required": true
+          },
+          "region": {
+            "type": "string",
+            "description": "Region slug, e.g. nyc3, fra1",
+            "required": true
+          },
+          "size": {
+            "type": "string",
+            "description": "Size slug, e.g. s-1vcpu-1gb",
+            "required": true
+          },
+          "image": {
+            "type": "string",
+            "description": "Image slug or ID, e.g. ubuntu-24-04-x64",
+            "required": true
+          },
+          "ssh_keys": {
+            "type": "array",
+            "description": "SSH key IDs or fingerprints to embed"
+          },
+          "tags": {
+            "type": "array",
+            "description": "Tags to apply to the Droplet"
+          },
+          "backups": {
+            "type": "boolean",
+            "description": "Enable automated backups",
+            "default": false
+          }
+        },
+        "response": {
+          "transform": "droplet"
+        }
+      }
+    },
+    {
+      "id": "delete_droplet",
+      "name": "Delete Droplet",
+      "description": "Permanently destroy a Droplet by ID",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "DELETE",
+        "url": "https://api.digitalocean.com/v2/droplets/{dropletId}",
+        "params": {
+          "dropletId": {
+            "type": "string",
+            "in": "path",
+            "description": "Droplet ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_databases",
+      "name": "List Database Clusters",
+      "description": "List managed database clusters in the account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.digitalocean.com/v2/databases",
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "databases"
+            ],
+            "collectionName": "databases",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "engine"
+              },
+              {
+                "name": "version"
+              },
+              {
+                "name": "status"
+              },
+              {
+                "name": "created_at"
+              },
+              {
+                "name": "tags",
+                "kind": "string-array"
+              }
+            ],
+            "omitted": "connection credentials, maintenance windows, and provider-specific payload fields",
+            "outputFields": []
+          }
+        }
+      }
+    },
+    {
+      "id": "get_account",
+      "name": "Get Account",
+      "description": "Get account information and limits for the authenticated user",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.digitalocean.com/v2/account",
+        "response": {
+          "transform": "account"
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "infra_overview",
+      "title": "Infrastructure overview",
+      "prompt": "List my DigitalOcean Droplets and database clusters with their status and region.",
+      "category": "devops",
+      "icon": "list"
+    },
+    {
+      "id": "spin_up_droplet",
+      "title": "Spin up a Droplet",
+      "prompt": "Create a small Ubuntu Droplet in the region closest to me, after confirming the size and cost with me.",
+      "category": "devops",
+      "icon": "plus"
+    }
+  ],
+  "suggestedWith": [
+    "github",
+    "datadog",
+    "slack"
+  ],
+  "SETUP_GUIDE": {
+    "title": "DigitalOcean OAuth Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Get a DigitalOcean account",
+        "description": "Sign up at https://www.digitalocean.com — new accounts get trial credit you can use for testing."
+      },
+      {
+        "step": 2,
+        "title": "Register an OAuth application",
+        "description": "Go to API > OAuth Applications (https://cloud.digitalocean.com/account/api/applications), register an app, and set the callback URL to your app's /api/auth/digitalocean/callback URL."
+      },
+      {
+        "step": 3,
+        "title": "Set environment variables",
+        "description": "Copy the Client ID and Client Secret into your .env as DIGITALOCEAN_CLIENT_ID and DIGITALOCEAN_CLIENT_SECRET."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Complete the OAuth flow, then run Get Account and List Droplets."
+      }
+    ],
+    "notes": [
+      "Scopes are space-separated 'read write'; request only 'read' if you don't need mutations",
+      "Access tokens expire after 30 days; refresh tokens are single-use and rotate on each refresh",
+      "Creating Droplets provisions billable infrastructure — confirm sizes and regions before running write tools"
+    ],
+    "documentation": "https://docs.digitalocean.com/reference/api/"
+  }
+}

@@ -1,0 +1,257 @@
+{
+  "name": "launchdarkly",
+  "displayName": "LaunchDarkly",
+  "icon": "launchdarkly.svg",
+  "description": "Read LaunchDarkly projects, feature flags, and environments, and toggle flags",
+  "auth": {
+    "type": "api-key",
+    "keyName": "LAUNCHDARKLY_API_TOKEN",
+    "docsUrl": "https://launchdarkly.com/docs/api",
+    "requiredApis": [
+      {
+        "name": "LaunchDarkly Access Tokens",
+        "enableUrl": "https://app.launchdarkly.com/settings/authorization"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "LAUNCHDARKLY_API_TOKEN",
+      "description": "LaunchDarkly personal or service access token (sent raw in the Authorization header, no prefix)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://launchdarkly.com/docs/home/account/api-create"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_projects",
+      "name": "List Projects",
+      "description": "List projects in the LaunchDarkly account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://app.launchdarkly.com/api/v2/projects",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Projects to return (default 20)",
+            "default": 20
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Where to start in the list, for pagination"
+          },
+          "filter": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter expression, e.g. query:my-project"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_flags",
+      "name": "List Feature Flags",
+      "description": "List feature flags in a project, optionally scoped to one environment",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://app.launchdarkly.com/api/v2/flags/{projectKey}",
+        "params": {
+          "projectKey": {
+            "type": "string",
+            "in": "path",
+            "description": "Project key (from List Projects)",
+            "required": true
+          },
+          "env": {
+            "type": "string",
+            "in": "query",
+            "description": "Environment key — restricts environment-specific flag configuration to this environment"
+          },
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "Case-insensitive match on flag key or name"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Flags to return (default 20)",
+            "default": 20
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Where to start in the list, for pagination"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["items"],
+            "collectionName": "feature flags",
+            "itemFields": [
+              { "name": "key" },
+              { "name": "name" },
+              { "name": "kind" },
+              { "name": "archived" },
+              { "name": "tags", "kind": "string-array" }
+            ],
+            "omitted": "variations, per-environment configuration, and link metadata",
+            "outputFields": [{ "name": "totalCount" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_flag",
+      "name": "Get Feature Flag",
+      "description": "Get a feature flag including its variations and per-environment configuration",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://app.launchdarkly.com/api/v2/flags/{projectKey}/{featureFlagKey}",
+        "params": {
+          "projectKey": {
+            "type": "string",
+            "in": "path",
+            "description": "Project key",
+            "required": true
+          },
+          "featureFlagKey": {
+            "type": "string",
+            "in": "path",
+            "description": "Feature flag key (from List Feature Flags)",
+            "required": true
+          },
+          "env": {
+            "type": "string",
+            "in": "query",
+            "description": "Environment key — limit returned configuration to this environment"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_environments",
+      "name": "List Environments",
+      "description": "List environments in a LaunchDarkly project",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://app.launchdarkly.com/api/v2/projects/{projectKey}/environments",
+        "params": {
+          "projectKey": {
+            "type": "string",
+            "in": "path",
+            "description": "Project key",
+            "required": true
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Environments to return (default 20)",
+            "default": 20
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Where to start in the list, for pagination"
+          }
+        }
+      }
+    },
+    {
+      "id": "toggle_flag",
+      "name": "Toggle Feature Flag",
+      "description": "Turn a feature flag on or off in one environment using a semantic patch instruction",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://app.launchdarkly.com/api/v2/flags/{projectKey}/{featureFlagKey}",
+        "contentType": "application/json; domain-model=launchdarkly.semanticpatch",
+        "params": {
+          "projectKey": {
+            "type": "string",
+            "in": "path",
+            "description": "Project key",
+            "required": true
+          },
+          "featureFlagKey": {
+            "type": "string",
+            "in": "path",
+            "description": "Feature flag key",
+            "required": true
+          }
+        },
+        "body": {
+          "environmentKey": {
+            "type": "string",
+            "description": "Environment key the instructions apply to",
+            "required": true
+          },
+          "instructions": {
+            "type": "array",
+            "description": "Semantic patch instructions, e.g. [{\"kind\":\"turnFlagOn\"}] or [{\"kind\":\"turnFlagOff\"}]",
+            "required": true
+          },
+          "comment": {
+            "type": "string",
+            "description": "Optional audit log comment for the change"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "flag_inventory",
+      "title": "Flag inventory",
+      "prompt": "List the feature flags in my LaunchDarkly project and group them by whether they are archived or tagged as temporary.",
+      "category": "devops",
+      "icon": "list"
+    },
+    {
+      "id": "flag_state",
+      "title": "Check a flag",
+      "prompt": "Get my LaunchDarkly flag and tell me whether it is on in production and what the default variation is.",
+      "category": "devops",
+      "icon": "search"
+    }
+  ],
+  "suggestedWith": ["github", "datadog", "segment"],
+  "SETUP_GUIDE": {
+    "title": "LaunchDarkly API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Sign in to LaunchDarkly",
+        "description": "Use an existing account or start a trial at https://app.launchdarkly.com. A project with a couple of test flags is enough to exercise all tools."
+      },
+      {
+        "step": 2,
+        "title": "Create an access token",
+        "description": "Go to Organization settings → Authorization (https://app.launchdarkly.com/settings/authorization) and create a personal or service access token. A Reader role token is enough for the read tools; toggling flags needs Writer access to the relevant projects."
+      },
+      {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add the token to your .env as LAUNCHDARKLY_API_TOKEN=..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Projects, then List Feature Flags with a project key."
+      }
+    ],
+    "notes": [
+      "The Authorization header contains the raw token with no Bearer prefix",
+      "Toggle Feature Flag uses LaunchDarkly's semantic patch format: Content-Type 'application/json; domain-model=launchdarkly.semanticpatch' with an instructions array",
+      "EU and Federal instances use different hosts (app.eu.launchdarkly.com, app.launchdarkly.us); these tools target the commercial instance at app.launchdarkly.com"
+    ],
+    "documentation": "https://launchdarkly.com/docs/api"
+  }
+}

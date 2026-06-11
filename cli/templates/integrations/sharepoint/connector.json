@@ -171,6 +171,63 @@
           }
         }
       }
+    },
+    {
+      "id": "search_files",
+      "name": "Search Files",
+      "description": "Search for files and folders in a SharePoint document library by name or content",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/sites/{siteId}/drive/root/search(q='{query}')",
+        "params": {
+          "siteId": {
+            "type": "string",
+            "in": "path",
+            "description": "SharePoint site ID",
+            "required": true
+          },
+          "query": {
+            "type": "string",
+            "in": "path",
+            "description": "Search query",
+            "required": true
+          },
+          "$top": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum number of items to return",
+            "default": 200
+          }
+        },
+        "response": {
+          "transform": "value"
+        }
+      }
+    },
+    {
+      "id": "download_file",
+      "name": "Download File",
+      "description": "Download file content from a SharePoint document library",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/sites/{siteId}/drive/items/{itemId}/content",
+        "params": {
+          "siteId": {
+            "type": "string",
+            "in": "path",
+            "description": "SharePoint site ID",
+            "required": true
+          },
+          "itemId": {
+            "type": "string",
+            "in": "path",
+            "description": "Drive item ID",
+            "required": true
+          }
+        }
+      }
     }
   ],
   "prompts": [

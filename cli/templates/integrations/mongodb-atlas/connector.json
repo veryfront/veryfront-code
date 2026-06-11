@@ -1,0 +1,273 @@
+{
+  "name": "mongodb-atlas",
+  "displayName": "MongoDB Atlas",
+  "icon": "mongodb-atlas.svg",
+  "description": "Inspect MongoDB Atlas projects, clusters, and database users via the Atlas Administration API",
+  "auth": {
+    "type": "oauth2",
+    "grantType": "client_credentials",
+    "tokenUrl": "https://cloud.mongodb.com/api/oauth/token",
+    "tokenAuthMethod": "basic",
+    "docsUrl": "https://www.mongodb.com/docs/atlas/api/service-accounts-overview/",
+    "requiredApis": [
+      {
+        "name": "Atlas Service Accounts",
+        "enableUrl": "https://cloud.mongodb.com"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "MONGODB_ATLAS_CLIENT_ID",
+      "description": "Atlas service account client ID (e.g. mdb_sa_id_...)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://www.mongodb.com/docs/atlas/api/service-accounts-overview/"
+    },
+    {
+      "name": "MONGODB_ATLAS_CLIENT_SECRET",
+      "description": "Atlas service account client secret (e.g. mdb_sa_sk_...)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://www.mongodb.com/docs/atlas/api/service-accounts-overview/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_projects",
+      "name": "List Projects",
+      "description": "List Atlas projects (groups) the service account can access",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://cloud.mongodb.com/api/atlas/v2/groups",
+        "params": {
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Accept",
+            "description": "Atlas versioned media type",
+            "default": "application/vnd.atlas.2025-03-12+json"
+          },
+          "itemsPerPage": {
+            "type": "number",
+            "in": "query",
+            "description": "Projects per page (max 500)",
+            "default": 100
+          },
+          "pageNum": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["results"],
+            "collectionName": "projects",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "orgId" },
+              { "name": "clusterCount" },
+              { "name": "created" }
+            ],
+            "omitted": "links and provider-specific payload fields",
+            "outputFields": [{ "name": "totalCount" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "list_clusters",
+      "name": "List Clusters",
+      "description": "List clusters in an Atlas project",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://cloud.mongodb.com/api/atlas/v2/groups/{groupId}/clusters",
+        "params": {
+          "groupId": {
+            "type": "string",
+            "in": "path",
+            "description": "Atlas project (group) ID — a 24-character hex string from List Projects",
+            "required": true
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Accept",
+            "description": "Atlas versioned media type",
+            "default": "application/vnd.atlas.2025-03-12+json"
+          },
+          "itemsPerPage": {
+            "type": "number",
+            "in": "query",
+            "description": "Clusters per page (max 500)",
+            "default": 100
+          },
+          "pageNum": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["results"],
+            "collectionName": "clusters",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "stateName" },
+              { "name": "clusterType" },
+              { "name": "mongoDBVersion" },
+              { "name": "paused" },
+              { "name": "createDate" }
+            ],
+            "omitted": "replication specs, connection strings, and provider-specific payload fields",
+            "outputFields": [{ "name": "totalCount" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_cluster",
+      "name": "Get Cluster",
+      "description": "Get details of a cluster, including state and connection strings",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://cloud.mongodb.com/api/atlas/v2/groups/{groupId}/clusters/{clusterName}",
+        "params": {
+          "groupId": {
+            "type": "string",
+            "in": "path",
+            "description": "Atlas project (group) ID",
+            "required": true
+          },
+          "clusterName": {
+            "type": "string",
+            "in": "path",
+            "description": "Cluster name",
+            "required": true
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Accept",
+            "description": "Atlas versioned media type",
+            "default": "application/vnd.atlas.2025-03-12+json"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_database_users",
+      "name": "List Database Users",
+      "description": "List database users configured in an Atlas project",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://cloud.mongodb.com/api/atlas/v2/groups/{groupId}/databaseUsers",
+        "params": {
+          "groupId": {
+            "type": "string",
+            "in": "path",
+            "description": "Atlas project (group) ID",
+            "required": true
+          },
+          "accept": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Accept",
+            "description": "Atlas versioned media type",
+            "default": "application/vnd.atlas.2025-03-12+json"
+          },
+          "itemsPerPage": {
+            "type": "number",
+            "in": "query",
+            "description": "Users per page (max 500)",
+            "default": 100
+          },
+          "pageNum": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["results"],
+            "collectionName": "database_users",
+            "itemFields": [
+              { "name": "username" },
+              { "name": "databaseName" },
+              { "name": "roles", "kind": "object" },
+              { "name": "awsIAMType" },
+              { "name": "x509Type" }
+            ],
+            "omitted": "scopes, labels, and provider-specific payload fields",
+            "outputFields": [{ "name": "totalCount" }]
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "cluster_overview",
+      "title": "Cluster overview",
+      "prompt": "List my MongoDB Atlas projects and the clusters in each, with their state and MongoDB version.",
+      "category": "data",
+      "icon": "list"
+    },
+    {
+      "id": "paused_clusters",
+      "title": "Find paused clusters",
+      "prompt": "Check my MongoDB Atlas clusters and tell me which ones are paused or not in the IDLE state.",
+      "category": "data",
+      "icon": "alert"
+    }
+  ],
+  "suggestedWith": ["aws", "datadog", "slack"],
+  "SETUP_GUIDE": {
+    "title": "MongoDB Atlas API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Sign in to Atlas",
+        "description": "Go to https://cloud.mongodb.com and sign in (a free M0 cluster is enough for testing)."
+      },
+      {
+        "step": 2,
+        "title": "Create a service account",
+        "description": "In Organization Access Manager > Applications > Service Accounts, create a service account with at least Organization Read Only (or Project Read Only on specific projects). Copy the client ID and client secret — the secret is shown only once."
+      },
+      {
+        "step": 3,
+        "title": "Add your IP to the API access list",
+        "description": "Service account access tokens can only be USED from IPs on the service account's API access list. Add your machine's IP (or 0.0.0.0/0 for testing only)."
+      },
+      {
+        "step": 4,
+        "title": "Set environment variables",
+        "description": "Add MONGODB_ATLAS_CLIENT_ID and MONGODB_ATLAS_CLIENT_SECRET to your .env. Tokens are minted automatically from https://cloud.mongodb.com/api/oauth/token via the OAuth2 client_credentials grant (credentials sent via HTTP Basic)."
+      },
+      {
+        "step": 5,
+        "title": "Verify access",
+        "description": "Run List Projects, then List Clusters with a project's ID."
+      }
+    ],
+    "notes": [
+      "Legacy Atlas programmatic API keys use HTTP Digest auth, which this connector does NOT support — use a service account (OAuth2 client_credentials) instead; MongoDB recommends service accounts over API keys",
+      "Every request must send a versioned Accept header; tools default to application/vnd.atlas.2025-03-12+json (the latest stable resource version). Atlas returns 406 if the header is missing or names a nonexistent version",
+      "Access tokens expire after 1 hour and are refreshed by re-running the client_credentials grant"
+    ],
+    "documentation": "https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2/"
+  }
+}

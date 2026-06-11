@@ -1,0 +1,269 @@
+{
+  "name": "google-chat",
+  "displayName": "Google Chat",
+  "icon": "google-chat.svg",
+  "description": "Read spaces and send messages in Google Chat",
+  "auth": {
+    "type": "oauth2",
+    "provider": "google",
+    "authorizationUrl": "https://accounts.google.com/o/oauth2/v2/auth",
+    "tokenUrl": "https://oauth2.googleapis.com/token",
+    "scopes": [
+      "https://www.googleapis.com/auth/chat.spaces.readonly",
+      "https://www.googleapis.com/auth/chat.messages"
+    ],
+    "callbackPath": "/api/auth/google-chat/callback",
+    "docsUrl": "https://developers.google.com/workspace/chat/api/reference/rest",
+    "requiredApis": [
+      {
+        "name": "Google Chat API",
+        "enableUrl": "https://console.cloud.google.com/apis/library/chat.googleapis.com"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "GOOGLE_CLIENT_ID",
+      "description": "Google OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://console.cloud.google.com/apis/credentials"
+    },
+    {
+      "name": "GOOGLE_CLIENT_SECRET",
+      "description": "Google OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://console.cloud.google.com/apis/credentials"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_spaces",
+      "name": "List Spaces",
+      "description": "List Google Chat spaces (rooms and direct messages) the authenticated user is a member of",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://chat.googleapis.com/v1/spaces",
+        "params": {
+          "pageSize": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum spaces to return (max 1000)",
+            "default": 50
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Page token from a previous list call"
+          },
+          "filter": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by space type, e.g. spaceType = \"SPACE\" or spaceType = \"DIRECT_MESSAGE\""
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["spaces"],
+            "collectionName": "spaces",
+            "itemFields": [
+              { "name": "name" },
+              { "name": "displayName" },
+              { "name": "spaceType" },
+              { "name": "singleUserBotDm" },
+              { "name": "createTime" }
+            ],
+            "omitted": "space details and provider-specific payload fields",
+            "outputFields": [{ "name": "nextPageToken" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_space",
+      "name": "Get Space",
+      "description": "Get details of a Google Chat space",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://chat.googleapis.com/v1/spaces/{spaceId}",
+        "params": {
+          "spaceId": {
+            "type": "string",
+            "in": "path",
+            "description": "Space ID — the part after 'spaces/' in the space resource name (e.g. AAAAAAAAAAA)",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_messages",
+      "name": "List Messages",
+      "description": "List messages in a Google Chat space, including messages in threads",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://chat.googleapis.com/v1/spaces/{spaceId}/messages",
+        "params": {
+          "spaceId": {
+            "type": "string",
+            "in": "path",
+            "description": "Space ID — the part after 'spaces/' in the space resource name",
+            "required": true
+          },
+          "pageSize": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum messages to return (max 1000)",
+            "default": 25
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Page token from a previous list call"
+          },
+          "filter": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter, e.g. createTime > \"2026-01-01T00:00:00+00:00\""
+          },
+          "orderBy": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort order: createTime ASC or createTime DESC",
+            "default": "createTime DESC"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["messages"],
+            "collectionName": "messages",
+            "itemFields": [
+              { "name": "name" },
+              { "name": "text", "maxLength": 300 },
+              { "name": "sender", "kind": "contact" },
+              { "name": "createTime" },
+              { "name": "thread", "kind": "object" }
+            ],
+            "omitted": "cards, annotations, and provider-specific payload fields",
+            "outputFields": [{ "name": "nextPageToken" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_message",
+      "name": "Get Message",
+      "description": "Get details of a specific Google Chat message",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://chat.googleapis.com/v1/spaces/{spaceId}/messages/{messageId}",
+        "params": {
+          "spaceId": {
+            "type": "string",
+            "in": "path",
+            "description": "Space ID — the part after 'spaces/' in the space resource name",
+            "required": true
+          },
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Message ID — the part after 'messages/' in the message resource name",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "send_message",
+      "name": "Send Message",
+      "description": "Send a text message to a Google Chat space",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://chat.googleapis.com/v1/spaces/{spaceId}/messages",
+        "params": {
+          "spaceId": {
+            "type": "string",
+            "in": "path",
+            "description": "Space ID — the part after 'spaces/' in the space resource name",
+            "required": true
+          },
+          "messageReplyOption": {
+            "type": "string",
+            "in": "query",
+            "description": "Set to REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD to reply in a thread when body.thread is provided"
+          }
+        },
+        "body": {
+          "text": {
+            "type": "string",
+            "description": "Plain-text message body (supports Google Chat markup)",
+            "required": true
+          },
+          "thread": {
+            "type": "object",
+            "description": "Optional thread to reply to, e.g. { \"name\": \"spaces/AAA/threads/BBB\" }"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "recent_messages",
+      "title": "Catch up on a space",
+      "prompt": "List my Google Chat spaces, then summarize the most recent messages in the most active one.",
+      "category": "communication",
+      "icon": "message"
+    },
+    {
+      "id": "send_update",
+      "title": "Send a message",
+      "prompt": "Send a status update message to a Google Chat space of my choice.",
+      "category": "communication",
+      "icon": "send"
+    }
+  ],
+  "suggestedWith": ["gmail", "calendar", "drive"],
+  "SETUP_GUIDE": {
+    "title": "Google Chat API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Google Cloud project",
+        "description": "Go to https://console.cloud.google.com/ and create (or select) a project. Any Google Workspace account can be used for testing; Chat API requires a Workspace account (consumer @gmail.com accounts cannot use Google Chat spaces)."
+      },
+      {
+        "step": 2,
+        "title": "Enable the Google Chat API",
+        "description": "Enable the API at https://console.cloud.google.com/apis/library/chat.googleapis.com."
+      },
+      {
+        "step": 3,
+        "title": "Configure the OAuth consent screen and Chat app",
+        "description": "Under APIs & Services → OAuth consent screen, configure the app and add the scopes chat.spaces.readonly and chat.messages. The Chat API also requires a Chat app configuration: visit https://console.cloud.google.com/apis/api/chat.googleapis.com/hangouts-chat and set an app name, avatar, and description."
+      },
+      {
+        "step": 4,
+        "title": "Create OAuth credentials",
+        "description": "Under APIs & Services → Credentials, create an OAuth client ID (Web application) with redirect URI <your-app-url>/api/auth/google-chat/callback. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in your .env."
+      },
+      {
+        "step": 5,
+        "title": "Verify access",
+        "description": "Run the List Spaces tool, then List Messages on one of the returned spaces."
+      }
+    ],
+    "notes": [
+      "Google Chat user authentication requires a Google Workspace account — consumer Gmail accounts will get 403s",
+      "Space and message IDs are resource-name segments: spaces/{spaceId} and spaces/{spaceId}/messages/{messageId}",
+      "The chat.messages scope covers listing, reading, and sending messages; chat.spaces.readonly covers space discovery"
+    ],
+    "documentation": "https://developers.google.com/workspace/chat/api/reference/rest"
+  }
+}

@@ -1,0 +1,280 @@
+{
+  "name": "langfuse",
+  "displayName": "Langfuse",
+  "icon": "langfuse.svg",
+  "description": "Query Langfuse traces and observations and create scores for LLM observability and evals",
+  "auth": {
+    "type": "basic",
+    "usernameKey": "LANGFUSE_PUBLIC_KEY",
+    "passwordKey": "LANGFUSE_SECRET_KEY",
+    "docsUrl": "https://langfuse.com/docs/api-and-data-platform/features/public-api",
+    "requiredApis": [
+      {
+        "name": "Langfuse Project API Keys",
+        "enableUrl": "https://cloud.langfuse.com"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "LANGFUSE_PUBLIC_KEY",
+      "description": "Langfuse project public key (starts with pk-lf-), used as the HTTP Basic username",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://langfuse.com/faq/all/where-are-langfuse-api-keys"
+    },
+    {
+      "name": "LANGFUSE_SECRET_KEY",
+      "description": "Langfuse project secret key (starts with sk-lf-), used as the HTTP Basic password",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://langfuse.com/faq/all/where-are-langfuse-api-keys"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_traces",
+      "name": "List Traces",
+      "description": "List traces in the Langfuse project with optional filters",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/api/public/traces",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Langfuse host: cloud.langfuse.com (EU), us.cloud.langfuse.com (US), or your self-hosted domain",
+            "default": "cloud.langfuse.com"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Traces per page",
+            "default": 25
+          },
+          "userId": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return traces for this user ID"
+          },
+          "name": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return traces with this name"
+          },
+          "sessionId": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return traces in this session"
+          },
+          "fromTimestamp": {
+            "type": "string",
+            "in": "query",
+            "description": "Only traces on or after this ISO 8601 timestamp, e.g. 2026-06-01T00:00:00Z"
+          },
+          "toTimestamp": {
+            "type": "string",
+            "in": "query",
+            "description": "Only traces before this ISO 8601 timestamp"
+          },
+          "tags": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return traces with this tag"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "traces",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "timestamp" },
+              { "name": "userId" },
+              { "name": "sessionId" },
+              { "name": "tags", "kind": "string-array" }
+            ],
+            "omitted": "trace input/output payloads, costs, and provider-specific payload fields",
+            "outputFields": [{ "name": "meta", "kind": "object" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_trace",
+      "name": "Get Trace",
+      "description": "Get a single trace with its full observation tree and scores",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/api/public/traces/{traceId}",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Langfuse host: cloud.langfuse.com (EU), us.cloud.langfuse.com (US), or your self-hosted domain",
+            "default": "cloud.langfuse.com"
+          },
+          "traceId": {
+            "type": "string",
+            "in": "path",
+            "description": "Trace ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_observations",
+      "name": "List Observations",
+      "description": "List observations (spans, generations, events) with optional filters",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/api/public/observations",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Langfuse host: cloud.langfuse.com (EU), us.cloud.langfuse.com (US), or your self-hosted domain",
+            "default": "cloud.langfuse.com"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Observations per page",
+            "default": 25
+          },
+          "traceId": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return observations belonging to this trace"
+          },
+          "type": {
+            "type": "string",
+            "in": "query",
+            "description": "Observation type: SPAN, GENERATION, or EVENT"
+          },
+          "name": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return observations with this name"
+          },
+          "userId": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return observations for this user ID"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_score",
+      "name": "Create Score",
+      "description": "Attach a score (evaluation result) to a trace or observation",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{host}/api/public/scores",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Langfuse host: cloud.langfuse.com (EU), us.cloud.langfuse.com (US), or your self-hosted domain",
+            "default": "cloud.langfuse.com"
+          }
+        },
+        "body": {
+          "traceId": {
+            "type": "string",
+            "description": "Trace ID to score",
+            "required": true
+          },
+          "name": {
+            "type": "string",
+            "description": "Score name, e.g. accuracy or user-feedback",
+            "required": true
+          },
+          "value": {
+            "type": "number",
+            "description": "Score value (numeric; for BOOLEAN data type use 1 or 0)",
+            "required": true
+          },
+          "observationId": {
+            "type": "string",
+            "description": "Score a specific observation within the trace instead of the whole trace"
+          },
+          "comment": {
+            "type": "string",
+            "description": "Optional comment explaining the score"
+          },
+          "dataType": {
+            "type": "string",
+            "description": "Score data type: NUMERIC, BOOLEAN, or CATEGORICAL"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "recent_traces",
+      "title": "Review recent traces",
+      "prompt": "List my most recent Langfuse traces and summarize latency, errors, and usage patterns.",
+      "category": "observability",
+      "icon": "list"
+    },
+    {
+      "id": "score_trace",
+      "title": "Score a trace",
+      "prompt": "Look up a Langfuse trace I specify and attach an accuracy score with a short comment.",
+      "category": "observability",
+      "icon": "star"
+    }
+  ],
+  "suggestedWith": ["openai", "anthropic", "gemini"],
+  "SETUP_GUIDE": {
+    "title": "Langfuse API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Langfuse account",
+        "description": "Sign up at https://cloud.langfuse.com (EU) or https://us.cloud.langfuse.com (US) — the free Hobby plan is enough for testing. Self-hosting is also supported."
+      },
+      {
+        "step": 2,
+        "title": "Create project API keys",
+        "description": "In your Langfuse project, open Settings → API Keys and create a key pair. You get a public key (pk-lf-...) and a secret key (sk-lf-...)."
+      },
+      {
+        "step": 3,
+        "title": "Store the keys",
+        "description": "Add LANGFUSE_PUBLIC_KEY=pk-lf-... and LANGFUSE_SECRET_KEY=sk-lf-... to your .env file. The API uses HTTP Basic auth with the public key as username and secret key as password."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Traces tool. If your project is in the US region, pass host us.cloud.langfuse.com; EU projects use the default cloud.langfuse.com."
+      }
+    ],
+    "notes": [
+      "API keys are project-scoped — create separate keys per project/environment",
+      "All tools take a 'host' parameter (default cloud.langfuse.com for EU); US cloud is us.cloud.langfuse.com and self-hosted deployments use their own domain"
+    ],
+    "documentation": "https://api.reference.langfuse.com"
+  }
+}

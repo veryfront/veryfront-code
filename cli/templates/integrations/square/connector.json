@@ -1,0 +1,323 @@
+{
+  "name": "square",
+  "displayName": "Square",
+  "icon": "square.svg",
+  "description": "Read payments, orders, customers, catalog, and locations from Square",
+  "auth": {
+    "type": "oauth2",
+    "provider": "square",
+    "authorizationUrl": "https://connect.squareup.com/oauth2/authorize",
+    "tokenUrl": "https://connect.squareup.com/oauth2/token",
+    "scopes": [
+      "MERCHANT_PROFILE_READ",
+      "PAYMENTS_READ",
+      "ORDERS_READ",
+      "CUSTOMERS_READ",
+      "ITEMS_READ"
+    ],
+    "callbackPath": "/api/auth/square/callback",
+    "docsUrl": "https://developer.squareup.com/docs/oauth-api/overview",
+    "requiredApis": [
+      {
+        "name": "Square Developer Console",
+        "enableUrl": "https://developer.squareup.com/apps"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "SQUARE_CLIENT_ID",
+      "description": "Square application ID (OAuth client ID)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.squareup.com/apps"
+    },
+    {
+      "name": "SQUARE_CLIENT_SECRET",
+      "description": "Square OAuth application secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.squareup.com/apps"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_payments",
+      "name": "List Payments",
+      "description": "List payments taken by the seller account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://connect.squareup.com/v2/payments",
+        "params": {
+          "square_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Square API version",
+            "default": "2026-05-20",
+            "headerName": "Square-Version"
+          },
+          "begin_time": {
+            "type": "string",
+            "in": "query",
+            "description": "RFC 3339 start of the time window (defaults to one year ago)"
+          },
+          "end_time": {
+            "type": "string",
+            "in": "query",
+            "description": "RFC 3339 end of the time window (defaults to now)"
+          },
+          "location_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Limit results to a specific location ID"
+          },
+          "sort_order": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort by created time: ASC or DESC",
+            "default": "DESC"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Payments per page (max 100)",
+            "default": 50
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["payments"],
+            "collectionName": "payments",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "status" },
+              { "name": "amount_money", "kind": "object" },
+              { "name": "source_type" },
+              { "name": "order_id" },
+              { "name": "customer_id" },
+              { "name": "created_at" },
+              { "name": "updated_at" }
+            ],
+            "omitted": "card details, processing fees, and risk evaluation blocks",
+            "outputFields": [{ "name": "cursor" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_payment",
+      "name": "Get Payment",
+      "description": "Get details of a payment",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://connect.squareup.com/v2/payments/{paymentId}",
+        "params": {
+          "paymentId": {
+            "type": "string",
+            "in": "path",
+            "description": "Square payment ID",
+            "required": true
+          },
+          "square_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Square API version",
+            "default": "2026-05-20",
+            "headerName": "Square-Version"
+          }
+        },
+        "response": {
+          "transform": "payment"
+        }
+      }
+    },
+    {
+      "id": "search_orders",
+      "name": "Search Orders",
+      "description": "Search orders across locations (read-only search via POST)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://connect.squareup.com/v2/orders/search",
+        "params": {
+          "square_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Square API version",
+            "default": "2026-05-20",
+            "headerName": "Square-Version"
+          }
+        },
+        "body": {
+          "location_ids": {
+            "type": "array",
+            "description": "Location IDs to search (from List Locations), max 10",
+            "required": true
+          },
+          "query": {
+            "type": "object",
+            "description": "Optional search query with filter (date_time_filter, state_filter) and sort"
+          },
+          "limit": {
+            "type": "number",
+            "description": "Orders per page",
+            "default": 50
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Pagination cursor from a previous response"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_customers",
+      "name": "List Customers",
+      "description": "List customer profiles",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://connect.squareup.com/v2/customers",
+        "params": {
+          "square_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Square API version",
+            "default": "2026-05-20",
+            "headerName": "Square-Version"
+          },
+          "sort_field": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort field: DEFAULT or CREATED_AT",
+            "default": "DEFAULT"
+          },
+          "sort_order": {
+            "type": "string",
+            "in": "query",
+            "description": "ASC or DESC",
+            "default": "ASC"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Customers per page (max 100)",
+            "default": 50
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_locations",
+      "name": "List Locations",
+      "description": "List the seller's business locations",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://connect.squareup.com/v2/locations",
+        "params": {
+          "square_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Square API version",
+            "default": "2026-05-20",
+            "headerName": "Square-Version"
+          }
+        },
+        "response": {
+          "transform": "locations"
+        }
+      }
+    },
+    {
+      "id": "list_catalog",
+      "name": "List Catalog",
+      "description": "List catalog objects such as items and categories",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://connect.squareup.com/v2/catalog/list",
+        "params": {
+          "square_version": {
+            "type": "string",
+            "in": "header",
+            "description": "Square API version",
+            "default": "2026-05-20",
+            "headerName": "Square-Version"
+          },
+          "types": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated object types, e.g. ITEM,CATEGORY",
+            "default": "ITEM"
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "recent_payments",
+      "title": "Recent payments",
+      "prompt": "List my Square payments from the last 7 days and summarize totals by status.",
+      "category": "finance",
+      "icon": "payment"
+    },
+    {
+      "id": "open_orders",
+      "title": "Open orders",
+      "prompt": "Search my Square orders in the OPEN state across all locations.",
+      "category": "commerce",
+      "icon": "cart"
+    }
+  ],
+  "suggestedWith": ["stripe", "paypal", "sheets"],
+  "SETUP_GUIDE": {
+    "title": "Square OAuth Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Square application",
+        "description": "Go to the Developer Console at https://developer.squareup.com/apps and create an application. Use the Production tab for live data; the Sandbox tab (connect.squareupsandbox.com) provides a test seller account."
+      },
+      {
+        "step": 2,
+        "title": "Configure the redirect URL",
+        "description": "In the app's OAuth settings, set the Production Redirect URL to your deployment's /api/auth/square/callback URL."
+      },
+      {
+        "step": 3,
+        "title": "Copy credentials",
+        "description": "Copy the Application ID and OAuth Application Secret from the OAuth page into SQUARE_CLIENT_ID and SQUARE_CLIENT_SECRET in your .env."
+      },
+      {
+        "step": 4,
+        "title": "Connect and verify",
+        "description": "Complete the OAuth consent flow, then run List Locations to confirm access."
+      }
+    ],
+    "notes": [
+      "This connector uses the confidential code flow; Square's token endpoint takes client_id and client_secret in the JSON request body",
+      "Every request sends a Square-Version header (tools default to 2026-05-20); update the default to adopt newer API versions",
+      "Refresh tokens from the code flow do not expire, but sellers can revoke access at any time"
+    ],
+    "documentation": "https://developer.squareup.com/docs"
+  }
+}

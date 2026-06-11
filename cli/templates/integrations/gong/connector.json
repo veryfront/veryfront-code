@@ -1,0 +1,238 @@
+{
+  "name": "gong",
+  "displayName": "Gong",
+  "icon": "gong.svg",
+  "description": "Read call recordings metadata, call content, and users from Gong",
+  "auth": {
+    "type": "basic",
+    "usernameKey": "GONG_ACCESS_KEY",
+    "passwordKey": "GONG_ACCESS_KEY_SECRET",
+    "docsUrl": "https://help.gong.io/docs/receive-access-to-the-api",
+    "requiredApis": [
+      {
+        "name": "Gong API Settings",
+        "enableUrl": "https://app.gong.io/company/api"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "GONG_ACCESS_KEY",
+      "description": "Gong API Access Key",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://help.gong.io/docs/receive-access-to-the-api"
+    },
+    {
+      "name": "GONG_ACCESS_KEY_SECRET",
+      "description": "Gong API Access Key Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://help.gong.io/docs/receive-access-to-the-api"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_calls",
+      "name": "List Calls",
+      "description": "List calls in a date window (max 90 days per request)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.gong.io/v2/calls",
+        "params": {
+          "fromDateTime": {
+            "type": "string",
+            "in": "query",
+            "description": "Window start, ISO 8601 with timezone, e.g. 2026-06-01T00:00:00Z",
+            "required": true
+          },
+          "toDateTime": {
+            "type": "string",
+            "in": "query",
+            "description": "Window end, ISO 8601 with timezone (within 90 days of fromDateTime)",
+            "required": true
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from records.cursor in a previous response"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["calls"],
+            "collectionName": "calls",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "title" },
+              { "name": "started" },
+              { "name": "duration" },
+              { "name": "direction" },
+              { "name": "primaryUserId" },
+              { "name": "url" }
+            ],
+            "omitted": "media URLs, parties, and call system metadata",
+            "outputFields": [{ "name": "records", "kind": "object" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_call",
+      "name": "Get Call",
+      "description": "Get metadata for a single call",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.gong.io/v2/calls/{callId}",
+        "params": {
+          "callId": {
+            "type": "string",
+            "in": "path",
+            "description": "Gong call ID",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "call"
+        }
+      }
+    },
+    {
+      "id": "get_calls_extensive",
+      "name": "Get Calls Extensive",
+      "description": "Retrieve detailed call data with content selectors (read-only retrieval via POST)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.gong.io/v2/calls/extensive",
+        "body": {
+          "filter": {
+            "type": "object",
+            "description": "Filter object, e.g. {\"fromDateTime\":\"2026-06-01T00:00:00Z\",\"toDateTime\":\"2026-06-08T00:00:00Z\"} or {\"callIds\":[\"...\"]}",
+            "required": true
+          },
+          "contentSelector": {
+            "type": "object",
+            "description": "Which data to include, e.g. {\"exposedFields\":{\"parties\":true,\"content\":{\"brief\":true,\"keyPoints\":true}}}"
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Pagination cursor from records.cursor in a previous response"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_call_transcripts",
+      "name": "Get Call Transcripts",
+      "description": "Retrieve transcripts for specific calls (read-only retrieval via POST)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.gong.io/v2/calls/transcript",
+        "body": {
+          "filter": {
+            "type": "object",
+            "description": "Filter object, e.g. {\"callIds\":[\"1234567890\"]} or a fromDateTime/toDateTime window",
+            "required": true
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Pagination cursor from records.cursor in a previous response"
+          }
+        },
+        "response": {
+          "transform": "callTranscripts"
+        }
+      }
+    },
+    {
+      "id": "list_users",
+      "name": "List Users",
+      "description": "List Gong users in the company",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.gong.io/v2/users",
+        "params": {
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from records.cursor in a previous response"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_user",
+      "name": "Get User",
+      "description": "Get a Gong user by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.gong.io/v2/users/{userId}",
+        "params": {
+          "userId": {
+            "type": "string",
+            "in": "path",
+            "description": "Gong user ID",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "user"
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "recent_calls",
+      "title": "Recent calls",
+      "prompt": "List my Gong calls from the last 7 days with titles, durations, and owners.",
+      "category": "sales",
+      "icon": "phone"
+    },
+    {
+      "id": "call_summary",
+      "title": "Summarize a call",
+      "prompt": "Get the transcript of my most recent Gong call and summarize the key points and next steps.",
+      "category": "sales",
+      "icon": "doc"
+    }
+  ],
+  "suggestedWith": ["salesforce", "hubspot", "slack"],
+  "SETUP_GUIDE": {
+    "title": "Gong API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Get API access",
+        "description": "Sign in to Gong as a technical administrator. API access requires a Gong subscription; ask your admin if you don't see the API settings."
+      },
+      {
+        "step": 2,
+        "title": "Create an access key",
+        "description": "In the Gong admin center go to Ecosystem → API (https://app.gong.io/company/api) and click 'Create' to generate an Access Key and Access Key Secret."
+      },
+      {
+        "step": 3,
+        "title": "Set environment variables",
+        "description": "Add GONG_ACCESS_KEY and GONG_ACCESS_KEY_SECRET to your .env."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Users to confirm the credentials work."
+      }
+    ],
+    "notes": [
+      "Authentication is HTTP Basic: base64(accessKey:accessKeySecret) in the Authorization header",
+      "Default rate limits are 3 calls/second and 10,000 calls/day; a 429 response includes a Retry-After header",
+      "List Calls requires fromDateTime and toDateTime and caps the window at 90 days per request"
+    ],
+    "documentation": "https://gong.app.gong.io/settings/api/documentation"
+  }
+}

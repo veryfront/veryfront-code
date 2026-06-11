@@ -267,6 +267,54 @@
           }
         }
       }
+    },
+    {
+      "id": "download_file",
+      "name": "Download File",
+      "description": "Download the content of a binary or text file stored in Google Drive (not Google Docs/Sheets/Slides; use export_file for those)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://www.googleapis.com/drive/v3/files/{fileId}",
+        "params": {
+          "fileId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Drive file ID to download",
+            "required": true
+          },
+          "alt": {
+            "type": "string",
+            "in": "query",
+            "description": "Response mode; media returns file content",
+            "default": "media"
+          }
+        }
+      }
+    },
+    {
+      "id": "export_file",
+      "name": "Export File",
+      "description": "Export a Google Docs/Sheets/Slides file to another format such as text/plain, text/csv, or application/pdf",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://www.googleapis.com/drive/v3/files/{fileId}/export",
+        "params": {
+          "fileId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Drive file ID of the Google Workspace document to export",
+            "required": true
+          },
+          "mimeType": {
+            "type": "string",
+            "in": "query",
+            "description": "Export MIME type, e.g. text/plain, text/csv, application/pdf",
+            "required": true
+          }
+        }
+      }
     }
   ],
   "prompts": [

@@ -1,0 +1,203 @@
+{
+  "name": "exa",
+  "displayName": "Exa",
+  "icon": "exa.svg",
+  "description": "Neural web search, page contents, similar-link discovery, and grounded answers via the Exa API",
+  "auth": {
+    "type": "api-key",
+    "keyName": "EXA_API_KEY",
+    "headerName": "x-api-key",
+    "docsUrl": "https://docs.exa.ai/reference/getting-started",
+    "requiredApis": [
+      {
+        "name": "Exa API Keys",
+        "enableUrl": "https://dashboard.exa.ai/api-keys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "EXA_API_KEY",
+      "description": "Exa API key from the Exa dashboard",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.exa.ai/reference/getting-started"
+    }
+  ],
+  "tools": [
+    {
+      "id": "search",
+      "name": "Search",
+      "description": "Search the web with Exa's neural and keyword search",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.exa.ai/search",
+        "body": {
+          "query": {
+            "type": "string",
+            "description": "Search query text",
+            "required": true
+          },
+          "type": {
+            "type": "string",
+            "description": "Search type: auto, fast, instant, deep, or keyword",
+            "default": "auto"
+          },
+          "numResults": {
+            "type": "number",
+            "description": "Number of results to return (max 100)",
+            "default": 10
+          },
+          "category": {
+            "type": "string",
+            "description": "Focus category, e.g. company, research paper, news, github, pdf"
+          },
+          "contents": {
+            "type": "object",
+            "description": "Content options, e.g. {\"text\":true} to include page text in results"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["results"],
+            "collectionName": "results",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "title" },
+              { "name": "url" },
+              { "name": "publishedDate" },
+              { "name": "author" }
+            ],
+            "omitted": "page text, highlights, and provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_contents",
+      "name": "Get Contents",
+      "description": "Get parsed page contents, summaries, and metadata for a list of URLs",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.exa.ai/contents",
+        "body": {
+          "urls": {
+            "type": "array",
+            "description": "URLs to fetch contents for, e.g. [\"https://example.com\"]",
+            "required": true
+          },
+          "text": {
+            "type": "boolean",
+            "description": "Include full page text",
+            "default": true
+          },
+          "summary": {
+            "type": "object",
+            "description": "Summary options, e.g. {\"query\":\"What is this page about?\"}"
+          },
+          "highlights": {
+            "type": "object",
+            "description": "Highlight options for key excerpts, e.g. {\"numSentences\":3}"
+          }
+        }
+      }
+    },
+    {
+      "id": "find_similar",
+      "name": "Find Similar Links",
+      "description": "Find pages similar in meaning to a given URL",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.exa.ai/findSimilar",
+        "body": {
+          "url": {
+            "type": "string",
+            "description": "URL to find similar pages for",
+            "required": true
+          },
+          "numResults": {
+            "type": "number",
+            "description": "Number of results to return (max 100)",
+            "default": 10
+          },
+          "contents": {
+            "type": "object",
+            "description": "Content options, e.g. {\"text\":true} to include page text in results"
+          }
+        }
+      }
+    },
+    {
+      "id": "answer",
+      "name": "Answer",
+      "description": "Get an LLM-generated answer to a question grounded in Exa search results with citations",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.exa.ai/answer",
+        "body": {
+          "query": {
+            "type": "string",
+            "description": "Question to answer",
+            "required": true
+          },
+          "text": {
+            "type": "boolean",
+            "description": "Include full text of citation sources",
+            "default": false
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "neural_search",
+      "title": "Search the web",
+      "prompt": "Use Exa to search the web for a topic I provide and summarize the top results.",
+      "category": "search",
+      "icon": "search"
+    },
+    {
+      "id": "similar_pages",
+      "title": "Find similar pages",
+      "prompt": "Find pages similar to a URL I provide using Exa and explain how they relate.",
+      "category": "search",
+      "icon": "link"
+    }
+  ],
+  "suggestedWith": ["openai", "anthropic", "notion"],
+  "SETUP_GUIDE": {
+    "title": "Exa API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create an Exa account",
+        "description": "Go to https://dashboard.exa.ai and sign up — new accounts include free credits for testing."
+      },
+      {
+        "step": 2,
+        "title": "Create an API key",
+        "description": "Open https://dashboard.exa.ai/api-keys and create a key with a descriptive name (e.g. 'Veryfront Integration')."
+      },
+      {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Add it to your .env file as EXA_API_KEY=..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the Search tool with a simple query. A 401 means the key is invalid; a 402 means you are out of credits."
+      }
+    ],
+    "notes": [
+      "All endpoints are billed per request from your credit balance; Answer also incurs LLM generation cost",
+      "Deep search types cost more than fast/instant — use type 'auto' unless you need depth"
+    ],
+    "documentation": "https://docs.exa.ai"
+  }
+}

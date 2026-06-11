@@ -1,0 +1,280 @@
+{
+  "name": "algolia",
+  "displayName": "Algolia",
+  "icon": "algolia.svg",
+  "description": "Search, browse, and update records in Algolia search indices",
+  "auth": {
+    "type": "api-key",
+    "keyName": "ALGOLIA_API_KEY",
+    "headerName": "X-Algolia-API-Key",
+    "additionalHeaders": {
+      "X-Algolia-Application-Id": "ALGOLIA_APP_ID"
+    },
+    "docsUrl": "https://www.algolia.com/doc/rest-api/search/",
+    "requiredApis": [
+      {
+        "name": "Algolia API Keys",
+        "enableUrl": "https://dashboard.algolia.com/account/api-keys/all"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "ALGOLIA_API_KEY",
+      "description": "Algolia API key (use the Search API key for read-only access, or a scoped key with addObject for writes)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://www.algolia.com/doc/guides/security/api-keys/"
+    },
+    {
+      "name": "ALGOLIA_APP_ID",
+      "description": "Algolia application ID (10-character uppercase ID shown next to your API keys)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://www.algolia.com/doc/guides/security/api-keys/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_indices",
+      "name": "List Indices",
+      "description": "List the indices in the Algolia application",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/1/indexes",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Algolia host built from your application ID: pass \"<ALGOLIA_APP_ID>-dsn.algolia.net\", e.g. B1G2GM9NG0-dsn.algolia.net",
+            "required": true
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page of indices to fetch (0-based; omit to list all)"
+          }
+        },
+        "response": {
+          "transform": "items",
+          "historicalSummary": {
+            "collectionKeys": ["items", "indices"],
+            "collectionName": "indices",
+            "itemFields": [
+              { "name": "name" },
+              { "name": "entries" },
+              { "name": "dataSize" },
+              { "name": "createdAt" },
+              { "name": "updatedAt" }
+            ],
+            "omitted": "index settings and provider-specific payload fields",
+            "outputFields": [{ "name": "nbPages" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "search_index",
+      "name": "Search Index",
+      "description": "Run a search query against an index",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{host}/1/indexes/{indexName}/query",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Algolia host built from your application ID: pass \"<ALGOLIA_APP_ID>-dsn.algolia.net\", e.g. B1G2GM9NG0-dsn.algolia.net",
+            "required": true
+          },
+          "indexName": {
+            "type": "string",
+            "in": "path",
+            "description": "Name of the index to search",
+            "required": true
+          }
+        },
+        "body": {
+          "query": {
+            "type": "string",
+            "description": "Search query text",
+            "required": true
+          },
+          "hitsPerPage": {
+            "type": "number",
+            "description": "Number of hits per page (max 1000)",
+            "default": 20
+          },
+          "page": {
+            "type": "number",
+            "description": "Page of results to fetch (0-based)",
+            "default": 0
+          },
+          "filters": {
+            "type": "string",
+            "description": "Filter expression, e.g. category:book AND price < 100"
+          },
+          "attributesToRetrieve": {
+            "type": "array",
+            "description": "Record attributes to include in results, e.g. [\"title\",\"url\"]"
+          }
+        }
+      }
+    },
+    {
+      "id": "browse_index",
+      "name": "Browse Index",
+      "description": "Browse all records in an index with cursor-based pagination",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{host}/1/indexes/{indexName}/browse",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Algolia host built from your application ID: pass \"<ALGOLIA_APP_ID>-dsn.algolia.net\", e.g. B1G2GM9NG0-dsn.algolia.net",
+            "required": true
+          },
+          "indexName": {
+            "type": "string",
+            "in": "path",
+            "description": "Name of the index to browse",
+            "required": true
+          }
+        },
+        "body": {
+          "query": {
+            "type": "string",
+            "description": "Optional query to restrict the records browsed"
+          },
+          "hitsPerPage": {
+            "type": "number",
+            "description": "Records per page (max 1000)",
+            "default": 100
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Cursor from the previous browse response to fetch the next page"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_object",
+      "name": "Get Object",
+      "description": "Retrieve a single record from an index by objectID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{host}/1/indexes/{indexName}/{objectID}",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Algolia host built from your application ID: pass \"<ALGOLIA_APP_ID>-dsn.algolia.net\", e.g. B1G2GM9NG0-dsn.algolia.net",
+            "required": true
+          },
+          "indexName": {
+            "type": "string",
+            "in": "path",
+            "description": "Name of the index",
+            "required": true
+          },
+          "objectID": {
+            "type": "string",
+            "in": "path",
+            "description": "Unique object ID of the record",
+            "required": true
+          },
+          "attributesToRetrieve": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated attributes to return"
+          }
+        }
+      }
+    },
+    {
+      "id": "save_objects",
+      "name": "Save Objects",
+      "description": "Add or update records in an index via a batch operation",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{host}/1/indexes/{indexName}/batch",
+        "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description": "Algolia host built from your application ID: pass \"<ALGOLIA_APP_ID>-dsn.algolia.net\", e.g. B1G2GM9NG0-dsn.algolia.net",
+            "required": true
+          },
+          "indexName": {
+            "type": "string",
+            "in": "path",
+            "description": "Name of the index to write to",
+            "required": true
+          }
+        },
+        "body": {
+          "requests": {
+            "type": "array",
+            "description": "Batch operations, e.g. [{\"action\":\"addObject\",\"body\":{\"objectID\":\"1\",\"title\":\"My record\"}}]; actions include addObject, updateObject, partialUpdateObject, deleteObject",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "search_records",
+      "title": "Search an index",
+      "prompt": "Search my Algolia index for a query I provide and summarize the top hits.",
+      "category": "search",
+      "icon": "search"
+    },
+    {
+      "id": "index_overview",
+      "title": "Index overview",
+      "prompt": "List my Algolia indices with their record counts and last update times.",
+      "category": "search",
+      "icon": "list"
+    }
+  ],
+  "suggestedWith": ["shopify", "supabase", "github"],
+  "SETUP_GUIDE": {
+    "title": "Algolia API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create an Algolia application",
+        "description": "Sign up at https://dashboard.algolia.com (the free Build plan works for testing) and create or select an application."
+      },
+      {
+        "step": 2,
+        "title": "Copy your credentials",
+        "description": "In Settings → API Keys (https://dashboard.algolia.com/account/api-keys/all), copy the Application ID into ALGOLIA_APP_ID and an API key into ALGOLIA_API_KEY. Use the Search API key for read-only use, or create a scoped key with search, browse, and addObject ACLs for writes — avoid the Admin API key."
+      },
+      {
+        "step": 3,
+        "title": "Note your host",
+        "description": "Tools take a 'host' parameter: pass \"<ALGOLIA_APP_ID>-dsn.algolia.net\" (your application ID followed by -dsn.algolia.net)."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Indices tool. A 403 usually means the API key lacks the required ACL or the host does not match your application ID."
+      }
+    ],
+    "notes": [
+      "Algolia authenticates with two headers: X-Algolia-API-Key and X-Algolia-Application-Id — both env vars are required",
+      "Browse requires an API key with the 'browse' ACL; Save Objects requires 'addObject'",
+      "The Search API key is safe to expose in frontends, but scoped/write keys must stay server-side"
+    ],
+    "documentation": "https://www.algolia.com/doc/rest-api/search/"
+  }
+}

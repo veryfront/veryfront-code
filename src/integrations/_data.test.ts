@@ -46,45 +46,139 @@ describe("integration endpoint specs", () => {
       "teams",
     ];
     const sourceConnectors = [
+      "activecampaign",
       "airtable",
+      "algolia",
+      "amplitude",
       "anthropic",
+      "apify",
+      "apollo",
       "asana",
+      "ashby",
+      "assemblyai",
+      "attio",
       "aws",
+      "axiom",
+      "basecamp",
+      "betterstack",
       "bitbucket",
+      "box",
+      "brevo",
+      "browserbase",
+      "buildkite",
       "calendar",
+      "calendly",
+      "checkly",
+      "circleci",
+      "clickhouse",
+      "clickup",
+      "close",
+      "cloudflare",
+      "coda",
+      "cohere",
       "confluence",
+      "datadog",
+      "deepgram",
+      "dialpad",
+      "digitalocean",
       "docs-google",
       "drive",
+      "elevenlabs",
+      "exa",
+      "fal",
+      "fathom",
       "figma",
+      "firecrawl",
+      "fireflies",
+      "fireworks-ai",
+      "fly-io",
+      "folk",
+      "freshdesk",
+      "gemini",
       "github",
       "gitlab",
       "gmail",
+      "gong",
+      "google-analytics",
+      "google-chat",
+      "grafana-cloud",
+      "groq",
+      "gusto",
       "harvest",
+      "heroku",
       "hubspot",
+      "huggingface",
+      "intercom",
       "jira",
+      "jotform",
+      "klaviyo",
+      "langfuse",
+      "langsmith",
+      "launchdarkly",
+      "lever",
       "linear",
+      "mailchimp",
+      "metabase",
+      "mistral",
       "mixpanel",
+      "monday",
+      "mongodb-atlas",
       "neon",
+      "netlify",
+      "new-relic",
       "notion",
       "onedrive",
+      "openai",
+      "openrouter",
       "outlook",
+      "pagerduty",
+      "paypal",
+      "perplexity",
       "persona",
+      "pinecone",
+      "pipedrive",
+      "planetscale",
       "posthog",
+      "productboard",
+      "qdrant",
+      "quickbooks",
+      "railway",
+      "razorpay",
+      "redis-cloud",
+      "render",
+      "replicate",
+      "resend",
+      "salesflare",
       "salesforce",
       "sap",
+      "segment",
+      "sendgrid",
       "sentry",
       "servicenow",
       "sharepoint",
       "sheets",
       "shopify",
+      "shortcut",
       "slack",
       "snowflake",
+      "snyk",
+      "square",
+      "stability-ai",
       "stripe",
       "supabase",
+      "tavily",
       "teams",
+      "todoist",
+      "together-ai",
       "trello",
       "twilio",
+      "typeform",
+      "vercel",
+      "weaviate",
+      "webex",
+      "xero",
       "zendesk",
+      "zoom",
     ];
 
     assertEquals(connectors.map((item) => item.name), sourceConnectors);
@@ -100,6 +194,91 @@ describe("integration endpoint specs", () => {
         `Expected every ${connector.name} tool to be endpoint-backed`,
       );
     }
+  });
+
+  it("registers the experimental wave-1 connectors behind the experimental flag", () => {
+    const waveConnectors = [
+      "openai",
+      "todoist",
+      "calendly",
+      "google-analytics",
+      "klaviyo",
+      "datadog",
+      "paypal",
+    ];
+
+    for (const name of waveConnectors) {
+      const connector = getConnector(name);
+      assertEquals(
+        connector.tools.every((tool) => Boolean(tool.endpoint)),
+        true,
+        `Expected every ${name} tool to be endpoint-backed`,
+      );
+      assertStringIncludes(icons[name] ?? "", "<svg");
+    }
+
+    const openai = getConnector("openai");
+    assertEquals(openai.auth.type, "api-key");
+    assertEquals(openai.auth.keyName, "OPENAI_API_KEY");
+    assertEquals(openai.auth.headerPrefix, "Bearer");
+
+    const todoist = getConnector("todoist");
+    assertEquals(todoist.auth.provider, "todoist");
+    assertEquals(todoist.auth.tokenUrl, "https://api.todoist.com/oauth/access_token");
+
+    const calendly = getConnector("calendly");
+    assertEquals(calendly.auth.provider, "calendly");
+    assertEquals(calendly.auth.authorizationUrl, "https://auth.calendly.com/oauth/authorize");
+
+    const googleAnalytics = getConnector("google-analytics");
+    assertEquals(googleAnalytics.auth.provider, "google");
+    assertEquals(
+      googleAnalytics.auth.scopes,
+      ["https://www.googleapis.com/auth/analytics.readonly"],
+    );
+    assertEquals(
+      googleAnalytics.tools.every((tool) => tool.requiresWrite === false),
+      true,
+      "Expected google-analytics to be read-only",
+    );
+
+    const klaviyo = getConnector("klaviyo");
+    assertEquals(klaviyo.auth.type, "api-key");
+    assertEquals(klaviyo.auth.keyName, "KLAVIYO_API_KEY");
+    assertEquals(klaviyo.auth.headerPrefix, "Klaviyo-API-Key");
+
+    const datadog = getConnector("datadog");
+    assertEquals(datadog.auth.type, "api-key");
+    assertEquals(datadog.auth.headerName, "DD-API-KEY");
+    assertEquals(datadog.auth.additionalHeaders, { "DD-APPLICATION-KEY": "DD_APP_KEY" });
+
+    const paypal = getConnector("paypal");
+    assertEquals(paypal.auth.type, "oauth2");
+    assertEquals(paypal.auth.grantType, "client_credentials");
+    assertEquals(paypal.auth.tokenUrl, "https://api-m.paypal.com/v1/oauth2/token");
+    assertEquals(paypal.auth.authorizationUrl, undefined);
+  });
+
+  it("publishes generic record tools via body passthrough", () => {
+    const salesforceCreate = getTool("salesforce", "create_record");
+    assertEquals(salesforceCreate.requiresWrite, true);
+    assertEquals(salesforceCreate.endpoint?.bodyMode, "passthrough");
+    assertEquals(salesforceCreate.endpoint?.body?.record?.required, true);
+    assertEquals(
+      getTool("salesforce", "delete_record").endpoint?.method,
+      "DELETE",
+    );
+
+    const servicenowQuery = getTool("servicenow", "query_table");
+    assertEquals(servicenowQuery.requiresWrite, false);
+    assertEquals(
+      servicenowQuery.endpoint?.url,
+      "https://{instanceHost}/api/now/v1/table/{tableName}",
+    );
+    assertEquals(
+      getTool("servicenow", "create_table_record").endpoint?.bodyMode,
+      "passthrough",
+    );
   });
 
   it("does not expose retired integrations until they have verified working tool surfaces", () => {
@@ -179,14 +358,14 @@ describe("integration endpoint specs", () => {
       totalEndpointTools += endpointTools.length;
     }
 
-    assertEquals(totalEndpointTools, 70);
+    assertEquals(totalEndpointTools, 73);
   });
 
   it("adds endpoint specs for the newly configured integration providers", () => {
     const expectedEndpointCounts = new Map([
       ["airtable", 11],
       ["figma", 4],
-      ["notion", 8],
+      ["notion", 10],
     ]);
 
     for (
@@ -257,11 +436,11 @@ describe("integration endpoint specs", () => {
 
   it("adds static endpoint specs for the next configured integration providers", () => {
     const expectedEndpointCounts = new Map([
-      ["drive", 7],
+      ["drive", 9],
       ["docs-google", 5],
       ["sheets", 16],
-      ["onedrive", 4],
-      ["sharepoint", 5],
+      ["onedrive", 7],
+      ["sharepoint", 7],
     ]);
 
     for (
@@ -280,12 +459,12 @@ describe("integration endpoint specs", () => {
 
   it("adds callable endpoint specs for remaining configured OAuth providers", () => {
     const expectedEndpointCounts = new Map([
-      ["asana", 11],
+      ["asana", 12],
       ["gitlab", 10],
-      ["jira", 11],
-      ["confluence", 6],
+      ["jira", 12],
+      ["confluence", 7],
       ["outlook", 61],
-      ["teams", 6],
+      ["teams", 7],
     ]);
 
     for (
@@ -316,7 +495,14 @@ describe("integration endpoint specs", () => {
     );
     assertEquals(
       endpointTools.map((tool) => tool.id).sort(),
-      ["get_issue", "list_issues", "list_organizations", "list_projects", "resolve_issue"],
+      [
+        "get_issue",
+        "get_latest_event",
+        "list_issues",
+        "list_organizations",
+        "list_projects",
+        "resolve_issue",
+      ],
     );
 
     const listOrganizations = getTool("sentry", "list_organizations");

@@ -10,6 +10,7 @@
 
 import { createFileSystem, join } from "veryfront/fs";
 import { filterVisibleIntegrations } from "../../src/integrations/feature-flags.ts";
+import { ALL_INTEGRATION_NAMES } from "../../src/integrations/schema.ts";
 import { loadTemplateFromDirectory } from "./loader.ts";
 import {
   buildIntegrationDirectory,
@@ -32,58 +33,7 @@ import type {
  * VERYFRONT_EXPERIMENTAL_INTEGRATIONS.
  */
 export const ALL_AVAILABLE_INTEGRATIONS: IntegrationName[] = [
-  "gmail",
-  "slack",
-  "github",
-  "calendar",
-  "jira",
-  "notion",
-  "servicenow",
-  "confluence",
-  "linear",
-  "gitlab",
-  "outlook",
-  "teams",
-  "figma",
-  "sap",
-  "sheets",
-  "airtable",
-  "supabase",
-  "neon",
-  "sharepoint",
-  "stripe",
-  "salesforce",
-  "twitter",
-  "onedrive",
-  "bitbucket",
-  "sentry",
-  "posthog",
-  "persona",
-  "zendesk",
-  // New integrations
-  "asana",
-  "monday",
-  "zoom",
-  "trello",
-  "box",
-  "shopify",
-  "clickup",
-  "intercom",
-  "pipedrive",
-  "mailchimp",
-  "webex",
-  "freshdesk",
-  "quickbooks",
-  "xero",
-  // 50+ integrations
-  "drive",
-  "docs-google",
-  "snowflake",
-  "mixpanel",
-  "twilio",
-  "anthropic",
-  "aws",
-  "hubspot",
+  ...ALL_INTEGRATION_NAMES,
 ];
 
 /**

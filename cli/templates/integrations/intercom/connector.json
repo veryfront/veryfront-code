@@ -1,0 +1,259 @@
+{
+  "name": "intercom",
+  "displayName": "Intercom",
+  "icon": "intercom.svg",
+  "description": "Work with contacts, conversations, and help center articles in Intercom",
+  "auth": {
+    "type": "oauth2",
+    "provider": "intercom",
+    "authorizationUrl": "https://app.intercom.com/oauth",
+    "tokenUrl": "https://api.intercom.io/auth/eagle/token",
+    "callbackPath": "/api/auth/intercom/callback",
+    "tokenAuthMethod": "request_body",
+    "docsUrl": "https://developers.intercom.com/docs/build-an-integration/learn-more/authentication/setting-up-oauth",
+    "requiredApis": [
+      {
+        "name": "Intercom Developer Hub",
+        "enableUrl": "https://app.intercom.com/a/apps/_/developer-hub"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "INTERCOM_CLIENT_ID",
+      "description": "Intercom OAuth Client ID (from your app's Basic information page in the Developer Hub)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developers.intercom.com/docs/build-an-integration/learn-more/authentication/setting-up-oauth"
+    },
+    {
+      "name": "INTERCOM_CLIENT_SECRET",
+      "description": "Intercom OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developers.intercom.com/docs/build-an-integration/learn-more/authentication/setting-up-oauth"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_contacts",
+      "name": "List Contacts",
+      "description": "List contacts (users and leads) in the Intercom workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.intercom.io/contacts",
+        "params": {
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Contacts per page (max 150)",
+            "default": 50
+          },
+          "starting_after": {
+            "type": "string",
+            "in": "query",
+            "description": "Cursor from pages.next.starting_after in a previous response"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data", "contacts"],
+            "collectionName": "contacts",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "role" },
+              { "name": "email" },
+              { "name": "name" },
+              { "name": "phone" },
+              { "name": "created_at" },
+              { "name": "updated_at" },
+              { "name": "last_seen_at" }
+            ],
+            "omitted": "custom attributes, company associations, and provider-specific payload fields",
+            "outputFields": [
+              { "name": "total_count" },
+              { "name": "pages", "kind": "object" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "search_contacts",
+      "name": "Search Contacts",
+      "description": "Search Intercom contacts with a field/operator/value query",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.intercom.io/contacts/search",
+        "body": {
+          "query": {
+            "type": "object",
+            "description": "Search query, e.g. { \"field\": \"email\", \"operator\": \"=\", \"value\": \"jane@acme.com\" } or a nested AND/OR query",
+            "required": true
+          },
+          "pagination": {
+            "type": "object",
+            "description": "Pagination, e.g. { \"per_page\": 50, \"starting_after\": \"<cursor>\" }"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_contact",
+      "name": "Get Contact",
+      "description": "Get a single Intercom contact by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.intercom.io/contacts/{contactId}",
+        "params": {
+          "contactId": {
+            "type": "string",
+            "in": "path",
+            "description": "Intercom contact ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_conversations",
+      "name": "List Conversations",
+      "description": "List conversations in the Intercom workspace, newest first",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.intercom.io/conversations",
+        "params": {
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Conversations per page (max 150)",
+            "default": 20
+          },
+          "starting_after": {
+            "type": "string",
+            "in": "query",
+            "description": "Cursor from pages.next.starting_after in a previous response"
+          }
+        }
+      }
+    },
+    {
+      "id": "reply_to_conversation",
+      "name": "Reply To Conversation",
+      "description": "Reply to an Intercom conversation as an admin (comment or internal note)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.intercom.io/conversations/{conversationId}/reply",
+        "params": {
+          "conversationId": {
+            "type": "string",
+            "in": "path",
+            "description": "Intercom conversation ID",
+            "required": true
+          }
+        },
+        "body": {
+          "message_type": {
+            "type": "string",
+            "description": "Reply type: 'comment' (visible to the user) or 'note' (internal)",
+            "required": true,
+            "default": "comment"
+          },
+          "type": {
+            "type": "string",
+            "description": "Author type; must be 'admin'",
+            "required": true,
+            "default": "admin"
+          },
+          "admin_id": {
+            "type": "string",
+            "description": "ID of the admin authoring the reply",
+            "required": true
+          },
+          "body": {
+            "type": "string",
+            "description": "Reply text (HTML allowed)",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_articles",
+      "name": "List Articles",
+      "description": "List help center articles in the Intercom workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.intercom.io/articles",
+        "params": {
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Articles per page (max 250)",
+            "default": 25
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number, starting at 1",
+            "default": 1
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "recent_conversations",
+      "title": "Recent conversations",
+      "prompt": "List the most recent Intercom conversations and summarize what customers are asking about.",
+      "category": "support",
+      "icon": "list"
+    },
+    {
+      "id": "find_contact",
+      "title": "Find a contact",
+      "prompt": "Search Intercom for a contact by email and show their profile.",
+      "category": "support",
+      "icon": "search"
+    }
+  ],
+  "suggestedWith": ["slack", "hubspot", "gmail"],
+  "SETUP_GUIDE": {
+    "title": "Intercom OAuth Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create an Intercom app",
+        "description": "Sign in to Intercom and open the Developer Hub (https://developers.intercom.com/ → Your apps). Create a new app — use a development workspace for testing."
+      },
+      {
+        "step": 2,
+        "title": "Enable OAuth and set the redirect URL",
+        "description": "In the app's Authentication page, click Edit, enable 'Use OAuth', and add your redirect URL ending in /api/auth/intercom/callback."
+      },
+      {
+        "step": 3,
+        "title": "Select permissions",
+        "description": "On the same Authentication page, tick the permissions the tools need: read/write contacts, read/list conversations, reply to conversations, and read articles. Permissions are configured here, not via OAuth scopes."
+      },
+      {
+        "step": 4,
+        "title": "Copy credentials and verify",
+        "description": "Copy the Client ID and Client Secret from Basic information into INTERCOM_CLIENT_ID and INTERCOM_CLIENT_SECRET, connect your workspace, and run the List Contacts tool."
+      }
+    ],
+    "notes": [
+      "Intercom access tokens are long-lived: they do not expire and no refresh tokens are issued; reauthorize to rotate",
+      "Permissions are configured on the app in the Developer Hub; the authorize URL carries no scope parameter",
+      "Requests default to the API version pinned on your app; you can override per-request with the Intercom-Version header"
+    ],
+    "documentation": "https://developers.intercom.com/docs/references/rest-api/"
+  }
+}

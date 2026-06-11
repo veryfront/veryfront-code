@@ -4,10 +4,10 @@
   "icon": "twilio.svg",
   "description": "Send SMS, WhatsApp messages, make calls, and manage communications with Twilio",
   "auth": {
-    "type": "api-key",
-    "keyName": "TWILIO_AUTH_TOKEN",
-    "headerName": "Authorization",
-    "headerPrefix": "Basic",
+    "type": "basic",
+    "usernameKey": "TWILIO_ACCOUNT_SID",
+    "passwordKey": "TWILIO_AUTH_TOKEN",
+    "docsUrl": "https://www.twilio.com/docs/iam/credentials/api",
     "requiredApis": [
       {
         "name": "Twilio API",
@@ -55,19 +55,128 @@
       "id": "list_messages",
       "name": "List Messages",
       "description": "List recent SMS and WhatsApp messages",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.twilio.com/2010-04-01/Accounts/{accountSid}/Messages.json",
+        "params": {
+          "accountSid": {
+            "type": "string",
+            "in": "path",
+            "description": "Twilio Account SID (starts with AC; the same value as TWILIO_ACCOUNT_SID)",
+            "required": true
+          },
+          "to": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return messages sent to this E.164 phone number",
+            "queryName": "To"
+          },
+          "from": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return messages sent from this E.164 phone number",
+            "queryName": "From"
+          },
+          "date_sent": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return messages sent on this date (YYYY-MM-DD)",
+            "queryName": "DateSent"
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Messages per page (max 1000)",
+            "default": 20,
+            "queryName": "PageSize"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["messages"],
+            "collectionName": "messages",
+            "itemFields": [
+              { "name": "sid" },
+              { "name": "to" },
+              { "name": "from" },
+              { "name": "status" },
+              { "name": "direction" },
+              { "name": "date_sent" },
+              { "name": "body", "maxLength": 160 }
+            ],
+            "omitted": "delivery error details, pricing, and provider-specific payload fields",
+            "outputFields": [{ "name": "next_page_uri" }]
+          }
+        }
+      }
     },
     {
       "id": "get_message",
       "name": "Get Message",
       "description": "Get details about a specific message",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.twilio.com/2010-04-01/Accounts/{accountSid}/Messages/{messageSid}.json",
+        "params": {
+          "accountSid": {
+            "type": "string",
+            "in": "path",
+            "description": "Twilio Account SID (starts with AC; the same value as TWILIO_ACCOUNT_SID)",
+            "required": true
+          },
+          "messageSid": {
+            "type": "string",
+            "in": "path",
+            "description": "Message SID (starts with SM or MM)",
+            "required": true
+          }
+        }
+      }
     },
     {
       "id": "list_calls",
       "name": "List Calls",
       "description": "List recent phone calls",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.twilio.com/2010-04-01/Accounts/{accountSid}/Calls.json",
+        "params": {
+          "accountSid": {
+            "type": "string",
+            "in": "path",
+            "description": "Twilio Account SID (starts with AC; the same value as TWILIO_ACCOUNT_SID)",
+            "required": true
+          },
+          "to": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return calls to this E.164 phone number",
+            "queryName": "To"
+          },
+          "from": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return calls from this E.164 phone number",
+            "queryName": "From"
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by status: queued, ringing, in-progress, completed, busy, failed, or no-answer",
+            "queryName": "Status"
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Calls per page (max 1000)",
+            "default": 20,
+            "queryName": "PageSize"
+          }
+        }
+      }
     }
   ],
   "prompts": [
@@ -136,6 +245,7 @@
       }
     ],
     "notes": [
+      "Twilio authenticates with HTTP Basic auth: Account SID as the username and Auth Token as the password",
       "Trial accounts have limitations: you can only send messages to verified phone numbers",
       "All trial messages will be prefixed with 'Sent from your Twilio trial account'",
       "WhatsApp messages require recipients to first opt-in by messaging your sandbox number",

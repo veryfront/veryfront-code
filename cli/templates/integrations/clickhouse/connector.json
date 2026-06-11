@@ -1,0 +1,190 @@
+{
+  "name": "clickhouse",
+  "displayName": "ClickHouse Cloud",
+  "icon": "clickhouse.svg",
+  "description": "Manage ClickHouse Cloud organizations and services",
+  "auth": {
+    "type": "basic",
+    "usernameKey": "CLICKHOUSE_KEY_ID",
+    "passwordKey": "CLICKHOUSE_KEY_SECRET",
+    "docsUrl": "https://clickhouse.com/docs/cloud/manage/openapi",
+    "requiredApis": [
+      {
+        "name": "ClickHouse Cloud API Keys",
+        "enableUrl": "https://console.clickhouse.cloud/organizations"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "CLICKHOUSE_KEY_ID",
+      "description": "ClickHouse Cloud API key ID (used as the HTTP Basic username)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://clickhouse.com/docs/cloud/manage/openapi"
+    },
+    {
+      "name": "CLICKHOUSE_KEY_SECRET",
+      "description": "ClickHouse Cloud API key secret (used as the HTTP Basic password)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://clickhouse.com/docs/cloud/manage/openapi"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_organizations",
+      "name": "List Organizations",
+      "description": "List organizations the API key has access to",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.clickhouse.cloud/v1/organizations",
+        "response": {
+          "transform": "result",
+          "historicalSummary": {
+            "collectionKeys": ["result", "organizations"],
+            "collectionName": "organizations",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "createdAt" }
+            ],
+            "omitted": "organization billing and configuration details"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_organization",
+      "name": "Get Organization",
+      "description": "Get details of an organization",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.clickhouse.cloud/v1/organizations/{organizationId}",
+        "params": {
+          "organizationId": {
+            "type": "string",
+            "in": "path",
+            "description": "Organization UUID (from List Organizations)",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "result"
+        }
+      }
+    },
+    {
+      "id": "list_services",
+      "name": "List Services",
+      "description": "List all ClickHouse services in an organization",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.clickhouse.cloud/v1/organizations/{organizationId}/services",
+        "params": {
+          "organizationId": {
+            "type": "string",
+            "in": "path",
+            "description": "Organization UUID",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "result",
+          "historicalSummary": {
+            "collectionKeys": ["result", "services"],
+            "collectionName": "services",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "state" },
+              { "name": "provider" },
+              { "name": "region" },
+              { "name": "tier" },
+              { "name": "createdAt" }
+            ],
+            "omitted": "endpoint lists, IP access lists, and scaling configuration"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_service",
+      "name": "Get Service",
+      "description": "Get details of a ClickHouse service, including endpoints and state",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.clickhouse.cloud/v1/organizations/{organizationId}/services/{serviceId}",
+        "params": {
+          "organizationId": {
+            "type": "string",
+            "in": "path",
+            "description": "Organization UUID",
+            "required": true
+          },
+          "serviceId": {
+            "type": "string",
+            "in": "path",
+            "description": "Service UUID (from List Services)",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "result"
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "service_overview",
+      "title": "Service overview",
+      "prompt": "List my ClickHouse Cloud services with their state, provider, and region.",
+      "category": "data",
+      "icon": "list"
+    },
+    {
+      "id": "service_health",
+      "title": "Check a service",
+      "prompt": "Get the details of my ClickHouse Cloud service and tell me whether it is running and where its endpoints are.",
+      "category": "data",
+      "icon": "search"
+    }
+  ],
+  "suggestedWith": ["datadog", "slack", "sheets"],
+  "SETUP_GUIDE": {
+    "title": "ClickHouse Cloud API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Sign in to ClickHouse Cloud",
+        "description": "Go to https://console.clickhouse.cloud and sign in (a free trial organization with one service is enough for testing)."
+      },
+      {
+        "step": 2,
+        "title": "Create an API key",
+        "description": "In the console, open the API Keys tab in the left menu, click New API Key, choose permissions (developer for read-only is sufficient for these tools), and set an expiration."
+      },
+      {
+        "step": 3,
+        "title": "Copy the key ID and secret",
+        "description": "Copy the Key ID and Key Secret immediately — they are not shown again. Add them to your .env as CLICKHOUSE_KEY_ID and CLICKHOUSE_KEY_SECRET."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Organizations, then List Services with the organization ID it returns."
+      }
+    ],
+    "notes": [
+      "Authentication is HTTP Basic: the key ID is the username and the key secret is the password",
+      "This connector targets the ClickHouse Cloud management API (api.clickhouse.cloud), not the SQL interface of your ClickHouse database",
+      "API responses wrap payloads in a top-level 'result' field"
+    ],
+    "documentation": "https://clickhouse.com/docs/cloud/manage/api/api-overview"
+  }
+}

@@ -1,0 +1,313 @@
+{
+  "name": "activecampaign",
+  "displayName": "ActiveCampaign",
+  "icon": "activecampaign.svg",
+  "description": "Manage contacts, deals, and accounts in ActiveCampaign",
+  "auth": {
+    "type": "api-key",
+    "keyName": "ACTIVECAMPAIGN_API_KEY",
+    "headerName": "Api-Token",
+    "docsUrl": "https://developers.activecampaign.com/reference/authentication",
+    "requiredApis": [
+      {
+        "name": "ActiveCampaign Developer Settings",
+        "enableUrl": "https://www.activecampaign.com/login"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "ACTIVECAMPAIGN_API_KEY",
+      "description": "ActiveCampaign API key (sent as the Api-Token header), from My Settings → Developer",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developers.activecampaign.com/reference/authentication"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_contacts",
+      "name": "List Contacts",
+      "description": "List or search contacts in ActiveCampaign",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{account}.api-us1.com/api/3/contacts",
+        "params": {
+          "account": {
+            "type": "string",
+            "in": "path",
+            "description": "ActiveCampaign account subdomain — the 'youraccount' part of https://youraccount.api-us1.com, shown under My Settings → Developer",
+            "required": true
+          },
+          "email": {
+            "type": "string",
+            "in": "query",
+            "description": "Return only the contact with this exact email"
+          },
+          "search": {
+            "type": "string",
+            "in": "query",
+            "description": "Search contacts by name, email, or phone"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum contacts to return (max 100)",
+            "default": 20
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of contacts to skip for pagination",
+            "default": 0
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["contacts"],
+            "collectionName": "contacts",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "email" },
+              { "name": "firstName" },
+              { "name": "lastName" },
+              { "name": "phone" },
+              { "name": "cdate" },
+              { "name": "udate" }
+            ],
+            "omitted": "contact field values, scores, and provider-specific payload fields",
+            "outputFields": [{ "name": "meta", "kind": "object" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_contact",
+      "name": "Get Contact",
+      "description": "Get details of an ActiveCampaign contact",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{account}.api-us1.com/api/3/contacts/{contactId}",
+        "params": {
+          "account": {
+            "type": "string",
+            "in": "path",
+            "description": "ActiveCampaign account subdomain — the 'youraccount' part of https://youraccount.api-us1.com",
+            "required": true
+          },
+          "contactId": {
+            "type": "string",
+            "in": "path",
+            "description": "ActiveCampaign contact ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_contact",
+      "name": "Create Contact",
+      "description": "Create a new contact in ActiveCampaign",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{account}.api-us1.com/api/3/contacts",
+        "params": {
+          "account": {
+            "type": "string",
+            "in": "path",
+            "description": "ActiveCampaign account subdomain — the 'youraccount' part of https://youraccount.api-us1.com",
+            "required": true
+          }
+        },
+        "body": {
+          "contact": {
+            "type": "object",
+            "description": "Contact payload, e.g. { \"email\": \"jane@acme.com\", \"firstName\": \"Jane\", \"lastName\": \"Doe\", \"phone\": \"+15551234567\" }",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "contact"
+        }
+      }
+    },
+    {
+      "id": "update_contact",
+      "name": "Update Contact",
+      "description": "Update an existing ActiveCampaign contact",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://{account}.api-us1.com/api/3/contacts/{contactId}",
+        "params": {
+          "account": {
+            "type": "string",
+            "in": "path",
+            "description": "ActiveCampaign account subdomain — the 'youraccount' part of https://youraccount.api-us1.com",
+            "required": true
+          },
+          "contactId": {
+            "type": "string",
+            "in": "path",
+            "description": "ActiveCampaign contact ID",
+            "required": true
+          }
+        },
+        "body": {
+          "contact": {
+            "type": "object",
+            "description": "Contact fields to update, e.g. { \"firstName\": \"Jane\" }",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "contact"
+        }
+      }
+    },
+    {
+      "id": "list_deals",
+      "name": "List Deals",
+      "description": "List deals in ActiveCampaign",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{account}.api-us1.com/api/3/deals",
+        "params": {
+          "account": {
+            "type": "string",
+            "in": "path",
+            "description": "ActiveCampaign account subdomain — the 'youraccount' part of https://youraccount.api-us1.com",
+            "required": true
+          },
+          "search": {
+            "type": "string",
+            "in": "query",
+            "description": "Search deals by title"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum deals to return (max 100)",
+            "default": 20
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of deals to skip for pagination",
+            "default": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "create_deal",
+      "name": "Create Deal",
+      "description": "Create a new deal in ActiveCampaign",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{account}.api-us1.com/api/3/deals",
+        "params": {
+          "account": {
+            "type": "string",
+            "in": "path",
+            "description": "ActiveCampaign account subdomain — the 'youraccount' part of https://youraccount.api-us1.com",
+            "required": true
+          }
+        },
+        "body": {
+          "deal": {
+            "type": "object",
+            "description": "Deal payload, e.g. { \"title\": \"Acme renewal\", \"value\": 50000, \"currency\": \"usd\", \"contact\": \"<contactId>\", \"stage\": \"<stageId>\" } — value is in cents",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "deal"
+        }
+      }
+    },
+    {
+      "id": "list_accounts",
+      "name": "List Accounts",
+      "description": "List accounts (companies) in ActiveCampaign",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{account}.api-us1.com/api/3/accounts",
+        "params": {
+          "account": {
+            "type": "string",
+            "in": "path",
+            "description": "ActiveCampaign account subdomain — the 'youraccount' part of https://youraccount.api-us1.com",
+            "required": true
+          },
+          "search": {
+            "type": "string",
+            "in": "query",
+            "description": "Search accounts by name"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum accounts to return (max 100)",
+            "default": 20
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of accounts to skip for pagination",
+            "default": 0
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "find_contact",
+      "title": "Find a contact",
+      "prompt": "Search my ActiveCampaign contacts by email and show their details.",
+      "category": "marketing",
+      "icon": "search"
+    },
+    {
+      "id": "new_deal",
+      "title": "Create a deal",
+      "prompt": "Create a new deal in ActiveCampaign with a title, value, and linked contact.",
+      "category": "sales",
+      "icon": "plus"
+    }
+  ],
+  "suggestedWith": ["shopify", "stripe", "slack"],
+  "SETUP_GUIDE": {
+    "title": "ActiveCampaign API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Find your account subdomain",
+        "description": "Log in to ActiveCampaign and open My Settings → Developer. Your API URL looks like https://youraccount.api-us1.com — the 'youraccount' part is the value to pass as the 'account' parameter on every tool call. ActiveCampaign offers free developer sandbox accounts via its developer program."
+      },
+      {
+        "step": 2,
+        "title": "Copy your API key",
+        "description": "On the same Developer page, copy the API Key and add it to your .env as ACTIVECAMPAIGN_API_KEY."
+      },
+      {
+        "step": 3,
+        "title": "Verify access",
+        "description": "Run the List Contacts tool with your account subdomain."
+      }
+    ],
+    "notes": [
+      "The API key is sent in the Api-Token header; each user in the account has their own key with that user's permissions",
+      "Every tool requires the 'account' parameter (your API URL subdomain) because the base URL is account-specific (https://{account}.api-us1.com)",
+      "Deal values are expressed in cents"
+    ],
+    "documentation": "https://developers.activecampaign.com/reference/overview"
+  }
+}

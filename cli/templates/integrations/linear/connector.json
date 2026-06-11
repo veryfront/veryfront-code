@@ -707,6 +707,58 @@
           "transform": "commentCreate"
         }
       }
+    },
+    {
+      "id": "list_issue_labels",
+      "name": "List Issue Labels",
+      "description": "List Linear issue labels so the right label IDs can be applied when creating or updating issues",
+      "requiresWrite": false,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.linear.app/graphql",
+        "query": "query($first: Int) { issueLabels(first: $first) { nodes { id name color description team { id name } } } }",
+        "params": {
+          "first": {
+            "type": "number",
+            "in": "body",
+            "description": "Max results",
+            "default": 100
+          }
+        },
+        "response": {
+          "transform": "issueLabels",
+          "historicalSummary": {
+            "collectionKeys": [
+              "issueLabels",
+              "nodes",
+              "data"
+            ],
+            "collectionName": "issueLabels",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "color"
+              },
+              {
+                "name": "description"
+              }
+            ],
+            "omitted": "label team details and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "pageInfo",
+                "kind": "object"
+              }
+            ]
+          }
+        }
+      }
     }
   ],
   "prompts": [

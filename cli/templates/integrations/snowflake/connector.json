@@ -5,6 +5,10 @@
   "description": "Query and manage your Snowflake data warehouse with SQL operations across databases, schemas, and tables",
   "auth": {
     "type": "api-key",
+    "keyName": "SNOWFLAKE_PAT",
+    "headerName": "Authorization",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://docs.snowflake.com/en/developer-guide/sql-api/authenticating",
     "requiredApis": [
       {
         "name": "Snowflake Account",
@@ -13,6 +17,13 @@
     ]
   },
   "envVars": [
+    {
+      "name": "SNOWFLAKE_PAT",
+      "description": "Snowflake programmatic access token (PAT) used as a Bearer token with the SQL API",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.snowflake.com/en/user-guide/programmatic-access-tokens"
+    },
     {
       "name": "SNOWFLAKE_ACCOUNT",
       "description": "Your Snowflake account identifier (e.g., xy12345.us-east-1)",
@@ -61,7 +72,53 @@
       "id": "run_query",
       "name": "Run Query",
       "description": "Execute a SQL query against your Snowflake data warehouse",
-      "requiresWrite": false
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{account}.snowflakecomputing.com/api/v2/statements",
+        "params": {
+          "account": {
+            "type": "string",
+            "in": "path",
+            "description": "Snowflake account identifier, e.g. xy12345.us-east-1 (the same value as SNOWFLAKE_ACCOUNT)",
+            "required": true
+          },
+          "token_type": {
+            "type": "string",
+            "in": "header",
+            "description": "Snowflake authorization token type",
+            "default": "PROGRAMMATIC_ACCESS_TOKEN",
+            "headerName": "X-Snowflake-Authorization-Token-Type"
+          }
+        },
+        "body": {
+          "statement": {
+            "type": "string",
+            "description": "SQL statement to execute, e.g. SELECT * FROM my_table LIMIT 10 or SHOW DATABASES",
+            "required": true
+          },
+          "warehouse": {
+            "type": "string",
+            "description": "Warehouse to run the statement on (e.g. COMPUTE_WH)"
+          },
+          "database": {
+            "type": "string",
+            "description": "Database context for the statement"
+          },
+          "schema": {
+            "type": "string",
+            "description": "Schema context for the statement"
+          },
+          "role": {
+            "type": "string",
+            "description": "Role to use when executing the statement"
+          },
+          "timeout": {
+            "type": "number",
+            "description": "Statement timeout in seconds"
+          }
+        }
+      }
     },
     {
       "id": "list_databases",
@@ -131,6 +188,11 @@
         "docsUrl": "https://docs.snowflake.com/en/user-guide/admin-user-management"
       },
       {
+        "title": "Generate a Programmatic Access Token",
+        "description": "In Snowsight, open your user profile > Settings > Authentication and generate a programmatic access token (PAT), or run ALTER USER ... ADD PROGRAMMATIC ACCESS TOKEN. The SQL API does not accept username/password basic auth; the PAT is sent as a Bearer token.",
+        "docsUrl": "https://docs.snowflake.com/en/user-guide/programmatic-access-tokens"
+      },
+      {
         "title": "Configure Warehouse",
         "description": "Ensure you have a warehouse created and running. The default warehouse is typically named COMPUTE_WH.",
         "docsUrl": "https://docs.snowflake.com/en/user-guide/warehouses"
@@ -138,7 +200,7 @@
       {
         "title": "Set Environment Variables",
         "description": "Add the following environment variables to your .env file with your Snowflake credentials",
-        "code": "SNOWFLAKE_ACCOUNT=xy12345.us-east-1\nSNOWFLAKE_USERNAME=your_username\nSNOWFLAKE_PASSWORD=your_password\nSNOWFLAKE_WAREHOUSE=COMPUTE_WH\nSNOWFLAKE_DATABASE=your_database\nSNOWFLAKE_SCHEMA=PUBLIC"
+        "code": "SNOWFLAKE_PAT=your_programmatic_access_token\nSNOWFLAKE_ACCOUNT=xy12345.us-east-1\nSNOWFLAKE_USERNAME=your_username\nSNOWFLAKE_PASSWORD=your_password\nSNOWFLAKE_WAREHOUSE=COMPUTE_WH\nSNOWFLAKE_DATABASE=your_database\nSNOWFLAKE_SCHEMA=PUBLIC"
       },
       {
         "title": "Test Connection",

@@ -1,0 +1,176 @@
+{
+  "name": "perplexity",
+  "displayName": "Perplexity",
+  "icon": "perplexity.svg",
+  "description": "Search the web and generate grounded, citation-backed answers with Perplexity Sonar models",
+  "auth": {
+    "type": "api-key",
+    "keyName": "PERPLEXITY_API_KEY",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://docs.perplexity.ai/getting-started/quickstart",
+    "requiredApis": [
+      {
+        "name": "Perplexity API Keys",
+        "enableUrl": "https://www.perplexity.ai/account/api/keys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "PERPLEXITY_API_KEY",
+      "description": "Perplexity API key (starts with pplx-)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.perplexity.ai/getting-started/quickstart"
+    }
+  ],
+  "tools": [
+    {
+      "id": "search_web",
+      "name": "Search Web",
+      "description": "Search the web with Perplexity's Search API and get ranked results",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.perplexity.ai/search",
+        "body": {
+          "query": {
+            "type": "string",
+            "description": "Search query text",
+            "required": true
+          },
+          "max_results": {
+            "type": "number",
+            "description": "Maximum results to return",
+            "default": 10
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["results"],
+            "collectionName": "results",
+            "itemFields": [
+              { "name": "title" },
+              { "name": "url" },
+              { "name": "snippet", "maxLength": 300 },
+              { "name": "date" }
+            ],
+            "omitted": "full result snippets and provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_chat_completion",
+      "name": "Create Chat Completion",
+      "description": "Generate a web-grounded chat completion with citations using a Sonar model",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.perplexity.ai/v1/sonar",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Sonar model ID: sonar, sonar-pro, sonar-reasoning-pro, or sonar-deep-research",
+            "required": true,
+            "default": "sonar"
+          },
+          "messages": {
+            "type": "array",
+            "description": "Chat messages, each with role (system|user|assistant) and content",
+            "required": true
+          },
+          "max_tokens": {
+            "type": "number",
+            "description": "Maximum tokens to generate"
+          },
+          "temperature": {
+            "type": "number",
+            "description": "Sampling temperature between 0 and 2"
+          },
+          "search_mode": {
+            "type": "string",
+            "description": "Search corpus: web, academic, or sec"
+          },
+          "disable_search": {
+            "type": "boolean",
+            "description": "Set true to answer without web search"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_agent_response",
+      "name": "Create Agent Response",
+      "description": "Generate a response with Perplexity's Agent API using optional web search and reasoning",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.perplexity.ai/v1/agent",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Model ID or preset, e.g. fast-search, pro-search, deep-research",
+            "required": true
+          },
+          "input": {
+            "type": "string",
+            "description": "Input text or question for the agent",
+            "required": true
+          },
+          "reasoning": {
+            "type": "object",
+            "description": "Reasoning configuration, e.g. {\"effort\":\"medium\"}"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "research_topic",
+      "title": "Research a topic",
+      "prompt": "Use Perplexity to research a topic I provide and summarize the answer with its citations.",
+      "category": "ai",
+      "icon": "search"
+    },
+    {
+      "id": "web_search",
+      "title": "Search the web",
+      "prompt": "Search the web with Perplexity for a query I provide and list the top results.",
+      "category": "ai",
+      "icon": "list"
+    }
+  ],
+  "suggestedWith": ["openai", "anthropic", "slack"],
+  "SETUP_GUIDE": {
+    "title": "Perplexity API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Perplexity account",
+        "description": "Go to https://www.perplexity.ai and sign up or sign in, then open the API section of your account settings."
+      },
+      {
+        "step": 2,
+        "title": "Add billing",
+        "description": "Add a payment method and credits in the API portal — API calls require a positive credit balance (Pro subscribers receive monthly API credits)."
+      },
+      {
+        "step": 3,
+        "title": "Generate an API key",
+        "description": "In https://www.perplexity.ai/account/api/keys, click 'Generate' and copy the key. Add it to your .env file as PERPLEXITY_API_KEY=pplx-..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the Search Web tool with a simple query. A 401 means the key is invalid; a 402 means you are out of credits."
+      }
+    ],
+    "notes": [
+      "Sonar chat completions and agent responses are billed per token plus per-request search fees — they cost money on every call",
+      "The Search API is billed per request and returns ranked results without LLM generation"
+    ],
+    "documentation": "https://docs.perplexity.ai"
+  }
+}

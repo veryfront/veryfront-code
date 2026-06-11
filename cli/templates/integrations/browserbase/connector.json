@@ -1,0 +1,199 @@
+{
+  "name": "browserbase",
+  "displayName": "Browserbase",
+  "icon": "browserbase.svg",
+  "description": "Create and manage headless browser sessions in the cloud with Browserbase",
+  "auth": {
+    "type": "api-key",
+    "keyName": "BROWSERBASE_API_KEY",
+    "headerName": "X-BB-API-Key",
+    "docsUrl": "https://docs.browserbase.com/reference/api/create-a-session",
+    "requiredApis": [
+      {
+        "name": "Browserbase API Keys",
+        "enableUrl": "https://www.browserbase.com/settings"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "BROWSERBASE_API_KEY",
+      "description": "Browserbase API key (starts with bb_)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.browserbase.com/introduction/getting-started"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_sessions",
+      "name": "List Sessions",
+      "description": "List browser sessions, optionally filtered by status",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.browserbase.com/v1/sessions",
+        "params": {
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by status: PENDING, RUNNING, COMPLETED, ERROR, or TIMED_OUT"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["sessions"],
+            "collectionName": "sessions",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "status" },
+              { "name": "projectId" },
+              { "name": "createdAt" },
+              { "name": "expiresAt" },
+              { "name": "region" }
+            ],
+            "omitted": "connection URLs, browser settings, and provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_session",
+      "name": "Create Session",
+      "description": "Create a new cloud browser session (consumes plan browser minutes)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.browserbase.com/v1/sessions",
+        "body": {
+          "projectId": {
+            "type": "string",
+            "description": "Browserbase project ID (omit to infer from the API key)"
+          },
+          "browserSettings": {
+            "type": "object",
+            "description": "Browser configuration, e.g. {\"viewport\":{\"width\":1280,\"height\":720},\"blockAds\":true}"
+          },
+          "region": {
+            "type": "string",
+            "description": "Region to run the session in, e.g. us-west-2, us-east-1, eu-central-1, ap-southeast-1"
+          },
+          "timeout": {
+            "type": "number",
+            "description": "Session timeout in seconds before it is automatically ended"
+          },
+          "keepAlive": {
+            "type": "boolean",
+            "description": "Keep the session alive after disconnects (paid plans only)"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_session",
+      "name": "Get Session",
+      "description": "Get a session's status, connection URL, and metadata",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.browserbase.com/v1/sessions/{sessionId}",
+        "params": {
+          "sessionId": {
+            "type": "string",
+            "in": "path",
+            "description": "Session ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "release_session",
+      "name": "Release Session",
+      "description": "Request release of a running session to stop billing for it",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.browserbase.com/v1/sessions/{sessionId}",
+        "params": {
+          "sessionId": {
+            "type": "string",
+            "in": "path",
+            "description": "Session ID to release",
+            "required": true
+          }
+        },
+        "body": {
+          "status": {
+            "type": "string",
+            "description": "Set to REQUEST_RELEASE to end the session",
+            "required": true,
+            "default": "REQUEST_RELEASE"
+          },
+          "projectId": {
+            "type": "string",
+            "description": "Project ID the session belongs to (optional)"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_projects",
+      "name": "List Projects",
+      "description": "List the Browserbase projects available to the API key",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.browserbase.com/v1/projects"
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "active_sessions",
+      "title": "Show running sessions",
+      "prompt": "List my Browserbase sessions that are currently RUNNING and release any I no longer need.",
+      "category": "automation",
+      "icon": "browser"
+    },
+    {
+      "id": "new_session",
+      "title": "Start a browser session",
+      "prompt": "Create a new Browserbase session and give me its ID and connection details.",
+      "category": "automation",
+      "icon": "plus"
+    }
+  ],
+  "suggestedWith": ["openai", "anthropic", "firecrawl"],
+  "SETUP_GUIDE": {
+    "title": "Browserbase API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Browserbase account",
+        "description": "Sign up at https://www.browserbase.com — the free plan includes browser hours for testing."
+      },
+      {
+        "step": 2,
+        "title": "Copy your API key and project ID",
+        "description": "In the dashboard, open Settings to find your API key (bb_...) and your default project ID. Each key belongs to a project."
+      },
+      {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Add it to your .env file as BROWSERBASE_API_KEY=bb_... — requests authenticate with the X-BB-API-Key header."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Projects tool, then List Sessions. Create Session can omit projectId — it is inferred from the API key."
+      }
+    ],
+    "notes": [
+      "Sessions are billed by browser minutes — release sessions you are done with via the Release Session tool",
+      "Driving the browser (navigation, clicks) happens over the session's CDP connectUrl with Playwright/Puppeteer/Stagehand, not through this REST API",
+      "keepAlive sessions are only available on paid plans"
+    ],
+    "documentation": "https://docs.browserbase.com/reference/api/create-a-session"
+  }
+}

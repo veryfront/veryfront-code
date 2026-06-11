@@ -1,0 +1,184 @@
+{
+  "name": "assemblyai",
+  "displayName": "AssemblyAI",
+  "icon": "assemblyai.svg",
+  "description": "Submit audio URLs for transcription and retrieve transcripts via the AssemblyAI API",
+  "auth": {
+    "type": "api-key",
+    "keyName": "ASSEMBLYAI_API_KEY",
+    "docsUrl": "https://www.assemblyai.com/docs/api-reference/overview",
+    "requiredApis": [
+      {
+        "name": "AssemblyAI API Keys",
+        "enableUrl": "https://www.assemblyai.com/app"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "ASSEMBLYAI_API_KEY",
+      "description": "AssemblyAI API key from the dashboard",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://www.assemblyai.com/app"
+    }
+  ],
+  "tools": [
+    {
+      "id": "submit_transcript",
+      "name": "Submit Transcript",
+      "description": "Submit an audio or video URL for transcription (processing is asynchronous)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.assemblyai.com/v2/transcript",
+        "body": {
+          "audio_url": {
+            "type": "string",
+            "description": "Publicly accessible URL of the audio or video file to transcribe",
+            "required": true
+          },
+          "language_code": {
+            "type": "string",
+            "description": "Language of the audio, e.g. en_us or es"
+          },
+          "speaker_labels": {
+            "type": "boolean",
+            "description": "Enable speaker diarization"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_transcript",
+      "name": "Get Transcript",
+      "description": "Get the status and text of a transcript by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.assemblyai.com/v2/transcript/{transcript_id}",
+        "params": {
+          "transcript_id": {
+            "type": "string",
+            "in": "path",
+            "description": "ID of the transcript to fetch",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_transcripts",
+      "name": "List Transcripts",
+      "description": "List transcripts created by the account",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.assemblyai.com/v2/transcript",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum transcripts to return (1-200)",
+            "default": 20
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by status: queued, processing, completed, or error"
+          },
+          "created_on": {
+            "type": "string",
+            "in": "query",
+            "description": "Only transcripts created on this date (YYYY-MM-DD)"
+          },
+          "before_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Return transcripts created before this transcript ID (pagination)"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["transcripts"],
+            "collectionName": "transcripts",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "status" },
+              { "name": "created" },
+              { "name": "audio_url", "maxLength": 120 }
+            ],
+            "omitted": "resource URLs, errors, and provider-specific payload fields",
+            "outputFields": [{ "name": "page_details", "kind": "object" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "delete_transcript",
+      "name": "Delete Transcript",
+      "description": "Permanently delete a transcript and its data",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "DELETE",
+        "url": "https://api.assemblyai.com/v2/transcript/{transcript_id}",
+        "params": {
+          "transcript_id": {
+            "type": "string",
+            "in": "path",
+            "description": "ID of the transcript to delete",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "transcribe_audio",
+      "title": "Transcribe an audio URL",
+      "prompt": "Submit this audio file to AssemblyAI, wait for it to finish, and give me the transcript: <paste URL>",
+      "category": "ai",
+      "icon": "sparkles"
+    },
+    {
+      "id": "recent_transcripts",
+      "title": "Review recent transcripts",
+      "prompt": "List my recent AssemblyAI transcripts and summarize their statuses.",
+      "category": "ai",
+      "icon": "list"
+    }
+  ],
+  "suggestedWith": ["deepgram", "elevenlabs", "openai"],
+  "SETUP_GUIDE": {
+    "title": "AssemblyAI API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create an AssemblyAI account",
+        "description": "Go to https://www.assemblyai.com/app and sign up. New accounts include free transcription credits for testing."
+      },
+      {
+        "step": 2,
+        "title": "Copy your API key",
+        "description": "Your API key is shown on the dashboard home page after signing in. You can rotate it from account settings if needed."
+      },
+      {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Add the key to your .env file as ASSEMBLYAI_API_KEY=..."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Transcripts tool to confirm the key works, then submit a sample file such as https://assembly.ai/wildfires.mp3"
+      }
+    ],
+    "notes": [
+      "Authentication sends the raw API key in the Authorization header — no Bearer prefix",
+      "Transcription is asynchronous: Submit Transcript returns an id with status 'queued'; poll Get Transcript until status is 'completed'",
+      "Transcription is billed per hour of audio once free credits are exhausted; EU data residency uses api.eu.assemblyai.com instead"
+    ],
+    "documentation": "https://www.assemblyai.com/docs/api-reference/overview"
+  }
+}
