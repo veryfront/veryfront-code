@@ -1,6 +1,7 @@
 import { agent } from "../factory.ts";
 import type { Agent } from "../types.ts";
 import type { RuntimeAgentMarkdownDefinition } from "./agent-definition.ts";
+import { buildAgentDelegateTools } from "./agent-delegation.ts";
 
 const markdownDefinitionByAgent = new WeakMap<Agent, RuntimeAgentMarkdownDefinition>();
 
@@ -8,6 +9,10 @@ const markdownDefinitionByAgent = new WeakMap<Agent, RuntimeAgentMarkdownDefinit
 export function createRuntimeAgentFromMarkdownDefinition(
   definition: RuntimeAgentMarkdownDefinition,
 ): Agent {
+  const delegateTools = definition.delegates && definition.delegates.length > 0
+    ? buildAgentDelegateTools({ delegates: definition.delegates, selfId: definition.id })
+    : undefined;
+
   const runtimeAgent = agent({
     id: definition.id,
     name: definition.name,
@@ -17,6 +22,7 @@ export function createRuntimeAgentFromMarkdownDefinition(
     ...(definition.temperature === undefined ? {} : { temperature: definition.temperature }),
     ...(definition.maxSteps === undefined ? {} : { maxSteps: definition.maxSteps }),
     ...(definition.providerTools ? { providerTools: definition.providerTools } : {}),
+    ...(delegateTools && Object.keys(delegateTools).length > 0 ? { tools: delegateTools } : {}),
   });
 
   markdownDefinitionByAgent.set(runtimeAgent, definition);

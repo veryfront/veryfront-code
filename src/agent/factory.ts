@@ -8,6 +8,7 @@ import type {
   ResolvedAgentConfig,
 } from "./types.ts";
 import { AgentRuntime } from "./runtime/index.ts";
+import { isRuntimeLocalTool } from "./runtime/local-tool.ts";
 import {
   detectPlatform,
   validatePlatformCompatibility,
@@ -74,6 +75,7 @@ export function agent(config: AgentConfig): Agent {
   if (config.tools && config.tools !== true) {
     for (const [name, entry] of Object.entries(config.tools)) {
       if (!entry || typeof entry !== "object") continue;
+      if (isRuntimeLocalTool(entry)) continue;
 
       const normalizedTool = entry.id === name ? entry : { ...entry, id: name };
       registerTool(normalizedTool.id, normalizedTool);
