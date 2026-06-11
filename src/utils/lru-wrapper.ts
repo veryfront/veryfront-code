@@ -9,6 +9,8 @@ const DEFAULT_CLEANUP_INTERVAL_MS = 60_000;
 
 interface LRUOptions {
   maxEntries?: number;
+  /** Byte cap for stored values. Defaults to the adapter's 50 MiB limit. */
+  maxSizeBytes?: number;
   ttlMs?: number;
   cleanupIntervalMs?: number;
 }
@@ -22,6 +24,7 @@ export class LRUCache<K, V> {
   constructor(options: LRUOptions = {}) {
     const adapterOptions: LRUCacheOptions = {
       maxEntries: options.maxEntries ?? DEFAULT_LRU_MAX_ENTRIES,
+      maxSizeBytes: options.maxSizeBytes,
       ttlMs: options.ttlMs,
     };
 

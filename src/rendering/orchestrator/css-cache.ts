@@ -25,6 +25,10 @@ export const PAGE_CSS_CACHE_MAX_SIZE = 200;
  */
 const pageCssCache = new LRUCache<string, string>({
   maxEntries: PAGE_CSS_CACHE_MAX_SIZE,
+  // The previous plain-Map cache was bounded by entry count only. Disable the
+  // adapter's default 50 MiB byte cap so large CSS payloads aren't evicted
+  // (or rejected) on insert; only the entry-count bound applies.
+  maxSizeBytes: Number.MAX_SAFE_INTEGER,
 });
 
 // Register cache for monitoring
