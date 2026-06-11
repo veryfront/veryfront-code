@@ -1,6 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { createRuntimeAgentFromMarkdownDefinition } from "./agent-markdown-adapter.ts";
+import {
+  createRuntimeAgentFromMarkdownDefinition,
+  getRuntimeAgentMarkdownDefinition,
+  getRuntimeAgentMarkdownMeta,
+  getRuntimeAgentMarkdownRootPath,
+  isRuntimeAgentMarkdownAgent,
+} from "./agent-markdown-adapter.ts";
+import { agent } from "../factory.ts";
 import type { Tool } from "#veryfront/tool";
 
 function fakeTool(id: string): Tool {
@@ -24,6 +31,25 @@ Deno.test("createRuntimeAgentFromMarkdownDefinition preserves provider-native to
   });
 
   assertEquals(runtimeAgent.config.providerTools, ["web_search", "web_fetch"]);
+});
+
+Deno.test("markdown metadata accessors expose definition + root path; code agents return null", () => {
+  const md = createRuntimeAgentFromMarkdownDefinition(
+    { id: "researcher", name: "Researcher", description: "", instructions: "Research." },
+    { rootPath: "/agents/researcher" },
+  );
+
+  assertEquals(isRuntimeAgentMarkdownAgent(md), true);
+  assertEquals(getRuntimeAgentMarkdownDefinition(md)?.id, "researcher");
+  assertEquals(getRuntimeAgentMarkdownMeta(md)?.rootPath, "/agents/researcher");
+  assertEquals(getRuntimeAgentMarkdownRootPath(md), "/agents/researcher");
+
+  // A code-defined agent carries no markdown metadata.
+  const code = agent({ id: "code-agent", system: "Help." });
+  assertEquals(isRuntimeAgentMarkdownAgent(code), false);
+  assertEquals(getRuntimeAgentMarkdownDefinition(code), null);
+  assertEquals(getRuntimeAgentMarkdownMeta(code), null);
+  assertEquals(getRuntimeAgentMarkdownRootPath(code), null);
 });
 
 Deno.test("colocated tools survive factory normalization with their namespaced id", () => {

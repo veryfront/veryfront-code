@@ -24,52 +24,62 @@ function write(path: string, content: string): void {
   Deno.writeTextFileSync(path, content);
 }
 
-Deno.test("discoverRuntimeAgentMarkdownDefinitions discovers flat and directory agents", async () => {
-  const dir = Deno.makeTempDirSync();
-  try {
-    write(resolve(dir, "mad-lead.md"), "---\nname: Lead\n---\nCoordinate.");
+// Agents with colocated tools/*.ts trigger importModule (esbuild child process),
+// so sanitizers are disabled here (matches src/discovery/transpiler.test.ts).
+Deno.test({
+  name: "discoverRuntimeAgentMarkdownDefinitions discovers flat and directory agents",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    const dir = Deno.makeTempDirSync();
+    try {
+      write(resolve(dir, "mad-lead.md"), "---\nname: Lead\n---\nCoordinate.");
 
-    const agentDir = resolve(dir, "mad-researcher");
-    Deno.mkdirSync(resolve(agentDir, "skills", "cite"), { recursive: true });
-    Deno.mkdirSync(resolve(agentDir, "tools"), { recursive: true });
-    write(
-      resolve(agentDir, "AGENT.md"),
-      "---\nname: Researcher\nskills: true\ntools: true\n---\nResearch.",
-    );
-    write(resolve(agentDir, "SKILL.md"), "---\nname: mad-researcher\ndescription: own\n---\nOwn.");
-    write(
-      resolve(agentDir, "skills", "cite", "SKILL.md"),
-      "---\nname: mad-cite\ndescription: cite\n---\nCite.",
-    );
-    write(
-      resolve(agentDir, "tools", "fetch.ts"),
-      'export const fetch = { id: "fetch", type: "function", description: "f",' +
-        ' inputSchema: { type: "object", properties: {} }, execute: async () => ({}) };\n',
-    );
-    // Non-agent markdown inside the agent dir must be ignored.
-    write(resolve(agentDir, "notes.md"), "# scratch notes");
+      const agentDir = resolve(dir, "mad-researcher");
+      Deno.mkdirSync(resolve(agentDir, "skills", "cite"), { recursive: true });
+      Deno.mkdirSync(resolve(agentDir, "tools"), { recursive: true });
+      write(
+        resolve(agentDir, "AGENT.md"),
+        "---\nname: Researcher\nskills: true\ntools: true\n---\nResearch.",
+      );
+      write(
+        resolve(agentDir, "SKILL.md"),
+        "---\nname: mad-researcher\ndescription: own\n---\nOwn.",
+      );
+      write(
+        resolve(agentDir, "skills", "cite", "SKILL.md"),
+        "---\nname: mad-cite\ndescription: cite\n---\nCite.",
+      );
+      write(
+        resolve(agentDir, "tools", "fetch.ts"),
+        'export const fetch = { id: "fetch", type: "function", description: "f",' +
+          ' inputSchema: { type: "object", properties: {} }, execute: async () => ({}) };\n',
+      );
+      // Non-agent markdown inside the agent dir must be ignored.
+      write(resolve(agentDir, "notes.md"), "# scratch notes");
 
-    const result = emptyResult();
-    await discoverRuntimeAgentMarkdownDefinitions(dir, result, context);
+      const result = emptyResult();
+      await discoverRuntimeAgentMarkdownDefinitions(dir, result, context);
 
-    assertEquals([...result.agents.keys()].sort(), ["mad-lead", "mad-researcher"]);
-    assertEquals(result.errors, []);
+      assertEquals([...result.agents.keys()].sort(), ["mad-lead", "mad-researcher"]);
+      assertEquals(result.errors, []);
 
-    const researcher = result.agents.get("mad-researcher");
-    assertEquals(getRuntimeAgentMarkdownRootPath(researcher!), agentDir);
-    // Colocated skills resolve to namespaced ids (own skill = agent id).
-    assertEquals(researcher!.config.skills, ["mad-researcher", "mad-researcher__cite"]);
-    // Colocated tools are namespaced and attached to the agent config.
-    const toolNames = Object.keys(
-      (researcher!.config.tools as Record<string, unknown>) ?? {},
-    );
-    assertEquals(toolNames.includes("mad-researcher__fetch"), true);
+      const researcher = result.agents.get("mad-researcher");
+      assertEquals(getRuntimeAgentMarkdownRootPath(researcher!), agentDir);
+      // Colocated skills resolve to namespaced ids (own skill = agent id).
+      assertEquals(researcher!.config.skills, ["mad-researcher", "mad-researcher__cite"]);
+      // Colocated tools are namespaced and attached to the agent config.
+      const toolNames = Object.keys(
+        (researcher!.config.tools as Record<string, unknown>) ?? {},
+      );
+      assertEquals(toolNames.includes("mad-researcher__fetch"), true);
 
-    const lead = result.agents.get("mad-lead");
-    assertEquals(getRuntimeAgentMarkdownRootPath(lead!), null);
-  } finally {
-    Deno.removeSync(dir, { recursive: true });
-  }
+      const lead = result.agents.get("mad-lead");
+      assertEquals(getRuntimeAgentMarkdownRootPath(lead!), null);
+    } finally {
+      Deno.removeSync(dir, { recursive: true });
+    }
+  },
 });
 
 Deno.test("discoverRuntimeAgentMarkdownDefinitions ignores directories without AGENT.md", async () => {
@@ -147,30 +157,35 @@ Deno.test("duplicate agent id (flat + directory) is recorded as an error", async
   }
 });
 
-Deno.test("agents whose ids sanitize to the same namespace are reported, not silently merged", async () => {
-  const dir = Deno.makeTempDirSync();
-  try {
-    for (const id of ["mad.ns", "mad_ns"]) {
-      const agentDir = resolve(dir, id);
-      Deno.mkdirSync(resolve(agentDir, "tools"), { recursive: true });
-      write(resolve(agentDir, "AGENT.md"), `---\nname: ${id}\ntools: true\n---\nWork.`);
-      write(
-        resolve(agentDir, "tools", "fetch.ts"),
-        'export const fetch = { id: "fetch", type: "function", description: "f",' +
-          ' inputSchema: { type: "object", properties: {} }, execute: async () => ({}) };\n',
+Deno.test({
+  name: "agents whose ids sanitize to the same namespace are reported, not silently merged",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    const dir = Deno.makeTempDirSync();
+    try {
+      for (const id of ["mad.ns", "mad_ns"]) {
+        const agentDir = resolve(dir, id);
+        Deno.mkdirSync(resolve(agentDir, "tools"), { recursive: true });
+        write(resolve(agentDir, "AGENT.md"), `---\nname: ${id}\ntools: true\n---\nWork.`);
+        write(
+          resolve(agentDir, "tools", "fetch.ts"),
+          'export const fetch = { id: "fetch", type: "function", description: "f",' +
+            ' inputSchema: { type: "object", properties: {} }, execute: async () => ({}) };\n',
+        );
+      }
+
+      const result = emptyResult();
+      await discoverRuntimeAgentMarkdownDefinitions(dir, result, context);
+
+      // Both agents still register (distinct ids), but the namespace clash is reported.
+      assertEquals([...result.agents.keys()].sort(), ["mad.ns", "mad_ns"]);
+      const clash = result.errors.find((e) =>
+        e.error.message.includes("sanitized capability namespace")
       );
+      assertEquals(clash !== undefined, true);
+    } finally {
+      Deno.removeSync(dir, { recursive: true });
     }
-
-    const result = emptyResult();
-    await discoverRuntimeAgentMarkdownDefinitions(dir, result, context);
-
-    // Both agents still register (distinct ids), but the namespace clash is reported.
-    assertEquals([...result.agents.keys()].sort(), ["mad.ns", "mad_ns"]);
-    const clash = result.errors.find((e) =>
-      e.error.message.includes("sanitized capability namespace")
-    );
-    assertEquals(clash !== undefined, true);
-  } finally {
-    Deno.removeSync(dir, { recursive: true });
-  }
+  },
 });

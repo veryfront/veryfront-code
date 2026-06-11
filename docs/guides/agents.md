@@ -55,6 +55,64 @@ The file path provides the agent id. For example, `agents/support.md` registers
 `support` and can be invoked through the same project runtime and control-plane
 surfaces as `agents/support.ts`.
 
+## Per-agent skills and tools
+
+A markdown agent can own its skills and tools by using a directory instead of a
+single file. Put the agent definition in `AGENT.md` and colocate its skills and
+tools beside it:
+
+```
+agents/
+  researcher/
+    AGENT.md            # the agent definition (frontmatter + instructions)
+    SKILL.md            # the agent's own skill, loaded as load_skill("researcher")
+    skills/
+      cite/SKILL.md     # an extra skill, loaded as load_skill("researcher__cite")
+    tools/
+      fetch-paper.ts    # a colocated tool, exposed as "researcher__fetch-paper"
+```
+
+The directory name is the agent id. The flat `agents/{id}.md` form still works
+for agents that do not own skills or tools.
+
+Select which colocated capabilities to expose with frontmatter:
+
+```md
+---
+name: Researcher
+model: anthropic/claude-sonnet-4-6
+skills: true # true = all colocated skills, or a list: [cite]
+tools: [fetch-paper] # true = all colocated tools, or a list of short names
+---
+
+Research the question and cite every claim.
+```
+
+Colocated skills and tools are namespaced per agent (`{agentId}__{name}`), so
+two agents can ship a skill or tool with the same name without colliding. An
+agent's own `SKILL.md` is referenced by the agent id. An agent only ever sees
+its own colocated skills — `skills: true` resolves to that agent's own skills,
+never another agent's.
+
+Colocated tools are ordinary tool modules (see [Tools](./tools.md)) placed under
+the agent's `tools/` directory. To delegate to other agents, see
+[Multi-agent](./multi-agent.md#declarative-delegation-with-delegates).
+
+### Markdown agent frontmatter
+
+| Field            | Type                | Description                                     |
+| ---------------- | ------------------- | ----------------------------------------------- |
+| `name`           | `string`            | Display name (defaults to the agent id)         |
+| `description`    | `string`            | Optional summary for listings                   |
+| `model`          | `string`            | Optional `provider/model` override              |
+| `temperature`    | `number`            | Sampling temperature                            |
+| `max-steps`      | `number`            | Max tool-call iterations per request            |
+| `thinking`       | `boolean \| number` | Enable extended thinking, or set a token budget |
+| `provider-tools` | `string[]`          | Provider-executed tools such as `web_search`    |
+| `skills`         | `true \| string[]`  | Colocated skills to expose (directory layout)   |
+| `tools`          | `true \| string[]`  | Colocated tools to bind (directory layout)      |
+| `delegates`      | `string[]`          | Specialist agent ids this agent may delegate to |
+
 ## Add tools
 
 Agents call tools to take actions or fetch data. Reference tools by name: the

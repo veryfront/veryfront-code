@@ -41,55 +41,70 @@ Deno.test("namespace helpers sanitize agent ids for provider-safe tool names", (
   assertEquals(namespaceAgentCapability("team.lead", "fetch"), "team_lead__fetch");
 });
 
-Deno.test("loadAgentColocatedTools namespaces tools and honors the selector", async () => {
-  const rootPath = Deno.makeTempDirSync();
-  try {
-    Deno.mkdirSync(resolve(rootPath, "tools"), { recursive: true });
-    Deno.writeTextFileSync(resolve(rootPath, "tools", "fetch-paper.ts"), toolModule("fetch-paper"));
-    Deno.writeTextFileSync(resolve(rootPath, "tools", "rank.ts"), toolModule("rank"));
+// importModule transpiles via esbuild, which keeps a child process alive across
+// tests; disable op/resource sanitizers (matches src/discovery/transpiler.test.ts).
+Deno.test({
+  name: "loadAgentColocatedTools namespaces tools and honors the selector",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    const rootPath = Deno.makeTempDirSync();
+    try {
+      Deno.mkdirSync(resolve(rootPath, "tools"), { recursive: true });
+      Deno.writeTextFileSync(
+        resolve(rootPath, "tools", "fetch-paper.ts"),
+        toolModule("fetch-paper"),
+      );
+      Deno.writeTextFileSync(resolve(rootPath, "tools", "rank.ts"), toolModule("rank"));
 
-    const all = await loadAgentColocatedTools({ agentId: "researcher", rootPath, context });
-    assertEquals(Object.keys(all).sort(), ["researcher__fetch-paper", "researcher__rank"]);
-    assertEquals(all["researcher__fetch-paper"].id, "researcher__fetch-paper");
+      const all = await loadAgentColocatedTools({ agentId: "researcher", rootPath, context });
+      assertEquals(Object.keys(all).sort(), ["researcher__fetch-paper", "researcher__rank"]);
+      assertEquals(all["researcher__fetch-paper"].id, "researcher__fetch-paper");
 
-    const selected = await loadAgentColocatedTools({
-      agentId: "researcher",
-      rootPath,
-      selector: ["rank"],
-      context,
-    });
-    assertEquals(Object.keys(selected), ["researcher__rank"]);
-  } finally {
-    Deno.removeSync(rootPath, { recursive: true });
-  }
+      const selected = await loadAgentColocatedTools({
+        agentId: "researcher",
+        rootPath,
+        selector: ["rank"],
+        context,
+      });
+      assertEquals(Object.keys(selected), ["researcher__rank"]);
+    } finally {
+      Deno.removeSync(rootPath, { recursive: true });
+    }
+  },
 });
 
-Deno.test("loadAgentColocatedTools skips tools whose namespaced name is not provider-safe", async () => {
-  const rootPath = Deno.makeTempDirSync();
-  try {
-    Deno.mkdirSync(resolve(rootPath, "tools"), { recursive: true });
-    // Explicit tool id contains ':' -> namespaced name violates the provider charset.
-    Deno.writeTextFileSync(resolve(rootPath, "tools", "bad.ts"), toolModule("fetch:v2"));
-    Deno.writeTextFileSync(resolve(rootPath, "tools", "ok.ts"), toolModule("rank"));
+Deno.test({
+  name: "loadAgentColocatedTools skips tools whose namespaced name is not provider-safe",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    const rootPath = Deno.makeTempDirSync();
+    try {
+      Deno.mkdirSync(resolve(rootPath, "tools"), { recursive: true });
+      // Explicit tool id contains ':' -> namespaced name violates the provider charset.
+      Deno.writeTextFileSync(resolve(rootPath, "tools", "bad.ts"), toolModule("fetch:v2"));
+      Deno.writeTextFileSync(resolve(rootPath, "tools", "ok.ts"), toolModule("rank"));
 
-    const result: DiscoveryResult = {
-      tools: new Map(),
-      agents: new Map(),
-      skills: new Map(),
-      resources: new Map(),
-      prompts: new Map(),
-      workflows: new Map(),
-      tasks: new Map(),
-      errors: [],
-    };
-    const tools = await loadAgentColocatedTools({ agentId: "r", rootPath, context, result });
+      const result: DiscoveryResult = {
+        tools: new Map(),
+        agents: new Map(),
+        skills: new Map(),
+        resources: new Map(),
+        prompts: new Map(),
+        workflows: new Map(),
+        tasks: new Map(),
+        errors: [],
+      };
+      const tools = await loadAgentColocatedTools({ agentId: "r", rootPath, context, result });
 
-    assertEquals(Object.keys(tools), ["r__rank"]);
-    assertEquals(result.errors.length, 1);
-    assertEquals(result.errors[0].error.message.includes("invalid tool name"), true);
-  } finally {
-    Deno.removeSync(rootPath, { recursive: true });
-  }
+      assertEquals(Object.keys(tools), ["r__rank"]);
+      assertEquals(result.errors.length, 1);
+      assertEquals(result.errors[0].error.message.includes("invalid tool name"), true);
+    } finally {
+      Deno.removeSync(rootPath, { recursive: true });
+    }
+  },
 });
 
 Deno.test("loadAgentColocatedTools returns empty when there is no tools dir", async () => {
