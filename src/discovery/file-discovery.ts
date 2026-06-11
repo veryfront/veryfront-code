@@ -107,3 +107,66 @@ export async function readDiscoveryTextFile(
   const { fs } = await getNodeDeps(context);
   return fs.readFileSync(path, "utf-8");
 }
+
+/** A single top-level entry inside a discovery directory. */
+export type DiscoveryDirectoryEntry = {
+  name: string;
+  isFile: boolean;
+  isDirectory: boolean;
+};
+
+/** Lists the immediate (non-recursive) entries of a discovery directory. */
+export async function listDiscoveryDirectoryEntries(
+  dir: string,
+  context: FileDiscoveryContext,
+): Promise<DiscoveryDirectoryEntry[]> {
+  const entries: DiscoveryDirectoryEntry[] = [];
+
+  try {
+    if (context.fsAdapter) {
+      if (!(await context.fsAdapter.exists(dir))) return entries;
+
+      for await (const entry of context.fsAdapter.readDir(dir)) {
+        entries.push({
+          name: entry.name,
+          isFile: entry.isFile,
+          isDirectory: entry.isDirectory,
+        });
+      }
+
+      return entries;
+    }
+
+    const { fs } = await getNodeDeps(context);
+    if (!fs.existsSync(dir)) return entries;
+
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      entries.push({
+        name: entry.name,
+        isFile: entry.isFile(),
+        isDirectory: entry.isDirectory(),
+      });
+    }
+  } catch (_) {
+    /* expected: directory may not exist or be unreadable */
+    return entries;
+  }
+
+  return entries;
+}
+
+/** Returns true when a discovery file exists (fsAdapter-aware). */
+export async function discoveryFileExists(
+  path: string,
+  context: FileDiscoveryContext,
+): Promise<boolean> {
+  try {
+    if (context.fsAdapter) {
+      return await context.fsAdapter.exists(path);
+    }
+    const { fs } = await getNodeDeps(context);
+    return fs.existsSync(path);
+  } catch (_) {
+    return false;
+  }
+}
