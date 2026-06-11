@@ -36,6 +36,9 @@ export interface OrchestrateOptions {
    *  project, package, or config extension with the same name overrides them.
    *  Users can disable them via `{ name: "ext-llm-anthropic", enabled: false }`. */
   builtinExtensions?: ResolvedExtension[];
+  /** Per-extension setup() timeout in milliseconds. Defaults to 30 000 ms.
+   *  Pass `0` to disable. */
+  setupTimeoutMs?: number;
   /** @internal Override discovery functions in tests. */
   discovery?: {
     discoverPackageExtensions: typeof defaultDiscovery.discoverPackageExtensions;
@@ -177,7 +180,9 @@ export async function orchestrateExtensions(
   if (options.primeContracts) {
     loader.primeContracts(options.primeContracts);
   }
-  await loader.setupAll(merged, config as Record<string, unknown>);
+  await loader.setupAll(merged, config as Record<string, unknown>, {
+    setupTimeoutMs: options.setupTimeoutMs,
+  });
   return loader;
 }
 

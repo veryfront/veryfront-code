@@ -296,6 +296,7 @@ export async function bootstrap(
         logger: bootstrapLog,
         primeContracts: { [LLMProviderRegistryName]: createLLMProviderRegistry() },
         builtinExtensions: createBuiltinExtensions(),
+        setupTimeoutMs: getEnvironmentConfig().extensionSetupTimeoutMs,
       });
       wireTracingShim();
       assertRequiredContracts();
@@ -347,6 +348,7 @@ export async function bootstrap(
         logger: bootstrapLog,
         primeContracts: { [LLMProviderRegistryName]: createLLMProviderRegistry() },
         builtinExtensions: createBuiltinExtensions(),
+        setupTimeoutMs: getEnvironmentConfig().extensionSetupTimeoutMs,
       });
       wireTracingShim();
       assertRequiredContracts();
@@ -420,6 +422,7 @@ export async function bootstrap(
           logger: bootstrapLog,
           primeContracts: { [LLMProviderRegistryName]: createLLMProviderRegistry() },
           builtinExtensions: createBuiltinExtensions(),
+          setupTimeoutMs: getEnvironmentConfig().extensionSetupTimeoutMs,
         }),
       fsDispose,
     );

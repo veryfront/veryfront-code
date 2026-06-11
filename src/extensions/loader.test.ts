@@ -201,6 +201,80 @@ describe("ExtensionLoader", () => {
     });
   });
 
+  describe("setupAll() — setup timeout", () => {
+    it("should throw a timeout error when setup() never resolves within the configured timeout", async () => {
+      const hanging = makeExt("hanging", {
+        setup: () => new Promise<void>(() => {}), // never resolves
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      const err = await assertRejects(
+        () => loader.setupAll([makeResolved(hanging)], {}, { setupTimeoutMs: 50 }),
+        Error,
+        "hanging",
+      );
+      assertEquals((err as { slug?: string }).slug, "extension-setup-timeout");
+    });
+
+    it("should include the timeout value in the error message", async () => {
+      const hanging = makeExt("slow-ext", {
+        setup: () => new Promise<void>(() => {}),
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      const err = await assertRejects(
+        () => loader.setupAll([makeResolved(hanging)], {}, { setupTimeoutMs: 75 }),
+        Error,
+      );
+      assertEquals((err as Error).message.includes("75ms"), true);
+    });
+
+    it("should rollback already-loaded extensions on timeout of a later one", async () => {
+      const order: string[] = [];
+      const a = makeExt("ext-a", {
+        setup: () => {
+          order.push("a-setup");
+        },
+        teardown: () => {
+          order.push("a-teardown");
+        },
+      });
+      const hanging = makeExt("hanging", {
+        setup: () => new Promise<void>(() => {}),
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      await assertRejects(
+        () => loader.setupAll([makeResolved(a), makeResolved(hanging)], {}, { setupTimeoutMs: 50 }),
+        Error,
+        "hanging",
+      );
+      assertEquals(order, ["a-setup", "a-teardown"]);
+    });
+
+    it("should not time out when setup() completes within the limit", async () => {
+      const fast = makeExt("fast", {
+        setup: () => Promise.resolve(),
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      // Should not throw
+      await loader.setupAll([makeResolved(fast)], {}, { setupTimeoutMs: 5_000 });
+    });
+
+    it("should disable timeout when setupTimeoutMs is 0", async () => {
+      // A setup that takes longer than a tight timeout would catch,
+      // but we call with 0 (disabled) so it must not throw.
+      const slow = makeExt("slow", {
+        setup: () => new Promise<void>((resolve) => setTimeout(resolve, 20)),
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      // With a 5 ms timeout this would fail; with 0 (disabled) it must succeed.
+      await loader.setupAll([makeResolved(slow)], {}, { setupTimeoutMs: 0 });
+    });
+  });
+
   describe("teardownAll()", () => {
     it("should call teardown() in reverse order", async () => {
       const order: string[] = [];

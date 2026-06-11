@@ -41,3 +41,13 @@ export const EXTENSION_CONFLICT_ERROR = defineError({
   title: "Conflicting extensions detected",
   suggestion: "Remove or disable one of the conflicting extensions in your configuration",
 });
+
+/** Shared extension setup timeout error value. */
+export const EXTENSION_SETUP_TIMEOUT_ERROR = defineError({
+  slug: "extension-setup-timeout",
+  category: "RUNTIME",
+  status: 500,
+  title: "Extension setup timed out",
+  suggestion:
+    "Check the extension's setup() for blocking operations, or increase VF_EXTENSION_SETUP_TIMEOUT_MS",
+});
