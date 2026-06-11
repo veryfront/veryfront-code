@@ -92,3 +92,23 @@ Deno.test("getDiscoveredHostTools excludes agent-owned tools from the host sprea
     clearMCPRegistry();
   }
 });
+
+Deno.test("getDiscoveredHostTools includes owned tools only for the hosted owner", () => {
+  clearMCPRegistry();
+  try {
+    registerTool("global-echo", makeTool("global-echo"));
+    registerTool("researcher--fetch", makeTool("researcher--fetch", "researcher"));
+    registerTool("writer--style", makeTool("writer--style", "writer"));
+
+    const ownerTools = getDiscoveredHostTools({ agentId: "researcher" });
+    assertEquals(Object.keys(ownerTools).includes("global-echo"), true);
+    assertEquals(Object.keys(ownerTools).includes("researcher--fetch"), true);
+    assertEquals(Object.keys(ownerTools).includes("writer--style"), false);
+
+    const otherTools = getDiscoveredHostTools({ agentId: "writer" });
+    assertEquals(Object.keys(otherTools).includes("researcher--fetch"), false);
+    assertEquals(Object.keys(otherTools).includes("writer--style"), true);
+  } finally {
+    clearMCPRegistry();
+  }
+});

@@ -21,6 +21,7 @@ import {
   createRemoteMCPToolSource,
   createToolsFromRemoteDefinitions,
   type HostToolSet,
+  isToolVisibleTo,
   sleepTool,
   toolRegistry,
 } from "#veryfront/tool";
@@ -594,15 +595,14 @@ function getProjectSteering(
   return projectSteering;
 }
 
-export function getDiscoveredHostTools(): HostToolSet {
-  // Agent-owned tools never enter the project-level host tool spread: this
-  // set is built without a per-run agent identity, so the rule matches MCP
-  // tools/list (project-level callers see only unowned tools). Per-agent
-  // owned-tool visibility in the hosted runtime arrives with the owner-aware
-  // catalog (see .omx/research/hosted-catalog-spike.md).
+export function getDiscoveredHostTools(scope?: { agentId?: string }): HostToolSet {
+  // Without an agent identity, this remains the project-level host tool spread
+  // and matches MCP tools/list: project-level callers see only unowned tools.
+  // Hosted per-agent runs pass their task context identity so owned colocated
+  // tools are available to their owner and hidden from other agents.
   return Object.fromEntries(
     [...toolRegistry.getAll()]
-      .filter(([, registryTool]) => registryTool.ownerAgentId === undefined)
+      .filter(([, registryTool]) => isToolVisibleTo(registryTool, scope))
       .sort(([left], [right]) => left.localeCompare(right)),
   );
 }
@@ -698,7 +698,7 @@ function buildLocalTools(
 ): HostToolSet {
   const config = context.infrastructure.getConfig();
   const tools: HostToolSet = {
-    ...getDiscoveredHostTools(),
+    ...getDiscoveredHostTools({ agentId: taskContext.agentId }),
     form_input: createHostedFormInputTool(taskContext, config.VERYFRONT_API_URL),
     load_skill: createLoadSkillTool(context, taskContext),
     sleep: sleepTool,
