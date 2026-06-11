@@ -1,6 +1,6 @@
 import { getMCPRegistry, getMCPStats } from "#veryfront/mcp";
 import { REQUEST_ERROR } from "#veryfront/errors";
-import { executeTool, toolRegistry } from "#veryfront/tool";
+import { executeTool, isToolVisibleTo, toolRegistry } from "#veryfront/tool";
 import { resourceRegistry } from "#veryfront/resource";
 import { promptRegistry } from "#veryfront/prompt";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
@@ -187,7 +187,7 @@ function handleListPrompts(): Response {
 }
 
 function handleListAgents(): Response {
-  const allToolIds = Array.from(toolRegistry.getAll().keys());
+  const allTools = Array.from(toolRegistry.getAll().entries());
 
   const list = Array.from(agentRegistry.getAll().entries()).map(([id, agent]) => {
     const cfg = agent.config as unknown as Record<string, unknown>;
@@ -198,7 +198,12 @@ function handleListAgents(): Response {
 
     let tools: Record<string, boolean> = {};
     if (cfg.tools === true) {
-      tools = Object.fromEntries(allToolIds.map((tid) => [tid, true]));
+      // Owner-aware: list only tools this agent can actually resolve.
+      tools = Object.fromEntries(
+        allTools
+          .filter(([, registryTool]) => isToolVisibleTo(registryTool, { agentId: id }))
+          .map(([tid]) => [tid, true]),
+      );
     } else if (typeof cfg.tools === "object" && cfg.tools !== null) {
       tools = cfg.tools as Record<string, boolean>;
     }

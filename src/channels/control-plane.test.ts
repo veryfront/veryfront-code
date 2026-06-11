@@ -520,3 +520,36 @@ describe("channels/control-plane", () => {
     });
   });
 });
+
+// ── Owner-aware agent skill metadata (review round 3) ─────────────────────
+
+import { resolveAgentSkills } from "./control-plane.ts";
+import type { Agent } from "#veryfront/agent/types.ts";
+
+Deno.test("resolveAgentSkills includes the agent's own skills and excludes others'", () => {
+  skillRegistry.clearAll();
+  try {
+    registerSkill("global-howto", {
+      id: "global-howto",
+      metadata: { name: "global-howto", description: "Global guide" },
+      rootPath: "/nonexistent/global-howto",
+    });
+    registerSkill("researcher--cite", {
+      id: "researcher--cite",
+      metadata: { name: "cite", description: "Cite sources" },
+      rootPath: "/nonexistent/cite",
+      ownerAgentId: "researcher",
+      shortName: "cite",
+    });
+
+    const researcher = { id: "researcher", config: { skills: true } } as unknown as Agent;
+    const researcherSkills = resolveAgentSkills(researcher).map((skill) => skill.id).sort();
+    assertEquals(researcherSkills, ["global-howto", "researcher--cite"]);
+
+    const writer = { id: "writer", config: { skills: true } } as unknown as Agent;
+    const writerSkills = resolveAgentSkills(writer).map((skill) => skill.id);
+    assertEquals(writerSkills, ["global-howto"]);
+  } finally {
+    skillRegistry.clearAll();
+  }
+});

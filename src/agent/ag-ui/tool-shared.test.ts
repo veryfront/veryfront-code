@@ -78,3 +78,39 @@ describe("buildMergedAgUiTools", () => {
     assertEquals(mergedTools["number-generator"], true);
   });
 });
+
+// ── Owner-aware tools: true expansion (review round 3) ────────────────────
+
+import { clearMCPRegistry, registerTool } from "#veryfront/mcp";
+
+function makeRegistryTool(id: string, ownerAgentId?: string): Tool {
+  return {
+    id,
+    type: "function",
+    description: `${id} test tool`,
+    inputSchema: defineSchema((v) => v.object({}))(),
+    execute: () => Promise.resolve({ ok: true }),
+    ...(ownerAgentId === undefined ? {} : { ownerAgentId }),
+  };
+}
+
+describe("buildMergedAgUiTools owner scope", () => {
+  it("tools: true excludes other agents' owned tools and includes the owner's", () => {
+    clearMCPRegistry();
+    try {
+      registerTool("global-echo", makeRegistryTool("global-echo"));
+      registerTool("researcher--fetch", makeRegistryTool("researcher--fetch", "researcher"));
+
+      const writer = { id: "writer", config: { tools: true } } as unknown as Agent;
+      const writerTools = buildMergedAgUiTools(writer, "run_w", []);
+      assertEquals(Object.keys(writerTools ?? {}).includes("global-echo"), true);
+      assertEquals(Object.keys(writerTools ?? {}).includes("researcher--fetch"), false);
+
+      const researcher = { id: "researcher", config: { tools: true } } as unknown as Agent;
+      const researcherTools = buildMergedAgUiTools(researcher, "run_r", []);
+      assertEquals(Object.keys(researcherTools ?? {}).includes("researcher--fetch"), true);
+    } finally {
+      clearMCPRegistry();
+    }
+  });
+});
