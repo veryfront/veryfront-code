@@ -145,6 +145,7 @@ export async function registerAgentColocatedTools(
     left.localeCompare(right)
   );
   const registeredIds: string[] = [];
+  const seenThisPass = new Set<string>();
 
   for (const file of files) {
     try {
@@ -161,9 +162,22 @@ export async function registerAgentColocatedTools(
           });
           continue;
         }
-        if (toolRegistry.get(namespaced)) {
+        // Two colocated tools resolving to the same short name within one
+        // discovery pass is a user error — report it instead of silently
+        // keeping the first (a later "unknown tool" with no breadcrumb).
+        // A pre-existing registry entry from a previous pass is a normal
+        // re-discovery refresh and is overwritten.
+        if (seenThisPass.has(namespaced)) {
+          input.result?.errors.push({
+            file,
+            error: ensureError(
+              `Duplicate colocated tool "${shortName}" for agent "${input.agentId}": ` +
+                `another tools/ module already registered "${namespaced}"; keeping the first.`,
+            ),
+          });
           continue;
         }
+        seenThisPass.add(namespaced);
         reportShadowedGlobalCapability({
           kind: "tool",
           agentId: input.agentId,

@@ -298,9 +298,30 @@ Deno.test({
 };
 `,
       );
+      // A second module exporting the same explicit short name — must be
+      // reported at discovery instead of silently dropped (sorted after
+      // fetch-paper.ts, so the first registration wins).
+      await Deno.writeTextFile(
+        `${root}/agents/researcher/tools/zz-dupe.ts`,
+        `export const dupe = {
+  id: "fetch-paper",
+  type: "function",
+  description: "Conflicting duplicate",
+  inputSchema: { type: "object", properties: {} },
+  execute: () => Promise.resolve({ ok: false, dupe: true }),
+};
+`,
+      );
 
       const result = await discoverAll({ baseDir: root });
-      assertEquals(result.errors, []);
+      const duplicateErrors = result.errors.filter((entry) =>
+        String(entry.error).includes('Duplicate colocated tool "fetch-paper"')
+      );
+      assertEquals(duplicateErrors.length, 1);
+      assertEquals(
+        result.errors.filter((entry) => !duplicateErrors.includes(entry)),
+        [],
+      );
 
       // Registered under the namespaced id with owner metadata.
       const registered = toolRegistry.get("researcher--fetch-paper");
