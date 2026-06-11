@@ -320,6 +320,15 @@ export async function prepareHostedChatRuntimeCreationOptions<
         ? { parentMessageId: input.rootRunContext.effectiveParentMessageId }
         : {}),
       availableSkillIds: visibleSkills.map((skill) => skill.id),
+      ...(visibleSkills.some((skill) => skill.sourcePath)
+        ? {
+          skillSourcePaths: Object.fromEntries(
+            visibleSkills
+              .filter((skill) => skill.sourcePath)
+              .map((skill) => [skill.id, skill.sourcePath as string]),
+          ),
+        }
+        : {}),
       ...(input.rootRunContext?.publishParentRunEvents
         ? { publishParentRunEvents: input.rootRunContext.publishParentRunEvents }
         : {}),

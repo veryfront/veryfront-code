@@ -690,6 +690,9 @@ Deno.test("prepareHostedChatRuntimeCreationOptions filters skills to the run age
   // the returned steering all carry the same owner-scoped set.
   assertEquals(seenByInstructions, [expected]);
   assertEquals(result.creationOptions.availableSkillIds, expected);
+  assertEquals(result.creationOptions.skillSourcePaths, {
+    "researcher--cite": "agents/researcher/skills/cite/SKILL.md",
+  });
   assertEquals(
     (result.creationOptions.liveProjectSteering?.initialSkills ?? []).map((
       skill: { id: string },

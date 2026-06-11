@@ -107,6 +107,8 @@ export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingC
   parentRunId?: string;
   parentMessageId?: string;
   availableSkillIds?: string[];
+  /** Per-run skill id -> discovered SKILL.md source path (owner-aware catalog). */
+  skillSourcePaths?: Readonly<Record<string, string>>;
   publishParentRunEvents?: (events: ConversationRunEvent[]) => Promise<void>;
   clientProfile?: RuntimeClientProfile | null;
   liveProjectSteering?: HostedChatRuntimeProjectSteering<TRuntimeAgentDefinition>;
