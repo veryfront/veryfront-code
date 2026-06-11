@@ -50,7 +50,10 @@ describe("rendering/orchestrator/MDXCompiler singleflight", () => {
   });
 
   afterEach(async () => {
-    await Promise.resolve();
+    // Drop the stubbed ContentProcessor so it cannot leak into other test
+    // files that share this worker process.
+    const { unregister } = await import("#veryfront/extensions/contracts.ts");
+    unregister("ContentProcessor");
   });
 
   describe("concurrent compilations of the same content", () => {
@@ -72,6 +75,23 @@ describe("rendering/orchestrator/MDXCompiler singleflight", () => {
         setCacheCount++;
       });
 
+      // Hold both callers at computeHash until BOTH have arrived, so they
+      // reach the singleflight map while the compile is still in flight.
+      // Without this the test races: under load the first caller can finish
+      // its whole compile before the second reaches the flight map, and the
+      // second then compiles again legitimately.
+      let hashCalls = 0;
+      let releaseHashes!: () => void;
+      const bothHashing = new Promise<void>((resolve) => {
+        releaseHashes = resolve;
+      });
+      adapter.computeHash = async (content: string) => {
+        hashCalls++;
+        if (hashCalls >= 2) releaseHashes();
+        await bothHashing;
+        return sha256Hex(content);
+      };
+
       const compiler = new MDXCompiler({
         projectDir: "/project",
         mode: "production",
@@ -82,6 +102,10 @@ describe("rendering/orchestrator/MDXCompiler singleflight", () => {
       const p1 = compiler.compileMDX(content, {}, "test.mdx");
       const p2 = compiler.compileMDX(content, {}, "test.mdx");
 
+      // Both callers are now past computeHash; drain a macrotask so both
+      // enter compileFlight.do() before the compile resolves.
+      await bothHashing;
+      await new Promise((resolve) => setTimeout(resolve, 0));
       resolveCompile(makeResult());
       const [r1, r2] = await Promise.all([p1, p2]);
 
