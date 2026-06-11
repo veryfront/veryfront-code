@@ -229,6 +229,28 @@ describe("ExtensionLoader", () => {
       assertEquals((err as Error).message.includes("75ms"), true);
     });
 
+    it("should ignore provide() from a timed-out setup that resumes later", async () => {
+      let capturedProvide: ((contract: string, impl: unknown) => void) | undefined;
+      const hanging = makeExt("late-provider", {
+        setup: (ctx) => {
+          capturedProvide = ctx.provide;
+          return new Promise<void>(() => {}); // never resolves
+        },
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      await assertRejects(
+        () => loader.setupAll([makeResolved(hanging)], {}, { setupTimeoutMs: 50 }),
+        Error,
+        "late-provider",
+      );
+
+      // Simulate the losing setup promise resuming after rollback and trying
+      // to mutate the contract registry through its stale context.
+      capturedProvide?.("LateContract", { id: "poisoned" });
+      assertEquals(tryResolve("LateContract"), undefined);
+    });
+
     it("should rollback already-loaded extensions on timeout of a later one", async () => {
       const order: string[] = [];
       const a = makeExt("ext-a", {

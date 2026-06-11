@@ -222,10 +222,20 @@ export class ExtensionLoader {
       }
 
       if (ext.setup) {
+        // Once setup fails (notably on timeout, where the losing promise may
+        // resume later), the context must stop mutating the contract registry,
+        // or a late provide() would poison state after teardownAll() rollback.
+        let ctxRevoked = false;
         const ctx: ExtensionContext = {
           get: <T>(contract: string) => tryResolve<T>(contract),
           require: <T>(contract: string) => resolveContract<T>(contract),
           provide: <T>(contract: string, impl: T) => {
+            if (ctxRevoked) {
+              this.logger.warn(
+                `Ignoring provide("${contract}") from "${ext.name}": its setup() already failed or timed out`,
+              );
+              return;
+            }
             const winner = contractWinner.get(contract);
             if (!winner || winner === resolved) {
               register(contract, impl);
@@ -249,6 +259,7 @@ export class ExtensionLoader {
             await ext.setup(ctx);
           }
         } catch (err) {
+          ctxRevoked = true;
           const normalized = err === SETUP_TIMEOUT_SENTINEL
             ? EXTENSION_SETUP_TIMEOUT_ERROR.create({
               message: `Extension "${ext.name}" setup() timed out after ${timeoutMs}ms`,
