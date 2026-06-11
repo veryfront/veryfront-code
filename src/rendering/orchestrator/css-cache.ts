@@ -8,19 +8,30 @@
  */
 
 import type { CacheRepository } from "#veryfront/repositories/types.ts";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import { registerLRUCache } from "#veryfront/cache";
 
 /** Timeout for CSS generation SSR (shorter than full SSR since it's optional) */
 export const CSS_SSR_TIMEOUT_MS = 5_000;
+
+/** Maximum number of entries in the CSS cache */
+export const PAGE_CSS_CACHE_MAX_SIZE = 200;
 
 /**
  * Per-page CSS cache to avoid redundant SSR for CSS generation.
  * Key: projectId:environment:slug:contentVersion
  * Value: Generated CSS string
+ * Uses LRU eviction so frequently-used pages' CSS is retained under cache pressure.
  */
-const pageCssCache = new Map<string, string>();
+const pageCssCache = new LRUCache<string, string>({
+  maxEntries: PAGE_CSS_CACHE_MAX_SIZE,
+});
 
-/** Maximum number of entries in the CSS cache */
-export const PAGE_CSS_CACHE_MAX_SIZE = 200;
+// Register cache for monitoring
+registerLRUCache("page-css-cache", pageCssCache);
+
+/** Exposed for testing only — do not use in production code */
+export const __pageCssCacheForTests = pageCssCache;
 
 /** Injected cache repository for testing */
 let injectedCssCacheRepo: CacheRepository<string> | null = null;
@@ -47,10 +58,6 @@ export function getPageCssCacheKey(
 
 /** Cache CSS for a page - internal implementation */
 function cachePageCssInternal(cacheKey: string, css: string): void {
-  if (pageCssCache.size >= PAGE_CSS_CACHE_MAX_SIZE && !pageCssCache.has(cacheKey)) {
-    const firstKey = pageCssCache.keys().next().value as string | undefined;
-    if (firstKey) pageCssCache.delete(firstKey);
-  }
   pageCssCache.set(cacheKey, css);
 }
 
