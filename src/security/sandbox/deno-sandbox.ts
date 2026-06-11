@@ -90,8 +90,8 @@ export function isBunSandboxAllowedUnsafe(envValue: string | undefined): boolean
  * Callers SHOULD NOT pass untrusted code to this function on Node.js or Bun
  * unless they have audited every caller and operator and accept the risk.
  *
- * @throws NOT_SUPPORTED — on Node.js without the explicit opt-in env var.
- * @throws NOT_SUPPORTED — on Bun without the explicit opt-in env var.
+ * @throws NOT_SUPPORTED on Node.js without the explicit opt-in env var.
+ * @throws NOT_SUPPORTED on Bun without the explicit opt-in env var.
  */
 export function runInWorker<T = unknown>(code: string, options: SandboxOptions = {}): Promise<T> {
   if (typeof code !== "string") {
