@@ -44,6 +44,7 @@ import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 import { exit, getEnv, onSignal } from "#veryfront/platform/compat/process.ts";
 import { createHttpServer, upgradeWebSocket } from "#veryfront/platform/compat/http/index.ts";
 import { createProxyErrorResponse, jsonErrorResponse } from "./error-response.ts";
+import { handleReleaseAssetRequest, isReleaseAssetPath } from "./asset-handler.ts";
 
 function getLocalProjects(): Record<string, string> {
   const raw = getEnv("LOCAL_PROJECTS");
@@ -563,6 +564,12 @@ function router(req: Request): Promise<Response> {
   }
 
   if (url.pathname.startsWith("/_vf/api/")) return handleApiProxy(req, url);
+
+  if (isReleaseAssetPath(url.pathname)) {
+    return handleReleaseAssetRequest(url, { apiBaseUrl: config.apiBaseUrl }).then((res) =>
+      res ?? forwardToServer(req, url)
+    );
+  }
 
   return forwardToServer(req, url);
 }

@@ -10,12 +10,20 @@ import {
   getListReleaseFilesResponseSchema,
   getProjectSchema,
   getProjectWithEnvironmentsSchema,
+  getReleaseAssetManifestBuildResponseSchema,
+  getReleaseAssetManifestResponseSchema,
+  getReleaseAssetManifestStateResponseSchema,
+  getReleaseAssetUploadResponseSchema,
   getReleaseFileDetailSchema,
   getStyleArtifactResolveResponseSchema,
   type LookupDomainResponse,
   type PageInfo,
   type Project,
   type ProjectFile,
+  type ReleaseAssetManifestApiResponse,
+  type ReleaseAssetManifestBuildResponse,
+  type ReleaseAssetManifestStateResponse,
+  type ReleaseAssetUploadResponse,
 } from "./schemas/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
@@ -565,6 +573,106 @@ export class VeryfrontAPIOperations {
         }),
       }),
     );
+  }
+
+  // ===========================================================================
+  // Release Asset Manifest operations
+  // ===========================================================================
+
+  async beginReleaseAssetManifestBuild(
+    projectRef: string,
+    version: string,
+  ): Promise<ReleaseAssetManifestBuildResponse> {
+    const url = `/projects/${encodeURIComponent(projectRef)}/releases/${
+      encodeURIComponent(version)
+    }/asset-manifest/builds`;
+    logger.debug("beginReleaseAssetManifestBuild", { projectRef, version });
+
+    const raw = await this.request(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    return getReleaseAssetManifestBuildResponseSchema().parse(raw);
+  }
+
+  async uploadReleaseAsset(
+    projectRef: string,
+    version: string,
+    contentHash: string,
+    contentType: string,
+    bytes: Uint8Array,
+  ): Promise<ReleaseAssetUploadResponse> {
+    const url = `/projects/${encodeURIComponent(projectRef)}/releases/${
+      encodeURIComponent(version)
+    }/asset-manifest/assets`;
+    logger.debug("uploadReleaseAsset", {
+      projectRef,
+      version,
+      contentHash,
+      contentType,
+      size: bytes.byteLength,
+    });
+
+    const raw = await this.request(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": contentType,
+        "x-vf-content-hash": contentHash,
+      },
+      body: bytes as BodyInit,
+    });
+    return getReleaseAssetUploadResponseSchema().parse(raw);
+  }
+
+  async putReleaseAssetManifest(
+    projectRef: string,
+    version: string,
+    manifest: unknown,
+  ): Promise<ReleaseAssetManifestStateResponse> {
+    const url = `/projects/${encodeURIComponent(projectRef)}/releases/${
+      encodeURIComponent(version)
+    }/asset-manifest`;
+    logger.debug("putReleaseAssetManifest", { projectRef, version });
+
+    const raw = await this.request(url, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(manifest),
+    });
+    return getReleaseAssetManifestStateResponseSchema().parse(raw);
+  }
+
+  async reportReleaseAssetManifestState(
+    projectRef: string,
+    version: string,
+    state: "partial" | "failed",
+    error?: string,
+  ): Promise<ReleaseAssetManifestStateResponse> {
+    const url = `/projects/${encodeURIComponent(projectRef)}/releases/${
+      encodeURIComponent(version)
+    }/asset-manifest/state`;
+    logger.debug("reportReleaseAssetManifestState", { projectRef, version, state });
+
+    const raw = await this.request(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(error ? { state, error } : { state }),
+    });
+    return getReleaseAssetManifestStateResponseSchema().parse(raw);
+  }
+
+  async getReleaseAssetManifest(
+    projectRef: string,
+    version: string,
+  ): Promise<ReleaseAssetManifestApiResponse> {
+    const url = `/projects/${encodeURIComponent(projectRef)}/releases/${
+      encodeURIComponent(version)
+    }/asset-manifest`;
+    logger.debug("getReleaseAssetManifest", { projectRef, version });
+
+    const raw = await this.request(url);
+    return getReleaseAssetManifestResponseSchema().parse(raw);
   }
 
   private request(endpoint: string, options: RequestOptions = {}): Promise<unknown> {

@@ -17,8 +17,16 @@ export function buildRenderCachePrefix(
   projectId: string,
   environment: "preview" | "production",
   releaseKey: string,
+  /**
+   * Release asset manifest version currently being consumed for this render.
+   * When set (a ready manifest is in use), it is folded into the prefix so
+   * manifest-rewritten HTML is cached separately from JIT HTML. Omitted when
+   * no manifest is consumed — preserving today's cache keys byte-for-byte.
+   */
+  manifestVersion?: number,
 ): string {
-  return `${projectId}:${environment}:${releaseKey}:${VERSION}`;
+  const base = `${projectId}:${environment}:${releaseKey}:${VERSION}`;
+  return manifestVersion === undefined ? base : `${base}:m${manifestVersion}`;
 }
 
 /**

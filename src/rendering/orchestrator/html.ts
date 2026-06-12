@@ -34,6 +34,22 @@ export type { HTMLGenerationContext, HTMLGeneratorConfig } from "./html-types.ts
 
 const logger = rendererLogger.component("html-generator");
 
+/**
+ * Resolve the release ID for manifest consumption from render options.
+ *
+ * Prefers an explicit `releaseId`, then derives it from a production
+ * `contentSourceId` of the form `release-<id>`. Returns undefined for
+ * preview/local renders so manifest consumption stays inert there.
+ */
+function resolveReleaseId(
+  options: { releaseId?: string; contentSourceId?: string } | undefined,
+): string | undefined {
+  if (options?.releaseId) return options.releaseId;
+  const source = options?.contentSourceId;
+  if (source && source.startsWith("release-")) return source.slice("release-".length);
+  return undefined;
+}
+
 function applyExplicitThemeToDocument(
   html: string,
   colorScheme: "light" | "dark" | undefined,
@@ -452,6 +468,7 @@ export class HTMLGenerator {
       studioEmbed: context.options?.studioEmbed,
       projectId: context.options?.projectId,
       projectSlug: context.options?.projectSlug,
+      releaseId: resolveReleaseId(context.options),
       pageId: context.options?.pageId,
       sourceHash,
       colorScheme: context.options?.colorScheme,

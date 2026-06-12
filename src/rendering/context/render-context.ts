@@ -9,6 +9,7 @@ import {
   computeContentSourceId,
   parseRenderCacheKey,
 } from "#veryfront/cache/keys.ts";
+import { getReadyManifestForRender } from "#veryfront/release-assets/manifest-cache.ts";
 
 export type RenderEnvironment = "preview" | "production";
 
@@ -65,7 +66,13 @@ export function createRenderContext(
   );
 
   const releaseKey = getReleaseKey(isLocal, environment, branch, ctx.releaseId);
-  const cachePrefix = buildRenderCachePrefix(projectId, environment, releaseKey);
+  const readyManifest = getReadyManifestForRender(ctx.releaseId);
+  const cachePrefix = buildRenderCachePrefix(
+    projectId,
+    environment,
+    releaseKey,
+    readyManifest?.manifestVersion,
+  );
 
   return {
     projectId,

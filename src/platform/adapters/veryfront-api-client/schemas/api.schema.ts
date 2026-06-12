@@ -203,6 +203,63 @@ export const getStyleArtifactResolveResponseSchema = defineSchema((v) =>
   })
 );
 
+export const getReleaseAssetManifestBuildResponseSchema = defineSchema((v) =>
+  v.object({
+    id: v.string(),
+    manifest_version: v.number(),
+    state: v.enum(
+      [
+        "queued",
+        "building",
+        "partial",
+        "ready",
+        "failed",
+        "superseded",
+      ] as const,
+    ),
+  })
+);
+
+export const getReleaseAssetUploadResponseSchema = defineSchema((v) =>
+  v.object({
+    stored: v.boolean(),
+    existed: v.boolean(),
+  })
+);
+
+export const getReleaseAssetManifestStateResponseSchema = defineSchema((v) =>
+  v.object({
+    state: v.enum(
+      [
+        "queued",
+        "building",
+        "partial",
+        "ready",
+        "failed",
+        "superseded",
+      ] as const,
+    ),
+    manifest_version: v.number().optional(),
+  })
+);
+
+export const getReleaseAssetManifestResponseSchema = defineSchema((v) =>
+  v.object({
+    state: v.enum(
+      [
+        "queued",
+        "building",
+        "partial",
+        "ready",
+        "failed",
+        "superseded",
+      ] as const,
+    ),
+    manifest_version: v.number(),
+    manifest: v.union([v.record(v.string(), v.unknown()), v.null()]),
+  })
+);
+
 /**
  * Project schema extended with the `environments` array — used by the
  * domain-lookup endpoint which returns a project plus its environments.
@@ -257,6 +314,19 @@ export type ReleaseFileDetail = InferSchema<ReturnType<typeof getReleaseFileDeta
 export type LookupDomainResponse = InferSchema<ReturnType<typeof getLookupDomainResponseSchema>>;
 export type StyleArtifactResolveResponse = InferSchema<
   ReturnType<typeof getStyleArtifactResolveResponseSchema>
+>;
+
+export type ReleaseAssetManifestBuildResponse = InferSchema<
+  ReturnType<typeof getReleaseAssetManifestBuildResponseSchema>
+>;
+export type ReleaseAssetUploadResponse = InferSchema<
+  ReturnType<typeof getReleaseAssetUploadResponseSchema>
+>;
+export type ReleaseAssetManifestStateResponse = InferSchema<
+  ReturnType<typeof getReleaseAssetManifestStateResponseSchema>
+>;
+export type ReleaseAssetManifestApiResponse = InferSchema<
+  ReturnType<typeof getReleaseAssetManifestResponseSchema>
 >;
 
 export const API_ENDPOINTS = {

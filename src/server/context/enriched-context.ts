@@ -2,6 +2,7 @@ import { buildRenderCachePrefix } from "#veryfront/cache/keys.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors/error-registry.ts";
 import type { HandlerContext } from "#veryfront/types/server.ts";
 import type { BuildEnrichedContextOptions, EnrichedContext } from "./enriched-context-types.ts";
+import { getReadyManifestForRender } from "#veryfront/release-assets/manifest-cache.ts";
 export type {
   BuildEnrichedContextOptions,
   EnrichedContext,
@@ -46,7 +47,12 @@ export function buildEnrichedContext(options: BuildEnrichedContextOptions): Enri
 
     adapter: options.adapter,
     config: options.config,
-    cachePrefix: buildRenderCachePrefix(options.projectId, options.environment, releaseKey),
+    cachePrefix: buildRenderCachePrefix(
+      options.projectId,
+      options.environment,
+      releaseKey,
+      getReadyManifestForRender(options.releaseId)?.manifestVersion,
+    ),
 
     moduleServerUrl: options.moduleServerUrl,
     nonce: options.nonce,

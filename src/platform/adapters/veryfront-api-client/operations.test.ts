@@ -179,4 +179,103 @@ describe("VeryfrontAPIOperations", () => {
       assertStringIncludes(requestedUrl, "include_server_functions=true");
     });
   });
+
+  describe("release asset manifest operations", () => {
+    it("begins a build at the builds endpoint", async () => {
+      let requestedUrl = "";
+      let method = "";
+      stubJsonFetch((url, init) => {
+        requestedUrl = url;
+        method = init?.method ?? "GET";
+        return { id: "b1", manifest_version: 1, state: "building" };
+      });
+
+      const res = await createOps().beginReleaseAssetManifestBuild("project-slug", "rel-1");
+
+      assertEquals(method, "POST");
+      assertStringIncludes(requestedUrl, "/releases/rel-1/asset-manifest/builds");
+      assertEquals(res.state, "building");
+    });
+
+    it("uploads an asset with the content-hash header and raw bytes", async () => {
+      let contentHashHeader: string | null = null;
+      let contentTypeHeader: string | null = null;
+      let requestedUrl = "";
+      globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+        requestedUrl = String(input);
+        const headers = new Headers(init?.headers);
+        contentHashHeader = headers.get("x-vf-content-hash");
+        contentTypeHeader = headers.get("Content-Type");
+        return Promise.resolve(
+          new Response(JSON.stringify({ stored: true, existed: false }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        );
+      }) as typeof fetch;
+
+      const bytes = new TextEncoder().encode("export const x = 1;");
+      const res = await createOps().uploadReleaseAsset(
+        "project-slug",
+        "rel-1",
+        "a".repeat(64),
+        "text/javascript",
+        bytes,
+      );
+
+      assertStringIncludes(requestedUrl, "/releases/rel-1/asset-manifest/assets");
+      assertEquals(contentHashHeader, "a".repeat(64));
+      assertEquals(contentTypeHeader, "text/javascript");
+      assertEquals(res.stored, true);
+    });
+
+    it("PUTs the full manifest body", async () => {
+      let method = "";
+      let requestedUrl = "";
+      stubJsonFetch((url, init) => {
+        requestedUrl = url;
+        method = init?.method ?? "GET";
+        return { state: "ready", manifest_version: 1 };
+      });
+
+      const res = await createOps().putReleaseAssetManifest("project-slug", "rel-1", {
+        schemaVersion: 1,
+      });
+
+      assertEquals(method, "PUT");
+      assertStringIncludes(requestedUrl, "/releases/rel-1/asset-manifest");
+      assertEquals(res.state, "ready");
+    });
+
+    it("reports a failed state with sanitized error", async () => {
+      let body: unknown;
+      stubJsonFetch((_url, init) => {
+        body = init?.body ? JSON.parse(String(init.body)) : undefined;
+        return { state: "failed" };
+      });
+
+      await createOps().reportReleaseAssetManifestState(
+        "project-slug",
+        "rel-1",
+        "failed",
+        "boom",
+      );
+
+      assertEquals((body as { state: string }).state, "failed");
+      assertEquals((body as { error: string }).error, "boom");
+    });
+
+    it("fetches the manifest via GET", async () => {
+      let requestedUrl = "";
+      stubJsonFetch((url) => {
+        requestedUrl = url;
+        return { state: "ready", manifest_version: 1, manifest: { schemaVersion: 1 } };
+      });
+
+      const res = await createOps().getReleaseAssetManifest("project-slug", "rel-1");
+
+      assertStringIncludes(requestedUrl, "/releases/rel-1/asset-manifest");
+      assertEquals(res.state, "ready");
+    });
+  });
 });
