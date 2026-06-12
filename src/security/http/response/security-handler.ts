@@ -42,15 +42,19 @@ const VERYFRONT_FRAME_ANCESTORS = [
  *   html2canvas, legacy/browser ESM hydration)
  * - Styles:
  *   - style-src: 'self' + 'unsafe-inline' + Google Fonts + cdn.veryfront.com
- *     so React style="" attributes and framework inline styles remain
- *     compatible. Do not include a nonce in style-src here: browsers ignore
- *     'unsafe-inline' when a nonce/hash is present on the directive, which
- *     breaks React style attributes.
- *   - style-src-elem: nonce-based + Google Fonts + cdn.veryfront.com for
- *     inline <style> tags and stylesheet elements
+ *     + Video.js CDN so React style="" attributes, framework inline styles,
+ *     and common media-player stylesheets remain compatible. Do not include a
+ *     nonce in style directives here: browsers ignore 'unsafe-inline' when a
+ *     nonce/hash is present, which breaks runtime-created style attributes and
+ *     style elements.
+ *   - style-src-elem: 'unsafe-inline' + Google Fonts + cdn.veryfront.com +
+ *     Video.js CDN for runtime-created <style> tags and stylesheet elements
  *   - style-src-attr: 'unsafe-inline' for modern browsers with directive-level
  *     style attribute support
- * - Images/media/fonts: 'self' + data: + https: + cdn.veryfront.com
+ * - Images/fonts: 'self' + data: + https: + cdn.veryfront.com
+ * - Media: 'self' + https: + blob: where browser media pipelines require
+ *   object URLs
+ * - Workers: 'self' + blob: for browser libraries that create blob workers
  * - Connections: 'self' + wss: + https: (WebSocket for HMR/live reload, API calls)
  * - Objects: 'none' (block Flash/plugins)
  * - Frames: 'self' (allows same-origin iframes; apps embedding external
@@ -70,13 +74,14 @@ function buildDefaultCSP(nonce: string, isVeryfrontDomain: boolean): string {
   return [
     `default-src 'self'`,
     `script-src 'self' 'nonce-${nonce}' https://cdn.jsdelivr.net https://esm.sh`,
-    `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.veryfront.com`,
-    `style-src-elem 'self' 'nonce-${nonce}' https://fonts.googleapis.com https://cdn.veryfront.com`,
+    `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.veryfront.com https://vjs.zencdn.net`,
+    `style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.veryfront.com https://vjs.zencdn.net`,
     `style-src-attr 'unsafe-inline'`,
     `img-src 'self' data: https:`,
     `font-src 'self' data: https://fonts.gstatic.com https://cdn.veryfront.com`,
     `connect-src 'self' wss: https:`,
-    `media-src 'self' https:`,
+    `media-src 'self' https: blob:`,
+    `worker-src 'self' blob:`,
     `object-src 'none'`,
     `frame-src 'self'`,
     frameAncestors,
