@@ -26,7 +26,7 @@
 import { serverLogger } from "#veryfront/utils";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
-import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "./constants.ts";
 import { parseReleaseAssetManifest, type ReleaseAssetManifest } from "./manifest-schema.ts";
 
@@ -113,7 +113,10 @@ function resolveFetcher(
 
 /** True when production manifest consumption is enabled via env flag. */
 export function isReleaseAssetManifestEnabled(): boolean {
-  return getEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG) === "1";
+  // Deployment-level flag: read HOST env explicitly. `getEnv` consults the
+  // per-request project env overlay and refuses host fallthrough during remote
+  // project renders, which left this flag permanently off in production.
+  return getHostEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG) === "1";
 }
 
 /** Build the cache key from releaseId + the latest known manifestVersion. */
