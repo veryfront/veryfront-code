@@ -95,6 +95,33 @@ describe("html shell release asset manifest consumption", () => {
     assertStringIncludes(result.start, `/_vf/assets/${PAGE_HASH}.js`);
   });
 
+  it("emits the manifest CSS asset link when the manifest carries CSS", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    const CSS_HASH = "c".repeat(64);
+    configureReleaseAssetManifestFetcher(() =>
+      Promise.resolve({
+        state: "ready",
+        manifest: {
+          ...manifest(),
+          css: [{
+            contentHash: CSS_HASH,
+            size: 10,
+            contentType: "text/css",
+            styleProfileHash: "sp",
+          }],
+          routes: { "/": { modules: ["pages/index.tsx"], css: [CSS_HASH] } },
+        },
+      })
+    );
+    await generateHTMLShellParts(meta(), prodOptions({ releaseId: "rel-1" }));
+    await new Promise((r) => setTimeout(r, 0));
+
+    const result = await generateHTMLShellParts(meta(), prodOptions({ releaseId: "rel-1" }));
+    assertStringIncludes(result.start, `/_vf/assets/${CSS_HASH}.css`);
+    // The JIT project-CSS link is replaced, not duplicated.
+    assert(!result.start.includes("/_vf/css/"));
+  });
+
   it("falls back to the existing URL for an uncovered page when the flag is on", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     await primeReadyManifest();
