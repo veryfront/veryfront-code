@@ -678,17 +678,21 @@ export class VeryfrontFSAdapter implements FSAdapter {
       contextWillChange: contextChanged,
     });
 
+    const oldReleaseId = oldContext?.releaseId;
+    const nextReleaseId = context.releaseId;
+
     // Unregister the manifest fetcher for the previous release (if any).
-    if (oldContext?.sourceType === "release" && oldContext.releaseId) {
-      unregisterManifestFetcherForRelease(oldContext.releaseId);
+    // Environment/domain contexts can also carry a deployed releaseId.
+    if (oldReleaseId && oldReleaseId !== nextReleaseId) {
+      unregisterManifestFetcherForRelease(oldReleaseId);
     }
 
     // Register a per-releaseId manifest fetcher so production HTML can
     // consult ready manifests when the feature flag is on. Using the per-
     // releaseId registry ensures the correct project-scoped token is always
     // used, even under multi-tenant / proxy-manager operation.
-    if (context.sourceType === "release" && context.releaseId) {
-      registerManifestFetcherForRelease(context.releaseId, buildManifestFetcher(this.client));
+    if (nextReleaseId) {
+      registerManifestFetcherForRelease(nextReleaseId, buildManifestFetcher(this.client));
     }
 
     this.contentContext = context;
