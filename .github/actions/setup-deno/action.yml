@@ -48,6 +48,7 @@ runs:
           mkdir -p "${deno_dir}"
           zip_path="${deno_dir}/deno.zip"
           if curl --fail --location --show-error --retry 5 --retry-delay 2 \
+            --connect-timeout 20 --max-time 120 \
             "https://github.com/denoland/deno/releases/download/v${version}/deno-${arch_target}-${os_target}.zip" \
             --output "${zip_path}"; then
             unzip -oq "${zip_path}" -d "${deno_dir}"
