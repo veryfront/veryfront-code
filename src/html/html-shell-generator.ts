@@ -314,7 +314,15 @@ async function generateHTMLShellPartsImpl(
     : "";
 
   let tailwindCSSBlock = "";
-  if (useProductionCSS) {
+  // Manifest-consumed CSS: when a ready release asset manifest carries a
+  // compiled CSS entry, serve it from the immutable asset path (no renderer
+  // involvement). Per-entry fallback: no manifest CSS → existing JIT link.
+  const manifestForCss = options.studioEmbed ? null : getReadyManifestForRender(options.releaseId);
+  const manifestCssEntry = useProductionCSS ? manifestForCss?.css?.[0] : undefined;
+  if (manifestCssEntry) {
+    tailwindCSSBlock =
+      `<link rel="stylesheet" href="/_vf/assets/${manifestCssEntry.contentHash}.css">`;
+  } else if (useProductionCSS) {
     const projectCSS = await profilePhase("html.project_css", () => projectCSSPromise);
     const cssHash = projectCSS?.hash ?? "";
     if (cssHash) {
