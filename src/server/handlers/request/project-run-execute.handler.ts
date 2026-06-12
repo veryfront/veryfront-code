@@ -101,6 +101,11 @@ export interface ProjectRunExecuteHandlerDeps {
     ctx: HandlerContext;
     req: Request;
   }): Promise<ProjectRunExecuteResponse>;
+  executeReleaseAssetBuild(input: {
+    request: ProjectRunExecuteRequest;
+    ctx: HandlerContext;
+    req: Request;
+  }): Promise<ProjectRunExecuteResponse>;
   sleep(ms: number): Promise<void>;
   now(): number;
 }
@@ -590,6 +595,106 @@ async function executeKnowledgeIngestRun(input: {
   }
 }
 
+function getNumberConfig(
+  config: Record<string, unknown>,
+  keys: readonly string[],
+): number | undefined {
+  for (const key of keys) {
+    const value = config[key];
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim() !== "") {
+      const parsed = Number.parseInt(value, 10);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return undefined;
+}
+
+async function executeReleaseAssetBuildRun(input: {
+  request: ProjectRunExecuteRequest;
+  ctx: HandlerContext;
+  req: Request;
+}): Promise<ProjectRunExecuteResponse> {
+  const startedAt = Date.now();
+  const config = input.request.config ?? {};
+  const projectReference = input.ctx.projectSlug ?? input.request.projectId;
+  const releaseId = getStringConfig(config, ["release_id", "releaseId"]);
+  const releaseVersion = getNumberConfig(config, ["release_version", "releaseVersion"]);
+  const tempDir = await Deno.makeTempDir({ prefix: "veryfront-release-assets-" });
+
+  try {
+    if (!releaseId || releaseVersion === undefined) {
+      throw new Error("Missing release_id or release_version for release asset build");
+    }
+
+    const { VeryfrontApiClient } = await import(
+      "#veryfront/platform/adapters/veryfront-api-client/client.ts"
+    );
+    const { resolveProjectReactVersion } = await import(
+      "#veryfront/transforms/esm/package-registry.ts"
+    );
+    const { runReleaseAssetBuild } = await import("#veryfront/release-assets/build-executor.ts");
+
+    const apiBaseUrl = getEnvironmentConfig().apiBaseUrl;
+    const token = input.req.headers.get("x-token") ?? input.ctx.proxyToken ??
+      input.ctx.requestContext?.token ?? "";
+    if (!token) throw new Error("Missing project runtime API token");
+
+    const apiClient = new VeryfrontApiClient({
+      apiBaseUrl,
+      apiToken: token,
+      projectSlug: projectReference,
+      projectId: input.ctx.projectId,
+    });
+    apiClient.setProjectSlug(projectReference);
+
+    const reactVersion = await resolveProjectReactVersion({
+      projectDir: input.ctx.projectDir,
+      config: input.ctx.config,
+    });
+
+    const releaseVersionRef = releaseId;
+
+    const result = await runReleaseAssetBuild({
+      projectReference,
+      projectId: input.ctx.projectId ?? input.request.projectId,
+      releaseId,
+      releaseVersion,
+      releaseVersionRef,
+      reactVersion,
+      adapter: input.ctx.adapter,
+      client: {
+        beginReleaseAssetManifestBuild: (version) =>
+          apiClient.beginReleaseAssetManifestBuild(version),
+        listAllReleaseFiles: (version) => apiClient.listAllReleaseFiles(version),
+        uploadReleaseAsset: (version, hash, contentType, bytes) =>
+          apiClient.uploadReleaseAsset(version, hash, contentType, bytes),
+        putReleaseAssetManifest: (version, manifest) =>
+          apiClient.putReleaseAssetManifest(version, manifest),
+        reportReleaseAssetManifestState: (version, state, error) =>
+          apiClient.reportReleaseAssetManifestState(version, state, error),
+      },
+    }, tempDir);
+
+    return {
+      success: result.success,
+      result,
+      error: result.error ?? null,
+      logs: null,
+      duration_ms: Date.now() - startedAt,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: errorMessage(error),
+      logs: null,
+      duration_ms: Date.now() - startedAt,
+    };
+  } finally {
+    await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
+  }
+}
+
 const defaultDeps: ProjectRunExecuteHandlerDeps = {
   findTaskById,
   runTask,
@@ -597,6 +702,7 @@ const defaultDeps: ProjectRunExecuteHandlerDeps = {
   createWorkflowClient: createRuntimeWorkflowClient,
   ensureProjectDiscovery,
   executeKnowledgeIngest: executeKnowledgeIngestRun,
+  executeReleaseAssetBuild: executeReleaseAssetBuildRun,
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   now: () => Date.now(),
 };
@@ -651,6 +757,8 @@ export class ProjectRunExecuteHandler extends BaseHandler {
         try {
           const response = request.kind === "task" && request.target === "task:knowledge-ingest"
             ? await this.deps.executeKnowledgeIngest({ request, ctx, req })
+            : request.kind === "task" && request.target === "task:release-asset-build"
+            ? await this.deps.executeReleaseAssetBuild({ request, ctx, req })
             : request.kind === "task"
             ? await executeTaskRun(request, ctx, this.deps)
             : await executeWorkflowRun(request, ctx, this.deps);
