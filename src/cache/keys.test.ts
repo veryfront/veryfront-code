@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd";
-import { assertEquals, assertMatch, assertNotEquals, assertThrows } from "#veryfront/testing/assert";
+import {
+  assertEquals,
+  assertMatch,
+  assertNotEquals,
+  assertThrows,
+} from "#veryfront/testing/assert";
 import {
   buildConfigCacheKey,
   buildQueryAwareCacheKey,
@@ -87,7 +92,9 @@ describe("cache/keys", () => {
     });
 
     it("flag off: getReadyManifestForRender returns null even when fetcher is registered", () => {
-      try { Deno.env.delete("VERYFRONT_RELEASE_ASSET_MANIFEST"); } catch (_) { /* ok */ }
+      try {
+        Deno.env.delete("VERYFRONT_RELEASE_ASSET_MANIFEST");
+      } catch (_) { /* ok */ }
       configureReleaseAssetManifestFetcher(async () => ({
         state: "ready",
         manifest: makeManifest(),
@@ -110,7 +117,9 @@ describe("cache/keys", () => {
       Deno.env.set("VERYFRONT_RELEASE_ASSET_MANIFEST", "1");
 
       let resolvePromise!: () => void;
-      const fetchDone = new Promise<void>((r) => { resolvePromise = r; });
+      const fetchDone = new Promise<void>((r) => {
+        resolvePromise = r;
+      });
       configureReleaseAssetManifestFetcher(async () => {
         resolvePromise();
         return { state: "ready", manifest: makeManifest() };

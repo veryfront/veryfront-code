@@ -11,13 +11,13 @@ export {
   RELEASE_ASSET_BASE_PATH,
   RELEASE_ASSET_CONTENT_TYPE_ALLOWLIST,
   RELEASE_ASSET_CONTENT_TYPES,
-  type ReleaseAssetContentType,
-  type ReleaseAssetExtension,
   RELEASE_ASSET_IMMUTABLE_MAX_AGE_SECONDS,
   RELEASE_ASSET_MANIFEST_ENV_FLAG,
   RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
   RELEASE_ASSET_MAX_SIZE_BYTES,
   RELEASE_ASSET_UPLOAD_CONCURRENCY,
+  type ReleaseAssetContentType,
+  type ReleaseAssetExtension,
   releaseAssetUrl,
 } from "./constants.ts";
 export { sha256Hex, sha256HexBytes } from "./hash.ts";

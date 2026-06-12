@@ -207,14 +207,16 @@ export const getReleaseAssetManifestBuildResponseSchema = defineSchema((v) =>
   v.object({
     id: v.string(),
     manifest_version: v.number(),
-    state: v.enum([
-      "queued",
-      "building",
-      "partial",
-      "ready",
-      "failed",
-      "superseded",
-    ] as const),
+    state: v.enum(
+      [
+        "queued",
+        "building",
+        "partial",
+        "ready",
+        "failed",
+        "superseded",
+      ] as const,
+    ),
   })
 );
 
@@ -227,28 +229,32 @@ export const getReleaseAssetUploadResponseSchema = defineSchema((v) =>
 
 export const getReleaseAssetManifestStateResponseSchema = defineSchema((v) =>
   v.object({
-    state: v.enum([
-      "queued",
-      "building",
-      "partial",
-      "ready",
-      "failed",
-      "superseded",
-    ] as const),
+    state: v.enum(
+      [
+        "queued",
+        "building",
+        "partial",
+        "ready",
+        "failed",
+        "superseded",
+      ] as const,
+    ),
     manifest_version: v.number().optional(),
   })
 );
 
 export const getReleaseAssetManifestResponseSchema = defineSchema((v) =>
   v.object({
-    state: v.enum([
-      "queued",
-      "building",
-      "partial",
-      "ready",
-      "failed",
-      "superseded",
-    ] as const),
+    state: v.enum(
+      [
+        "queued",
+        "building",
+        "partial",
+        "ready",
+        "failed",
+        "superseded",
+      ] as const,
+    ),
     manifest_version: v.number(),
     manifest: v.union([v.record(v.string(), v.unknown()), v.null()]),
   })

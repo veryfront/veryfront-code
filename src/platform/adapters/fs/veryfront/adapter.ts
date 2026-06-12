@@ -52,7 +52,9 @@ const logger = baseLogger.component("veryfront-fs-adapter");
  */
 function buildManifestFetcher(
   client: VeryfrontApiClient,
-): (releaseId: string) => Promise<{ state: string; manifest: ReturnType<typeof parseReleaseAssetManifest> } | null> {
+): (
+  releaseId: string,
+) => Promise<{ state: string; manifest: ReturnType<typeof parseReleaseAssetManifest> } | null> {
   return async (releaseId: string) => {
     const response = await client.getReleaseAssetManifest(releaseId);
     return {

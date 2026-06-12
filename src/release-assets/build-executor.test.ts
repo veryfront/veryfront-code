@@ -147,7 +147,10 @@ describe("release asset build executor", () => {
 
   it("includes compiled CSS when a css pipeline is provided", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
-    const files = [{ path: "pages/index.tsx", content: 'export default () => "<div class=\\"p-4\\"/>";' }];
+    const files = [{
+      path: "pages/index.tsx",
+      content: 'export default () => "<div class=\\"p-4\\"/>";',
+    }];
     const client = makeClient(files, rec, {
       compileProjectCss: () =>
         Promise.resolve({ css: ".p-4{padding:1rem}", styleProfileHash: "sp-1" }),
@@ -169,8 +172,14 @@ describe("release asset build executor", () => {
     // Relative imports are resolved from the importing module's directory, so
     // pages/index.tsx uses "../components/Button.tsx" to reach components/.
     const files2 = [
-      { path: "pages/index.tsx", content: 'import Button from "../components/Button.tsx"; export default () => null;' },
-      { path: "components/Button.tsx", content: 'import Icon from "./Icon.tsx"; export default () => null;' },
+      {
+        path: "pages/index.tsx",
+        content: 'import Button from "../components/Button.tsx"; export default () => null;',
+      },
+      {
+        path: "components/Button.tsx",
+        content: 'import Icon from "./Icon.tsx"; export default () => null;',
+      },
       { path: "components/Icon.tsx", content: "export default () => null;" },
     ];
     const client = makeClient(files2, rec);
@@ -282,8 +291,9 @@ describe("release asset build executor", () => {
 // B1: Two adapters with different releaseIds must each use the right fetcher.
 describe("manifest fetcher registry (B1 multi-project isolation)", () => {
   it("each releaseId fetcher is registered and invoked independently", async () => {
-    const { registerManifestFetcherForRelease, clearReleaseAssetManifestCache } =
-      await import("./manifest-cache.ts");
+    const { registerManifestFetcherForRelease, clearReleaseAssetManifestCache } = await import(
+      "./manifest-cache.ts"
+    );
 
     const calls: string[] = [];
     registerManifestFetcherForRelease("rel-A", async () => {

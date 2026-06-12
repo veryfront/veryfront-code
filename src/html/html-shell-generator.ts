@@ -84,9 +84,7 @@ function generateModulePreloadHints(options: HTMLGenerationOptions): string {
   // Release asset manifest (production only, env-gated, ready manifests only).
   // Never consulted in studio-embed; returns null when the flag is off so the
   // emitted HTML is byte-identical to today.
-  const releaseManifest = studioEmbed
-    ? null
-    : getReadyManifestForRender(options.releaseId);
+  const releaseManifest = studioEmbed ? null : getReadyManifestForRender(options.releaseId);
 
   function addHint(moduleUrl: string): void {
     if (!moduleUrl || addedUrls.has(moduleUrl)) return;

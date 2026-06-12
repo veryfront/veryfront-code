@@ -28,10 +28,7 @@ import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "./constants.ts";
-import {
-  parseReleaseAssetManifest,
-  type ReleaseAssetManifest,
-} from "./manifest-schema.ts";
+import { parseReleaseAssetManifest, type ReleaseAssetManifest } from "./manifest-schema.ts";
 
 const logger = serverLogger.component("release-asset-manifest");
 
@@ -121,9 +118,7 @@ export function isReleaseAssetManifestEnabled(): boolean {
 
 /** Build the cache key from releaseId + the latest known manifestVersion. */
 function cacheKey(releaseId: string, manifestVersion?: number): string {
-  return manifestVersion !== undefined
-    ? `${releaseId}:${manifestVersion}`
-    : releaseId;
+  return manifestVersion !== undefined ? `${releaseId}:${manifestVersion}` : releaseId;
 }
 
 /**

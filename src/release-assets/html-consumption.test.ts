@@ -81,7 +81,9 @@ describe("manifest cache gating", () => {
 
   it("returns null when the flag is off (byte-identical fallback)", () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "");
-    configureReleaseAssetManifestFetcher(() => Promise.resolve({ state: "ready", manifest: manifest() }));
+    configureReleaseAssetManifestFetcher(() =>
+      Promise.resolve({ state: "ready", manifest: manifest() })
+    );
     assertEquals(getReadyManifestForRender("r"), null);
   });
 

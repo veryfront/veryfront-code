@@ -14,8 +14,7 @@ const HASH = "a".repeat(64);
 function makeFetch(
   handler: (url: string) => Response | Promise<Response>,
 ): typeof fetch {
-  return ((input: RequestInfo | URL) =>
-    Promise.resolve(handler(String(input)))) as typeof fetch;
+  return ((input: RequestInfo | URL) => Promise.resolve(handler(String(input)))) as typeof fetch;
 }
 
 describe("proxy release asset handler", () => {

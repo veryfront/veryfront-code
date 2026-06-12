@@ -17,8 +17,7 @@ export const RELEASE_ASSET_CONTENT_TYPES = {
 } as const;
 
 export type ReleaseAssetExtension = keyof typeof RELEASE_ASSET_CONTENT_TYPES;
-export type ReleaseAssetContentType =
-  (typeof RELEASE_ASSET_CONTENT_TYPES)[ReleaseAssetExtension];
+export type ReleaseAssetContentType = (typeof RELEASE_ASSET_CONTENT_TYPES)[ReleaseAssetExtension];
 
 /** Allowlist of accepted content types (upstream + upload validation). */
 export const RELEASE_ASSET_CONTENT_TYPE_ALLOWLIST: readonly ReleaseAssetContentType[] = [
