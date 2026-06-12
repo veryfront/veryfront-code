@@ -332,6 +332,10 @@ export class VeryfrontApiClient {
     return this.operations.listReleaseFiles(this.getProjectSlug()!, version, options);
   }
 
+  listAllReleaseFiles(version = "latest", options: Omit<ListFilesOptions, "cursor"> = {}) {
+    return this.operations.listAllReleaseFiles(this.getProjectSlug()!, version, options);
+  }
+
   getReleaseFile(version: string, pathOrId: string) {
     return this.operations.getReleaseFile(this.getProjectSlug()!, version, pathOrId);
   }
@@ -363,6 +367,47 @@ export class VeryfrontApiClient {
     projectRef = this.getProjectSlug()!,
   ): Promise<ProjectStyleArtifactResolution> {
     return this.operations.upsertStyleArtifact(projectRef, input);
+  }
+
+  // =============================================================================
+  // Release Asset Manifest Operations
+  // =============================================================================
+
+  beginReleaseAssetManifestBuild(version: string, projectRef = this.getProjectSlug()!) {
+    return this.operations.beginReleaseAssetManifestBuild(projectRef, version);
+  }
+
+  uploadReleaseAsset(
+    version: string,
+    contentHash: string,
+    contentType: string,
+    bytes: Uint8Array,
+    projectRef = this.getProjectSlug()!,
+  ) {
+    return this.operations.uploadReleaseAsset(
+      projectRef,
+      version,
+      contentHash,
+      contentType,
+      bytes,
+    );
+  }
+
+  putReleaseAssetManifest(version: string, manifest: unknown, projectRef = this.getProjectSlug()!) {
+    return this.operations.putReleaseAssetManifest(projectRef, version, manifest);
+  }
+
+  reportReleaseAssetManifestState(
+    version: string,
+    state: "partial" | "failed",
+    error?: string,
+    projectRef = this.getProjectSlug()!,
+  ) {
+    return this.operations.reportReleaseAssetManifestState(projectRef, version, state, error);
+  }
+
+  getReleaseAssetManifest(version: string, projectRef = this.getProjectSlug()!) {
+    return this.operations.getReleaseAssetManifest(projectRef, version);
   }
 
   // =============================================================================
