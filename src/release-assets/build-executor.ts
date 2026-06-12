@@ -7,8 +7,10 @@
  * hard requirement), compiles route CSS where reachable, content-addresses and
  * uploads each asset, then assembles and PUTs the manifest (→ ready).
  *
- * Defensive by construction: any module transform failure reports `failed` and
- * stops without PUTting, and the temp dir is always cleaned up.
+ * Defensive by construction:
+ * - Any module transform failure reports `failed` and stops without PUTting.
+ * - Any other build failure (list/hash/upload/PUT) also reports `failed`.
+ * - The temp dir is always cleaned up by the caller.
  *
  * @module release-assets/build-executor
  */
@@ -18,11 +20,12 @@ import { VERSION } from "#veryfront/utils/version.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { dirname, join } from "#veryfront/compat/path/index.ts";
 import { transformToESM } from "#veryfront/transforms/esm-transform.ts";
-import { sha256Hex } from "./hash.ts";
+import { sha256HexBytes } from "./hash.ts";
 import {
   RELEASE_ASSET_BASE_PATH,
   RELEASE_ASSET_CONTENT_TYPES,
   RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
+  RELEASE_ASSET_MAX_SIZE_BYTES,
   RELEASE_ASSET_UPLOAD_CONCURRENCY,
 } from "./constants.ts";
 import type {
@@ -133,12 +136,116 @@ function isBrowserModule(path: string): boolean {
 }
 
 /** Derive a route path from a page module logical path. */
-function routeForPage(logicalPath: string): string | null {
+export function routeForPage(logicalPath: string): string | null {
   if (!logicalPath.startsWith("pages/")) return null;
   const withoutPrefix = logicalPath.slice("pages/".length);
   const withoutExt = withoutPrefix.replace(/\.(tsx|ts|jsx|mdx|js)$/, "");
   const route = withoutExt.replace(/\/index$/, "").replace(/^index$/, "");
   return `/${route}`.replace(/\/+/g, "/").replace(/\/$/, "") || "/";
+}
+
+/**
+ * Statically resolve relative imports in a source file to logical paths.
+ *
+ * Parses `import/export ... from "..."` and bare `import "..."` statements.
+ * Only relative specifiers (`./` or `../`) are resolved; package imports and
+ * absolute URLs are skipped. Extension-less specifiers try each browser module
+ * extension in order.
+ */
+function resolveStaticImports(
+  source: string,
+  moduleLogicalPath: string,
+  knownPaths: Set<string>,
+): string[] {
+  const importRe = /(?:^|;|\n)\s*(?:import|export)\s+(?:[^'"]+\s+from\s+)?['"]([^'"]+)['"]/gm;
+  const results: string[] = [];
+  let m: RegExpExecArray | null;
+
+  while ((m = importRe.exec(source)) !== null) {
+    const specifier = m[1]!;
+    if (!specifier.startsWith("./") && !specifier.startsWith("../")) continue;
+
+    const dir = moduleLogicalPath.includes("/")
+      ? moduleLogicalPath.slice(0, moduleLogicalPath.lastIndexOf("/"))
+      : ".";
+
+    // Resolve the path segments manually (no path library needed for simple cases).
+    const segments = `${dir}/${specifier}`.split("/").filter((s) => s !== "");
+    const resolved: string[] = [];
+    for (const seg of segments) {
+      if (seg === "..") {
+        resolved.pop();
+      } else if (seg !== ".") {
+        resolved.push(seg);
+      }
+    }
+    const candidate = resolved.join("/");
+
+    // If the specifier already has a known extension and exists, use it.
+    if (knownPaths.has(candidate)) {
+      results.push(candidate);
+      continue;
+    }
+
+    // Try appending each browser module extension.
+    let found = false;
+    for (const ext of BROWSER_MODULE_EXTENSIONS) {
+      const withExt = `${candidate}${ext}`;
+      if (knownPaths.has(withExt)) {
+        results.push(withExt);
+        found = true;
+        break;
+      }
+    }
+
+    // Also try /index variants for directory imports.
+    if (!found) {
+      for (const ext of BROWSER_MODULE_EXTENSIONS) {
+        const indexPath = `${candidate}/index${ext}`;
+        if (knownPaths.has(indexPath)) {
+          results.push(indexPath);
+          break;
+        }
+      }
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Walk the static import graph from a set of entry points using BFS.
+ * Returns all reachable logical paths (entries included).
+ * Modules not in `sourceByPath` are recorded as closure gaps.
+ */
+function collectClosure(
+  entrypoints: string[],
+  sourceByPath: Map<string, string>,
+  knownPaths: Set<string>,
+): { modules: string[]; gaps: string[] } {
+  const visited = new Set<string>();
+  const queue = [...entrypoints];
+  const gaps: string[] = [];
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    if (visited.has(current)) continue;
+    visited.add(current);
+
+    const source = sourceByPath.get(current);
+    if (!source) {
+      // Module referenced but not in the materialized file set.
+      gaps.push(`closure-missing:${current}`);
+      continue;
+    }
+
+    const imports = resolveStaticImports(source, current, knownPaths);
+    for (const imp of imports) {
+      if (!visited.has(imp)) queue.push(imp);
+    }
+  }
+
+  return { modules: [...visited], gaps };
 }
 
 /**
@@ -160,8 +267,48 @@ export async function runReleaseAssetBuild(
         reactVersion: options.reactVersion,
       }));
 
-  // 1. Begin (idempotent).
-  await client.beginReleaseAssetManifestBuild(input.releaseVersionRef);
+  // H1: wrap the whole build so any non-transform failure also reports failed.
+  try {
+    return await runBuildInner(input, tempDir, client, transform);
+  } catch (error) {
+    const sanitized = sanitizeError(error);
+    logger.warn("Release asset build failed (non-transform error)", {
+      releaseId: input.releaseId,
+      error: sanitized,
+    });
+    try {
+      await client.reportReleaseAssetManifestState(
+        input.releaseVersionRef,
+        "failed",
+        sanitized,
+      );
+    } catch (reportErr) {
+      logger.warn("Failed to report build failure state", {
+        releaseId: input.releaseId,
+        error: sanitizeError(reportErr),
+      });
+    }
+    return {
+      success: false,
+      state: "failed",
+      moduleCount: 0,
+      cssCount: 0,
+      routeCount: 0,
+      gaps: [],
+      error: sanitized,
+    };
+  }
+}
+
+async function runBuildInner(
+  input: ReleaseAssetBuildInput,
+  tempDir: string,
+  client: ReleaseAssetBuildClient,
+  transform: ReleaseAssetTransform,
+): Promise<ReleaseAssetBuildResult> {
+  // 1. Begin (idempotent). H2: capture manifest_version from the API response.
+  const beginResult = await client.beginReleaseAssetManifestBuild(input.releaseVersionRef);
+  const manifestVersion = beginResult.manifest_version;
 
   // 2. Materialize the release file set.
   const files = await client.listAllReleaseFiles(input.releaseVersionRef);
@@ -181,11 +328,15 @@ export async function runReleaseAssetBuild(
   const modules: Record<string, PreparedAsset> = {};
   const gaps: string[] = [];
   const uploadQueue: PreparedAsset[] = [];
-  const assetBytes = new Map<string, { bytes: Uint8Array; contentType: string }>();
+  // Bytes are held per-hash only until uploaded, then dropped (M3).
+  const pendingBytes = new Map<string, { bytes: Uint8Array<ArrayBuffer>; contentType: string }>();
+  const knownPaths = new Set(sourceByPath.keys());
 
   for (const [logicalPath, source] of sourceByPath) {
     if (!isBrowserModule(logicalPath)) continue;
 
+    // M2: enforce client-side size limit before transform (source is a proxy;
+    // transformed output is checked after encoding below).
     const sourceFile = join(tempDir, logicalPath);
     let code: string;
     try {
@@ -218,8 +369,21 @@ export async function runReleaseAssetBuild(
       };
     }
 
-    const bytes = new TextEncoder().encode(code);
-    const contentHash = await sha256Hex(code);
+    // L2: hash the bytes, not the string.
+    const bytes = new TextEncoder().encode(code) as Uint8Array<ArrayBuffer>;
+
+    // M2: enforce 10 MB client-side limit — skip oversized modules with a gap.
+    if (bytes.byteLength > RELEASE_ASSET_MAX_SIZE_BYTES) {
+      gaps.push(`oversized:${logicalPath}`);
+      logger.warn("Module exceeds max size, skipping", {
+        path: logicalPath,
+        size: bytes.byteLength,
+        limit: RELEASE_ASSET_MAX_SIZE_BYTES,
+      });
+      continue;
+    }
+
+    const contentHash = await sha256HexBytes(bytes);
     const entry: PreparedAsset = {
       logicalPath,
       contentHash,
@@ -227,8 +391,8 @@ export async function runReleaseAssetBuild(
       contentType: RELEASE_ASSET_CONTENT_TYPES.js,
     };
     modules[logicalPath] = entry;
-    if (!assetBytes.has(contentHash)) {
-      assetBytes.set(contentHash, { bytes, contentType: RELEASE_ASSET_CONTENT_TYPES.js });
+    if (!pendingBytes.has(contentHash)) {
+      pendingBytes.set(contentHash, { bytes, contentType: RELEASE_ASSET_CONTENT_TYPES.js });
       uploadQueue.push(entry);
     }
   }
@@ -241,8 +405,8 @@ export async function runReleaseAssetBuild(
       const candidates = collectClassCandidates(sourceByPath);
       const compiled = await client.compileProjectCss(candidates);
       if (compiled && compiled.css) {
-        const bytes = new TextEncoder().encode(compiled.css);
-        const contentHash = await sha256Hex(compiled.css);
+        const bytes = new TextEncoder().encode(compiled.css) as Uint8Array<ArrayBuffer>;
+        const contentHash = await sha256HexBytes(bytes);
         css.push({
           contentHash,
           size: bytes.byteLength,
@@ -250,8 +414,8 @@ export async function runReleaseAssetBuild(
           styleProfileHash: compiled.styleProfileHash,
         });
         cssHashes.push(contentHash);
-        if (!assetBytes.has(contentHash)) {
-          assetBytes.set(contentHash, { bytes, contentType: RELEASE_ASSET_CONTENT_TYPES.css });
+        if (!pendingBytes.has(contentHash)) {
+          pendingBytes.set(contentHash, { bytes, contentType: RELEASE_ASSET_CONTENT_TYPES.css });
           uploadQueue.push({
             logicalPath: `__css__/${contentHash}`,
             contentHash,
@@ -271,9 +435,10 @@ export async function runReleaseAssetBuild(
     gaps.push("css:no-pipeline");
   }
 
-  // 5a. Upload assets with bounded concurrency.
+  // 5a. Upload assets with bounded concurrency, dropping bytes after each
+  // successful upload (M3) to bound peak memory.
   await uploadWithConcurrency(uploadQueue, RELEASE_ASSET_UPLOAD_CONCURRENCY, async (asset) => {
-    const stored = assetBytes.get(asset.contentHash);
+    const stored = pendingBytes.get(asset.contentHash);
     if (!stored) return;
     await client.uploadReleaseAsset(
       input.releaseVersionRef,
@@ -281,26 +446,55 @@ export async function runReleaseAssetBuild(
       stored.contentType,
       stored.bytes,
     );
+    // M3: drop bytes immediately after upload.
+    pendingBytes.delete(asset.contentHash);
   });
 
-  // 3b. Routes: map each page to its (page) module + css closure.
+  // B2. Routes: walk the full static import closure from each page entrypoint.
+  // Modules whose source is not in sourceByPath are recorded as closure gaps.
   const routes: Record<string, ReleaseAssetRouteEntry> = {};
-  for (const logicalPath of Object.keys(modules)) {
+  const pageModules = Object.keys(modules).filter((p) => p.startsWith("pages/"));
+
+  for (const logicalPath of pageModules) {
     const route = routeForPage(logicalPath);
     if (!route) continue;
-    routes[route] = { modules: [logicalPath], css: cssHashes };
+
+    const { modules: closureModules, gaps: closureGaps } = collectClosure(
+      [logicalPath],
+      sourceByPath,
+      knownPaths,
+    );
+
+    // Include only modules we actually have in the manifest (transformed +
+    // within size limit). Framework lib/* modules are excluded per contract
+    // (they are embedded by the runtime, not shipped as release assets).
+    const manifestedModules = closureModules.filter((m) => modules[m] !== undefined);
+
+    // Closure members not in the manifest (missing transforms, oversized, or
+    // framework-provided) are recorded as gaps for this route.
+    for (const missing of closureModules) {
+      if (modules[missing] === undefined && !missing.startsWith("lib/")) {
+        closureGaps.push(`route-gap:${route}:${missing}`);
+      }
+    }
+    if (closureGaps.length > 0) {
+      gaps.push(...closureGaps.filter((g) => !gaps.includes(g)));
+    }
+
+    routes[route] = { modules: manifestedModules, css: cssHashes };
   }
 
   // 6. Assemble and PUT the manifest.
-  const sourceContentHash = await sha256Hex(
-    [...sourceByPath.keys()].sort().join("\n"),
+  const sourceContentHash = await sha256HexBytes(
+    new TextEncoder().encode([...sourceByPath.keys()].sort().join("\n")) as Uint8Array<ArrayBuffer>,
   );
   const manifest: ReleaseAssetManifest = {
     schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
     projectId: input.projectId,
     releaseId: input.releaseId,
     releaseVersion: input.releaseVersion,
-    manifestVersion: 1,
+    // H2: use the manifest_version returned by begin, not a hardcoded 1.
+    manifestVersion,
     builderVersion: VERSION,
     sourceContentHash,
     createdAt: new Date().toISOString(),
@@ -321,6 +515,7 @@ export async function runReleaseAssetBuild(
   const result = await client.putReleaseAssetManifest(input.releaseVersionRef, manifest);
   logger.info("Release asset manifest built", {
     releaseId: input.releaseId,
+    manifestVersion,
     moduleCount: Object.keys(modules).length,
     cssCount: css.length,
     routeCount: Object.keys(routes).length,
