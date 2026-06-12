@@ -10,7 +10,7 @@ export class UrlStrategy implements ImportRewriteStrategy {
   readonly name = "url";
   readonly priority = 7;
 
-  matches(specifier: string): boolean {
+  matches(specifier: string, _ctx: RewriteContext): boolean {
     return isEsmShUrl(specifier);
   }
 
