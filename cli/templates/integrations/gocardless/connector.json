@@ -1,0 +1,385 @@
+{
+  "name": "gocardless",
+  "displayName": "GoCardless",
+  "icon": "gocardless.svg",
+  "description": "Access GoCardless Direct Debit customers, mandates, and payments, and collect payments against existing mandates",
+  "category": "finance",
+  "auth": {
+    "type": "api-key",
+    "keyName": "GOCARDLESS_ACCESS_TOKEN",
+    "headerName": "Authorization",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://developer.gocardless.com/api-reference/",
+    "requiredApis": [
+      {
+        "name": "GoCardless access token",
+        "enableUrl": "https://manage.gocardless.com/developers"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "GOCARDLESS_ACCESS_TOKEN",
+      "description": "GoCardless API access token created in the dashboard under Developers. Use a sandbox token (from manage-sandbox.gocardless.com) for testing or a live token for production.",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.gocardless.com/getting-started/set-up/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_customers",
+      "name": "List Customers",
+      "description": "List GoCardless customers to find customer IDs and contact details",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.gocardless.com/customers",
+        "params": {
+          "GoCardless-Version": {
+            "type": "string",
+            "in": "header",
+            "description": "GoCardless API version date; the current released version is 2015-07-06",
+            "required": true,
+            "default": "2015-07-06"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of customers to return (1-500)",
+            "default": 50
+          },
+          "after": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor: customer ID to return records after"
+          },
+          "before": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor: customer ID to return records before"
+          }
+        },
+        "response": {
+          "transform": "customers"
+        }
+      }
+    },
+    {
+      "id": "list_payments",
+      "name": "List Payments",
+      "description": "List GoCardless payments with optional status, customer, or mandate filtering",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.gocardless.com/payments",
+        "params": {
+          "GoCardless-Version": {
+            "type": "string",
+            "in": "header",
+            "description": "GoCardless API version date; the current released version is 2015-07-06",
+            "required": true,
+            "default": "2015-07-06"
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by status: pending_customer_approval, pending_submission, submitted, confirmed, paid_out, cancelled, customer_approval_denied, failed, or charged_back"
+          },
+          "customer": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return payments for this customer ID, e.g. CU123"
+          },
+          "mandate": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return payments collected against this mandate ID, e.g. MD123"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of payments to return (1-500)",
+            "default": 50
+          },
+          "after": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor: payment ID to return records after"
+          }
+        },
+        "response": {
+          "transform": "payments"
+        }
+      }
+    },
+    {
+      "id": "get_payment",
+      "name": "Get Payment",
+      "description": "Get a single GoCardless payment by ID to check its status, amount, and linked mandate",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.gocardless.com/payments/{paymentId}",
+        "params": {
+          "paymentId": {
+            "type": "string",
+            "in": "path",
+            "description": "GoCardless payment ID, e.g. PM123",
+            "required": true
+          },
+          "GoCardless-Version": {
+            "type": "string",
+            "in": "header",
+            "description": "GoCardless API version date; the current released version is 2015-07-06",
+            "required": true,
+            "default": "2015-07-06"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_mandates",
+      "name": "List Mandates",
+      "description": "List Direct Debit mandates to find an active mandate before collecting a payment",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.gocardless.com/mandates",
+        "params": {
+          "GoCardless-Version": {
+            "type": "string",
+            "in": "header",
+            "description": "GoCardless API version date; the current released version is 2015-07-06",
+            "required": true,
+            "default": "2015-07-06"
+          },
+          "customer": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return mandates for this customer ID, e.g. CU123"
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by status: pending_customer_approval, pending_submission, submitted, active, failed, cancelled, expired, consumed, blocked, or suspended_by_payer"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of mandates to return (1-500)",
+            "default": 50
+          },
+          "after": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor: mandate ID to return records after"
+          }
+        },
+        "response": {
+          "transform": "mandates"
+        }
+      }
+    },
+    {
+      "id": "create_payment",
+      "name": "Create Payment",
+      "description": "Collect a one-off payment against an existing active Direct Debit mandate",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.gocardless.com/payments",
+        "params": {
+          "GoCardless-Version": {
+            "type": "string",
+            "in": "header",
+            "description": "GoCardless API version date; the current released version is 2015-07-06",
+            "required": true,
+            "default": "2015-07-06"
+          },
+          "Idempotency-Key": {
+            "type": "string",
+            "in": "header",
+            "description": "Optional unique key (max 128 chars) to safely retry without creating duplicate payments"
+          }
+        },
+        "body": {
+          "payments": {
+            "type": "object",
+            "description": "Payment resource. Required: amount (integer, in the smallest currency unit, e.g. pence or cents), currency (e.g. GBP, EUR, USD), and links with a mandate ID, e.g. {\"amount\": 1000, \"currency\": \"GBP\", \"links\": {\"mandate\": \"MD123\"}}. Optional: charge_date (YYYY-MM-DD, rolled forward to the mandate's next possible charge date if too early), description, reference, and metadata.",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_subscription",
+      "name": "Create Subscription",
+      "description": "Set up a recurring payment collection against an existing active Direct Debit mandate",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.gocardless.com/subscriptions",
+        "params": {
+          "GoCardless-Version": {
+            "type": "string",
+            "in": "header",
+            "description": "GoCardless API version date; the current released version is 2015-07-06",
+            "required": true,
+            "default": "2015-07-06"
+          },
+          "Idempotency-Key": {
+            "type": "string",
+            "in": "header",
+            "description": "Optional unique key (max 128 chars) to safely retry without creating duplicate subscriptions"
+          }
+        },
+        "body": {
+          "subscriptions": {
+            "type": "object",
+            "description": "Subscription resource. Required: amount (integer, in the smallest currency unit), currency (e.g. GBP, EUR, USD), interval_unit (weekly, monthly, or yearly), and links with a mandate ID, e.g. {\"amount\": 2500, \"currency\": \"GBP\", \"interval_unit\": \"monthly\", \"links\": {\"mandate\": \"MD123\"}}. Optional: interval (periods between charges), day_of_month, start_date (YYYY-MM-DD), count (total number of payments), name, and metadata.",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "retry_payment",
+      "name": "Retry Payment",
+      "description": "Retry a failed payment if its mandate is still active; a payment can be retried at most three times",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.gocardless.com/payments/{paymentId}/actions/retry",
+        "params": {
+          "paymentId": {
+            "type": "string",
+            "in": "path",
+            "description": "GoCardless payment ID to retry, e.g. PM123 (the payment must be in the failed state)",
+            "required": true
+          },
+          "GoCardless-Version": {
+            "type": "string",
+            "in": "header",
+            "description": "GoCardless API version date; the current released version is 2015-07-06",
+            "required": true,
+            "default": "2015-07-06"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_events",
+      "name": "List Events",
+      "description": "List GoCardless events (status changes such as payment failures, chargebacks, and mandate cancellations) for monitoring and audit workflows",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.gocardless.com/events",
+        "params": {
+          "GoCardless-Version": {
+            "type": "string",
+            "in": "header",
+            "description": "GoCardless API version date; the current released version is 2015-07-06",
+            "required": true,
+            "default": "2015-07-06"
+          },
+          "payment": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return events for this payment ID, e.g. PM123"
+          },
+          "mandate": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return events for this mandate ID, e.g. MD123"
+          },
+          "subscription": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return events for this subscription ID, e.g. SB123"
+          },
+          "resource_type": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by resource type, e.g. payments, mandates, subscriptions, refunds, or payouts"
+          },
+          "action": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by event action, e.g. failed, charged_back, cancelled, or confirmed (valid actions depend on the resource type)"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of events to return (1-500)",
+            "default": 50
+          },
+          "after": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor: event ID to return records after"
+          }
+        },
+        "response": {
+          "transform": "events"
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "recent_payments",
+      "title": "Review recent payments",
+      "prompt": "List my most recent GoCardless payments and summarize their statuses, flagging any failed or charged-back payments.",
+      "category": "finance",
+      "icon": "payment"
+    },
+    {
+      "id": "mandate_health",
+      "title": "Check mandate health",
+      "prompt": "List my GoCardless mandates and report which are active versus cancelled, failed, or expired.",
+      "category": "finance",
+      "icon": "list"
+    },
+    {
+      "id": "collect_payment",
+      "title": "Collect a payment",
+      "prompt": "Find the active GoCardless mandate for a customer I specify and collect a payment of the amount I provide.",
+      "category": "finance",
+      "icon": "currency"
+    }
+  ],
+  "suggestedWith": ["stripe", "slack", "sheets"],
+  "SETUP_GUIDE": {
+    "title": "GoCardless setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a sandbox account for testing",
+        "description": "Sign up for a free GoCardless sandbox at https://manage-sandbox.gocardless.com/signup. The sandbox lets you create test customers, mandates, and payments without moving real money. Sandbox API requests go to https://api-sandbox.gocardless.com instead of https://api.gocardless.com."
+      },
+      {
+        "step": 2,
+        "title": "Create an access token",
+        "description": "In the dashboard (https://manage.gocardless.com for live, https://manage-sandbox.gocardless.com for sandbox), go to Developers, then Create and choose Access token. Give it read-write access if you want to create payments."
+      },
+      {
+        "step": 3,
+        "title": "Store the token",
+        "description": "Add GOCARDLESS_ACCESS_TOKEN=<your token> to your .env file. The token is sent as a Bearer token in the Authorization header."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Customers tool. Every request also sends the GoCardless-Version header (2015-07-06 by default), which the API requires."
+      }
+    ],
+    "notes": [
+      "Tools call the live API at https://api.gocardless.com; for sandbox testing, point requests at https://api-sandbox.gocardless.com with a sandbox token",
+      "Amounts are integers in the smallest currency unit (pence/cents), and payments can only be created against mandates in an active or pending state",
+      "Every API request must include the GoCardless-Version header; each tool sends 2015-07-06 by default"
+    ],
+    "documentation": "https://developer.gocardless.com/api-reference/"
+  }
+}

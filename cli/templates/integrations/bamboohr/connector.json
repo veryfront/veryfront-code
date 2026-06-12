@@ -1,0 +1,419 @@
+{
+  "name": "bamboohr",
+  "displayName": "BambooHR",
+  "icon": "bamboohr.svg",
+  "description": "Look up BambooHR employees, check who's out, and read or create time-off requests",
+  "category": "hr",
+  "auth": {
+    "type": "basic",
+    "usernameKey": "BAMBOOHR_API_KEY",
+    "passwordKey": "BAMBOOHR_API_PASSWORD",
+    "docsUrl": "https://documentation.bamboohr.com/docs/getting-started"
+  },
+  "envVars": [
+    {
+      "name": "BAMBOOHR_API_KEY",
+      "description": "BambooHR API key, used as the HTTP Basic username. Generate it from your name menu in BambooHR under API Keys.",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://documentation.bamboohr.com/docs/getting-started"
+    },
+    {
+      "name": "BAMBOOHR_API_PASSWORD",
+      "description": "HTTP Basic password. BambooHR ignores the value - any string works; the conventional value is x.",
+      "required": false,
+      "sensitive": false,
+      "default": "x",
+      "docsUrl": "https://documentation.bamboohr.com/docs/getting-started"
+    },
+    {
+      "name": "BAMBOOHR_SUBDOMAIN",
+      "description": "Your BambooHR company subdomain - the {company} part of https://{company}.bamboohr.com. Pass it as the companyDomain parameter on each tool.",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://documentation.bamboohr.com/docs/getting-started"
+    }
+  ],
+  "tools": [
+    {
+      "id": "get_employee_directory",
+      "name": "Get Employee Directory",
+      "description": "Get the company employee directory with names, job titles, departments, and contact details",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{companyDomain}.bamboohr.com/api/v1/employees/directory",
+        "params": {
+          "companyDomain": {
+            "type": "string",
+            "in": "path",
+            "description": "BambooHR company subdomain (the {company} in {company}.bamboohr.com), also stored as BAMBOOHR_SUBDOMAIN",
+            "required": true
+          },
+          "Accept": {
+            "type": "string",
+            "in": "header",
+            "description": "Response format; keep application/json (BambooHR returns XML otherwise)",
+            "required": true,
+            "default": "application/json"
+          }
+        },
+        "response": {
+          "transform": "employees"
+        }
+      }
+    },
+    {
+      "id": "get_employee",
+      "name": "Get Employee",
+      "description": "Get a single employee record with the specific fields you request",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{companyDomain}.bamboohr.com/api/v1/employees/{employeeId}",
+        "params": {
+          "companyDomain": {
+            "type": "string",
+            "in": "path",
+            "description": "BambooHR company subdomain (the {company} in {company}.bamboohr.com), also stored as BAMBOOHR_SUBDOMAIN",
+            "required": true
+          },
+          "employeeId": {
+            "type": "string",
+            "in": "path",
+            "description": "Employee ID; use 0 for the employee tied to the API key",
+            "required": true
+          },
+          "fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated field names to return, e.g. firstName,lastName,jobTitle,department,workEmail,hireDate,supervisor",
+            "required": true,
+            "default": "firstName,lastName,jobTitle,department,workEmail"
+          },
+          "onlyCurrent": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Set to false to include future-dated values from history table fields"
+          },
+          "Accept": {
+            "type": "string",
+            "in": "header",
+            "description": "Response format; keep application/json (BambooHR returns XML otherwise)",
+            "required": true,
+            "default": "application/json"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_time_off_requests",
+      "name": "List Time-Off Requests",
+      "description": "List time-off requests that overlap a date range, optionally filtered by employee or status",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{companyDomain}.bamboohr.com/api/v1/time_off/requests",
+        "params": {
+          "companyDomain": {
+            "type": "string",
+            "in": "path",
+            "description": "BambooHR company subdomain (the {company} in {company}.bamboohr.com), also stored as BAMBOOHR_SUBDOMAIN",
+            "required": true
+          },
+          "start": {
+            "type": "string",
+            "in": "query",
+            "description": "Start of the date range, YYYY-MM-DD. Requests overlapping the range are returned.",
+            "required": true
+          },
+          "end": {
+            "type": "string",
+            "in": "query",
+            "description": "End of the date range, YYYY-MM-DD",
+            "required": true
+          },
+          "employeeId": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return requests for this employee ID"
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated statuses: approved, denied, superseded, requested, canceled"
+          },
+          "type": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated time-off type IDs to include"
+          },
+          "action": {
+            "type": "string",
+            "in": "query",
+            "description": "Limit to requests the API user can act on: view or approve"
+          },
+          "Accept": {
+            "type": "string",
+            "in": "header",
+            "description": "Response format; keep application/json (BambooHR returns XML otherwise)",
+            "required": true,
+            "default": "application/json"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_time_off_request",
+      "name": "Create Time-Off Request",
+      "description": "Create a time-off request for an employee; it must be approved before it appears in history",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://{companyDomain}.bamboohr.com/api/v1/employees/{employeeId}/time_off/request",
+        "params": {
+          "companyDomain": {
+            "type": "string",
+            "in": "path",
+            "description": "BambooHR company subdomain (the {company} in {company}.bamboohr.com), also stored as BAMBOOHR_SUBDOMAIN",
+            "required": true
+          },
+          "employeeId": {
+            "type": "string",
+            "in": "path",
+            "description": "Employee ID the request is for",
+            "required": true
+          },
+          "Accept": {
+            "type": "string",
+            "in": "header",
+            "description": "Response format; keep application/json (BambooHR returns XML otherwise)",
+            "required": true,
+            "default": "application/json"
+          }
+        },
+        "body": {
+          "timeOffTypeId": {
+            "type": "number",
+            "description": "Time-off type ID (e.g. vacation or sick); list types via the company's time-off types in BambooHR",
+            "required": true
+          },
+          "start": {
+            "type": "string",
+            "description": "First day of time off, YYYY-MM-DD",
+            "required": true
+          },
+          "end": {
+            "type": "string",
+            "description": "Last day of time off, YYYY-MM-DD",
+            "required": true
+          },
+          "status": {
+            "type": "string",
+            "description": "Request status: requested, approved, or denied. Approving directly requires sufficient permissions.",
+            "default": "requested",
+            "required": true
+          },
+          "amount": {
+            "type": "number",
+            "description": "Total amount of time off in the unit of the time-off type (days or hours). Provide amount and/or per-day dates."
+          },
+          "dates": {
+            "type": "array",
+            "description": "Optional per-day breakdown, e.g. [{\"ymd\": \"2026-07-01\", \"amount\": 8}]"
+          },
+          "notes": {
+            "type": "array",
+            "description": "Optional notes, e.g. [{\"from\": \"employee\", \"note\": \"Summer holiday\"}]"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_time_off_types",
+      "name": "List Time-Off Types",
+      "description": "List the company's time-off types and their IDs - needed to fill the timeOffTypeId field when creating a time-off request",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{companyDomain}.bamboohr.com/api/v1/meta/time_off/types",
+        "params": {
+          "companyDomain": {
+            "type": "string",
+            "in": "path",
+            "description": "BambooHR company subdomain (the {company} in {company}.bamboohr.com), also stored as BAMBOOHR_SUBDOMAIN",
+            "required": true
+          },
+          "Accept": {
+            "type": "string",
+            "in": "header",
+            "description": "Response format; keep application/json (BambooHR returns XML otherwise)",
+            "required": true,
+            "default": "application/json"
+          }
+        }
+      }
+    },
+    {
+      "id": "update_time_off_request_status",
+      "name": "Update Time-Off Request Status",
+      "description": "Approve, deny, or cancel an existing time-off request (the API user must have approval permissions)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://{companyDomain}.bamboohr.com/api/v1/time_off/requests/{requestId}/status",
+        "params": {
+          "companyDomain": {
+            "type": "string",
+            "in": "path",
+            "description": "BambooHR company subdomain (the {company} in {company}.bamboohr.com), also stored as BAMBOOHR_SUBDOMAIN",
+            "required": true
+          },
+          "requestId": {
+            "type": "string",
+            "in": "path",
+            "description": "Time-off request ID (from List Time-Off Requests)",
+            "required": true
+          },
+          "Accept": {
+            "type": "string",
+            "in": "header",
+            "description": "Response format; keep application/json (BambooHR returns XML otherwise)",
+            "required": true,
+            "default": "application/json"
+          }
+        },
+        "body": {
+          "status": {
+            "type": "string",
+            "description": "New status for the request: approved, denied, or canceled",
+            "required": true
+          },
+          "note": {
+            "type": "string",
+            "description": "Optional note to attach to the status change"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_fields",
+      "name": "List Field Metadata",
+      "description": "List all employee fields available in the account (standard and custom) so agents know which field names Get Employee accepts",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{companyDomain}.bamboohr.com/api/v1/meta/fields",
+        "params": {
+          "companyDomain": {
+            "type": "string",
+            "in": "path",
+            "description": "BambooHR company subdomain (the {company} in {company}.bamboohr.com), also stored as BAMBOOHR_SUBDOMAIN",
+            "required": true
+          },
+          "Accept": {
+            "type": "string",
+            "in": "header",
+            "description": "Response format; keep application/json (BambooHR returns XML otherwise)",
+            "required": true,
+            "default": "application/json"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_whos_out",
+      "name": "List Who's Out",
+      "description": "List approved time off and company holidays in a date range to see who is out of office",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{companyDomain}.bamboohr.com/api/v1/time_off/whos_out",
+        "params": {
+          "companyDomain": {
+            "type": "string",
+            "in": "path",
+            "description": "BambooHR company subdomain (the {company} in {company}.bamboohr.com), also stored as BAMBOOHR_SUBDOMAIN",
+            "required": true
+          },
+          "start": {
+            "type": "string",
+            "in": "query",
+            "description": "Start of the date range, YYYY-MM-DD; defaults to today"
+          },
+          "end": {
+            "type": "string",
+            "in": "query",
+            "description": "End of the date range, YYYY-MM-DD; defaults to 14 days from the start date"
+          },
+          "Accept": {
+            "type": "string",
+            "in": "header",
+            "description": "Response format; keep application/json (BambooHR returns XML otherwise)",
+            "required": true,
+            "default": "application/json"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "whos_out_week",
+      "title": "Who's out this week",
+      "prompt": "Check BambooHR for who is out of office this week and summarize by team.",
+      "category": "hr",
+      "icon": "calendar"
+    },
+    {
+      "id": "employee_lookup",
+      "title": "Look up an employee",
+      "prompt": "Find an employee I name in the BambooHR directory and show their job title, department, and contact details.",
+      "category": "hr",
+      "icon": "users"
+    },
+    {
+      "id": "pending_time_off",
+      "title": "Pending time-off requests",
+      "prompt": "List BambooHR time-off requests with status requested for the next month and summarize what needs approval.",
+      "category": "hr",
+      "icon": "list"
+    }
+  ],
+  "suggestedWith": [
+    "slack",
+    "calendar",
+    "sheets"
+  ],
+  "SETUP_GUIDE": {
+    "title": "BambooHR setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Get a BambooHR account",
+        "description": "Use your company's existing BambooHR account, or start a free trial at https://www.bamboohr.com to get a test company. Note your subdomain - the {company} part of https://{company}.bamboohr.com."
+      },
+      {
+        "step": 2,
+        "title": "Generate an API key",
+        "description": "Log in to BambooHR, click your name in the lower-left corner, and choose API Keys to generate a key. The key inherits the permissions of your user, so time-off and directory access depend on what your user can see."
+      },
+      {
+        "step": 3,
+        "title": "Store the credentials",
+        "description": "Add BAMBOOHR_API_KEY=<your key> and BAMBOOHR_SUBDOMAIN=<your subdomain> to your .env file. The API uses HTTP Basic auth with the API key as the username and any string as the password (BAMBOOHR_API_PASSWORD defaults to x)."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the Get Employee Directory tool with companyDomain set to your subdomain. Requests go to https://{companyDomain}.bamboohr.com/api/v1/."
+      }
+    ],
+    "notes": [
+      "Responses default to XML; every tool sends Accept: application/json to get JSON",
+      "List Time-Off Requests requires both start and end dates (YYYY-MM-DD)",
+      "Whether you can create or approve time-off requests depends on the permissions of the user who owns the API key"
+    ],
+    "documentation": "https://documentation.bamboohr.com/docs"
+  }
+}

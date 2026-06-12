@@ -1,0 +1,356 @@
+{
+  "name": "power-bi",
+  "displayName": "Microsoft Power BI",
+  "icon": "power-bi.svg",
+  "description": "Explore Power BI workspaces, datasets, and reports, run DAX queries, and trigger dataset refreshes",
+  "category": "analytics",
+  "auth": {
+    "type": "oauth2",
+    "provider": "microsoft",
+    "authorizationUrl": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+    "tokenUrl": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+    "scopes": [
+      "https://analysis.windows.net/powerbi/api/Workspace.Read.All",
+      "https://analysis.windows.net/powerbi/api/Dataset.Read.All",
+      "https://analysis.windows.net/powerbi/api/Report.Read.All",
+      "offline_access"
+    ],
+    "optionalScopes": [
+      "https://analysis.windows.net/powerbi/api/Dataset.ReadWrite.All"
+    ],
+    "callbackPath": "/api/auth/power-bi/callback",
+    "tokenAuthMethod": "body",
+    "docsUrl": "https://learn.microsoft.com/en-us/rest/api/power-bi/",
+    "requiredApis": [
+      {
+        "name": "Power BI Service API (Azure app registration)",
+        "enableUrl": "https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "MICROSOFT_CLIENT_ID",
+      "description": "Microsoft Azure App Client ID (Application ID)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
+    },
+    {
+      "name": "MICROSOFT_CLIENT_SECRET",
+      "description": "Microsoft Azure App Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_workspaces",
+      "name": "List Workspaces",
+      "description": "List Power BI workspaces (groups) the signed-in user has access to",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.powerbi.com/v1.0/myorg/groups",
+        "params": {
+          "$top": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum workspaces to return",
+            "default": 100
+          },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description": "Skips the first n results"
+          },
+          "$filter": {
+            "type": "string",
+            "in": "query",
+            "description": "OData filter, e.g. contains(name,'marketing')"
+          }
+        },
+        "response": {
+          "transform": "value"
+        }
+      }
+    },
+    {
+      "id": "list_datasets",
+      "name": "List My Workspace Datasets",
+      "description": "List datasets in the signed-in user's My workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.powerbi.com/v1.0/myorg/datasets",
+        "response": {
+          "transform": "value"
+        }
+      }
+    },
+    {
+      "id": "list_workspace_datasets",
+      "name": "List Workspace Datasets",
+      "description": "List datasets in a specific Power BI workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.powerbi.com/v1.0/myorg/groups/{groupId}/datasets",
+        "params": {
+          "groupId": {
+            "type": "string",
+            "in": "path",
+            "description": "Workspace (group) ID from List Workspaces",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "value"
+        }
+      }
+    },
+    {
+      "id": "list_reports",
+      "name": "List My Workspace Reports",
+      "description": "List reports in the signed-in user's My workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.powerbi.com/v1.0/myorg/reports",
+        "response": {
+          "transform": "value"
+        }
+      }
+    },
+    {
+      "id": "list_workspace_reports",
+      "name": "List Workspace Reports",
+      "description": "List reports in a specific Power BI workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.powerbi.com/v1.0/myorg/groups/{groupId}/reports",
+        "params": {
+          "groupId": {
+            "type": "string",
+            "in": "path",
+            "description": "Workspace (group) ID from List Workspaces",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "value"
+        }
+      }
+    },
+    {
+      "id": "execute_dax_query",
+      "name": "Execute DAX Query",
+      "description": "Run a read-only DAX query against a dataset and return the resulting rows",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.powerbi.com/v1.0/myorg/datasets/{datasetId}/executeQueries",
+        "params": {
+          "datasetId": {
+            "type": "string",
+            "in": "path",
+            "description": "Dataset ID (the dataset may live in My workspace or any workspace the user can access)",
+            "required": true
+          }
+        },
+        "body": {
+          "queries": {
+            "type": "array",
+            "description": "Array with a single { query: '<DAX>' } object, e.g. [{ query: \"EVALUATE TOPN(10, 'Sales')\" }]. One query per call.",
+            "required": true
+          },
+          "serializerSettings": {
+            "type": "object",
+            "description": "Result serialization settings, e.g. { includeNulls: true }"
+          },
+          "impersonatedUserName": {
+            "type": "string",
+            "description": "UPN of a user to impersonate for RLS-enabled models"
+          }
+        },
+        "response": {
+          "transform": "results"
+        }
+      }
+    },
+    {
+      "id": "refresh_dataset",
+      "name": "Refresh Dataset",
+      "description": "Trigger a data refresh for a dataset in the signed-in user's My workspace (returns 202 Accepted; the refresh runs asynchronously). Datasets in shared workspaces are not supported by this endpoint",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.powerbi.com/v1.0/myorg/datasets/{datasetId}/refreshes",
+        "params": {
+          "datasetId": {
+            "type": "string",
+            "in": "path",
+            "description": "Dataset ID to refresh; the dataset must live in My workspace (workspace datasets use the groups refresh endpoint, which this tool does not call)",
+            "required": true
+          }
+        },
+        "body": {
+          "notifyOption": {
+            "type": "string",
+            "description": "Mail notification option: NoNotification, MailOnFailure, or MailOnCompletion. Required by the API; on shared capacities this is the only field allowed.",
+            "required": true,
+            "default": "NoNotification"
+          }
+        }
+      }
+    },
+    {
+      "id": "refresh_workspace_dataset",
+      "name": "Refresh Workspace Dataset",
+      "description": "Trigger a data refresh for a dataset in a specific workspace (returns 202 Accepted; the refresh runs asynchronously)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.powerbi.com/v1.0/myorg/groups/{groupId}/datasets/{datasetId}/refreshes",
+        "params": {
+          "groupId": {
+            "type": "string",
+            "in": "path",
+            "description": "Workspace (group) ID the dataset lives in, from List Workspaces",
+            "required": true
+          },
+          "datasetId": {
+            "type": "string",
+            "in": "path",
+            "description": "Dataset ID to refresh",
+            "required": true
+          }
+        },
+        "body": {
+          "notifyOption": {
+            "type": "string",
+            "description": "Mail notification option: NoNotification, MailOnFailure, or MailOnCompletion. Required by the API; on shared capacities this is the only field allowed.",
+            "required": true,
+            "default": "NoNotification"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_refresh_history",
+      "name": "List Refresh History",
+      "description": "Get the refresh history of a dataset in the signed-in user's My workspace — the way to follow up the 202 returned by Refresh Dataset",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.powerbi.com/v1.0/myorg/datasets/{datasetId}/refreshes",
+        "params": {
+          "datasetId": {
+            "type": "string",
+            "in": "path",
+            "description": "Dataset ID whose refresh history to fetch; the dataset must live in My workspace",
+            "required": true
+          },
+          "$top": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of most recent refresh entries to return (defaults to the last 60)"
+          }
+        },
+        "response": {
+          "transform": "value"
+        }
+      }
+    },
+    {
+      "id": "list_workspace_refresh_history",
+      "name": "List Workspace Refresh History",
+      "description": "Get the refresh history of a dataset in a specific workspace, including status and failure error codes",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.powerbi.com/v1.0/myorg/groups/{groupId}/datasets/{datasetId}/refreshes",
+        "params": {
+          "groupId": {
+            "type": "string",
+            "in": "path",
+            "description": "Workspace (group) ID the dataset lives in, from List Workspaces",
+            "required": true
+          },
+          "datasetId": {
+            "type": "string",
+            "in": "path",
+            "description": "Dataset ID whose refresh history to fetch",
+            "required": true
+          },
+          "$top": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of most recent refresh entries to return (defaults to the last 60)"
+          }
+        },
+        "response": {
+          "transform": "value"
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "workspace_inventory",
+      "title": "Workspace inventory",
+      "prompt": "List my Power BI workspaces and the datasets and reports inside each one.",
+      "category": "analytics",
+      "icon": "list"
+    },
+    {
+      "id": "run_dax_query",
+      "title": "Run a DAX query",
+      "prompt": "Run a DAX query against one of my Power BI datasets and summarize the result table.",
+      "category": "analytics",
+      "icon": "chart"
+    },
+    {
+      "id": "refresh_data",
+      "title": "Refresh a dataset",
+      "prompt": "Trigger a refresh for my Power BI dataset and confirm it was accepted.",
+      "category": "analytics",
+      "icon": "repeat"
+    }
+  ],
+  "suggestedWith": ["teams", "outlook"],
+  "SETUP_GUIDE": {
+    "title": "Microsoft Power BI setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Get a Power BI account",
+        "description": "Sign in at https://app.powerbi.com with a work or school account. For testing, you can create a free Microsoft 365 developer tenant or start a Power BI trial and publish a sample report."
+      },
+      {
+        "step": 2,
+        "title": "Register an Azure app",
+        "description": "In the Azure portal, open Microsoft Entra ID > App registrations > New registration. Choose 'Accounts in any organizational directory' and add your callback URL as a Web redirect URI."
+      },
+      {
+        "step": 3,
+        "title": "Add Power BI delegated permissions",
+        "description": "Under API permissions, select Add a permission > Power BI Service > Delegated permissions, and add Workspace.Read.All, Dataset.Read.All, and Report.Read.All (plus Dataset.ReadWrite.All if you want to trigger refreshes)."
+      },
+      {
+        "step": 4,
+        "title": "Create a client secret",
+        "description": "Under Certificates & secrets, create a client secret. Set MICROSOFT_CLIENT_ID to the Application (client) ID and MICROSOFT_CLIENT_SECRET to the secret value."
+      }
+    ],
+    "notes": [
+      "Execute DAX Query requires the tenant setting 'Dataset Execute Queries REST API' (Power BI admin portal > Integration settings) to be enabled, and the user needs read and Build permissions on the dataset.",
+      "Execute DAX Query is limited to one query per call, 100,000 rows or 1,000,000 values, and 15 MB of data per query.",
+      "Dataset refreshes on shared capacities are limited to eight per day per dataset and only accept the notifyOption body field; Refresh Dataset needs the Dataset.ReadWrite.All scope.",
+      "Power BI REST APIs refer to workspaces as 'groups'."
+    ],
+    "documentation": "https://learn.microsoft.com/en-us/rest/api/power-bi/"
+  }
+}

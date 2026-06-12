@@ -1,0 +1,273 @@
+{
+  "name": "sprites",
+  "displayName": "Sprites",
+  "icon": "sprites.svg",
+  "description": "Manage Sprites.dev stateful AI sandboxes — list, create, inspect, and destroy persistent Linux VMs and execute commands inside them",
+  "category": "ai",
+  "auth": {
+    "type": "api-key",
+    "keyName": "SPRITES_TOKEN",
+    "headerName": "Authorization",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://sprites.dev/api",
+    "requiredApis": [
+      {
+        "name": "Sprites account tokens",
+        "enableUrl": "https://sprites.dev/account"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "SPRITES_TOKEN",
+      "description": "Sprites API token in org/token-id/secret format, generated at sprites.dev/account; same env var used by the Sprites CLI and SDKs",
+      "required": true,
+      "sensitive": true,
+      "placeholder": "my-org/1ef8.../...",
+      "docsUrl": "https://docs.sprites.dev/cli/authentication/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_sprites",
+      "name": "List Sprites",
+      "description": "List sprites in the organization, optionally filtered by name prefix and paginated",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.sprites.dev/v1/sprites",
+        "params": {
+          "prefix": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter sprites by name prefix"
+          },
+          "max_results": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum number of results (1-50)",
+            "default": 50
+          },
+          "continuation_token": {
+            "type": "string",
+            "in": "query",
+            "description": "Token from a previous response for pagination"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_sprite",
+      "name": "Create Sprite",
+      "description": "Create a new sprite — a persistent, hardware-isolated Linux VM that keeps its filesystem state between runs",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.sprites.dev/v1/sprites",
+        "body": {
+          "name": {
+            "type": "string",
+            "description": "Unique name for the sprite within the organization",
+            "required": true
+          },
+          "url_settings": {
+            "type": "object",
+            "description": "URL access configuration, e.g. {\"auth\":\"sprite\"} (default) or {\"auth\":\"public\"} to make the sprite URL publicly reachable"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_sprite",
+      "name": "Get Sprite",
+      "description": "Get a sprite by name, including its URL, runtime status (cold, warm, or running), and creation/activity timestamps",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.sprites.dev/v1/sprites/{name}",
+        "params": {
+          "name": {
+            "type": "string",
+            "in": "path",
+            "description": "Unique name of the sprite",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "delete_sprite",
+      "name": "Destroy Sprite",
+      "description": "Destroy a sprite by name, permanently deleting the VM and its persisted filesystem state",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "DELETE",
+        "url": "https://api.sprites.dev/v1/sprites/{name}",
+        "params": {
+          "name": {
+            "type": "string",
+            "in": "path",
+            "description": "Unique name of the sprite to destroy",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "exec_command",
+      "name": "Execute Command",
+      "description": "Execute a command inside a sprite over HTTP (non-interactive) and return its output as JSON",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.sprites.dev/v1/sprites/{name}/exec",
+        "params": {
+          "name": {
+            "type": "string",
+            "in": "path",
+            "description": "Unique name of the sprite to run the command in",
+            "required": true
+          },
+          "cmd": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Command and its arguments, one array entry per argument (sent as repeated cmd query parameters), e.g. [\"ls\", \"-la\"]",
+            "required": true
+          },
+          "dir": {
+            "type": "string",
+            "in": "query",
+            "description": "Working directory for command execution"
+          },
+          "env": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Environment variables in KEY=VALUE format, one array entry per variable"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_checkpoint",
+      "name": "Create Checkpoint",
+      "description": "Create a point-in-time checkpoint of a sprite (filesystem and memory) before risky operations; the response is a stream of NDJSON progress events",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.sprites.dev/v1/sprites/{name}/checkpoint",
+        "params": {
+          "name": {
+            "type": "string",
+            "in": "path",
+            "description": "Unique name of the sprite to checkpoint",
+            "required": true
+          }
+        },
+        "body": {
+          "comment": {
+            "type": "string",
+            "description": "Optional comment describing the checkpoint"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_checkpoints",
+      "name": "List Checkpoints",
+      "description": "List a sprite's checkpoints with their IDs (e.g. v7), creation times, and comments — discover restore points",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.sprites.dev/v1/sprites/{name}/checkpoints",
+        "params": {
+          "name": {
+            "type": "string",
+            "in": "path",
+            "description": "Unique name of the sprite",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "restore_checkpoint",
+      "name": "Restore Checkpoint",
+      "description": "Roll a sprite back to a checkpoint, replacing its current state with the snapshot; the response is a stream of NDJSON progress events",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.sprites.dev/v1/sprites/{name}/checkpoints/{checkpointId}/restore",
+        "params": {
+          "name": {
+            "type": "string",
+            "in": "path",
+            "description": "Unique name of the sprite to restore",
+            "required": true
+          },
+          "checkpointId": {
+            "type": "string",
+            "in": "path",
+            "description": "Checkpoint ID from List Checkpoints, e.g. v7",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "sprite_overview",
+      "title": "My sprites",
+      "prompt": "List my Sprites.dev sandboxes with their status and last activity.",
+      "category": "ai",
+      "icon": "list"
+    },
+    {
+      "id": "spin_up_sprite",
+      "title": "Spin up a sprite",
+      "prompt": "Create a new sprite named scratchpad and confirm it is reachable by running uname -a inside it.",
+      "category": "ai",
+      "icon": "plus"
+    },
+    {
+      "id": "cleanup_sprites",
+      "title": "Clean up sprites",
+      "prompt": "List my sprites and destroy any that I confirm are no longer needed.",
+      "category": "ai",
+      "icon": "trash"
+    }
+  ],
+  "suggestedWith": ["github", "openai"],
+  "SETUP_GUIDE": {
+    "title": "Sprites setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Sprites account",
+        "description": "Sign up at https://sprites.dev by signing in with a Fly.io account (Sprites is made by Fly.io); new accounts can create sprites right away for testing."
+      },
+      {
+        "step": 2,
+        "title": "Generate an API token",
+        "description": "Go to https://sprites.dev/account and generate an API token. Tokens have the format my-org/token-id/secret. (Alternatively, install the sprite CLI and run sprite org auth.)"
+      },
+      {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Copy the token into your .env as SPRITES_TOKEN."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Sprites to confirm the token works, then create a sprite and execute a command in it."
+      }
+    ],
+    "notes": [
+      "The API is served on https://api.sprites.dev/v1 and authenticates with Authorization: Bearer $SPRITES_TOKEN",
+      "Sprites are stateful: the filesystem persists across suspends, and sprites wake automatically on use (status moves between cold, warm, and running)",
+      "Destroying a sprite permanently deletes its persisted state",
+      "Execute Command uses the HTTP POST exec endpoint for non-interactive commands; interactive TTY sessions, filesystem APIs, checkpoints, and services are WebSocket/SDK-first and not covered by these tools"
+    ],
+    "documentation": "https://sprites.dev/api"
+  }
+}

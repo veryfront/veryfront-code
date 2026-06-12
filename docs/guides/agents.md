@@ -98,10 +98,10 @@ Research the question and cite every claim.
   global id is reported at discovery so the reference stays unambiguous.
 - Duplicate agent ids (flat file + directory) and agent ids whose sanitized
   namespaces collide are reported as discovery errors.
-The same catalog metadata is used by local and hosted runtime paths. Hosted
-skill loading uses the catalog `sourcePath`, not a path reconstructed from the
-namespaced id, so `load_skill("researcher--cite")` resolves to the actual
-colocated `SKILL.md`.
+  The same catalog metadata is used by local and hosted runtime paths. Hosted
+  skill loading uses the catalog `sourcePath`, not a path reconstructed from the
+  namespaced id, so `load_skill("researcher--cite")` resolves to the actual
+  colocated `SKILL.md`.
 
 ## Add tools
 

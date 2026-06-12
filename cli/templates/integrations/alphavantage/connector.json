@@ -1,0 +1,187 @@
+{
+  "name": "alphavantage",
+  "displayName": "Alpha Vantage",
+  "icon": "alphavantage.svg",
+  "description": "Stock quotes, time series, forex, crypto, and fundamentals data through the Alpha Vantage market data API",
+  "category": "finance",
+  "auth": {
+    "type": "api-key",
+    "keyName": "ALPHAVANTAGE_API_KEY",
+    "queryParamName": "apikey",
+    "docsUrl": "https://www.alphavantage.co/documentation/",
+    "requiredApis": [
+      {
+        "name": "Alpha Vantage API key",
+        "enableUrl": "https://www.alphavantage.co/support/#api-key"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "ALPHAVANTAGE_API_KEY",
+      "description": "Alpha Vantage API key claimed from the free API key form",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://www.alphavantage.co/support/#api-key"
+    }
+  ],
+  "tools": [
+    {
+      "id": "quote",
+      "name": "Get Quote",
+      "description": "Get the latest price and volume information for an equity ticker",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://www.alphavantage.co/query",
+        "params": {
+          "function": {
+            "type": "string",
+            "in": "query",
+            "description": "Alpha Vantage API function; GLOBAL_QUOTE returns the latest quote",
+            "default": "GLOBAL_QUOTE"
+          },
+          "symbol": {
+            "type": "string",
+            "in": "query",
+            "description": "Equity ticker symbol, e.g. IBM or AAPL",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "daily_time_series",
+      "name": "Daily Time Series",
+      "description": "Get daily open, high, low, close, and volume history for an equity ticker",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://www.alphavantage.co/query",
+        "params": {
+          "function": {
+            "type": "string",
+            "in": "query",
+            "description": "Alpha Vantage API function; TIME_SERIES_DAILY returns daily OHLCV bars",
+            "default": "TIME_SERIES_DAILY"
+          },
+          "symbol": {
+            "type": "string",
+            "in": "query",
+            "description": "Equity ticker symbol, e.g. IBM or AAPL",
+            "required": true
+          },
+          "outputsize": {
+            "type": "string",
+            "in": "query",
+            "description": "compact returns the latest 100 data points; full returns up to 20+ years of history",
+            "default": "compact"
+          }
+        }
+      }
+    },
+    {
+      "id": "symbol_search",
+      "name": "Symbol Search",
+      "description": "Search for ticker symbols and companies matching keywords",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://www.alphavantage.co/query",
+        "params": {
+          "function": {
+            "type": "string",
+            "in": "query",
+            "description": "Alpha Vantage API function; SYMBOL_SEARCH returns best-matching symbols",
+            "default": "SYMBOL_SEARCH"
+          },
+          "keywords": {
+            "type": "string",
+            "in": "query",
+            "description": "Text to match against symbols and company names, e.g. microsoft or BA",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "company_overview",
+      "name": "Company Overview",
+      "description": "Get company information and key fundamentals (market cap, PE ratio, EPS, sector) for an equity ticker",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://www.alphavantage.co/query",
+        "params": {
+          "function": {
+            "type": "string",
+            "in": "query",
+            "description": "Alpha Vantage API function; OVERVIEW returns company fundamentals",
+            "default": "OVERVIEW"
+          },
+          "symbol": {
+            "type": "string",
+            "in": "query",
+            "description": "Equity ticker symbol, e.g. IBM or AAPL",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "fx_rate",
+      "name": "FX Exchange Rate",
+      "description": "Get the realtime exchange rate between two currencies (physical or digital, e.g. USD to EUR or BTC to USD)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://www.alphavantage.co/query",
+        "params": {
+          "function": {
+            "type": "string",
+            "in": "query",
+            "description": "Alpha Vantage API function; CURRENCY_EXCHANGE_RATE returns the realtime rate",
+            "default": "CURRENCY_EXCHANGE_RATE"
+          },
+          "from_currency": {
+            "type": "string",
+            "in": "query",
+            "description": "Currency to convert from, e.g. USD or BTC",
+            "required": true
+          },
+          "to_currency": {
+            "type": "string",
+            "in": "query",
+            "description": "Currency to convert to, e.g. EUR or JPY",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "SETUP_GUIDE": {
+    "title": "Alpha Vantage setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Claim a free API key",
+        "description": "Open https://www.alphavantage.co/support/#api-key, fill in the short form (who you are, organization, email address), and the API key is shown immediately. The free key allows up to 25 requests per day."
+      },
+      {
+        "step": 2,
+        "title": "Store the key",
+        "description": "Set the key as ALPHAVANTAGE_API_KEY."
+      },
+      {
+        "step": 3,
+        "title": "Verify it works",
+        "description": "Open https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=IBM&apikey=YOUR_KEY in a browser and check that a JSON quote comes back instead of an error message."
+      }
+    ],
+    "notes": [
+      "Alpha Vantage authenticates by passing the API key as an apikey query parameter on every request (https://www.alphavantage.co/query?function=...&apikey=...); it does not accept the key in an HTTP header.",
+      "The free API key is limited to 25 requests per day; premium plans at https://www.alphavantage.co/premium/ raise the limit and remove delays."
+    ],
+    "documentation": "https://www.alphavantage.co/documentation/"
+  }
+}

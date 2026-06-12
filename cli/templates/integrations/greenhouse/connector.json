@@ -1,0 +1,374 @@
+{
+  "name": "greenhouse",
+  "displayName": "Greenhouse",
+  "icon": "greenhouse.svg",
+  "description": "Access Greenhouse recruiting data — jobs, candidates, and applications — via the Harvest API, and add candidate notes",
+  "category": "hr",
+  "auth": {
+    "type": "basic",
+    "usernameKey": "GREENHOUSE_API_KEY",
+    "passwordKey": "GREENHOUSE_API_PASSWORD",
+    "docsUrl": "https://developers.greenhouse.io/harvest.html#authentication",
+    "requiredApis": [
+      {
+        "name": "Greenhouse Harvest API Key",
+        "enableUrl": "https://developers.greenhouse.io/harvest.html#authentication"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "GREENHOUSE_API_KEY",
+      "description": "Greenhouse Harvest API key (used as the HTTP Basic username; the password is blank). Created in the Dev Center under API Credential Management",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developers.greenhouse.io/harvest.html#authentication"
+    },
+    {
+      "name": "GREENHOUSE_API_PASSWORD",
+      "description": "Leave empty — Greenhouse Harvest Basic auth uses the API key as username with a blank password",
+      "required": false,
+      "sensitive": false,
+      "default": "",
+      "docsUrl": "https://developers.greenhouse.io/harvest.html#authentication"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_jobs",
+      "name": "List Jobs",
+      "description": "List jobs in the Greenhouse organization with optional status and date filtering",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://harvest.greenhouse.io/v1/jobs",
+        "params": {
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by job status: open, closed, or draft"
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of jobs to return per page (1-500)",
+            "default": 25
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number for pagination (1-based)"
+          },
+          "created_after": {
+            "type": "string",
+            "in": "query",
+            "description": "Only jobs created at or after this ISO 8601 timestamp"
+          },
+          "updated_after": {
+            "type": "string",
+            "in": "query",
+            "description": "Only jobs updated at or after this ISO 8601 timestamp"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_candidates",
+      "name": "List Candidates",
+      "description": "List candidates with optional job, email, and date filtering",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://harvest.greenhouse.io/v1/candidates",
+        "params": {
+          "job_id": {
+            "type": "number",
+            "in": "query",
+            "description": "Only return candidates with an application on this job"
+          },
+          "email": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return candidates with this email address"
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of candidates to return per page (1-500)",
+            "default": 25
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number for pagination (1-based)"
+          },
+          "created_after": {
+            "type": "string",
+            "in": "query",
+            "description": "Only candidates created at or after this ISO 8601 timestamp"
+          },
+          "updated_after": {
+            "type": "string",
+            "in": "query",
+            "description": "Only candidates updated at or after this ISO 8601 timestamp"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_candidate",
+      "name": "Get Candidate",
+      "description": "Get a candidate's full record, including applications, attachments, and contact details",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://harvest.greenhouse.io/v1/candidates/{candidateId}",
+        "params": {
+          "candidateId": {
+            "type": "string",
+            "in": "path",
+            "description": "The candidate's ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_applications",
+      "name": "List Applications",
+      "description": "List applications with optional job, status, and activity filtering",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://harvest.greenhouse.io/v1/applications",
+        "params": {
+          "job_id": {
+            "type": "number",
+            "in": "query",
+            "description": "Only return applications for this job"
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by application status: active, converted, hired, or rejected"
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of applications to return per page (1-500)",
+            "default": 25
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number for pagination (1-based)"
+          },
+          "created_after": {
+            "type": "string",
+            "in": "query",
+            "description": "Only applications created at or after this ISO 8601 timestamp"
+          },
+          "last_activity_after": {
+            "type": "string",
+            "in": "query",
+            "description": "Only applications whose last activity was at or after this ISO 8601 timestamp"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_users",
+      "name": "List Users",
+      "description": "List Greenhouse users to find the numeric user IDs needed for On-Behalf-Of headers and notes",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://harvest.greenhouse.io/v1/users",
+        "params": {
+          "email": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter users by email address"
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of users to return per page (1-500)",
+            "default": 25
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number for pagination (1-based)"
+          },
+          "updated_after": {
+            "type": "string",
+            "in": "query",
+            "description": "Only users updated at or after this ISO 8601 timestamp"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_job_stages",
+      "name": "List Job Stages",
+      "description": "List the interview stages of a job to find the stage IDs needed to move applications",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://harvest.greenhouse.io/v1/jobs/{jobId}/stages",
+        "params": {
+          "jobId": {
+            "type": "string",
+            "in": "path",
+            "description": "The job's ID",
+            "required": true
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of stages to return per page (1-500)",
+            "default": 25
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number for pagination (1-based)"
+          }
+        }
+      }
+    },
+    {
+      "id": "move_application",
+      "name": "Move Application",
+      "description": "Move an active application to another stage on the same job (the core pipeline action)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://harvest.greenhouse.io/v1/applications/{applicationId}/move",
+        "params": {
+          "applicationId": {
+            "type": "string",
+            "in": "path",
+            "description": "The application's ID",
+            "required": true
+          },
+          "On-Behalf-Of": {
+            "type": "string",
+            "in": "header",
+            "description": "ID of the Greenhouse user issuing this request — required by Greenhouse for auditing all writes",
+            "required": true
+          }
+        },
+        "body": {
+          "from_stage_id": {
+            "type": "number",
+            "description": "ID of the stage the application is currently in",
+            "required": true
+          },
+          "to_stage_id": {
+            "type": "number",
+            "description": "ID of the stage to move the application to (see List Job Stages)",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "add_candidate_note",
+      "name": "Add Candidate Note",
+      "description": "Create a note on a candidate's activity feed (requires the acting Greenhouse user's ID)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://harvest.greenhouse.io/v1/candidates/{candidateId}/activity_feed/notes",
+        "params": {
+          "candidateId": {
+            "type": "string",
+            "in": "path",
+            "description": "The candidate's ID",
+            "required": true
+          },
+          "On-Behalf-Of": {
+            "type": "string",
+            "in": "header",
+            "description": "ID of the Greenhouse user issuing this request — required by Greenhouse for auditing all writes",
+            "required": true
+          }
+        },
+        "body": {
+          "user_id": {
+            "type": "number",
+            "description": "The ID of the Greenhouse user creating the note",
+            "required": true
+          },
+          "body": {
+            "type": "string",
+            "description": "Note text",
+            "required": true
+          },
+          "visibility": {
+            "type": "string",
+            "description": "Note visibility: admin_only, private, or public",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "pipeline_overview",
+      "title": "Hiring pipeline overview",
+      "prompt": "List my open jobs in Greenhouse and summarize active applications per job.",
+      "category": "hr",
+      "icon": "briefcase"
+    },
+    {
+      "id": "recent_candidates",
+      "title": "Recent candidates",
+      "prompt": "Show me candidates added to Greenhouse in the last week with their current application status.",
+      "category": "hr",
+      "icon": "users"
+    },
+    {
+      "id": "leave_feedback",
+      "title": "Note on a candidate",
+      "prompt": "Look up a candidate I specify in Greenhouse and add a note to their activity feed with my feedback.",
+      "category": "hr",
+      "icon": "comment"
+    }
+  ],
+  "suggestedWith": ["slack", "gmail"],
+  "SETUP_GUIDE": {
+    "title": "Greenhouse Harvest API setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Get Greenhouse access",
+        "description": "You need a Greenhouse Recruiting account; ask your Greenhouse admin for access or request a demo/sandbox at https://www.greenhouse.com. Creating API keys requires the 'Can manage ALL organization's API Credentials' developer permission."
+      },
+      {
+        "step": 2,
+        "title": "Create a Harvest API key",
+        "description": "In Greenhouse, go to Configure (gear icon) → Dev Center → API Credential Management → Create New API Key, choose type 'Harvest', and grant only the endpoints you need (Jobs, Candidates, Applications)."
+      },
+      {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Add GREENHOUSE_API_KEY=<your key> to your .env file and leave GREENHOUSE_API_PASSWORD empty. The Harvest API uses HTTP Basic auth with the key as username and a blank password."
+      },
+      {
+        "step": 4,
+        "title": "Find your user ID for writes",
+        "description": "Write requests must include an On-Behalf-Of header with the numeric ID of the Greenhouse user performing the action (look it up via the Harvest Users endpoint or the Greenhouse UI)."
+      }
+    ],
+    "notes": [
+      "Each API key is restricted to the endpoints granted at creation — a 403 usually means the key lacks that endpoint",
+      "All write endpoints (POST/PATCH/DELETE) require the On-Behalf-Of header for auditing",
+      "List endpoints return plain JSON arrays and paginate via per_page/page with RFC 5988 Link response headers"
+    ],
+    "documentation": "https://developers.greenhouse.io/harvest.html"
+  }
+}

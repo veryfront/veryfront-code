@@ -1,0 +1,296 @@
+{
+  "name": "azure-document-intelligence",
+  "displayName": "Azure Document Intelligence",
+  "icon": "azure-document-intelligence.svg",
+  "description": "Analyze invoices, receipts, and document layout with Azure AI Document Intelligence prebuilt models",
+  "category": "ai",
+  "auth": {
+    "type": "api-key",
+    "keyName": "AZURE_DOCUMENT_INTELLIGENCE_KEY",
+    "headerName": "Ocp-Apim-Subscription-Key",
+    "docsUrl": "https://learn.microsoft.com/en-us/rest/api/aiservices/document-models/analyze-document",
+    "requiredApis": [
+      {
+        "name": "Azure Document Intelligence resource",
+        "enableUrl": "https://portal.azure.com/#create/Microsoft.CognitiveServicesFormRecognizer"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "AZURE_DOCUMENT_INTELLIGENCE_KEY",
+      "description": "Key for your Azure Document Intelligence resource (Keys and Endpoint blade in the Azure portal), sent as the Ocp-Apim-Subscription-Key header",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://portal.azure.com"
+    },
+    {
+      "name": "AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT",
+      "description": "Hostname of your resource endpoint, e.g. myresource.cognitiveservices.azure.com — pass it as the {resourceHost} parameter on each tool call",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://portal.azure.com"
+    }
+  ],
+  "tools": [
+    {
+      "id": "analyze_invoice",
+      "name": "Analyze Invoice",
+      "description": "Start analysis of an invoice with the prebuilt-invoice model (vendor, customer, line items, totals, taxes, payment terms). Asynchronous: the API responds 202 Accepted with an Operation-Location header containing the result ID — poll Get Analyze Result with that ID to fetch the extracted fields.",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{resourceHost}/documentintelligence/documentModels/prebuilt-invoice:analyze?api-version=2024-11-30",
+        "params": {
+          "resourceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Your Document Intelligence resource hostname, e.g. myresource.cognitiveservices.azure.com (see AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT)",
+            "required": true
+          },
+          "pages": {
+            "type": "string",
+            "in": "query",
+            "description": "1-based page numbers to analyze, e.g. '1-3,5'"
+          },
+          "locale": {
+            "type": "string",
+            "in": "query",
+            "description": "Locale hint for text recognition, e.g. 'en-US'"
+          }
+        },
+        "body": {
+          "urlSource": {
+            "type": "string",
+            "description": "Publicly accessible URL of the document to analyze (PDF, JPEG, PNG, TIFF, BMP, HEIF). Provide either urlSource or base64Source"
+          },
+          "base64Source": {
+            "type": "string",
+            "description": "Base64-encoded contents of the document to analyze. Provide either urlSource or base64Source"
+          }
+        }
+      }
+    },
+    {
+      "id": "analyze_receipt",
+      "name": "Analyze Receipt",
+      "description": "Start analysis of a sales receipt with the prebuilt-receipt model (merchant, transaction date/time, line items, tax, tip, total). Asynchronous: responds 202 Accepted with an Operation-Location header containing the result ID — poll Get Analyze Result with that ID.",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{resourceHost}/documentintelligence/documentModels/prebuilt-receipt:analyze?api-version=2024-11-30",
+        "params": {
+          "resourceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Your Document Intelligence resource hostname, e.g. myresource.cognitiveservices.azure.com (see AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT)",
+            "required": true
+          },
+          "pages": {
+            "type": "string",
+            "in": "query",
+            "description": "1-based page numbers to analyze, e.g. '1-3,5'"
+          },
+          "locale": {
+            "type": "string",
+            "in": "query",
+            "description": "Locale hint for text recognition, e.g. 'en-US'"
+          }
+        },
+        "body": {
+          "urlSource": {
+            "type": "string",
+            "description": "Publicly accessible URL of the document to analyze (PDF, JPEG, PNG, TIFF, BMP, HEIF). Provide either urlSource or base64Source"
+          },
+          "base64Source": {
+            "type": "string",
+            "description": "Base64-encoded contents of the document to analyze. Provide either urlSource or base64Source"
+          }
+        }
+      }
+    },
+    {
+      "id": "analyze_layout",
+      "name": "Analyze Layout",
+      "description": "Start analysis of any document with the prebuilt-layout model to extract text, tables, selection marks, and document structure (optionally as Markdown). Asynchronous: responds 202 Accepted with an Operation-Location header containing the result ID — poll Get Analyze Result with that ID.",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{resourceHost}/documentintelligence/documentModels/prebuilt-layout:analyze?api-version=2024-11-30",
+        "params": {
+          "resourceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Your Document Intelligence resource hostname, e.g. myresource.cognitiveservices.azure.com (see AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT)",
+            "required": true
+          },
+          "pages": {
+            "type": "string",
+            "in": "query",
+            "description": "1-based page numbers to analyze, e.g. '1-3,5'"
+          },
+          "outputContentFormat": {
+            "type": "string",
+            "in": "query",
+            "description": "Format of the result's top-level content: 'text' or 'markdown'"
+          }
+        },
+        "body": {
+          "urlSource": {
+            "type": "string",
+            "description": "Publicly accessible URL of the document to analyze (PDF, JPEG, PNG, TIFF, BMP, HEIF). Provide either urlSource or base64Source"
+          },
+          "base64Source": {
+            "type": "string",
+            "description": "Base64-encoded contents of the document to analyze. Provide either urlSource or base64Source"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_analyze_result",
+      "name": "Get Analyze Result",
+      "description": "Fetch the result of a previously started analysis. Use the result ID (GUID) from the Operation-Location response header of an analyze call, and the same model ID that started it. While status is 'running', wait and poll again; when status is 'succeeded', the extracted fields are in analyzeResult.",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{resourceHost}/documentintelligence/documentModels/{modelId}/analyzeResults/{resultId}?api-version=2024-11-30",
+        "params": {
+          "resourceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Your Document Intelligence resource hostname, e.g. myresource.cognitiveservices.azure.com (see AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT)",
+            "required": true
+          },
+          "modelId": {
+            "type": "string",
+            "in": "path",
+            "description": "Model that started the analysis: prebuilt-invoice, prebuilt-receipt, prebuilt-layout, or prebuilt-read",
+            "required": true
+          },
+          "resultId": {
+            "type": "string",
+            "in": "path",
+            "description": "Result ID (GUID) from the Operation-Location header returned by the analyze call",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "analyze_read",
+      "name": "Analyze Read (OCR)",
+      "description": "Start pure OCR text extraction with the prebuilt-read model — the cheapest option for plain scans where only the text matters (no tables or key-value pairs). Asynchronous: responds 202 Accepted with an Operation-Location header containing the result ID — poll Get Analyze Result with that ID.",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{resourceHost}/documentintelligence/documentModels/prebuilt-read:analyze?api-version=2024-11-30",
+        "params": {
+          "resourceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Your Document Intelligence resource hostname, e.g. myresource.cognitiveservices.azure.com (see AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT)",
+            "required": true
+          },
+          "pages": {
+            "type": "string",
+            "in": "query",
+            "description": "1-based page numbers to analyze, e.g. '1-3,5'"
+          },
+          "locale": {
+            "type": "string",
+            "in": "query",
+            "description": "Locale hint for text recognition, e.g. 'en-US'"
+          }
+        },
+        "body": {
+          "urlSource": {
+            "type": "string",
+            "description": "Publicly accessible URL of the document to analyze (PDF, JPEG, PNG, TIFF, BMP, HEIF). Provide either urlSource or base64Source"
+          },
+          "base64Source": {
+            "type": "string",
+            "description": "Base64-encoded contents of the document to analyze. Provide either urlSource or base64Source"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_document_models",
+      "name": "List Document Models",
+      "description": "List the document models available on the resource (prebuilt and custom) with their model IDs and descriptions — use this to discover valid model IDs",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{resourceHost}/documentintelligence/documentModels?api-version=2024-11-30",
+        "params": {
+          "resourceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Your Document Intelligence resource hostname, e.g. myresource.cognitiveservices.azure.com (see AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT)",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "value"
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "extract_invoice",
+      "title": "Extract invoice fields",
+      "prompt": "Analyze this invoice with Azure Document Intelligence and summarize the vendor, invoice ID, due date, line items, and total.",
+      "category": "finance",
+      "icon": "document"
+    },
+    {
+      "id": "scan_receipt",
+      "title": "Scan a receipt",
+      "prompt": "Analyze this receipt with Azure Document Intelligence and report the merchant, date, and total amount.",
+      "category": "finance",
+      "icon": "receipt"
+    },
+    {
+      "id": "document_to_markdown",
+      "title": "Document to Markdown",
+      "prompt": "Run layout analysis on this document with outputContentFormat=markdown and return the document content as Markdown.",
+      "category": "productivity",
+      "icon": "layout"
+    }
+  ],
+  "suggestedWith": ["azure-blob-storage", "sharepoint", "onedrive"],
+  "SETUP_GUIDE": {
+    "title": "Azure Document Intelligence setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Document Intelligence resource",
+        "description": "In the Azure portal, create an Azure AI Document Intelligence (formerly Form Recognizer) resource: https://portal.azure.com/#create/Microsoft.CognitiveServicesFormRecognizer. Choose the free F0 pricing tier to test at no cost (500 pages/month; F0 only processes the first 2 pages of each request)."
+      },
+      {
+        "step": 2,
+        "title": "Copy the key and endpoint",
+        "description": "Open the resource's 'Keys and Endpoint' blade. Store KEY 1 as AZURE_DOCUMENT_INTELLIGENCE_KEY and the endpoint hostname (e.g. myresource.cognitiveservices.azure.com, without https://) as AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT."
+      },
+      {
+        "step": 3,
+        "title": "Run an analysis",
+        "description": "Call Analyze Invoice with your resource hostname as resourceHost and a urlSource pointing at a sample invoice. The API replies 202 Accepted; copy the result ID (GUID) from the Operation-Location response header."
+      },
+      {
+        "step": 4,
+        "title": "Fetch the result",
+        "description": "Call Get Analyze Result with the same modelId (prebuilt-invoice) and the result ID. Poll until status is 'succeeded', then read the extracted fields from analyzeResult.documents."
+      }
+    ],
+    "notes": [
+      "Analysis is asynchronous: analyze calls return 202 with no body — the result ID must be read from the Operation-Location response header",
+      "Analyze results are retained for 24 hours, after which the result ID expires",
+      "All tools pin api-version 2024-11-30 (GA v4.0); region availability and model versions are listed in the Azure docs",
+      "Either urlSource or base64Source must be set on analyze calls — never both"
+    ],
+    "documentation": "https://learn.microsoft.com/en-us/azure/ai-services/document-intelligence/"
+  }
+}

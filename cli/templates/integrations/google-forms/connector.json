@@ -1,0 +1,261 @@
+{
+  "name": "google-forms",
+  "displayName": "Google Forms",
+  "icon": "google-forms.svg",
+  "description": "Read Google Forms structure and responses, and create or edit forms",
+  "category": "productivity",
+  "auth": {
+    "type": "oauth2",
+    "provider": "google",
+    "authorizationUrl": "https://accounts.google.com/o/oauth2/v2/auth",
+    "tokenUrl": "https://oauth2.googleapis.com/token",
+    "scopes": [
+      "https://www.googleapis.com/auth/forms.body.readonly",
+      "https://www.googleapis.com/auth/forms.responses.readonly"
+    ],
+    "optionalScopes": [
+      "https://www.googleapis.com/auth/forms.body"
+    ],
+    "callbackPath": "/api/auth/google-forms/callback",
+    "supportsRefreshToken": true,
+    "docsUrl": "https://developers.google.com/workspace/forms/api/reference/rest",
+    "requiredApis": [
+      {
+        "name": "Google Forms API",
+        "enableUrl": "https://console.cloud.google.com/apis/library/forms.googleapis.com"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "GOOGLE_CLIENT_ID",
+      "description": "Google OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://console.cloud.google.com/apis/credentials"
+    },
+    {
+      "name": "GOOGLE_CLIENT_SECRET",
+      "description": "Google OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://console.cloud.google.com/apis/credentials"
+    }
+  ],
+  "tools": [
+    {
+      "id": "get_form",
+      "name": "Get Form",
+      "description": "Get a form's metadata, settings, and items (questions) including the question IDs needed to interpret responses",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://forms.googleapis.com/v1/forms/{formId}",
+        "params": {
+          "formId": {
+            "type": "string",
+            "in": "path",
+            "description": "Form ID (the long ID in the form's edit URL)",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_form_responses",
+      "name": "List Form Responses",
+      "description": "List submitted responses for a form, with answers keyed by question ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://forms.googleapis.com/v1/forms/{formId}/responses",
+        "params": {
+          "formId": {
+            "type": "string",
+            "in": "path",
+            "description": "Form ID",
+            "required": true
+          },
+          "filter": {
+            "type": "string",
+            "in": "query",
+            "description": "Response filter, e.g. timestamp >= 2024-01-01T00:00:00Z (only the timestamp field is supported)"
+          },
+          "pageSize": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum responses to return (max 5000)",
+            "default": 100
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Page token from a previous list call"
+          }
+        },
+        "response": {
+          "transform": "responses"
+        }
+      }
+    },
+    {
+      "id": "get_form_response",
+      "name": "Get Form Response",
+      "description": "Get a single response submitted to a form",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://forms.googleapis.com/v1/forms/{formId}/responses/{responseId}",
+        "params": {
+          "formId": {
+            "type": "string",
+            "in": "path",
+            "description": "Form ID",
+            "required": true
+          },
+          "responseId": {
+            "type": "string",
+            "in": "path",
+            "description": "Response ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_form",
+      "name": "Create Form",
+      "description": "Create a new form with a title; add questions afterwards with Batch Update Form",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://forms.googleapis.com/v1/forms",
+        "body": {
+          "info": {
+            "type": "object",
+            "description": "Form info object, e.g. { title: 'Customer feedback', documentTitle: 'Feedback form' }. Only title and documentTitle are honored at creation.",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "set_publish_settings",
+      "name": "Set Publish Settings",
+      "description": "Publish or unpublish a form and toggle whether it accepts responses, e.g. to open a survey after building it or close it when done (requires the forms.body scope)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://forms.googleapis.com/v1/forms/{formId}:setPublishSettings",
+        "params": {
+          "formId": {
+            "type": "string",
+            "in": "path",
+            "description": "Form ID to update",
+            "required": true
+          }
+        },
+        "body": {
+          "publishSettings": {
+            "type": "object",
+            "description": "Desired publish settings; publishState requires both flags, e.g. { \"publishState\": { \"isPublished\": true, \"isAcceptingResponses\": true } }. Setting isPublished false forces isAcceptingResponses to false.",
+            "required": true
+          },
+          "updateMask": {
+            "type": "string",
+            "description": "Optional field mask of publish_settings fields to update, e.g. publishState (defaults to all fields)"
+          }
+        }
+      }
+    },
+    {
+      "id": "batch_update_form",
+      "name": "Batch Update Form",
+      "description": "Apply a batch of updates to a form, such as adding questions, updating form info, or changing settings",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://forms.googleapis.com/v1/forms/{formId}:batchUpdate",
+        "params": {
+          "formId": {
+            "type": "string",
+            "in": "path",
+            "description": "Form ID to update",
+            "required": true
+          }
+        },
+        "body": {
+          "requests": {
+            "type": "array",
+            "description": "Array of update request objects, e.g. [{ createItem: { item: {...}, location: { index: 0 } } }] or [{ updateFormInfo: { info: {...}, updateMask: 'description' } }]",
+            "required": true
+          },
+          "includeFormInResponse": {
+            "type": "boolean",
+            "description": "Return the updated form in the response",
+            "default": false
+          },
+          "writeControl": {
+            "type": "object",
+            "description": "Optional write control, e.g. { requiredRevisionId: '...' } to guard against concurrent edits"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "summarize_form_responses",
+      "title": "Summarize form responses",
+      "prompt": "Get the responses for my Google Form and summarize the answers per question, highlighting common themes.",
+      "category": "analytics",
+      "icon": "chart"
+    },
+    {
+      "id": "create_feedback_form",
+      "title": "Create a feedback form",
+      "prompt": "Create a new Google Form for customer feedback and add a rating question plus an open-text comments question.",
+      "category": "productivity",
+      "icon": "plus"
+    },
+    {
+      "id": "recent_submissions",
+      "title": "Recent submissions",
+      "prompt": "Show me the responses submitted to my Google Form in the last 7 days.",
+      "category": "productivity",
+      "icon": "inbox"
+    }
+  ],
+  "suggestedWith": ["sheets", "gmail"],
+  "SETUP_GUIDE": {
+    "title": "Google Forms setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Google Cloud project",
+        "description": "Go to https://console.cloud.google.com, create (or select) a project. A free Google account is enough for testing."
+      },
+      {
+        "step": 2,
+        "title": "Enable the Google Forms API",
+        "description": "Open https://console.cloud.google.com/apis/library/forms.googleapis.com and click Enable for your project."
+      },
+      {
+        "step": 3,
+        "title": "Configure the OAuth consent screen",
+        "description": "Under APIs & Services > OAuth consent screen, configure the app and add the Forms scopes (forms.body.readonly, forms.responses.readonly, and forms.body if you need write access). Add your account as a test user while the app is in testing mode."
+      },
+      {
+        "step": 4,
+        "title": "Create OAuth credentials",
+        "description": "Under APIs & Services > Credentials, create an OAuth client ID of type Web application and add your callback URL as an authorized redirect URI. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET from the generated credentials."
+      }
+    ],
+    "notes": [
+      "The Forms API can read responses but cannot submit them; responses are only created by people filling out the form.",
+      "Create Form only honors info.title and info.documentTitle; add questions and settings afterwards with Batch Update Form.",
+      "Creating or editing forms requires the https://www.googleapis.com/auth/forms.body scope (listed under optional scopes)."
+    ],
+    "documentation": "https://developers.google.com/workspace/forms/api/reference/rest"
+  }
+}

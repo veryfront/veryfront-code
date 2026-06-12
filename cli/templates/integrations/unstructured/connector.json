@@ -1,0 +1,141 @@
+{
+  "name": "unstructured",
+  "displayName": "Unstructured",
+  "icon": "unstructured.svg",
+  "description": "Partition documents (PDF, DOCX, PPTX, HTML, images, and more) into structured JSON elements for RAG ingestion via the Unstructured Partition API",
+  "auth": {
+    "type": "api-key",
+    "keyName": "UNSTRUCTURED_API_KEY",
+    "headerName": "unstructured-api-key",
+    "docsUrl": "https://docs.unstructured.io/api-reference/partition/overview",
+    "requiredApis": [
+      {
+        "name": "Unstructured API Keys",
+        "enableUrl": "https://platform.unstructured.io"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "UNSTRUCTURED_API_KEY",
+      "description": "Unstructured API key, sent as the unstructured-api-key request header",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.unstructured.io/api-reference/partition/overview"
+    }
+  ],
+  "tools": [
+    {
+      "id": "partition_document",
+      "name": "Partition Document",
+      "description": "Parse one local document into structured JSON elements (titles, narrative text, tables, lists) with optional chunking for RAG. The file content is uploaded as the multipart/form-data 'files' field together with the other fields; remote URLs are not accepted — fetch the file first and pass its content",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.unstructuredapp.io/general/v0/general",
+        "contentType": "multipart/form-data",
+        "bodyMode": "form-data",
+        "body": {
+          "files": {
+            "type": "string",
+            "description": "Base64-encoded document content, sent decoded as the binary 'files' part of the multipart request",
+            "required": true,
+            "encoding": "base64",
+            "partFilenameField": "file_name"
+          },
+          "file_name": {
+            "type": "string",
+            "description": "Filename for the uploaded document, e.g. report.pdf; the extension helps Unstructured detect the file type",
+            "required": true
+          },
+          "strategy": {
+            "type": "string",
+            "description": "Partitioning strategy: auto (default), fast, hi_res (layout-aware, best for tables), ocr_only, or vlm (requires vlm_model and vlm_model_provider)",
+            "default": "auto"
+          },
+          "vlm_model": {
+            "type": "string",
+            "description": "VLM model to use, e.g. claude-sonnet-4-5-20250929 or gpt-4o; required when strategy is vlm"
+          },
+          "vlm_model_provider": {
+            "type": "string",
+            "description": "Provider of the VLM model, e.g. anthropic, openai, bedrock, or vertexai; required when strategy is vlm"
+          },
+          "content_type": {
+            "type": "string",
+            "description": "MIME type hint for the uploaded file, e.g. application/pdf"
+          },
+          "chunking_strategy": {
+            "type": "string",
+            "description": "Chunk elements for RAG: basic, by_title, by_page, or by_similarity; omit to return raw elements"
+          },
+          "max_characters": {
+            "type": "number",
+            "description": "Hard maximum chunk size in characters when chunking (default 500)"
+          },
+          "languages": {
+            "type": "array",
+            "description": "Document language codes to improve OCR/partitioning, e.g. [\"eng\"]"
+          },
+          "coordinates": {
+            "type": "boolean",
+            "description": "Include element bounding-box coordinates in the output (default false)"
+          },
+          "output_format": {
+            "type": "string",
+            "description": "Response format: application/json (default) or text/csv"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "parse_for_rag",
+      "title": "Parse a document for RAG",
+      "prompt": "Partition the document I provide with Unstructured using by_title chunking and summarize the resulting elements.",
+      "category": "ai",
+      "icon": "document"
+    },
+    {
+      "id": "extract_tables",
+      "title": "Extract tables",
+      "prompt": "Partition my document with the hi_res strategy and extract the tables it contains.",
+      "category": "ai",
+      "icon": "table"
+    }
+  ],
+  "suggestedWith": ["voyage-ai", "pinecone", "qdrant"],
+  "SETUP_GUIDE": {
+    "title": "Unstructured API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create an Unstructured account",
+        "description": "Sign up at https://platform.unstructured.io — new accounts include a free trial of the serverless API, enough for testing without billing."
+      },
+      {
+        "step": 2,
+        "title": "Get an API key",
+        "description": "In the Unstructured UI, open the API Keys section, create a key, and copy it."
+      },
+      {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Add UNSTRUCTURED_API_KEY=... to your .env file. Requests authenticate with the unstructured-api-key header (no Bearer prefix)."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the Partition Document tool with a small text or PDF file and strategy auto. A 401 means the key is wrong; a 422 usually means the files field is missing or unreadable."
+      }
+    ],
+    "notes": [
+      "The Partition endpoint processes one local file per request and does not fetch remote URLs — download the file first and pass its content",
+      "Your account may be issued a dedicated API URL; the default https://api.unstructuredapp.io/general/v0/general works for standard serverless accounts",
+      "hi_res and vlm strategies are slower and cost more per page than fast/auto but handle complex layouts and tables much better",
+      "Use chunking_strategy by_title with max_characters tuned to your embedding model for RAG-ready chunks"
+    ],
+    "documentation": "https://docs.unstructured.io/api-reference/partition/overview"
+  }
+}

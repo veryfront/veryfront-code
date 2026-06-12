@@ -1,0 +1,450 @@
+{
+  "name": "gcp",
+  "displayName": "Google Cloud",
+  "icon": "gcp.svg",
+  "description": "Inspect Google Cloud Compute Engine instances, Cloud Run services, and Cloud Functions, and start or stop VM instances",
+  "category": "devops",
+  "auth": {
+    "type": "oauth2",
+    "provider": "google",
+    "authorizationUrl": "https://accounts.google.com/o/oauth2/v2/auth",
+    "tokenUrl": "https://oauth2.googleapis.com/token",
+    "scopes": [
+      "https://www.googleapis.com/auth/compute.readonly",
+      "https://www.googleapis.com/auth/run.readonly"
+    ],
+    "optionalScopes": [
+      "https://www.googleapis.com/auth/cloud-platform"
+    ],
+    "callbackPath": "/api/auth/gcp/callback",
+    "supportsRefreshToken": true,
+    "docsUrl": "https://cloud.google.com/docs/authentication",
+    "requiredApis": [
+      {
+        "name": "Compute Engine API",
+        "enableUrl": "https://console.cloud.google.com/apis/library/compute.googleapis.com"
+      },
+      {
+        "name": "Cloud Run Admin API",
+        "enableUrl": "https://console.cloud.google.com/apis/library/run.googleapis.com"
+      },
+      {
+        "name": "Cloud Functions API",
+        "enableUrl": "https://console.cloud.google.com/apis/library/cloudfunctions.googleapis.com"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "GOOGLE_CLIENT_ID",
+      "description": "Google OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://console.cloud.google.com/apis/credentials"
+    },
+    {
+      "name": "GOOGLE_CLIENT_SECRET",
+      "description": "Google OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://console.cloud.google.com/apis/credentials"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_compute_instances",
+      "name": "List Compute Instances",
+      "description": "List Compute Engine VM instances in a specific zone of a project",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://compute.googleapis.com/compute/v1/projects/{projectId}/zones/{zone}/instances",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Cloud project ID",
+            "required": true
+          },
+          "zone": {
+            "type": "string",
+            "in": "path",
+            "description": "Compute Engine zone, e.g. us-central1-a",
+            "required": true
+          },
+          "filter": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter expression, e.g. status = \"RUNNING\" or name = \"my-instance-*\""
+          },
+          "maxResults": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum instances to return per page",
+            "default": 100
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Continuation token from a previous page (nextPageToken)"
+          }
+        },
+        "response": {
+          "transform": "items"
+        }
+      }
+    },
+    {
+      "id": "list_all_compute_instances",
+      "name": "List All Compute Instances",
+      "description": "List Compute Engine VM instances across all zones of a project (aggregated list), useful when you don't know which zones are in use",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://compute.googleapis.com/compute/v1/projects/{projectId}/aggregated/instances",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Cloud project ID",
+            "required": true
+          },
+          "filter": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter expression, e.g. status = \"RUNNING\""
+          },
+          "maxResults": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum instances to return per page",
+            "default": 100
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Continuation token from a previous page (nextPageToken)"
+          },
+          "returnPartialSuccess": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Return partial results instead of failing when some zones are unreachable",
+            "default": true
+          }
+        },
+        "response": {
+          "transform": "items"
+        }
+      }
+    },
+    {
+      "id": "get_compute_instance",
+      "name": "Get Compute Instance",
+      "description": "Get one Compute Engine VM instance's details - machine type, status, IPs, and disks - e.g. to confirm a start or stop completed",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://compute.googleapis.com/compute/v1/projects/{projectId}/zones/{zone}/instances/{instance}",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Cloud project ID",
+            "required": true
+          },
+          "zone": {
+            "type": "string",
+            "in": "path",
+            "description": "Compute Engine zone of the instance, e.g. us-central1-a",
+            "required": true
+          },
+          "instance": {
+            "type": "string",
+            "in": "path",
+            "description": "Name of the VM instance to describe",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_zones",
+      "name": "List Zones",
+      "description": "List the Compute Engine zones available in a project, so agents can discover valid zone names for the zone-scoped tools",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://compute.googleapis.com/compute/v1/projects/{projectId}/zones",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Cloud project ID",
+            "required": true
+          },
+          "filter": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter expression, e.g. name = \"us-central1-*\" or status = \"UP\""
+          },
+          "maxResults": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum zones to return per page",
+            "default": 100
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Continuation token from a previous page (nextPageToken)"
+          }
+        },
+        "response": {
+          "transform": "items"
+        }
+      }
+    },
+    {
+      "id": "start_compute_instance",
+      "name": "Start Compute Instance",
+      "description": "Start a stopped Compute Engine VM instance (returns a zone operation that completes asynchronously) — requires the full cloud-platform scope",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://compute.googleapis.com/compute/v1/projects/{projectId}/zones/{zone}/instances/{instance}/start",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Cloud project ID",
+            "required": true
+          },
+          "zone": {
+            "type": "string",
+            "in": "path",
+            "description": "Compute Engine zone of the instance, e.g. us-central1-a",
+            "required": true
+          },
+          "instance": {
+            "type": "string",
+            "in": "path",
+            "description": "Name of the VM instance to start",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "stop_compute_instance",
+      "name": "Stop Compute Instance",
+      "description": "Stop a running Compute Engine VM instance so it stops incurring compute charges (returns a zone operation that completes asynchronously) — requires the full cloud-platform scope",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://compute.googleapis.com/compute/v1/projects/{projectId}/zones/{zone}/instances/{instance}/stop",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Cloud project ID",
+            "required": true
+          },
+          "zone": {
+            "type": "string",
+            "in": "path",
+            "description": "Compute Engine zone of the instance, e.g. us-central1-a",
+            "required": true
+          },
+          "instance": {
+            "type": "string",
+            "in": "path",
+            "description": "Name of the VM instance to stop",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_cloud_run_services",
+      "name": "List Cloud Run Services",
+      "description": "List Cloud Run services in a project location (region)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://run.googleapis.com/v2/projects/{projectId}/locations/{location}/services",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Cloud project ID",
+            "required": true
+          },
+          "location": {
+            "type": "string",
+            "in": "path",
+            "description": "Cloud Run region, e.g. us-central1 (must be a valid region; Cloud Run does not accept the '-' wildcard)",
+            "required": true
+          },
+          "pageSize": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum services to return per page",
+            "default": 100
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Continuation token from a previous services.list call (nextPageToken)"
+          },
+          "showDeleted": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include deleted but unexpired services",
+            "default": false
+          }
+        },
+        "response": {
+          "transform": "services"
+        }
+      }
+    },
+    {
+      "id": "get_cloud_run_service",
+      "name": "Get Cloud Run Service",
+      "description": "Get one Cloud Run service's details - URL, container image, environment, and traffic split",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://run.googleapis.com/v2/projects/{projectId}/locations/{location}/services/{service}",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Cloud project ID",
+            "required": true
+          },
+          "location": {
+            "type": "string",
+            "in": "path",
+            "description": "Cloud Run region of the service, e.g. us-central1",
+            "required": true
+          },
+          "service": {
+            "type": "string",
+            "in": "path",
+            "description": "Name of the Cloud Run service to describe",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_cloud_functions",
+      "name": "List Cloud Functions",
+      "description": "List Cloud Functions (2nd gen API) in a project location — requires the optional cloud-platform scope (the only scope the Cloud Functions API accepts)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://cloudfunctions.googleapis.com/v2/projects/{projectId}/locations/{location}/functions",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Cloud project ID",
+            "required": true
+          },
+          "location": {
+            "type": "string",
+            "in": "path",
+            "description": "Function location, e.g. us-central1, or '-' to list functions across all locations",
+            "required": true
+          },
+          "pageSize": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum functions to return per page (up to 1000)",
+            "default": 100
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Continuation token from a previous page (nextPageToken)"
+          },
+          "filter": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter expression following https://google.aip.dev/160"
+          },
+          "orderBy": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated list of fields to sort by"
+          }
+        },
+        "response": {
+          "transform": "functions"
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "compute_inventory",
+      "title": "Compute inventory",
+      "prompt": "List my Compute Engine instances across all zones and summarize their machine types and power states.",
+      "category": "devops",
+      "icon": "server"
+    },
+    {
+      "id": "serverless_overview",
+      "title": "Serverless overview",
+      "prompt": "List my Cloud Run services and Cloud Functions in a region and summarize what is deployed.",
+      "category": "devops",
+      "icon": "cloud"
+    },
+    {
+      "id": "stop_idle_instances",
+      "title": "Stop an idle VM",
+      "prompt": "Find running Compute Engine instances and help me stop one that looks idle so it stops incurring charges.",
+      "category": "devops",
+      "icon": "power"
+    }
+  ],
+  "suggestedWith": [
+    "google-cloud-storage",
+    "google-bigquery"
+  ],
+  "SETUP_GUIDE": {
+    "title": "Google Cloud setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create or select a Google Cloud project",
+        "description": "Go to https://console.cloud.google.com and create a project (new Google Cloud accounts include free-tier credit, and Compute Engine offers an always-free e2-micro instance in some US regions for testing)."
+      },
+      {
+        "step": 2,
+        "title": "Enable the required APIs",
+        "description": "Enable the Compute Engine API (https://console.cloud.google.com/apis/library/compute.googleapis.com), the Cloud Run Admin API (https://console.cloud.google.com/apis/library/run.googleapis.com), and the Cloud Functions API (https://console.cloud.google.com/apis/library/cloudfunctions.googleapis.com) for your project."
+      },
+      {
+        "step": 3,
+        "title": "Create OAuth credentials",
+        "description": "In https://console.cloud.google.com/apis/credentials create an OAuth 2.0 Client ID (Web application) and add your callback URL as an authorized redirect URI. Store the values as GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET."
+      },
+      {
+        "step": 4,
+        "title": "Create test resources",
+        "description": "Create a small VM instance (e2-micro) in Compute Engine and deploy a sample Cloud Run service so the list tools have something to return. Stop the VM when done to avoid charges."
+      }
+    ],
+    "notes": [
+      "The default scopes are read-only (compute.readonly and run.readonly) and cover listing Compute Engine instances and Cloud Run services; listing Cloud Functions and starting or stopping VM instances require granting the optional cloud-platform scope during authorization.",
+      "The signed-in user also needs IAM permissions on the project: roles/viewer covers the list tools, and roles/compute.instanceAdmin.v1 (or broader) is needed to start and stop instances.",
+      "Start and stop return a zone operation immediately; the instance state changes asynchronously, so re-run List Compute Instances to confirm.",
+      "Use '-' as the location to list Cloud Functions across all locations in one call (unreachable regions are reported in the 'unreachable' field); Cloud Run does not support the '-' wildcard, so list its services one region at a time.",
+      "The Cloud Functions v2 API also returns 1st-gen functions, with the generation indicated by the 'environment' field."
+    ],
+    "documentation": "https://cloud.google.com/compute/docs/reference/rest/v1"
+  }
+}

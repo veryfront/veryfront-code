@@ -1,0 +1,338 @@
+{
+  "name": "daytona",
+  "displayName": "Daytona",
+  "icon": "daytona.svg",
+  "description": "Manage Daytona dev sandboxes — list, create, inspect, and delete sandboxes and run shell commands inside them",
+  "category": "ai",
+  "auth": {
+    "type": "api-key",
+    "keyName": "DAYTONA_API_KEY",
+    "headerName": "Authorization",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://www.daytona.io/docs/en/api-keys/",
+    "requiredApis": [
+      {
+        "name": "Daytona Dashboard API keys",
+        "enableUrl": "https://app.daytona.io/dashboard/keys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "DAYTONA_API_KEY",
+      "description": "Daytona API key created in the Dashboard under API Keys; same env var used by the Daytona SDKs and CLI",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://www.daytona.io/docs/en/api-keys/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_sandboxes",
+      "name": "List Sandboxes",
+      "description": "List sandboxes in the organization with optional name, label, and state filtering",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://app.daytona.io/api/sandbox",
+        "params": {
+          "name": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by name prefix (case-insensitive)"
+          },
+          "labels": {
+            "type": "string",
+            "in": "query",
+            "description": "JSON-encoded labels to filter by, e.g. {\"env\":\"prod\"}"
+          },
+          "states": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Filter by sandbox states, e.g. started, stopped, archived, error"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of results per page",
+            "default": 100
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response (nextCursor)"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["items"],
+            "collectionName": "sandboxes",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "state" },
+              { "name": "snapshot" },
+              { "name": "target" },
+              { "name": "cpu" },
+              { "name": "memory" },
+              { "name": "createdAt" }
+            ],
+            "omitted": "resource limits, backup and network settings, and provider-specific payload fields",
+            "outputFields": [{ "name": "nextCursor" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "create_sandbox",
+      "name": "Create Sandbox",
+      "description": "Create a new sandbox, optionally from a snapshot and with custom resources (starts billable compute)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://app.daytona.io/api/sandbox",
+        "body": {
+          "name": {
+            "type": "string",
+            "description": "Sandbox name (defaults to the sandbox ID if not provided)"
+          },
+          "snapshot": {
+            "type": "string",
+            "description": "ID or name of the snapshot to create the sandbox from (omit for the default image)"
+          },
+          "env": {
+            "type": "object",
+            "description": "Environment variables to set inside the sandbox"
+          },
+          "labels": {
+            "type": "object",
+            "description": "User-defined key/value labels"
+          },
+          "target": {
+            "type": "string",
+            "description": "Target region where the sandbox will be created, e.g. us, eu"
+          },
+          "cpu": {
+            "type": "number",
+            "description": "CPU cores allocated to the sandbox"
+          },
+          "memory": {
+            "type": "number",
+            "description": "Memory allocated to the sandbox in GB"
+          },
+          "disk": {
+            "type": "number",
+            "description": "Disk space allocated to the sandbox in GB"
+          },
+          "autoStopInterval": {
+            "type": "number",
+            "description": "Auto-stop interval in minutes (0 disables auto-stop)"
+          },
+          "public": {
+            "type": "boolean",
+            "description": "Whether the sandbox HTTP preview is publicly accessible"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_sandbox",
+      "name": "Get Sandbox",
+      "description": "Get sandbox details by ID or name, including state, snapshot, resources, and timestamps",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://app.daytona.io/api/sandbox/{sandboxIdOrName}",
+        "params": {
+          "sandboxIdOrName": {
+            "type": "string",
+            "in": "path",
+            "description": "ID or name of the sandbox",
+            "required": true
+          },
+          "verbose": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include verbose output"
+          }
+        }
+      }
+    },
+    {
+      "id": "delete_sandbox",
+      "name": "Delete Sandbox",
+      "description": "Delete a sandbox by ID or name, discarding its state and filesystem",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "DELETE",
+        "url": "https://app.daytona.io/api/sandbox/{sandboxIdOrName}",
+        "params": {
+          "sandboxIdOrName": {
+            "type": "string",
+            "in": "path",
+            "description": "ID or name of the sandbox to delete",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "execute_command",
+      "name": "Execute Command",
+      "description": "Execute a shell command inside a running sandbox via the toolbox and return its exit code and output (legacy REST route; Daytona's current toolbox API is SDK-first)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://app.daytona.io/api/toolbox/{sandboxId}/toolbox/process/execute",
+        "params": {
+          "sandboxId": {
+            "type": "string",
+            "in": "path",
+            "description": "ID of the running sandbox to execute the command in",
+            "required": true
+          }
+        },
+        "body": {
+          "command": {
+            "type": "string",
+            "description": "Shell command to execute",
+            "required": true
+          },
+          "cwd": {
+            "type": "string",
+            "description": "Working directory to execute the command in"
+          },
+          "timeout": {
+            "type": "number",
+            "description": "Timeout in seconds",
+            "default": 10
+          }
+        }
+      }
+    },
+    {
+      "id": "start_sandbox",
+      "name": "Start Sandbox",
+      "description": "Start a stopped sandbox — required before Execute Command, since sandboxes auto-stop after the autoStopInterval (15 minutes by default)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://app.daytona.io/api/sandbox/{sandboxIdOrName}/start",
+        "params": {
+          "sandboxIdOrName": {
+            "type": "string",
+            "in": "path",
+            "description": "Sandbox ID or name",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "stop_sandbox",
+      "name": "Stop Sandbox",
+      "description": "Stop a running sandbox to pause billable compute without destroying its state",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://app.daytona.io/api/sandbox/{sandboxIdOrName}/stop",
+        "params": {
+          "sandboxIdOrName": {
+            "type": "string",
+            "in": "path",
+            "description": "Sandbox ID or name",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_snapshots",
+      "name": "List Snapshots",
+      "description": "List available snapshots (sandbox base images) — use these names or IDs in the snapshot field of Create Sandbox",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://app.daytona.io/api/snapshots",
+        "params": {
+          "name": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by partial snapshot name match"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of results per page",
+            "default": 100
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number of the results"
+          }
+        },
+        "response": {
+          "transform": "items"
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "sandbox_overview",
+      "title": "Sandbox overview",
+      "prompt": "List my Daytona sandboxes with their state, snapshot, and resources.",
+      "category": "ai",
+      "icon": "list"
+    },
+    {
+      "id": "spin_up_sandbox",
+      "title": "Spin up a sandbox",
+      "prompt": "Create a new Daytona sandbox and confirm it reaches the started state.",
+      "category": "ai",
+      "icon": "plus"
+    },
+    {
+      "id": "run_command",
+      "title": "Run a command",
+      "prompt": "Run the shell command I give you inside the Daytona sandbox I name and show me the output and exit code.",
+      "category": "ai",
+      "icon": "terminal"
+    }
+  ],
+  "suggestedWith": ["github", "openai"],
+  "SETUP_GUIDE": {
+    "title": "Daytona setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Daytona account",
+        "description": "Sign up at https://app.daytona.io — new accounts include free usage credits, so no payment method is needed to test."
+      },
+      {
+        "step": 2,
+        "title": "Create an API key",
+        "description": "In the Daytona Dashboard go to API Keys and create a new key (it is shown only once at creation time)."
+      },
+      {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Copy the key into your .env as DAYTONA_API_KEY."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Sandboxes to confirm the key works, then create a sandbox and execute a simple command like echo hello."
+      }
+    ],
+    "notes": [
+      "The API is served on https://app.daytona.io/api and authenticates with Authorization: Bearer <API key>",
+      "Sandboxes auto-stop after the autoStopInterval (default 15 minutes) unless set to 0",
+      "Execute Command requires the sandbox to be in the started state",
+      "Execute Command uses the legacy /toolbox REST route, which Daytona marks deprecated in favor of its SDKs; the richer per-sandbox toolbox API (files, git, sessions) is SDK-first and not covered here",
+      "Creating sandboxes consumes billable compute — delete sandboxes you no longer need"
+    ],
+    "documentation": "https://www.daytona.io/docs/en/tools/api/"
+  }
+}

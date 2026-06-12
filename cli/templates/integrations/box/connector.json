@@ -2,13 +2,15 @@
   "name": "box",
   "displayName": "Box",
   "icon": "box.svg",
-  "description": "Browse, search, and organize files and folders in Box cloud storage",
+  "description": "Browse, search, upload, and organize files and folders in Box cloud storage",
   "auth": {
     "type": "oauth2",
     "provider": "box",
     "authorizationUrl": "https://account.box.com/api/oauth2/authorize",
     "tokenUrl": "https://api.box.com/oauth2/token",
-    "scopes": ["root_readwrite"],
+    "scopes": [
+      "root_readwrite"
+    ],
     "callbackPath": "/api/auth/box/callback",
     "tokenAuthMethod": "request_body",
     "docsUrl": "https://developer.box.com/guides/authentication/oauth2/",
@@ -71,21 +73,41 @@
         },
         "response": {
           "historicalSummary": {
-            "collectionKeys": ["entries"],
+            "collectionKeys": [
+              "entries"
+            ],
             "collectionName": "items",
             "itemFields": [
-              { "name": "id" },
-              { "name": "type" },
-              { "name": "name" },
-              { "name": "size" },
-              { "name": "modified_at" },
-              { "name": "created_at" }
+              {
+                "name": "id"
+              },
+              {
+                "name": "type"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "size"
+              },
+              {
+                "name": "modified_at"
+              },
+              {
+                "name": "created_at"
+              }
             ],
             "omitted": "file metadata, shared links, and provider-specific payload fields",
             "outputFields": [
-              { "name": "total_count" },
-              { "name": "offset" },
-              { "name": "limit" }
+              {
+                "name": "total_count"
+              },
+              {
+                "name": "offset"
+              },
+              {
+                "name": "limit"
+              }
             ]
           }
         }
@@ -190,7 +212,86 @@
             "type": "object",
             "description": "Parent folder reference, e.g. { \"id\": \"0\" } for the root folder",
             "required": true,
-            "default": { "id": "0" }
+            "default": {
+              "id": "0"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "upload_file",
+      "name": "Upload File",
+      "description": "Upload a new file (up to 50 MB) into a Box folder; larger files require Box's chunked upload API",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://upload.box.com/api/2.0/files/content",
+        "contentType": "multipart/form-data",
+        "bodyMode": "form-data",
+        "params": {
+          "fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated attribute list to include in the response"
+          }
+        },
+        "body": {
+          "attributes": {
+            "type": "object",
+            "description": "File metadata sent as the multipart 'attributes' part (Box requires it to precede the file part), e.g. { \"name\": \"report.pdf\", \"parent\": { \"id\": \"0\" } }; the name must be unique within the parent folder",
+            "required": true
+          },
+          "file": {
+            "type": "string",
+            "description": "Base64-encoded file content, sent decoded as the binary multipart 'file' part",
+            "required": true,
+            "encoding": "base64",
+            "partFilenameField": "file_name"
+          },
+          "file_name": {
+            "type": "string",
+            "description": "Filename for the uploaded file part, e.g. report.pdf; should match the name in attributes",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "upload_file_version",
+      "name": "Upload File Version",
+      "description": "Upload a new version of an existing Box file (up to 50 MB)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://upload.box.com/api/2.0/files/{fileId}/content",
+        "contentType": "multipart/form-data",
+        "bodyMode": "form-data",
+        "params": {
+          "fileId": {
+            "type": "string",
+            "in": "path",
+            "description": "Box file ID to upload a new version of",
+            "required": true
+          }
+        },
+        "body": {
+          "attributes": {
+            "type": "object",
+            "description": "Metadata sent as the multipart 'attributes' part (required by Box even when not renaming, and must precede the file part), e.g. { \"name\": \"report-v2.pdf\" } to rename the file",
+            "required": true
+          },
+          "file": {
+            "type": "string",
+            "description": "Base64-encoded new file content, sent decoded as the binary multipart 'file' part",
+            "required": true,
+            "encoding": "base64",
+            "partFilenameField": "file_name"
+          },
+          "file_name": {
+            "type": "string",
+            "description": "Filename for the uploaded file part, e.g. report-v2.pdf",
+            "required": true
           }
         }
       }
@@ -246,6 +347,29 @@
           }
         }
       }
+    },
+    {
+      "id": "download_file",
+      "name": "Download File",
+      "description": "Download a file's content; Box responds with a 302 redirect to a short-lived dl.boxcloud.com URL that is followed to fetch the binary content (a 202 with Retry-After means the file is not yet ready)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.box.com/2.0/files/{fileId}/content",
+        "params": {
+          "fileId": {
+            "type": "string",
+            "in": "path",
+            "description": "Box file ID",
+            "required": true
+          },
+          "version": {
+            "type": "string",
+            "in": "query",
+            "description": "Specific file version to download; omit for the current version"
+          }
+        }
+      }
     }
   ],
   "prompts": [
@@ -264,7 +388,11 @@
       "icon": "search"
     }
   ],
-  "suggestedWith": ["slack", "gmail", "drive"],
+  "suggestedWith": [
+    "slack",
+    "gmail",
+    "drive"
+  ],
   "SETUP_GUIDE": {
     "title": "Box OAuth Setup",
     "steps": [
@@ -292,7 +420,7 @@
     "notes": [
       "Authorization codes are only valid for 30 seconds; the client is authenticated with client_id/client_secret in the token request body",
       "Refresh tokens are issued; access tokens are short-lived and refreshed automatically",
-      "File upload is not included: Box uploads go to upload.box.com and require multipart/form-data with a file part, which this connector's JSON endpoint executor does not support yet"
+      "Uploads go to upload.box.com as multipart/form-data: the 'attributes' part must come before the 'file' part, and files over 50 MB require Box's chunked upload API (not covered by these tools)"
     ],
     "documentation": "https://developer.box.com/reference/"
   }

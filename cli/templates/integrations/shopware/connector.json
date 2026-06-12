@@ -1,0 +1,402 @@
+{
+  "name": "shopware",
+  "displayName": "Shopware",
+  "icon": "shopware.svg",
+  "description": "Manage Shopware 6 shop data - search products and orders, create products, and transition order states via the Admin API",
+  "category": "ecommerce",
+  "auth": {
+    "type": "oauth2",
+    "provider": "shopware",
+    "grantType": "client_credentials",
+    "tokenUrl": "https://{{env.SHOPWARE_SHOP_DOMAIN}}/api/oauth/token",
+    "tokenAuthMethod": "request_body",
+    "docsUrl": "https://shopware.stoplight.io/docs/admin-api/authentication",
+    "requiredApis": [
+      {
+        "name": "Shopware Admin Integration",
+        "enableUrl": "https://docs.shopware.com/en/shopware-6-en/settings/system/integrationen"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "SHOPWARE_CLIENT_ID",
+      "description": "Access key ID of the integration (Admin > Settings > System > Integrations)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://shopware.stoplight.io/docs/admin-api/authentication"
+    },
+    {
+      "name": "SHOPWARE_CLIENT_SECRET",
+      "description": "Secret access key of the integration (shown once at creation)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://shopware.stoplight.io/docs/admin-api/authentication"
+    },
+    {
+      "name": "SHOPWARE_SHOP_DOMAIN",
+      "description": "Bare hostname of your Shopware shop without protocol, e.g. my-shop.example.com (the token endpoint and all tools live on this host)",
+      "required": true,
+      "sensitive": false
+    }
+  ],
+  "tools": [
+    {
+      "id": "search_products",
+      "name": "Search Products",
+      "description": "Search products with the Admin API search criteria (term, filters, sorting, paging)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{shopDomain}/api/search/product",
+        "params": {
+          "shopDomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Shopware shop hostname (SHOPWARE_SHOP_DOMAIN)",
+            "required": true
+          }
+        },
+        "body": {
+          "term": {
+            "type": "string",
+            "description": "Free-text search term matched against product fields"
+          },
+          "filter": {
+            "type": "array",
+            "description": "Search criteria filters, e.g. [{\"type\":\"equals\",\"field\":\"active\",\"value\":true}]"
+          },
+          "sort": {
+            "type": "array",
+            "description": "Sorting, e.g. [{\"field\":\"createdAt\",\"order\":\"DESC\"}]"
+          },
+          "limit": {
+            "type": "number",
+            "description": "Number of products to return"
+          },
+          "page": {
+            "type": "number",
+            "description": "Page number for pagination"
+          },
+          "associations": {
+            "type": "object",
+            "description": "Associations to load, e.g. {\"categories\":{}}"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "search_orders",
+      "name": "Search Orders",
+      "description": "Search orders with the Admin API search criteria (filters, sorting, paging)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{shopDomain}/api/search/order",
+        "params": {
+          "shopDomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Shopware shop hostname (SHOPWARE_SHOP_DOMAIN)",
+            "required": true
+          }
+        },
+        "body": {
+          "term": {
+            "type": "string",
+            "description": "Free-text search term, e.g. an order number"
+          },
+          "filter": {
+            "type": "array",
+            "description": "Search criteria filters, e.g. [{\"type\":\"range\",\"field\":\"orderDateTime\",\"parameters\":{\"gte\":\"2026-01-01\"}}]"
+          },
+          "sort": {
+            "type": "array",
+            "description": "Sorting, e.g. [{\"field\":\"orderDateTime\",\"order\":\"DESC\"}]"
+          },
+          "limit": {
+            "type": "number",
+            "description": "Number of orders to return"
+          },
+          "page": {
+            "type": "number",
+            "description": "Page number for pagination"
+          },
+          "associations": {
+            "type": "object",
+            "description": "Associations to load, e.g. {\"lineItems\":{},\"stateMachineState\":{}}"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "search_customers",
+      "name": "Search Customers",
+      "description": "Search customers with the Admin API search criteria (term, filters, sorting, paging)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{shopDomain}/api/search/customer",
+        "params": {
+          "shopDomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Shopware shop hostname (SHOPWARE_SHOP_DOMAIN)",
+            "required": true
+          }
+        },
+        "body": {
+          "term": {
+            "type": "string",
+            "description": "Free-text search term, e.g. a customer name, email, or customer number"
+          },
+          "filter": {
+            "type": "array",
+            "description": "Search criteria filters, e.g. [{\"type\":\"equals\",\"field\":\"email\",\"value\":\"jane@example.com\"}]"
+          },
+          "sort": {
+            "type": "array",
+            "description": "Sorting, e.g. [{\"field\":\"createdAt\",\"order\":\"DESC\"}]"
+          },
+          "limit": {
+            "type": "number",
+            "description": "Number of customers to return"
+          },
+          "page": {
+            "type": "number",
+            "description": "Page number for pagination"
+          },
+          "associations": {
+            "type": "object",
+            "description": "Associations to load, e.g. {\"defaultBillingAddress\":{}}"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "get_order",
+      "name": "Get Order",
+      "description": "Get full details of a single order by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{shopDomain}/api/order/{orderId}",
+        "params": {
+          "shopDomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Shopware shop hostname (SHOPWARE_SHOP_DOMAIN)",
+            "required": true
+          },
+          "orderId": {
+            "type": "string",
+            "in": "path",
+            "description": "Order UUID (32-char hex)",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "get_product",
+      "name": "Get Product",
+      "description": "Get full details of a single product by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{shopDomain}/api/product/{productId}",
+        "params": {
+          "shopDomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Shopware shop hostname (SHOPWARE_SHOP_DOMAIN)",
+            "required": true
+          },
+          "productId": {
+            "type": "string",
+            "in": "path",
+            "description": "Product UUID (32-char hex)",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "create_product",
+      "name": "Create Product",
+      "description": "Create a new product (requires name, productNumber, stock, taxId, and a price array)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{shopDomain}/api/product",
+        "params": {
+          "shopDomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Shopware shop hostname (SHOPWARE_SHOP_DOMAIN)",
+            "required": true
+          },
+          "_response": {
+            "type": "string",
+            "in": "query",
+            "description": "Set to 'detail' to return the created entity in the response",
+            "default": "detail"
+          }
+        },
+        "bodyMode": "passthrough",
+        "body": {
+          "product": {
+            "type": "object",
+            "description": "Product payload, e.g. {\"name\":\"T-shirt\",\"productNumber\":\"SW-1001\",\"stock\":10,\"taxId\":\"<tax uuid>\",\"price\":[{\"currencyId\":\"<currency uuid>\",\"gross\":19.99,\"net\":16.8,\"linked\":true}]}",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "update_product",
+      "name": "Update Product",
+      "description": "Partially update a product, e.g. change its price, stock, or visibility",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://{shopDomain}/api/product/{productId}",
+        "params": {
+          "shopDomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Shopware shop hostname (SHOPWARE_SHOP_DOMAIN)",
+            "required": true
+          },
+          "productId": {
+            "type": "string",
+            "in": "path",
+            "description": "Product UUID (32-char hex) to update",
+            "required": true
+          },
+          "_response": {
+            "type": "string",
+            "in": "query",
+            "description": "Set to 'detail' to return the updated entity in the response",
+            "default": "detail"
+          }
+        },
+        "bodyMode": "passthrough",
+        "body": {
+          "product": {
+            "type": "object",
+            "description": "Subset of product fields to update, e.g. {\"stock\":42,\"active\":false} or {\"price\":[{\"currencyId\":\"<currency uuid>\",\"gross\":24.99,\"net\":21.0,\"linked\":true}]}",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "transition_order_state",
+      "name": "Transition Order State",
+      "description": "Move an order to its next state via a state machine transition (e.g. process, complete, cancel, reopen)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{shopDomain}/api/_action/order/{orderId}/state/{transition}",
+        "params": {
+          "shopDomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Shopware shop hostname (SHOPWARE_SHOP_DOMAIN)",
+            "required": true
+          },
+          "orderId": {
+            "type": "string",
+            "in": "path",
+            "description": "Order UUID (32-char hex)",
+            "required": true
+          },
+          "transition": {
+            "type": "string",
+            "in": "path",
+            "description": "Transition action name: process, complete, cancel, or reopen (only transitions valid from the current state succeed)",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "recent_orders",
+      "title": "Recent orders",
+      "prompt": "Search my Shopware shop for the most recent orders and summarize their states and totals.",
+      "category": "ecommerce",
+      "icon": "cart"
+    },
+    {
+      "id": "catalog_overview",
+      "title": "Catalog overview",
+      "prompt": "Search my Shopware products and give me an overview of the catalog including stock levels.",
+      "category": "ecommerce",
+      "icon": "package"
+    },
+    {
+      "id": "find_product",
+      "title": "Find a product",
+      "prompt": "Search Shopware for a product by name or product number and show its details.",
+      "category": "ecommerce",
+      "icon": "search"
+    }
+  ],
+  "suggestedWith": ["stripe", "slack", "mailchimp"],
+  "SETUP_GUIDE": {
+    "title": "Shopware setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Get a Shopware 6 shop",
+        "description": "Use an existing Shopware 6 instance, start a free Shopware cloud trial at https://www.shopware.com, or run a local instance (e.g. via Docker/devenv) for testing. Note the shop hostname and set it as SHOPWARE_SHOP_DOMAIN."
+      },
+      {
+        "step": 2,
+        "title": "Create an integration",
+        "description": "In the shop administration go to Settings > System > Integrations and click Add integration. Give it a name and (if write tools are needed) enable write access / an appropriate role."
+      },
+      {
+        "step": 3,
+        "title": "Save the access keys",
+        "description": "Copy the Access key ID as SHOPWARE_CLIENT_ID and the Secret access key as SHOPWARE_CLIENT_SECRET. The secret is shown only once."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Tokens are issued from https://<your-shop-domain>/api/oauth/token via the client_credentials grant (access tokens expire after 600 seconds (10 minutes) and are refreshed automatically). Run Search Products to confirm the integration works."
+      }
+    ],
+    "notes": [
+      "Integration credentials come from Admin > Settings > System > Integrations - not from a central Shopware portal",
+      "The OAuth token endpoint is per-shop and resolved from the SHOPWARE_SHOP_DOMAIN env var (https://<SHOPWARE_SHOP_DOMAIN>/api/oauth/token), so each shop issues its own tokens",
+      "Admin API search endpoints are POST requests with a criteria body; entity responses are wrapped in a data key",
+      "Order state transitions are constrained by the state machine - only transitions valid from the current state succeed"
+    ],
+    "documentation": "https://shopware.stoplight.io/docs/admin-api/8d53c59b2e6bc-shopware-admin-api"
+  }
+}

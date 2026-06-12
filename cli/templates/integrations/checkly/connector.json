@@ -10,7 +10,7 @@
     "additionalHeaders": {
       "X-Checkly-Account": "CHECKLY_ACCOUNT_ID"
     },
-    "docsUrl": "https://developers.checklyhq.com/reference/authentication",
+    "docsUrl": "https://www.checklyhq.com/docs/api-reference/overview/",
     "requiredApis": [
       {
         "name": "Checkly API Keys",
@@ -24,14 +24,14 @@
       "description": "Checkly user API key",
       "required": true,
       "sensitive": true,
-      "docsUrl": "https://developers.checklyhq.com/reference/authentication"
+      "docsUrl": "https://www.checklyhq.com/docs/api-reference/overview/"
     },
     {
       "name": "CHECKLY_ACCOUNT_ID",
       "description": "Checkly account ID (sent as the X-Checkly-Account header)",
       "required": true,
       "sensitive": false,
-      "docsUrl": "https://developers.checklyhq.com/reference/authentication"
+      "docsUrl": "https://www.checklyhq.com/docs/api-reference/overview/"
     }
   ],
   "tools": [
@@ -215,6 +215,6 @@
       "Raw check results are kept for 30 days, and a results query window (from/to) may span at most 6 hours",
       "Check results use the newer /v2 path; checks and statuses use /v1"
     ],
-    "documentation": "https://developers.checklyhq.com/reference"
+    "documentation": "https://www.checklyhq.com/docs/api-reference/overview/"
   }
 }

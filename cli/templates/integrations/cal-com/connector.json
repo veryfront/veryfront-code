@@ -1,0 +1,413 @@
+{
+  "name": "cal-com",
+  "displayName": "Cal.com",
+  "icon": "cal-com.svg",
+  "description": "Manage Cal.com bookings, event types, and availability through the Cal.com API v2",
+  "category": "scheduling",
+  "auth": {
+    "type": "api-key",
+    "keyName": "CALCOM_API_KEY",
+    "headerName": "Authorization",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://cal.com/docs/api-reference/v2/introduction",
+    "requiredApis": [
+      {
+        "name": "Cal.com API v2",
+        "enableUrl": "https://app.cal.com/settings/developer/api-keys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "CALCOM_API_KEY",
+      "description": "Cal.com API key (starts with cal_ for test mode or cal_live_ for live mode), sent as a Bearer token",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://cal.com/docs/api-reference/v2/introduction"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_bookings",
+      "name": "List Bookings",
+      "description": "List bookings for the authenticated user with optional status, event type, and attendee filters",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.cal.com/v2/bookings",
+        "params": {
+          "cal-api-version": {
+            "type": "string",
+            "in": "header",
+            "description": "Cal.com API version header; must be 2026-05-01 for this endpoint",
+            "required": true,
+            "default": "2026-05-01"
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by booking status: upcoming, recurring, past, cancelled, or unconfirmed"
+          },
+          "eventTypeId": {
+            "type": "number",
+            "in": "query",
+            "description": "Only return bookings for this event type ID"
+          },
+          "attendeeEmail": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return bookings with an attendee matching this email address"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of bookings per page (default 50)",
+            "default": 50
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor: pass pagination.nextCursor from the previous response"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "list_event_types",
+      "name": "List Event Types",
+      "description": "List event types so the agent can find the event type ID needed for slots and bookings",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.cal.com/v2/event-types",
+        "params": {
+          "cal-api-version": {
+            "type": "string",
+            "in": "header",
+            "description": "Cal.com API version header; must be 2024-06-14 for this endpoint",
+            "required": true,
+            "default": "2024-06-14"
+          },
+          "username": {
+            "type": "string",
+            "in": "query",
+            "description": "Username of the user to get event types for"
+          },
+          "eventSlug": {
+            "type": "string",
+            "in": "query",
+            "description": "Slug of a specific event type to fetch; requires username"
+          },
+          "orgSlug": {
+            "type": "string",
+            "in": "query",
+            "description": "Organization slug, if the user belongs to an organization"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "get_available_slots",
+      "name": "Get Available Slots",
+      "description": "Find available time slots for an event type within a date range, e.g. before creating a booking",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.cal.com/v2/slots",
+        "params": {
+          "cal-api-version": {
+            "type": "string",
+            "in": "header",
+            "description": "Cal.com API version header; must be 2024-09-04 for this endpoint",
+            "required": true,
+            "default": "2024-09-04"
+          },
+          "start": {
+            "type": "string",
+            "in": "query",
+            "description": "Start of the time range in UTC ISO 8601, e.g. 2026-06-15 or 2026-06-15T09:00:00Z",
+            "required": true
+          },
+          "end": {
+            "type": "string",
+            "in": "query",
+            "description": "End of the time range in UTC ISO 8601, e.g. 2026-06-16",
+            "required": true
+          },
+          "eventTypeId": {
+            "type": "number",
+            "in": "query",
+            "description": "Event type ID to get slots for (alternatively pass eventTypeSlug plus username)"
+          },
+          "eventTypeSlug": {
+            "type": "string",
+            "in": "query",
+            "description": "Event type slug; must be combined with username"
+          },
+          "username": {
+            "type": "string",
+            "in": "query",
+            "description": "Username owning the event type, when identifying it by slug"
+          },
+          "timeZone": {
+            "type": "string",
+            "in": "query",
+            "description": "IANA time zone for the returned slots, e.g. Europe/Rome (defaults to UTC)"
+          },
+          "duration": {
+            "type": "number",
+            "in": "query",
+            "description": "Slot duration in minutes; defaults to the event type's configured length"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "create_booking",
+      "name": "Create Booking",
+      "description": "Book a time slot on an event type for an attendee",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.cal.com/v2/bookings",
+        "params": {
+          "cal-api-version": {
+            "type": "string",
+            "in": "header",
+            "description": "Cal.com API version header; must be 2026-02-25 for this endpoint",
+            "required": true,
+            "default": "2026-02-25"
+          }
+        },
+        "body": {
+          "start": {
+            "type": "string",
+            "description": "Booking start time in UTC ISO 8601, e.g. 2026-06-15T09:00:00Z (always UTC, regardless of attendee time zone)",
+            "required": true
+          },
+          "eventTypeId": {
+            "type": "number",
+            "description": "ID of the event type to book (find it with list_event_types); required unless eventTypeSlug plus username (or teamSlug) are provided instead"
+          },
+          "eventTypeSlug": {
+            "type": "string",
+            "description": "Event type slug, as an alternative to eventTypeId; must be combined with username (or teamSlug for team event types)"
+          },
+          "username": {
+            "type": "string",
+            "description": "Username owning the event type, when identifying it by eventTypeSlug"
+          },
+          "teamSlug": {
+            "type": "string",
+            "description": "Team slug owning the event type, when booking a team event type by eventTypeSlug"
+          },
+          "attendee": {
+            "type": "object",
+            "description": "Attendee details: { \"name\": \"Jane Doe\", \"email\": \"jane@example.com\", \"timeZone\": \"America/New_York\" }",
+            "required": true
+          },
+          "metadata": {
+            "type": "object",
+            "description": "Optional key-value metadata to store on the booking"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "get_booking",
+      "name": "Get Booking",
+      "description": "Get a single booking by UID, e.g. to confirm details before rescheduling or cancelling",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.cal.com/v2/bookings/{bookingUid}",
+        "params": {
+          "bookingUid": {
+            "type": "string",
+            "in": "path",
+            "description": "UID of the booking (from list_bookings); a recurring booking UID returns all its recurrences",
+            "required": true
+          },
+          "cal-api-version": {
+            "type": "string",
+            "in": "header",
+            "description": "Cal.com API version header; must be 2026-02-25 for this endpoint",
+            "required": true,
+            "default": "2026-02-25"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "reschedule_booking",
+      "name": "Reschedule Booking",
+      "description": "Move an existing booking to a new start time (only accepted or pending bookings can be rescheduled)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.cal.com/v2/bookings/{bookingUid}/reschedule",
+        "params": {
+          "bookingUid": {
+            "type": "string",
+            "in": "path",
+            "description": "UID of the booking to reschedule (from list_bookings)",
+            "required": true
+          },
+          "cal-api-version": {
+            "type": "string",
+            "in": "header",
+            "description": "Cal.com API version header; must be 2026-02-25 for this endpoint",
+            "required": true,
+            "default": "2026-02-25"
+          }
+        },
+        "body": {
+          "start": {
+            "type": "string",
+            "description": "New booking start time in UTC ISO 8601, e.g. 2026-06-20T10:00:00Z (find open times with get_available_slots)",
+            "required": true
+          },
+          "reschedulingReason": {
+            "type": "string",
+            "description": "Reason for rescheduling, shown to the organizer and attendees"
+          },
+          "rescheduledBy": {
+            "type": "string",
+            "description": "Email of whoever initiates the reschedule; when it is the event owner's email the new time auto-confirms, otherwise the owner must confirm"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "confirm_booking",
+      "name": "Confirm Booking",
+      "description": "Confirm a booking that is awaiting host approval (status unconfirmed in list_bookings)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.cal.com/v2/bookings/{bookingUid}/confirm",
+        "params": {
+          "bookingUid": {
+            "type": "string",
+            "in": "path",
+            "description": "UID of the unconfirmed booking to confirm",
+            "required": true
+          },
+          "cal-api-version": {
+            "type": "string",
+            "in": "header",
+            "description": "Cal.com API version header; must be 2026-02-25 for this endpoint",
+            "required": true,
+            "default": "2026-02-25"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "cancel_booking",
+      "name": "Cancel Booking",
+      "description": "Cancel an existing booking, optionally recording a cancellation reason",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.cal.com/v2/bookings/{bookingUid}/cancel",
+        "params": {
+          "bookingUid": {
+            "type": "string",
+            "in": "path",
+            "description": "UID of the booking to cancel (from list_bookings)",
+            "required": true
+          },
+          "cal-api-version": {
+            "type": "string",
+            "in": "header",
+            "description": "Cal.com API version header; must be 2026-02-25 for this endpoint",
+            "required": true,
+            "default": "2026-02-25"
+          }
+        },
+        "body": {
+          "cancellationReason": {
+            "type": "string",
+            "description": "Reason for the cancellation, shown to the organizer and attendees"
+          },
+          "cancelSubsequentBookings": {
+            "type": "boolean",
+            "description": "For recurring bookings only: also cancel all recurrences after this one"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "upcoming_bookings",
+      "title": "Upcoming bookings",
+      "prompt": "Show me my upcoming Cal.com bookings and who I'm meeting with.",
+      "category": "productivity"
+    },
+    {
+      "id": "find_open_slot",
+      "title": "Find an open slot",
+      "prompt": "Find available time slots on my Cal.com event type for the next few days.",
+      "category": "productivity"
+    },
+    {
+      "id": "book_meeting",
+      "title": "Book a meeting",
+      "prompt": "Book a meeting on my Cal.com event type for an attendee at the next available slot.",
+      "category": "productivity"
+    }
+  ],
+  "suggestedWith": ["calendar", "slack", "email"],
+  "SETUP_GUIDE": {
+    "title": "Cal.com setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Cal.com account",
+        "description": "Sign up for a free account at https://cal.com/signup (or use your self-hosted instance) and set up at least one event type so there is something to book."
+      },
+      {
+        "step": 2,
+        "title": "Generate an API key",
+        "description": "In Cal.com, go to Settings > Developer > API Keys and click Add. Give the key a name, optionally set an expiration, and save it."
+      },
+      {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Copy the generated key into CALCOM_API_KEY. Keys start with cal_ (test) or cal_live_ (live) and are sent as a Bearer token in the Authorization header."
+      }
+    ],
+    "notes": [
+      "Most v2 endpoints require a cal-api-version header with a fixed date value that differs per endpoint; the tools set the correct default automatically.",
+      "Booking start times must always be provided in UTC, even when the attendee's time zone differs.",
+      "API keys are rate limited to 120 requests per minute by default."
+    ],
+    "documentation": "https://cal.com/docs/api-reference/v2/introduction"
+  }
+}

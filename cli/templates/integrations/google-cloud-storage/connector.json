@@ -1,0 +1,347 @@
+{
+  "name": "google-cloud-storage",
+  "displayName": "Google Cloud Storage",
+  "icon": "google-cloud-storage.svg",
+  "description": "Browse buckets and read, upload, and delete objects in Google Cloud Storage",
+  "category": "files",
+  "auth": {
+    "type": "oauth2",
+    "provider": "google",
+    "authorizationUrl": "https://accounts.google.com/o/oauth2/v2/auth",
+    "tokenUrl": "https://oauth2.googleapis.com/token",
+    "scopes": [
+      "https://www.googleapis.com/auth/devstorage.read_only"
+    ],
+    "optionalScopes": [
+      "https://www.googleapis.com/auth/devstorage.read_write"
+    ],
+    "callbackPath": "/api/auth/google-cloud-storage/callback",
+    "supportsRefreshToken": true,
+    "docsUrl": "https://cloud.google.com/storage/docs/authentication",
+    "requiredApis": [
+      {
+        "name": "Google Cloud Storage JSON API",
+        "enableUrl": "https://console.cloud.google.com/apis/library/storage-json.googleapis.com"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "GOOGLE_CLIENT_ID",
+      "description": "Google OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://console.cloud.google.com/apis/credentials"
+    },
+    {
+      "name": "GOOGLE_CLIENT_SECRET",
+      "description": "Google OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://console.cloud.google.com/apis/credentials"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_buckets",
+      "name": "List Buckets",
+      "description": "List Cloud Storage buckets in a Google Cloud project",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://storage.googleapis.com/storage/v1/b",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "query",
+            "queryName": "project",
+            "description": "Google Cloud project ID that owns the buckets",
+            "required": true
+          },
+          "prefix": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return buckets whose names begin with this prefix"
+          },
+          "maxResults": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum buckets to return per page",
+            "default": 100
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Continuation token from a previous page (nextPageToken)"
+          }
+        },
+        "response": {
+          "transform": "items"
+        }
+      }
+    },
+    {
+      "id": "get_bucket",
+      "name": "Get Bucket Metadata",
+      "description": "Get a bucket's metadata - location, storage class, versioning, and lifecycle configuration",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://storage.googleapis.com/storage/v1/b/{bucket}",
+        "params": {
+          "bucket": {
+            "type": "string",
+            "in": "path",
+            "description": "Bucket name",
+            "required": true
+          },
+          "projection": {
+            "type": "string",
+            "in": "query",
+            "description": "Set of properties to return: noAcl (default) or full"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_objects",
+      "name": "List Objects",
+      "description": "List objects in a bucket, optionally filtered by name prefix or grouped by delimiter",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://storage.googleapis.com/storage/v1/b/{bucket}/o",
+        "params": {
+          "bucket": {
+            "type": "string",
+            "in": "path",
+            "description": "Bucket name",
+            "required": true
+          },
+          "prefix": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return objects whose names begin with this prefix, e.g. 'reports/2026/'"
+          },
+          "delimiter": {
+            "type": "string",
+            "in": "query",
+            "description": "Group results like folders; use '/' to list one directory level at a time"
+          },
+          "maxResults": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum objects to return per page",
+            "default": 100
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Continuation token from a previous page (nextPageToken)"
+          }
+        },
+        "response": {
+          "transform": "items"
+        }
+      }
+    },
+    {
+      "id": "download_object",
+      "name": "Download Object",
+      "description": "Download an object's content (alt=media), or set alt=json to return the object's metadata instead",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://storage.googleapis.com/storage/v1/b/{bucket}/o/{objectName}",
+        "params": {
+          "bucket": {
+            "type": "string",
+            "in": "path",
+            "description": "Bucket name",
+            "required": true
+          },
+          "objectName": {
+            "type": "string",
+            "in": "path",
+            "description": "Object name, URL-encoded — slashes in the name must be encoded as %2F (e.g. reports%2F2026%2Fsummary.csv)",
+            "required": true
+          },
+          "alt": {
+            "type": "string",
+            "in": "query",
+            "description": "Response type: 'media' returns the object content, 'json' returns object metadata (size, contentType, updated, md5Hash, etc.)",
+            "default": "media"
+          }
+        }
+      }
+    },
+    {
+      "id": "upload_object",
+      "name": "Upload Object",
+      "description": "Upload content as a new object (or overwrite an existing one) using a simple media upload — requires the read-write scope",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://storage.googleapis.com/upload/storage/v1/b/{bucket}/o",
+        "params": {
+          "bucket": {
+            "type": "string",
+            "in": "path",
+            "description": "Bucket name",
+            "required": true
+          },
+          "uploadType": {
+            "type": "string",
+            "in": "query",
+            "description": "Upload protocol; 'media' sends the request body directly as the object content",
+            "default": "media"
+          },
+          "name": {
+            "type": "string",
+            "in": "query",
+            "description": "Object name to create, including any folder-style prefix (e.g. reports/2026/summary.csv)",
+            "required": true
+          },
+          "contentType": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Content-Type",
+            "description": "MIME type of the uploaded content",
+            "default": "text/plain"
+          }
+        },
+        "body": {
+          "content": {
+            "type": "string",
+            "description": "Raw object content sent as the request body",
+            "required": true
+          }
+        },
+        "bodyMode": "passthrough"
+      }
+    },
+    {
+      "id": "copy_object",
+      "name": "Copy Object",
+      "description": "Copy an object to another name or bucket server-side (rewrite), without downloading and re-uploading - requires the read-write scope",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://storage.googleapis.com/storage/v1/b/{sourceBucket}/o/{sourceObject}/rewriteTo/b/{destinationBucket}/o/{destinationObject}",
+        "params": {
+          "sourceBucket": {
+            "type": "string",
+            "in": "path",
+            "description": "Bucket containing the source object",
+            "required": true
+          },
+          "sourceObject": {
+            "type": "string",
+            "in": "path",
+            "description": "Source object name, URL-encoded — slashes in the name must be encoded as %2F",
+            "required": true
+          },
+          "destinationBucket": {
+            "type": "string",
+            "in": "path",
+            "description": "Bucket to copy the object into (may be the same as the source bucket)",
+            "required": true
+          },
+          "destinationObject": {
+            "type": "string",
+            "in": "path",
+            "description": "Name for the new object, URL-encoded — slashes in the name must be encoded as %2F",
+            "required": true
+          },
+          "rewriteToken": {
+            "type": "string",
+            "in": "query",
+            "description": "For very large objects: token from a previous rewrite response; repeat the call with it until the response reports done"
+          }
+        }
+      }
+    },
+    {
+      "id": "delete_object",
+      "name": "Delete Object",
+      "description": "Permanently delete an object from a bucket — requires the read-write scope",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "DELETE",
+        "url": "https://storage.googleapis.com/storage/v1/b/{bucket}/o/{objectName}",
+        "params": {
+          "bucket": {
+            "type": "string",
+            "in": "path",
+            "description": "Bucket name",
+            "required": true
+          },
+          "objectName": {
+            "type": "string",
+            "in": "path",
+            "description": "Object name to delete, URL-encoded — slashes in the name must be encoded as %2F",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "browse_bucket",
+      "title": "Browse a bucket",
+      "prompt": "List the objects in one of my Cloud Storage buckets and summarize what's stored there.",
+      "category": "files",
+      "icon": "folder"
+    },
+    {
+      "id": "read_file",
+      "title": "Read a stored file",
+      "prompt": "Download a file from my Cloud Storage bucket and summarize its contents.",
+      "category": "files",
+      "icon": "file"
+    },
+    {
+      "id": "cleanup_old_objects",
+      "title": "Find stale objects",
+      "prompt": "List objects in a bucket with their metadata and point out large or old files I might want to clean up.",
+      "category": "files",
+      "icon": "trash"
+    }
+  ],
+  "suggestedWith": [
+    "google-bigquery",
+    "drive"
+  ],
+  "SETUP_GUIDE": {
+    "title": "Google Cloud Storage setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create or select a Google Cloud project",
+        "description": "Go to https://console.cloud.google.com and create a project (new Google Cloud accounts include free-tier credit; Cloud Storage also has an always-free tier in some regions)."
+      },
+      {
+        "step": 2,
+        "title": "Enable the Cloud Storage JSON API",
+        "description": "Open https://console.cloud.google.com/apis/library/storage-json.googleapis.com and click Enable for your project."
+      },
+      {
+        "step": 3,
+        "title": "Create OAuth credentials",
+        "description": "In https://console.cloud.google.com/apis/credentials create an OAuth 2.0 Client ID (Web application) and add your callback URL as an authorized redirect URI. Store the values as GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET."
+      },
+      {
+        "step": 4,
+        "title": "Create a test bucket",
+        "description": "In https://console.cloud.google.com/storage/browser create a bucket and upload a small file so List Objects and Download Object have something to return."
+      }
+    ],
+    "notes": [
+      "The default scope is read-only; uploading and deleting objects requires granting the optional devstorage.read_write scope during authorization.",
+      "List Buckets needs the project ID (not the project name or number label shown in the console header dropdown).",
+      "Object names that contain slashes must be URL-encoded (%2F) when used in the object path of download and delete calls."
+    ],
+    "documentation": "https://cloud.google.com/storage/docs/json_api"
+  }
+}

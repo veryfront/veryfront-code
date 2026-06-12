@@ -1,0 +1,414 @@
+{
+  "name": "paddle",
+  "displayName": "Paddle",
+  "icon": "paddle.svg",
+  "description": "Access Paddle Billing products, prices, customers, transactions, and subscriptions",
+  "category": "finance",
+  "auth": {
+    "type": "api-key",
+    "keyName": "PADDLE_API_KEY",
+    "headerName": "Authorization",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://developer.paddle.com/api-reference/about/authentication",
+    "requiredApis": [
+      {
+        "name": "Paddle API keys",
+        "enableUrl": "https://vendors.paddle.com/authentication-v2"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "PADDLE_API_KEY",
+      "description": "Paddle API key (pdl_live_apikey_... for live, pdl_sdbx_apikey_... for sandbox)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.paddle.com/api-reference/about/authentication",
+      "placeholder": "pdl_sdbx_apikey_..."
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_products",
+      "name": "List Products",
+      "description": "List products in the Paddle catalog, optionally including their prices",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.paddle.com/products",
+        "params": {
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by status: active or archived"
+          },
+          "include": {
+            "type": "string",
+            "in": "query",
+            "description": "Related entities to include, e.g. prices"
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of products per page",
+            "default": 50
+          },
+          "after": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor: return entities after this Paddle ID"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "list_prices",
+      "name": "List Prices",
+      "description": "List prices for Paddle products to find price IDs for checkouts and subscriptions",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.paddle.com/prices",
+        "params": {
+          "product_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated Paddle product IDs (pro_...) to filter by"
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by status: active or archived"
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of prices per page",
+            "default": 50
+          },
+          "after": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor: return entities after this Paddle ID"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "list_customers",
+      "name": "List Customers",
+      "description": "List or search Paddle customers to find customer IDs and contact details",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.paddle.com/customers",
+        "params": {
+          "search": {
+            "type": "string",
+            "in": "query",
+            "description": "Search customers by name or email"
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by status: active or archived"
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of customers per page",
+            "default": 50
+          },
+          "after": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor: return entities after this Paddle ID"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "list_transactions",
+      "name": "List Transactions",
+      "description": "List Paddle transactions for revenue review, filtered by status, customer, or subscription",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.paddle.com/transactions",
+        "params": {
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated statuses to filter by: draft, ready, billed, paid, completed, canceled, past_due"
+          },
+          "customer_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated Paddle customer IDs (ctm_...) to filter by"
+          },
+          "subscription_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated Paddle subscription IDs (sub_...) to filter by"
+          },
+          "order_by": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort expression such as billed_at[DESC] or created_at[ASC]; default id[DESC]"
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of transactions per page (maximum 30)",
+            "default": 30
+          },
+          "after": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor: return entities after this Paddle ID"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "list_subscriptions",
+      "name": "List Subscriptions",
+      "description": "List Paddle subscriptions to review recurring revenue, statuses, and renewal dates",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.paddle.com/subscriptions",
+        "params": {
+          "customer_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated Paddle customer IDs (ctm_...) to filter by"
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated statuses to filter by: active, canceled, past_due, paused, trialing"
+          },
+          "price_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated Paddle price IDs (pri_...) to filter by"
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of subscriptions per page",
+            "default": 50
+          },
+          "after": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor: return entities after this Paddle ID"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "get_subscription",
+      "name": "Get Subscription",
+      "description": "Retrieve a single Paddle subscription with its items, status, and billing dates",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.paddle.com/subscriptions/{subscriptionId}",
+        "params": {
+          "subscriptionId": {
+            "type": "string",
+            "in": "path",
+            "description": "Paddle subscription ID, e.g. sub_01h04vsc0qhwtsbsxh3422wjs4",
+            "required": true
+          },
+          "include": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated related previews to include: next_transaction, recurring_transaction_details"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "create_customer",
+      "name": "Create Customer",
+      "description": "Create a new Paddle customer, e.g. before creating transactions or subscriptions for a new buyer",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.paddle.com/customers",
+        "body": {
+          "email": {
+            "type": "string",
+            "description": "Email address of the customer (1-320 characters)",
+            "required": true
+          },
+          "name": {
+            "type": "string",
+            "description": "Full name of the customer"
+          },
+          "locale": {
+            "type": "string",
+            "description": "IETF BCP 47 locale tag, e.g. en or de (defaults to en)"
+          },
+          "custom_data": {
+            "type": "object",
+            "description": "Arbitrary key-value data stored with the customer"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_price",
+      "name": "Create Price",
+      "description": "Create a price for a Paddle product so it can be used in checkouts, transactions, and subscriptions",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.paddle.com/prices",
+        "body": {
+          "product_id": {
+            "type": "string",
+            "description": "Paddle product ID (pro_...) this price is for",
+            "required": true
+          },
+          "description": {
+            "type": "string",
+            "description": "Internal description for this price, not shown to customers (2-500 characters)",
+            "required": true
+          },
+          "unit_price": {
+            "type": "object",
+            "description": "Price object with amount as a string in the lowest denomination and currency_code, e.g. {\"amount\": \"1000\", \"currency_code\": \"USD\"} for $10",
+            "required": true
+          },
+          "billing_cycle": {
+            "type": "object",
+            "description": "For recurring prices: interval (day, week, month, year) and frequency, e.g. {\"interval\": \"month\", \"frequency\": 1}; omit for one-time prices"
+          },
+          "trial_period": {
+            "type": "object",
+            "description": "Trial period with interval and frequency (requires billing_cycle)"
+          },
+          "name": {
+            "type": "string",
+            "description": "Name shown to customers at checkout and on invoices (1-150 characters)"
+          },
+          "quantity": {
+            "type": "object",
+            "description": "Purchase quantity limits, e.g. {\"minimum\": 1, \"maximum\": 100} (the default when omitted)"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_product",
+      "name": "Create Product",
+      "description": "Create a new product in the Paddle catalog",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.paddle.com/products",
+        "body": {
+          "name": {
+            "type": "string",
+            "description": "Product name (1-200 characters)",
+            "required": true
+          },
+          "tax_category": {
+            "type": "string",
+            "description": "Tax category used to charge the correct tax rate, e.g. standard, saas, digital-goods, ebooks, implementation-services, professional-services, software-programming-services, training-services, website-hosting",
+            "required": true
+          },
+          "description": {
+            "type": "string",
+            "description": "Short description of the product"
+          },
+          "type": {
+            "type": "string",
+            "description": "Product type: standard (default) or custom"
+          },
+          "image_url": {
+            "type": "string",
+            "description": "HTTPS URL of an image shown at checkout"
+          },
+          "custom_data": {
+            "type": "object",
+            "description": "Arbitrary key-value data stored with the product"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "revenue_overview",
+      "title": "Revenue overview",
+      "prompt": "List my recent completed Paddle transactions and summarize revenue by product.",
+      "category": "finance",
+      "icon": "currency"
+    },
+    {
+      "id": "subscription_status",
+      "title": "Subscription status",
+      "prompt": "Show me my active Paddle subscriptions and flag any that are past due or canceled.",
+      "category": "analytics",
+      "icon": "repeat"
+    },
+    {
+      "id": "catalog_overview",
+      "title": "Catalog overview",
+      "prompt": "List my Paddle products with their prices and summarize the current catalog.",
+      "category": "analytics",
+      "icon": "search"
+    }
+  ],
+  "suggestedWith": ["slack", "sheets"],
+  "SETUP_GUIDE": {
+    "title": "Paddle setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Paddle account",
+        "description": "Sign up for a free sandbox account at https://sandbox-login.paddle.com/signup to test against simulated data, or use your live account at https://login.paddle.com."
+      },
+      {
+        "step": 2,
+        "title": "Create an API key",
+        "description": "In the Paddle dashboard, go to Paddle > Developer tools > Authentication, open the API keys tab, and select New API key. Name it, assign the permissions you need (e.g. read for products, prices, customers, transactions, subscriptions; write for products), and set an expiry (default 90 days, maximum 1 year). The key is shown only once - store it securely."
+      },
+      {
+        "step": 3,
+        "title": "Configure the environment variable",
+        "description": "Set PADDLE_API_KEY to your key. Sandbox keys start with pdl_sdbx_apikey_ and live keys with pdl_live_apikey_."
+      }
+    ],
+    "notes": [
+      "Sandbox uses a separate host: replace api.paddle.com with sandbox-api.paddle.com when working with a sandbox key. Keys are environment-specific and do not work across environments.",
+      "List endpoints return a data array plus meta pagination info; follow meta.pagination.next or pass the last ID as the after cursor.",
+      "Transactions are capped at 30 results per page; other entities support larger pages.",
+      "API keys expire (maximum 1 year), so rotate them before expiry to avoid outages."
+    ],
+    "documentation": "https://developer.paddle.com/api-reference/overview"
+  }
+}

@@ -1,0 +1,357 @@
+{
+  "name": "zoho-crm",
+  "displayName": "Zoho CRM",
+  "icon": "zoho-crm.svg",
+  "description": "Read, search, create, and update records in Zoho CRM modules such as Leads, Contacts, Deals, and Accounts",
+  "category": "crm",
+  "auth": {
+    "type": "oauth2",
+    "provider": "zoho-crm",
+    "authorizationUrl": "https://accounts.zoho.com/oauth/v2/auth",
+    "tokenUrl": "https://accounts.zoho.com/oauth/v2/token",
+    "scopes": [
+      "ZohoCRM.modules.READ",
+      "ZohoSearch.securesearch.READ",
+      "ZohoCRM.settings.fields.READ",
+      "ZohoCRM.coql.READ"
+    ],
+    "optionalScopes": [
+      "ZohoCRM.modules.CREATE",
+      "ZohoCRM.modules.UPDATE"
+    ],
+    "callbackPath": "/oauth/callback/zoho-crm",
+    "tokenAuthMethod": "request_body",
+    "supportsRefreshToken": true,
+    "additionalAuthParams": {
+      "access_type": "offline",
+      "prompt": "consent"
+    },
+    "docsUrl": "https://www.zoho.com/crm/developer/docs/api/v8/oauth-overview.html",
+    "requiredApis": [
+      {
+        "name": "Zoho API Console client",
+        "enableUrl": "https://api-console.zoho.com/"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "ZOHO_CLIENT_ID",
+      "description": "Zoho OAuth Client ID from the Zoho API Console",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://www.zoho.com/crm/developer/docs/api/v8/register-client.html"
+    },
+    {
+      "name": "ZOHO_CLIENT_SECRET",
+      "description": "Zoho OAuth Client Secret from the Zoho API Console",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://www.zoho.com/crm/developer/docs/api/v8/register-client.html"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_records",
+      "name": "List Records",
+      "description": "List records from a Zoho CRM module such as Leads, Contacts, Deals, or Accounts",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "{{oauth.raw.api_domain}}/crm/v8/{module}",
+        "params": {
+          "module": {
+            "type": "string",
+            "in": "path",
+            "description": "Module API name, such as Leads, Contacts, Deals, or Accounts",
+            "required": true
+          },
+          "fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated field API names to return (required, max 50), e.g. Last_Name,Email,Company",
+            "required": true
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number to fetch",
+            "default": 1
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Records per page (max 200)",
+            "default": 50
+          },
+          "sort_by": {
+            "type": "string",
+            "in": "query",
+            "description": "Field to sort by: id, Created_Time, or Modified_Time"
+          },
+          "sort_order": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort direction: asc or desc"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "get_record",
+      "name": "Get Record",
+      "description": "Get a single Zoho CRM record by ID from any module",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "{{oauth.raw.api_domain}}/crm/v8/{module}/{recordId}",
+        "params": {
+          "module": {
+            "type": "string",
+            "in": "path",
+            "description": "Module API name, such as Leads, Contacts, Deals, or Accounts",
+            "required": true
+          },
+          "recordId": {
+            "type": "string",
+            "in": "path",
+            "description": "Zoho CRM record ID",
+            "required": true
+          },
+          "fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Optional comma-separated field API names to return"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "search_records",
+      "name": "Search Records",
+      "description": "Search records in a Zoho CRM module by criteria, email, phone, or a free-text word",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "{{oauth.raw.api_domain}}/crm/v8/{module}/search",
+        "params": {
+          "module": {
+            "type": "string",
+            "in": "path",
+            "description": "Module API name, such as Leads, Contacts, Deals, or Accounts",
+            "required": true
+          },
+          "criteria": {
+            "type": "string",
+            "in": "query",
+            "description": "Field criteria in the form ((Field:operator:value)), e.g. ((Last_Name:equals:Smith)). Takes precedence over email, phone, and word."
+          },
+          "email": {
+            "type": "string",
+            "in": "query",
+            "description": "Search all email fields in the module for this address"
+          },
+          "phone": {
+            "type": "string",
+            "in": "query",
+            "description": "Search all phone fields in the module for this number"
+          },
+          "word": {
+            "type": "string",
+            "in": "query",
+            "description": "Global free-text search across module fields"
+          },
+          "fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Optional comma-separated field API names to return"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number to fetch",
+            "default": 1
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Records per page (max 200)",
+            "default": 50
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "get_fields",
+      "name": "Get Fields Metadata",
+      "description": "List the field metadata of a Zoho CRM module so agents can discover the field API names required by list, search, and write tools",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "{{oauth.raw.api_domain}}/crm/v8/settings/fields",
+        "params": {
+          "module": {
+            "type": "string",
+            "in": "query",
+            "description": "Module API name to get fields for, such as Leads, Contacts, Deals, or Accounts",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "fields"
+        }
+      }
+    },
+    {
+      "id": "coql_query",
+      "name": "Run COQL Query",
+      "description": "Run a CRM Object Query Language (COQL) SELECT query for filtered reads, joins, and aggregation that the list and search tools cannot express",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "{{oauth.raw.api_domain}}/crm/v8/coql",
+        "body": {
+          "select_query": {
+            "type": "string",
+            "description": "COQL SELECT statement, e.g. select Last_Name, Email from Leads where Lead_Status = 'Contacted' limit 50. Max 2000 rows per call (use limit/offset), max 25 criteria in the where clause.",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "create_records",
+      "name": "Create Records",
+      "description": "Create up to 100 records in a Zoho CRM module (requires the ZohoCRM.modules.CREATE scope)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "{{oauth.raw.api_domain}}/crm/v8/{module}",
+        "params": {
+          "module": {
+            "type": "string",
+            "in": "path",
+            "description": "Module API name, such as Leads, Contacts, Deals, or Accounts",
+            "required": true
+          }
+        },
+        "body": {
+          "data": {
+            "type": "array",
+            "description": "Array of record objects keyed by field API names, e.g. [{\"Last_Name\":\"Smith\",\"Company\":\"Acme\"}]",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "update_record",
+      "name": "Update Record",
+      "description": "Update fields on an existing Zoho CRM record (requires the ZohoCRM.modules.UPDATE scope)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "{{oauth.raw.api_domain}}/crm/v8/{module}/{recordId}",
+        "params": {
+          "module": {
+            "type": "string",
+            "in": "path",
+            "description": "Module API name, such as Leads, Contacts, Deals, or Accounts",
+            "required": true
+          },
+          "recordId": {
+            "type": "string",
+            "in": "path",
+            "description": "Zoho CRM record ID to update",
+            "required": true
+          }
+        },
+        "body": {
+          "data": {
+            "type": "array",
+            "description": "Array with one record object of field API names to update, e.g. [{\"Lead_Status\":\"Contacted\"}]",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "find_leads",
+      "title": "Find leads",
+      "prompt": "Search my Zoho CRM leads and summarize the most recent ones with their status and contact details.",
+      "category": "crm",
+      "icon": "search"
+    },
+    {
+      "id": "create_lead",
+      "title": "Create a lead",
+      "prompt": "Create a new lead in Zoho CRM with the details I provide.",
+      "category": "crm",
+      "icon": "plus"
+    },
+    {
+      "id": "deal_pipeline",
+      "title": "Deal pipeline",
+      "prompt": "List my open deals in Zoho CRM and summarize the pipeline by stage and amount.",
+      "category": "crm",
+      "icon": "chart"
+    }
+  ],
+  "suggestedWith": [
+    "gmail",
+    "slack",
+    "sheets"
+  ],
+  "SETUP_GUIDE": {
+    "title": "Zoho CRM setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Zoho account with CRM",
+        "description": "Sign up at https://www.zoho.com/crm/ — the free edition (up to 3 users) is enough for development, or use an existing Zoho CRM org. Zoho also offers a developer sandbox via Zoho CRM Settings > Sandbox."
+      },
+      {
+        "step": 2,
+        "title": "Register an OAuth client",
+        "description": "Open the Zoho API Console at https://api-console.zoho.com/, click Add Client, and choose Server-based Applications. Set the Authorized Redirect URI to your app's callback URL (the /oauth/callback/zoho-crm path on your deployment)."
+      },
+      {
+        "step": 3,
+        "title": "Copy the client credentials",
+        "description": "After creating the client, copy the Client ID into ZOHO_CLIENT_ID and the Client Secret into ZOHO_CLIENT_SECRET."
+      },
+      {
+        "step": 4,
+        "title": "Authorize with the right scopes",
+        "description": "The default scopes grant read, search, field-metadata, and COQL access (ZohoCRM.modules.READ, ZohoSearch.securesearch.READ, ZohoCRM.settings.fields.READ, ZohoCRM.coql.READ). Enable the optional ZohoCRM.modules.CREATE and ZohoCRM.modules.UPDATE scopes if agents should create or update records."
+      }
+    ],
+    "notes": [
+      "Zoho accounts live in region-specific datacenters. This connector defaults to accounts.zoho.com (US). If your org is in another region, use the matching accounts domain for the authorization and token URLs: accounts.zoho.eu (EU), accounts.zoho.in (India), accounts.zoho.com.au (Australia), accounts.zoho.jp (Japan), accounts.zohocloud.ca (Canada), accounts.zoho.sa (Saudi Arabia), or accounts.zoho.com.cn (China).",
+      "API calls automatically use the api_domain returned with your OAuth token (for example https://www.zohoapis.com for US or https://www.zohoapis.eu for EU), so tool URLs follow your org's region.",
+      "The authorization request uses access_type=offline so Zoho issues a refresh token; access tokens expire after one hour and are refreshed automatically.",
+      "The fields query parameter is mandatory when listing module records and accepts at most 50 field API names."
+    ],
+    "documentation": "https://www.zoho.com/crm/developer/docs/api/v8/"
+  }
+}

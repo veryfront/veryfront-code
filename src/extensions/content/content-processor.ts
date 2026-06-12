@@ -68,9 +68,9 @@ export interface ContentCompileOptions {
 }
 
 /**
- * Opaque unified-compatible plugin entry. Kept as `unknown[] | unknown` so
- * the contract surface doesn't require consumers to depend on the `unified`
- * package directly. Callers cast to the plugin-list shape they need.
+ * Opaque unified-compatible plugin entry. Kept as an unknown-typed value or
+ * tuple so the contract surface doesn't require consumers to depend on the
+ * `unified` package directly. Callers cast to the plugin-list shape they need.
  */
 export type ContentPlugin = unknown | [unknown, ...unknown[]];
 

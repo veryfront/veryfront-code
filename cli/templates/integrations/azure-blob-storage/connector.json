@@ -1,0 +1,391 @@
+{
+  "name": "azure-blob-storage",
+  "displayName": "Azure Blob Storage",
+  "icon": "azure-blob-storage.svg",
+  "description": "Browse containers and read, upload, and delete blobs in an Azure Storage account",
+  "category": "files",
+  "auth": {
+    "type": "oauth2",
+    "provider": "microsoft",
+    "authorizationUrl": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+    "tokenUrl": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+    "scopes": [
+      "https://storage.azure.com/user_impersonation",
+      "offline_access"
+    ],
+    "callbackPath": "/api/auth/azure-blob-storage/callback",
+    "tokenAuthMethod": "body",
+    "supportsRefreshToken": true,
+    "docsUrl": "https://learn.microsoft.com/en-us/rest/api/storageservices/authorize-with-azure-active-directory",
+    "requiredApis": [
+      {
+        "name": "Microsoft Entra app registration with Azure Storage user_impersonation permission",
+        "enableUrl": "https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "MICROSOFT_CLIENT_ID",
+      "description": "Microsoft Azure App Client ID (Application ID)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
+    },
+    {
+      "name": "MICROSOFT_CLIENT_SECRET",
+      "description": "Microsoft Azure App Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
+    },
+    {
+      "name": "AZURE_STORAGE_ACCOUNT",
+      "description": "Default Azure Storage account name (the {accountName} in https://{accountName}.blob.core.windows.net)",
+      "required": false,
+      "sensitive": false,
+      "docsUrl": "https://portal.azure.com/#browse/Microsoft.Storage%2FStorageAccounts"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_containers",
+      "name": "List Containers",
+      "description": "List blob containers in a storage account; the response is XML (EnumerationResults), not JSON",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{accountName}.blob.core.windows.net/?comp=list",
+        "params": {
+          "accountName": {
+            "type": "string",
+            "in": "path",
+            "description": "Azure Storage account name (see AZURE_STORAGE_ACCOUNT)",
+            "required": true
+          },
+          "prefix": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return containers whose names begin with this prefix"
+          },
+          "maxresults": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum containers to return",
+            "default": 100
+          },
+          "x-ms-version": {
+            "type": "string",
+            "in": "header",
+            "description": "Azure Storage service version (YYYY-MM-DD); required for OAuth-authorized requests",
+            "default": "2026-04-06"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_blobs",
+      "name": "List Blobs",
+      "description": "List blobs in a container, optionally filtered by name prefix; the response is XML (EnumerationResults), not JSON",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{accountName}.blob.core.windows.net/{containerName}?restype=container&comp=list",
+        "params": {
+          "accountName": {
+            "type": "string",
+            "in": "path",
+            "description": "Azure Storage account name (see AZURE_STORAGE_ACCOUNT)",
+            "required": true
+          },
+          "containerName": {
+            "type": "string",
+            "in": "path",
+            "description": "Container name",
+            "required": true
+          },
+          "prefix": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return blobs whose names begin with this prefix, e.g. 'reports/2026/'"
+          },
+          "maxresults": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum blobs to return",
+            "default": 100
+          },
+          "x-ms-version": {
+            "type": "string",
+            "in": "header",
+            "description": "Azure Storage service version (YYYY-MM-DD); required for OAuth-authorized requests",
+            "default": "2026-04-06"
+          }
+        }
+      }
+    },
+    {
+      "id": "download_blob",
+      "name": "Download Blob",
+      "description": "Download a blob's content (Get Blob); blob properties are returned as x-ms-* response headers",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{accountName}.blob.core.windows.net/{containerName}/{blobName}",
+        "params": {
+          "accountName": {
+            "type": "string",
+            "in": "path",
+            "description": "Azure Storage account name (see AZURE_STORAGE_ACCOUNT)",
+            "required": true
+          },
+          "containerName": {
+            "type": "string",
+            "in": "path",
+            "description": "Container name",
+            "required": true
+          },
+          "blobName": {
+            "type": "string",
+            "in": "path",
+            "description": "Blob name, URL-encoded if it contains special characters (slashes for virtual folders may stay as-is)",
+            "required": true
+          },
+          "x-ms-version": {
+            "type": "string",
+            "in": "header",
+            "description": "Azure Storage service version (YYYY-MM-DD); required for OAuth-authorized requests",
+            "default": "2026-04-06"
+          }
+        }
+      }
+    },
+    {
+      "id": "upload_blob",
+      "name": "Upload Blob",
+      "description": "Create or overwrite a block blob with the given content (Put Blob)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://{accountName}.blob.core.windows.net/{containerName}/{blobName}",
+        "params": {
+          "accountName": {
+            "type": "string",
+            "in": "path",
+            "description": "Azure Storage account name (see AZURE_STORAGE_ACCOUNT)",
+            "required": true
+          },
+          "containerName": {
+            "type": "string",
+            "in": "path",
+            "description": "Container name",
+            "required": true
+          },
+          "blobName": {
+            "type": "string",
+            "in": "path",
+            "description": "Blob name to create, including any virtual folder prefix (e.g. reports/2026/summary.csv)",
+            "required": true
+          },
+          "x-ms-blob-type": {
+            "type": "string",
+            "in": "header",
+            "description": "Blob type to create; BlockBlob is correct for ordinary file uploads",
+            "default": "BlockBlob"
+          },
+          "contentType": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Content-Type",
+            "description": "MIME type stored as the blob's content type",
+            "default": "text/plain"
+          },
+          "x-ms-version": {
+            "type": "string",
+            "in": "header",
+            "description": "Azure Storage service version (YYYY-MM-DD); required for OAuth-authorized requests",
+            "default": "2026-04-06"
+          }
+        },
+        "body": {
+          "content": {
+            "type": "string",
+            "description": "Raw blob content sent as the request body",
+            "required": true
+          }
+        },
+        "bodyMode": "passthrough"
+      }
+    },
+    {
+      "id": "delete_blob",
+      "name": "Delete Blob",
+      "description": "Delete a blob from a container (Delete Blob); errors are returned as XML",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "DELETE",
+        "url": "https://{accountName}.blob.core.windows.net/{containerName}/{blobName}",
+        "params": {
+          "accountName": {
+            "type": "string",
+            "in": "path",
+            "description": "Azure Storage account name (see AZURE_STORAGE_ACCOUNT)",
+            "required": true
+          },
+          "containerName": {
+            "type": "string",
+            "in": "path",
+            "description": "Container name",
+            "required": true
+          },
+          "blobName": {
+            "type": "string",
+            "in": "path",
+            "description": "Blob name to delete",
+            "required": true
+          },
+          "x-ms-version": {
+            "type": "string",
+            "in": "header",
+            "description": "Azure Storage service version (YYYY-MM-DD); required for OAuth-authorized requests",
+            "default": "2026-04-06"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_container",
+      "name": "Create Container",
+      "description": "Create a new blob container in the storage account (Create Container); fails with 409 if a container with the same name already exists",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://{accountName}.blob.core.windows.net/{containerName}?restype=container",
+        "params": {
+          "accountName": {
+            "type": "string",
+            "in": "path",
+            "description": "Azure Storage account name (see AZURE_STORAGE_ACCOUNT)",
+            "required": true
+          },
+          "containerName": {
+            "type": "string",
+            "in": "path",
+            "description": "Container name to create (lowercase letters, numbers, and hyphens only)",
+            "required": true
+          },
+          "x-ms-blob-public-access": {
+            "type": "string",
+            "in": "header",
+            "description": "Optional public access level: 'container' (full public read) or 'blob' (public blob read); omit to keep the container private"
+          },
+          "x-ms-version": {
+            "type": "string",
+            "in": "header",
+            "description": "Azure Storage service version (YYYY-MM-DD); required for OAuth-authorized requests",
+            "default": "2026-04-06"
+          }
+        }
+      }
+    },
+    {
+      "id": "copy_blob",
+      "name": "Copy Blob",
+      "description": "Server-side copy of a blob to a destination within the storage account (Copy Blob) — no download/re-upload needed; returns 202 with x-ms-copy-status 'success' or 'pending' (poll the destination blob until the copy finishes)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://{accountName}.blob.core.windows.net/{containerName}/{blobName}",
+        "params": {
+          "accountName": {
+            "type": "string",
+            "in": "path",
+            "description": "Azure Storage account name (see AZURE_STORAGE_ACCOUNT)",
+            "required": true
+          },
+          "containerName": {
+            "type": "string",
+            "in": "path",
+            "description": "Destination container name",
+            "required": true
+          },
+          "blobName": {
+            "type": "string",
+            "in": "path",
+            "description": "Destination blob name, including any virtual folder prefix",
+            "required": true
+          },
+          "x-ms-copy-source": {
+            "type": "string",
+            "in": "header",
+            "description": "URL of the source blob, e.g. https://{accountName}.blob.core.windows.net/{container}/{blob} (URL-encoded); sources in other accounts must be public or carry a SAS token",
+            "required": true
+          },
+          "x-ms-version": {
+            "type": "string",
+            "in": "header",
+            "description": "Azure Storage service version (YYYY-MM-DD); required for OAuth-authorized requests",
+            "default": "2026-04-06"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "browse_container",
+      "title": "Browse a container",
+      "prompt": "List the blobs in one of my Azure Storage containers and summarize what's stored there.",
+      "category": "files",
+      "icon": "folder"
+    },
+    {
+      "id": "read_blob",
+      "title": "Read a stored file",
+      "prompt": "Download a blob from my Azure Storage container and summarize its contents.",
+      "category": "files",
+      "icon": "file"
+    }
+  ],
+  "suggestedWith": [
+    "outlook",
+    "onedrive"
+  ],
+  "SETUP_GUIDE": {
+    "title": "Azure Blob Storage setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a storage account",
+        "description": "In https://portal.azure.com (a free Azure account includes credit and free-tier storage) create a Storage account, then create a container and upload a small test blob. Note the storage account name — it forms the request host https://{accountName}.blob.core.windows.net."
+      },
+      {
+        "step": 2,
+        "title": "Register a Microsoft Entra application",
+        "description": "Open https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade, register an app (supported account types: accounts in any organizational directory and personal accounts work for the common endpoint), and add your callback URL as a Web redirect URI. Create a client secret. Store the Application (client) ID as MICROSOFT_CLIENT_ID and the secret as MICROSOFT_CLIENT_SECRET."
+      },
+      {
+        "step": 3,
+        "title": "Add the Azure Storage delegated permission",
+        "description": "In the app registration, go to API permissions, click Add a permission, choose Azure Storage, and add the delegated user_impersonation permission."
+      },
+      {
+        "step": 4,
+        "title": "Grant the signed-in user a data role",
+        "description": "OAuth tokens act on behalf of the user, so the user also needs RBAC access to blob data: on the storage account, assign Storage Blob Data Reader (read-only) or Storage Blob Data Contributor (read/write/delete) to the user under Access control (IAM). Role assignments can take a few minutes to propagate."
+      },
+      {
+        "step": 5,
+        "title": "Set the default account name",
+        "description": "Optionally set AZURE_STORAGE_ACCOUNT to your storage account name so agents know which account to target; the account name is passed as the accountName parameter on every tool call."
+      }
+    ],
+    "notes": [
+      "The Blob service REST API returns XML, not JSON — listing responses are <EnumerationResults> documents and errors are <Error> documents.",
+      "Every OAuth-authorized request must include an x-ms-version header (2017-11-09 or later); tools default to 2026-04-06, the latest fully deployed service version.",
+      "Entra ID authorization is two-layered: the OAuth scope (user_impersonation) only delegates the user's rights, and the user must separately hold a Storage Blob Data RBAC role on the account or container.",
+      "The host is account-specific (https://{accountName}.blob.core.windows.net), so every tool takes the storage account name as a parameter."
+    ],
+    "documentation": "https://learn.microsoft.com/en-us/rest/api/storageservices/blob-service-rest-api"
+  }
+}

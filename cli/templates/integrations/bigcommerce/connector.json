@@ -1,0 +1,485 @@
+{
+  "name": "bigcommerce",
+  "displayName": "BigCommerce",
+  "icon": "bigcommerce.svg",
+  "description": "Manage BigCommerce store data - products, orders, and customers via the Catalog, Orders, and Customers APIs",
+  "category": "ecommerce",
+  "auth": {
+    "type": "api-key",
+    "keyName": "BIGCOMMERCE_ACCESS_TOKEN",
+    "headerName": "X-Auth-Token",
+    "docsUrl": "https://developer.bigcommerce.com/docs/start/authentication",
+    "requiredApis": [
+      {
+        "name": "BigCommerce Store API Account",
+        "enableUrl": "https://login.bigcommerce.com/deep-links/settings/api-accounts"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "BIGCOMMERCE_ACCESS_TOKEN",
+      "description": "BigCommerce store-level API account access token (sent as X-Auth-Token)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.bigcommerce.com/docs/start/authentication/api-accounts"
+    },
+    {
+      "name": "BIGCOMMERCE_STORE_HASH",
+      "description": "Store hash from the API path, e.g. the 'abc123' in https://api.bigcommerce.com/stores/abc123/v3/",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.bigcommerce.com/docs/start/authentication/api-accounts"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_orders",
+      "name": "List Orders",
+      "description": "List store orders with optional status, customer, and date filtering (Orders are served by the v2 API)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.bigcommerce.com/stores/{storeHash}/v2/orders",
+        "params": {
+          "storeHash": {
+            "type": "string",
+            "in": "path",
+            "description": "BigCommerce store hash (BIGCOMMERCE_STORE_HASH)",
+            "required": true
+          },
+          "status_id": {
+            "type": "number",
+            "in": "query",
+            "description": "Filter by order status ID, e.g. 11 = Awaiting Fulfillment, 2 = Shipped"
+          },
+          "customer_id": {
+            "type": "number",
+            "in": "query",
+            "description": "Only return orders for this customer ID"
+          },
+          "min_date_created": {
+            "type": "string",
+            "in": "query",
+            "description": "Only orders created after this RFC 2822 or ISO 8601 date"
+          },
+          "sort": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort field and direction, e.g. date_created:desc",
+            "default": "date_created:desc"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of orders per page (max 250)",
+            "default": 25
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number for pagination",
+            "default": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "get_order",
+      "name": "Get Order",
+      "description": "Get full details of a single order (Orders are served by the v2 API)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.bigcommerce.com/stores/{storeHash}/v2/orders/{orderId}",
+        "params": {
+          "storeHash": {
+            "type": "string",
+            "in": "path",
+            "description": "BigCommerce store hash (BIGCOMMERCE_STORE_HASH)",
+            "required": true
+          },
+          "orderId": {
+            "type": "number",
+            "in": "path",
+            "description": "Numeric order ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_order_products",
+      "name": "List Order Products",
+      "description": "List the line items of an order — v2 order responses do not embed products, so use this to see what was bought",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.bigcommerce.com/stores/{storeHash}/v2/orders/{orderId}/products",
+        "params": {
+          "storeHash": {
+            "type": "string",
+            "in": "path",
+            "description": "BigCommerce store hash (BIGCOMMERCE_STORE_HASH)",
+            "required": true
+          },
+          "orderId": {
+            "type": "number",
+            "in": "path",
+            "description": "Numeric order ID",
+            "required": true
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of order products per page (max 50)",
+            "default": 50
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number for pagination",
+            "default": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "update_order",
+      "name": "Update Order",
+      "description": "Update an order, e.g. change its status to Shipped/Cancelled/Refunded or add staff notes",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://api.bigcommerce.com/stores/{storeHash}/v2/orders/{orderId}",
+        "params": {
+          "storeHash": {
+            "type": "string",
+            "in": "path",
+            "description": "BigCommerce store hash (BIGCOMMERCE_STORE_HASH)",
+            "required": true
+          },
+          "orderId": {
+            "type": "number",
+            "in": "path",
+            "description": "Numeric order ID to update",
+            "required": true
+          }
+        },
+        "body": {
+          "status_id": {
+            "type": "number",
+            "description": "New order status ID, e.g. 2 = Shipped, 5 = Cancelled, 4 = Refunded, 10 = Completed (all fields optional; any subset may be updated)"
+          },
+          "staff_notes": {
+            "type": "string",
+            "description": "Internal notes for staff"
+          },
+          "customer_message": {
+            "type": "string",
+            "description": "Message shown to the customer on the order"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_products",
+      "name": "List Products",
+      "description": "List catalog products with optional keyword, SKU, and availability filtering",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.bigcommerce.com/stores/{storeHash}/v3/catalog/products",
+        "params": {
+          "storeHash": {
+            "type": "string",
+            "in": "path",
+            "description": "BigCommerce store hash (BIGCOMMERCE_STORE_HASH)",
+            "required": true
+          },
+          "keyword": {
+            "type": "string",
+            "in": "query",
+            "description": "Search products by keyword in name, description, or SKU"
+          },
+          "sku": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by exact product SKU"
+          },
+          "availability": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by availability: available, disabled, or preorder"
+          },
+          "include": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated sub-resources to include, e.g. variants,images,custom_fields"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of products per page (max 250)",
+            "default": 25
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number for pagination",
+            "default": 1
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "get_product",
+      "name": "Get Product",
+      "description": "Get full details of a single catalog product",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.bigcommerce.com/stores/{storeHash}/v3/catalog/products/{productId}",
+        "params": {
+          "storeHash": {
+            "type": "string",
+            "in": "path",
+            "description": "BigCommerce store hash (BIGCOMMERCE_STORE_HASH)",
+            "required": true
+          },
+          "productId": {
+            "type": "number",
+            "in": "path",
+            "description": "Numeric product ID",
+            "required": true
+          },
+          "include": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated sub-resources to include, e.g. variants,images,custom_fields"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "list_customers",
+      "name": "List Customers",
+      "description": "List store customers with optional email and name filtering",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.bigcommerce.com/stores/{storeHash}/v3/customers",
+        "params": {
+          "storeHash": {
+            "type": "string",
+            "in": "path",
+            "description": "BigCommerce store hash (BIGCOMMERCE_STORE_HASH)",
+            "required": true
+          },
+          "email:in": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by comma-separated exact email addresses"
+          },
+          "name:like": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter customers whose name contains this substring"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of customers per page (max 250)",
+            "default": 25
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number for pagination",
+            "default": 1
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "create_product",
+      "name": "Create Product",
+      "description": "Create a new product in the catalog",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.bigcommerce.com/stores/{storeHash}/v3/catalog/products",
+        "params": {
+          "storeHash": {
+            "type": "string",
+            "in": "path",
+            "description": "BigCommerce store hash (BIGCOMMERCE_STORE_HASH)",
+            "required": true
+          }
+        },
+        "body": {
+          "name": {
+            "type": "string",
+            "description": "Product name",
+            "required": true
+          },
+          "type": {
+            "type": "string",
+            "description": "Product type: physical or digital",
+            "required": true
+          },
+          "weight": {
+            "type": "number",
+            "description": "Product weight in the store's weight units (required for physical products)",
+            "required": true
+          },
+          "price": {
+            "type": "number",
+            "description": "Product price in the store's default currency",
+            "required": true
+          },
+          "sku": {
+            "type": "string",
+            "description": "Stock keeping unit"
+          },
+          "description": {
+            "type": "string",
+            "description": "Product description (HTML allowed)"
+          },
+          "categories": {
+            "type": "array",
+            "description": "Array of category IDs to assign the product to"
+          },
+          "is_visible": {
+            "type": "boolean",
+            "description": "Whether the product is visible on the storefront"
+          },
+          "inventory_level": {
+            "type": "number",
+            "description": "Current inventory level (requires inventory_tracking set to product)"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "update_product",
+      "name": "Update Product",
+      "description": "Update fields of an existing catalog product, such as price, visibility, or inventory",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://api.bigcommerce.com/stores/{storeHash}/v3/catalog/products/{productId}",
+        "params": {
+          "storeHash": {
+            "type": "string",
+            "in": "path",
+            "description": "BigCommerce store hash (BIGCOMMERCE_STORE_HASH)",
+            "required": true
+          },
+          "productId": {
+            "type": "number",
+            "in": "path",
+            "description": "Numeric product ID to update",
+            "required": true
+          }
+        },
+        "body": {
+          "name": {
+            "type": "string",
+            "description": "New product name"
+          },
+          "price": {
+            "type": "number",
+            "description": "New product price"
+          },
+          "sale_price": {
+            "type": "number",
+            "description": "Sale price (0 to remove the sale price)"
+          },
+          "description": {
+            "type": "string",
+            "description": "New product description (HTML allowed)"
+          },
+          "is_visible": {
+            "type": "boolean",
+            "description": "Whether the product is visible on the storefront"
+          },
+          "inventory_level": {
+            "type": "number",
+            "description": "New inventory level"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "recent_orders",
+      "title": "Recent orders",
+      "prompt": "Show me the most recent orders in my BigCommerce store and summarize their statuses.",
+      "category": "ecommerce",
+      "icon": "cart"
+    },
+    {
+      "id": "low_visibility_products",
+      "title": "Catalog overview",
+      "prompt": "List the products in my BigCommerce catalog and flag any that are hidden from the storefront.",
+      "category": "ecommerce",
+      "icon": "package"
+    },
+    {
+      "id": "customer_lookup",
+      "title": "Find a customer",
+      "prompt": "Find a BigCommerce customer by email and show their recent orders.",
+      "category": "ecommerce",
+      "icon": "users"
+    }
+  ],
+  "suggestedWith": ["stripe", "slack", "klaviyo"],
+  "SETUP_GUIDE": {
+    "title": "BigCommerce setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Get a store (sandbox available)",
+        "description": "Use an existing BigCommerce store or create a free developer sandbox store at https://start.bigcommerce.com/developer-sandbox/ for testing."
+      },
+      {
+        "step": 2,
+        "title": "Create a store-level API account",
+        "description": "In the store control panel go to Settings > API > Store-level API accounts and click Create API account. Choose Token type 'V2/V3 API token' and grant the OAuth scopes you need (e.g. Products: modify, Orders: read-only, Customers: read-only)."
+      },
+      {
+        "step": 3,
+        "title": "Save the access token and store hash",
+        "description": "After saving, BigCommerce shows the access token once (also downloaded as a .txt file). Set it as BIGCOMMERCE_ACCESS_TOKEN. The API path shown (https://api.bigcommerce.com/stores/{store_hash}/v3/) contains your store hash - set that as BIGCOMMERCE_STORE_HASH."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Products tool with your store hash to confirm the token works."
+      }
+    ],
+    "notes": [
+      "The access token is shown only once at creation - store it securely",
+      "Orders endpoints live on the v2 API; products and customers use v3",
+      "Tools take a storeHash path parameter - pass the value of BIGCOMMERCE_STORE_HASH"
+    ],
+    "documentation": "https://developer.bigcommerce.com/docs/api"
+  }
+}

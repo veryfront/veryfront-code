@@ -1,0 +1,416 @@
+{
+  "name": "ramp",
+  "displayName": "Ramp",
+  "icon": "ramp.svg",
+  "description": "Read Ramp corporate card transactions, cards, employees, and reimbursements for spend management",
+  "category": "finance",
+  "auth": {
+    "type": "oauth2",
+    "grantType": "client_credentials",
+    "tokenUrl": "https://api.ramp.com/developer/v1/token",
+    "tokenAuthMethod": "basic",
+    "scopes": [
+      "transactions:read",
+      "cards:read",
+      "users:read",
+      "reimbursements:read"
+    ],
+    "docsUrl": "https://docs.ramp.com/developer-api/v1/authorization",
+    "requiredApis": [
+      {
+        "name": "Ramp Developer App",
+        "enableUrl": "https://app.ramp.com"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "RAMP_CLIENT_ID",
+      "description": "Ramp developer app Client ID (Ramp dashboard → Company → Developer)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://docs.ramp.com/developer-api/v1/getting-started"
+    },
+    {
+      "name": "RAMP_CLIENT_SECRET",
+      "description": "Ramp developer app Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.ramp.com/developer-api/v1/getting-started"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_transactions",
+      "name": "List Transactions",
+      "description": "List card transactions with optional filtering by state, user, card, or date window",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.ramp.com/developer/v1/transactions",
+        "params": {
+          "state": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by transaction state: ALL, CLEARED, COMPLETION, DECLINED, ERROR, PENDING, or PENDING_INITIATION (default excludes declined transactions)"
+          },
+          "user_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return transactions made by this user"
+          },
+          "card_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return transactions on this card"
+          },
+          "merchant_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return transactions with this merchant"
+          },
+          "from_date": {
+            "type": "string",
+            "in": "query",
+            "description": "Only transactions with a user_transaction_time after this ISO 8601 date"
+          },
+          "to_date": {
+            "type": "string",
+            "in": "query",
+            "description": "Only transactions with a user_transaction_time before this ISO 8601 date"
+          },
+          "order_by_date_desc": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Sort by user_transaction_date, newest first"
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Results per page (2-100, API default 20)",
+            "default": 20
+          },
+          "start": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor: ID of the last entity of the previous page"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "transactions",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "amount" },
+              { "name": "currency_code" },
+              { "name": "merchant_name" },
+              { "name": "state" },
+              { "name": "user_transaction_time" },
+              { "name": "sk_category_name" }
+            ],
+            "omitted": "accounting field selections, receipts, disputes, and policy violation details",
+            "outputFields": [{ "name": "page", "kind": "object" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_transaction",
+      "name": "Get Transaction",
+      "description": "Fetch full details of a single card transaction",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.ramp.com/developer/v1/transactions/{transactionId}",
+        "params": {
+          "transactionId": {
+            "type": "string",
+            "in": "path",
+            "description": "Ramp transaction ID",
+            "required": true
+          },
+          "include_merchant_data": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include all purchase data provided by the merchant"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_cards",
+      "name": "List Cards",
+      "description": "List corporate cards with optional filtering by owner or activation state",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.ramp.com/developer/v1/cards",
+        "params": {
+          "user_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return cards owned by this user"
+          },
+          "display_name": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by card display name"
+          },
+          "is_activated": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Filter only for activated cards (defaults to true if not specified)"
+          },
+          "is_terminated": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Filter only for terminated cards (defaults to false if not specified)"
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Results per page (2-100, API default 20)",
+            "default": 20
+          },
+          "start": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor: ID of the last entity of the previous page"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "cards",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "display_name" },
+              { "name": "cardholder_name" },
+              { "name": "last_four" },
+              { "name": "is_physical" },
+              { "name": "state" }
+            ],
+            "omitted": "spending restrictions, fulfillment details, and card program metadata",
+            "outputFields": [{ "name": "page", "kind": "object" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "list_users",
+      "name": "List Users",
+      "description": "List employees on the Ramp account with optional filtering by email, role, department, or status",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.ramp.com/developer/v1/users",
+        "params": {
+          "email": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by user email"
+          },
+          "role": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by user role, e.g. BUSINESS_ADMIN, BUSINESS_USER, BUSINESS_OWNER, BUSINESS_BOOKKEEPER"
+          },
+          "department_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by department"
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by user status: USER_ACTIVE, USER_DRAFT, USER_INACTIVE, or USER_SUSPENDED"
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Results per page (2-100, API default 20)",
+            "default": 20
+          },
+          "start": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor: ID of the last entity of the previous page"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "users",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "first_name" },
+              { "name": "last_name" },
+              { "name": "email" },
+              { "name": "role" },
+              { "name": "department_id" }
+            ],
+            "omitted": "custom fields, manager assignments, and scheduled deactivation details",
+            "outputFields": [{ "name": "page", "kind": "object" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_user",
+      "name": "Get User",
+      "description": "Fetch a single employee by ID, e.g. to resolve the user_id referenced on a transaction or card",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.ramp.com/developer/v1/users/{userId}",
+        "params": {
+          "userId": {
+            "type": "string",
+            "in": "path",
+            "description": "Ramp user ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "get_card",
+      "name": "Get Card",
+      "description": "Fetch a single corporate card by ID, e.g. to resolve the card_id referenced on a transaction",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.ramp.com/developer/v1/cards/{cardId}",
+        "params": {
+          "cardId": {
+            "type": "string",
+            "in": "path",
+            "description": "Ramp card ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_reimbursements",
+      "name": "List Reimbursements",
+      "description": "List employee reimbursements with optional filtering by user, state, or date window",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.ramp.com/developer/v1/reimbursements",
+        "params": {
+          "user_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return reimbursements for this user"
+          },
+          "state": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by reimbursement state"
+          },
+          "from_date": {
+            "type": "string",
+            "in": "query",
+            "description": "Only reimbursements created after this ISO 8601 date"
+          },
+          "to_date": {
+            "type": "string",
+            "in": "query",
+            "description": "Only reimbursements created before this ISO 8601 date"
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Results per page (2-100, API default 20)",
+            "default": 20
+          },
+          "start": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor: ID of the last entity of the previous page"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "reimbursements",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "amount" },
+              { "name": "currency" },
+              { "name": "merchant" },
+              { "name": "state" },
+              { "name": "user_id" },
+              { "name": "created_at" }
+            ],
+            "omitted": "accounting field selections, receipts, and line item breakdowns",
+            "outputFields": [{ "name": "page", "kind": "object" }]
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "recent_spend",
+      "title": "Recent spend",
+      "prompt": "List my recent Ramp card transactions and summarize spend by merchant and category.",
+      "category": "finance",
+      "icon": "payment"
+    },
+    {
+      "id": "pending_reimbursements",
+      "title": "Pending reimbursements",
+      "prompt": "Show Ramp reimbursements that are still pending and who submitted them.",
+      "category": "finance",
+      "icon": "currency"
+    },
+    {
+      "id": "card_inventory",
+      "title": "Card inventory",
+      "prompt": "List all active Ramp cards and their cardholders.",
+      "category": "finance",
+      "icon": "list"
+    }
+  ],
+  "suggestedWith": ["quickbooks", "slack", "sheets"],
+  "SETUP_GUIDE": {
+    "title": "Ramp Developer API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Get a Ramp account or sandbox",
+        "description": "Sign up at https://ramp.com, or request Sandbox access from Ramp to build without a live account. The sandbox has the same API surface with test data: app at https://demo.ramp.com, API at https://demo-api.ramp.com."
+      },
+      {
+        "step": 2,
+        "title": "Create a developer app",
+        "description": "In the Ramp dashboard go to Company → Developer (admin access required) and click Create New App. Copy the Client ID and Client Secret."
+      },
+      {
+        "step": 3,
+        "title": "Enable the Client Credentials grant and scopes",
+        "description": "In the app settings, under Grant types add Client Credentials, then under Scopes configure the allowed scopes: transactions:read, cards:read, users:read, reimbursements:read."
+      },
+      {
+        "step": 4,
+        "title": "Set environment variables",
+        "description": "Add RAMP_CLIENT_ID and RAMP_CLIENT_SECRET to your .env."
+      },
+      {
+        "step": 5,
+        "title": "Verify access",
+        "description": "Run List Transactions. Access tokens are minted automatically from https://api.ramp.com/developer/v1/token using HTTP Basic auth with your client credentials; the requested scopes are sent in the token request."
+      }
+    ],
+    "notes": [
+      "Sandbox and production require separate apps — create one app in each environment. This connector targets production (api.ramp.com); for sandbox testing point a copy at demo-api.ramp.com with sandbox app credentials.",
+      "Scopes are configured on the app and requested at token time; only request the scopes you need.",
+      "List endpoints paginate with a page.next cursor — pass the last item's ID as the start parameter for the next page."
+    ],
+    "documentation": "https://docs.ramp.com/developer-api/v1/getting-started"
+  }
+}

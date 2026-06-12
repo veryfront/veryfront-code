@@ -1,0 +1,283 @@
+{
+  "name": "deel",
+  "displayName": "Deel",
+  "icon": "deel.svg",
+  "description": "Read Deel contracts, workers, invoices, and timesheets for global payroll and contractor management, with optional timesheet submission",
+  "category": "hr",
+  "auth": {
+    "type": "api-key",
+    "keyName": "DEEL_API_TOKEN",
+    "headerName": "Authorization",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://developer.deel.com/docs/authentication"
+  },
+  "envVars": [
+    {
+      "name": "DEEL_API_TOKEN",
+      "description": "Deel API access token (personal or organization token, generated in the Deel app under Apps & Integrations > Developer)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.deel.com/docs/api-tokens-1"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_contracts",
+      "name": "List Contracts",
+      "description": "List contracts in the Deel account, optionally filtered by contract type",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.letsdeel.com/rest/v2/contracts",
+        "params": {
+          "types": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by contract type, e.g. payg_tasks, payg_milestones, pay_as_you_go_time_based, eor"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of contracts to return per page",
+            "default": 25
+          },
+          "after_cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor returned by a previous page"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_contract",
+      "name": "Get Contract",
+      "description": "Retrieve full details of a single contract by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.letsdeel.com/rest/v2/contracts/{contractId}",
+        "params": {
+          "contractId": {
+            "type": "string",
+            "in": "path",
+            "description": "Deel contract ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_people",
+      "name": "List People",
+      "description": "List people (workers) in the organization with their employment details",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.letsdeel.com/rest/v2/people",
+        "params": {
+          "hiring_statuses": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by hiring status, e.g. active, onboarding, offboarding, inactive"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of people to return per page",
+            "default": 25
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Index of the first record to return (offset pagination)",
+            "default": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "get_person",
+      "name": "Get Person",
+      "description": "Retrieve a single person (worker) with their employments, manager, and direct reports",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.letsdeel.com/rest/v2/people/{personId}",
+        "params": {
+          "personId": {
+            "type": "string",
+            "in": "path",
+            "description": "Deel person ID (UUID, from List People)",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_invoices",
+      "name": "List Invoices",
+      "description": "List worker invoices; only paid invoices are returned unless status=all is passed",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.letsdeel.com/rest/v2/invoices",
+        "params": {
+          "issued_from_date": {
+            "type": "string",
+            "in": "query",
+            "description": "Only invoices issued on or after this date (YYYY-MM-DD)"
+          },
+          "issued_to_date": {
+            "type": "string",
+            "in": "query",
+            "description": "Only invoices issued before this date (YYYY-MM-DD)"
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Pass 'all' to return invoices in every status; otherwise only paid invoices are returned"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of invoices to return per page",
+            "default": 25
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Index of the first record to return (offset pagination)",
+            "default": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "list_timesheets",
+      "name": "List Timesheets",
+      "description": "List timesheet entries, optionally filtered to a single contract",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.letsdeel.com/rest/v2/timesheets",
+        "params": {
+          "contract_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return timesheets for this contract ID"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of timesheets to return per page",
+            "default": 25
+          },
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Index of the first record to return (offset pagination)",
+            "default": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "create_timesheet",
+      "name": "Create Timesheet Entry",
+      "description": "Submit a timesheet entry (work performed) for a contractor contract",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.letsdeel.com/rest/v2/timesheets",
+        "body": {
+          "data": {
+            "type": "object",
+            "description": "Timesheet entry payload with required fields: contract_id (string), description (string), date_submitted (YYYY-MM-DD), quantity (number, based on the contract's scale of work). Optional: is_auto_approved (boolean)",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "review_timesheet",
+      "name": "Review Timesheet",
+      "description": "Approve or decline a submitted timesheet entry; approved hours flow onto the contractor's invoice",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.letsdeel.com/rest/v2/timesheets/{timesheetId}/reviews",
+        "params": {
+          "timesheetId": {
+            "type": "string",
+            "in": "path",
+            "description": "ID of the timesheet entry to review",
+            "required": true
+          }
+        },
+        "body": {
+          "data": {
+            "type": "object",
+            "description": "Review payload with required field status ('approved' or 'declined') and optional reason (string), e.g. {\"status\": \"approved\", \"reason\": \"Hours verified\"}",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "active_contracts",
+      "title": "Active contracts",
+      "prompt": "List the contracts in my Deel account and summarize them by type and status.",
+      "category": "hr",
+      "icon": "document"
+    },
+    {
+      "id": "workforce_overview",
+      "title": "Workforce overview",
+      "prompt": "Show me the people in my Deel organization grouped by hiring status and country.",
+      "category": "hr",
+      "icon": "users"
+    },
+    {
+      "id": "recent_invoices",
+      "title": "Recent invoices",
+      "prompt": "List Deel invoices issued in the last month and summarize the totals.",
+      "category": "finance",
+      "icon": "currency"
+    }
+  ],
+  "suggestedWith": ["slack", "sheets"],
+  "SETUP_GUIDE": {
+    "title": "Deel API setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Generate an API token",
+        "description": "Sign in to the Deel app (https://app.deel.com), open Apps & Integrations and go to the API access / developer section, then click Generate new token. Choose an organization token (recommended for automation; never expires and is not tied to a user) or a personal token, and select the scopes the tools need: contracts:read, people:read, accounting:read, timesheets:read, and timesheets:write if you want to submit timesheets."
+      },
+      {
+        "step": 2,
+        "title": "Optional: use the sandbox for testing",
+        "description": "Deel provides an isolated sandbox with sample data that never triggers real payments or contracts. Create a sandbox account from the developer center in the Deel platform (sandbox app at demo.letsdeel.com) and generate a sandbox token there. The sandbox API base URL is https://api-sandbox.demo.deel.com/rest/v2 — to test against it, point a copy of this connector at that host."
+      },
+      {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Add DEEL_API_TOKEN to your .env with the generated token."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Contracts. If you get a 403, check that the token includes the required scope for the endpoint."
+      }
+    ],
+    "notes": [
+      "All requests must be made over HTTPS; the token is sent as Authorization: Bearer <token>.",
+      "Personal tokens are limited to what the generating user can access and expire when that user leaves the organization; organization tokens do not expire.",
+      "This connector targets the production API (api.letsdeel.com). Sandbox and production use separate credentials."
+    ],
+    "documentation": "https://developer.deel.com/docs"
+  }
+}

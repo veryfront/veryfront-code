@@ -1,0 +1,506 @@
+{
+  "name": "databricks",
+  "displayName": "Databricks",
+  "icon": "databricks.svg",
+  "description": "Query Databricks workspace compute, jobs, and SQL warehouses — list clusters and jobs, trigger job runs, and execute SQL statements",
+  "category": "data",
+  "auth": {
+    "type": "api-key",
+    "keyName": "DATABRICKS_TOKEN",
+    "headerName": "Authorization",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://docs.databricks.com/aws/en/dev-tools/auth/pat",
+    "requiredApis": [
+      {
+        "name": "Databricks Workspace REST API",
+        "enableUrl": "https://docs.databricks.com/api/workspace/introduction"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "DATABRICKS_TOKEN",
+      "description": "Databricks personal access token (generated under Settings > Developer > Access tokens)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.databricks.com/aws/en/dev-tools/auth/pat"
+    },
+    {
+      "name": "DATABRICKS_HOST",
+      "description": "Databricks workspace host, e.g. dbc-a1b2345c-d6e7.cloud.databricks.com or adb-1234567890123456.7.azuredatabricks.net (no protocol)",
+      "required": true,
+      "sensitive": false,
+      "placeholder": "dbc-a1b2345c-d6e7.cloud.databricks.com"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_clusters",
+      "name": "List Clusters",
+      "description": "List all-purpose and job compute clusters in the workspace with their state and configuration",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{workspaceHost}/api/2.1/clusters/list",
+        "params": {
+          "workspaceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Databricks workspace host, e.g. dbc-a1b2345c-d6e7.cloud.databricks.com",
+            "required": true
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum clusters to return per page (max 100)",
+            "default": 25
+          },
+          "page_token": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination token from a previous response (next_page_token)"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "clusters"
+            ],
+            "collectionName": "clusters",
+            "itemFields": [
+              {
+                "name": "cluster_id"
+              },
+              {
+                "name": "cluster_name"
+              },
+              {
+                "name": "state"
+              },
+              {
+                "name": "spark_version"
+              },
+              {
+                "name": "node_type_id"
+              },
+              {
+                "name": "num_workers"
+              },
+              {
+                "name": "creator_user_name"
+              }
+            ],
+            "omitted": "spark configuration, AWS/Azure attributes, and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "next_page_token"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "list_jobs",
+      "name": "List Jobs",
+      "description": "List jobs defined in the workspace, optionally filtered by name",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{workspaceHost}/api/2.2/jobs/list",
+        "params": {
+          "workspaceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Databricks workspace host, e.g. dbc-a1b2345c-d6e7.cloud.databricks.com",
+            "required": true
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of jobs to return (1-100)",
+            "default": 25
+          },
+          "name": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter jobs by an exact (case-insensitive) job name"
+          },
+          "page_token": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination token from a previous response (next_page_token)"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "jobs"
+            ],
+            "collectionName": "jobs",
+            "itemFields": [
+              {
+                "name": "job_id"
+              },
+              {
+                "name": "created_time"
+              },
+              {
+                "name": "creator_user_name"
+              },
+              {
+                "name": "settings"
+              }
+            ],
+            "omitted": "full task definitions and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "next_page_token"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "run_job_now",
+      "name": "Run Job Now",
+      "description": "Trigger an immediate run of an existing job, optionally overriding job parameters",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{workspaceHost}/api/2.2/jobs/run-now",
+        "params": {
+          "workspaceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Databricks workspace host, e.g. dbc-a1b2345c-d6e7.cloud.databricks.com",
+            "required": true
+          }
+        },
+        "body": {
+          "job_id": {
+            "type": "number",
+            "description": "ID of the job to run",
+            "required": true
+          },
+          "job_parameters": {
+            "type": "object",
+            "description": "Job-level parameter overrides as a key-value map, e.g. {\"date\":\"2026-06-11\"}"
+          },
+          "idempotency_token": {
+            "type": "string",
+            "description": "Optional token to guarantee the request triggers at most one run"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_job_runs",
+      "name": "List Job Runs",
+      "description": "List recent job runs, optionally filtered to one job or to active/completed runs",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{workspaceHost}/api/2.2/jobs/runs/list",
+        "params": {
+          "workspaceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Databricks workspace host, e.g. dbc-a1b2345c-d6e7.cloud.databricks.com",
+            "required": true
+          },
+          "job_id": {
+            "type": "number",
+            "in": "query",
+            "description": "Only return runs of this job"
+          },
+          "active_only": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Only return currently running runs"
+          },
+          "completed_only": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Only return completed runs"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of runs to return (1-25)",
+            "default": 25
+          },
+          "page_token": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination token from a previous response (next_page_token)"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "runs"
+            ],
+            "collectionName": "runs",
+            "itemFields": [
+              {
+                "name": "run_id"
+              },
+              {
+                "name": "job_id"
+              },
+              {
+                "name": "start_time"
+              },
+              {
+                "name": "state"
+              },
+              {
+                "name": "run_name"
+              }
+            ],
+            "omitted": "task definitions, cluster specs, and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "next_page_token"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "cancel_job_run",
+      "name": "Cancel Job Run",
+      "description": "Cancel a job run; the cancellation happens asynchronously, so the run may still be running briefly",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{workspaceHost}/api/2.2/jobs/runs/cancel",
+        "params": {
+          "workspaceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Databricks workspace host, e.g. dbc-a1b2345c-d6e7.cloud.databricks.com",
+            "required": true
+          }
+        },
+        "body": {
+          "run_id": {
+            "type": "number",
+            "description": "ID of the run to cancel (a no-op if the run is already in a terminal state)",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "get_job_run",
+      "name": "Get Job Run",
+      "description": "Get the status, timing, and task results of a job run (use the run_id returned by Run Job Now)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{workspaceHost}/api/2.2/jobs/runs/get",
+        "params": {
+          "workspaceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Databricks workspace host, e.g. dbc-a1b2345c-d6e7.cloud.databricks.com",
+            "required": true
+          },
+          "run_id": {
+            "type": "number",
+            "in": "query",
+            "description": "The canonical run ID to retrieve",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "execute_sql_statement",
+      "name": "Execute SQL Statement",
+      "description": "Execute a SQL query against a SQL warehouse and return the result rows (queries; the warehouse enforces table permissions)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{workspaceHost}/api/2.0/sql/statements",
+        "params": {
+          "workspaceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Databricks workspace host, e.g. dbc-a1b2345c-d6e7.cloud.databricks.com",
+            "required": true
+          }
+        },
+        "body": {
+          "statement": {
+            "type": "string",
+            "description": "SQL statement to execute, e.g. SELECT * FROM samples.nyctaxi.trips LIMIT 10",
+            "required": true
+          },
+          "warehouse_id": {
+            "type": "string",
+            "description": "ID of the SQL warehouse to run the statement on (from List SQL Warehouses)",
+            "required": true
+          },
+          "catalog": {
+            "type": "string",
+            "description": "Default catalog for unqualified table names"
+          },
+          "schema": {
+            "type": "string",
+            "description": "Default schema for unqualified table names"
+          },
+          "wait_timeout": {
+            "type": "string",
+            "description": "How long to wait synchronously for the result, between 5s and 50s, or 0s for async",
+            "default": "30s"
+          },
+          "row_limit": {
+            "type": "number",
+            "description": "Maximum number of result rows to return"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_sql_statement",
+      "name": "Get SQL Statement",
+      "description": "Poll the status and result of a previously submitted SQL statement, e.g. after an async or timed-out execution",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{workspaceHost}/api/2.0/sql/statements/{statementId}",
+        "params": {
+          "workspaceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Databricks workspace host, e.g. dbc-a1b2345c-d6e7.cloud.databricks.com",
+            "required": true
+          },
+          "statementId": {
+            "type": "string",
+            "in": "path",
+            "description": "Statement ID returned by Execute SQL Statement",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_sql_warehouses",
+      "name": "List SQL Warehouses",
+      "description": "List SQL warehouses in the workspace to find a warehouse_id for executing SQL statements",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{workspaceHost}/api/2.0/sql/warehouses",
+        "params": {
+          "workspaceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Databricks workspace host, e.g. dbc-a1b2345c-d6e7.cloud.databricks.com",
+            "required": true
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "warehouses"
+            ],
+            "collectionName": "warehouses",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "state"
+              },
+              {
+                "name": "cluster_size"
+              },
+              {
+                "name": "warehouse_type"
+              },
+              {
+                "name": "auto_stop_mins"
+              }
+            ],
+            "omitted": "channel, tags, and provider-specific payload fields"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "query_warehouse",
+      "title": "Run a SQL query",
+      "prompt": "List my Databricks SQL warehouses, then run a SQL query I provide against one of them and summarize the results.",
+      "category": "data",
+      "icon": "database"
+    },
+    {
+      "id": "job_health",
+      "title": "Check job status",
+      "prompt": "List my Databricks jobs and check the status of their most recent runs.",
+      "category": "data",
+      "icon": "activity"
+    },
+    {
+      "id": "cluster_overview",
+      "title": "Cluster overview",
+      "prompt": "Show me the clusters in my Databricks workspace and which ones are currently running.",
+      "category": "data",
+      "icon": "server"
+    }
+  ],
+  "suggestedWith": [
+    "slack",
+    "github",
+    "snowflake"
+  ],
+  "SETUP_GUIDE": {
+    "title": "Databricks setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Get a workspace",
+        "description": "If you don't have one, sign up for the Databricks Free Edition at https://www.databricks.com/learn/free-edition, or use an existing workspace on AWS, Azure, or GCP."
+      },
+      {
+        "step": 2,
+        "title": "Find your workspace host",
+        "description": "Copy the hostname from your workspace URL, e.g. dbc-a1b2345c-d6e7.cloud.databricks.com (AWS/GCP) or adb-1234567890123456.7.azuredatabricks.net (Azure). Set it as DATABRICKS_HOST (no https://)."
+      },
+      {
+        "step": 3,
+        "title": "Generate a personal access token",
+        "description": "In the workspace, click your username > Settings > Developer, click Manage next to Access tokens, then Generate new token. Name it, set a lifetime, and copy the token immediately."
+      },
+      {
+        "step": 4,
+        "title": "Store the credentials",
+        "description": "Add DATABRICKS_TOKEN=<your token> and DATABRICKS_HOST=<your workspace host> to your .env file."
+      },
+      {
+        "step": 5,
+        "title": "Verify access",
+        "description": "Run the List SQL Warehouses tool. A 401/403 means the token is invalid or expired, or token-based auth is disabled by your workspace admin."
+      }
+    ],
+    "notes": [
+      "Personal access tokens are workspace-scoped — the token only works against the workspace host where it was created",
+      "Executing SQL requires a running (or auto-starting) SQL warehouse; the first query may take a minute while the warehouse starts",
+      "Databricks recommends OAuth over PATs for production use; PATs are the simplest option for getting started",
+      "Tokens can expire — if calls suddenly return 403, regenerate the token"
+    ],
+    "documentation": "https://docs.databricks.com/api/workspace/introduction"
+  }
+}

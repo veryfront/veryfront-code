@@ -1,0 +1,462 @@
+{
+  "name": "workable",
+  "displayName": "Workable",
+  "icon": "workable.svg",
+  "description": "Access Workable recruiting data — jobs, candidates, and pipeline stages — and add comments or move candidates",
+  "category": "hr",
+  "auth": {
+    "type": "api-key",
+    "keyName": "WORKABLE_API_TOKEN",
+    "headerName": "Authorization",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://workable.readme.io/reference/generate-an-access-token",
+    "requiredApis": [
+      {
+        "name": "Workable API Access Token",
+        "enableUrl": "https://workable.readme.io/reference/generate-an-access-token"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "WORKABLE_API_TOKEN",
+      "description": "Workable API access token, generated under Settings → Integrations → Apps → Generate new token",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://workable.readme.io/reference/generate-an-access-token"
+    },
+    {
+      "name": "WORKABLE_SUBDOMAIN",
+      "description": "Your Workable account subdomain ({subdomain}.workable.com), shown in your company profile settings",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://workable.readme.io/reference/generate-an-access-token"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_jobs",
+      "name": "List Jobs",
+      "description": "List jobs in the Workable account with optional state filtering",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{subdomain}.workable.com/spi/v3/jobs",
+        "params": {
+          "subdomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Workable account subdomain (the {subdomain} in {subdomain}.workable.com; see WORKABLE_SUBDOMAIN)",
+            "required": true
+          },
+          "state": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by job state: draft, published, archived, or closed"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of jobs to return per page (max 100)",
+            "default": 50
+          },
+          "since_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination: only return jobs with ID greater than or equal to this ID"
+          },
+          "created_after": {
+            "type": "string",
+            "in": "query",
+            "description": "Only jobs created after this ISO 8601 timestamp"
+          },
+          "updated_after": {
+            "type": "string",
+            "in": "query",
+            "description": "Only jobs updated after this ISO 8601 timestamp"
+          },
+          "include_fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Extra fields to include, e.g. description, full_description, requirements, benefits"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["jobs"],
+            "collectionName": "jobs",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "shortcode" },
+              { "name": "title" },
+              { "name": "state" },
+              { "name": "department" },
+              { "name": "created_at" }
+            ],
+            "omitted": "job descriptions, location details, and provider-specific payload fields",
+            "outputFields": [{ "name": "paging", "kind": "object" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_job",
+      "name": "Get Job",
+      "description": "Get the full details of a job by its shortcode",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{subdomain}.workable.com/spi/v3/jobs/{shortcode}",
+        "params": {
+          "subdomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Workable account subdomain (see WORKABLE_SUBDOMAIN)",
+            "required": true
+          },
+          "shortcode": {
+            "type": "string",
+            "in": "path",
+            "description": "The job's shortcode, e.g. GROOV005 (from List Jobs)",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_candidates",
+      "name": "List Candidates",
+      "description": "List candidates account-wide or for a specific job (filter by job shortcode, stage, or email)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{subdomain}.workable.com/spi/v3/candidates",
+        "params": {
+          "subdomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Workable account subdomain (see WORKABLE_SUBDOMAIN)",
+            "required": true
+          },
+          "shortcode": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return candidates for the job with this shortcode"
+          },
+          "stage": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return candidates in this stage (stage slug, e.g. sourced, applied, interview)"
+          },
+          "email": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return candidates with this email address"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of candidates to return per page (max 100)",
+            "default": 50
+          },
+          "since_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination: only return candidates with ID greater than or equal to this ID"
+          },
+          "created_after": {
+            "type": "string",
+            "in": "query",
+            "description": "Only candidates created after this ISO 8601 timestamp"
+          },
+          "updated_after": {
+            "type": "string",
+            "in": "query",
+            "description": "Only candidates updated after this ISO 8601 timestamp"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["candidates"],
+            "collectionName": "candidates",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "email" },
+              { "name": "stage" },
+              { "name": "job", "kind": "object" },
+              { "name": "updated_at" }
+            ],
+            "omitted": "candidate profiles, resumes, and provider-specific payload fields",
+            "outputFields": [{ "name": "paging", "kind": "object" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_candidate",
+      "name": "Get Candidate",
+      "description": "Get the full profile of a candidate by ID, including stage, answers, and attachments",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{subdomain}.workable.com/spi/v3/candidates/{id}",
+        "params": {
+          "subdomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Workable account subdomain (see WORKABLE_SUBDOMAIN)",
+            "required": true
+          },
+          "id": {
+            "type": "string",
+            "in": "path",
+            "description": "The candidate's ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_members",
+      "name": "List Members",
+      "description": "List account members to find the member IDs required by the comment and move-candidate tools",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{subdomain}.workable.com/spi/v3/members",
+        "params": {
+          "subdomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Workable account subdomain (see WORKABLE_SUBDOMAIN)",
+            "required": true
+          },
+          "email": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by member email address"
+          },
+          "role": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by recruiting role: simple, admin, or reviewer"
+          },
+          "shortcode": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter for a specific job shortcode; returns only that job's collaborators"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of members to return per page",
+            "default": 50
+          },
+          "since_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination: only return members with ID greater than or equal to this ID"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["members"],
+            "collectionName": "members",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "email" },
+              { "name": "role" }
+            ],
+            "omitted": "provider-specific payload fields",
+            "outputFields": [{ "name": "paging", "kind": "object" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "list_stages",
+      "name": "List Stages",
+      "description": "List the recruitment pipeline stages to find stage slugs for candidate filtering and moves",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{subdomain}.workable.com/spi/v3/stages",
+        "params": {
+          "subdomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Workable account subdomain (see WORKABLE_SUBDOMAIN)",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_candidate",
+      "name": "Create Candidate",
+      "description": "Add a candidate to a job, either as sourced or as having applied",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{subdomain}.workable.com/spi/v3/jobs/{shortcode}/candidates",
+        "params": {
+          "subdomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Workable account subdomain (see WORKABLE_SUBDOMAIN)",
+            "required": true
+          },
+          "shortcode": {
+            "type": "string",
+            "in": "path",
+            "description": "Shortcode of the job to add the candidate to (from List Jobs)",
+            "required": true
+          }
+        },
+        "body": {
+          "candidate": {
+            "type": "object",
+            "description": "Candidate data, e.g. { \"name\": \"Jane Doe\", \"email\": \"jane@example.com\", \"phone\": \"...\", \"summary\": \"...\" }",
+            "required": true
+          },
+          "sourced": {
+            "type": "boolean",
+            "description": "Whether the candidate was sourced (true, default) or applied themselves (false); determines the default starting stage"
+          },
+          "stage": {
+            "type": "string",
+            "description": "Stage slug to place the candidate in, overriding the sourced/applied default (see List Stages)"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_candidate_comment",
+      "name": "Create Candidate Comment",
+      "description": "Post a comment on a candidate's timeline on behalf of a team member",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{subdomain}.workable.com/spi/v3/candidates/{id}/comments",
+        "params": {
+          "subdomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Workable account subdomain (see WORKABLE_SUBDOMAIN)",
+            "required": true
+          },
+          "id": {
+            "type": "string",
+            "in": "path",
+            "description": "The candidate's ID",
+            "required": true
+          }
+        },
+        "body": {
+          "member_id": {
+            "type": "string",
+            "description": "ID of the team member creating the comment (from the account's members)",
+            "required": true
+          },
+          "comment": {
+            "type": "object",
+            "description": "Comment object: { \"body\": \"comment text\" } with optional \"policy\" array restricting visibility to roles, e.g. [\"recruiter\", \"admin\"]",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "move_candidate",
+      "name": "Move Candidate",
+      "description": "Move a candidate to another pipeline stage on behalf of a team member",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{subdomain}.workable.com/spi/v3/candidates/{id}/move",
+        "params": {
+          "subdomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Workable account subdomain (see WORKABLE_SUBDOMAIN)",
+            "required": true
+          },
+          "id": {
+            "type": "string",
+            "in": "path",
+            "description": "The candidate's ID",
+            "required": true
+          }
+        },
+        "body": {
+          "member_id": {
+            "type": "string",
+            "description": "ID of the team member performing the move",
+            "required": true
+          },
+          "target_stage": {
+            "type": "string",
+            "description": "Slug of the stage to move the candidate to, e.g. interview or offer"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "open_roles",
+      "title": "Open roles overview",
+      "prompt": "List my published jobs in Workable and summarize how many candidates are in each pipeline.",
+      "category": "hr",
+      "icon": "briefcase"
+    },
+    {
+      "id": "stage_review",
+      "title": "Review a hiring stage",
+      "prompt": "Show me the candidates currently in the interview stage for a job I specify and summarize their profiles.",
+      "category": "hr",
+      "icon": "users"
+    },
+    {
+      "id": "candidate_note",
+      "title": "Comment on a candidate",
+      "prompt": "Look up a candidate I specify in Workable and add a comment to their timeline with my feedback.",
+      "category": "hr",
+      "icon": "comment"
+    }
+  ],
+  "suggestedWith": ["slack", "gmail"],
+  "SETUP_GUIDE": {
+    "title": "Workable API setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Get a Workable account",
+        "description": "Sign up at https://www.workable.com — a 15-day free trial account is enough for testing the API against your own data."
+      },
+      {
+        "step": 2,
+        "title": "Generate an access token",
+        "description": "In Workable, open the top-right dropdown menu → Integrations, then click 'Generate new token'. Select the scopes you need (r_jobs and r_candidates for reads; w_candidates for comments and stage moves). The token is shown only once — copy it immediately."
+      },
+      {
+        "step": 3,
+        "title": "Find your subdomain",
+        "description": "Your account subdomain is the {subdomain} part of {subdomain}.workable.com and is shown on your company profile settings page."
+      },
+      {
+        "step": 4,
+        "title": "Store the credentials",
+        "description": "Add WORKABLE_API_TOKEN=<your token> and WORKABLE_SUBDOMAIN=<your subdomain> to your .env file. Requests go to https://{subdomain}.workable.com/spi/v3 with an Authorization: Bearer header."
+      }
+    ],
+    "notes": [
+      "Tokens are scoped at generation time — writes need w_candidates (comments also accept w_comments)",
+      "Revoking a token breaks every script using it; generate a new one and update all consumers",
+      "List endpoints paginate via the paging.next URL and since_id cursors (max 100 per page)"
+    ],
+    "documentation": "https://workable.readme.io/reference"
+  }
+}

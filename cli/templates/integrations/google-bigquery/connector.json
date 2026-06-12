@@ -1,0 +1,394 @@
+{
+  "name": "google-bigquery",
+  "displayName": "Google BigQuery",
+  "icon": "google-bigquery.svg",
+  "description": "Explore BigQuery datasets and tables and run SQL queries against your Google Cloud data warehouse",
+  "category": "data",
+  "auth": {
+    "type": "oauth2",
+    "provider": "google",
+    "authorizationUrl": "https://accounts.google.com/o/oauth2/v2/auth",
+    "tokenUrl": "https://oauth2.googleapis.com/token",
+    "scopes": [
+      "https://www.googleapis.com/auth/cloud-platform.read-only"
+    ],
+    "optionalScopes": [
+      "https://www.googleapis.com/auth/bigquery"
+    ],
+    "callbackPath": "/api/auth/google-bigquery/callback",
+    "supportsRefreshToken": true,
+    "docsUrl": "https://cloud.google.com/bigquery/docs/authentication",
+    "requiredApis": [
+      {
+        "name": "BigQuery API",
+        "enableUrl": "https://console.cloud.google.com/apis/library/bigquery.googleapis.com"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "GOOGLE_CLIENT_ID",
+      "description": "Google OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://console.cloud.google.com/apis/credentials"
+    },
+    {
+      "name": "GOOGLE_CLIENT_SECRET",
+      "description": "Google OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://console.cloud.google.com/apis/credentials"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_projects",
+      "name": "List Projects",
+      "description": "List the Google Cloud projects the connected user can access, so agents can discover the projectId every other tool requires",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://bigquery.googleapis.com/bigquery/v2/projects",
+        "params": {
+          "maxResults": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum number of projects to return per page (up to 50 per page)",
+            "default": 50
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Page token from a previous response for pagination"
+          }
+        },
+        "response": {
+          "transform": "projects"
+        }
+      }
+    },
+    {
+      "id": "list_datasets",
+      "name": "List Datasets",
+      "description": "List all BigQuery datasets in a Google Cloud project",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://bigquery.googleapis.com/bigquery/v2/projects/{projectId}/datasets",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Cloud project ID that owns the datasets",
+            "required": true
+          },
+          "maxResults": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum number of datasets to return per page",
+            "default": 50
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Page token from a previous response for pagination"
+          },
+          "all": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Whether to include hidden datasets",
+            "default": false
+          }
+        },
+        "response": {
+          "transform": "datasets"
+        }
+      }
+    },
+    {
+      "id": "list_tables",
+      "name": "List Tables",
+      "description": "List tables and views in a BigQuery dataset",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://bigquery.googleapis.com/bigquery/v2/projects/{projectId}/datasets/{datasetId}/tables",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Cloud project ID that owns the dataset",
+            "required": true
+          },
+          "datasetId": {
+            "type": "string",
+            "in": "path",
+            "description": "Dataset ID to list tables from",
+            "required": true
+          },
+          "maxResults": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum number of tables to return per page",
+            "default": 50
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Page token from a previous response for pagination"
+          }
+        },
+        "response": {
+          "transform": "tables"
+        }
+      }
+    },
+    {
+      "id": "get_table",
+      "name": "Get Table Schema",
+      "description": "Get a table's metadata including its full column schema, row count, and size",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://bigquery.googleapis.com/bigquery/v2/projects/{projectId}/datasets/{datasetId}/tables/{tableId}",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Cloud project ID that owns the table",
+            "required": true
+          },
+          "datasetId": {
+            "type": "string",
+            "in": "path",
+            "description": "Dataset ID containing the table",
+            "required": true
+          },
+          "tableId": {
+            "type": "string",
+            "in": "path",
+            "description": "Table ID to describe",
+            "required": true
+          },
+          "selectedFields": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated list of table schema fields to return; returns all fields if unset"
+          }
+        }
+      }
+    },
+    {
+      "id": "preview_table_data",
+      "name": "Preview Table Data",
+      "description": "Read sample rows directly from a table without running a query - no bytes are billed, ideal for inspecting data before writing SQL",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://bigquery.googleapis.com/bigquery/v2/projects/{projectId}/datasets/{datasetId}/tables/{tableId}/data",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Cloud project ID that owns the table",
+            "required": true
+          },
+          "datasetId": {
+            "type": "string",
+            "in": "path",
+            "description": "Dataset ID containing the table",
+            "required": true
+          },
+          "tableId": {
+            "type": "string",
+            "in": "path",
+            "description": "Table ID to read rows from",
+            "required": true
+          },
+          "maxResults": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum number of rows to return",
+            "default": 50
+          },
+          "startIndex": {
+            "type": "number",
+            "in": "query",
+            "description": "Zero-based index of the starting row to read"
+          },
+          "selectedFields": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated subset of fields to return, supports nested sub-fields, e.g. a,e.d.f"
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Page token from a previous response for pagination"
+          }
+        },
+        "response": {
+          "transform": "rows"
+        }
+      }
+    },
+    {
+      "id": "run_query",
+      "name": "Run SQL Query",
+      "description": "Run a read/SELECT GoogleSQL query and return the first page of results. With the default read-only scope only SELECT queries work; DML statements (INSERT/UPDATE/DELETE) require the full https://www.googleapis.com/auth/bigquery scope.",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://bigquery.googleapis.com/bigquery/v2/projects/{projectId}/queries",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Cloud project ID to bill the query against",
+            "required": true
+          }
+        },
+        "body": {
+          "query": {
+            "type": "string",
+            "description": "GoogleSQL SELECT query, e.g. SELECT name FROM `project.dataset.table` LIMIT 10",
+            "required": true
+          },
+          "useLegacySql": {
+            "type": "boolean",
+            "description": "Set false to use GoogleSQL (standard SQL); the API defaults to legacy SQL when omitted",
+            "default": false
+          },
+          "maxResults": {
+            "type": "number",
+            "description": "Maximum number of result rows to return in the first page",
+            "default": 100
+          },
+          "timeoutMs": {
+            "type": "number",
+            "description": "How long (ms) to wait for the query to complete before returning with jobComplete=false",
+            "default": 10000
+          },
+          "dryRun": {
+            "type": "boolean",
+            "description": "If true, validate the query and estimate bytes processed without running it",
+            "default": false
+          },
+          "location": {
+            "type": "string",
+            "description": "Geographic location where the query should run, e.g. US or EU"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_query_results",
+      "name": "Get Query Results",
+      "description": "Fetch additional pages of results from a previously started query job, using the jobId and pageToken returned by Run SQL Query",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://bigquery.googleapis.com/bigquery/v2/projects/{projectId}/queries/{jobId}",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Cloud project ID that the query job ran in",
+            "required": true
+          },
+          "jobId": {
+            "type": "string",
+            "in": "path",
+            "description": "Job ID returned in jobReference.jobId by Run SQL Query",
+            "required": true
+          },
+          "maxResults": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum number of result rows to return per page",
+            "default": 100
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Page token from a previous response for pagination"
+          },
+          "startIndex": {
+            "type": "number",
+            "in": "query",
+            "description": "Zero-based index of the starting row to read"
+          },
+          "timeoutMs": {
+            "type": "number",
+            "in": "query",
+            "description": "How long (ms) to wait for the job to complete before returning"
+          },
+          "location": {
+            "type": "string",
+            "in": "query",
+            "description": "Geographic location of the job, e.g. US or EU"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "explore_warehouse",
+      "title": "Explore my data warehouse",
+      "prompt": "List the datasets and tables in my BigQuery project and summarize what data is available.",
+      "category": "data",
+      "icon": "database"
+    },
+    {
+      "id": "answer_with_sql",
+      "title": "Answer a question with SQL",
+      "prompt": "Write and run a BigQuery SQL query to answer a question about my data, then explain the results.",
+      "category": "data",
+      "icon": "search"
+    },
+    {
+      "id": "describe_table",
+      "title": "Describe a table",
+      "prompt": "Show me the schema of a BigQuery table and suggest useful queries against it.",
+      "category": "data",
+      "icon": "table"
+    }
+  ],
+  "suggestedWith": [
+    "sheets"
+  ],
+  "SETUP_GUIDE": {
+    "title": "Google BigQuery setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create or reuse a Google Cloud project",
+        "description": "Go to https://console.cloud.google.com and create a project (or reuse the one that already hosts your Google OAuth app). Note its project ID — every BigQuery call takes a projectId parameter (the same value you would put in a GOOGLE_CLOUD_PROJECT env var). Without billing enabled you can still use the free BigQuery sandbox to test queries against public datasets."
+      },
+      {
+        "step": 2,
+        "title": "Enable the BigQuery API",
+        "description": "Open https://console.cloud.google.com/apis/library/bigquery.googleapis.com, select your project, and click Enable."
+      },
+      {
+        "step": 3,
+        "title": "Configure the OAuth consent screen and client",
+        "description": "Under APIs & Services > Credentials, create (or reuse) an OAuth 2.0 Client ID of type Web application. Add your app's redirect URI ending in /api/auth/google-bigquery/callback. The same Google OAuth client can be shared across all Google connectors."
+      },
+      {
+        "step": 4,
+        "title": "Set environment variables",
+        "description": "Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET from the OAuth client you created. These are shared with other Google integrations."
+      }
+    ],
+    "notes": [
+      "The default scope is read-only (cloud-platform.read-only): listing datasets/tables and SELECT queries work, but DML (INSERT/UPDATE/DELETE) requires granting the optional full bigquery scope.",
+      "There is no project-wide env var: pass the Google Cloud project ID as the projectId parameter on every call (treat it like GOOGLE_CLOUD_PROJECT).",
+      "Queries are billed to the projectId you pass; use dryRun to estimate bytes processed before running expensive queries.",
+      "The query API defaults to legacy SQL — keep useLegacySql set to false to write GoogleSQL."
+    ],
+    "documentation": "https://cloud.google.com/bigquery/docs/reference/rest"
+  }
+}

@@ -1,0 +1,364 @@
+{
+  "name": "discord",
+  "displayName": "Discord",
+  "icon": "discord.svg",
+  "description": "Read Discord servers, channels, and messages, and post messages, reactions, and threads as a bot",
+  "category": "communication",
+  "auth": {
+    "type": "api-key",
+    "keyName": "DISCORD_BOT_TOKEN",
+    "headerName": "Authorization",
+    "headerPrefix": "Bot",
+    "docsUrl": "https://discord.com/developers/docs/reference#authentication",
+    "requiredApis": [
+      {
+        "name": "Discord application with a bot user",
+        "enableUrl": "https://discord.com/developers/applications"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "DISCORD_BOT_TOKEN",
+      "description": "Discord bot token from the Bot tab of your application in the Discord Developer Portal",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://discord.com/developers/applications"
+    }
+  ],
+  "tools": [
+    {
+      "id": "get_bot_user",
+      "name": "Get Bot User",
+      "description": "Get the bot's own user account to confirm the token works and learn the bot's ID and username",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://discord.com/api/v10/users/@me"
+      }
+    },
+    {
+      "id": "list_guilds",
+      "name": "List Guilds",
+      "description": "List the servers (guilds) the bot has been added to, so an agent can find a guild ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://discord.com/api/v10/users/@me/guilds",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum guilds to return (1-200)",
+            "default": 200
+          },
+          "before": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return guilds with an ID before this guild ID (pagination)"
+          },
+          "after": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return guilds with an ID after this guild ID (pagination)"
+          },
+          "with_counts": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include approximate member and presence counts",
+            "default": false
+          }
+        }
+      }
+    },
+    {
+      "id": "list_guild_channels",
+      "name": "List Guild Channels",
+      "description": "List the channels in a server so an agent can find the right channel ID before reading or posting",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://discord.com/api/v10/guilds/{guildId}/channels",
+        "params": {
+          "guildId": {
+            "type": "string",
+            "in": "path",
+            "description": "Discord guild (server) ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "get_channel_messages",
+      "name": "Get Channel Messages",
+      "description": "Read recent messages from a channel for summaries, support triage, or context before replying",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://discord.com/api/v10/channels/{channelId}/messages",
+        "params": {
+          "channelId": {
+            "type": "string",
+            "in": "path",
+            "description": "Discord channel ID",
+            "required": true
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum messages to return (1-100)",
+            "default": 50
+          },
+          "before": {
+            "type": "string",
+            "in": "query",
+            "description": "Return messages sent before this message ID"
+          },
+          "after": {
+            "type": "string",
+            "in": "query",
+            "description": "Return messages sent after this message ID"
+          },
+          "around": {
+            "type": "string",
+            "in": "query",
+            "description": "Return messages around this message ID"
+          }
+        }
+      }
+    },
+    {
+      "id": "send_message",
+      "name": "Send Message",
+      "description": "Post a message to a channel, optionally as a reply to an existing message",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://discord.com/api/v10/channels/{channelId}/messages",
+        "params": {
+          "channelId": {
+            "type": "string",
+            "in": "path",
+            "description": "Discord channel ID to post in",
+            "required": true
+          }
+        },
+        "body": {
+          "content": {
+            "type": "string",
+            "description": "Message text (up to 2000 characters, supports Discord markdown)",
+            "required": true
+          },
+          "message_reference": {
+            "type": "object",
+            "description": "Reply target, e.g. { \"message_id\": \"...\" } to reply to a message in the same channel"
+          },
+          "tts": {
+            "type": "boolean",
+            "description": "Send as a text-to-speech message",
+            "default": false
+          }
+        }
+      }
+    },
+    {
+      "id": "create_dm",
+      "name": "Create DM Channel",
+      "description": "Open (or return the existing) direct-message channel with a user; use the returned channel ID with Send Message to DM the user",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://discord.com/api/v10/users/@me/channels",
+        "body": {
+          "recipient_id": {
+            "type": "string",
+            "description": "User ID to open the DM channel with (find it via Search Guild Members or message author IDs)",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "edit_message",
+      "name": "Edit Message",
+      "description": "Edit the text of a message the bot previously sent, e.g. to update a status post or correct an announcement",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://discord.com/api/v10/channels/{channelId}/messages/{messageId}",
+        "params": {
+          "channelId": {
+            "type": "string",
+            "in": "path",
+            "description": "Discord channel ID containing the message",
+            "required": true
+          },
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "ID of the message to edit (must have been sent by the bot)",
+            "required": true
+          }
+        },
+        "body": {
+          "content": {
+            "type": "string",
+            "description": "New message text (up to 2000 characters, supports Discord markdown)",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "search_guild_members",
+      "name": "Search Guild Members",
+      "description": "Find members of a server whose username or nickname starts with a string, e.g. to resolve a name to a user ID for mentions or DMs",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://discord.com/api/v10/guilds/{guildId}/members/search",
+        "params": {
+          "guildId": {
+            "type": "string",
+            "in": "path",
+            "description": "Discord guild (server) ID to search in",
+            "required": true
+          },
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "String to match usernames and nicknames against (prefix match)",
+            "required": true
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum members to return (1-1000)",
+            "default": 25
+          }
+        }
+      }
+    },
+    {
+      "id": "add_reaction",
+      "name": "Add Reaction",
+      "description": "React to a message with an emoji, e.g. to acknowledge or label it",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://discord.com/api/v10/channels/{channelId}/messages/{messageId}/reactions/{emoji}/@me",
+        "params": {
+          "channelId": {
+            "type": "string",
+            "in": "path",
+            "description": "Discord channel ID containing the message",
+            "required": true
+          },
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Message ID to react to",
+            "required": true
+          },
+          "emoji": {
+            "type": "string",
+            "in": "path",
+            "description": "Unicode emoji character, or name:id for a custom emoji",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_thread",
+      "name": "Create Thread",
+      "description": "Start a thread from an existing message to keep a discussion organized",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://discord.com/api/v10/channels/{channelId}/messages/{messageId}/threads",
+        "params": {
+          "channelId": {
+            "type": "string",
+            "in": "path",
+            "description": "Discord channel ID containing the message",
+            "required": true
+          },
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Message ID to start the thread from",
+            "required": true
+          }
+        },
+        "body": {
+          "name": {
+            "type": "string",
+            "description": "Thread name (1-100 characters)",
+            "required": true
+          },
+          "auto_archive_duration": {
+            "type": "number",
+            "description": "Minutes of inactivity before the thread auto-archives: 60, 1440, 4320, or 10080"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "summarize_channel",
+      "title": "Summarize a channel",
+      "prompt": "Read the latest messages in our Discord support channel and summarize the main topics and any unanswered questions.",
+      "category": "communication",
+      "icon": "chat"
+    },
+    {
+      "id": "post_update",
+      "title": "Post an update",
+      "prompt": "Post a release announcement to our Discord announcements channel.",
+      "category": "communication",
+      "icon": "megaphone"
+    },
+    {
+      "id": "triage_questions",
+      "title": "Triage community questions",
+      "prompt": "Find recent questions in our Discord server, react to the ones already handled, and start a thread for the most important open one.",
+      "category": "support",
+      "icon": "users"
+    }
+  ],
+  "suggestedWith": ["github", "linear", "notion"],
+  "SETUP_GUIDE": {
+    "title": "Discord setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Discord application",
+        "description": "Go to https://discord.com/developers/applications, sign in with any Discord account (free), and click New Application. For testing, create your own free Discord server first so you have a safe place to invite the bot."
+      },
+      {
+        "step": 2,
+        "title": "Get the bot token",
+        "description": "Open your application's Bot tab and click Reset Token to reveal the bot token. Copy it immediately (it is shown once) and set it as DISCORD_BOT_TOKEN. Resetting again invalidates the previous token."
+      },
+      {
+        "step": 3,
+        "title": "Enable privileged intents",
+        "description": "On the Bot tab, under Privileged Gateway Intents, enable Message Content Intent. Without it, the content field of most messages returned by the API is empty for the bot. Enable Server Members Intent too if you need member data."
+      },
+      {
+        "step": 4,
+        "title": "Invite the bot to your server",
+        "description": "In OAuth2 > URL Generator, select the bot scope, then grant permissions such as View Channels, Send Messages, Read Message History, Add Reactions, and Create Public Threads. Open the generated URL in a browser and add the bot to your server (requires Manage Server permission there)."
+      }
+    ],
+    "notes": [
+      "The bot can only see and post in servers it has been invited to and channels its role can access.",
+      "Message content in API responses is empty unless the Message Content privileged intent is enabled (bots in fewer than 100 servers can enable it directly in the portal).",
+      "Discord rate limits per route; bulk reads should page with before/after cursors rather than tight loops."
+    ],
+    "documentation": "https://discord.com/developers/docs/reference"
+  }
+}

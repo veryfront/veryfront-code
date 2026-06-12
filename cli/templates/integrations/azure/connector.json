@@ -1,0 +1,444 @@
+{
+  "name": "azure",
+  "displayName": "Microsoft Azure",
+  "icon": "azure.svg",
+  "description": "Inspect Azure subscriptions, resource groups, storage accounts, and function apps, and start or stop virtual machines via Azure Resource Manager",
+  "category": "devops",
+  "auth": {
+    "type": "oauth2",
+    "provider": "microsoft",
+    "authorizationUrl": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+    "tokenUrl": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+    "scopes": [
+      "https://management.azure.com/user_impersonation",
+      "offline_access"
+    ],
+    "callbackPath": "/api/auth/azure/callback",
+    "tokenAuthMethod": "body",
+    "docsUrl": "https://learn.microsoft.com/en-us/rest/api/azure/",
+    "requiredApis": [
+      {
+        "name": "Azure Service Management API (Azure app registration)",
+        "enableUrl": "https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "MICROSOFT_CLIENT_ID",
+      "description": "Microsoft Azure App Client ID (Application ID)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
+    },
+    {
+      "name": "MICROSOFT_CLIENT_SECRET",
+      "description": "Microsoft Azure App Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_subscriptions",
+      "name": "List Subscriptions",
+      "description": "List all Azure subscriptions the signed-in user can access; use this first to get subscription IDs for the other tools",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://management.azure.com/subscriptions",
+        "params": {
+          "api-version": {
+            "type": "string",
+            "in": "query",
+            "description": "Azure Resource Manager API version for the subscriptions operation",
+            "default": "2022-12-01"
+          }
+        },
+        "response": {
+          "transform": "value"
+        }
+      }
+    },
+    {
+      "id": "list_resource_groups",
+      "name": "List Resource Groups",
+      "description": "List the resource groups in an Azure subscription",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://management.azure.com/subscriptions/{subscriptionId}/resourcegroups",
+        "params": {
+          "subscriptionId": {
+            "type": "string",
+            "in": "path",
+            "description": "Azure subscription ID (GUID) from List Subscriptions",
+            "required": true
+          },
+          "api-version": {
+            "type": "string",
+            "in": "query",
+            "description": "Azure Resource Manager API version for the resource groups operation",
+            "default": "2021-04-01"
+          },
+          "$top": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum resource groups to return; omit to return all"
+          },
+          "$filter": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by tag, e.g. tagName eq 'env' and tagValue eq 'prod'"
+          }
+        },
+        "response": {
+          "transform": "value"
+        }
+      }
+    },
+    {
+      "id": "list_virtual_machines",
+      "name": "List Virtual Machines",
+      "description": "List all virtual machines in an Azure subscription, optionally with runtime power state",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://management.azure.com/subscriptions/{subscriptionId}/providers/Microsoft.Compute/virtualMachines",
+        "params": {
+          "subscriptionId": {
+            "type": "string",
+            "in": "path",
+            "description": "Azure subscription ID (GUID) from List Subscriptions",
+            "required": true
+          },
+          "api-version": {
+            "type": "string",
+            "in": "query",
+            "description": "Azure Compute API version for the virtual machines operation",
+            "default": "2024-07-01"
+          },
+          "statusOnly": {
+            "type": "string",
+            "in": "query",
+            "description": "Set to 'true' to fetch the runtime status (power state) of all virtual machines in the subscription"
+          }
+        },
+        "response": {
+          "transform": "value"
+        }
+      }
+    },
+    {
+      "id": "start_virtual_machine",
+      "name": "Start Virtual Machine",
+      "description": "Start a stopped or deallocated virtual machine (returns 202 Accepted; the operation completes asynchronously)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/virtualMachines/{vmName}/start",
+        "params": {
+          "subscriptionId": {
+            "type": "string",
+            "in": "path",
+            "description": "Azure subscription ID (GUID)",
+            "required": true
+          },
+          "resourceGroupName": {
+            "type": "string",
+            "in": "path",
+            "description": "Resource group that contains the virtual machine",
+            "required": true
+          },
+          "vmName": {
+            "type": "string",
+            "in": "path",
+            "description": "Virtual machine name",
+            "required": true
+          },
+          "api-version": {
+            "type": "string",
+            "in": "query",
+            "description": "Azure Compute API version for the start operation",
+            "default": "2024-07-01"
+          }
+        }
+      }
+    },
+    {
+      "id": "deallocate_virtual_machine",
+      "name": "Deallocate Virtual Machine",
+      "description": "Shut down a virtual machine and release its compute resources so it stops incurring compute charges (returns 202 Accepted)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/virtualMachines/{vmName}/deallocate",
+        "params": {
+          "subscriptionId": {
+            "type": "string",
+            "in": "path",
+            "description": "Azure subscription ID (GUID)",
+            "required": true
+          },
+          "resourceGroupName": {
+            "type": "string",
+            "in": "path",
+            "description": "Resource group that contains the virtual machine",
+            "required": true
+          },
+          "vmName": {
+            "type": "string",
+            "in": "path",
+            "description": "Virtual machine name",
+            "required": true
+          },
+          "api-version": {
+            "type": "string",
+            "in": "query",
+            "description": "Azure Compute API version for the deallocate operation",
+            "default": "2024-07-01"
+          },
+          "hibernate": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Hibernate the virtual machine instead of fully deallocating it (VM must support hibernation)"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_storage_accounts",
+      "name": "List Storage Accounts",
+      "description": "List all storage accounts in an Azure subscription (storage keys are not returned)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://management.azure.com/subscriptions/{subscriptionId}/providers/Microsoft.Storage/storageAccounts",
+        "params": {
+          "subscriptionId": {
+            "type": "string",
+            "in": "path",
+            "description": "Azure subscription ID (GUID) from List Subscriptions",
+            "required": true
+          },
+          "api-version": {
+            "type": "string",
+            "in": "query",
+            "description": "Azure Storage resource provider API version for the storage accounts operation",
+            "default": "2024-01-01"
+          }
+        },
+        "response": {
+          "transform": "value"
+        }
+      }
+    },
+    {
+      "id": "list_function_apps",
+      "name": "List Function and Web Apps",
+      "description": "List all App Service sites (function apps and web apps, Microsoft.Web/sites) in an Azure subscription; function apps have kind 'functionapp'",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://management.azure.com/subscriptions/{subscriptionId}/providers/Microsoft.Web/sites",
+        "params": {
+          "subscriptionId": {
+            "type": "string",
+            "in": "path",
+            "description": "Azure subscription ID (GUID) from List Subscriptions",
+            "required": true
+          },
+          "api-version": {
+            "type": "string",
+            "in": "query",
+            "description": "Azure App Service API version for the sites operation",
+            "default": "2024-11-01"
+          }
+        },
+        "response": {
+          "transform": "value"
+        }
+      }
+    },
+    {
+      "id": "restart_virtual_machine",
+      "name": "Restart Virtual Machine",
+      "description": "Restart a running virtual machine (returns 202 Accepted; the operation completes asynchronously)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/virtualMachines/{vmName}/restart",
+        "params": {
+          "subscriptionId": {
+            "type": "string",
+            "in": "path",
+            "description": "Azure subscription ID (GUID)",
+            "required": true
+          },
+          "resourceGroupName": {
+            "type": "string",
+            "in": "path",
+            "description": "Resource group that contains the virtual machine",
+            "required": true
+          },
+          "vmName": {
+            "type": "string",
+            "in": "path",
+            "description": "Virtual machine name",
+            "required": true
+          },
+          "api-version": {
+            "type": "string",
+            "in": "query",
+            "description": "Azure Compute API version for the restart operation",
+            "default": "2024-07-01"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_vm_instance_view",
+      "name": "Get VM Instance View",
+      "description": "Get the runtime state of a single virtual machine, including power state (statuses with code PowerState/running etc.), OS info, and boot diagnostics — cheaper than listing all VMs with statusOnly",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/virtualMachines/{vmName}/instanceView",
+        "params": {
+          "subscriptionId": {
+            "type": "string",
+            "in": "path",
+            "description": "Azure subscription ID (GUID)",
+            "required": true
+          },
+          "resourceGroupName": {
+            "type": "string",
+            "in": "path",
+            "description": "Resource group that contains the virtual machine",
+            "required": true
+          },
+          "vmName": {
+            "type": "string",
+            "in": "path",
+            "description": "Virtual machine name",
+            "required": true
+          },
+          "api-version": {
+            "type": "string",
+            "in": "query",
+            "description": "Azure Compute API version for the instance view operation",
+            "default": "2024-07-01"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_resources",
+      "name": "List Resources",
+      "description": "List all resources in an Azure subscription across every resource type — a generic inventory beyond the dedicated list tools",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://management.azure.com/subscriptions/{subscriptionId}/resources",
+        "params": {
+          "subscriptionId": {
+            "type": "string",
+            "in": "path",
+            "description": "Azure subscription ID (GUID) from List Subscriptions",
+            "required": true
+          },
+          "api-version": {
+            "type": "string",
+            "in": "query",
+            "description": "Azure Resource Manager API version for the resources operation",
+            "default": "2021-04-01"
+          },
+          "$filter": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter expression, e.g. resourceType eq 'Microsoft.Network/virtualNetworks', substringof('demo', name), or tagName eq 'env' and tagValue eq 'prod'"
+          },
+          "$expand": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated extra properties to include: createdTime, changedTime, provisioningState"
+          },
+          "$top": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum resources to return; omit to return all"
+          }
+        },
+        "response": {
+          "transform": "value"
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "subscription_inventory",
+      "title": "Subscription inventory",
+      "prompt": "List my Azure subscriptions and summarize the resource groups, virtual machines, storage accounts, and function apps in each one.",
+      "category": "devops",
+      "icon": "list"
+    },
+    {
+      "id": "vm_power_audit",
+      "title": "Audit VM power states",
+      "prompt": "List my Azure virtual machines with their power states and point out any running VMs that look idle or forgotten.",
+      "category": "devops",
+      "icon": "server"
+    },
+    {
+      "id": "stop_idle_vms",
+      "title": "Stop a VM to save cost",
+      "prompt": "Help me deallocate an Azure virtual machine so it stops incurring compute charges, and confirm the operation was accepted.",
+      "category": "devops",
+      "icon": "power"
+    }
+  ],
+  "suggestedWith": [
+    "azure-blob-storage",
+    "github"
+  ],
+  "SETUP_GUIDE": {
+    "title": "Microsoft Azure setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Get an Azure subscription",
+        "description": "Sign in at https://portal.azure.com with a Microsoft account. New accounts can create a free subscription with trial credit at https://azure.microsoft.com/free, which is enough to test every tool in this connector."
+      },
+      {
+        "step": 2,
+        "title": "Register an Azure app",
+        "description": "In the Azure portal, open Microsoft Entra ID > App registrations > New registration. Choose 'Accounts in any organizational directory and personal Microsoft accounts' (or your single tenant) and add your callback URL as a Web redirect URI."
+      },
+      {
+        "step": 3,
+        "title": "Add the Azure Service Management delegated permission",
+        "description": "Under API permissions, select Add a permission > Azure Service Management > Delegated permissions, and add user_impersonation. This lets the connector call Azure Resource Manager as the signed-in user."
+      },
+      {
+        "step": 4,
+        "title": "Create a client secret",
+        "description": "Under Certificates & secrets, create a client secret. Set MICROSOFT_CLIENT_ID to the Application (client) ID and MICROSOFT_CLIENT_SECRET to the secret value."
+      },
+      {
+        "step": 5,
+        "title": "Create test resources",
+        "description": "Create a resource group with a small VM (e.g. B1s) and a storage account so the list and VM power tools have something to return. Deallocate the VM when done to avoid charges."
+      }
+    ],
+    "notes": [
+      "The signed-in user needs Azure RBAC roles on the subscription: Reader is enough for the list tools, and Virtual Machine Contributor (or Contributor) is required to start and deallocate VMs.",
+      "Start and deallocate are asynchronous: a 202 Accepted response means the operation was queued, not that it has finished; re-run List Virtual Machines with statusOnly=true to check the power state.",
+      "Deallocate (not just stop) releases the compute hardware so the VM stops incurring compute charges; disks continue to bill.",
+      "Each Azure resource provider versions its API independently, which is why every tool carries its own api-version default.",
+      "List Function and Web Apps returns all Microsoft.Web/sites resources; filter client-side on the 'kind' field (e.g. 'functionapp') to isolate function apps."
+    ],
+    "documentation": "https://learn.microsoft.com/en-us/rest/api/azure/"
+  }
+}

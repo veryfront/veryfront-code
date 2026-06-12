@@ -1,0 +1,279 @@
+{
+  "name": "sendcloud",
+  "displayName": "Sendcloud",
+  "icon": "sendcloud.svg",
+  "description": "Create shipping labels, list shipments, compare carrier shipping options, and track parcels via the Sendcloud multi-carrier shipping API",
+  "category": "ecommerce",
+  "auth": {
+    "type": "basic",
+    "usernameKey": "SENDCLOUD_PUBLIC_KEY",
+    "passwordKey": "SENDCLOUD_SECRET_KEY",
+    "docsUrl": "https://sendcloud.dev/docs/getting-started/authentication",
+    "requiredApis": [
+      {
+        "name": "Sendcloud API Integration",
+        "enableUrl": "https://app.sendcloud.com/v2/settings/integrations/manage"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "SENDCLOUD_PUBLIC_KEY",
+      "description": "Sendcloud API public key, used as the HTTP Basic username",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://sendcloud.dev/docs/getting-started/how-to-create-your-api-keys"
+    },
+    {
+      "name": "SENDCLOUD_SECRET_KEY",
+      "description": "Sendcloud API secret key, used as the HTTP Basic password",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://sendcloud.dev/docs/getting-started/how-to-create-your-api-keys"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_shipments",
+      "name": "List Shipments",
+      "description": "List shipments (parcels) in the Sendcloud account with optional filters such as order number, tracking number, or update time",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://panel.sendcloud.sc/api/v3/shipments",
+        "params": {
+          "order_number": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return shipments with this order number"
+          },
+          "tracking_number": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return the shipment with this carrier tracking number"
+          },
+          "external_reference_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return shipments with this external reference ID"
+          },
+          "updated_after": {
+            "type": "string",
+            "in": "query",
+            "description": "Only shipments updated on or after this ISO 8601 timestamp, e.g. 2026-06-01T00:00:00Z"
+          },
+          "updated_before": {
+            "type": "string",
+            "in": "query",
+            "description": "Only shipments updated before this ISO 8601 timestamp"
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Results per page (max 100)",
+            "default": 40
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response's Link header"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "get_shipment",
+      "name": "Get Shipment",
+      "description": "Get a single shipment with its parcels, addresses, tracking numbers, and label documents",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://panel.sendcloud.sc/api/v3/shipments/{shipmentId}",
+        "params": {
+          "shipmentId": {
+            "type": "string",
+            "in": "path",
+            "description": "ID of the shipment to retrieve",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_shipment",
+      "name": "Create Shipment",
+      "description": "Create and announce a shipment synchronously, generating a shipping label for one or more parcels",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://panel.sendcloud.sc/api/v3/shipments/announce",
+        "body": {
+          "to_address": {
+            "type": "object",
+            "description": "Destination address: name, address_line_1, house_number, postal_code, city, country_code, and optionally email and phone_number",
+            "required": true
+          },
+          "ship_with": {
+            "type": "object",
+            "description": "Shipping selection, e.g. { \"type\": \"shipping_option_code\", \"properties\": { \"shipping_option_code\": \"...\" } } from the List Shipping Options tool",
+            "required": true
+          },
+          "parcels": {
+            "type": "array",
+            "description": "1-15 parcel objects with dimensions { length, width, height, unit } and weight { value, unit }",
+            "required": true
+          },
+          "from_address": {
+            "type": "object",
+            "description": "Origin address: provide either { \"sender_address_id\": <id> } referencing a sender address configured in the panel, or the full address fields directly",
+            "required": true
+          },
+          "order_number": {
+            "type": "string",
+            "description": "Order number to associate with the shipment"
+          },
+          "label_details": {
+            "type": "object",
+            "description": "Label preferences, e.g. { \"mime_type\": \"application/pdf\", \"dpi\": 72 }"
+          },
+          "customs_information": {
+            "type": "object",
+            "description": "Customs details, required for international shipments outside customs unions"
+          },
+          "external_reference_id": {
+            "type": "string",
+            "description": "Your own unique reference for idempotency and later lookup"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_shipping_options",
+      "name": "List Shipping Options",
+      "description": "List available carrier shipping options (methods) for a given route and parcel, optionally with price quotes",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://panel.sendcloud.sc/api/v3/shipping-options",
+        "body": {
+          "from_address": {
+            "type": "object",
+            "description": "Origin address with at least country_code and postal_code",
+            "required": true
+          },
+          "to_address": {
+            "type": "object",
+            "description": "Destination address with at least country_code and postal_code",
+            "required": true
+          },
+          "parcels": {
+            "type": "array",
+            "description": "1-50 parcel objects with dimensions and weight used to filter applicable options"
+          },
+          "carrier_code": {
+            "type": "string",
+            "description": "Only return options for this carrier, e.g. dhl, dpd, postnl"
+          },
+          "calculate_quotes": {
+            "type": "boolean",
+            "description": "Include price quotes per shipping option (slower)"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_tracking",
+      "name": "Get Tracking",
+      "description": "Get the current status and recent tracking events of a parcel by its carrier tracking number",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://panel.sendcloud.sc/api/v3/parcels/tracking/{trackingNumber}",
+        "params": {
+          "trackingNumber": {
+            "type": "string",
+            "in": "path",
+            "description": "Carrier tracking number of the parcel",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "cancel_shipment",
+      "name": "Cancel Shipment",
+      "description": "Cancel an announced shipment and its label before carrier collection — the undo for a mis-announced (cost-incurring) label; cancellation is no longer possible once the carrier has the parcel",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://panel.sendcloud.sc/api/v3/shipments/{shipmentId}/cancel",
+        "params": {
+          "shipmentId": {
+            "type": "string",
+            "in": "path",
+            "description": "Shipment ID from Create Shipment or List Shipments",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "track_parcel",
+      "title": "Track a parcel",
+      "prompt": "Track a Sendcloud parcel by its tracking number and summarize its current status and latest events.",
+      "category": "ecommerce",
+      "icon": "package"
+    },
+    {
+      "id": "recent_shipments",
+      "title": "Recent shipments",
+      "prompt": "List my most recent Sendcloud shipments and flag any that look stuck or undelivered.",
+      "category": "ecommerce",
+      "icon": "list"
+    },
+    {
+      "id": "compare_shipping_options",
+      "title": "Compare shipping options",
+      "prompt": "Given an origin, destination, and parcel size, list the available Sendcloud shipping options with quotes and recommend the cheapest suitable one.",
+      "category": "ecommerce",
+      "icon": "currency"
+    }
+  ],
+  "suggestedWith": ["shopify", "woocommerce", "billbee"],
+  "SETUP_GUIDE": {
+    "title": "Sendcloud API setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Sendcloud account",
+        "description": "Sign up at https://app.sendcloud.com — a free plan is available and is enough to test the API against your own account."
+      },
+      {
+        "step": 2,
+        "title": "Create API keys",
+        "description": "In the Sendcloud panel open Settings → Integrations (https://app.sendcloud.com/v2/settings/integrations/manage), find 'Sendcloud API' in the list, click Connect, and give the integration a name. You receive a public key and a secret key."
+      },
+      {
+        "step": 3,
+        "title": "Store the keys",
+        "description": "Add SENDCLOUD_PUBLIC_KEY and SENDCLOUD_SECRET_KEY to your .env file. The API uses HTTP Basic auth with the public key as username and the secret key as password."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Shipments tool. An empty data array is a valid response for a new account."
+      }
+    ],
+    "notes": [
+      "Always use API v3 (https://panel.sendcloud.sc/api/v3/...) for new integrations — Sendcloud is migrating integrations from v2 to v3",
+      "Creating a shipment announces it to the carrier and may incur label costs; configure a sender address in the panel first",
+      "List Shipping Options is a POST request but is read-only — it only calculates available options and quotes"
+    ],
+    "documentation": "https://sendcloud.dev"
+  }
+}

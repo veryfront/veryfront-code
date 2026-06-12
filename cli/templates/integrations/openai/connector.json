@@ -187,6 +187,272 @@
           }
         }
       }
+    },
+    {
+      "id": "upload_file",
+      "name": "Upload File",
+      "description": "Upload a file for use with assistants, batch, fine-tune, vision, user_data, or evals",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/files",
+        "contentType": "multipart/form-data",
+        "bodyMode": "form-data",
+        "body": {
+          "purpose": {
+            "type": "string",
+            "description": "Intended purpose of the file: assistants, batch, fine-tune, vision, user_data, or evals",
+            "required": true
+          },
+          "file": {
+            "type": "string",
+            "description": "Base64-encoded file content, sent decoded as the binary multipart 'file' part",
+            "required": true,
+            "encoding": "base64",
+            "partFilenameField": "filename"
+          },
+          "filename": {
+            "type": "string",
+            "description": "Filename for the uploaded file part, e.g. training.jsonl; the extension helps OpenAI validate the file type",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_files",
+      "name": "List Files",
+      "description": "List files uploaded to the organization, optionally filtered by purpose",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.openai.com/v1/files",
+        "params": {
+          "purpose": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return files with the given purpose, e.g. assistants or batch"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of files to return (1-10000)",
+            "default": 100
+          },
+          "order": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort order by created_at: asc or desc",
+            "default": "desc"
+          },
+          "after": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor: object ID from the previous page"
+          }
+        },
+        "response": {
+          "transform": "data",
+          "historicalSummary": {
+            "collectionKeys": ["data", "files"],
+            "collectionName": "files",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "filename" },
+              { "name": "purpose" },
+              { "name": "bytes" },
+              { "name": "created_at" }
+            ],
+            "omitted": "expiration and status payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_file",
+      "name": "Get File",
+      "description": "Get metadata about an uploaded file by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.openai.com/v1/files/{file_id}",
+        "params": {
+          "file_id": {
+            "type": "string",
+            "in": "path",
+            "description": "ID of the file, e.g. file-abc123",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "delete_file",
+      "name": "Delete File",
+      "description": "Delete an uploaded file and remove it from all vector stores",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "DELETE",
+        "url": "https://api.openai.com/v1/files/{file_id}",
+        "params": {
+          "file_id": {
+            "type": "string",
+            "in": "path",
+            "description": "ID of the file to delete, e.g. file-abc123",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "get_usage_completions",
+      "name": "Get Completions Usage",
+      "description": "Get token usage for completions across the organization, bucketed over time. Requires an organization admin API key (created under Settings → Organization → Admin keys) set as OPENAI_API_KEY — a regular project key returns 401",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.openai.com/v1/organization/usage/completions",
+        "params": {
+          "start_time": {
+            "type": "number",
+            "in": "query",
+            "description": "Start time as a Unix timestamp in seconds, inclusive",
+            "required": true
+          },
+          "end_time": {
+            "type": "number",
+            "in": "query",
+            "description": "End time as a Unix timestamp in seconds, exclusive"
+          },
+          "bucket_width": {
+            "type": "string",
+            "in": "query",
+            "description": "Time bucket width: 1m, 1h, or 1d",
+            "default": "1d"
+          },
+          "group_by": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Group usage by fields: project_id, user_id, api_key_id, model, batch, service_tier"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of buckets to return (max 31 for 1d, 168 for 1h, 1440 for 1m)"
+          },
+          "page": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response's next_page"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_costs",
+      "name": "Get Costs",
+      "description": "Get daily spend (in USD) for the organization, bucketed by day. Requires an organization admin API key (created under Settings → Organization → Admin keys) set as OPENAI_API_KEY — a regular project key returns 401",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.openai.com/v1/organization/costs",
+        "params": {
+          "start_time": {
+            "type": "number",
+            "in": "query",
+            "description": "Start time as a Unix timestamp in seconds, inclusive",
+            "required": true
+          },
+          "end_time": {
+            "type": "number",
+            "in": "query",
+            "description": "End time as a Unix timestamp in seconds, exclusive"
+          },
+          "group_by": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Group costs by fields: project_id, line_item, api_key_id"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of daily buckets to return (1-180)",
+            "default": 7
+          },
+          "page": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response's next_page"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_file_content",
+      "name": "Get File Content",
+      "description": "Download the raw contents of an uploaded file by ID — required to read batch output files and other generated artifacts",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.openai.com/v1/files/{file_id}/content",
+        "params": {
+          "file_id": {
+            "type": "string",
+            "in": "path",
+            "description": "ID of the file to download, e.g. file-abc123",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "get_usage_embeddings",
+      "name": "Get Embeddings Usage",
+      "description": "Get token usage for embeddings across the organization, bucketed over time. Requires an organization admin API key (created under Settings → Organization → Admin keys) set as OPENAI_API_KEY — a regular project key returns 401",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.openai.com/v1/organization/usage/embeddings",
+        "params": {
+          "start_time": {
+            "type": "number",
+            "in": "query",
+            "description": "Start time as a Unix timestamp in seconds, inclusive",
+            "required": true
+          },
+          "end_time": {
+            "type": "number",
+            "in": "query",
+            "description": "End time as a Unix timestamp in seconds, exclusive"
+          },
+          "bucket_width": {
+            "type": "string",
+            "in": "query",
+            "description": "Time bucket width: 1m, 1h, or 1d",
+            "default": "1d"
+          },
+          "group_by": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Group usage by fields: project_id, user_id, api_key_id, model"
+          },
+          "models": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Return only usage for these models"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of buckets to return (max 31 for 1d, 168 for 1h, 1440 for 1m)"
+          },
+          "page": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from a previous response's next_page"
+          }
+        }
+      }
     }
   ],
   "prompts": [
@@ -232,7 +498,9 @@
     ],
     "notes": [
       "Use project-scoped API keys to limit blast radius; you can revoke keys at any time from the dashboard",
-      "API usage is billed per token — set usage limits under Settings → Limits"
+      "API usage is billed per token — set usage limits under Settings → Limits",
+      "The Get Completions Usage and Get Costs tools call the organization usage API, which only accepts admin API keys created at https://platform.openai.com/settings/organization/admin-keys — set one as OPENAI_API_KEY to use them",
+      "The Upload File tool sends multipart/form-data with a binary file part; pass the file content base64-encoded"
     ],
     "documentation": "https://platform.openai.com/docs/api-reference"
   }

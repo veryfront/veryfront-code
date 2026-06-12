@@ -1,0 +1,374 @@
+{
+  "name": "xentral",
+  "displayName": "Xentral",
+  "icon": "xentral.svg",
+  "description": "Access Xentral ERP sales orders, products, and customers, and import new sales orders into your Xentral instance",
+  "category": "ecommerce",
+  "auth": {
+    "type": "api-key",
+    "keyName": "XENTRAL_API_TOKEN",
+    "headerName": "Authorization",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://developer.xentral.com/reference/authentication",
+    "requiredApis": [
+      {
+        "name": "Xentral Personal Access Token",
+        "enableUrl": "https://help.xentral.com/hc/en-us/articles/22627542067740-Personal-Access-Tokens-PAT-in-Xentral-API-User-anlegen"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "XENTRAL_API_TOKEN",
+      "description": "Xentral Personal Access Token (PAT), sent as Authorization: Bearer header",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.xentral.com/reference/authentication"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_sales_orders",
+      "name": "List Sales Orders",
+      "description": "List sales orders in the Xentral instance with optional filtering and pagination",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{instanceHost}/api/v1/salesOrders",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Xentral instance host, for example mycompany.xentral.biz",
+            "required": true
+          },
+          "page[number]": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1
+          },
+          "page[size]": {
+            "type": "number",
+            "in": "query",
+            "description": "Results per page (usually 10-50)",
+            "default": 25
+          },
+          "filter[0][key]": {
+            "type": "string",
+            "in": "query",
+            "description": "Field to filter on, e.g. status, documentNumber, customerId, orderDate, externalOrderNumber"
+          },
+          "filter[0][op]": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter operator: equals, notEquals, in, notIn, greaterThan, lessThan, greaterThanOrEquals, lessThanOrEquals"
+          },
+          "filter[0][value]": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter value; statuses are created, released, canceled, completed; dates use ISO 8601 like 2026-06-01T00:00:00+02:00"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "get_sales_order",
+      "name": "Get Sales Order",
+      "description": "Get a single sales order with its positions and financial details",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{instanceHost}/api/v1/salesOrders/{salesOrderId}",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Xentral instance host, for example mycompany.xentral.biz",
+            "required": true
+          },
+          "salesOrderId": {
+            "type": "string",
+            "in": "path",
+            "description": "Sales order ID",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "list_products",
+      "name": "List Products",
+      "description": "List products in the Xentral instance (v2 API) with optional filtering and pagination",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{instanceHost}/api/v2/products",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Xentral instance host, for example mycompany.xentral.biz",
+            "required": true
+          },
+          "page[number]": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1
+          },
+          "page[size]": {
+            "type": "number",
+            "in": "query",
+            "description": "Results per page (usually 10-50)",
+            "default": 25
+          },
+          "filter[0][key]": {
+            "type": "string",
+            "in": "query",
+            "description": "Field to filter on, e.g. number, name, ean"
+          },
+          "filter[0][op]": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter operator: equals, notEquals, in, notIn, greaterThan, lessThan, greaterThanOrEquals, lessThanOrEquals"
+          },
+          "filter[0][value]": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter value"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "list_customers",
+      "name": "List Customers",
+      "description": "List customers in the Xentral instance (v2 API) with optional filtering and pagination",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{instanceHost}/api/v2/customers",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Xentral instance host, for example mycompany.xentral.biz",
+            "required": true
+          },
+          "page[number]": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1
+          },
+          "page[size]": {
+            "type": "number",
+            "in": "query",
+            "description": "Results per page (usually 10-50)",
+            "default": 25
+          },
+          "filter[0][key]": {
+            "type": "string",
+            "in": "query",
+            "description": "Field to filter on, e.g. name, customerNumber, email"
+          },
+          "filter[0][op]": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter operator: equals, notEquals, in, notIn, greaterThan, lessThan, greaterThanOrEquals, lessThanOrEquals"
+          },
+          "filter[0][value]": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter value"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "create_sales_order",
+      "name": "Create Sales Order",
+      "description": "Import a new sales order into Xentral with customer, financials, delivery, and order positions",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{instanceHost}/api/v1/salesOrders/actions/import",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Xentral instance host, for example mycompany.xentral.biz",
+            "required": true
+          }
+        },
+        "body": {
+          "date": {
+            "type": "string",
+            "description": "Order date, ISO 8601, e.g. 2026-06-11",
+            "required": true
+          },
+          "customer": {
+            "type": "object",
+            "description": "Customer reference, e.g. { \"id\": \"123\" }",
+            "required": true
+          },
+          "project": {
+            "type": "object",
+            "description": "Project reference, e.g. { \"id\": \"1\" }",
+            "required": true
+          },
+          "financials": {
+            "type": "object",
+            "description": "Financial details: paymentMethod, currency, billingAddress, tax, paymentTerms",
+            "required": true
+          },
+          "delivery": {
+            "type": "object",
+            "description": "Delivery details such as shipping method and shipping address",
+            "required": true
+          },
+          "positions": {
+            "type": "array",
+            "description": "Order positions, each with product { id }, quantity, and price",
+            "required": true
+          },
+          "externalOrderNumber": {
+            "type": "string",
+            "description": "External order number from the originating shop or marketplace"
+          },
+          "customerOrderNumber": {
+            "type": "string",
+            "description": "Order number assigned by the customer"
+          },
+          "comment": {
+            "type": "string",
+            "description": "Internal comment on the order"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_product",
+      "name": "Get Product",
+      "description": "Get a single product with full details (v2 API) after finding it via List Products",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{instanceHost}/api/v2/products/{productId}",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Xentral instance host, for example mycompany.xentral.biz",
+            "required": true
+          },
+          "productId": {
+            "type": "string",
+            "in": "path",
+            "description": "Product ID from List Products",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "get_customer",
+      "name": "Get Customer",
+      "description": "Get a single customer record with full details including addresses (v2 API) — useful before creating a sales order",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{instanceHost}/api/v2/customers/{customerId}",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Xentral instance host, for example mycompany.xentral.biz",
+            "required": true
+          },
+          "customerId": {
+            "type": "string",
+            "in": "path",
+            "description": "Customer ID from List Customers",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "open_sales_orders",
+      "title": "Review open sales orders",
+      "prompt": "List my Xentral sales orders with status created or released and summarize them by customer and value.",
+      "category": "ecommerce",
+      "icon": "list"
+    },
+    {
+      "id": "product_lookup",
+      "title": "Product lookup",
+      "prompt": "Find a product in Xentral by name or number and show its details.",
+      "category": "ecommerce",
+      "icon": "search"
+    },
+    {
+      "id": "import_order",
+      "title": "Import a sales order",
+      "prompt": "Create a new sales order in Xentral for a customer and products I specify.",
+      "category": "ecommerce",
+      "icon": "plus"
+    }
+  ],
+  "suggestedWith": ["shopify", "sendcloud", "billbee"],
+  "SETUP_GUIDE": {
+    "title": "Xentral API setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Get a Xentral instance",
+        "description": "Sign up for a Xentral trial at https://xentral.com. Your instance gets its own host like mycompany.xentral.biz — all API calls go to that host."
+      },
+      {
+        "step": 2,
+        "title": "Create a Personal Access Token",
+        "description": "In your Xentral instance, create a Personal Access Token (PAT) via the API token settings (see https://help.xentral.com/hc/en-us/articles/22627542067740). Grant read scopes for sales orders, products, and customers, plus create scope for sales orders if you want to import orders."
+      },
+      {
+        "step": 3,
+        "title": "Store the token",
+        "description": "Add XENTRAL_API_TOKEN to your .env file. It is sent as an Authorization: Bearer header on every request."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Sales Orders tool with your instance host (e.g. mycompany.xentral.biz) as instanceHost."
+      }
+    ],
+    "notes": [
+      "Every tool takes an instanceHost parameter — your instance subdomain such as mycompany.xentral.biz (custom domains are also supported)",
+      "PAT scopes are granted per resource group (CRM, products, accounting, ...) with separate read/create/update/delete permissions",
+      "Sales orders use the v1 API; products and customers use the newer v2 API endpoints",
+      "List responses wrap results in a data array with pagination info in extra"
+    ],
+    "documentation": "https://developer.xentral.com"
+  }
+}

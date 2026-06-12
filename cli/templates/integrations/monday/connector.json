@@ -15,7 +15,7 @@
     "requiredApis": [
       {
         "name": "monday.com Developer Center",
-        "enableUrl": "https://monday.com/developers/apps"
+        "enableUrl": "https://developer.monday.com/apps/docs/the-developer-center"
       }
     ]
   },
@@ -234,7 +234,7 @@
       {
         "step": 1,
         "title": "Create a monday.com app",
-        "description": "Sign in to monday.com (a free trial account works) and open the Developer Center via your avatar → Developers, or https://monday.com/developers/apps. Click Create App."
+        "description": "Sign in to monday.com (a free trial account works) and open the Developer Center via your avatar → Developers, or https://developer.monday.com/apps/docs/the-developer-center. Click Create App."
       },
       {
         "step": 2,

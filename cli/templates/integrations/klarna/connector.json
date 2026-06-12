@@ -1,0 +1,267 @@
+{
+  "name": "klarna",
+  "displayName": "Klarna",
+  "icon": "klarna.svg",
+  "description": "Manage Klarna BNPL orders: look up order details and capture, refund, or cancel orders",
+  "auth": {
+    "type": "basic",
+    "usernameKey": "KLARNA_API_USERNAME",
+    "passwordKey": "KLARNA_API_PASSWORD",
+    "docsUrl": "https://docs.klarna.com/api/authentication/",
+    "requiredApis": [
+      {
+        "name": "Klarna Merchant Portal API credentials",
+        "enableUrl": "https://portal.klarna.com/"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "KLARNA_API_USERNAME",
+      "description": "Klarna API username (the UID shown when creating credentials in the Merchant Portal), used as the HTTP Basic username",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://docs.klarna.com/api/authentication/"
+    },
+    {
+      "name": "KLARNA_API_PASSWORD",
+      "description": "Klarna API password/key associated with the username, used as the HTTP Basic password",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.klarna.com/api/authentication/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "get_order",
+      "name": "Get Order",
+      "description": "Retrieve a Klarna order including status, amounts, order lines, captures, and refunds",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{apiHost}/ordermanagement/v1/orders/{orderId}",
+        "params": {
+          "apiHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Klarna API host: api.klarna.com (Europe), api-na.klarna.com (North America), api-oc.klarna.com (Oceania); playground hosts are api.playground.klarna.com, api-na.playground.klarna.com, api-oc.playground.klarna.com",
+            "default": "api.klarna.com"
+          },
+          "orderId": {
+            "type": "string",
+            "in": "path",
+            "description": "Klarna order ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "capture_order",
+      "name": "Capture Order",
+      "description": "Capture a full or partial amount of an authorized order (activates the payment after fulfillment)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{apiHost}/ordermanagement/v1/orders/{orderId}/captures",
+        "params": {
+          "apiHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Klarna API host: api.klarna.com (Europe), api-na.klarna.com (North America), api-oc.klarna.com (Oceania); playground hosts are api.playground.klarna.com, api-na.playground.klarna.com, api-oc.playground.klarna.com",
+            "default": "api.klarna.com"
+          },
+          "orderId": {
+            "type": "string",
+            "in": "path",
+            "description": "Klarna order ID",
+            "required": true
+          }
+        },
+        "body": {
+          "captured_amount": {
+            "type": "number",
+            "description": "Amount to capture in minor units (e.g. 1000 = 10.00), must not exceed the remaining authorized amount",
+            "required": true
+          },
+          "description": {
+            "type": "string",
+            "description": "Description of the capture shown to the customer"
+          },
+          "reference": {
+            "type": "string",
+            "description": "Internal merchant reference for the capture, e.g. a shipment ID"
+          }
+        }
+      }
+    },
+    {
+      "id": "refund_order",
+      "name": "Refund Order",
+      "description": "Refund a full or partial captured amount back to the customer",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{apiHost}/ordermanagement/v1/orders/{orderId}/refunds",
+        "params": {
+          "apiHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Klarna API host: api.klarna.com (Europe), api-na.klarna.com (North America), api-oc.klarna.com (Oceania); playground hosts are api.playground.klarna.com, api-na.playground.klarna.com, api-oc.playground.klarna.com",
+            "default": "api.klarna.com"
+          },
+          "orderId": {
+            "type": "string",
+            "in": "path",
+            "description": "Klarna order ID",
+            "required": true
+          }
+        },
+        "body": {
+          "refunded_amount": {
+            "type": "number",
+            "description": "Amount to refund in minor units (e.g. 1000 = 10.00), must not exceed the captured amount",
+            "required": true
+          },
+          "description": {
+            "type": "string",
+            "description": "Description of the refund shown to the customer"
+          }
+        }
+      }
+    },
+    {
+      "id": "cancel_order",
+      "name": "Cancel Order",
+      "description": "Cancel an authorized order that has not been captured, releasing the full authorization",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{apiHost}/ordermanagement/v1/orders/{orderId}/cancel",
+        "params": {
+          "apiHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Klarna API host: api.klarna.com (Europe), api-na.klarna.com (North America), api-oc.klarna.com (Oceania); playground hosts are api.playground.klarna.com, api-na.playground.klarna.com, api-oc.playground.klarna.com",
+            "default": "api.klarna.com"
+          },
+          "orderId": {
+            "type": "string",
+            "in": "path",
+            "description": "Klarna order ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "release_remaining_authorization",
+      "name": "Release Remaining Authorization",
+      "description": "Release the remaining (uncaptured) authorized amount of an order after the final partial capture — the standard end-of-fulfillment step that frees the customer's remaining authorization",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{apiHost}/ordermanagement/v1/orders/{orderId}/release-remaining-authorization",
+        "params": {
+          "apiHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Klarna API host: api.klarna.com (Europe), api-na.klarna.com (North America), api-oc.klarna.com (Oceania); playground hosts are api.playground.klarna.com, api-na.playground.klarna.com, api-oc.playground.klarna.com",
+            "default": "api.klarna.com"
+          },
+          "orderId": {
+            "type": "string",
+            "in": "path",
+            "description": "Klarna order ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "get_capture",
+      "name": "Get Capture",
+      "description": "Get a single capture of an order with its status and amounts",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{apiHost}/ordermanagement/v1/orders/{orderId}/captures/{captureId}",
+        "params": {
+          "apiHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Klarna API host: api.klarna.com (Europe), api-na.klarna.com (North America), api-oc.klarna.com (Oceania); playground hosts are api.playground.klarna.com, api-na.playground.klarna.com, api-oc.playground.klarna.com",
+            "default": "api.klarna.com"
+          },
+          "orderId": {
+            "type": "string",
+            "in": "path",
+            "description": "Klarna order ID",
+            "required": true
+          },
+          "captureId": {
+            "type": "string",
+            "in": "path",
+            "description": "Capture ID, e.g. from the captures array on Get Order or the Capture-ID response header of Capture Order",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "order_status",
+      "title": "Check order status",
+      "prompt": "Look up a Klarna order I specify and summarize its status, authorized, captured, and refunded amounts.",
+      "category": "commerce",
+      "icon": "package"
+    },
+    {
+      "id": "capture_shipment",
+      "title": "Capture after shipping",
+      "prompt": "Capture the full remaining amount of a Klarna order I specify, with the shipment reference as the capture reference.",
+      "category": "commerce",
+      "icon": "payment"
+    },
+    {
+      "id": "refund_customer",
+      "title": "Refund a customer",
+      "prompt": "Issue a partial refund on a Klarna order I specify and confirm the new refunded total.",
+      "category": "commerce",
+      "icon": "currency"
+    }
+  ],
+  "suggestedWith": ["stripe", "paypal", "shopify"],
+  "SETUP_GUIDE": {
+    "title": "Klarna API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Get a Klarna merchant account",
+        "description": "Sign up as a Klarna merchant at https://www.klarna.com/business/ and log in to the Merchant Portal at https://portal.klarna.com/. For testing without a live contract, use the Playground environment (https://portal.playground.klarna.com/)."
+      },
+      {
+        "step": 2,
+        "title": "Create API credentials",
+        "description": "In the Merchant Portal, go to Settings > API credentials and generate a new credential. You get a username (a UID linked to your merchant ID) and a password/API key — the password is shown only once, so store it immediately."
+      },
+      {
+        "step": 3,
+        "title": "Set environment variables",
+        "description": "Add KLARNA_API_USERNAME (the UID) and KLARNA_API_PASSWORD (the API key/password) to your .env. Requests authenticate with HTTP Basic auth using these two values."
+      },
+      {
+        "step": 4,
+        "title": "Pick your regional host and verify",
+        "description": "All tools take an apiHost parameter (default api.klarna.com for Europe). Use api-na.klarna.com for North America or api-oc.klarna.com for Oceania. Run Get Order with a known order ID to verify access."
+      }
+    ],
+    "notes": [
+      "Playground (test) credentials only work against the playground hosts (api.playground.klarna.com, api-na.playground.klarna.com, api-oc.playground.klarna.com) and production credentials only against production hosts — pass the matching apiHost.",
+      "All amounts are in minor units of the order currency (e.g. 1050 = 10.50 EUR).",
+      "Refunds require a prior capture; cancel only works on orders that have not been captured."
+    ],
+    "documentation": "https://docs.klarna.com/api/ordermanagement/"
+  }
+}

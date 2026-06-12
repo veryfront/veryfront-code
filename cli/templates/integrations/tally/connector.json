@@ -1,0 +1,230 @@
+{
+  "name": "tally",
+  "displayName": "Tally",
+  "icon": "tally.svg",
+  "description": "Read Tally forms, form submissions, and workspaces to analyze responses collected with the form builder",
+  "auth": {
+    "type": "api-key",
+    "keyName": "TALLY_API_KEY",
+    "headerName": "Authorization",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://developers.tally.so/api-reference/api-keys"
+  },
+  "envVars": [
+    {
+      "name": "TALLY_API_KEY",
+      "description": "Tally API key (created in Tally under Settings > API keys; shown only once)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developers.tally.so/api-reference/api-keys"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_forms",
+      "name": "List Forms",
+      "description": "List forms in the Tally account, optionally filtered by workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.tally.so/forms",
+        "params": {
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number for pagination",
+            "default": 1
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of forms per page (1-500)",
+            "default": 50
+          },
+          "workspaceIds": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Filter forms by workspace IDs"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_form",
+      "name": "Get Form",
+      "description": "Retrieve a single form by ID with all its blocks and settings",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.tally.so/forms/{formId}",
+        "params": {
+          "formId": {
+            "type": "string",
+            "in": "path",
+            "description": "Tally form ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_submissions",
+      "name": "List Submissions",
+      "description": "List submissions of a form with their responses, filterable by status and date range",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.tally.so/forms/{formId}/submissions",
+        "params": {
+          "formId": {
+            "type": "string",
+            "in": "path",
+            "description": "Tally form ID",
+            "required": true
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number for pagination",
+            "default": 1
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of submissions per page (1-500)",
+            "default": 50
+          },
+          "filter": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter submissions by status: all, completed, or partial"
+          },
+          "startDate": {
+            "type": "string",
+            "in": "query",
+            "description": "Only submissions submitted on or after this date (ISO 8601)"
+          },
+          "endDate": {
+            "type": "string",
+            "in": "query",
+            "description": "Only submissions submitted on or before this date (ISO 8601)"
+          },
+          "afterId": {
+            "type": "string",
+            "in": "query",
+            "description": "Only submissions that came after this submission ID"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_submission",
+      "name": "Get Submission",
+      "description": "Retrieve a specific form submission with all its responses and the form questions",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.tally.so/forms/{formId}/submissions/{submissionId}",
+        "params": {
+          "formId": {
+            "type": "string",
+            "in": "path",
+            "description": "Tally form ID",
+            "required": true
+          },
+          "submissionId": {
+            "type": "string",
+            "in": "path",
+            "description": "Submission ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_form_questions",
+      "name": "List Form Questions",
+      "description": "List a form's questions with their IDs, types, and response counts — lighter than parsing the full form blocks for mapping answers",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.tally.so/forms/{formId}/questions",
+        "params": {
+          "formId": {
+            "type": "string",
+            "in": "path",
+            "description": "Tally form ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_workspaces",
+      "name": "List Workspaces",
+      "description": "List workspaces with their members and pending invites",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.tally.so/workspaces",
+        "params": {
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number for pagination",
+            "default": 1
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "recent_responses",
+      "title": "Recent responses",
+      "prompt": "List my Tally forms, pick the most recently updated one, and summarize its latest submissions.",
+      "category": "productivity",
+      "icon": "inbox"
+    },
+    {
+      "id": "form_overview",
+      "title": "Form overview",
+      "prompt": "Give me an overview of my Tally forms with their status and number of submissions.",
+      "category": "analytics",
+      "icon": "chart"
+    },
+    {
+      "id": "completion_rate",
+      "title": "Completion rate",
+      "prompt": "For a given Tally form, compare completed vs partial submissions and report the completion rate.",
+      "category": "analytics",
+      "icon": "percent"
+    }
+  ],
+  "suggestedWith": ["slack", "sheets", "notion"],
+  "SETUP_GUIDE": {
+    "title": "Tally API setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create an API key",
+        "description": "Sign in to Tally (free accounts work — the API is available to all users), go to Settings > API keys, and click 'Create API key'. Copy the key immediately; it is shown only once."
+      },
+      {
+        "step": 2,
+        "title": "Set the environment variable",
+        "description": "Add TALLY_API_KEY to your .env."
+      },
+      {
+        "step": 3,
+        "title": "Verify access",
+        "description": "Run List Forms. The key is sent as Authorization: Bearer <key> against https://api.tally.so."
+      }
+    ],
+    "notes": [
+      "For real-time submission data, Tally recommends webhooks over polling the submissions endpoint.",
+      "List endpoints are paginated with page/limit and return hasMore plus total counts."
+    ],
+    "documentation": "https://developers.tally.so/api-reference/introduction"
+  }
+}

@@ -1,0 +1,171 @@
+{
+  "name": "serpapi",
+  "displayName": "SerpApi",
+  "icon": "serpapi.svg",
+  "description": "Structured Google search, news, maps, and shopping results through the SerpApi search API",
+  "category": "search",
+  "auth": {
+    "type": "api-key",
+    "keyName": "SERPAPI_API_KEY",
+    "queryParamName": "api_key",
+    "docsUrl": "https://serpapi.com/search-api",
+    "requiredApis": [
+      {
+        "name": "SerpApi API key",
+        "enableUrl": "https://serpapi.com/manage-api-key"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "SERPAPI_API_KEY",
+      "description": "SerpApi private API key from your account dashboard",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://serpapi.com/manage-api-key"
+    }
+  ],
+  "tools": [
+    {
+      "id": "google_search",
+      "name": "Google Search",
+      "description": "Run a Google web search and get structured organic results, answer boxes, and related data",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://serpapi.com/search",
+        "params": {
+          "engine": {
+            "type": "string",
+            "in": "query",
+            "description": "SerpApi engine to use; google returns standard web results",
+            "default": "google"
+          },
+          "q": {
+            "type": "string",
+            "in": "query",
+            "description": "Search query, supporting regular Google operators like site:, OR, and quoted phrases",
+            "required": true
+          },
+          "location": {
+            "type": "string",
+            "in": "query",
+            "description": "Geographic origin of the search, e.g. Austin, Texas, United States"
+          },
+          "num": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum number of results to return (e.g. 10, 20, up to 100)"
+          },
+          "start": {
+            "type": "number",
+            "in": "query",
+            "description": "Result offset for pagination (0 is the first page, 10 the second, ...)"
+          }
+        }
+      }
+    },
+    {
+      "id": "google_news",
+      "name": "Google News Search",
+      "description": "Search Google News and get structured article results with titles, sources, and publish dates",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://serpapi.com/search",
+        "params": {
+          "engine": {
+            "type": "string",
+            "in": "query",
+            "description": "SerpApi engine to use; google_news returns news article results",
+            "default": "google_news"
+          },
+          "q": {
+            "type": "string",
+            "in": "query",
+            "description": "News search query",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "google_maps",
+      "name": "Google Maps Search",
+      "description": "Search Google Maps for places and get structured local results with addresses, ratings, and coordinates",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://serpapi.com/search",
+        "params": {
+          "engine": {
+            "type": "string",
+            "in": "query",
+            "description": "SerpApi engine to use; google_maps returns local place results",
+            "default": "google_maps"
+          },
+          "q": {
+            "type": "string",
+            "in": "query",
+            "description": "Place or business search query, e.g. coffee shops",
+            "required": true
+          },
+          "ll": {
+            "type": "string",
+            "in": "query",
+            "description": "GPS coordinates to center the search, in the form @latitude,longitude,zoom (e.g. @40.7455096,-74.0083012,14z)"
+          }
+        }
+      }
+    },
+    {
+      "id": "google_shopping",
+      "name": "Google Shopping Search",
+      "description": "Search Google Shopping and get structured product results with prices, merchants, and ratings",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://serpapi.com/search",
+        "params": {
+          "engine": {
+            "type": "string",
+            "in": "query",
+            "description": "SerpApi engine to use; google_shopping returns product results",
+            "default": "google_shopping"
+          },
+          "q": {
+            "type": "string",
+            "in": "query",
+            "description": "Product search query",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "SETUP_GUIDE": {
+    "title": "SerpApi setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a SerpApi account",
+        "description": "Sign up at https://serpapi.com/users/sign_up. The free plan includes a monthly allowance of searches, which is enough for testing."
+      },
+      {
+        "step": 2,
+        "title": "Copy your private API key",
+        "description": "Open https://serpapi.com/manage-api-key and copy the private API key shown for your account."
+      },
+      {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Set the key as SERPAPI_API_KEY. You can verify it works by opening https://serpapi.com/search?engine=google&q=coffee&api_key=YOUR_KEY in a browser and checking that JSON results come back."
+      }
+    ],
+    "notes": [
+      "SerpApi authenticates by passing the API key as an api_key query parameter on every request (https://serpapi.com/search?engine=google&q=...&api_key=...); it does not accept the key in an HTTP header.",
+      "Each request consumes one search from your plan; the engine parameter selects the result type (google, google_news, google_maps, google_shopping, and more)."
+    ],
+    "documentation": "https://serpapi.com/search-api"
+  }
+}

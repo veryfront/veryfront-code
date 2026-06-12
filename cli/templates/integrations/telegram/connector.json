@@ -1,0 +1,172 @@
+{
+  "name": "telegram",
+  "displayName": "Telegram",
+  "icon": "telegram.svg",
+  "description": "Send and manage Telegram bot messages through the Telegram Bot API",
+  "category": "communication",
+  "auth": {
+    "type": "api-key",
+    "keyName": "TELEGRAM_BOT_TOKEN",
+    "docsUrl": "https://core.telegram.org/bots/api#authorizing-your-bot",
+    "requiredApis": [
+      {
+        "name": "Telegram bot (created via @BotFather)",
+        "enableUrl": "https://t.me/botfather"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "TELEGRAM_BOT_TOKEN",
+      "description": "Telegram bot token issued by @BotFather, in the form 123456789:ABC-DEF...",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://core.telegram.org/bots/features#botfather"
+    }
+  ],
+  "tools": [
+    {
+      "id": "send_message",
+      "name": "Send Message",
+      "description": "Send a text message to a chat, group, or channel the bot has access to",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot{{auth.token}}/sendMessage",
+        "body": {
+          "chat_id": {
+            "type": "string",
+            "description": "Unique identifier of the target chat (numeric id from getUpdates) or channel username in the form @channelusername",
+            "required": true
+          },
+          "text": {
+            "type": "string",
+            "description": "Text of the message to send (1-4096 characters after entities parsing)",
+            "required": true
+          },
+          "parse_mode": {
+            "type": "string",
+            "description": "Formatting mode for the text: MarkdownV2, HTML, or Markdown (legacy). Omit for plain text"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_updates",
+      "name": "Get Updates",
+      "description": "Receive incoming updates (messages sent to the bot) via long polling; use it to discover chat ids",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.telegram.org/bot{{auth.token}}/getUpdates",
+        "params": {
+          "offset": {
+            "type": "number",
+            "in": "query",
+            "description": "Identifier of the first update to return; pass the highest received update_id + 1 to confirm earlier updates"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum number of updates to retrieve (1-100)",
+            "default": 100
+          },
+          "timeout": {
+            "type": "number",
+            "in": "query",
+            "description": "Timeout in seconds for long polling; 0 returns immediately",
+            "default": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "get_me",
+      "name": "Get Me",
+      "description": "Return basic information about the bot itself; useful for verifying the token works",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.telegram.org/bot{{auth.token}}/getMe"
+      }
+    },
+    {
+      "id": "send_photo",
+      "name": "Send Photo",
+      "description": "Send a photo to a chat by passing a publicly reachable HTTP URL or an existing Telegram file_id",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot{{auth.token}}/sendPhoto",
+        "body": {
+          "chat_id": {
+            "type": "string",
+            "description": "Unique identifier of the target chat or channel username in the form @channelusername",
+            "required": true
+          },
+          "photo": {
+            "type": "string",
+            "description": "HTTP URL of the photo for Telegram to fetch (max 10 MB), or a file_id of a photo already on Telegram servers",
+            "required": true
+          },
+          "caption": {
+            "type": "string",
+            "description": "Photo caption (0-1024 characters after entities parsing)"
+          }
+        }
+      }
+    },
+    {
+      "id": "edit_message_text",
+      "name": "Edit Message Text",
+      "description": "Edit the text of a message previously sent by the bot",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot{{auth.token}}/editMessageText",
+        "body": {
+          "chat_id": {
+            "type": "string",
+            "description": "Unique identifier of the chat containing the message, or channel username in the form @channelusername",
+            "required": true
+          },
+          "message_id": {
+            "type": "number",
+            "description": "Identifier of the message to edit (as returned when the message was sent)",
+            "required": true
+          },
+          "text": {
+            "type": "string",
+            "description": "New text of the message (1-4096 characters after entities parsing)",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "SETUP_GUIDE": {
+    "title": "Telegram setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a bot with @BotFather",
+        "description": "In any Telegram client (a regular free Telegram account works), open a chat with @BotFather, send /newbot, and follow the prompts to pick a display name and a unique username ending in 'bot'. BotFather replies with the bot token."
+      },
+      {
+        "step": 2,
+        "title": "Store the token",
+        "description": "Set the token from BotFather as TELEGRAM_BOT_TOKEN. You can regenerate it at any time with /revoke in @BotFather, which invalidates the old token."
+      },
+      {
+        "step": 3,
+        "title": "Open a chat with the bot",
+        "description": "Bots cannot message users first. Start a direct chat with your bot (or add it to a group) and send it a message; the chat then appears in getUpdates, where you can read the numeric chat_id used to address messages."
+      }
+    ],
+    "notes": [
+      "The Telegram Bot API authenticates by embedding the bot token in the request URL path (https://api.telegram.org/bot<token>/<method>); it does not accept the token in an HTTP header.",
+      "Keep the token secret: anyone who has it fully controls the bot."
+    ],
+    "documentation": "https://core.telegram.org/bots/api"
+  }
+}

@@ -1,0 +1,413 @@
+{
+  "name": "lexoffice",
+  "displayName": "Lexware Office",
+  "icon": "lexoffice.svg",
+  "description": "Manage invoices, vouchers, contacts, and receipt uploads in Lexware Office (formerly lexoffice) bookkeeping",
+  "category": "finance",
+  "auth": {
+    "type": "api-key",
+    "keyName": "LEXOFFICE_API_KEY",
+    "headerName": "Authorization",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://developers.lexware.io/docs/",
+    "requiredApis": [
+      {
+        "name": "Lexware Office Public API key",
+        "enableUrl": "https://app.lexware.de/addons/public-api"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "LEXOFFICE_API_KEY",
+      "description": "Lexware Office (lexoffice) Public API key, created in the Lexware Office app under Add-ons > Public API",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://app.lexware.de/addons/public-api"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_vouchers",
+      "name": "List Vouchers",
+      "description": "List and filter bookkeeping vouchers (sales and purchase invoices, credit notes) via the voucherlist, e.g. to find open or overdue invoices",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.lexware.io/v1/voucherlist",
+        "params": {
+          "voucherType": {
+            "type": "string",
+            "in": "query",
+            "description": "Required. Comma-separated voucher types or 'any'. Types include salesinvoice, salescreditnote, purchaseinvoice, purchasecreditnote, invoice, downpaymentinvoice, creditnote, orderconfirmation, quotation, deliverynote.",
+            "required": true,
+            "default": "any"
+          },
+          "voucherStatus": {
+            "type": "string",
+            "in": "query",
+            "description": "Required. Comma-separated statuses or 'any'. Statuses include draft, open, paid, paidoff, voided, transferred, sepadebit, overdue, accepted, rejected, and unchecked (bookkeeping vouchers created via file upload that still lack mandatory information).",
+            "required": true,
+            "default": "any"
+          },
+          "archived": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Filter by archived flag"
+          },
+          "contactId": {
+            "type": "string",
+            "in": "query",
+            "description": "Only vouchers for this contact UUID"
+          },
+          "voucherDateFrom": {
+            "type": "string",
+            "in": "query",
+            "description": "Earliest voucher date, format yyyy-MM-dd"
+          },
+          "voucherDateTo": {
+            "type": "string",
+            "in": "query",
+            "description": "Latest voucher date, format yyyy-MM-dd"
+          },
+          "voucherNumber": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by exact voucher number"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Zero-based page index",
+            "default": 0
+          },
+          "size": {
+            "type": "number",
+            "in": "query",
+            "description": "Page size (max 250)",
+            "default": 25
+          }
+        },
+        "response": {
+          "transform": "content"
+        }
+      }
+    },
+    {
+      "id": "get_invoice",
+      "name": "Get Invoice",
+      "description": "Retrieve a single invoice with line items, totals, tax conditions, and payment status",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.lexware.io/v1/invoices/{invoiceId}",
+        "params": {
+          "invoiceId": {
+            "type": "string",
+            "in": "path",
+            "description": "Invoice UUID, e.g. from the voucherlist",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_invoice",
+      "name": "Create Invoice",
+      "description": "Create a sales invoice. Created as an editable draft by default; set finalize=true to immediately open it",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.lexware.io/v1/invoices",
+        "params": {
+          "finalize": {
+            "type": "boolean",
+            "in": "query",
+            "description": "If true the invoice is finalized with status open instead of draft",
+            "default": false
+          }
+        },
+        "body": {
+          "voucherDate": {
+            "type": "string",
+            "description": "Invoice date in RFC 3339 format, e.g. 2026-06-01T00:00:00.000+02:00",
+            "required": true
+          },
+          "address": {
+            "type": "object",
+            "description": "Recipient address: either { contactId } of an existing contact or a manual address with name, street, city, zip, countryCode",
+            "required": true
+          },
+          "lineItems": {
+            "type": "array",
+            "description": "Line items, each with type (custom or text), name, quantity, unitName, and unitPrice { currency, netAmount, taxRatePercentage }",
+            "required": true
+          },
+          "totalPrice": {
+            "type": "object",
+            "description": "Total price object, at minimum { \"currency\": \"EUR\" }",
+            "required": true
+          },
+          "taxConditions": {
+            "type": "object",
+            "description": "Tax conditions, e.g. { \"taxType\": \"net\" }",
+            "required": true
+          },
+          "shippingConditions": {
+            "type": "object",
+            "description": "Optional shipping conditions with shippingDate and shippingType"
+          },
+          "title": {
+            "type": "string",
+            "description": "Optional document title, defaults to Rechnung"
+          },
+          "introduction": {
+            "type": "string",
+            "description": "Optional introduction text above the line items"
+          },
+          "remark": {
+            "type": "string",
+            "description": "Optional closing remark below the line items"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_contacts",
+      "name": "List Contacts",
+      "description": "List and filter customers and vendors, e.g. to find the contactId for an invoice",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.lexware.io/v1/contacts",
+        "params": {
+          "email": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by email address (substring match, min 3 characters)"
+          },
+          "name": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by company or person name (substring match, min 3 characters)"
+          },
+          "number": {
+            "type": "number",
+            "in": "query",
+            "description": "Filter by customer or vendor number"
+          },
+          "customer": {
+            "type": "boolean",
+            "in": "query",
+            "description": "If true only contacts with a customer role; if false only contacts without one"
+          },
+          "vendor": {
+            "type": "boolean",
+            "in": "query",
+            "description": "If true only contacts with a vendor role; if false only contacts without one"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Zero-based page index",
+            "default": 0
+          },
+          "size": {
+            "type": "number",
+            "in": "query",
+            "description": "Page size (max 250)",
+            "default": 25
+          }
+        },
+        "response": {
+          "transform": "content"
+        }
+      }
+    },
+    {
+      "id": "create_contact",
+      "name": "Create Contact",
+      "description": "Create a customer or vendor contact for use on invoices and vouchers",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.lexware.io/v1/contacts",
+        "body": {
+          "version": {
+            "type": "number",
+            "description": "Optimistic locking version, must be 0 when creating",
+            "required": true,
+            "default": 0
+          },
+          "roles": {
+            "type": "object",
+            "description": "Roles of the contact: { \"customer\": {} } and/or { \"vendor\": {} }",
+            "required": true
+          },
+          "company": {
+            "type": "object",
+            "description": "Company details with name and optional taxNumber, vatRegistrationId, contactPersons. Provide exactly one of company or person."
+          },
+          "person": {
+            "type": "object",
+            "description": "Person details with firstName and lastName. Provide exactly one of company or person."
+          },
+          "addresses": {
+            "type": "object",
+            "description": "Optional addresses: { \"billing\": [...], \"shipping\": [...] }"
+          },
+          "emailAddresses": {
+            "type": "object",
+            "description": "Optional email addresses grouped by type, e.g. { \"business\": [\"a@b.de\"] }"
+          },
+          "phoneNumbers": {
+            "type": "object",
+            "description": "Optional phone numbers grouped by type, e.g. { \"business\": [\"+49...\"] }"
+          },
+          "note": {
+            "type": "string",
+            "description": "Optional free-text note"
+          }
+        }
+      }
+    },
+    {
+      "id": "upload_voucher_file",
+      "name": "Upload Voucher File",
+      "description": "Upload a receipt image or invoice file (pdf, jpg, png, xml; max 5 MB) for bookkeeping; returns the file id and the id of the voucher created for it",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.lexware.io/v1/files",
+        "contentType": "multipart/form-data",
+        "bodyMode": "form-data",
+        "body": {
+          "file": {
+            "type": "string",
+            "description": "Base64-encoded file content, sent decoded as the binary multipart 'file' part. Allowed formats: pdf, jpg, png, xml; max 5 MB.",
+            "required": true,
+            "encoding": "base64",
+            "partFilenameField": "file_name"
+          },
+          "file_name": {
+            "type": "string",
+            "description": "Filename for the uploaded file, e.g. receipt.pdf; the extension must match one of the allowed formats",
+            "required": true
+          },
+          "type": {
+            "type": "string",
+            "description": "Upload type; must be 'voucher'",
+            "required": true,
+            "default": "voucher"
+          }
+        }
+      }
+    },
+    {
+      "id": "download_file",
+      "name": "Download File",
+      "description": "Download an uploaded bookkeeping voucher file (receipt/invoice image) as binary data by its file id; Content-Type and Content-Disposition response headers carry the MIME type and suggested filename. For sales voucher documents prefer the document render flow.",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.lexware.io/v1/files/{fileId}",
+        "params": {
+          "fileId": {
+            "type": "string",
+            "in": "path",
+            "description": "File id (UUID), e.g. from Upload Voucher File or a voucher's files list",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "get_invoice_document",
+      "name": "Get Invoice Document",
+      "description": "Trigger PDF rendering for an invoice and return its documentFileId, which can then be downloaded via Download File. Required for invoices created through the API with status open; draft invoices have no document file and are rejected with 406.",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.lexware.io/v1/invoices/{id}/document",
+        "params": {
+          "id": {
+            "type": "string",
+            "in": "path",
+            "description": "Invoice id (UUID)",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "get_payments",
+      "name": "Get Payments",
+      "description": "Get the payment status of an invoice or voucher: open amount, paid date, and payment items — the reliable way to check who actually paid",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.lexware.io/v1/payments/{voucherId}",
+        "params": {
+          "voucherId": {
+            "type": "string",
+            "in": "path",
+            "description": "Id (UUID) of the invoice, credit note, or voucher to read payment information for",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "open_invoices",
+      "title": "Open invoices",
+      "prompt": "List my open and overdue invoices in Lexware Office and summarize the outstanding amounts.",
+      "category": "finance",
+      "icon": "currency"
+    },
+    {
+      "id": "draft_invoice",
+      "title": "Draft an invoice",
+      "prompt": "Create a draft invoice in Lexware Office for a customer; ask me for the line items first.",
+      "category": "finance",
+      "icon": "document"
+    },
+    {
+      "id": "file_receipt",
+      "title": "File a receipt",
+      "prompt": "Upload this receipt to Lexware Office as a bookkeeping voucher.",
+      "category": "finance",
+      "icon": "upload"
+    }
+  ],
+  "suggestedWith": ["gmail", "drive", "slack"],
+  "SETUP_GUIDE": {
+    "title": "Lexware Office setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Lexware Office account",
+        "description": "Sign up at https://www.lexware.de (Lexware Office, formerly lexoffice). A regular trial account is sufficient for testing the Public API; there is no separate sandbox environment."
+      },
+      {
+        "step": 2,
+        "title": "Generate an API key",
+        "description": "Log in to the Lexware Office app and open https://app.lexware.de/addons/public-api to create your Public API key. Only account administrators can create keys."
+      },
+      {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Set the key as LEXOFFICE_API_KEY. It is sent as a Bearer token in the Authorization header on every request."
+      }
+    ],
+    "notes": [
+      "Since the rebranding from lexoffice to Lexware, the canonical API gateway is https://api.lexware.io (changed 26 May 2025). The legacy gateway api.lexoffice.io was only kept available until December 2025, so all tools use the new domain.",
+      "The API is rate limited to 2 requests per second per client; HTTP 429 is returned when exceeded.",
+      "POST /v1/files is a multipart/form-data upload: the binary file goes in the 'file' part and the upload type ('voucher') in the 'type' part.",
+      "Invoices created via the API are drafts by default; pass finalize=true to create them with status open. Finalized invoices can no longer be edited freely.",
+      "voucherType and voucherStatus are mandatory on the voucherlist endpoint; use 'any' to avoid filtering."
+    ],
+    "documentation": "https://developers.lexware.io/docs/"
+  }
+}

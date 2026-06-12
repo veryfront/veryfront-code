@@ -1,0 +1,223 @@
+{
+  "name": "voyage-ai",
+  "displayName": "Voyage AI",
+  "icon": "voyage-ai.svg",
+  "description": "Create text and contextualized chunk embeddings and rerank documents with Voyage AI models for retrieval and RAG pipelines",
+  "auth": {
+    "type": "api-key",
+    "keyName": "VOYAGE_API_KEY",
+    "headerName": "Authorization",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://docs.voyageai.com/docs/api-key-and-installation",
+    "requiredApis": [
+      {
+        "name": "Voyage AI Dashboard API Keys",
+        "enableUrl": "https://dashboard.voyageai.com"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "VOYAGE_API_KEY",
+      "description": "Voyage AI API key from the Voyage dashboard (starts with pa-)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.voyageai.com/docs/api-key-and-installation"
+    }
+  ],
+  "tools": [
+    {
+      "id": "create_embeddings",
+      "name": "Create Embeddings",
+      "description": "Create embedding vectors for one or more texts — use input_type to optimize for retrieval queries vs documents",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.voyageai.com/v1/embeddings",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Embedding model, e.g. voyage-3.5, voyage-3.5-lite, voyage-3-large, or voyage-code-3",
+            "required": true
+          },
+          "input": {
+            "type": "array",
+            "description": "Texts to embed as an array of strings (max 1,000 items)",
+            "required": true
+          },
+          "input_type": {
+            "type": "string",
+            "description": "Set 'query' for search queries or 'document' for corpus documents; omit for general-purpose embeddings"
+          },
+          "output_dimension": {
+            "type": "number",
+            "description": "Embedding dimensions: 256, 512, 1024 (default), or 2048 on supported models"
+          },
+          "output_dtype": {
+            "type": "string",
+            "description": "Output data type: float (default), int8, uint8, binary, or ubinary"
+          },
+          "truncation": {
+            "type": "boolean",
+            "description": "Truncate inputs that exceed the model context length (default true); if false, over-length inputs error"
+          }
+        }
+      }
+    },
+    {
+      "id": "rerank_documents",
+      "name": "Rerank Documents",
+      "description": "Rank candidate documents by relevance to a query with a Voyage reranker — use as a precision pass after vector search",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.voyageai.com/v1/rerank",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Reranker model, e.g. rerank-2.5 or rerank-2.5-lite",
+            "required": true
+          },
+          "query": {
+            "type": "string",
+            "description": "The search query to rank documents against",
+            "required": true
+          },
+          "documents": {
+            "type": "array",
+            "description": "Candidate document texts as an array of strings (max 1,000)",
+            "required": true
+          },
+          "top_k": {
+            "type": "number",
+            "description": "Return only the top K most relevant documents (default: all)"
+          },
+          "return_documents": {
+            "type": "boolean",
+            "description": "Include the document texts in the response, not just indices and scores (default false)"
+          },
+          "truncation": {
+            "type": "boolean",
+            "description": "Truncate query/documents that exceed the model context length (default true)"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_contextualized_embeddings",
+      "name": "Create Contextualized Embeddings",
+      "description": "Embed document chunks with document-level context (voyage-context-3) so each chunk vector also captures the surrounding document",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.voyageai.com/v1/contextualizedembeddings",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Contextualized embedding model, e.g. voyage-context-3",
+            "required": true
+          },
+          "inputs": {
+            "type": "array",
+            "description": "List of lists of strings: each inner list is the ordered chunks of one document (or a single query). Max 1,000 inner lists, 16K chunks, 120K tokens total",
+            "required": true
+          },
+          "input_type": {
+            "type": "string",
+            "description": "Set 'query' for search queries or 'document' for corpus documents; omit for general-purpose embeddings"
+          },
+          "output_dimension": {
+            "type": "number",
+            "description": "Embedding dimensions for voyage-context-3: 256, 512, 1024 (default), or 2048"
+          },
+          "output_dtype": {
+            "type": "string",
+            "description": "Output data type: float (default), int8, uint8, binary, or ubinary"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_multimodal_embeddings",
+      "name": "Create Multimodal Embeddings",
+      "description": "Embed interleaved text and images into one vector space (voyage-multimodal models) for visual RAG over screenshots, slides, and PDFs",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.voyageai.com/v1/multimodalembeddings",
+        "body": {
+          "model": {
+            "type": "string",
+            "description": "Multimodal embedding model, e.g. voyage-multimodal-3.5 or voyage-multimodal-3",
+            "required": true
+          },
+          "inputs": {
+            "type": "array",
+            "description": "List of input objects (max 1,000), each with a 'content' array of parts: {\"type\": \"text\", \"text\": ...} and {\"type\": \"image_url\", \"image_url\": ...} or {\"type\": \"image_base64\", \"image_base64\": \"data:image/png;base64,...\"} — don't mix URL and base64 images in one request",
+            "required": true
+          },
+          "input_type": {
+            "type": "string",
+            "description": "Set 'query' for search queries or 'document' for corpus documents; omit for general-purpose embeddings"
+          },
+          "truncation": {
+            "type": "boolean",
+            "description": "Truncate inputs that exceed the context length (default true)"
+          },
+          "output_encoding": {
+            "type": "string",
+            "description": "Set 'base64' for base64-encoded embeddings; omit for plain float arrays"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "embed_texts",
+      "title": "Embed texts",
+      "prompt": "Create Voyage AI embeddings for the texts I provide and report the model, dimensions, and token usage.",
+      "category": "ai",
+      "icon": "sparkles"
+    },
+    {
+      "id": "rerank_results",
+      "title": "Rerank search results",
+      "prompt": "Use Voyage AI rerank-2.5 to order a list of documents I provide by relevance to my query and show the relevance scores.",
+      "category": "ai",
+      "icon": "list"
+    }
+  ],
+  "suggestedWith": ["pinecone", "qdrant", "neo4j"],
+  "SETUP_GUIDE": {
+    "title": "Voyage AI API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Voyage AI account",
+        "description": "Sign up at https://dashboard.voyageai.com. New accounts include free trial tokens for every model, which is enough for evaluation without billing."
+      },
+      {
+        "step": 2,
+        "title": "Create an API key",
+        "description": "In the dashboard, open the API Keys section and create a new key. Copy it immediately."
+      },
+      {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Add VOYAGE_API_KEY=... to your .env file. Requests authenticate with an Authorization: Bearer header."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the Create Embeddings tool with model voyage-3.5 and a single short input string. A 401 means the key is wrong or revoked."
+      }
+    ],
+    "notes": [
+      "Use the same embedding model (and input_type convention) for indexing and querying — vectors from different models are not comparable",
+      "Contextualized chunk embeddings (voyage-context-3) expect each inner list to be one document's chunks in order; regular embeddings treat every array item independently",
+      "Usage beyond the free trial tokens is billed per million tokens and requires adding a payment method in the dashboard"
+    ],
+    "documentation": "https://docs.voyageai.com/reference/embeddings-api"
+  }
+}

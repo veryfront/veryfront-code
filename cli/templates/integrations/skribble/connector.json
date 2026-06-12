@@ -1,0 +1,62 @@
+{
+  "name": "skribble",
+  "displayName": "Skribble",
+  "icon": "skribble.svg",
+  "description": "Request and track eIDAS/ZertES-compliant electronic signatures on documents through the Skribble e-signing API",
+  "category": "legal",
+  "auth": {
+    "type": "basic",
+    "usernameKey": "SKRIBBLE_API_USERNAME",
+    "passwordKey": "SKRIBBLE_API_KEY",
+    "docsUrl": "https://api-doc.skribble.com/",
+    "requiredApis": [
+      {
+        "name": "Skribble API key (Admin area > API keys)",
+        "enableUrl": "https://my.skribble.com/"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "SKRIBBLE_API_USERNAME",
+      "description": "Skribble API username shown when the API key is created (for example api_demo_yourcompany)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://docs.skribble.com/business-admin/api/apicreate.html"
+    },
+    {
+      "name": "SKRIBBLE_API_KEY",
+      "description": "Skribble API key (acts as the password for the API username); shown only once at creation and cannot be recovered afterwards",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.skribble.com/business-admin/api/apicreate.html"
+    }
+  ],
+  "tools": [],
+  "SETUP_GUIDE": {
+    "title": "Skribble setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Get a Skribble plan with API access",
+        "description": "API integration is available on Skribble's Pro, Scale, Business, and Enterprise plans. For development you can use Demo API keys: signatures requested with them carry no legal weight and are free of charge, so a demo key is the recommended way to test."
+      },
+      {
+        "step": 2,
+        "title": "Create an API key",
+        "description": "Sign in to Skribble, click 'Admin area' in the lower-left, go to 'API keys', and click 'Create API key' at the top right. Choose Demo (testing) or Production (live, invoiced signatures) and optionally add a description."
+      },
+      {
+        "step": 3,
+        "title": "Store the credentials",
+        "description": "On the next screen Skribble shows your API username and the API key (your password). Copy both immediately — the key cannot be recovered after you close the window. Set them as SKRIBBLE_API_USERNAME and SKRIBBLE_API_KEY."
+      }
+    ],
+    "notes": [
+      "The Skribble API uses a two-step authentication: you POST the username and API key as JSON to https://api.skribble.com/v2/access/login, which returns a JWT access token valid for about 20 minutes, and every subsequent API call sends that token as 'Authorization: Bearer <token>'.",
+      "Because of this login-then-Bearer token exchange, hosted tools for this connector are not yet enabled; the credentials are still collected so signature-request tools can light up once runtime token-exchange support is available.",
+      "There is no logout endpoint — the access token simply expires after its lifetime."
+    ],
+    "documentation": "https://api-doc.skribble.com/"
+  }
+}

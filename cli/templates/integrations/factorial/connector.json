@@ -1,0 +1,295 @@
+{
+  "name": "factorial",
+  "displayName": "Factorial",
+  "icon": "factorial.svg",
+  "description": "Access Factorial HR employees, teams, and time-off data, and create leave requests",
+  "category": "hr",
+  "auth": {
+    "type": "api-key",
+    "keyName": "FACTORIAL_API_KEY",
+    "headerName": "x-api-key",
+    "docsUrl": "https://apidoc.factorialhr.com/docs/api-keys",
+    "requiredApis": [
+      {
+        "name": "Factorial API key (created by an administrator in the Factorial platform)",
+        "enableUrl": "https://help.factorialhr.com/how-to-create-api-keys-in-factorial"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "FACTORIAL_API_KEY",
+      "description": "Factorial API key, sent without any prefix in the x-api-key header. API keys grant total access and never expire, so store securely.",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://apidoc.factorialhr.com/docs/api-keys"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_employees",
+      "name": "List Employees",
+      "description": "List employees in the Factorial account, with filters for name, activity status, and team",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.factorialhr.com/api/2026-04-01/resources/employees/employees",
+        "params": {
+          "only_active": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Return only currently active employees",
+            "required": true,
+            "default": true
+          },
+          "only_managers": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Return only employees who are managers",
+            "required": true,
+            "default": false
+          },
+          "full_text_name": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter employees by name (full-text match)"
+          },
+          "emails": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Filter by employee email addresses",
+            "queryName": "emails[]"
+          },
+          "team_ids": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Filter by team IDs",
+            "queryName": "team_ids[]"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_employee",
+      "name": "Get Employee",
+      "description": "Get a single Factorial employee record by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.factorialhr.com/api/2026-04-01/resources/employees/employees/{id}",
+        "params": {
+          "id": {
+            "type": "string",
+            "in": "path",
+            "description": "Factorial employee ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_leaves",
+      "name": "List Leaves",
+      "description": "List time-off leaves (absences) with filters for employee, date range, and approval status",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.factorialhr.com/api/2026-04-01/resources/timeoff/leaves",
+        "params": {
+          "include_deleted_leaves": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Whether to include deleted leave records",
+            "required": true,
+            "default": false
+          },
+          "employee_ids": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Filter leaves by employee IDs",
+            "queryName": "employee_ids[]"
+          },
+          "from": {
+            "type": "string",
+            "in": "query",
+            "description": "Only leaves starting on or after this date (YYYY-MM-DD)"
+          },
+          "to": {
+            "type": "string",
+            "in": "query",
+            "description": "Only leaves up to this date (YYYY-MM-DD)"
+          },
+          "approved": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Filter by approval status"
+          },
+          "only_active": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Return only currently active leaves"
+          },
+          "include_leave_type": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include leave type information in the response"
+          },
+          "include_duration": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include computed leave duration in the response"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_leave",
+      "name": "Create Leave",
+      "description": "Create a time-off leave (absence) for an employee, such as vacation or sick leave",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.factorialhr.com/api/2026-04-01/resources/timeoff/leaves",
+        "body": {
+          "employee_id": {
+            "type": "number",
+            "description": "Factorial employee ID the leave belongs to",
+            "required": true
+          },
+          "start_on": {
+            "type": "string",
+            "description": "Leave start date (YYYY-MM-DD)",
+            "required": true
+          },
+          "finish_on": {
+            "type": "string",
+            "description": "Leave end date (YYYY-MM-DD)"
+          },
+          "leave_type_id": {
+            "type": "number",
+            "description": "Leave type ID (for example vacation or sick leave) configured in Factorial"
+          },
+          "description": {
+            "type": "string",
+            "description": "Free-text reason or note for the leave"
+          },
+          "half_day": {
+            "type": "string",
+            "description": "Mark the leave as a half day: beginning_of_day or end_of_day"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_teams",
+      "name": "List Teams",
+      "description": "List all teams in the Factorial account, useful before filtering employees by team",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.factorialhr.com/api/2026-04-01/resources/teams/teams",
+        "params": {
+          "ids": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Filter teams by IDs",
+            "queryName": "ids[]"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_leave_types",
+      "name": "List Leave Types",
+      "description": "List the leave types configured in the account (vacation, sick leave, ...) with their IDs — required to pick a valid leave_type_id for Create Leave",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.factorialhr.com/api/2026-04-01/resources/timeoff/leave_types",
+        "params": {
+          "ids": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Filter leave types by IDs",
+            "queryName": "ids[]"
+          },
+          "active": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Only active (true) or inactive (false) leave types"
+          },
+          "employee_id": {
+            "type": "number",
+            "in": "query",
+            "description": "Only leave types available to this employee"
+          }
+        }
+      }
+    },
+    {
+      "id": "delete_leave",
+      "name": "Delete Leave",
+      "description": "Delete (cancel) a leave request by its ID",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "DELETE",
+        "url": "https://api.factorialhr.com/api/2026-04-01/resources/timeoff/leaves/{id}",
+        "params": {
+          "id": {
+            "type": "number",
+            "in": "path",
+            "description": "Leave ID from List Leaves",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "whos_out",
+      "title": "Who is out this week",
+      "prompt": "List Factorial leaves overlapping the current week and summarize who is away, for how long, and whether the leave is approved.",
+      "category": "hr",
+      "icon": "calendar"
+    },
+    {
+      "id": "team_roster",
+      "title": "Team roster",
+      "prompt": "List Factorial teams, then list the active employees of a team I pick and summarize the roster.",
+      "category": "hr",
+      "icon": "users"
+    }
+  ],
+  "suggestedWith": [
+    "slack",
+    "calendar",
+    "sheets"
+  ],
+  "SETUP_GUIDE": {
+    "title": "Factorial setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Get a Factorial account with admin access",
+        "description": "Sign up at factorialhr.com (a free trial is available) or use an existing company account. Only administrators with full permissions can create and manage API keys."
+      },
+      {
+        "step": 2,
+        "title": "Create an API key",
+        "description": "As an administrator, generate an API key from the Factorial platform user interface (see https://help.factorialhr.com/how-to-create-api-keys-in-factorial). Copy the key value."
+      },
+      {
+        "step": 3,
+        "title": "Store the key",
+        "description": "Set the key as FACTORIAL_API_KEY. It is sent as-is in the x-api-key header, without any prefix."
+      }
+    ],
+    "notes": [
+      "Factorial API keys grant TOTAL access to the account and never expire — rotate them carefully and keep them secret.",
+      "The API is date-versioned per quarter (this connector uses the 2026-04-01 version); each version is supported for one year after release.",
+      "Regular (non-admin) users see a restricted version of employee data; admin-generated keys see everything."
+    ],
+    "documentation": "https://apidoc.factorialhr.com/"
+  }
+}

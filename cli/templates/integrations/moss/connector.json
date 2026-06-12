@@ -1,0 +1,359 @@
+{
+  "name": "moss",
+  "displayName": "Moss",
+  "icon": "moss.svg",
+  "description": "Read Moss spend management data: expenses (card transactions, invoices, reimbursements) with accounting detail, bank transactions, receipt files, and chart of accounts",
+  "category": "finance",
+  "auth": {
+    "type": "oauth2",
+    "grantType": "client_credentials",
+    "tokenUrl": "https://public-api.getmoss.com/oauth2/token",
+    "tokenAuthMethod": "request_body",
+    "scopes": ["read"],
+    "docsUrl": "https://developers.getmoss.com/",
+    "requiredApis": [
+      {
+        "name": "Moss API key (admin only)",
+        "enableUrl": "https://developers.getmoss.com/"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "MOSS_CLIENT_ID",
+      "description": "Moss API Key ID (starts with kid_), created by an admin under Settings > Platform > API Keys",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developers.getmoss.com/"
+    },
+    {
+      "name": "MOSS_CLIENT_SECRET",
+      "description": "Moss API Secret Key (starts with sk_) paired with the Key ID",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developers.getmoss.com/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_expenses",
+      "name": "List Expenses",
+      "description": "List expenses — card transactions, invoices, and reimbursements — with status, export status, and date filters; the basis for accounting exports",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://public-api.getmoss.com/v1/expenses",
+        "params": {
+          "type": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Filter by expense type: CARD_TRANSACTION, INVOICE, REIMBURSEMENT (repeatable)"
+          },
+          "status": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Filter by expense status, e.g. SUBMITTED, APPROVED, REJECTED, VERIFIED, COMPLETED (repeatable)"
+          },
+          "export_status": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Filter by accounting export status: NOT_EXPORTED, READY_FOR_EXPORT, EXPORT_PENDING, EXPORTED, EXPORT_FAILED (repeatable)"
+          },
+          "expense_date__gte": {
+            "type": "string",
+            "in": "query",
+            "description": "Expenses with expense date on or after this ISO 8601 date"
+          },
+          "expense_date__lte": {
+            "type": "string",
+            "in": "query",
+            "description": "Expenses with expense date on or before this ISO 8601 date"
+          },
+          "update_time__gte": {
+            "type": "string",
+            "in": "query",
+            "description": "Expenses last updated on or after this ISO 8601 timestamp (useful for incremental sync)"
+          },
+          "sort": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort by field with direction, format [+|-]field_name, e.g. -expense_date"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Items per page (max 100)",
+            "default": 20
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["data"],
+            "collectionName": "expenses",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "expenseType" },
+              { "name": "status" },
+              { "name": "homeAmount", "kind": "object" },
+              { "name": "supplierId" },
+              { "name": "expenseTime" },
+              { "name": "bookingText" }
+            ],
+            "omitted": "expense line items, accounting dimensions, and export metadata",
+            "outputFields": [{ "name": "meta", "kind": "object" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "search_bank_transactions",
+      "name": "Search Bank Transactions",
+      "description": "Search bank transactions of a Moss bank account within a booking-date window (read-only search query)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://public-api.getmoss.com/v1/bank-transactions/search-query",
+        "body": {
+          "filters": {
+            "type": "object",
+            "description": "Required filters: { \"bankAccountId\": \"<uuid>\", \"bookingDateFrom\": \"YYYY-MM-DD\", \"bookingDateTo\": \"YYYY-MM-DD\" } — all three fields are required",
+            "required": true
+          },
+          "pagination": {
+            "type": "object",
+            "description": "Optional pagination: { \"page\": 1, \"pageSize\": 20 } (pageSize max 100)"
+          },
+          "sort": {
+            "type": "object",
+            "description": "Optional sort: { \"sortBy\": \"bookingDate\", \"sortOrder\": \"ASC\" | \"DESC\" } (default DESC)"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_bank_accounts",
+      "name": "List Bank Accounts",
+      "description": "List the company's bank accounts in Moss (use the IDs with Search Bank Transactions)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://public-api.getmoss.com/v1/bank-accounts"
+      }
+    },
+    {
+      "id": "search_receipt_files",
+      "name": "Search Receipt Files",
+      "description": "Find receipt and invoice files attached to specific expenses (read-only search query); download via the returned file IDs",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://public-api.getmoss.com/v1/files/search-query",
+        "body": {
+          "filters": {
+            "type": "object",
+            "description": "Required filters: { \"expenseIds\": [\"<uuid>\", ...] } — up to 100 expense IDs",
+            "required": true
+          },
+          "pagination": {
+            "type": "object",
+            "description": "Optional pagination: { \"page\": 1, \"pageSize\": 20 } (pageSize max 100)"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_expense_accounts",
+      "name": "List Expense Accounts",
+      "description": "List the chart of accounts used for ledger posting, for mapping expenses into your accounting system",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://public-api.getmoss.com/v1/expense-accounts",
+        "params": {
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Items per page (max 100)",
+            "default": 20
+          },
+          "sort": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort by field with direction, format [+|-]field_name"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_suppliers",
+      "name": "List Suppliers",
+      "description": "List supplier master data for spend-by-vendor analysis and accounting export enrichment",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://public-api.getmoss.com/v1/suppliers",
+        "params": {
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by supplier status"
+          },
+          "update_time__gte": {
+            "type": "string",
+            "in": "query",
+            "description": "Suppliers last updated on or after this ISO 8601 timestamp"
+          },
+          "sort": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort by field with direction, format [+|-]field_name"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Items per page (max 100)",
+            "default": 20
+          }
+        }
+      }
+    },
+    {
+      "id": "get_file_content",
+      "name": "Get File Content",
+      "description": "Download the binary content of a receipt or invoice file (application/octet-stream) using a file ID from Search Receipt Files",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://public-api.getmoss.com/v1/files/{fileId}/content",
+        "params": {
+          "fileId": {
+            "type": "string",
+            "in": "path",
+            "description": "File UUID from Search Receipt Files",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "get_bank_account_balance",
+      "name": "Get Bank Account Balance",
+      "description": "Get the current balance of a Moss bank account for liquidity overviews",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://public-api.getmoss.com/v1/bank-accounts/{bankAccountId}/balance",
+        "params": {
+          "bankAccountId": {
+            "type": "string",
+            "in": "path",
+            "description": "Bank account UUID from List Bank Accounts",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_tax_rates",
+      "name": "List Tax Rates",
+      "description": "List VAT/tax rate master data for mapping expenses into the accounting system",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://public-api.getmoss.com/v1/tax-rates",
+        "params": {
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by tax rate status"
+          },
+          "sort": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort by field with direction, format [+|-]field_name (name, rate, or code)"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number (1-based)",
+            "default": 1
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Items per page (max 100)",
+            "default": 20
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "export_ready",
+      "title": "Expenses ready for export",
+      "prompt": "List Moss expenses with export status READY_FOR_EXPORT and summarize them by type and supplier.",
+      "category": "finance",
+      "icon": "document"
+    },
+    {
+      "id": "card_spend",
+      "title": "Card spend overview",
+      "prompt": "Show this month's Moss card transactions and break down spend by status.",
+      "category": "finance",
+      "icon": "payment"
+    },
+    {
+      "id": "missing_receipts",
+      "title": "Receipt check",
+      "prompt": "For my most recent approved Moss expenses, check which ones have receipt files attached.",
+      "category": "finance",
+      "icon": "search"
+    }
+  ],
+  "suggestedWith": ["qonto", "sheets", "slack"],
+  "SETUP_GUIDE": {
+    "title": "Moss setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create an API key",
+        "description": "As a Moss admin, go to Settings > Platform > API Keys in the Moss app and create a key. You receive a Key ID (kid_...) and a Secret Key (sk_...). Only admins can create API keys."
+      },
+      {
+        "step": 2,
+        "title": "Set environment variables",
+        "description": "Set MOSS_CLIENT_ID to the Key ID and MOSS_CLIENT_SECRET to the Secret Key."
+      },
+      {
+        "step": 3,
+        "title": "Verify access",
+        "description": "Run List Bank Accounts or List Expenses. Access tokens are minted automatically via the OAuth2 client_credentials grant at https://public-api.getmoss.com/oauth2/token (valid for 1 hour, scope 'read')."
+      }
+    ],
+    "notes": [
+      "This connector requests the 'read' scope only; Moss write endpoints (creating suppliers, dimensions, or dimension items) require scope 'write' and are not included.",
+      "Rate limits: 180 read requests/minute and 20 write requests/minute per company.",
+      "The Search Bank Transactions and Search Receipt Files tools use POST search-query endpoints but are read-only."
+    ],
+    "documentation": "https://developers.getmoss.com/"
+  }
+}

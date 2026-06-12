@@ -1,0 +1,369 @@
+{
+  "name": "adyen",
+  "displayName": "Adyen",
+  "icon": "adyen.svg",
+  "description": "Create Adyen payment sessions, check session results, list payment methods, and issue refunds via the Checkout API",
+  "category": "finance",
+  "auth": {
+    "type": "api-key",
+    "keyName": "ADYEN_API_KEY",
+    "headerName": "X-API-Key",
+    "docsUrl": "https://docs.adyen.com/development-resources/api-credentials/",
+    "requiredApis": [
+      {
+        "name": "Adyen API credential",
+        "enableUrl": "https://ca-test.adyen.com"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "ADYEN_API_KEY",
+      "description": "Adyen API key generated for your API credential in the Customer Area (Developers > API credentials)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.adyen.com/development-resources/api-credentials/"
+    },
+    {
+      "name": "ADYEN_MERCHANT_ACCOUNT",
+      "description": "Adyen merchant account name, passed as the merchantAccount field in API requests",
+      "required": false,
+      "sensitive": false,
+      "docsUrl": "https://docs.adyen.com/account/account-structure/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "create_payment_session",
+      "name": "Create Payment Session",
+      "description": "Create an Adyen Checkout payment session that a Drop-in or Component can use to collect payment",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{checkoutHost}/v71/sessions",
+        "params": {
+          "checkoutHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Adyen Checkout API host. Use checkout-test.adyen.com for test; for live use your prefixed host including the checkout path segment, e.g. {prefix}-checkout-live.adyenpayments.com/checkout",
+            "required": true,
+            "default": "checkout-test.adyen.com"
+          }
+        },
+        "body": {
+          "amount": {
+            "type": "object",
+            "description": "Amount object with currency (ISO 4217 code) and value in minor units, e.g. {\"currency\": \"EUR\", \"value\": 1000} for EUR 10.00",
+            "required": true
+          },
+          "merchantAccount": {
+            "type": "string",
+            "description": "Adyen merchant account name to process the payment with",
+            "required": true
+          },
+          "reference": {
+            "type": "string",
+            "description": "Your unique reference for this payment",
+            "required": true
+          },
+          "returnUrl": {
+            "type": "string",
+            "description": "URL the shopper returns to after completing the payment",
+            "required": true
+          },
+          "countryCode": {
+            "type": "string",
+            "description": "Shopper's two-letter country code, used to determine available payment methods"
+          },
+          "shopperReference": {
+            "type": "string",
+            "description": "Your unique shopper identifier, required for recurring payments"
+          },
+          "expiresAt": {
+            "type": "string",
+            "description": "ISO 8601 session expiry; defaults to 1 hour after creation, maximum 24 hours"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_session_result",
+      "name": "Get Session Result",
+      "description": "Get the final result of an Adyen payment session, including authorized payments and status",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{checkoutHost}/v71/sessions/{sessionId}",
+        "params": {
+          "checkoutHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Adyen Checkout API host. Use checkout-test.adyen.com for test; for live use your prefixed host including the checkout path segment, e.g. {prefix}-checkout-live.adyenpayments.com/checkout",
+            "required": true,
+            "default": "checkout-test.adyen.com"
+          },
+          "sessionId": {
+            "type": "string",
+            "in": "path",
+            "description": "Unique identifier of the payment session",
+            "required": true
+          },
+          "sessionResult": {
+            "type": "string",
+            "in": "query",
+            "description": "The sessionResult value returned by the Drop-in or Component",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_payment_methods",
+      "name": "List Payment Methods",
+      "description": "List the payment methods available for a merchant account, amount, and shopper country",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{checkoutHost}/v71/paymentMethods",
+        "params": {
+          "checkoutHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Adyen Checkout API host. Use checkout-test.adyen.com for test; for live use your prefixed host including the checkout path segment, e.g. {prefix}-checkout-live.adyenpayments.com/checkout",
+            "required": true,
+            "default": "checkout-test.adyen.com"
+          }
+        },
+        "body": {
+          "merchantAccount": {
+            "type": "string",
+            "description": "Adyen merchant account name",
+            "required": true
+          },
+          "amount": {
+            "type": "object",
+            "description": "Optional amount object with currency and value in minor units to filter methods"
+          },
+          "countryCode": {
+            "type": "string",
+            "description": "Shopper's two-letter country code"
+          },
+          "channel": {
+            "type": "string",
+            "description": "Sales channel: Web, iOS, or Android"
+          },
+          "shopperReference": {
+            "type": "string",
+            "description": "Your unique shopper identifier, used to return stored payment methods"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_payment_link",
+      "name": "Create Payment Link",
+      "description": "Create a hosted Pay by Link URL the shopper can open to pay, without needing a Drop-in or Component frontend",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{checkoutHost}/v71/paymentLinks",
+        "params": {
+          "checkoutHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Adyen Checkout API host. Use checkout-test.adyen.com for test; for live use your prefixed host including the checkout path segment, e.g. {prefix}-checkout-live.adyenpayments.com/checkout",
+            "required": true,
+            "default": "checkout-test.adyen.com"
+          }
+        },
+        "body": {
+          "amount": {
+            "type": "object",
+            "description": "Amount object with currency (ISO 4217 code) and value in minor units, e.g. {\"currency\": \"EUR\", \"value\": 1000} for EUR 10.00",
+            "required": true
+          },
+          "merchantAccount": {
+            "type": "string",
+            "description": "Adyen merchant account name to process the payment with",
+            "required": true
+          },
+          "reference": {
+            "type": "string",
+            "description": "Your unique reference for this payment link",
+            "required": true
+          },
+          "description": {
+            "type": "string",
+            "description": "Description shown to the shopper on the payment page"
+          },
+          "countryCode": {
+            "type": "string",
+            "description": "Shopper's two-letter country code, used to determine available payment methods"
+          },
+          "shopperEmail": {
+            "type": "string",
+            "description": "Shopper's email address"
+          },
+          "shopperReference": {
+            "type": "string",
+            "description": "Your unique shopper identifier, required for recurring payments"
+          },
+          "expiresAt": {
+            "type": "string",
+            "description": "ISO 8601 expiry of the link; defaults to 24 hours after creation"
+          },
+          "reusable": {
+            "type": "boolean",
+            "description": "Whether the link can be used for multiple payments (defaults to false)"
+          },
+          "returnUrl": {
+            "type": "string",
+            "description": "URL the shopper is redirected to after completing the payment"
+          }
+        }
+      }
+    },
+    {
+      "id": "capture_payment",
+      "name": "Capture Payment",
+      "description": "Capture an authorised Adyen payment (for manual-capture flows); the outcome arrives asynchronously via a CAPTURE webhook",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{checkoutHost}/v71/payments/{paymentPspReference}/captures",
+        "params": {
+          "checkoutHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Adyen Checkout API host. Use checkout-test.adyen.com for test; for live use your prefixed host including the checkout path segment, e.g. {prefix}-checkout-live.adyenpayments.com/checkout",
+            "required": true,
+            "default": "checkout-test.adyen.com"
+          },
+          "paymentPspReference": {
+            "type": "string",
+            "in": "path",
+            "description": "PSP reference of the authorised payment to capture",
+            "required": true
+          }
+        },
+        "body": {
+          "merchantAccount": {
+            "type": "string",
+            "description": "Adyen merchant account name the payment was processed with",
+            "required": true
+          },
+          "amount": {
+            "type": "object",
+            "description": "Amount to capture with currency and value in minor units; less than the authorised amount for a partial capture",
+            "required": true
+          },
+          "reference": {
+            "type": "string",
+            "description": "Your unique reference for this capture request"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_refund",
+      "name": "Create Refund",
+      "description": "Refund all or part of a captured Adyen payment; the outcome arrives asynchronously via a REFUND webhook",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{checkoutHost}/v71/payments/{paymentPspReference}/refunds",
+        "params": {
+          "checkoutHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Adyen Checkout API host. Use checkout-test.adyen.com for test; for live use your prefixed host including the checkout path segment, e.g. {prefix}-checkout-live.adyenpayments.com/checkout",
+            "required": true,
+            "default": "checkout-test.adyen.com"
+          },
+          "paymentPspReference": {
+            "type": "string",
+            "in": "path",
+            "description": "PSP reference of the payment to refund",
+            "required": true
+          }
+        },
+        "body": {
+          "merchantAccount": {
+            "type": "string",
+            "description": "Adyen merchant account name the payment was processed with",
+            "required": true
+          },
+          "amount": {
+            "type": "object",
+            "description": "Amount to refund with currency and value in minor units, e.g. {\"currency\": \"EUR\", \"value\": 500}",
+            "required": true
+          },
+          "reference": {
+            "type": "string",
+            "description": "Your unique reference for this refund request"
+          },
+          "merchantRefundReason": {
+            "type": "string",
+            "description": "Reason for the refund, such as FRAUD, CUSTOMER REQUEST, RETURN, DUPLICATE, or OTHER"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "start_payment",
+      "title": "Start a payment session",
+      "prompt": "Create an Adyen payment session for a given amount and currency, and give me the session details.",
+      "category": "finance",
+      "icon": "payment"
+    },
+    {
+      "id": "check_session",
+      "title": "Check session result",
+      "prompt": "Check the result of an Adyen payment session and summarize whether the payment succeeded.",
+      "category": "finance",
+      "icon": "search"
+    },
+    {
+      "id": "issue_refund",
+      "title": "Issue a refund",
+      "prompt": "Refund an Adyen payment by PSP reference: confirm the amount with me first, then submit the refund.",
+      "category": "finance",
+      "icon": "currency"
+    }
+  ],
+  "suggestedWith": ["slack", "sheets"],
+  "SETUP_GUIDE": {
+    "title": "Adyen setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create an Adyen test account",
+        "description": "Sign up for a free Adyen test account at https://www.adyen.com/signup. This gives you a test Customer Area at https://ca-test.adyen.com with a test merchant account."
+      },
+      {
+        "step": 2,
+        "title": "Generate an API key",
+        "description": "In the Customer Area, go to Developers > API credentials, select (or create) a credential, then under Server settings > Authentication open the API key tab and select Generate API key. Copy it immediately - it cannot be shown again after you leave the page."
+      },
+      {
+        "step": 3,
+        "title": "Configure environment variables",
+        "description": "Set ADYEN_API_KEY to the generated key. Optionally set ADYEN_MERCHANT_ACCOUNT to your merchant account name (shown in the Customer Area) - it is required as the merchantAccount field in every request body."
+      },
+      {
+        "step": 4,
+        "title": "Going live",
+        "description": "Live mode needs a separate API key generated in the live Customer Area (https://ca-live.adyen.com), and live API calls use your unique live URL prefix. Find the prefix under Developers > API URLs in the live Customer Area."
+      }
+    ],
+    "notes": [
+      "Each tool takes a checkoutHost parameter. For test, keep the default checkout-test.adyen.com. For live, pass your prefixed live host including the checkout path segment, e.g. 1797a841fbb37ca7-AdyenDemo-checkout-live.adyenpayments.com/checkout (test and live URLs have different structures).",
+      "Amounts are in minor units (e.g. value 1000 with currency EUR is EUR 10.00).",
+      "Refund outcomes are asynchronous: the API acknowledges the request and the final result is delivered via a REFUND webhook.",
+      "The Checkout API does not provide a payment listing endpoint; use get_session_result or webhooks to track payment outcomes."
+    ],
+    "documentation": "https://docs.adyen.com/api-explorer/Checkout/71/overview"
+  }
+}

@@ -1,0 +1,452 @@
+{
+  "name": "chargebee",
+  "displayName": "Chargebee",
+  "icon": "chargebee.svg",
+  "description": "Read Chargebee subscriptions, customers, and invoices and create customers for subscription billing",
+  "category": "finance",
+  "auth": {
+    "type": "basic",
+    "usernameKey": "CHARGEBEE_API_KEY",
+    "passwordKey": "CHARGEBEE_API_PASSWORD",
+    "docsUrl": "https://apidocs.chargebee.com/docs/api/auth",
+    "requiredApis": [
+      {
+        "name": "Chargebee API Keys",
+        "enableUrl": "https://www.chargebee.com"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "CHARGEBEE_API_KEY",
+      "description": "Chargebee API key, used as the HTTP Basic username (Settings → Configure Chargebee → API Keys and Webhooks)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://apidocs.chargebee.com/docs/api/auth"
+    },
+    {
+      "name": "CHARGEBEE_API_PASSWORD",
+      "description": "HTTP Basic password — Chargebee expects this to stay empty; leave it as an empty string",
+      "required": false,
+      "sensitive": false,
+      "default": ""
+    },
+    {
+      "name": "CHARGEBEE_SITE",
+      "description": "Chargebee site name (the subdomain of your Chargebee account, e.g. acme or acme-test)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://apidocs.chargebee.com/docs/api"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_subscriptions",
+      "name": "List Subscriptions",
+      "description": "List subscriptions with optional status or customer filtering",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{site}.chargebee.com/api/v2/subscriptions",
+        "params": {
+          "site": {
+            "type": "string",
+            "in": "path",
+            "description": "Chargebee site name (subdomain), e.g. acme or acme-test — same value as CHARGEBEE_SITE",
+            "required": true
+          },
+          "status[is]": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by subscription status: future, in_trial, active, non_renewing, paused, cancelled, or transferred"
+          },
+          "customer_id[is]": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return subscriptions belonging to this customer ID"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of subscriptions to return (1-100)",
+            "default": 25
+          },
+          "offset": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor: pass the next_offset value from the previous response"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["list"],
+            "collectionName": "subscriptions",
+            "itemFields": [{ "name": "subscription", "kind": "object" }],
+            "omitted": "nested customer and card objects returned alongside each subscription",
+            "outputFields": [{ "name": "next_offset" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_subscription",
+      "name": "Get Subscription",
+      "description": "Retrieve a single subscription with its plan, status, and billing details",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{site}.chargebee.com/api/v2/subscriptions/{subscriptionId}",
+        "params": {
+          "site": {
+            "type": "string",
+            "in": "path",
+            "description": "Chargebee site name (subdomain), e.g. acme or acme-test — same value as CHARGEBEE_SITE",
+            "required": true
+          },
+          "subscriptionId": {
+            "type": "string",
+            "in": "path",
+            "description": "Chargebee subscription ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_customers",
+      "name": "List Customers",
+      "description": "List customers with optional email filtering",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{site}.chargebee.com/api/v2/customers",
+        "params": {
+          "site": {
+            "type": "string",
+            "in": "path",
+            "description": "Chargebee site name (subdomain), e.g. acme or acme-test — same value as CHARGEBEE_SITE",
+            "required": true
+          },
+          "email[is]": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return customers with this exact email address"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of customers to return (1-100)",
+            "default": 25
+          },
+          "offset": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor: pass the next_offset value from the previous response"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["list"],
+            "collectionName": "customers",
+            "itemFields": [{ "name": "customer", "kind": "object" }],
+            "omitted": "nested card objects returned alongside each customer",
+            "outputFields": [{ "name": "next_offset" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "list_invoices",
+      "name": "List Invoices",
+      "description": "List invoices with optional status, customer, or subscription filtering",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{site}.chargebee.com/api/v2/invoices",
+        "params": {
+          "site": {
+            "type": "string",
+            "in": "path",
+            "description": "Chargebee site name (subdomain), e.g. acme or acme-test — same value as CHARGEBEE_SITE",
+            "required": true
+          },
+          "status[is]": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by invoice status: paid, posted, payment_due, not_paid, voided, or pending"
+          },
+          "customer_id[is]": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return invoices for this customer ID"
+          },
+          "subscription_id[is]": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return invoices for this subscription ID"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of invoices to return (1-100)",
+            "default": 25
+          },
+          "offset": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor: pass the next_offset value from the previous response"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["list"],
+            "collectionName": "invoices",
+            "itemFields": [{ "name": "invoice", "kind": "object" }],
+            "omitted": "invoice line items, discounts, and linked payment details",
+            "outputFields": [{ "name": "next_offset" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "list_item_prices",
+      "name": "List Item Prices",
+      "description": "List item prices (plans, addons, charges) in the catalog to find IDs and pricing for subscriptions",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{site}.chargebee.com/api/v2/item_prices",
+        "params": {
+          "site": {
+            "type": "string",
+            "in": "path",
+            "description": "Chargebee site name (subdomain), e.g. acme or acme-test — same value as CHARGEBEE_SITE",
+            "required": true
+          },
+          "item_id[is]": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return prices belonging to this item ID"
+          },
+          "item_type[is]": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by item type: plan, addon, or charge"
+          },
+          "status[is]": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by status: active, archived, or deleted"
+          },
+          "currency_code[is]": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by ISO 4217 currency code, e.g. USD"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of item prices to return (1-100)",
+            "default": 25
+          },
+          "offset": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor: pass the next_offset value from the previous response"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["list"],
+            "collectionName": "item prices",
+            "itemFields": [{ "name": "item_price", "kind": "object" }],
+            "omitted": "tier, tax, and accounting detail fields on each item price",
+            "outputFields": [{ "name": "next_offset" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_invoice",
+      "name": "Get Invoice",
+      "description": "Retrieve a single invoice with its line items, amounts due, and linked payments",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{site}.chargebee.com/api/v2/invoices/{invoiceId}",
+        "params": {
+          "site": {
+            "type": "string",
+            "in": "path",
+            "description": "Chargebee site name (subdomain), e.g. acme or acme-test — same value as CHARGEBEE_SITE",
+            "required": true
+          },
+          "invoiceId": {
+            "type": "string",
+            "in": "path",
+            "description": "Chargebee invoice ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_transactions",
+      "name": "List Transactions",
+      "description": "List payment-level transactions (payments, refunds, authorizations) behind invoices, e.g. to review failed payments",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{site}.chargebee.com/api/v2/transactions",
+        "params": {
+          "site": {
+            "type": "string",
+            "in": "path",
+            "description": "Chargebee site name (subdomain), e.g. acme or acme-test — same value as CHARGEBEE_SITE",
+            "required": true
+          },
+          "customer_id[is]": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return transactions for this customer ID"
+          },
+          "subscription_id[is]": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return transactions for this subscription ID"
+          },
+          "type[is]": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by transaction type: authorization, payment, refund, or payment_reversal"
+          },
+          "status[is]": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by status: in_progress, success, voided, failure, timeout, needs_attention, late_failure, or fraud_flag"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of transactions to return (1-100)",
+            "default": 25
+          },
+          "offset": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor: pass the next_offset value from the previous response"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["list"],
+            "collectionName": "transactions",
+            "itemFields": [{ "name": "transaction", "kind": "object" }],
+            "omitted": "linked invoice, payment, and refund detail objects on each transaction",
+            "outputFields": [{ "name": "next_offset" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "create_customer",
+      "name": "Create Customer",
+      "description": "Create a new customer record in Chargebee",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{site}.chargebee.com/api/v2/customers",
+        "contentType": "application/x-www-form-urlencoded",
+        "params": {
+          "site": {
+            "type": "string",
+            "in": "path",
+            "description": "Chargebee site name (subdomain), e.g. acme or acme-test — same value as CHARGEBEE_SITE",
+            "required": true
+          }
+        },
+        "body": {
+          "id": {
+            "type": "string",
+            "description": "Customer ID (max 50 chars); auto-generated by Chargebee if omitted"
+          },
+          "first_name": {
+            "type": "string",
+            "description": "Customer first name (max 150 chars)"
+          },
+          "last_name": {
+            "type": "string",
+            "description": "Customer last name (max 150 chars)"
+          },
+          "email": {
+            "type": "string",
+            "description": "Customer email address (max 70 chars)"
+          },
+          "company": {
+            "type": "string",
+            "description": "Company name (max 250 chars)"
+          },
+          "phone": {
+            "type": "string",
+            "description": "Phone number (max 50 chars)"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "active_subscriptions",
+      "title": "Active subscriptions",
+      "prompt": "List my active Chargebee subscriptions and summarize them by plan.",
+      "category": "finance",
+      "icon": "repeat"
+    },
+    {
+      "id": "unpaid_invoices",
+      "title": "Unpaid invoices",
+      "prompt": "Show Chargebee invoices with status payment_due or not_paid and which customers they belong to.",
+      "category": "finance",
+      "icon": "currency"
+    },
+    {
+      "id": "customer_lookup",
+      "title": "Customer lookup",
+      "prompt": "Look up a Chargebee customer by email and show their subscriptions and recent invoices.",
+      "category": "analytics",
+      "icon": "users"
+    }
+  ],
+  "suggestedWith": ["stripe", "slack", "sheets"],
+  "SETUP_GUIDE": {
+    "title": "Chargebee API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Chargebee account",
+        "description": "Sign up at https://www.chargebee.com. A test site (e.g. acme-test.chargebee.com) is created automatically when you sign up — use it for development before switching to your live site."
+      },
+      {
+        "step": 2,
+        "title": "Create an API key",
+        "description": "In the Chargebee app go to Settings → Configure Chargebee → API Keys and Webhooks → API Keys, click Add an API Key, choose Full-Access Key, and copy the generated key."
+      },
+      {
+        "step": 3,
+        "title": "Set environment variables",
+        "description": "Add CHARGEBEE_API_KEY (the key from step 2) and CHARGEBEE_SITE (your site subdomain, e.g. acme-test) to your .env. Leave CHARGEBEE_API_PASSWORD unset or empty — Chargebee uses the API key as the HTTP Basic username with an empty password."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Subscriptions with site set to your CHARGEBEE_SITE value. All requests go to https://{site}.chargebee.com/api/v2 over HTTPS."
+      }
+    ],
+    "notes": [
+      "API keys are environment-specific: your test site and live site have separate keys and separate site subdomains.",
+      "Chargebee filters use bracket operators in query parameter names, e.g. status[is]=active or email[is]=jane@example.com.",
+      "List endpoints paginate with an opaque next_offset string — pass it back as the offset parameter to fetch the next page."
+    ],
+    "documentation": "https://apidocs.chargebee.com/docs/api"
+  }
+}

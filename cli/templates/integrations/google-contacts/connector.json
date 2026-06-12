@@ -1,0 +1,332 @@
+{
+  "name": "google-contacts",
+  "displayName": "Google Contacts",
+  "icon": "google-contacts.svg",
+  "description": "Search, read, create, and update the authenticated user's Google Contacts via the People API",
+  "category": "productivity",
+  "auth": {
+    "type": "oauth2",
+    "provider": "google",
+    "authorizationUrl": "https://accounts.google.com/o/oauth2/v2/auth",
+    "tokenUrl": "https://oauth2.googleapis.com/token",
+    "scopes": [
+      "https://www.googleapis.com/auth/contacts.readonly"
+    ],
+    "optionalScopes": [
+      "https://www.googleapis.com/auth/contacts"
+    ],
+    "callbackPath": "/api/auth/google-contacts/callback",
+    "supportsRefreshToken": true,
+    "docsUrl": "https://developers.google.com/people/api/rest",
+    "requiredApis": [
+      {
+        "name": "Google People API",
+        "enableUrl": "https://console.cloud.google.com/apis/library/people.googleapis.com"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "GOOGLE_CLIENT_ID",
+      "description": "Google OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://console.cloud.google.com/apis/credentials"
+    },
+    {
+      "name": "GOOGLE_CLIENT_SECRET",
+      "description": "Google OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://console.cloud.google.com/apis/credentials"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_contacts",
+      "name": "List Contacts",
+      "description": "List the authenticated user's contacts (connections) with the requested person fields",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://people.googleapis.com/v1/people/me/connections",
+        "params": {
+          "personFields": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated person fields to return, e.g. names,emailAddresses,phoneNumbers,organizations",
+            "required": true,
+            "default": "names,emailAddresses,phoneNumbers"
+          },
+          "pageSize": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of contacts to return per page (max 1000)",
+            "default": 100
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Page token from a previous response for pagination"
+          },
+          "sortOrder": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort order: LAST_MODIFIED_ASCENDING, LAST_MODIFIED_DESCENDING, FIRST_NAME_ASCENDING, or LAST_NAME_ASCENDING"
+          }
+        },
+        "response": {
+          "transform": "connections"
+        }
+      }
+    },
+    {
+      "id": "search_contacts",
+      "name": "Search Contacts",
+      "description": "Search the user's contacts by prefix match on names, nicknames, email addresses, and phone numbers. For best results send a warmup request with an empty query first, then search.",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://people.googleapis.com/v1/people:searchContacts",
+        "params": {
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "Plain-text search query matched against prefix phrases (use an empty string for a cache warmup request)",
+            "required": true
+          },
+          "readMask": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated person fields to return, e.g. names,emailAddresses,phoneNumbers",
+            "required": true,
+            "default": "names,emailAddresses,phoneNumbers"
+          },
+          "pageSize": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of results to return (max 30)",
+            "default": 10
+          }
+        },
+        "response": {
+          "transform": "results"
+        }
+      }
+    },
+    {
+      "id": "get_contact",
+      "name": "Get Contact",
+      "description": "Get a single contact by person ID, including the etag needed for updates",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://people.googleapis.com/v1/people/{personId}",
+        "params": {
+          "personId": {
+            "type": "string",
+            "in": "path",
+            "description": "Person ID — the part after 'people/' in the contact's resourceName (e.g. for resourceName 'people/c123' pass 'c123'); use 'me' for the authenticated user",
+            "required": true
+          },
+          "personFields": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated person fields to return; include metadata to retrieve the etag and sources required for updates",
+            "required": true,
+            "default": "names,emailAddresses,phoneNumbers,organizations,metadata"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_contact_groups",
+      "name": "List Contact Groups",
+      "description": "List the user's contact groups (labels), including system groups and member counts, e.g. to organize or filter contacts",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://people.googleapis.com/v1/contactGroups",
+        "params": {
+          "pageSize": {
+            "type": "number",
+            "in": "query",
+            "description": "Number of groups to return per page (1-1000, defaults to 30)",
+            "default": 30
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Page token from a previous response for pagination"
+          },
+          "groupFields": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated group fields to return; defaults to metadata,groupType,memberCount,name"
+          }
+        },
+        "response": {
+          "transform": "contactGroups"
+        }
+      }
+    },
+    {
+      "id": "create_contact",
+      "name": "Create Contact",
+      "description": "Create a new contact in the user's Google Contacts (requires the full contacts scope)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://people.googleapis.com/v1/people:createContact",
+        "params": {
+          "personFields": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated person fields to return on the created contact",
+            "default": "names,emailAddresses,phoneNumbers,metadata"
+          }
+        },
+        "body": {
+          "names": {
+            "type": "array",
+            "description": "Array with a single {givenName, familyName} object (singleton field — at most one entry)",
+            "required": true
+          },
+          "emailAddresses": {
+            "type": "array",
+            "description": "Array of {value: 'email@example.com', type: 'work'|'home'|'other'} objects"
+          },
+          "phoneNumbers": {
+            "type": "array",
+            "description": "Array of {value: '+1...', type: 'mobile'|'work'|'home'} objects"
+          },
+          "organizations": {
+            "type": "array",
+            "description": "Array of {name: 'Company', title: 'Job title'} objects"
+          },
+          "addresses": {
+            "type": "array",
+            "description": "Array of postal address objects, e.g. {formattedValue, type}"
+          }
+        }
+      }
+    },
+    {
+      "id": "update_contact",
+      "name": "Update Contact",
+      "description": "Update an existing contact (requires the full contacts scope). You must pass updatePersonFields naming the fields you are changing, and the body must include the contact's current etag (fetch it with Get Contact including metadata first); a stale etag fails with a 400 failedPrecondition error.",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://people.googleapis.com/v1/people/{personId}:updateContact",
+        "params": {
+          "personId": {
+            "type": "string",
+            "in": "path",
+            "description": "Person ID — the part after 'people/' in the contact's resourceName (e.g. for resourceName 'people/c123' pass 'c123')",
+            "required": true
+          },
+          "updatePersonFields": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated field mask of the person fields being updated, e.g. names,emailAddresses,phoneNumbers",
+            "required": true
+          },
+          "personFields": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated person fields to return on the updated contact",
+            "default": "names,emailAddresses,phoneNumbers,metadata"
+          }
+        },
+        "body": {
+          "etag": {
+            "type": "string",
+            "description": "Current etag of the contact, from a preceding Get Contact call",
+            "required": true
+          },
+          "metadata": {
+            "type": "object",
+            "description": "Person metadata copied from Get Contact (must include sources, or the API returns a 400 error)",
+            "required": true
+          },
+          "names": {
+            "type": "array",
+            "description": "Updated names array with a single {givenName, familyName} object (include 'names' in updatePersonFields)"
+          },
+          "emailAddresses": {
+            "type": "array",
+            "description": "Updated array of {value, type} email objects (include 'emailAddresses' in updatePersonFields)"
+          },
+          "phoneNumbers": {
+            "type": "array",
+            "description": "Updated array of {value, type} phone objects (include 'phoneNumbers' in updatePersonFields)"
+          },
+          "organizations": {
+            "type": "array",
+            "description": "Updated array of {name, title} organization objects (include 'organizations' in updatePersonFields)"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "find_contact",
+      "title": "Find a contact",
+      "prompt": "Search my Google Contacts for a person and show their email address and phone number.",
+      "category": "productivity",
+      "icon": "search"
+    },
+    {
+      "id": "add_contact",
+      "title": "Add a new contact",
+      "prompt": "Create a new contact in my Google Contacts with name, email, and phone number.",
+      "category": "productivity",
+      "icon": "plus"
+    },
+    {
+      "id": "update_contact_info",
+      "title": "Update contact details",
+      "prompt": "Find a contact and update their email address or phone number in Google Contacts.",
+      "category": "productivity",
+      "icon": "edit"
+    }
+  ],
+  "suggestedWith": [
+    "gmail",
+    "calendar"
+  ],
+  "SETUP_GUIDE": {
+    "title": "Google Contacts setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create or reuse a Google Cloud project",
+        "description": "Go to https://console.cloud.google.com and create a project, or reuse the project that already hosts your shared Google OAuth app. Any free Google account works for testing — add a few contacts at https://contacts.google.com to have data to query."
+      },
+      {
+        "step": 2,
+        "title": "Enable the People API",
+        "description": "Open https://console.cloud.google.com/apis/library/people.googleapis.com, select your project, and click Enable. Google Contacts data is served by the People API."
+      },
+      {
+        "step": 3,
+        "title": "Configure the OAuth consent screen and client",
+        "description": "Under APIs & Services > Credentials, create (or reuse) an OAuth 2.0 Client ID of type Web application and add your app's redirect URI ending in /api/auth/google-contacts/callback. The same Google OAuth client can be shared across all Google connectors."
+      },
+      {
+        "step": 4,
+        "title": "Set environment variables",
+        "description": "Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET from the OAuth client you created. These are shared with other Google integrations."
+      }
+    ],
+    "notes": [
+      "The default scope is read-only (contacts.readonly); creating or updating contacts requires granting the optional https://www.googleapis.com/auth/contacts scope.",
+      "Contact resource names look like 'people/c123'; tools take just the ID portion after 'people/' as the personId parameter.",
+      "Updates are etag-guarded: fetch the contact (including metadata) first and send its etag and metadata.sources back, plus an updatePersonFields mask naming the changed fields.",
+      "Search uses a prefix-match cache; send a warmup search with an empty query before the real query for fresh results."
+    ],
+    "documentation": "https://developers.google.com/people/api/rest"
+  }
+}

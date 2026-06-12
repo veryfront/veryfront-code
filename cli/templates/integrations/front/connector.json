@@ -1,0 +1,399 @@
+{
+  "name": "front",
+  "displayName": "Front",
+  "icon": "front.svg",
+  "description": "Read Front shared-inbox conversations and messages and send replies on behalf of your team",
+  "category": "support",
+  "auth": {
+    "type": "api-key",
+    "keyName": "FRONT_API_TOKEN",
+    "headerName": "Authorization",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://dev.frontapp.com/docs/authentication",
+    "requiredApis": [
+      {
+        "name": "Front API token",
+        "enableUrl": "https://app.frontapp.com/settings/developers"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "FRONT_API_TOKEN",
+      "description": "Front API token, created under Settings → Developers → API Tokens (sent as Authorization: Bearer)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://dev.frontapp.com/docs/create-and-revoke-api-tokens"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_conversations",
+      "name": "List Conversations",
+      "description": "List conversations across your Front inboxes, most recently updated first",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api2.frontapp.com/conversations",
+        "params": {
+          "q": {
+            "type": "string",
+            "in": "query",
+            "description": "Search query object filtering by status, e.g. q[statuses][]=assigned (statuses: assigned, unassigned, archived, trashed)"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Max number of results per page (up to 100)",
+            "default": 25
+          },
+          "page_token": {
+            "type": "string",
+            "in": "query",
+            "description": "Token from the previous response's _pagination.next URL to fetch the next page"
+          },
+          "sort_by": {
+            "type": "string",
+            "in": "query",
+            "description": "Field used to sort the conversations; only supports 'date'"
+          },
+          "sort_order": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort order: asc or desc"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["_results"],
+            "collectionName": "conversations",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "subject" },
+              { "name": "status" },
+              { "name": "created_at" },
+              { "name": "is_private" }
+            ],
+            "omitted": "assignee/recipient objects, tags, links, and provider-specific payload fields",
+            "outputFields": [{ "name": "_pagination", "kind": "object" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_conversation",
+      "name": "Get Conversation",
+      "description": "Retrieve a single conversation with its subject, status, assignee, recipient, and tags",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api2.frontapp.com/conversations/{conversationId}",
+        "params": {
+          "conversationId": {
+            "type": "string",
+            "in": "path",
+            "description": "Conversation ID, e.g. cnv_55c8c149",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_conversation_messages",
+      "name": "List Conversation Messages",
+      "description": "List the messages in a conversation thread, including bodies and authors",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api2.frontapp.com/conversations/{conversationId}/messages",
+        "params": {
+          "conversationId": {
+            "type": "string",
+            "in": "path",
+            "description": "Conversation ID, e.g. cnv_55c8c149",
+            "required": true
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Max number of results per page (up to 100)",
+            "default": 25
+          },
+          "page_token": {
+            "type": "string",
+            "in": "query",
+            "description": "Token from the previous response's _pagination.next URL to fetch the next page"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["_results"],
+            "collectionName": "messages",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "type" },
+              { "name": "is_inbound" },
+              { "name": "subject" },
+              { "name": "blurb" },
+              { "name": "created_at" }
+            ],
+            "omitted": "full message bodies, attachments, recipient objects, and provider-specific payload fields",
+            "outputFields": [{ "name": "_pagination", "kind": "object" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "reply_to_conversation",
+      "name": "Reply to Conversation",
+      "description": "Send a reply message in an existing conversation (archives the conversation by default)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api2.frontapp.com/conversations/{conversationId}/messages",
+        "params": {
+          "conversationId": {
+            "type": "string",
+            "in": "path",
+            "description": "Conversation ID to reply in, e.g. cnv_55c8c149",
+            "required": true
+          }
+        },
+        "body": {
+          "body": {
+            "type": "string",
+            "description": "Body of the message (HTML supported for email)",
+            "required": true
+          },
+          "to": {
+            "type": "array",
+            "description": "List of recipient handles (e.g. email addresses) who will receive this message; defaults to the conversation's recipients"
+          },
+          "cc": {
+            "type": "array",
+            "description": "List of recipient handles who will receive a copy of this message"
+          },
+          "subject": {
+            "type": "string",
+            "description": "Subject of the message (email only)"
+          },
+          "text": {
+            "type": "string",
+            "description": "Text version of the body for email messages"
+          },
+          "channel_id": {
+            "type": "string",
+            "description": "Channel ID the message is sent from; defaults to the original conversation channel"
+          },
+          "author_id": {
+            "type": "string",
+            "description": "ID of the teammate on behalf of whom the reply is sent"
+          },
+          "options": {
+            "type": "object",
+            "description": "Sending options, e.g. { \"archive\": false } to keep the conversation open after replying (archive defaults to true)"
+          }
+        }
+      }
+    },
+    {
+      "id": "update_conversation",
+      "name": "Update Conversation",
+      "description": "Update a conversation's assignee, status, inbox, or tags, e.g. to assign, archive, or reopen it without sending a message",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://api2.frontapp.com/conversations/{conversationId}",
+        "params": {
+          "conversationId": {
+            "type": "string",
+            "in": "path",
+            "description": "Conversation ID to update, e.g. cnv_55c8c149",
+            "required": true
+          }
+        },
+        "body": {
+          "assignee_id": {
+            "type": "string",
+            "description": "ID of the teammate to assign the conversation to; set to null to unassign"
+          },
+          "status": {
+            "type": "string",
+            "description": "New conversation status: open, archived, deleted, or spam"
+          },
+          "inbox_id": {
+            "type": "string",
+            "description": "ID of the inbox to move the conversation to"
+          },
+          "tag_ids": {
+            "type": "array",
+            "description": "List of tag IDs replacing all of the conversation's current tags"
+          }
+        }
+      }
+    },
+    {
+      "id": "search_conversations",
+      "name": "Search Conversations",
+      "description": "Full-text search across conversations with operators like from:, tag:, inbox:, is:open, before:/after:",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api2.frontapp.com/conversations/search/{query}",
+        "params": {
+          "query": {
+            "type": "string",
+            "in": "path",
+            "description": "Search query combining free text and operators, e.g. 'refund inbox:inb_123 is:open' or 'tag:tag_345 after:1700000000'",
+            "required": true
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Max number of results per page (up to 100)",
+            "default": 25
+          },
+          "page_token": {
+            "type": "string",
+            "in": "query",
+            "description": "Token from the previous response's _pagination.next URL to fetch the next page"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["_results"],
+            "collectionName": "conversations",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "subject" },
+              { "name": "status" },
+              { "name": "created_at" },
+              { "name": "is_private" }
+            ],
+            "omitted": "assignee/recipient objects, tags, links, and provider-specific payload fields",
+            "outputFields": [
+              { "name": "_total", "kind": "scalar" },
+              { "name": "_pagination", "kind": "object" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "list_teammates",
+      "name": "List Teammates",
+      "description": "List the teammates in the company to find teammate IDs for assignment and reply authorship",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api2.frontapp.com/teammates",
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["_results"],
+            "collectionName": "teammates",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "email" },
+              { "name": "first_name" },
+              { "name": "last_name" },
+              { "name": "is_available" }
+            ],
+            "omitted": "links and provider-specific payload fields",
+            "outputFields": [{ "name": "_pagination", "kind": "object" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "list_inboxes",
+      "name": "List Inboxes",
+      "description": "List the shared inboxes in the company to find inbox IDs and names",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api2.frontapp.com/inboxes",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Max number of results per page (up to 100)",
+            "default": 25
+          },
+          "page_token": {
+            "type": "string",
+            "in": "query",
+            "description": "Token from the previous response's _pagination.next URL to fetch the next page"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["_results"],
+            "collectionName": "inboxes",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "is_private" }
+            ],
+            "omitted": "links and provider-specific payload fields",
+            "outputFields": [{ "name": "_pagination", "kind": "object" }]
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "open_conversations",
+      "title": "Review open conversations",
+      "prompt": "List the open conversations in my Front inboxes and summarize who is waiting on a reply.",
+      "category": "support",
+      "icon": "inbox"
+    },
+    {
+      "id": "draft_reply",
+      "title": "Draft a reply",
+      "prompt": "Read the messages in a Front conversation I specify and draft a concise, friendly reply that resolves the request.",
+      "category": "support",
+      "icon": "reply"
+    },
+    {
+      "id": "inbox_overview",
+      "title": "Inbox overview",
+      "prompt": "List my Front inboxes and give me a quick overview of conversation volume and status per inbox.",
+      "category": "analytics",
+      "icon": "chart"
+    }
+  ],
+  "suggestedWith": ["slack", "hubspot", "linear"],
+  "SETUP_GUIDE": {
+    "title": "Front setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Get a Front account",
+        "description": "Sign up at https://front.com — a free trial workspace is enough for testing. You can also request a developer sandbox at https://dev.frontapp.com."
+      },
+      {
+        "step": 2,
+        "title": "Create an API token",
+        "description": "In Front, open Settings → Developers → API Tokens and click 'Create API token'. Give it a descriptive name and pick the scopes you need (read access for browsing, plus shared resource access to send replies). Admin privileges are required to manage tokens."
+      },
+      {
+        "step": 3,
+        "title": "Store the token",
+        "description": "Add FRONT_API_TOKEN=<your token> to your .env file. Requests authenticate with the header 'Authorization: Bearer <token>' against https://api2.frontapp.com."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run the List Inboxes tool. You should get back the inboxes your token's scopes can see."
+      }
+    ],
+    "notes": [
+      "Replying to a conversation archives it by default — pass options { \"archive\": false } to keep it open",
+      "Message sending is asynchronous: the reply endpoint returns 202 Accepted with a message_uid rather than the final message",
+      "API tokens are scoped at creation time; a token without the messaging scopes can read conversations but not send replies"
+    ],
+    "documentation": "https://dev.frontapp.com/reference/introduction"
+  }
+}

@@ -1,0 +1,413 @@
+{
+  "name": "whatsapp",
+  "displayName": "WhatsApp",
+  "icon": "whatsapp.svg",
+  "description": "Send WhatsApp messages and manage your business profile and message templates via the WhatsApp Business Cloud API",
+  "category": "communication",
+  "auth": {
+    "type": "api-key",
+    "keyName": "WHATSAPP_ACCESS_TOKEN",
+    "headerName": "Authorization",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://developers.facebook.com/docs/whatsapp/cloud-api/get-started",
+    "requiredApis": [
+      {
+        "name": "Meta app with the WhatsApp product",
+        "enableUrl": "https://developers.facebook.com/apps"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "WHATSAPP_ACCESS_TOKEN",
+      "description": "Meta access token with whatsapp_business_messaging and whatsapp_business_management permissions (use a System User token in production)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developers.facebook.com/docs/whatsapp/cloud-api/get-started"
+    },
+    {
+      "name": "WHATSAPP_PHONE_NUMBER_ID",
+      "description": "Phone number ID of the business phone number (from WhatsApp > API Setup in the Meta app dashboard); pass it as the phoneNumberId parameter of messaging tools",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developers.facebook.com/docs/whatsapp/cloud-api/get-started"
+    },
+    {
+      "name": "WHATSAPP_BUSINESS_ACCOUNT_ID",
+      "description": "WhatsApp Business Account (WABA) ID, needed to list message templates; pass it as the wabaId parameter",
+      "required": false,
+      "sensitive": false,
+      "docsUrl": "https://developers.facebook.com/docs/whatsapp/cloud-api/get-started"
+    }
+  ],
+  "tools": [
+    {
+      "id": "send_text_message",
+      "name": "Send Text Message",
+      "description": "Send a free-form text message to a WhatsApp user (only within 24 hours of their last message; otherwise use a template)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v25.0/{phoneNumberId}/messages",
+        "params": {
+          "phoneNumberId": {
+            "type": "string",
+            "in": "path",
+            "description": "Business phone number ID (the WHATSAPP_PHONE_NUMBER_ID value, not the phone number itself)",
+            "required": true
+          }
+        },
+        "body": {
+          "messaging_product": {
+            "type": "string",
+            "description": "Always \"whatsapp\"",
+            "default": "whatsapp"
+          },
+          "recipient_type": {
+            "type": "string",
+            "description": "Recipient type",
+            "default": "individual"
+          },
+          "to": {
+            "type": "string",
+            "description": "Recipient phone number in international format, e.g. +16505551234",
+            "required": true
+          },
+          "type": {
+            "type": "string",
+            "description": "Message type",
+            "default": "text"
+          },
+          "text": {
+            "type": "object",
+            "description": "Text payload, e.g. { \"body\": \"Hello!\", \"preview_url\": false }",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "send_template_message",
+      "name": "Send Template Message",
+      "description": "Send an approved message template to a WhatsApp user; required to start conversations outside the 24-hour customer service window",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v25.0/{phoneNumberId}/messages",
+        "params": {
+          "phoneNumberId": {
+            "type": "string",
+            "in": "path",
+            "description": "Business phone number ID (the WHATSAPP_PHONE_NUMBER_ID value)",
+            "required": true
+          }
+        },
+        "body": {
+          "messaging_product": {
+            "type": "string",
+            "description": "Always \"whatsapp\"",
+            "default": "whatsapp"
+          },
+          "to": {
+            "type": "string",
+            "description": "Recipient phone number in international format, e.g. +16505551234",
+            "required": true
+          },
+          "type": {
+            "type": "string",
+            "description": "Message type",
+            "default": "template"
+          },
+          "template": {
+            "type": "object",
+            "description": "Template payload, e.g. { \"name\": \"hello_world\", \"language\": { \"code\": \"en_US\" }, \"components\": [...] }",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "send_media_message",
+      "name": "Send Media Message",
+      "description": "Send an image, document, video, or audio message to a WhatsApp user by public URL or uploaded media ID (subject to the same 24-hour window as text messages)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v25.0/{phoneNumberId}/messages",
+        "params": {
+          "phoneNumberId": {
+            "type": "string",
+            "in": "path",
+            "description": "Business phone number ID (the WHATSAPP_PHONE_NUMBER_ID value)",
+            "required": true
+          }
+        },
+        "body": {
+          "messaging_product": {
+            "type": "string",
+            "description": "Always \"whatsapp\"",
+            "default": "whatsapp"
+          },
+          "to": {
+            "type": "string",
+            "description": "Recipient phone number in international format, e.g. +16505551234",
+            "required": true
+          },
+          "type": {
+            "type": "string",
+            "description": "Media message type: image, document, video, or audio - must match the media payload field you provide",
+            "required": true
+          },
+          "image": {
+            "type": "object",
+            "description": "Image payload when type is image, e.g. { \"link\": \"https://example.com/photo.png\", \"caption\": \"...\" } or { \"id\": \"<media-id>\" }"
+          },
+          "document": {
+            "type": "object",
+            "description": "Document payload when type is document, e.g. { \"link\": \"https://example.com/invoice.pdf\", \"caption\": \"...\", \"filename\": \"invoice.pdf\" }"
+          },
+          "video": {
+            "type": "object",
+            "description": "Video payload when type is video, e.g. { \"link\": \"https://example.com/clip.mp4\", \"caption\": \"...\" }"
+          },
+          "audio": {
+            "type": "object",
+            "description": "Audio payload when type is audio, e.g. { \"link\": \"https://example.com/note.mp3\" } (no caption support)"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_media_url",
+      "name": "Get Media URL",
+      "description": "Get a short-lived download URL and metadata for a media ID, e.g. to retrieve an image or document a customer sent inbound",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.facebook.com/v25.0/{mediaId}",
+        "params": {
+          "mediaId": {
+            "type": "string",
+            "in": "path",
+            "description": "Media ID from an inbound message webhook or a media upload",
+            "required": true
+          },
+          "phone_number_id": {
+            "type": "string",
+            "in": "query",
+            "description": "Optional business phone number ID; when set, the request fails unless the media belongs to this number"
+          }
+        }
+      }
+    },
+    {
+      "id": "update_business_profile",
+      "name": "Update Business Profile",
+      "description": "Update the business profile (about, address, description, email, websites, vertical) shown to customers for a business phone number",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v25.0/{phoneNumberId}/whatsapp_business_profile",
+        "params": {
+          "phoneNumberId": {
+            "type": "string",
+            "in": "path",
+            "description": "Business phone number ID (the WHATSAPP_PHONE_NUMBER_ID value)",
+            "required": true
+          }
+        },
+        "body": {
+          "messaging_product": {
+            "type": "string",
+            "description": "Always \"whatsapp\"",
+            "default": "whatsapp"
+          },
+          "about": {
+            "type": "string",
+            "description": "Short status text shown under the business name"
+          },
+          "address": {
+            "type": "string",
+            "description": "Business street address"
+          },
+          "description": {
+            "type": "string",
+            "description": "Business description shown in the profile"
+          },
+          "email": {
+            "type": "string",
+            "description": "Business contact email address"
+          },
+          "websites": {
+            "type": "array",
+            "description": "Up to two website URLs, e.g. [\"https://example.com\"]"
+          },
+          "vertical": {
+            "type": "string",
+            "description": "Business industry vertical, e.g. RETAIL, PROF_SERVICES, EDU, HEALTH, FINANCE, HOTEL, RESTAURANT, TRAVEL, or OTHER"
+          }
+        }
+      }
+    },
+    {
+      "id": "mark_message_read",
+      "name": "Mark Message as Read",
+      "description": "Mark an inbound WhatsApp message as read so the customer sees read receipts after the agent processes it",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v25.0/{phoneNumberId}/messages",
+        "params": {
+          "phoneNumberId": {
+            "type": "string",
+            "in": "path",
+            "description": "Business phone number ID (the WHATSAPP_PHONE_NUMBER_ID value)",
+            "required": true
+          }
+        },
+        "body": {
+          "messaging_product": {
+            "type": "string",
+            "description": "Always \"whatsapp\"",
+            "default": "whatsapp"
+          },
+          "status": {
+            "type": "string",
+            "description": "Status to set",
+            "default": "read"
+          },
+          "message_id": {
+            "type": "string",
+            "description": "WhatsApp message ID (wamid...) of the inbound message to mark as read",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "get_business_profile",
+      "name": "Get Business Profile",
+      "description": "Read the business profile (about, address, email, websites) shown to customers for a business phone number",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.facebook.com/v25.0/{phoneNumberId}/whatsapp_business_profile",
+        "params": {
+          "phoneNumberId": {
+            "type": "string",
+            "in": "path",
+            "description": "Business phone number ID (the WHATSAPP_PHONE_NUMBER_ID value)",
+            "required": true
+          },
+          "fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated profile fields to return",
+            "default": "about,address,description,email,profile_picture_url,websites,vertical"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "list_message_templates",
+      "name": "List Message Templates",
+      "description": "List the message templates on a WhatsApp Business Account so an agent can pick an approved template name and language before sending",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.facebook.com/v25.0/{wabaId}/message_templates",
+        "params": {
+          "wabaId": {
+            "type": "string",
+            "in": "path",
+            "description": "WhatsApp Business Account ID (the WHATSAPP_BUSINESS_ACCOUNT_ID value)",
+            "required": true
+          },
+          "fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated template fields to return",
+            "default": "name,status,category,language,components"
+          },
+          "status": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by template status, e.g. APPROVED, PENDING, or REJECTED"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum templates to return",
+            "default": 25
+          },
+          "after": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from the previous page"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "send_followup",
+      "title": "Send a follow-up",
+      "prompt": "Send a WhatsApp message to a customer following up on their recent inquiry.",
+      "category": "communication",
+      "icon": "chat"
+    },
+    {
+      "id": "template_overview",
+      "title": "Review templates",
+      "prompt": "List my approved WhatsApp message templates and summarize what each one is for.",
+      "category": "communication",
+      "icon": "list"
+    },
+    {
+      "id": "profile_check",
+      "title": "Check business profile",
+      "prompt": "Show my WhatsApp business profile and suggest improvements to the description and website links.",
+      "category": "marketing",
+      "icon": "building"
+    }
+  ],
+  "suggestedWith": ["hubspot", "stripe", "calendly"],
+  "SETUP_GUIDE": {
+    "title": "WhatsApp Business Cloud API setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create a Meta app with the WhatsApp product",
+        "description": "Sign in at https://developers.facebook.com (a free Meta developer account works), create a Business-type app, and add the WhatsApp product. Meta provisions a free test phone number and sandbox automatically."
+      },
+      {
+        "step": 2,
+        "title": "Get a test token and phone number ID",
+        "description": "In WhatsApp > API Setup, copy the temporary access token and the Phone number ID for the test number. Add up to 5 verified recipient numbers for sandbox testing. Set WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID."
+      },
+      {
+        "step": 3,
+        "title": "Note your WhatsApp Business Account ID",
+        "description": "The WABA ID is shown in WhatsApp > API Setup (and in Meta Business Suite). Set it as WHATSAPP_BUSINESS_ACCOUNT_ID if you want to list message templates."
+      },
+      {
+        "step": 4,
+        "title": "Create a permanent token for production",
+        "description": "Temporary tokens expire after about 24 hours. For production, create a System User in Meta Business Suite, grant it the whatsapp_business_messaging and whatsapp_business_management permissions, generate a non-expiring token, and use it as WHATSAPP_ACCESS_TOKEN."
+      }
+    ],
+    "notes": [
+      "Free-form text messages are only delivered within 24 hours of the customer's last message; outside that window you must send an approved template.",
+      "Use the internal phone number ID in API calls, not the E.164 phone number.",
+      "New templates must be approved by Meta before they can be sent; check status with the List Message Templates tool."
+    ],
+    "documentation": "https://developers.facebook.com/docs/whatsapp/cloud-api"
+  }
+}

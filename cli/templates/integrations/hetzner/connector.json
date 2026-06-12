@@ -1,0 +1,447 @@
+{
+  "name": "hetzner",
+  "displayName": "Hetzner Cloud",
+  "icon": "hetzner.svg",
+  "description": "Manage Hetzner Cloud servers, images, and server types — list and inspect infrastructure, create servers, and power them on or off",
+  "category": "devops",
+  "auth": {
+    "type": "api-key",
+    "keyName": "HCLOUD_TOKEN",
+    "headerName": "Authorization",
+    "headerPrefix": "Bearer",
+    "docsUrl": "https://docs.hetzner.cloud/reference/cloud",
+    "requiredApis": [
+      {
+        "name": "Hetzner Cloud Console API tokens",
+        "enableUrl": "https://console.hetzner.cloud/"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "HCLOUD_TOKEN",
+      "description": "Hetzner Cloud API token (per project, created in Console under Security > API tokens); same env var used by hcloud CLI and Terraform",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.hetzner.cloud/reference/cloud"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_servers",
+      "name": "List Servers",
+      "description": "List servers in the Hetzner Cloud project with optional name, label, and status filtering",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.hetzner.cloud/v1/servers",
+        "params": {
+          "name": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by exact server name"
+          },
+          "label_selector": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by label selector, e.g. env=prod"
+          },
+          "status": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Filter by status: initializing, starting, running, stopping, off, deleting, migrating, rebuilding, unknown"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number",
+            "default": 1
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Items per page (max 50)",
+            "default": 25
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["servers"],
+            "collectionName": "servers",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "status" },
+              { "name": "created" },
+              { "name": "labels", "kind": "object" }
+            ],
+            "omitted": "network interfaces, image and server type details, and provider-specific payload fields",
+            "outputFields": [{ "name": "meta", "kind": "object" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "get_server",
+      "name": "Get Server",
+      "description": "Get a server by ID, including status, server type, image, and public network info",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.hetzner.cloud/v1/servers/{serverId}",
+        "params": {
+          "serverId": {
+            "type": "string",
+            "in": "path",
+            "description": "Server ID",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "server"
+        }
+      }
+    },
+    {
+      "id": "create_server",
+      "name": "Create Server",
+      "description": "Create a new server (provisions billable infrastructure)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.hetzner.cloud/v1/servers",
+        "body": {
+          "name": {
+            "type": "string",
+            "description": "Server name (unique per project, valid hostname per RFC 1123)",
+            "required": true
+          },
+          "server_type": {
+            "type": "string",
+            "description": "ID or name of the server type, e.g. cx22",
+            "required": true
+          },
+          "image": {
+            "type": "string",
+            "description": "ID or name of the image, e.g. ubuntu-24.04",
+            "required": true
+          },
+          "location": {
+            "type": "string",
+            "description": "ID or name of the location to create the server in, e.g. fsn1, nbg1, hel1"
+          },
+          "ssh_keys": {
+            "type": "array",
+            "description": "SSH key IDs or names to inject into the server on creation"
+          },
+          "start_after_create": {
+            "type": "boolean",
+            "description": "Start the server right after creation",
+            "default": true
+          },
+          "user_data": {
+            "type": "string",
+            "description": "Cloud-Init user data (max 32 KiB)"
+          },
+          "labels": {
+            "type": "object",
+            "description": "User-defined key/value labels"
+          }
+        }
+      }
+    },
+    {
+      "id": "power_on_server",
+      "name": "Power On Server",
+      "description": "Power on a server by ID",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.hetzner.cloud/v1/servers/{serverId}/actions/poweron",
+        "params": {
+          "serverId": {
+            "type": "string",
+            "in": "path",
+            "description": "Server ID",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "action"
+        }
+      }
+    },
+    {
+      "id": "power_off_server",
+      "name": "Power Off Server",
+      "description": "Cut power to a server by ID (hard power off, like pulling the plug; data may be lost if the OS is running)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.hetzner.cloud/v1/servers/{serverId}/actions/poweroff",
+        "params": {
+          "serverId": {
+            "type": "string",
+            "in": "path",
+            "description": "Server ID",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "action"
+        }
+      }
+    },
+    {
+      "id": "list_images",
+      "name": "List Images",
+      "description": "List available images (system images, backups, snapshots) usable for server creation",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.hetzner.cloud/v1/images",
+        "params": {
+          "type": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Filter by type: system, backup, snapshot, app"
+          },
+          "name": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by exact image name, e.g. ubuntu-24.04"
+          },
+          "architecture": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by architecture: x86 or arm"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number",
+            "default": 1
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Items per page (max 50)",
+            "default": 25
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["images"],
+            "collectionName": "images",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "type" },
+              { "name": "status" },
+              { "name": "os_flavor" },
+              { "name": "architecture" }
+            ],
+            "omitted": "image protection, deprecation details, and provider-specific payload fields",
+            "outputFields": [{ "name": "meta", "kind": "object" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "list_server_types",
+      "name": "List Server Types",
+      "description": "List available server types (sizes) with cores, memory, disk, and pricing",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.hetzner.cloud/v1/server_types",
+        "params": {
+          "name": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by exact server type name, e.g. cx22"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number",
+            "default": 1
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Items per page (max 50)",
+            "default": 25
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["server_types"],
+            "collectionName": "server_types",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "cores" },
+              { "name": "memory" },
+              { "name": "disk" },
+              { "name": "architecture" }
+            ],
+            "omitted": "per-location pricing tables and provider-specific payload fields",
+            "outputFields": [{ "name": "meta", "kind": "object" }]
+          }
+        }
+      }
+    },
+    {
+      "id": "shutdown_server",
+      "name": "Shutdown Server",
+      "description": "Gracefully shut down a server by sending an ACPI shutdown signal to the OS — prefer this over Power Off for running workloads",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.hetzner.cloud/v1/servers/{serverId}/actions/shutdown",
+        "params": {
+          "serverId": {
+            "type": "string",
+            "in": "path",
+            "description": "Server ID",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "action"
+        }
+      }
+    },
+    {
+      "id": "reboot_server",
+      "name": "Reboot Server",
+      "description": "Gracefully reboot a server by sending an ACPI reboot signal to the OS",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.hetzner.cloud/v1/servers/{serverId}/actions/reboot",
+        "params": {
+          "serverId": {
+            "type": "string",
+            "in": "path",
+            "description": "Server ID",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "action"
+        }
+      }
+    },
+    {
+      "id": "list_ssh_keys",
+      "name": "List SSH Keys",
+      "description": "List SSH keys in the project — use these IDs or names in the ssh_keys field of Create Server",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.hetzner.cloud/v1/ssh_keys",
+        "params": {
+          "name": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by exact SSH key name"
+          },
+          "fingerprint": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by exact key fingerprint"
+          },
+          "label_selector": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter by label selector, e.g. env=prod"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number",
+            "default": 1
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Items per page (max 50)",
+            "default": 25
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["ssh_keys"],
+            "collectionName": "ssh_keys",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "fingerprint" },
+              { "name": "created" }
+            ],
+            "omitted": "public key material and provider-specific payload fields",
+            "outputFields": [{ "name": "meta", "kind": "object" }]
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "infra_overview",
+      "title": "Infrastructure overview",
+      "prompt": "List my Hetzner Cloud servers with their status, server type, and labels.",
+      "category": "devops",
+      "icon": "list"
+    },
+    {
+      "id": "spin_up_server",
+      "title": "Spin up a server",
+      "prompt": "Create a small Ubuntu server on Hetzner Cloud after confirming the server type, location, and cost with me.",
+      "category": "devops",
+      "icon": "plus"
+    },
+    {
+      "id": "power_cycle",
+      "title": "Power cycle a server",
+      "prompt": "Power off the Hetzner Cloud server I name, wait for it to stop, then power it back on.",
+      "category": "devops",
+      "icon": "refresh"
+    }
+  ],
+  "suggestedWith": ["github", "cloudflare", "slack"],
+  "SETUP_GUIDE": {
+    "title": "Hetzner Cloud setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Get a Hetzner Cloud account",
+        "description": "Sign up at https://www.hetzner.com/cloud and create a project in the Cloud Console (https://console.hetzner.cloud)."
+      },
+      {
+        "step": 2,
+        "title": "Generate an API token",
+        "description": "In the Cloud Console open your project, go to Security > API tokens, and generate a token with Read & Write permissions (Read-only suffices if you skip the write tools)."
+      },
+      {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Copy the token into your .env as HCLOUD_TOKEN — it is shown only once at creation time."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Servers and List Server Types to confirm the token works."
+      }
+    ],
+    "notes": [
+      "API tokens are scoped to a single Hetzner Cloud project",
+      "Rate limit applies per token (check RateLimit-* response headers)",
+      "Power Off is a hard power cut — prefer a graceful OS shutdown for running workloads",
+      "Creating servers provisions billable infrastructure — confirm server type and location before running write tools"
+    ],
+    "documentation": "https://docs.hetzner.cloud/reference/cloud"
+  }
+}

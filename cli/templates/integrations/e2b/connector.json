@@ -1,0 +1,260 @@
+{
+  "name": "e2b",
+  "displayName": "E2B",
+  "icon": "e2b.svg",
+  "description": "Manage E2B code-execution sandboxes — list, create, inspect, and kill cloud sandboxes and browse available templates",
+  "category": "ai",
+  "auth": {
+    "type": "api-key",
+    "keyName": "E2B_API_KEY",
+    "headerName": "X-API-Key",
+    "docsUrl": "https://e2b.dev/docs/api-reference",
+    "requiredApis": [
+      {
+        "name": "E2B Dashboard API keys",
+        "enableUrl": "https://e2b.dev/dashboard?tab=keys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "E2B_API_KEY",
+      "description": "E2B API key (starts with e2b_), created in the E2B Dashboard under Keys; same env var used by the E2B SDKs and CLI",
+      "required": true,
+      "sensitive": true,
+      "placeholder": "e2b_...",
+      "docsUrl": "https://e2b.dev/dashboard?tab=keys"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_sandboxes",
+      "name": "List Sandboxes",
+      "description": "List all running sandboxes, optionally filtered by metadata key/value pairs",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.e2b.app/sandboxes",
+        "params": {
+          "metadata": {
+            "type": "string",
+            "in": "query",
+            "description": "Metadata filter as a URL-encoded query string, e.g. user=abc&app=prod"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_sandbox",
+      "name": "Create Sandbox",
+      "description": "Create a new sandbox from a template (starts a billable running sandbox)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.e2b.app/sandboxes",
+        "body": {
+          "templateID": {
+            "type": "string",
+            "description": "Identifier or alias of the template to create the sandbox from, e.g. base",
+            "required": true
+          },
+          "timeout": {
+            "type": "number",
+            "description": "Time to live for the sandbox in seconds before it is automatically killed",
+            "default": 15
+          },
+          "autoPause": {
+            "type": "boolean",
+            "description": "Automatically pause the sandbox after the timeout instead of killing it",
+            "default": false
+          },
+          "metadata": {
+            "type": "object",
+            "description": "Key/value metadata attached to the sandbox (usable as a filter in List Sandboxes)"
+          },
+          "envVars": {
+            "type": "object",
+            "description": "Environment variables to set inside the sandbox"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_sandbox",
+      "name": "Get Sandbox",
+      "description": "Get a sandbox by ID, including template, state, resources, and start/end times",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.e2b.app/sandboxes/{sandboxID}",
+        "params": {
+          "sandboxID": {
+            "type": "string",
+            "in": "path",
+            "description": "Identifier of the sandbox",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "kill_sandbox",
+      "name": "Kill Sandbox",
+      "description": "Kill a sandbox by ID, immediately terminating it and discarding its state",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "DELETE",
+        "url": "https://api.e2b.app/sandboxes/{sandboxID}",
+        "params": {
+          "sandboxID": {
+            "type": "string",
+            "in": "path",
+            "description": "Identifier of the sandbox to kill",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_templates",
+      "name": "List Templates",
+      "description": "List all sandbox templates available to the account, with CPU, memory, and disk defaults",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.e2b.app/templates",
+        "params": {
+          "teamID": {
+            "type": "string",
+            "in": "query",
+            "description": "Identifier of the team to list templates for"
+          }
+        }
+      }
+    },
+    {
+      "id": "pause_sandbox",
+      "name": "Pause Sandbox",
+      "description": "Pause a running sandbox, preserving its state so it can be resumed later — the middle ground between running and killed (returns 204 on success)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.e2b.app/sandboxes/{sandboxID}/pause",
+        "params": {
+          "sandboxID": {
+            "type": "string",
+            "in": "path",
+            "description": "Identifier of the sandbox to pause",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "resume_sandbox",
+      "name": "Resume Sandbox",
+      "description": "Resume a paused sandbox with its preserved state and a fresh timeout",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.e2b.app/sandboxes/{sandboxID}/resume",
+        "params": {
+          "sandboxID": {
+            "type": "string",
+            "in": "path",
+            "description": "Identifier of the paused sandbox to resume",
+            "required": true
+          }
+        },
+        "body": {
+          "timeout": {
+            "type": "number",
+            "description": "Seconds from now until the resumed sandbox expires",
+            "default": 15
+          }
+        }
+      }
+    },
+    {
+      "id": "set_sandbox_timeout",
+      "name": "Set Sandbox Timeout",
+      "description": "Reset a running sandbox's TTL: the sandbox will expire the given number of seconds from now (each call overwrites the previous timeout) — use this to keep a sandbox alive mid-task (returns 204 on success)",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.e2b.app/sandboxes/{sandboxID}/timeout",
+        "params": {
+          "sandboxID": {
+            "type": "string",
+            "in": "path",
+            "description": "Identifier of the sandbox",
+            "required": true
+          }
+        },
+        "body": {
+          "timeout": {
+            "type": "number",
+            "description": "Seconds from now until the sandbox expires",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "sandbox_overview",
+      "title": "Running sandboxes",
+      "prompt": "List my running E2B sandboxes with their template, state, and expiry time.",
+      "category": "ai",
+      "icon": "list"
+    },
+    {
+      "id": "spin_up_sandbox",
+      "title": "Spin up a sandbox",
+      "prompt": "Create a new E2B sandbox from the base template with a 5 minute timeout and show me its ID.",
+      "category": "ai",
+      "icon": "plus"
+    },
+    {
+      "id": "cleanup_sandboxes",
+      "title": "Clean up sandboxes",
+      "prompt": "List my running E2B sandboxes and kill any that I confirm are no longer needed.",
+      "category": "ai",
+      "icon": "trash"
+    }
+  ],
+  "suggestedWith": ["github", "openai"],
+  "SETUP_GUIDE": {
+    "title": "E2B setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Create an E2B account",
+        "description": "Sign up at https://e2b.dev — the free hobby tier includes sandbox usage credits, so no payment method is needed to test."
+      },
+      {
+        "step": 2,
+        "title": "Get an API key",
+        "description": "Open the E2B Dashboard (https://e2b.dev/dashboard), go to the Keys tab, and copy your API key (starts with e2b_) or create a new one."
+      },
+      {
+        "step": 3,
+        "title": "Set the environment variable",
+        "description": "Copy the key into your .env as E2B_API_KEY."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Templates and List Sandboxes to confirm the key works."
+      }
+    ],
+    "notes": [
+      "The platform REST API is served on https://api.e2b.app and authenticates with the X-API-Key header",
+      "Sandboxes are killed automatically when their timeout (TTL) elapses unless autoPause is set",
+      "Running sandboxes consume billable compute — kill sandboxes you no longer need",
+      "Code execution, filesystem, and process control inside a sandbox are SDK-first (served per sandbox on {port}-{sandboxID}.e2b.app) and are not covered by these platform tools"
+    ],
+    "documentation": "https://e2b.dev/docs/api-reference"
+  }
+}
