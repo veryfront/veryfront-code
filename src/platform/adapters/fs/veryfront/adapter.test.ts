@@ -1,10 +1,16 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { VeryfrontFSAdapter } from "./adapter.ts";
 import { buildFileListCacheKey } from "./cache-keys.ts";
 import { createAdapter, seedCachedFiles, waitFor } from "./adapter.test-helpers.ts";
 import type { ResolvedContentContext } from "./types.ts";
+import {
+  clearReleaseAssetManifestCache,
+  getReadyManifestForRender,
+} from "#veryfront/release-assets/manifest-cache.ts";
+import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 
 describe("VeryfrontFSAdapter", () => {
   describe("class", () => {
@@ -102,6 +108,13 @@ describe("VeryfrontFSAdapter", () => {
   });
 
   describe("content context", () => {
+    const originalManifestFlag = getHostEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG);
+
+    afterEach(() => {
+      setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, originalManifestFlag ?? "");
+      clearReleaseAssetManifestCache();
+    });
+
     it("should default to null before initialize", () => {
       assertEquals(createAdapter().getContentContext(), null);
     });
@@ -144,6 +157,60 @@ describe("VeryfrontFSAdapter", () => {
       const ctx = adapter.getContentContext();
       assertEquals(ctx?.sourceType, "release");
       assertEquals(ctx?.releaseId, "release-123");
+    });
+
+    it("should register a release asset manifest fetcher for environment contexts with release ids", async () => {
+      setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+      const releaseId = "release-env-123";
+      const contentHash = "a".repeat(64);
+      const adapter = createAdapter();
+      let fetchCount = 0;
+
+      (adapter.getClient() as unknown as {
+        getReleaseAssetManifest: (releaseId: string) => Promise<{
+          state: string;
+          manifest: unknown;
+        }>;
+      }).getReleaseAssetManifest = async (requestedReleaseId: string) => {
+        fetchCount++;
+        assertEquals(requestedReleaseId, releaseId);
+        return {
+          state: "ready",
+          manifest: {
+            schemaVersion: 1,
+            projectId: "project-123",
+            releaseId,
+            releaseVersion: 1,
+            manifestVersion: 2,
+            builderVersion: "0.1.765",
+            sourceContentHash: "",
+            createdAt: "2026-06-12T00:00:00.000Z",
+            assetBasePath: "/_vf/assets",
+            modules: {
+              "pages/index.tsx": {
+                contentHash,
+                size: 1,
+                contentType: "text/javascript",
+              },
+            },
+            css: [],
+            routes: { "/": { modules: ["pages/index.tsx"], css: [] } },
+            dependencies: {},
+            fallback: { mode: "jit", gaps: [] },
+          },
+        };
+      };
+
+      adapter.setContentContext({
+        sourceType: "environment",
+        projectSlug: "test-project",
+        environmentName: "production",
+        releaseId,
+      });
+
+      assertEquals(getReadyManifestForRender(releaseId), null);
+      await waitFor(async () => getReadyManifestForRender(releaseId)?.manifestVersion === 2);
+      assertEquals(fetchCount, 1);
     });
 
     it("should preserve context set before initialize", () => {
