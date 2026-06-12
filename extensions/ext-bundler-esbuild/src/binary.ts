@@ -14,7 +14,7 @@
 
 import { isDenoCompiled } from "./runtime.ts";
 
-const ESBUILD_VERSION = "0.27.4";
+const ESBUILD_VERSION = "0.28.1";
 
 function getTempDir(): string {
   try {

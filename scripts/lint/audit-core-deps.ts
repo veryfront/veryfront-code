@@ -136,7 +136,10 @@ function collectRootNpmSpecifierLiterals(
   issues: RootNpmSpecifierLiteralIssue[],
 ): void {
   if (typeof value === "string") {
-    if (value.startsWith("npm:")) {
+    if (
+      value.startsWith("npm:") &&
+      !/^minimumDependencyAge\.exclude\[\d+\]$/.test(path)
+    ) {
       issues.push({ path, value });
     }
     return;
