@@ -163,14 +163,17 @@ function resolveStaticImports(
 
   while ((m = importRe.exec(source)) !== null) {
     const specifier = m[1]!;
-    if (!specifier.startsWith("./") && !specifier.startsWith("../")) continue;
+    const isAlias = specifier.startsWith("@/");
+    if (!isAlias && !specifier.startsWith("./") && !specifier.startsWith("../")) continue;
 
     const dir = moduleLogicalPath.includes("/")
       ? moduleLogicalPath.slice(0, moduleLogicalPath.lastIndexOf("/"))
       : ".";
 
+    // `@/x` is a project-root alias (mirrors transforms/esm/path-resolver.ts).
     // Resolve the path segments manually (no path library needed for simple cases).
-    const segments = `${dir}/${specifier}`.split("/").filter((s) => s !== "");
+    const segments = (isAlias ? specifier.substring(2) : `${dir}/${specifier}`)
+      .split("/").filter((s) => s !== "");
     const resolved: string[] = [];
     for (const seg of segments) {
       if (seg === "..") {

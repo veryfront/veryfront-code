@@ -197,6 +197,35 @@ describe("release asset build executor", () => {
     assert(routeModules.includes("components/Icon.tsx"), "Icon.tsx in route closure");
   });
 
+  // Project-root alias (@/) and extensionless imports must join the closure
+  // (mirrors transforms/esm/path-resolver.ts alias semantics).
+  it("resolves @/ alias and extensionless imports into route closure", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files2 = [
+      {
+        path: "pages/index.tsx",
+        content: 'import App from "@/components/app"; export default () => null;',
+      },
+      {
+        path: "components/app.tsx",
+        content: 'import { util } from "../lib/utils"; export default () => null;',
+      },
+      { path: "lib/utils.ts", content: "export const util = 1;" },
+    ];
+    const client = makeClient(files2, rec);
+    const transform = (s: string) => Promise.resolve(s);
+
+    await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+
+    const routeModules = manifest.routes["/"]?.modules ?? [];
+    assert(routeModules.includes("pages/index.tsx"), "page entrypoint in route modules");
+    assert(routeModules.includes("components/app.tsx"), "@/ alias import in route closure");
+    assert(routeModules.includes("lib/utils.ts"), "extensionless transitive import in closure");
+  });
+
   // H1: non-transform failures (e.g., listAllReleaseFiles throws) report failed.
   it("reports failed on non-transform build failure (H1)", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
