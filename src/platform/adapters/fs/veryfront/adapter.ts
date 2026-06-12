@@ -35,7 +35,27 @@ import {
   shouldBackgroundPregenerateStyles,
 } from "./adapter-helpers.ts";
 
+import { configureReleaseAssetManifestFetcher } from "#veryfront/release-assets/manifest-cache.ts";
+import { parseReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
+
 const logger = baseLogger.component("veryfront-fs-adapter");
+
+/**
+ * Register a release asset manifest fetcher backed by the given API client.
+ *
+ * The fetcher resolves a manifest for a release via the project-scoped GET
+ * endpoint (release id used as the version ref). Consumption is gated by the
+ * env flag inside the cache module, so this registration is inert by default.
+ */
+function registerReleaseAssetManifestFetcher(client: VeryfrontApiClient): void {
+  configureReleaseAssetManifestFetcher(async (releaseId) => {
+    const response = await client.getReleaseAssetManifest(releaseId);
+    return {
+      state: response.state,
+      manifest: response.manifest ? parseReleaseAssetManifest(response.manifest) : null,
+    };
+  });
+}
 
 export class VeryfrontFSAdapter implements FSAdapter {
   private client: VeryfrontApiClient;
@@ -142,6 +162,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
     this.cache = new FileCache(cacheConfig);
     this.normalizer = new PathNormalizer(config.projectDir);
+
+    // Register the release asset manifest fetcher so production HTML can
+    // consult ready manifests when the feature flag is on. The consumption
+    // module no-ops when the flag is unset, keeping output byte-identical.
+    registerReleaseAssetManifestFetcher(this.client);
 
     const contentContextGetter = {
       isProductionMode: () => this.contentContext?.sourceType !== "branch",

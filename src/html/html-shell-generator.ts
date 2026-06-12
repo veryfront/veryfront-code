@@ -9,6 +9,12 @@ import {
   generateModulePreloadHintsFromManifest,
   getRouteManifest,
 } from "#veryfront/modules/manifest/route-module-manifest.ts";
+import { getReadyManifestForRender } from "#veryfront/release-assets/manifest-cache.ts";
+import {
+  resolveManifestModuleUrl,
+  resolveManifestRoutePreloadUrls,
+} from "#veryfront/release-assets/html-consumption.ts";
+import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { buildNonceAttribute, escapeHTML } from "./html-escape.ts";
 import {
   generateHydrationData,
@@ -26,8 +32,19 @@ import {
 import type { HTMLGenerationOptions } from "./types.ts";
 import { buildImportMap, buildRootAttributes, shouldDisableLayout } from "./utils.ts";
 
-function pathToModuleUrl(path: string, studioEmbed?: boolean): string {
+function pathToModuleUrl(
+  path: string,
+  studioEmbed?: boolean,
+  manifest?: ReleaseAssetManifest | null,
+): string {
   if (!path) return "";
+
+  // Manifest hit → content-addressed asset URL (production only; never in
+  // studio-embed). Miss falls through to the existing URL (per-entry fallback).
+  if (manifest && !studioEmbed) {
+    const assetUrl = resolveManifestModuleUrl(manifest, path);
+    if (assetUrl) return assetUrl;
+  }
 
   const withExtReplaced = path.replace(/\.(tsx|ts|jsx|mdx)$/, ".js");
   const urlBase = withExtReplaced === path && !path.endsWith(".js")
@@ -64,6 +81,13 @@ function generateModulePreloadHints(options: HTMLGenerationOptions): string {
   const projectDir = options.projectDir ?? "";
   const studioEmbed = options.studioEmbed;
 
+  // Release asset manifest (production only, env-gated, ready manifests only).
+  // Never consulted in studio-embed; returns null when the flag is off so the
+  // emitted HTML is byte-identical to today.
+  const releaseManifest = studioEmbed
+    ? null
+    : getReadyManifestForRender(options.releaseId);
+
   function addHint(moduleUrl: string): void {
     if (!moduleUrl || addedUrls.has(moduleUrl)) return;
     hints.push(`<link rel="modulepreload" href="${moduleUrl}">`);
@@ -72,7 +96,7 @@ function generateModulePreloadHints(options: HTMLGenerationOptions): string {
 
   if (options.pagePath) {
     const relativePath = getRelativePagePath(options.pagePath, projectDir);
-    addHint(pathToModuleUrl(relativePath, studioEmbed));
+    addHint(pathToModuleUrl(relativePath, studioEmbed, releaseManifest));
   }
 
   for (const layout of options.nestedLayouts ?? []) {
@@ -80,7 +104,7 @@ function generateModulePreloadHints(options: HTMLGenerationOptions): string {
     if (!layoutPath) continue;
 
     const relativePath = getRelativePagePath(layoutPath, projectDir);
-    addHint(pathToModuleUrl(relativePath, studioEmbed));
+    addHint(pathToModuleUrl(relativePath, studioEmbed, releaseManifest));
   }
 
   // Skip manifest-based preloads in preview/studio-embed mode:
@@ -90,13 +114,21 @@ function generateModulePreloadHints(options: HTMLGenerationOptions): string {
     return hints.join("\n  ");
   }
 
-  const projectSlug = options.projectSlug ?? options.projectId;
   const route = options.pagePath
     ? getRelativePagePath(options.pagePath, projectDir)
       .replace(/\.(tsx|ts|jsx|mdx)$/, "")
       .replace(/^pages\//, "")
     : "";
 
+  // Manifest-covered routes: preload the full closure from the manifest.
+  if (releaseManifest) {
+    for (const url of resolveManifestRoutePreloadUrls(releaseManifest, route)) {
+      addHint(url);
+    }
+    return hints.join("\n  ");
+  }
+
+  const projectSlug = options.projectSlug ?? options.projectId;
   const manifest = getRouteManifest(projectSlug, route);
   if (!manifest || manifest.renderCount <= 0) return hints.join("\n  ");
 

@@ -36,6 +36,7 @@ export const getHTMLGenerationOptionsSchema = defineSchema((v) =>
     studioEmbed: v.boolean().optional(),
     projectId: v.string().optional(),
     projectSlug: v.string().optional(),
+    releaseId: v.string().optional(),
     pageId: v.string().optional(),
     sourceHash: v.string().optional(),
     colorScheme: getColorSchemeSchema().optional(),
