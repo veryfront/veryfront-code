@@ -35,26 +35,31 @@ import {
   shouldBackgroundPregenerateStyles,
 } from "./adapter-helpers.ts";
 
-import { configureReleaseAssetManifestFetcher } from "#veryfront/release-assets/manifest-cache.ts";
+import {
+  registerManifestFetcherForRelease,
+  unregisterManifestFetcherForRelease,
+} from "#veryfront/release-assets/manifest-cache.ts";
 import { parseReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 
 const logger = baseLogger.component("veryfront-fs-adapter");
 
 /**
- * Register a release asset manifest fetcher backed by the given API client.
+ * Build a project-scoped manifest fetcher backed by the given API client.
  *
- * The fetcher resolves a manifest for a release via the project-scoped GET
- * endpoint (release id used as the version ref). Consumption is gated by the
- * env flag inside the cache module, so this registration is inert by default.
+ * The fetcher resolves a manifest for a specific release via the GET endpoint.
+ * Registered per-releaseId in `setContentContext` so each releaseId is always
+ * served by the client (and token) that owns it.
  */
-function registerReleaseAssetManifestFetcher(client: VeryfrontApiClient): void {
-  configureReleaseAssetManifestFetcher(async (releaseId) => {
+function buildManifestFetcher(
+  client: VeryfrontApiClient,
+): (releaseId: string) => Promise<{ state: string; manifest: ReturnType<typeof parseReleaseAssetManifest> } | null> {
+  return async (releaseId: string) => {
     const response = await client.getReleaseAssetManifest(releaseId);
     return {
       state: response.state,
       manifest: response.manifest ? parseReleaseAssetManifest(response.manifest) : null,
     };
-  });
+  };
 }
 
 export class VeryfrontFSAdapter implements FSAdapter {
@@ -162,11 +167,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
     this.cache = new FileCache(cacheConfig);
     this.normalizer = new PathNormalizer(config.projectDir);
-
-    // Register the release asset manifest fetcher so production HTML can
-    // consult ready manifests when the feature flag is on. The consumption
-    // module no-ops when the flag is unset, keeping output byte-identical.
-    registerReleaseAssetManifestFetcher(this.client);
+    // Per-releaseId fetcher registration is done in setContentContext when a
+    // release context is resolved, ensuring the correct project-scoped token.
 
     const contentContextGetter = {
       isProductionMode: () => this.contentContext?.sourceType !== "branch",
@@ -673,6 +675,19 @@ export class VeryfrontFSAdapter implements FSAdapter {
       oldReleaseId: oldContext?.releaseId,
       contextWillChange: contextChanged,
     });
+
+    // Unregister the manifest fetcher for the previous release (if any).
+    if (oldContext?.sourceType === "release" && oldContext.releaseId) {
+      unregisterManifestFetcherForRelease(oldContext.releaseId);
+    }
+
+    // Register a per-releaseId manifest fetcher so production HTML can
+    // consult ready manifests when the feature flag is on. Using the per-
+    // releaseId registry ensures the correct project-scoped token is always
+    // used, even under multi-tenant / proxy-manager operation.
+    if (context.sourceType === "release" && context.releaseId) {
+      registerManifestFetcherForRelease(context.releaseId, buildManifestFetcher(this.client));
+    }
 
     this.contentContext = context;
     this.client.setContext(toClientContext(context));

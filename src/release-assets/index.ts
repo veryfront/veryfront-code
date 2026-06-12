@@ -36,7 +36,9 @@ export {
   configureReleaseAssetManifestFetcher,
   getReadyManifestForRender,
   isReleaseAssetManifestEnabled,
+  registerManifestFetcherForRelease,
   type ReleaseAssetManifestFetcher,
+  unregisterManifestFetcherForRelease,
 } from "./manifest-cache.ts";
 export {
   normalizeManifestModuleKey,
