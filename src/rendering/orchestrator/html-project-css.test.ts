@@ -28,6 +28,7 @@ describe("rendering/orchestrator/html-project-css", () => {
   describe("getProjectContentVersion", () => {
     it("prefers the adapter content context version", () => {
       const version = getProjectContentVersion({
+        mode: "production",
         adapter: {
           fs: {
             getUnderlyingAdapter: () => ({
@@ -47,6 +48,7 @@ describe("rendering/orchestrator/html-project-css", () => {
 
     it("falls back to project updated_at when no content context is available", () => {
       const version = getProjectContentVersion({
+        mode: "production",
         adapter: {
           fs: {
             getUnderlyingAdapter: () => ({
@@ -90,7 +92,51 @@ describe("rendering/orchestrator/html-project-css", () => {
   });
 
   describe("extractProjectClassesForRoute", () => {
-    it("delegates route metadata and returns the candidate set", async () => {
+    it("includes candidates from component files outside the route module graph", async () => {
+      const classes = await extractProjectClassesForRoute(
+        {
+          projectDir: "/project",
+          adapter: {
+            fs: {
+              getUnderlyingAdapter: () => ({
+                getAllSourceFiles: () =>
+                  Promise.resolve([
+                    {
+                      path: "/project/pages/docs.tsx",
+                      content: `export default () => <div className="text-sm">Docs</div>;`,
+                    },
+                    {
+                      path: "/project/components/header.tsx",
+                      content:
+                        `export const Header = () => <header className="h-16 md:pr-8">Nav</header>;`,
+                    },
+                  ]),
+              }),
+            },
+          } as any,
+          config: {} as any,
+          mode: "production",
+        },
+        {
+          slug: "docs",
+          pageInfo: { entity: { path: "/project/pages/docs.tsx" } },
+          nestedLayouts: [],
+          options: { projectSlug: "route-scope-regression" },
+        } as any,
+        undefined,
+        {
+          getProjectContentVersion: () => "v1",
+        },
+      );
+
+      assertEquals(classes.has("text-sm"), true);
+      // Classes from shared components must be present even when the route
+      // module manifest has never observed them (cold pod, first render).
+      assertEquals(classes.has("h-16"), true);
+      assertEquals(classes.has("md:pr-8"), true);
+    });
+
+    it("delegates project metadata and returns the candidate set", async () => {
       const calls: Array<Record<string, unknown>> = [];
 
       const classes = await extractProjectClassesForRoute(
@@ -117,8 +163,8 @@ describe("rendering/orchestrator/html-project-css", () => {
         } as any,
         "/project/app.tsx",
         {
-          getRouteCandidates: (input) => {
-            calls.push(input as Record<string, unknown>);
+          getProjectCandidates: (input) => {
+            calls.push(input as unknown as Record<string, unknown>);
             return new Set(["prose", "docs-page"]);
           },
           createStyleScopeProfile: () => ({ mode: "test" }) as any,
@@ -128,13 +174,10 @@ describe("rendering/orchestrator/html-project-css", () => {
 
       assertEquals([...classes], ["prose", "docs-page"]);
       assertEquals(calls.length, 1);
-      assertEquals(calls[0]?.routeKey, "docs");
       assertEquals(calls[0]?.projectScope, "demo-project");
       assertEquals(calls[0]?.projectVersion, "version-123");
-      assertEquals(
-        calls[0]?.routeFilePaths,
-        ["/project/pages/docs.tsx", "/project/layouts/docs.tsx", "/project/app.tsx"],
-      );
+      assertEquals(calls[0]?.projectDir, "/project");
+      assertEquals(calls[0]?.developmentMode, false);
     });
   });
 });

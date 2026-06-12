@@ -11,7 +11,7 @@ import type {
 } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { extractRelativePath } from "#veryfront/utils/route-path-utils.ts";
-import { getRouteCandidates } from "./css-candidate-manifest.ts";
+import { getProjectCandidates } from "./css-candidate-manifest.ts";
 import type { HTMLGenerationContext } from "./html-types.ts";
 
 const logger = rendererLogger.component("html-project-css");
@@ -31,7 +31,7 @@ interface ProjectCssDeps {
   getProjectContentVersion?: (
     config: Pick<ProjectCssConfig, "adapter" | "mode">,
   ) => string | undefined;
-  getRouteCandidates?: typeof getRouteCandidates;
+  getProjectCandidates?: typeof getProjectCandidates;
   resolveStyleContentVersion?: typeof resolveStyleContentVersion;
   warmPreparedCSSArtifactFromFiles?: typeof warmPreparedCSSArtifactFromFiles;
 }
@@ -156,10 +156,10 @@ export function startPreparedCSSWarmup(
 export async function extractProjectClassesForRoute(
   config: ProjectCssConfig,
   context: HTMLGenerationContext,
-  appComponentPath?: string,
+  _appComponentPath?: string,
   deps: Pick<
     ProjectCssDeps,
-    "createStyleScopeProfile" | "getProjectContentVersion" | "getRouteCandidates"
+    "createStyleScopeProfile" | "getProjectContentVersion" | "getProjectCandidates"
   > = {},
 ): Promise<Set<string>> {
   const classes = new Set<string>();
@@ -175,35 +175,26 @@ export async function extractProjectClassesForRoute(
   const resolveProjectContentVersion = deps.getProjectContentVersion ?? getProjectContentVersion;
   const projectVersion = resolveProjectContentVersion(config) ??
     (config.mode === "development" ? "dev" : "unknown");
-  const routeKey = buildRouteManifestKey(context.pageInfo.entity.path, config.projectDir);
-  const routeLayoutPaths = context.nestedLayouts
-    .map((layout) => layout.componentPath || layout.path)
-    .filter((path): path is string => Boolean(path));
-  const routeFilePaths = [
-    context.pageInfo.entity.path,
-    ...routeLayoutPaths,
-    ...(appComponentPath ? [appComponentPath] : []),
-  ];
 
   const createStyleProfile = deps.createStyleScopeProfile ?? createStyleScopeProfile;
-  const getRouteCssCandidates = deps.getRouteCandidates ?? getRouteCandidates;
-  const routeCandidates = getRouteCssCandidates({
+  const getProjectCssCandidates = deps.getProjectCandidates ?? getProjectCandidates;
+  // Candidates must come from the full source scan, not the route-module
+  // manifest: the manifest is populated per pod from request history, so
+  // route-scoped candidates omit shared components the pod has not yet
+  // observed and produce divergent CSS across replicas for the same page.
+  const projectCandidates = getProjectCssCandidates({
     projectScope,
     projectVersion,
     projectDir: config.projectDir,
     styleProfile: createStyleProfile(config.config),
-    routeKey,
-    routeFilePaths,
     files,
     developmentMode: config.mode === "development",
   });
 
-  for (const cls of routeCandidates) classes.add(cls);
+  for (const cls of projectCandidates) classes.add(cls);
 
   logger.debug("extractProjectClasses", {
     filesProcessed: files.length,
-    routeKey,
-    routeFileCount: routeFilePaths.length,
     totalClasses: classes.size,
   });
 
