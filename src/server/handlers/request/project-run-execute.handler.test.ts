@@ -52,6 +52,12 @@ function createDeps(
       logs: "knowledge ingest completed",
       duration_ms: 51,
     }),
+    executeReleaseAssetBuild: async () => ({
+      success: true,
+      result: { state: "ready", moduleCount: 0, cssCount: 0, routeCount: 0 },
+      logs: null,
+      duration_ms: 10,
+    }),
     ensureProjectDiscovery: async () => {},
     sleep: async () => {},
     now: () => 0,
