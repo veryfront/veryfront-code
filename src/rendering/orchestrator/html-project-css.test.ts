@@ -107,7 +107,8 @@ describe("rendering/orchestrator/html-project-css", () => {
                     },
                     {
                       path: "/project/components/header.tsx",
-                      content: `export const Header = () => <header className="h-16 md:pr-8">Nav</header>;`,
+                      content:
+                        `export const Header = () => <header className="h-16 md:pr-8">Nav</header>;`,
                     },
                   ]),
               }),
