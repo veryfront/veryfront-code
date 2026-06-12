@@ -54,6 +54,12 @@ export interface ReleaseAssetBuildInput {
   releaseVersionRef: string;
   /** React version for transforms. */
   reactVersion?: string;
+  /**
+   * Configured Tailwind stylesheet path (relative to the project root), used to
+   * resolve the project stylesheet from the materialized file set for CSS
+   * compilation. When absent, conventional defaults are tried (globals.css).
+   */
+  stylesheetPath?: string;
   /** Authenticated, project-scoped API client. */
   client: ReleaseAssetBuildClient;
   /** Runtime adapter used by the transform pipeline. */
@@ -99,9 +105,17 @@ export interface ReleaseAssetBuildClient {
     state: "partial" | "failed",
     error?: string,
   ): Promise<unknown>;
-  /** Optional project CSS compiler; when absent, css:[] is recorded. */
+  /**
+   * Optional project CSS compiler; when absent, css:[] is recorded.
+   *
+   * Receives the Tailwind class candidates extracted from the release source
+   * plus the resolved project stylesheet (so the implementation can compile
+   * without re-fetching the file set). Returns `null` on any failure so the
+   * executor keeps a CSS gap and proceeds.
+   */
   compileProjectCss?(
     candidates: Set<string>,
+    stylesheet: string | undefined,
   ): Promise<{ css: string; styleProfileHash: string | null } | null>;
 }
 
@@ -406,7 +420,8 @@ async function runBuildInner(
   if (client.compileProjectCss) {
     try {
       const candidates = collectClassCandidates(sourceByPath);
-      const compiled = await client.compileProjectCss(candidates);
+      const stylesheet = resolveProjectStylesheet(sourceByPath, input.stylesheetPath);
+      const compiled = await client.compileProjectCss(candidates, stylesheet);
       if (compiled && compiled.css) {
         const bytes = new TextEncoder().encode(compiled.css) as Uint8Array<ArrayBuffer>;
         const contentHash = await sha256HexBytes(bytes);
@@ -533,6 +548,25 @@ async function runBuildInner(
     routeCount: Object.keys(routes).length,
     gaps,
   };
+}
+
+/**
+ * Resolve the project Tailwind stylesheet from the materialized file set.
+ * Tries the configured path first, then conventional defaults. Returns
+ * `undefined` when none is present (the CSS compiler then uses its default).
+ */
+function resolveProjectStylesheet(
+  sourceByPath: Map<string, string>,
+  stylesheetPath: string | undefined,
+): string | undefined {
+  const candidatePaths = stylesheetPath
+    ? [stylesheetPath, stylesheetPath.replace(/^\.?\//, "")]
+    : ["globals.css", "src/globals.css"];
+  for (const path of candidatePaths) {
+    const content = sourceByPath.get(path);
+    if (typeof content === "string") return content;
+  }
+  return undefined;
 }
 
 /** Extract Tailwind class candidates from materialized source (best-effort). */
