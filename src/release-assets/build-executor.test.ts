@@ -171,6 +171,26 @@ describe("release asset build executor", () => {
     assertEquals(manifest.routes["/"]?.css, [cssHash]);
   });
 
+  it("records css:compile-failed when the compiler returns null", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [{
+      path: "pages/index.tsx",
+      content: 'export default () => "<div class=\\"p-4\\"/>";',
+    }];
+    const client = makeClient(files, rec, {
+      compileProjectCss: () => Promise.resolve(null),
+    });
+    const transform = (s: string) => Promise.resolve(s);
+
+    const result = await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    assertEquals(result.cssCount, 0);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.css.length, 0);
+    assert(manifest.fallback.gaps.includes("css:compile-failed"), "null compile records gap");
+  });
+
   it("passes the resolved stylesheet to compileProjectCss", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [

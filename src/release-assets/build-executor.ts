@@ -441,6 +441,11 @@ async function runBuildInner(
             contentType: RELEASE_ASSET_CONTENT_TYPES.css,
           });
         }
+      } else {
+        // The compiler degraded (returned null/empty) — record the gap so a
+        // ready manifest never silently lacks the promised CSS signal.
+        gaps.push("css:compile-failed");
+        logger.warn("Release asset CSS compile returned no output (recording gap)");
       }
     } catch (error) {
       // CSS is best-effort: record a gap, keep css:[].

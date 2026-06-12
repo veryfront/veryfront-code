@@ -3,7 +3,7 @@ import "#veryfront/schemas/_test-setup.ts";
 // `generateTailwindCSS` compile path resolves a real compiler.
 import "#veryfront/html/styles-builder/__tests__/css-processor-setup.ts";
 
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createCompileProjectCss } from "./css-compile.ts";
 
@@ -25,10 +25,21 @@ describe("release-assets/css-compile", () => {
     assertEquals(typeof result.styleProfileHash, "string");
   });
 
-  it("returns null when there are no candidates (no CSS to ship)", async () => {
+  it("returns null only when there are no candidates AND no stylesheet", async () => {
     const compile = createCompileProjectCss({ projectScope: "css-compile-empty" });
-    const result = await compile(new Set<string>(), '@import "tailwindcss";');
+    const result = await compile(new Set<string>(), undefined);
     assertEquals(result, null);
+  });
+
+  it("compiles base/custom CSS from a stylesheet even without candidates", async () => {
+    const compile = createCompileProjectCss({ projectScope: "css-compile-stylesheet-only" });
+    const result = await compile(
+      new Set<string>(),
+      '@import "tailwindcss"; :root { --brand: #123456; }',
+    );
+    // Stylesheet-only compiles must not be skipped: base/custom rules ship.
+    assertExists(result);
+    assert(result.css.length > 0, "stylesheet-only compile produced CSS");
   });
 
   it("returns null (keeps the CSS gap) when the compiler throws — never propagates", async () => {

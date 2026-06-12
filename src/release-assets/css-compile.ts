@@ -62,8 +62,11 @@ export function createCompileProjectCss(
     stylesheet: string | undefined,
   ): Promise<CompileProjectCssResult | null> => {
     try {
-      if (candidates.size === 0) {
-        logger.debug("No CSS candidates for release; skipping compile", {
+      // A stylesheet can emit base/custom CSS without any utility candidates
+      // (CSS variables, global rules), so only skip when there is neither a
+      // stylesheet nor any candidates to compile.
+      if (candidates.size === 0 && !stylesheet) {
+        logger.debug("No CSS candidates or stylesheet for release; skipping compile", {
           projectScope: options.projectScope,
         });
         return null;
