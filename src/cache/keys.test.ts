@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { describe, it } from "#veryfront/testing/bdd";
-import { assertEquals, assertMatch, assertThrows } from "#veryfront/testing/assert";
+import { afterEach, describe, it } from "#veryfront/testing/bdd";
+import { assertEquals, assertMatch, assertNotEquals, assertThrows } from "#veryfront/testing/assert";
 import {
   buildConfigCacheKey,
   buildQueryAwareCacheKey,
@@ -13,6 +13,12 @@ import {
   parseRenderCacheKey,
   sanitizeQueryParamsForCacheKey,
 } from "./keys.ts";
+import {
+  clearReleaseAssetManifestCache,
+  configureReleaseAssetManifestFetcher,
+  getReadyManifestForRender,
+} from "#veryfront/release-assets/manifest-cache.ts";
+import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 
 describe("cache/keys", () => {
   describe("CacheKeyPrefix", () => {
@@ -38,6 +44,115 @@ describe("cache/keys", () => {
     it("should build prefix for preview", () => {
       const prefix = buildRenderCachePrefix("proj_123", "preview", "main");
       assertMatch(prefix, /^proj_123:preview:main:.+$/);
+    });
+
+    it("should append :m{n} suffix when manifestVersion is provided", () => {
+      const base = buildRenderCachePrefix("proj_123", "production", "rel_456");
+      const withManifest = buildRenderCachePrefix("proj_123", "production", "rel_456", 1);
+      assertMatch(withManifest, /^proj_123:production:rel_456:.+:m1$/);
+      assertNotEquals(base, withManifest);
+    });
+
+    it("should produce identical prefix when manifestVersion is undefined (flag-off byte-identical)", () => {
+      const withUndefined = buildRenderCachePrefix("proj_123", "production", "rel_456", undefined);
+      const withoutArg = buildRenderCachePrefix("proj_123", "production", "rel_456");
+      assertEquals(withUndefined, withoutArg);
+    });
+  });
+
+  describe("render cache prefix + manifest consumption", () => {
+    const makeManifest = (): ReleaseAssetManifest => ({
+      schemaVersion: 1,
+      manifestVersion: 1,
+      projectId: "proj_123",
+      releaseId: "rel_456",
+      releaseVersion: 1,
+      builderVersion: "0.1.765",
+      sourceContentHash: "abc123",
+      createdAt: "2026-06-12T00:00:00Z",
+      assetBasePath: "/_vf/assets",
+      modules: {},
+      css: [],
+      routes: {},
+      fallback: { mode: "jit" as const, gaps: [] },
+      dependencies: {},
+    });
+
+    afterEach(() => {
+      clearReleaseAssetManifestCache();
+      configureReleaseAssetManifestFetcher(undefined);
+      try {
+        Deno.env.delete("VERYFRONT_RELEASE_ASSET_MANIFEST");
+      } catch (_) { /* env may be read-only in some test configs */ }
+    });
+
+    it("flag off: getReadyManifestForRender returns null even when fetcher is registered", () => {
+      try { Deno.env.delete("VERYFRONT_RELEASE_ASSET_MANIFEST"); } catch (_) { /* ok */ }
+      configureReleaseAssetManifestFetcher(async () => ({
+        state: "ready",
+        manifest: makeManifest(),
+      }));
+      // With flag off, must return null
+      assertEquals(getReadyManifestForRender("rel_456"), null);
+
+      // Cache prefix is byte-identical whether manifestVersion is undefined or not passed
+      const prefixNoManifest = buildRenderCachePrefix("proj_123", "production", "rel_456");
+      const prefixWithUndefined = buildRenderCachePrefix(
+        "proj_123",
+        "production",
+        "rel_456",
+        undefined,
+      );
+      assertEquals(prefixNoManifest, prefixWithUndefined);
+    });
+
+    it("flag on + ready manifest: cache prefix gains :m{manifestVersion} suffix", async () => {
+      Deno.env.set("VERYFRONT_RELEASE_ASSET_MANIFEST", "1");
+
+      let resolvePromise!: () => void;
+      const fetchDone = new Promise<void>((r) => { resolvePromise = r; });
+      configureReleaseAssetManifestFetcher(async () => {
+        resolvePromise();
+        return { state: "ready", manifest: makeManifest() };
+      });
+
+      // First call: cache miss → background fetch scheduled → returns null
+      assertEquals(getReadyManifestForRender("rel_456"), null);
+
+      // Wait for the background fetch to complete
+      await fetchDone;
+      await Promise.resolve();
+
+      // Second call: cache hit → returns manifest
+      const cached = getReadyManifestForRender("rel_456");
+      assertEquals(cached?.manifestVersion, 1);
+
+      // Prefixes must differ
+      const prefixJIT = buildRenderCachePrefix("proj_123", "production", "rel_456");
+      const prefixManifest = buildRenderCachePrefix(
+        "proj_123",
+        "production",
+        "rel_456",
+        cached?.manifestVersion,
+      );
+      assertNotEquals(prefixJIT, prefixManifest);
+      assertMatch(prefixManifest, /:m1$/);
+    });
+
+    it("flag on + no ready manifest: prefix is identical to JIT prefix", () => {
+      Deno.env.set("VERYFRONT_RELEASE_ASSET_MANIFEST", "1");
+      // No fetcher registered → getReadyManifestForRender returns null
+      const manifest = getReadyManifestForRender("rel_456");
+      assertEquals(manifest, null);
+
+      const prefixJIT = buildRenderCachePrefix("proj_123", "production", "rel_456");
+      const prefixWithNull = buildRenderCachePrefix(
+        "proj_123",
+        "production",
+        "rel_456",
+        manifest?.manifestVersion,
+      );
+      assertEquals(prefixJIT, prefixWithNull);
     });
   });
 
