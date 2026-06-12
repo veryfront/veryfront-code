@@ -97,6 +97,17 @@ describe("findRootNpmSpecifierLiterals", () => {
 
     assertEquals(issues, []);
   });
+
+  it("allows Deno minimum dependency age excludes", () => {
+    const issues = findRootNpmSpecifierLiterals({
+      minimumDependencyAge: {
+        age: "P2D",
+        exclude: ["npm:esbuild", "npm:@esbuild/linux-x64"],
+      },
+    });
+
+    assertEquals(issues, []);
+  });
 });
 
 describe("findCoreThirdPartySourceImports", () => {

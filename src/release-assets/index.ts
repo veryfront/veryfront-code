@@ -52,3 +52,8 @@ export {
   type ReleaseAssetTransform,
   runReleaseAssetBuild,
 } from "./build-executor.ts";
+export {
+  type CompileProjectCssOptions,
+  type CompileProjectCssResult,
+  createCompileProjectCss,
+} from "./css-compile.ts";

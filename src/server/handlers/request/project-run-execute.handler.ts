@@ -634,6 +634,9 @@ async function executeReleaseAssetBuildRun(input: {
       "#veryfront/transforms/esm/package-registry.ts"
     );
     const { runReleaseAssetBuild } = await import("#veryfront/release-assets/build-executor.ts");
+    const { createCompileProjectCss } = await import(
+      "#veryfront/release-assets/css-compile.ts"
+    );
 
     const apiBaseUrl = getEnvironmentConfig().apiBaseUrl;
     const token = input.req.headers.get("x-token") ?? input.ctx.proxyToken ??
@@ -655,6 +658,15 @@ async function executeReleaseAssetBuildRun(input: {
 
     const releaseVersionRef = releaseId;
 
+    // Production CSS compiler: compiles the project's Tailwind CSS in-runtime
+    // via the pure `generateTailwindCSS` primitive (no distributed-cache /
+    // candidate-contract machinery). Defensive — returns null on any failure,
+    // letting the executor keep its CSS gap.
+    const compileProjectCss = createCompileProjectCss({
+      projectScope: projectReference,
+      config: input.ctx.config,
+    });
+
     const result = await runReleaseAssetBuild({
       projectReference,
       projectId: input.ctx.projectId ?? input.request.projectId,
@@ -662,6 +674,7 @@ async function executeReleaseAssetBuildRun(input: {
       releaseVersion,
       releaseVersionRef,
       reactVersion,
+      stylesheetPath: input.ctx.config?.tailwind?.stylesheet,
       adapter: input.ctx.adapter,
       client: {
         beginReleaseAssetManifestBuild: (version) =>
@@ -673,6 +686,7 @@ async function executeReleaseAssetBuildRun(input: {
           apiClient.putReleaseAssetManifest(version, manifest),
         reportReleaseAssetManifestState: (version, state, error) =>
           apiClient.reportReleaseAssetManifestState(version, state, error),
+        compileProjectCss,
       },
     }, tempDir);
 

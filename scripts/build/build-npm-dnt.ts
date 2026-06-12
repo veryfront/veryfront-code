@@ -212,7 +212,7 @@ await build({
 		// it as a static import and would otherwise omit it from the build. Strip
 		// the TypeScript types and rewrite the sibling `./kreuzberg.ts` import to the
 		// transpiled `./kreuzberg.js` that dnt emits next to it.
-		const esbuild = await import("npm:esbuild@0.27.4");
+		const esbuild = await import("npm:esbuild@0.28.1");
 		try {
 			const workerSrc = "./extensions/ext-document-kreuzberg/src/upload-extraction-worker.ts";
 			const workerDest =

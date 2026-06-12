@@ -54,6 +54,12 @@ export interface ReleaseAssetBuildInput {
   releaseVersionRef: string;
   /** React version for transforms. */
   reactVersion?: string;
+  /**
+   * Configured Tailwind stylesheet path (relative to the project root), used to
+   * resolve the project stylesheet from the materialized file set for CSS
+   * compilation. When absent, conventional defaults are tried (globals.css).
+   */
+  stylesheetPath?: string;
   /** Authenticated, project-scoped API client. */
   client: ReleaseAssetBuildClient;
   /** Runtime adapter used by the transform pipeline. */
@@ -99,9 +105,17 @@ export interface ReleaseAssetBuildClient {
     state: "partial" | "failed",
     error?: string,
   ): Promise<unknown>;
-  /** Optional project CSS compiler; when absent, css:[] is recorded. */
+  /**
+   * Optional project CSS compiler; when absent, css:[] is recorded.
+   *
+   * Receives the Tailwind class candidates extracted from the release source
+   * plus the resolved project stylesheet (so the implementation can compile
+   * without re-fetching the file set). Returns `null` on any failure so the
+   * executor keeps a CSS gap and proceeds.
+   */
   compileProjectCss?(
     candidates: Set<string>,
+    stylesheet: string | undefined,
   ): Promise<{ css: string; styleProfileHash: string | null } | null>;
 }
 
@@ -163,14 +177,17 @@ function resolveStaticImports(
 
   while ((m = importRe.exec(source)) !== null) {
     const specifier = m[1]!;
-    if (!specifier.startsWith("./") && !specifier.startsWith("../")) continue;
+    const isAlias = specifier.startsWith("@/");
+    if (!isAlias && !specifier.startsWith("./") && !specifier.startsWith("../")) continue;
 
     const dir = moduleLogicalPath.includes("/")
       ? moduleLogicalPath.slice(0, moduleLogicalPath.lastIndexOf("/"))
       : ".";
 
+    // `@/x` is a project-root alias (mirrors transforms/esm/path-resolver.ts).
     // Resolve the path segments manually (no path library needed for simple cases).
-    const segments = `${dir}/${specifier}`.split("/").filter((s) => s !== "");
+    const segments = (isAlias ? specifier.substring(2) : `${dir}/${specifier}`)
+      .split("/").filter((s) => s !== "");
     const resolved: string[] = [];
     for (const seg of segments) {
       if (seg === "..") {
@@ -403,7 +420,8 @@ async function runBuildInner(
   if (client.compileProjectCss) {
     try {
       const candidates = collectClassCandidates(sourceByPath);
-      const compiled = await client.compileProjectCss(candidates);
+      const stylesheet = resolveProjectStylesheet(sourceByPath, input.stylesheetPath);
+      const compiled = await client.compileProjectCss(candidates, stylesheet);
       if (compiled && compiled.css) {
         const bytes = new TextEncoder().encode(compiled.css) as Uint8Array<ArrayBuffer>;
         const contentHash = await sha256HexBytes(bytes);
@@ -423,6 +441,11 @@ async function runBuildInner(
             contentType: RELEASE_ASSET_CONTENT_TYPES.css,
           });
         }
+      } else {
+        // The compiler degraded (returned null/empty) — record the gap so a
+        // ready manifest never silently lacks the promised CSS signal.
+        gaps.push("css:compile-failed");
+        logger.warn("Release asset CSS compile returned no output (recording gap)");
       }
     } catch (error) {
       // CSS is best-effort: record a gap, keep css:[].
@@ -530,6 +553,25 @@ async function runBuildInner(
     routeCount: Object.keys(routes).length,
     gaps,
   };
+}
+
+/**
+ * Resolve the project Tailwind stylesheet from the materialized file set.
+ * Tries the configured path first, then conventional defaults. Returns
+ * `undefined` when none is present (the CSS compiler then uses its default).
+ */
+function resolveProjectStylesheet(
+  sourceByPath: Map<string, string>,
+  stylesheetPath: string | undefined,
+): string | undefined {
+  const candidatePaths = stylesheetPath
+    ? [stylesheetPath, stylesheetPath.replace(/^\.?\//, "")]
+    : ["globals.css", "src/globals.css"];
+  for (const path of candidatePaths) {
+    const content = sourceByPath.get(path);
+    if (typeof content === "string") return content;
+  }
+  return undefined;
 }
 
 /** Extract Tailwind class candidates from materialized source (best-effort). */

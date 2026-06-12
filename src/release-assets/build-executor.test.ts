@@ -164,6 +164,54 @@ describe("release asset build executor", () => {
     assertExists(manifest);
     assertEquals(manifest.css[0]?.styleProfileHash, "sp-1");
     assertEquals(manifest.css[0]?.contentType, "text/css");
+    // The route entry must carry the compiled CSS hash (project-level CSS is
+    // applied to every route per the executor contract).
+    const cssHash = manifest.css[0]?.contentHash;
+    assertExists(cssHash);
+    assertEquals(manifest.routes["/"]?.css, [cssHash]);
+  });
+
+  it("records css:compile-failed when the compiler returns null", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [{
+      path: "pages/index.tsx",
+      content: 'export default () => "<div class=\\"p-4\\"/>";',
+    }];
+    const client = makeClient(files, rec, {
+      compileProjectCss: () => Promise.resolve(null),
+    });
+    const transform = (s: string) => Promise.resolve(s);
+
+    const result = await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    assertEquals(result.cssCount, 0);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.css.length, 0);
+    assert(manifest.fallback.gaps.includes("css:compile-failed"), "null compile records gap");
+  });
+
+  it("passes the resolved stylesheet to compileProjectCss", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      { path: "globals.css", content: '@import "tailwindcss"; /* custom */' },
+      {
+        path: "pages/index.tsx",
+        content: 'export default () => "<div class=\\"p-4\\"/>";',
+      },
+    ];
+    let seenStylesheet: string | undefined = "UNSET";
+    const client = makeClient(files, rec, {
+      compileProjectCss: (_candidates, stylesheet) => {
+        seenStylesheet = stylesheet;
+        return Promise.resolve({ css: ".p-4{padding:1rem}", styleProfileHash: "sp-1" });
+      },
+    });
+    const transform = (s: string) => Promise.resolve(s);
+
+    await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    assertEquals(seenStylesheet, '@import "tailwindcss"; /* custom */');
   });
 
   // B2: route closure includes transitive imports, not just page entrypoint.
@@ -195,6 +243,35 @@ describe("release asset build executor", () => {
     assert(routeModules.includes("pages/index.tsx"), "page entrypoint in route modules");
     assert(routeModules.includes("components/Button.tsx"), "Button.tsx in route closure");
     assert(routeModules.includes("components/Icon.tsx"), "Icon.tsx in route closure");
+  });
+
+  // Project-root alias (@/) and extensionless imports must join the closure
+  // (mirrors transforms/esm/path-resolver.ts alias semantics).
+  it("resolves @/ alias and extensionless imports into route closure", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files2 = [
+      {
+        path: "pages/index.tsx",
+        content: 'import App from "@/components/app"; export default () => null;',
+      },
+      {
+        path: "components/app.tsx",
+        content: 'import { util } from "../lib/utils"; export default () => null;',
+      },
+      { path: "lib/utils.ts", content: "export const util = 1;" },
+    ];
+    const client = makeClient(files2, rec);
+    const transform = (s: string) => Promise.resolve(s);
+
+    await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+
+    const routeModules = manifest.routes["/"]?.modules ?? [];
+    assert(routeModules.includes("pages/index.tsx"), "page entrypoint in route modules");
+    assert(routeModules.includes("components/app.tsx"), "@/ alias import in route closure");
+    assert(routeModules.includes("lib/utils.ts"), "extensionless transitive import in closure");
   });
 
   // H1: non-transform failures (e.g., listAllReleaseFiles throws) report failed.
