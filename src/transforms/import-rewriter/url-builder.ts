@@ -146,7 +146,49 @@ export function isEsmShUrl(url: string): boolean {
 export function addEsmShDeps(url: string, reactVersion: string): string {
   if (!isEsmShUrl(url)) return url;
   if (url.includes(`react@${reactVersion}`)) return url;
-  if (url.includes("?")) return url;
 
-  return `${url}?external=react,react-dom&target=es2022`;
+  try {
+    const parsed = new URL(url);
+    const params = new URLSearchParams(parsed.search);
+    const externals = new Set<string>();
+
+    for (const value of params.getAll("external")) {
+      for (const external of value.split(",")) {
+        const normalized = external.trim();
+        if (normalized) externals.add(normalized);
+      }
+    }
+
+    for (const external of ["react", "react-dom"]) {
+      if (params.has(external)) {
+        externals.add(external);
+        params.delete(external);
+      }
+      externals.add(external);
+    }
+
+    const orderedExternals = [
+      "react",
+      "react-dom",
+      ...Array.from(externals).filter((external) =>
+        external !== "react" && external !== "react-dom"
+      ),
+    ];
+    const target = params.get("target") ?? "es2022";
+    params.delete("external");
+    params.delete("target");
+
+    const query = [
+      `external=${orderedExternals.join(",")}`,
+      `target=${target}`,
+      ...Array.from(params.entries()).map(([key, value]) =>
+        `${encodeURIComponent(key)}=${encodeURIComponent(value)}`
+      ),
+    ].join("&");
+
+    return `${parsed.origin}${parsed.pathname}?${query}${parsed.hash}`;
+  } catch (_) {
+    /* expected: malformed URL falls back to the original string */
+    return url;
+  }
 }

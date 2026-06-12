@@ -86,7 +86,7 @@ export class BareStrategy implements ImportRewriteStrategy {
     }
 
     const url = buildEsmShUrl(packageName, version, subpath, {
-      external: ["react"],
+      external: ["react", "react-dom"],
     });
 
     return { specifier: url };

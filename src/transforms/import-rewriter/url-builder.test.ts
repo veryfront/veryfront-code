@@ -222,7 +222,21 @@ describe("transforms/import-rewriter/url-builder", () => {
     it("should skip URLs with existing query params", () => {
       assertEquals(
         addEsmShDeps("https://esm.sh/lodash?target=es2022", "19.1.1"),
-        "https://esm.sh/lodash?target=es2022",
+        "https://esm.sh/lodash?external=react,react-dom&target=es2022",
+      );
+    });
+
+    it("should normalize malformed external params", () => {
+      assertEquals(
+        addEsmShDeps("https://esm.sh/@tanstack/react-query@5?external=react&react-dom", "19.1.1"),
+        "https://esm.sh/@tanstack/react-query@5?external=react,react-dom&target=es2022",
+      );
+    });
+
+    it("should add missing react-dom external to existing esm.sh params", () => {
+      assertEquals(
+        addEsmShDeps("https://esm.sh/@tanstack/react-query@5?external=react", "19.1.1"),
+        "https://esm.sh/@tanstack/react-query@5?external=react,react-dom&target=es2022",
       );
     });
   });

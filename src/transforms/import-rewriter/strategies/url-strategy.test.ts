@@ -59,12 +59,12 @@ describe("UrlStrategy", () => {
       assertEquals(specifier?.includes("external=react"), true);
     });
 
-    it("should return null for URLs that already have params", () => {
+    it("should canonicalize URLs that already have params", () => {
       const { specifier } = urlStrategy.rewrite(
         makeInfo("https://esm.sh/lodash?target=es2022"),
         makeCtx(),
       );
-      assertEquals(specifier, null);
+      assertEquals(specifier, "https://esm.sh/lodash?external=react,react-dom&target=es2022");
     });
 
     it("should return null for react packages (already configured)", () => {

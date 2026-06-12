@@ -130,6 +130,22 @@ describe("Hydration Parity", () => {
       expect(result).toContain("./lib/utils");
       expect(result).not.toContain("https://esm.sh/https://");
     });
+
+    it("should canonicalize matching bare and malformed esm.sh package imports", async () => {
+      const code = `
+        import { QueryClient } from "https://esm.sh/@tanstack/react-query@5?external=react&react-dom";
+        import { useQuery } from "@tanstack/react-query@5";
+      `;
+
+      const result = await rewriteImports(code, createContext({ target: "browser" }));
+      const urls = [...result.matchAll(/https:\/\/esm\.sh\/@tanstack\/react-query@5\?[^"']+/g)]
+        .map((match) => match[0]);
+
+      expect(urls).toHaveLength(2);
+      expect(new Set(urls)).toEqual(
+        new Set(["https://esm.sh/@tanstack/react-query@5?external=react,react-dom&target=es2022"]),
+      );
+    });
   });
 });
 

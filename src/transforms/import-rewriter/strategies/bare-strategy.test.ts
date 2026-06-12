@@ -87,7 +87,10 @@ describe("BareStrategy", () => {
 
     it("should rewrite to esm.sh URL for browser", () => {
       const result = bareStrategy.rewrite(makeInfo("lodash"), makeCtx({ target: "browser" }));
-      assertEquals(result.specifier?.includes("esm.sh"), true);
+      assertEquals(
+        result.specifier,
+        "https://esm.sh/lodash?external=react,react-dom&target=es2022",
+      );
     });
 
     it("should handle tailwindcss with pinned version", () => {
