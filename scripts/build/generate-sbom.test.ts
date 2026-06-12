@@ -131,20 +131,22 @@ describe("componentsFromLock", () => {
     );
   });
 
-  it("can emit lock and esm.sh components for one workspace manifest boundary", () => {
+  it("can emit lock and import-map components for one workspace manifest boundary", () => {
     const lock = JSON.stringify({
       version: "5",
       specifiers: {
         "npm:bash-tool@1.3.16": "1.3.16",
+        "npm:tailwindcss@4.2.2": "4.2.2",
       },
       npm: {
         "bash-tool@1.3.16": { integrity: "sha512-shell", dependencies: [] },
+        "tailwindcss@4.2.2": { integrity: "sha512-tailwind", dependencies: [] },
       },
       workspace: {
         dependencies: [],
         members: {
           "extensions/ext-css-tailwind": {
-            dependencies: ["npm:bash-tool@1.3.16"],
+            dependencies: ["npm:bash-tool@1.3.16", "npm:tailwindcss@4.2.2"],
           },
         },
       },
@@ -156,7 +158,7 @@ describe("componentsFromLock", () => {
       {
         manifestImportsByPath: {
           "extensions/ext-css-tailwind/deno.json": {
-            tailwindcss: "https://esm.sh/tailwindcss@4.2.2",
+            tailwindcss: "npm:tailwindcss@4.2.2",
           },
         },
       },
@@ -216,15 +218,17 @@ describe("componentsFromLock", () => {
       version: "5",
       specifiers: {
         "npm:bash-tool@1.3.16": "1.3.16",
+        "npm:tailwindcss@4.2.2": "4.2.2",
       },
       npm: {
         "bash-tool@1.3.16": { integrity: "sha512-shell", dependencies: [] },
+        "tailwindcss@4.2.2": { integrity: "sha512-tailwind", dependencies: [] },
       },
       workspace: {
         dependencies: [],
         members: {
           "extensions/ext-css-tailwind": {
-            dependencies: [],
+            dependencies: ["npm:tailwindcss@4.2.2"],
           },
           "extensions/ext-sandbox-shell-tools": {
             dependencies: ["npm:bash-tool@1.3.16"],
@@ -250,8 +254,8 @@ describe("componentsFromLock", () => {
             "https://esm.sh/react@19.2.4/jsx-runtime?deps=csstype@3.2.3&external=react&target=es2022",
         },
         "extensions/ext-css-tailwind/deno.json": {
-          tailwindcss: "https://esm.sh/tailwindcss@4.2.2",
-          "tailwindcss/plugin": "https://esm.sh/tailwindcss@4.2.2/plugin",
+          tailwindcss: "npm:tailwindcss@4.2.2",
+          "tailwindcss/plugin": "npm:tailwindcss@4.2.2/plugin",
         },
       },
     });
