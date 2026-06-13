@@ -168,6 +168,126 @@ describe("release asset build executor", () => {
     assert(!pageUpload.text.includes("/_vf_modules/components/Header.js"));
   });
 
+  it("rewrites transformed relative project imports to immutable asset URLs", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "pages/index.tsx",
+        content: 'import Hero from "../components/sections/HeroSection.tsx"; export default Hero;',
+      },
+      {
+        path: "components/sections/HeroSection.tsx",
+        content: 'import Button from "../elements/Button.tsx"; export default Button;',
+      },
+      {
+        path: "components/elements/Button.tsx",
+        content: "export default function Button() { return null; }",
+      },
+    ];
+    const client = makeClient(files, rec);
+    const transform = (_source: string, sourceFile: string) => {
+      if (sourceFile.endsWith("pages/index.tsx")) {
+        return Promise.resolve(
+          'import Hero from "/_vf_modules/components/sections/HeroSection.js"; export default Hero;',
+        );
+      }
+      if (sourceFile.endsWith("components/sections/HeroSection.tsx")) {
+        return Promise.resolve(
+          'import Button from "../../components/elements/Button.js"; export default Button;',
+        );
+      }
+      return Promise.resolve("export default function Button() { return null; }");
+    };
+
+    await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    const buttonHash = manifest.modules["components/elements/Button.tsx"]?.contentHash;
+    assertExists(buttonHash);
+    const heroHash = manifest.modules["components/sections/HeroSection.tsx"]?.contentHash;
+    assertExists(heroHash);
+    const pageHash = manifest.modules["pages/index.tsx"]?.contentHash;
+    assertExists(pageHash);
+
+    const heroUpload = rec.uploads.find((u) => u.hash === heroHash);
+    assertExists(heroUpload);
+    assert(heroUpload.text.includes(`"/_vf/assets/${buttonHash}.js"`));
+    assert(!heroUpload.text.includes("../../components/elements/Button.js"));
+
+    const pageUpload = rec.uploads.find((u) => u.hash === pageHash);
+    assertExists(pageUpload);
+    assert(pageUpload.text.includes(`"/_vf/assets/${heroHash}.js"`));
+    assert(!pageUpload.text.includes("/_vf_modules/components/sections/HeroSection.js"));
+  });
+
+  it("rewrites transformed root project imports to immutable asset URLs", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      { path: "pages/index.tsx", content: 'import Button from "../components/Button.tsx";' },
+      { path: "components/Button.tsx", content: "export const Button = () => null;" },
+    ];
+    const client = makeClient(files, rec);
+    const transform = (_source: string, sourceFile: string) => {
+      if (sourceFile.endsWith("pages/index.tsx")) {
+        return Promise.resolve('import { Button } from "/components/Button.js"; Button();');
+      }
+      return Promise.resolve("export const Button = () => null;");
+    };
+
+    await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    const buttonHash = manifest.modules["components/Button.tsx"]?.contentHash;
+    assertExists(buttonHash);
+    const pageHash = manifest.modules["pages/index.tsx"]?.contentHash;
+    assertExists(pageHash);
+
+    const pageUpload = rec.uploads.find((u) => u.hash === pageHash);
+    assertExists(pageUpload);
+    assert(pageUpload.text.includes(`"/_vf/assets/${buttonHash}.js"`));
+    assert(!pageUpload.text.includes("/components/Button.js"));
+  });
+
+  it("does not rewrite import-like strings or comments in transformed modules", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      { path: "pages/index.tsx", content: "export default function Page() { return null; }" },
+      { path: "components/Button.tsx", content: "export const Button = () => null;" },
+    ];
+    const client = makeClient(files, rec);
+    const transform = (_source: string, sourceFile: string) => {
+      if (sourceFile.endsWith("pages/index.tsx")) {
+        return Promise.resolve([
+          "const sample = 'import { Button } from \"/components/Button.js\"';",
+          '// import { Button } from "/components/Button.js"',
+          "export default function Page() { return sample; }",
+        ].join("\n"));
+      }
+      return Promise.resolve("export const Button = () => null;");
+    };
+
+    await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    const buttonHash = manifest.modules["components/Button.tsx"]?.contentHash;
+    assertExists(buttonHash);
+    const pageHash = manifest.modules["pages/index.tsx"]?.contentHash;
+    assertExists(pageHash);
+
+    const pageUpload = rec.uploads.find((u) => u.hash === pageHash);
+    assertExists(pageUpload);
+    assert(
+      pageUpload.text.includes(
+        "const sample = 'import { Button } from \"/components/Button.js\"';",
+      ),
+    );
+    assert(pageUpload.text.includes('// import { Button } from "/components/Button.js"'));
+    assert(!pageUpload.text.includes(`/_vf/assets/${buttonHash}.js`));
+  });
+
   it("keeps framework module imports on the module-server path", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
