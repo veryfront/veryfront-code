@@ -67,6 +67,7 @@ import {
   extractSkillPolicy,
   hydrateActiveSkillStateFromMessages,
   LOAD_SKILL_TOOL_ID,
+  removeFormInputAfterSubmission,
 } from "./skill-policy-enforcement.ts";
 import {
   getRuntimeAllowedRemoteTools,
@@ -754,6 +755,11 @@ export class AgentRuntime {
                 activeSkillDelegationOverrides = extractSkillDelegationOverrides(result);
                 mustLoadSkillFirst = false;
               }
+              activeSkillPolicy = removeFormInputAfterSubmission(
+                tc.toolName,
+                result,
+                activeSkillPolicy,
+              );
 
               const toolResultMessage = createToolResultMessage(
                 tc.toolCallId,
@@ -1171,6 +1177,11 @@ export class AgentRuntime {
             activeSkillDelegationOverrides = extractSkillDelegationOverrides(result);
             mustLoadSkillFirst = false;
           }
+          activeSkillPolicy = removeFormInputAfterSubmission(
+            tc.name,
+            result,
+            activeSkillPolicy,
+          );
 
           const dynamic = isDynamicTool(tc.name);
           sendSSE(controller, encoder, {
