@@ -131,7 +131,14 @@ export function narrowPolicyAfterSubmittedForm(
     activeSkillId === "create-agentic-workflow"
   ) {
     return activeSkillPolicy.filter((allowedToolName) =>
-      ["studio_suggestions", "create_file", "update_file"].includes(allowedToolName)
+      [
+        "studio_suggestions",
+        "list_files",
+        "get_file",
+        "search_files",
+        "create_file",
+        "update_file",
+      ].includes(allowedToolName)
     );
   }
 

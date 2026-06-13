@@ -181,7 +181,7 @@ describe("src/agent/runtime skill policy helpers", () => {
       );
     });
 
-    it("narrows terminal starter skills to write and suggestion tools after submission", () => {
+    it("narrows terminal starter skills to read, write, and suggestion tools after submission", () => {
       assertEquals(
         removeFormInputAfterSubmission("form_input", { submitted: true }, "plan", [
           "form_input",
@@ -193,7 +193,14 @@ describe("src/agent/runtime skill policy helpers", () => {
           "update_file",
           "web_search",
         ]),
-        ["studio_suggestions", "create_file", "update_file"],
+        [
+          "studio_suggestions",
+          "list_files",
+          "get_file",
+          "search_files",
+          "create_file",
+          "update_file",
+        ],
       );
       assertEquals(
         removeFormInputAfterSubmission(
@@ -207,7 +214,7 @@ describe("src/agent/runtime skill policy helpers", () => {
             "create_file",
           ],
         ),
-        ["studio_suggestions", "create_file"],
+        ["studio_suggestions", "list_files", "create_file"],
       );
     });
 

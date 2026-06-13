@@ -209,7 +209,7 @@ Use one form, then write the plan.`,
     "list_files",
     "create_file",
   ]);
-  assertEquals(secondResult.allowedTools, ["studio_suggestions", "create_file"]);
+  assertEquals(secondResult.allowedTools, ["studio_suggestions", "list_files", "create_file"]);
   assertEquals(secondResult.delegationTools, [
     "form_input",
     "studio_suggestions",
