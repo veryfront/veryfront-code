@@ -13,6 +13,7 @@ import {
 const logger = serverLogger.component("agent");
 
 export const LOAD_SKILL_TOOL_ID = "load_skill";
+export const FORM_INPUT_TOOL_ID = "form_input";
 
 function getSkillActivationRequiredError(toolName: string): string {
   return `Tool "${toolName}" cannot run before load_skill succeeds in the same step. ` +
@@ -64,6 +65,26 @@ export function extractSkillPolicy(result: unknown): string[] | undefined {
     );
     return [];
   }
+}
+
+function isSubmittedFormInputResult(result: unknown): boolean {
+  return Boolean(result) && typeof result === "object" &&
+    (result as { submitted?: unknown }).submitted === true;
+}
+
+export function removeFormInputAfterSubmission(
+  toolName: string,
+  result: unknown,
+  activeSkillPolicy: string[] | undefined,
+): string[] | undefined {
+  if (
+    toolName !== FORM_INPUT_TOOL_ID || !isSubmittedFormInputResult(result) ||
+    activeSkillPolicy === undefined
+  ) {
+    return activeSkillPolicy;
+  }
+
+  return activeSkillPolicy.filter((allowedToolName) => allowedToolName !== FORM_INPUT_TOOL_ID);
 }
 
 export type SkillPolicyResult =

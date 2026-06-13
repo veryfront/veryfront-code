@@ -5,6 +5,7 @@ import {
   enforceSkillPolicy,
   extractSkillPolicy,
   hydrateActiveSkillStateFromMessages,
+  removeFormInputAfterSubmission,
 } from "./skill-policy-enforcement.ts";
 import type { Message } from "../types.ts";
 
@@ -134,6 +135,36 @@ describe("src/agent/runtime skill policy helpers", () => {
       assertEquals(enforceSkillPolicy("Read", undefined, false), { allowed: true });
       assertEquals(enforceSkillPolicy("Write", undefined, false), { allowed: true });
       assertEquals(enforceSkillPolicy("Bash", undefined, false), { allowed: true });
+    });
+  });
+
+  describe("removeFormInputAfterSubmission", () => {
+    it("removes form_input from the active policy after a submitted form result", () => {
+      assertEquals(
+        removeFormInputAfterSubmission("form_input", { submitted: true }, [
+          "form_input",
+          "studio_suggestions",
+          "create_file",
+        ]),
+        ["studio_suggestions", "create_file"],
+      );
+    });
+
+    it("keeps form_input available for non-submitted or non-form tool results", () => {
+      assertEquals(
+        removeFormInputAfterSubmission("form_input", { submitted: false }, [
+          "form_input",
+          "studio_suggestions",
+        ]),
+        ["form_input", "studio_suggestions"],
+      );
+      assertEquals(
+        removeFormInputAfterSubmission("web_search", { submitted: true }, [
+          "form_input",
+          "web_search",
+        ]),
+        ["form_input", "web_search"],
+      );
     });
   });
 
