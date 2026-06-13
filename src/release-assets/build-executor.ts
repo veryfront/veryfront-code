@@ -21,6 +21,7 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { dirname, join } from "#veryfront/compat/path/index.ts";
 import { resolveFrameworkSourcePath } from "#veryfront/platform/compat/framework-source-resolver.ts";
 import { transformToESM } from "#veryfront/transforms/esm-transform.ts";
+import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
 import { PLATFORM_UTILITIES } from "#veryfront/html/utils.ts";
 import { extractCandidatesFromFiles } from "#veryfront/html/styles-builder/candidate-extractor.ts";
 import { sha256HexBytes } from "./hash.ts";
@@ -248,10 +249,12 @@ function resolveStaticImports(
 }
 
 function resolveKnownModulePath(path: string, knownPaths: Set<string>): string | null {
-  const normalized = path
-    .replace(/^\/?_vf_modules\//, "")
-    .replace(/^\/+/, "")
-    .replace(/[?#].*$/, "");
+  const normalized = normalizeLogicalPath(
+    path
+      .replace(/^\/?_vf_modules\//, "")
+      .replace(/^\/+/, "")
+      .replace(/[?#].*$/, ""),
+  );
 
   if (normalized.startsWith("_veryfront/")) return null;
   if (knownPaths.has(normalized)) return normalized;
@@ -265,39 +268,95 @@ function resolveKnownModulePath(path: string, knownPaths: Set<string>): string |
   return null;
 }
 
-function collectVfModuleImports(
-  code: string,
-  knownPaths: Set<string>,
-): Map<string, string> {
-  const imports = new Map<string, string>();
-  const re = /(["'])(\/_vf_modules\/[^"']+)\1/g;
-  let match: RegExpExecArray | null;
+function normalizeLogicalPath(path: string): string {
+  const parts: string[] = [];
+  for (const part of path.split("/")) {
+    if (!part || part === ".") continue;
+    if (part === "..") {
+      parts.pop();
+      continue;
+    }
+    parts.push(part);
+  }
+  return parts.join("/");
+}
 
-  while ((match = re.exec(code)) !== null) {
-    const specifier = match[2]!;
-    const logicalPath = resolveKnownModulePath(specifier, knownPaths);
-    if (logicalPath) imports.set(specifier, logicalPath);
+function normalizeProjectSpecifier(specifier: string, logicalPath: string): string | null {
+  if (
+    specifier.startsWith("http://") ||
+    specifier.startsWith("https://") ||
+    specifier.startsWith("data:") ||
+    specifier.startsWith("blob:") ||
+    specifier.startsWith("#")
+  ) {
+    return null;
+  }
+
+  if (specifier.startsWith("/_vf_modules/_veryfront/")) return null;
+  if (specifier.startsWith("/_vf_modules/")) return specifier;
+  if (specifier.startsWith("_veryfront/")) return null;
+
+  if (specifier.startsWith("./") || specifier.startsWith("../")) {
+    const dir = logicalPath.includes("/")
+      ? logicalPath.slice(0, logicalPath.lastIndexOf("/"))
+      : ".";
+    return `${dir}/${specifier}`;
+  }
+
+  if (specifier.startsWith("/")) return specifier;
+
+  if (BROWSER_MODULE_DIRS.some((dir) => specifier.startsWith(dir))) return specifier;
+
+  return null;
+}
+
+function resolveProjectModuleSpecifier(
+  specifier: string,
+  logicalPath: string,
+  knownPaths: Set<string>,
+): string | null {
+  const normalized = normalizeProjectSpecifier(specifier, logicalPath);
+  if (!normalized) return null;
+  return resolveKnownModulePath(normalized, knownPaths);
+}
+
+async function collectProjectModuleImports(
+  code: string,
+  logicalPath: string,
+  knownPaths: Set<string>,
+): Promise<Map<string, string>> {
+  const imports = new Map<string, string>();
+
+  for (const imp of await parseImports(code)) {
+    if (!imp.n) continue;
+
+    const specifier = imp.n;
+    const importedPath = resolveProjectModuleSpecifier(specifier, logicalPath, knownPaths);
+    if (importedPath) imports.set(specifier, importedPath);
   }
 
   return imports;
 }
 
-function rewriteVfModuleImports(
+async function rewriteProjectModuleImports(
   code: string,
+  logicalPath: string,
   moduleAssets: Map<string, PreparedAsset>,
   knownPaths: Set<string>,
   dependencyUrls: Map<string, string>,
-): string {
-  return code.replace(/(["'])(\/_vf_modules\/[^"']+)\1/g, (full, quote, specifier) => {
-    const dependencyUrl = dependencyUrls.get(specifier.replace(/[?#].*$/, ""));
-    if (dependencyUrl) return `${quote}${dependencyUrl}${quote}`;
+): Promise<string> {
+  function rewriteSpecifier(specifier: string): string | null {
+    if (specifier.startsWith("/_vf_modules/")) {
+      const dependencyUrl = dependencyUrls.get(specifier.replace(/[?#].*$/, ""));
+      if (dependencyUrl) return dependencyUrl;
+    }
 
-    const logicalPath = resolveKnownModulePath(specifier, knownPaths);
-    const asset = logicalPath ? moduleAssets.get(logicalPath) : undefined;
-    if (!asset) return full;
+    const importedPath = resolveProjectModuleSpecifier(specifier, logicalPath, knownPaths);
+    const asset = importedPath ? moduleAssets.get(importedPath) : undefined;
+    return asset ? releaseAssetUrl(asset.contentHash, "js") : null;
+  }
 
-    return `${quote}${releaseAssetUrl(asset.contentHash, "js")}${quote}`;
-  });
+  return await replaceSpecifiers(code, (specifier) => rewriteSpecifier(specifier));
 }
 
 function buildDependencyUrlMap(_dependencies: Record<string, PreparedAsset>): Map<string, string> {
@@ -317,7 +376,7 @@ async function finalizeProjectModules(
 ): Promise<{ modules: Record<string, PreparedAsset>; skippedModules: Set<string> }> {
   const finalized = new Map<string, PreparedAsset>();
   const unresolvedCycles = new Set<string>();
-  const cyclicModules = collectCyclicProjectModules(transformedModules, knownPaths, gaps);
+  const cyclicModules = await collectCyclicProjectModules(transformedModules, knownPaths, gaps);
   const skippedModules = new Set(cyclicModules);
 
   async function finalize(logicalPath: string, stack: string[]): Promise<PreparedAsset | null> {
@@ -339,13 +398,14 @@ async function finalizeProjectModules(
     if (!transformed) return null;
 
     const nextStack = [...stack, logicalPath];
-    const imports = collectVfModuleImports(transformed.code, knownPaths);
+    const imports = await collectProjectModuleImports(transformed.code, logicalPath, knownPaths);
     for (const importedPath of imports.values()) {
       await finalize(importedPath, nextStack);
     }
 
-    const rewritten = rewriteVfModuleImports(
+    const rewritten = await rewriteProjectModuleImports(
       transformed.code,
+      logicalPath,
       finalized,
       knownPaths,
       dependencyUrls,
@@ -376,18 +436,18 @@ async function finalizeProjectModules(
   return { modules: Object.fromEntries(finalized), skippedModules };
 }
 
-function collectCyclicProjectModules(
+async function collectCyclicProjectModules(
   transformedModules: Map<string, TransformedProjectModule>,
   knownPaths: Set<string>,
   gaps: string[],
-): Set<string> {
+): Promise<Set<string>> {
   const cyclic = new Set<string>();
   const visiting = new Set<string>();
   const visited = new Set<string>();
   const stack: string[] = [];
   const recordedCycles = new Set<string>();
 
-  function visit(logicalPath: string): void {
+  async function visit(logicalPath: string): Promise<void> {
     if (visited.has(logicalPath)) return;
 
     if (visiting.has(logicalPath)) {
@@ -411,9 +471,9 @@ function collectCyclicProjectModules(
     visiting.add(logicalPath);
     stack.push(logicalPath);
 
-    const imports = collectVfModuleImports(transformed.code, knownPaths);
+    const imports = await collectProjectModuleImports(transformed.code, logicalPath, knownPaths);
     for (const importedPath of imports.values()) {
-      if (transformedModules.has(importedPath)) visit(importedPath);
+      if (transformedModules.has(importedPath)) await visit(importedPath);
     }
 
     stack.pop();
@@ -421,7 +481,7 @@ function collectCyclicProjectModules(
     visited.add(logicalPath);
   }
 
-  for (const logicalPath of transformedModules.keys()) visit(logicalPath);
+  for (const logicalPath of transformedModules.keys()) await visit(logicalPath);
   return cyclic;
 }
 
