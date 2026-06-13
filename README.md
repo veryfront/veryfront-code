@@ -94,54 +94,11 @@ brew install veryfront/tap/veryfront
 
 Follow the [Quickstart guide](https://veryfront.com/docs/code/getting-started/quickstart) to build the agent app end-to-end, or use [Create a project](https://veryfront.com/docs/code/getting-started/create-a-project) to compare templates before you scaffold. For the full documentation, visit [veryfront.com/docs/code](https://veryfront.com/docs/code).
 
-## Project Structure
-
-```
-veryfront/
-├── src/                  # Framework core modules
-│   ├── agent/           # Agent runtime, AG-UI, hosted execution
-│   ├── tool/            # Tool definitions and registry
-│   ├── workflow/        # Durable DAG workflows with crash recovery
-│   ├── mcp/             # Model Context Protocol server
-│   ├── skill/           # Agent skills system (SKILL.md)
-│   ├── chat/            # Chat UI components and streaming
-│   ├── discovery/       # Auto-discovery of tools, agents, workflows
-│   ├── sandbox/         # Ephemeral compute environments
-│   ├── runs/            # Durable runs client
-│   ├── task/            # Task definitions and runner
-│   ├── channels/        # Control-plane agent routing
-│   ├── integrations/    # Third-party connector metadata
-│   ├── provider/        # AI model provider adapters
-│   ├── rendering/       # SSR/RSC engine
-│   ├── server/          # HTTP servers (dev + production)
-│   ├── routing/         # File-based routing
-│   ├── security/        # Rate limiting, CORS, CSP, validation
-│   └── ...              # See src/README.md for full list
-├── cli/                  # CLI and TUI dashboard
-├── extensions/           # First-party extension packages
-├── docs/                 # Architecture diagrams and guides
-├── tests/                # Integration and E2E tests
-└── scripts/              # Development and build scripts
-```
-
-## Examples
-
-You can find standalone, runnable examples in the [veryfront-examples](https://github.com/veryfront/veryfront-examples) repo.
-
 ## Contributing
 
 Looking to contribute? All types of help are appreciated, from coding to testing and feature specification. Read [CONTRIBUTING.md](./CONTRIBUTING.md) for more details on how to get involved.
 
 If you are a developer and would like to contribute with code, please open an issue to discuss before opening a Pull Request.
-
-## Supply-Chain Hardening
-
-Veryfront Code treats dependency changes as reviewed code changes.
-
-- Workspace Deno dependencies use exact versions and are resolved through the checked-in `deno.lock`.
-- `deno.json` sets `minimumDependencyAge` to delay freshly published dependency versions during Deno resolution.
-- `.npmrc` sets `save-exact=true` so npm-compatible tooling records exact versions.
-- The npm package generator pins automatic `dependencies`, `optionalDependencies`, and `devDependencies`; peer ranges remain available only for opt-in compatibility constraints.
 
 ## Support
 
