@@ -52,6 +52,77 @@ export type HostedChildForkRuntimeConfig = {
   thinkingConfig: RuntimeAgentThinkingConfig | undefined;
 };
 
+function getStringRecord(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  const record: Record<string, string> = {};
+  for (const [key, property] of Object.entries(value)) {
+    if (typeof property === "string") {
+      record[key] = property;
+    }
+  }
+
+  return record;
+}
+
+function buildHostedChildInvocationContext(
+  forkInput: HostedChildForkToolInput,
+  input: {
+    conversationId?: string;
+    parentRunId?: string;
+    toolCallId: string;
+  },
+): Record<string, string> {
+  const existing = getStringRecord(forkInput.context?.veryfront_invocation_context);
+  const rootConversationId = existing.root_conversation_id || input.conversationId;
+  const rootRunId = existing.root_run_id || input.parentRunId;
+
+  return {
+    ...existing,
+    ...(rootConversationId
+      ? {
+        root_conversation_id: rootConversationId,
+      }
+      : {}),
+    ...(input.conversationId
+      ? {
+        parent_conversation_id: input.conversationId,
+      }
+      : {}),
+    ...(rootRunId
+      ? {
+        root_run_id: rootRunId,
+      }
+      : {}),
+    ...(input.parentRunId
+      ? {
+        parent_run_id: input.parentRunId,
+      }
+      : {}),
+    tool_call_id: input.toolCallId,
+  };
+}
+
+/** Adds Veryfront invocation metadata to hosted child fork input. */
+export function withHostedChildInvocationContext(
+  forkInput: HostedChildForkToolInput,
+  input: {
+    conversationId?: string;
+    parentRunId?: string;
+    toolCallId: string;
+  },
+): HostedChildForkToolInput {
+  return {
+    ...forkInput,
+    context: {
+      ...(forkInput.context ?? {}),
+      veryfront_invocation_context: buildHostedChildInvocationContext(forkInput, input),
+    },
+  };
+}
+
 /** Input payload for resolve hosted child fork runtime config. */
 export type ResolveHostedChildForkRuntimeConfigInput = {
   forkInput: Pick<
@@ -96,6 +167,22 @@ function appendStructuredContextToPrompt(
   }\n</structured_context>\nTreat structured_context as the authoritative data payload for the child task. If prose conflicts with structured_context, use structured_context and say what conflicted.`;
 }
 
+/** Builds the effective hosted child fork prompt. */
+export function buildHostedChildForkEffectivePrompt(input: {
+  description: string;
+  prompt: string;
+  context: HostedChildForkToolInput["context"];
+  runId: string;
+}): string {
+  const promptWithArtifactPath = withDefaultResearchArtifactPath({
+    description: input.description,
+    prompt: input.prompt,
+    runId: input.runId,
+  });
+
+  return appendStructuredContextToPrompt(promptWithArtifactPath, input.context);
+}
+
 /** Configuration used by resolve hosted child fork runtime. */
 export function resolveHostedChildForkRuntimeConfig(
   input: ResolveHostedChildForkRuntimeConfigInput,
@@ -103,15 +190,15 @@ export function resolveHostedChildForkRuntimeConfig(
   const { description, prompt, context, tools, model, thinking, max_steps } = input.forkInput;
   const forkModel = input.resolveModelId(model || input.contextModel || input.defaultModel);
   const requestedMaxSteps = typeof max_steps === "number" ? max_steps : undefined;
-  const promptWithArtifactPath = withDefaultResearchArtifactPath({
-    description,
-    prompt,
-    runId: input.runId,
-  });
 
   return {
     description,
-    effectivePrompt: appendStructuredContextToPrompt(promptWithArtifactPath, context),
+    effectivePrompt: buildHostedChildForkEffectivePrompt({
+      description,
+      prompt,
+      context,
+      runId: input.runId,
+    }),
     requestedTools: tools,
     forkModel,
     provider: input.resolveProvider(forkModel),

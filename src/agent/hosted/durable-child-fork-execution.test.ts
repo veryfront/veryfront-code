@@ -582,6 +582,12 @@ describe("agent/hosted-durable-child-fork-execution", () => {
           description: "Inspect logs",
           prompt: "Find logs",
           project_id: "77777777-7777-4777-8777-777777777777",
+          context: {
+            veryfront_invocation_context: {
+              root_conversation_id: "root-conversation-1",
+              root_run_id: "run_root_1",
+            },
+          },
         },
         executionOptions: { toolCallId: "tool-call-1" },
         childAgentId: "invoke-agent-child",
@@ -649,6 +655,17 @@ describe("agent/hosted-durable-child-fork-execution", () => {
       targetBranchId: BRANCH_ID,
     });
     assertEquals(result.success.snapshot.success, true);
+    const handoffMessageBody = getRecordedRequest(requests, 2).body;
+    assertEquals(handoffMessageBody, {
+      role: "user",
+      parts: [
+        {
+          type: "text",
+          text:
+            'Find logs\n\n<structured_context>\n{"veryfront_invocation_context":{"root_conversation_id":"root-conversation-1","root_run_id":"run_root_1","parent_conversation_id":"11111111-1111-4111-a111-111111111111","parent_run_id":"run_parent_1","tool_call_id":"tool-call-1"}}\n</structured_context>\nTreat structured_context as the authoritative data payload for the child task. If prose conflicts with structured_context, use structured_context and say what conflicted.',
+        },
+      ],
+    });
     const createRunBody = getRecordedRequest(requests, 3).body;
     assertEquals(createRunBody, {
       kind: "agent",

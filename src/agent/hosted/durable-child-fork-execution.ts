@@ -21,7 +21,11 @@ import {
   HostedChildTerminalStateError,
   type HostedChildTerminalStatus,
 } from "./child-status.ts";
-import type { HostedChildForkToolInput } from "./child-tool-input.ts";
+import {
+  buildHostedChildForkEffectivePrompt,
+  type HostedChildForkToolInput,
+  withHostedChildInvocationContext,
+} from "./child-tool-input.ts";
 import { isChildRunAbortError, throwIfChildRunAborted } from "../child-run/execution-support.ts";
 
 /** Options accepted by hosted durable child execution. */
@@ -481,6 +485,11 @@ async function bootstrapHostedDurableChildFork<
 
   return runBootstrap(async () => {
     await input.bootstrap?.onBootstrapStart?.(input.bootstrapContext);
+    const forkInput = withHostedChildInvocationContext(input.forkInput, {
+      conversationId: input.bootstrapContext.parentConversationId,
+      parentRunId: input.bootstrapContext.parentRunId,
+      toolCallId: input.executionOptions.toolCallId,
+    });
 
     const bootstrapChildRun = input.runtime?.bootstrapChildRun ?? bootstrapHostedChildRun;
     const run = await bootstrapChildRun({
@@ -492,8 +501,13 @@ async function bootstrapHostedDurableChildFork<
       parentRunId: input.bootstrapContext.parentRunId,
       parentMessageId: input.bootstrapContext.parentMessageId,
       spawnedFromToolCallId: input.executionOptions.toolCallId,
-      description: input.forkInput.description,
-      prompt: input.forkInput.prompt,
+      description: forkInput.description,
+      prompt: buildHostedChildForkEffectivePrompt({
+        description: forkInput.description,
+        prompt: forkInput.prompt,
+        context: forkInput.context,
+        runId: input.executionOptions.toolCallId,
+      }),
       agentId: input.childAgentId,
       branchId: getBranchId(input),
     });

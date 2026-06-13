@@ -314,7 +314,15 @@ Deno.test("executeHostedChildForkToolInput resolves runtime config and prepares 
         true,
       );
       assertEquals(
+        runtimeConfig.effectivePrompt.includes('"root_conversation_id":"conversation-parent-1"'),
+        true,
+      );
+      assertEquals(
         runtimeConfig.effectivePrompt.includes('"parent_run_id":"run-parent-1"'),
+        true,
+      );
+      assertEquals(
+        runtimeConfig.effectivePrompt.includes('"root_run_id":"run-parent-1"'),
         true,
       );
       assertEquals(
@@ -369,6 +377,81 @@ Deno.test("executeHostedChildForkToolInput resolves runtime config and prepares 
   if (result.success) {
     assertEquals(result.summary.text, "Resolved.");
   }
+});
+
+Deno.test("executeHostedChildForkToolInput preserves root invocation context for nested child forks", async () => {
+  await executeHostedChildForkToolInput({
+    authToken: "token",
+    apiUrl: "https://api.example.com",
+    projectId: "project-1",
+    conversationId: "conversation-parent-2",
+    parentRunId: "run-parent-2",
+    kind: "invoke_agent",
+    forkInput: {
+      description: "Review nested handoff",
+      prompt: "Review the nested handoff.",
+      context: {
+        veryfront_invocation_context: {
+          root_conversation_id: "conversation-root-1",
+          parent_conversation_id: "conversation-parent-1",
+          root_run_id: "run-root-1",
+          parent_run_id: "run-parent-1",
+          tool_call_id: "tool-call-parent",
+        },
+      },
+    },
+    toolCallId: "tool-call-2",
+    defaultModel: "haiku",
+    defaultMaxSteps: 80,
+    resolveModelId: (modelId) => modelId,
+    resolveProvider: () => "anthropic",
+    prepareToolAssembly: ({ runtimeConfig }) => {
+      assertEquals(
+        runtimeConfig.effectivePrompt.includes('"root_conversation_id":"conversation-root-1"'),
+        true,
+      );
+      assertEquals(
+        runtimeConfig.effectivePrompt.includes('"parent_conversation_id":"conversation-parent-2"'),
+        true,
+      );
+      assertEquals(
+        runtimeConfig.effectivePrompt.includes('"root_run_id":"run-root-1"'),
+        true,
+      );
+      assertEquals(
+        runtimeConfig.effectivePrompt.includes('"parent_run_id":"run-parent-2"'),
+        true,
+      );
+      assertEquals(runtimeConfig.effectivePrompt.includes('"tool_call_id":"tool-call-2"'), true);
+      assertEquals(runtimeConfig.effectivePrompt.includes('"tool-call-parent"'), false);
+      return {
+        ok: true,
+        forkTools: {},
+        availableToolNames: [],
+      };
+    },
+    startRuntime: () => ({
+      forkStreamAbortController: new AbortController(),
+      childRunMonitorAbortController: null,
+      childRunMonitorPromise: Promise.resolve(),
+      forkToolNames: [],
+      streamResult: {
+        fullStream: (async function* () {
+          yield { type: "text-delta", text: "Resolved." } as const;
+        })(),
+        steps: Promise.resolve([
+          {
+            text: "Resolved.",
+            finishReason: "stop",
+            messages: [],
+            toolCalls: [],
+            toolResults: [],
+          },
+        ]),
+        totalUsage: Promise.resolve(undefined),
+      },
+    }),
+  });
 });
 
 Deno.test("executeHostedChildForkWithPreparedTools exports stable default timeout constants", () => {

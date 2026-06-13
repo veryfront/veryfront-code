@@ -49,6 +49,7 @@ import {
   type HostedChildForkToolInput,
   resolveHostedChildForkRuntimeConfig,
   type ResolveHostedChildForkRuntimeConfigInput,
+  withHostedChildInvocationContext,
 } from "./child-tool-input.ts";
 
 /** Default value for hosted child fork stream idle timeout ms. */
@@ -221,45 +222,6 @@ export type ExecuteHostedChildForkToolInputOptions<
     ) => Record<string, unknown> | undefined;
     onRuntimeConfig?: (runtimeConfig: HostedChildForkRuntimeConfig) => void | Promise<void>;
   };
-
-function buildHostedChildInvocationContext(input: {
-  conversationId?: string;
-  parentRunId?: string;
-  toolCallId: string;
-}): Record<string, string> {
-  return {
-    ...(input.conversationId
-      ? {
-        root_conversation_id: input.conversationId,
-        parent_conversation_id: input.conversationId,
-      }
-      : {}),
-    ...(input.parentRunId
-      ? {
-        root_run_id: input.parentRunId,
-        parent_run_id: input.parentRunId,
-      }
-      : {}),
-    tool_call_id: input.toolCallId,
-  };
-}
-
-function withHostedChildInvocationContext(
-  forkInput: HostedChildForkToolInput,
-  input: {
-    conversationId?: string;
-    parentRunId?: string;
-    toolCallId: string;
-  },
-): HostedChildForkToolInput {
-  return {
-    ...forkInput,
-    context: {
-      ...(forkInput.context ?? {}),
-      veryfront_invocation_context: buildHostedChildInvocationContext(input),
-    },
-  };
-}
 
 /** Input payload for execute hosted child fork tool. */
 export async function executeHostedChildForkToolInput<
