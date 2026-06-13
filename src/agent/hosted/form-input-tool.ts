@@ -19,6 +19,10 @@ export interface HostedFormInputToolContext {
   conversationId?: string;
   parentRunId?: string;
   slashCommandArtifactPathSeen?: boolean;
+  submittedFormInputResult?: {
+    values: Record<string, unknown>;
+    inputRequestId: string;
+  };
 }
 
 /** Create hosted form input tool. */
@@ -47,6 +51,16 @@ async function executeDurableFormInputFlow(
 
   const conversationId = context.conversationId;
   const parentRunId = context.parentRunId;
+  if (context.submittedFormInputResult) {
+    return {
+      submitted: true,
+      values: context.submittedFormInputResult.values,
+      inputRequestId: context.submittedFormInputResult.inputRequestId,
+      reused: true,
+      reason: "A submitted form_input result already exists for this run.",
+    };
+  }
+
   const toolCallId =
     typeof execContext?.toolCallId === "string" && execContext.toolCallId.length > 0
       ? execContext.toolCallId
@@ -111,6 +125,10 @@ function resolveDurableInputRequestResult(
     if (containsExactArtifactPathValue(values)) {
       context.slashCommandArtifactPathSeen = true;
     }
+    context.submittedFormInputResult = {
+      values,
+      inputRequestId: snapshot.id,
+    };
 
     return {
       submitted: true,

@@ -146,6 +146,45 @@ describe("agent/hosted-form-input-tool", () => {
     assertEquals(calls[1]?.init?.method, "GET");
   });
 
+  it("reuses a submitted form result instead of opening another form in the same run", async () => {
+    const calls = stubFetchSequence([
+      jsonResponse(createInputRequestRecord(), 201),
+      jsonResponse(
+        createInputRequestRecord({
+          status: "submitted",
+          submitted_at: "2026-04-04T00:00:30.000Z",
+          latest_response: createLatestResponse({ topic: "Support FAQ assistant" }),
+        }),
+        200,
+      ),
+    ]);
+
+    const context = createContext();
+    const formInputTool = createHostedFormInputTool(context, API_URL);
+    const firstResult = await formInputTool.execute(
+      createExecuteInput([{ type: "textarea", name: "topic", label: "Topic" }]),
+      { toolCallId: TOOL_CALL_ID },
+    );
+    const secondResult = await formInputTool.execute(
+      createExecuteInput([{ type: "textarea", name: "topic", label: "Topic" }]),
+      { toolCallId: "tool-call-2" },
+    );
+
+    assertEquals(firstResult, {
+      submitted: true,
+      values: { topic: "Support FAQ assistant" },
+      inputRequestId: INPUT_REQUEST_ID,
+    });
+    assertEquals(secondResult, {
+      submitted: true,
+      values: { topic: "Support FAQ assistant" },
+      inputRequestId: INPUT_REQUEST_ID,
+      reused: true,
+      reason: "A submitted form_input result already exists for this run.",
+    });
+    assertEquals(calls.length, 2);
+  });
+
   it("publishes a lifecycle data event for the created durable input request", async () => {
     const publishedEvents: unknown[] = [];
     stubFetchSequence([
