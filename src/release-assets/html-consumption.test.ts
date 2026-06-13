@@ -9,6 +9,7 @@ import {
   resolveManifestRoutePreloadUrls,
 } from "./html-consumption.ts";
 import {
+  clearCachedReleaseAssetManifests,
   clearReleaseAssetManifestCache,
   configureReleaseAssetManifestFetcher,
   getReadyManifestForRender,
@@ -18,7 +19,7 @@ import type { ReleaseAssetManifest } from "./manifest-schema.ts";
 
 const MOD_HASH = "a".repeat(64);
 
-function manifest(): ReleaseAssetManifest {
+function manifest(contentHash = MOD_HASH): ReleaseAssetManifest {
   return {
     schemaVersion: 1,
     projectId: "p",
@@ -30,7 +31,7 @@ function manifest(): ReleaseAssetManifest {
     createdAt: "2026-06-12T00:00:00.000Z",
     assetBasePath: "/_vf/assets",
     modules: {
-      "pages/index.tsx": { contentHash: MOD_HASH, size: 1, contentType: "text/javascript" },
+      "pages/index.tsx": { contentHash, size: 1, contentType: "text/javascript" },
     },
     css: [],
     routes: { "/": { modules: ["pages/index.tsx"], css: [] } },
@@ -110,5 +111,31 @@ describe("manifest cache gating", () => {
 
     const cached = getReadyManifestForRender("r");
     assertEquals(cached?.manifestVersion, 3);
+  });
+
+  it("ignores in-flight manifest fetches that resolve after the cache is cleared", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    const resolvers: Array<(value: { state: string; manifest: ReleaseAssetManifest }) => void> = [];
+    configureReleaseAssetManifestFetcher(() =>
+      new Promise((resolve) => {
+        resolvers.push(resolve);
+      })
+    );
+
+    assertEquals(getReadyManifestForRender("r"), null);
+    await Promise.resolve();
+    assertEquals(resolvers.length, 1);
+    clearCachedReleaseAssetManifests();
+    assertEquals(getReadyManifestForRender("r"), null);
+    await Promise.resolve();
+    assertEquals(resolvers.length, 2);
+
+    resolvers[1]!({ state: "ready", manifest: manifest("b".repeat(64)) });
+    await new Promise((r) => setTimeout(r, 0));
+    resolvers[0]!({ state: "ready", manifest: manifest("a".repeat(64)) });
+    await new Promise((r) => setTimeout(r, 0));
+
+    const cached = getReadyManifestForRender("r");
+    assertEquals(cached?.modules["pages/index.tsx"]?.contentHash, "b".repeat(64));
   });
 });
