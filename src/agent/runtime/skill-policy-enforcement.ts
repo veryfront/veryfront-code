@@ -23,21 +23,30 @@ function getSkillActivationRequiredError(toolName: string): string {
 export function hydrateActiveSkillStateFromMessages(
   messages: readonly Message[],
 ): {
+  activeSkillId: string | undefined;
   activeSkillPolicy: string[] | undefined;
   activeSkillDelegationOverrides: SkillDelegationOverrides | undefined;
 } {
+  let activeSkillId: string | undefined;
   let activeSkillPolicy: string[] | undefined;
   let activeSkillDelegationOverrides: SkillDelegationOverrides | undefined;
 
   for (const message of messages) {
     for (const part of message.parts) {
       if (!isToolResultPart(part) || part.toolName !== LOAD_SKILL_TOOL_ID) continue;
+      activeSkillId = extractSkillId(part.result);
       activeSkillPolicy = extractSkillPolicy(part.result);
       activeSkillDelegationOverrides = extractSkillDelegationOverrides(part.result);
     }
   }
 
-  return { activeSkillPolicy, activeSkillDelegationOverrides };
+  return { activeSkillId, activeSkillPolicy, activeSkillDelegationOverrides };
+}
+
+export function extractSkillId(result: unknown): string | undefined {
+  if (!result || typeof result !== "object") return undefined;
+  const skillResult = result as { skillId?: unknown };
+  return typeof skillResult.skillId === "string" ? skillResult.skillId : undefined;
 }
 
 export function extractSkillPolicy(result: unknown): string[] | undefined {
@@ -75,6 +84,7 @@ function isSubmittedFormInputResult(result: unknown): boolean {
 export function removeFormInputAfterSubmission(
   toolName: string,
   result: unknown,
+  activeSkillId: string | undefined,
   activeSkillPolicy: string[] | undefined,
 ): string[] | undefined {
   if (
@@ -82,6 +92,28 @@ export function removeFormInputAfterSubmission(
     activeSkillPolicy === undefined
   ) {
     return activeSkillPolicy;
+  }
+
+  if (activeSkillId === "research") {
+    return activeSkillPolicy.filter((allowedToolName) =>
+      [
+        "studio_suggestions",
+        "web_search",
+        "web_fetch",
+        "create_file",
+        "update_file",
+      ].includes(allowedToolName)
+    );
+  }
+
+  if (
+    activeSkillId === "plan" ||
+    activeSkillId === "create-agent" ||
+    activeSkillId === "create-agentic-workflow"
+  ) {
+    return activeSkillPolicy.filter((allowedToolName) =>
+      ["studio_suggestions", "create_file", "update_file"].includes(allowedToolName)
+    );
   }
 
   return activeSkillPolicy.filter((allowedToolName) => allowedToolName !== FORM_INPUT_TOOL_ID);

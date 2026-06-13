@@ -64,6 +64,7 @@ import {
 } from "./tool-result-continuation.ts";
 import {
   enforceSkillPolicy,
+  extractSkillId,
   extractSkillPolicy,
   hydrateActiveSkillStateFromMessages,
   LOAD_SKILL_TOOL_ID,
@@ -532,6 +533,7 @@ export class AgentRuntime {
 
       // Request-scoped skill policy (not class-level mutable state)
       const hydratedSkillState = hydrateActiveSkillStateFromMessages(currentMessages);
+      let activeSkillId = hydratedSkillState.activeSkillId;
       let activeSkillPolicy = hydratedSkillState.activeSkillPolicy;
       let activeSkillDelegationOverrides = hydratedSkillState.activeSkillDelegationOverrides;
       const allowedRemoteToolNames = getRuntimeAllowedRemoteTools(this.config);
@@ -751,6 +753,7 @@ export class AgentRuntime {
 
               // Track skill policy from load_skill results
               if (tc.toolName === LOAD_SKILL_TOOL_ID) {
+                activeSkillId = extractSkillId(result);
                 activeSkillPolicy = extractSkillPolicy(result);
                 activeSkillDelegationOverrides = extractSkillDelegationOverrides(result);
                 mustLoadSkillFirst = false;
@@ -758,6 +761,7 @@ export class AgentRuntime {
               activeSkillPolicy = removeFormInputAfterSubmission(
                 tc.toolName,
                 result,
+                activeSkillId,
                 activeSkillPolicy,
               );
 
@@ -845,6 +849,7 @@ export class AgentRuntime {
 
     // Request-scoped skill policy (not class-level mutable state)
     const hydratedSkillState = hydrateActiveSkillStateFromMessages(currentMessages);
+    let activeSkillId = hydratedSkillState.activeSkillId;
     let activeSkillPolicy = hydratedSkillState.activeSkillPolicy;
     let activeSkillDelegationOverrides = hydratedSkillState.activeSkillDelegationOverrides;
     let finalFinishReason: string | undefined;
@@ -1173,6 +1178,7 @@ export class AgentRuntime {
 
           // Track skill policy from load_skill results
           if (tc.name === LOAD_SKILL_TOOL_ID) {
+            activeSkillId = extractSkillId(result);
             activeSkillPolicy = extractSkillPolicy(result);
             activeSkillDelegationOverrides = extractSkillDelegationOverrides(result);
             mustLoadSkillFirst = false;
@@ -1180,6 +1186,7 @@ export class AgentRuntime {
           activeSkillPolicy = removeFormInputAfterSubmission(
             tc.name,
             result,
+            activeSkillId,
             activeSkillPolicy,
           );
 
