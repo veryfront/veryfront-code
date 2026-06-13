@@ -165,7 +165,9 @@ export function getReadyManifestForRender(
   }
 
   if (best) {
-    if ((best.refreshAfter ?? best.expiresAt) <= Date.now()) {
+    const now = Date.now();
+    if ((best.refreshAfter ?? best.expiresAt) <= now) {
+      best.refreshAfter = now + READY_REVALIDATE_MS;
       scheduleFetch(releaseId);
     }
     return best.manifest;

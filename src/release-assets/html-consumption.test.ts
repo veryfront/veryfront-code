@@ -190,4 +190,34 @@ describe("manifest cache gating", () => {
       Date.now = originalDateNow;
     }
   });
+
+  it("throttles failed ready-manifest revalidation while serving the stale ready manifest", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    let now = 1_000;
+    const originalDateNow = Date.now;
+    Date.now = () => now;
+
+    try {
+      let fetchCount = 0;
+      configureReleaseAssetManifestFetcher(async () => {
+        fetchCount++;
+        return fetchCount === 1 ? { state: "ready", manifest: manifest("a".repeat(64), 3) } : null;
+      });
+
+      assertEquals(getReadyManifestForRender("r"), null);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assertEquals(getReadyManifestForRender("r")?.manifestVersion, 3);
+
+      now += 61_000;
+      assertEquals(getReadyManifestForRender("r")?.manifestVersion, 3);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assertEquals(fetchCount, 2);
+
+      assertEquals(getReadyManifestForRender("r")?.manifestVersion, 3);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assertEquals(fetchCount, 2);
+    } finally {
+      Date.now = originalDateNow;
+    }
+  });
 });

@@ -16,6 +16,7 @@ import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-sc
 
 const PAGE_HASH = "a".repeat(64);
 const CHAT_HASH = "b".repeat(64);
+const COMPONENT_HASH = "d".repeat(64);
 
 function meta(): RenderMetadata {
   return { title: "T", slug: "index", frontmatter: {} };
@@ -94,6 +95,36 @@ describe("html shell release asset manifest consumption", () => {
 
     const result = await generateHTMLShellParts(meta(), prodOptions({ releaseId: "rel-1" }));
     assertStringIncludes(result.start, `/_vf/assets/${PAGE_HASH}.js`);
+  });
+
+  it("uses manifest route closure preloads for index routes", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    configureReleaseAssetManifestFetcher(() =>
+      Promise.resolve({
+        state: "ready",
+        manifest: {
+          ...manifest(),
+          modules: {
+            "pages/index.tsx": {
+              contentHash: PAGE_HASH,
+              size: 1,
+              contentType: "text/javascript",
+            },
+            "components/Hero.tsx": {
+              contentHash: COMPONENT_HASH,
+              size: 1,
+              contentType: "text/javascript",
+            },
+          },
+          routes: { "/": { modules: ["pages/index.tsx", "components/Hero.tsx"], css: [] } },
+        },
+      })
+    );
+    await generateHTMLShellParts(meta(), prodOptions({ releaseId: "rel-1" }));
+    await new Promise((r) => setTimeout(r, 0));
+
+    const result = await generateHTMLShellParts(meta(), prodOptions({ releaseId: "rel-1" }));
+    assertStringIncludes(result.start, `/_vf/assets/${COMPONENT_HASH}.js`);
   });
 
   it("emits the manifest CSS asset link when the manifest carries CSS", async () => {

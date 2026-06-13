@@ -14,6 +14,7 @@ import {
   resolveManifestModuleUrl,
   resolveManifestRoutePreloadUrls,
 } from "#veryfront/release-assets/html-consumption.ts";
+import { routeForPage } from "#veryfront/release-assets/route-path.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { buildNonceAttribute, escapeHTML } from "./html-escape.ts";
 import {
@@ -112,25 +113,35 @@ function generateModulePreloadHints(options: HTMLGenerationOptions): string {
     return hints.join("\n  ");
   }
 
-  const route = options.pagePath
+  const relativePagePath = options.pagePath
     ? getRelativePagePath(options.pagePath, projectDir)
+    : "";
+  const releaseManifestRoute = relativePagePath ? routeForPage(relativePagePath) ?? "" : "";
+  const legacyModuleManifestRoute = relativePagePath
+    ? relativePagePath
       .replace(/\.(tsx|ts|jsx|mdx)$/, "")
       .replace(/^pages\//, "")
     : "";
 
   // Manifest-covered routes: preload the full closure from the manifest.
   if (releaseManifest) {
-    for (const url of resolveManifestRoutePreloadUrls(releaseManifest, route)) {
+    for (const url of resolveManifestRoutePreloadUrls(releaseManifest, releaseManifestRoute)) {
       addHint(url);
     }
     return hints.join("\n  ");
   }
 
   const projectSlug = options.projectSlug ?? options.projectId;
-  const manifest = getRouteManifest(projectSlug, route);
+  const manifest = getRouteManifest(projectSlug, legacyModuleManifestRoute);
   if (!manifest || manifest.renderCount <= 0) return hints.join("\n  ");
 
-  for (const hint of generateModulePreloadHintsFromManifest(projectSlug, route, 50)) {
+  for (
+    const hint of generateModulePreloadHintsFromManifest(
+      projectSlug,
+      legacyModuleManifestRoute,
+      50,
+    )
+  ) {
     const href = hint.match(/href="([^"]+)"/)?.[1];
     if (!href || addedUrls.has(href)) continue;
 

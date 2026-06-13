@@ -63,7 +63,7 @@ export async function buildSSRResponse(
   }
 
   // ETag match → 304 Not Modified (production only)
-  if (!isDev && result.etag && hasMatchingEtag(req, result.etag)) {
+  if (!isDev && !builder.nonce && result.etag && hasMatchingEtag(req, result.etag)) {
     return builder
       .withCORS(req, ctx.securityConfig?.cors)
       .withSecurity(ctx.securityConfig ?? undefined, req)

@@ -33,6 +33,8 @@ import {
   RELEASE_ASSET_UPLOAD_CONCURRENCY,
   releaseAssetUrl,
 } from "./constants.ts";
+import { routeForPage } from "./route-path.ts";
+export { routeForPage } from "./route-path.ts";
 import type {
   ReleaseAssetCssEntry,
   ReleaseAssetManifest,
@@ -165,15 +167,6 @@ function isBrowserModule(path: string): boolean {
   if (!BROWSER_MODULE_EXTENSIONS.some((ext) => path.endsWith(ext))) return false;
   if (path.endsWith(".d.ts")) return false;
   return BROWSER_MODULE_DIRS.some((dir) => path.startsWith(dir));
-}
-
-/** Derive a route path from a page module logical path. */
-export function routeForPage(logicalPath: string): string | null {
-  if (!logicalPath.startsWith("pages/")) return null;
-  const withoutPrefix = logicalPath.slice("pages/".length);
-  const withoutExt = withoutPrefix.replace(/\.(tsx|ts|jsx|mdx|js)$/, "");
-  const route = withoutExt.replace(/\/index$/, "").replace(/^index$/, "");
-  return `/${route}`.replace(/\/+/g, "/").replace(/\/$/, "") || "/";
 }
 
 /**
