@@ -300,16 +300,11 @@ function rewriteVfModuleImports(
   });
 }
 
-function buildDependencyUrlMap(dependencies: Record<string, PreparedAsset>): Map<string, string> {
-  const urls = new Map<string, string>();
-
-  for (const [specifier, moduleUrl] of Object.entries(PLATFORM_UTILITIES)) {
-    const entry = dependencies[specifier];
-    if (!entry) continue;
-    urls.set(moduleUrl, releaseAssetUrl(entry.contentHash, "js"));
-  }
-
-  return urls;
+function buildDependencyUrlMap(_dependencies: Record<string, PreparedAsset>): Map<string, string> {
+  // Framework barrels can contain their own relative import closure. Keep those
+  // URLs on the module server until the builder rewrites and uploads the full
+  // framework closure, otherwise the browser resolves relatives under /_vf/assets.
+  return new Map<string, string>();
 }
 
 async function finalizeProjectModules(
@@ -319,13 +314,16 @@ async function finalizeProjectModules(
   uploadQueue: PreparedAsset[],
   pendingBytes: Map<string, { bytes: Uint8Array<ArrayBuffer>; contentType: string }>,
   gaps: string[],
-): Promise<Record<string, PreparedAsset>> {
+): Promise<{ modules: Record<string, PreparedAsset>; skippedModules: Set<string> }> {
   const finalized = new Map<string, PreparedAsset>();
   const unresolvedCycles = new Set<string>();
+  const cyclicModules = collectCyclicProjectModules(transformedModules, knownPaths, gaps);
+  const skippedModules = new Set(cyclicModules);
 
   async function finalize(logicalPath: string, stack: string[]): Promise<PreparedAsset | null> {
     const existing = finalized.get(logicalPath);
     if (existing) return existing;
+    if (cyclicModules.has(logicalPath)) return null;
 
     if (stack.includes(logicalPath)) {
       const cycle = [...stack.slice(stack.indexOf(logicalPath)), logicalPath].join("->");
@@ -365,14 +363,66 @@ async function finalizeProjectModules(
   }
 
   for (const logicalPath of transformedModules.keys()) {
+    if (cyclicModules.has(logicalPath)) continue;
+
     const entry = await finalize(logicalPath, []);
     if (!entry) {
+      skippedModules.add(logicalPath);
       const gap = `oversized:${logicalPath}`;
       if (!gaps.includes(gap)) gaps.push(gap);
     }
   }
 
-  return Object.fromEntries(finalized);
+  return { modules: Object.fromEntries(finalized), skippedModules };
+}
+
+function collectCyclicProjectModules(
+  transformedModules: Map<string, TransformedProjectModule>,
+  knownPaths: Set<string>,
+  gaps: string[],
+): Set<string> {
+  const cyclic = new Set<string>();
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const stack: string[] = [];
+  const recordedCycles = new Set<string>();
+
+  function visit(logicalPath: string): void {
+    if (visited.has(logicalPath)) return;
+
+    if (visiting.has(logicalPath)) {
+      const index = stack.indexOf(logicalPath);
+      if (index < 0) return;
+
+      const cycleMembers = stack.slice(index);
+      for (const member of cycleMembers) cyclic.add(member);
+
+      const gap = `cycle:${[...cycleMembers, logicalPath].join("->")}`;
+      if (!recordedCycles.has(gap)) {
+        recordedCycles.add(gap);
+        gaps.push(gap);
+      }
+      return;
+    }
+
+    const transformed = transformedModules.get(logicalPath);
+    if (!transformed) return;
+
+    visiting.add(logicalPath);
+    stack.push(logicalPath);
+
+    const imports = collectVfModuleImports(transformed.code, knownPaths);
+    for (const importedPath of imports.values()) {
+      if (transformedModules.has(importedPath)) visit(importedPath);
+    }
+
+    stack.pop();
+    visiting.delete(logicalPath);
+    visited.add(logicalPath);
+  }
+
+  for (const logicalPath of transformedModules.keys()) visit(logicalPath);
+  return cyclic;
 }
 
 async function addPreparedJavaScriptAsset(
@@ -625,7 +675,7 @@ async function runBuildInner(
   );
   const dependencyUrls = buildDependencyUrlMap(dependencies);
 
-  const modules = await finalizeProjectModules(
+  const { modules, skippedModules } = await finalizeProjectModules(
     transformedModules,
     knownPaths,
     dependencyUrls,
@@ -636,6 +686,8 @@ async function runBuildInner(
 
   for (const logicalPath of transformedModules.keys()) {
     if (modules[logicalPath]) continue;
+    if (skippedModules.has(logicalPath)) continue;
+
     logger.warn("Module exceeds max size, skipping", {
       path: logicalPath,
       limit: RELEASE_ASSET_MAX_SIZE_BYTES,
