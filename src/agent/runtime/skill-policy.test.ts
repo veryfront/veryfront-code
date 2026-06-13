@@ -141,7 +141,7 @@ describe("src/agent/runtime skill policy helpers", () => {
   describe("removeFormInputAfterSubmission", () => {
     it("removes form_input from the active policy after a submitted form result", () => {
       assertEquals(
-        removeFormInputAfterSubmission("form_input", { submitted: true }, [
+        removeFormInputAfterSubmission("form_input", { submitted: true }, undefined, [
           "form_input",
           "studio_suggestions",
           "create_file",
@@ -152,18 +152,64 @@ describe("src/agent/runtime skill policy helpers", () => {
 
     it("keeps form_input available for non-submitted or non-form tool results", () => {
       assertEquals(
-        removeFormInputAfterSubmission("form_input", { submitted: false }, [
+        removeFormInputAfterSubmission("form_input", { submitted: false }, "plan", [
           "form_input",
           "studio_suggestions",
         ]),
         ["form_input", "studio_suggestions"],
       );
       assertEquals(
-        removeFormInputAfterSubmission("web_search", { submitted: true }, [
+        removeFormInputAfterSubmission("web_search", { submitted: true }, "plan", [
           "form_input",
           "web_search",
         ]),
         ["form_input", "web_search"],
+      );
+    });
+
+    it("narrows terminal starter skills to write and suggestion tools after submission", () => {
+      assertEquals(
+        removeFormInputAfterSubmission("form_input", { submitted: true }, "plan", [
+          "form_input",
+          "studio_suggestions",
+          "list_files",
+          "get_file",
+          "search_files",
+          "create_file",
+          "update_file",
+          "web_search",
+        ]),
+        ["studio_suggestions", "create_file", "update_file"],
+      );
+      assertEquals(
+        removeFormInputAfterSubmission(
+          "form_input",
+          { submitted: true },
+          "create-agentic-workflow",
+          [
+            "form_input",
+            "studio_suggestions",
+            "list_files",
+            "create_file",
+          ],
+        ),
+        ["studio_suggestions", "create_file"],
+      );
+    });
+
+    it("keeps source tools for research after submission but closes project inspection", () => {
+      assertEquals(
+        removeFormInputAfterSubmission("form_input", { submitted: true }, "research", [
+          "form_input",
+          "studio_suggestions",
+          "web_search",
+          "web_fetch",
+          "list_files",
+          "get_file",
+          "create_file",
+          "update_file",
+        ]),
+        ["studio_suggestions", "web_search", "web_fetch", "create_file", "update_file"],
       );
     });
   });
@@ -179,6 +225,7 @@ describe("src/agent/runtime skill policy helpers", () => {
             toolCallId: "load_skill_old",
             toolName: "load_skill",
             result: {
+              skillId: "old",
               allowedTools: ["Read"],
               model: "anthropic/claude-sonnet-4-5",
               thinking: true,
@@ -204,6 +251,7 @@ describe("src/agent/runtime skill policy helpers", () => {
             toolCallId: "load_skill_new",
             toolName: "load_skill",
             result: {
+              skillId: "new",
               allowedTools: ["Write"],
               model: "openai/gpt-5.1",
               thinking: false,
@@ -215,6 +263,7 @@ describe("src/agent/runtime skill policy helpers", () => {
 
       const hydrated = hydrateActiveSkillStateFromMessages(messages);
 
+      assertEquals(hydrated.activeSkillId, "new");
       assertEquals(hydrated.activeSkillPolicy, ["Write"]);
       assertEquals(hydrated.activeSkillDelegationOverrides, {
         model: "openai/gpt-5.1",
