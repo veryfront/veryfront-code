@@ -51,6 +51,7 @@ const DEFAULT_RUNTIME_LOAD_SKILL_RESPONSE_MESSAGES: RuntimeLoadedSkillResponseMe
 export type RuntimeLoadSkillToolContext = RuntimeProjectSkillContext & {
   availableSkillIds?: readonly string[];
   availableToolNames?: readonly string[];
+  loadedSkillResponses?: Record<string, RuntimeLoadedSkillResponse>;
 };
 
 /** Public API contract for runtime load skill builtin store. */
@@ -155,6 +156,21 @@ function buildLoadedSkillResponse(input: {
     availableToolNames: input.options.context.availableToolNames,
     logger: input.options.logger,
   });
+}
+
+function buildAlreadyLoadedSkillResponse(
+  skillId: string,
+  response: RuntimeLoadedSkillResponse,
+): RuntimeLoadedSkillResponse {
+  return {
+    ...response,
+    instructions:
+      `Skill "${skillId}" is already loaded in this turn. Do not call load_skill for "${skillId}" again. ` +
+      "Continue from the existing user request and any submitted tool results, then produce the next useful response now.",
+    nextStep:
+      "Continue now. Do not reload this skill or restart intake; use the existing context and finish the current turn.",
+    references: response.references,
+  };
 }
 
 function buildMissingSkillError(
@@ -275,24 +291,34 @@ export function createRuntimeLoadSkillTool(
         return await loadRuntimeSkillReferenceFile(options, skillId, file);
       }
 
+      const loadedSkillResponses = options.context.loadedSkillResponses ??= {};
+      const loadedResponse = loadedSkillResponses[skillId];
+      if (loadedResponse) {
+        return buildAlreadyLoadedSkillResponse(skillId, loadedResponse);
+      }
+
       const projectSkill = await loadRuntimeSkillBody(options, skillId);
       if (projectSkill) {
-        return buildLoadedSkillResponse({
+        const response = buildLoadedSkillResponse({
           options,
           skillId,
           instructions: projectSkill.instructions,
           references: projectSkill.references,
         });
+        loadedSkillResponses[skillId] = response;
+        return response;
       }
 
       const localContent = builtinStore.readSkill(options.skillsDir, skillId);
       if (localContent) {
-        return buildLoadedSkillResponse({
+        const response = buildLoadedSkillResponse({
           options,
           skillId,
           instructions: localContent,
           references: builtinStore.listReferences(options.skillsDir, skillId),
         });
+        loadedSkillResponses[skillId] = response;
+        return response;
       }
 
       return buildMissingSkillError(options, skillId);

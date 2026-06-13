@@ -4,6 +4,7 @@ import {
   createRuntimeLoadSkillTool,
   RUNTIME_LOAD_SKILL_CONTINUATION_NOTE,
   type RuntimeLoadSkillBuiltinStore,
+  type RuntimeLoadSkillToolContext,
 } from "./load-skill-tool.ts";
 import type {
   RuntimeLoadedProjectSkill,
@@ -31,6 +32,15 @@ function createProjectSkillLoader(input: {
     loadProjectSkill: (_context, skillId) => Promise.resolve(input.skills?.get(skillId) ?? null),
     loadProjectSkillReference: (_context, skillId, normalizedFile) =>
       Promise.resolve(input.references?.get(`${skillId}/${normalizedFile}`) ?? null),
+  };
+}
+
+function createProjectContext(
+  overrides: Partial<RuntimeLoadSkillToolContext> = {},
+): RuntimeLoadSkillToolContext {
+  return {
+    ...PROJECT_CONTEXT,
+    ...overrides,
   };
 }
 
@@ -64,7 +74,7 @@ function createBuiltinStore(input: {
 
 Deno.test("createRuntimeLoadSkillTool loads project skills before builtin skills", async () => {
   const tool = createRuntimeLoadSkillTool({
-    context: PROJECT_CONTEXT,
+    context: createProjectContext(),
     skillsDir: "/skills",
     projectSkillLoader: createProjectSkillLoader({
       skills: new Map([
@@ -90,10 +100,9 @@ Deno.test("createRuntimeLoadSkillTool loads project skills before builtin skills
 
 Deno.test("createRuntimeLoadSkillTool falls back to builtin skills and filters allowed tools", async () => {
   const tool = createRuntimeLoadSkillTool({
-    context: {
-      ...PROJECT_CONTEXT,
+    context: createProjectContext({
       availableToolNames: ["read_file", "invoke_agent"],
-    },
+    }),
     skillsDir: "/skills",
     projectSkillLoader: createProjectSkillLoader({}),
     builtinStore: createBuiltinStore({
@@ -123,9 +132,49 @@ Write carefully.`,
   assertEquals(result.maxSteps, 8);
 });
 
+Deno.test("createRuntimeLoadSkillTool makes same-skill reloads concise and idempotent", async () => {
+  const context = createProjectContext({
+    availableToolNames: ["read_file"],
+  });
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: createBuiltinStore({
+      skills: new Map([
+        [
+          "plan",
+          `---
+allowed-tools:
+  - read_file
+  - write_file
+max-steps: 8
+---
+# Plan
+
+Use form_input once, then produce the plan.`,
+        ],
+      ]),
+      referenceLists: new Map([["plan", ["references/plan.md"]]]),
+    }),
+  });
+
+  const firstResult = expectLoadedSkillResponse(await tool.execute({ skillId: "plan" }));
+  const secondResult = expectLoadedSkillResponse(await tool.execute({ skillId: "plan" }));
+
+  assertStringIncludes(firstResult.instructions, "Use form_input once");
+  assertStringIncludes(secondResult.instructions, 'Skill "plan" is already loaded');
+  assertStringIncludes(secondResult.instructions, "Do not call load_skill");
+  assertEquals(secondResult.allowedTools, ["read_file"]);
+  assertEquals(secondResult.delegationTools, ["read_file", "write_file"]);
+  assertEquals(secondResult.unavailableCurrentRunTools, ["write_file"]);
+  assertEquals(secondResult.maxSteps, 8);
+  assertEquals(secondResult.references, ["references/plan.md"]);
+});
+
 Deno.test("createRuntimeLoadSkillTool loads project and builtin reference files", async () => {
   const tool = createRuntimeLoadSkillTool({
-    context: PROJECT_CONTEXT,
+    context: createProjectContext(),
     skillsDir: "/skills",
     projectSkillLoader: createProjectSkillLoader({
       references: new Map([["plan/references/project.md", "project reference"]]),
@@ -149,10 +198,9 @@ Deno.test("createRuntimeLoadSkillTool loads project and builtin reference files"
 
 Deno.test("createRuntimeLoadSkillTool rejects unsafe and unknown manifest skill inputs", async () => {
   const tool = createRuntimeLoadSkillTool({
-    context: {
-      ...PROJECT_CONTEXT,
+    context: createProjectContext({
       availableSkillIds: ["project-only", "plan"],
-    },
+    }),
     skillsDir: "/skills",
     projectSkillLoader: createProjectSkillLoader({}),
     builtinSkillIds: ["build", "plan"],
@@ -176,10 +224,9 @@ Deno.test("createRuntimeLoadSkillTool rejects unsafe and unknown manifest skill 
 
 Deno.test("createRuntimeLoadSkillTool advertises the runtime skill manifest instead of inviting invented skill IDs", () => {
   const tool = createRuntimeLoadSkillTool({
-    context: {
-      ...PROJECT_CONTEXT,
+    context: createProjectContext({
       availableSkillIds: ["daily-briefing"],
-    },
+    }),
     skillsDir: "/skills",
     projectSkillLoader: createProjectSkillLoader({}),
     builtinSkillIds: [],
@@ -192,10 +239,9 @@ Deno.test("createRuntimeLoadSkillTool advertises the runtime skill manifest inst
 
 Deno.test("createRuntimeLoadSkillTool rejects invented skill IDs before tool execution when manifest is known", async () => {
   const tool = createRuntimeLoadSkillTool({
-    context: {
-      ...PROJECT_CONTEXT,
+    context: createProjectContext({
       availableSkillIds: ["daily-briefing"],
-    },
+    }),
     skillsDir: "/skills",
     projectSkillLoader: createProjectSkillLoader({}),
     builtinSkillIds: [],
@@ -211,7 +257,7 @@ Deno.test("createRuntimeLoadSkillTool rejects invented skill IDs before tool exe
 
 Deno.test("createRuntimeLoadSkillTool allows host copy overrides", async () => {
   const tool = createRuntimeLoadSkillTool({
-    context: PROJECT_CONTEXT,
+    context: createProjectContext(),
     skillsDir: "/skills",
     projectSkillLoader: createProjectSkillLoader({}),
     builtinStore: createBuiltinStore({
