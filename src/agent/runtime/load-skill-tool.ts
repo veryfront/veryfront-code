@@ -162,13 +162,24 @@ function buildAlreadyLoadedSkillResponse(
   skillId: string,
   response: RuntimeLoadedSkillResponse,
 ): RuntimeLoadedSkillResponse {
+  const finishAllowedTools = response.allowedTools?.filter((toolName) => toolName !== "form_input");
+
   return {
     ...response,
     instructions:
       `Skill "${skillId}" is already loaded in this turn. Do not call load_skill for "${skillId}" again. ` +
-      "Continue from the existing user request and any submitted tool results, then produce the next useful response now.",
+      "Continue from the existing user request and any submitted tool results, then produce the next useful response now. " +
+      "If a form_input result already exists, treat it as final for this turn and do not call form_input again.",
     nextStep:
       "Continue now. Do not reload this skill or restart intake; use the existing context and finish the current turn.",
+    ...(finishAllowedTools
+      ? {
+        allowedTools: finishAllowedTools,
+        note: finishAllowedTools.length > 0
+          ? response.note
+          : "IMPORTANT: Intake is complete for this turn. Do not call form_input again; finish with the existing context.",
+      }
+      : {}),
     references: response.references,
   };
 }
