@@ -22,6 +22,7 @@ import { dirname, join } from "#veryfront/compat/path/index.ts";
 import { resolveFrameworkSourcePath } from "#veryfront/platform/compat/framework-source-resolver.ts";
 import { transformToESM } from "#veryfront/transforms/esm-transform.ts";
 import { PLATFORM_UTILITIES } from "#veryfront/html/utils.ts";
+import { extractCandidatesFromFiles } from "#veryfront/html/styles-builder/candidate-extractor.ts";
 import { sha256HexBytes } from "./hash.ts";
 import {
   RELEASE_ASSET_BASE_PATH,
@@ -671,19 +672,11 @@ function resolveProjectStylesheet(
   return undefined;
 }
 
-/** Extract Tailwind class candidates from materialized source (best-effort). */
+/** Extract Tailwind class candidates from materialized source. */
 function collectClassCandidates(sourceByPath: Map<string, string>): Set<string> {
-  const candidates = new Set<string>();
-  const re = /class(?:Name)?\s*=\s*["'`]([^"'`]+)["'`]/g;
-  for (const source of sourceByPath.values()) {
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(source)) !== null) {
-      for (const cls of m[1]!.split(/\s+/)) {
-        if (cls) candidates.add(cls);
-      }
-    }
-  }
-  return candidates;
+  return extractCandidatesFromFiles(
+    [...sourceByPath.entries()].map(([path, content]) => ({ path, content })),
+  );
 }
 
 /** Run an async task over items with a fixed concurrency limit. */

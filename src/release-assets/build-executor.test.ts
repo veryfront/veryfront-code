@@ -233,6 +233,40 @@ describe("release asset build executor", () => {
     assertEquals(seenStylesheet, '@import "tailwindcss"; /* custom */');
   });
 
+  it("passes helper-composed Tailwind candidates to compileProjectCss", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "components/Header.tsx",
+        content: `
+          const navClass = "h-16 md:h-[4.5rem] lg:h-[5rem]";
+          export function Header() {
+            return <header className={navClass} />;
+          }
+        `,
+      },
+      {
+        path: "pages/index.tsx",
+        content: 'import { Header } from "../components/Header.tsx"; export default Header;',
+      },
+    ];
+    let seenCandidates: Set<string> | null = null;
+    const client = makeClient(files, rec, {
+      compileProjectCss: (candidates) => {
+        seenCandidates = new Set(candidates);
+        return Promise.resolve({ css: ".h-16{height:4rem}", styleProfileHash: "sp-1" });
+      },
+    });
+    const transform = (s: string) => Promise.resolve(s);
+
+    await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    assertExists(seenCandidates);
+    assert(seenCandidates.has("h-16"));
+    assert(seenCandidates.has("md:h-[4.5rem]"));
+    assert(seenCandidates.has("lg:h-[5rem]"));
+  });
+
   // B2: route closure includes transitive imports, not just page entrypoint.
   it("includes transitive imports in route closure (B2)", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
