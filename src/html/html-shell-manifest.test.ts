@@ -123,7 +123,7 @@ describe("html shell release asset manifest consumption", () => {
     assert(!result.start.includes("/_vf/css/"));
   });
 
-  it("rewrites covered framework import-map entries to manifest dependency assets", async () => {
+  it("keeps covered framework import-map entries on the module-server path", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     configureReleaseAssetManifestFetcher(() =>
       Promise.resolve({
@@ -144,7 +144,8 @@ describe("html shell release asset manifest consumption", () => {
     await new Promise((r) => setTimeout(r, 0));
 
     const result = await generateHTMLShellParts(meta(), prodOptions({ releaseId: "rel-1" }));
-    assertStringIncludes(result.start, `"veryfront/chat":"/_vf/assets/${CHAT_HASH}.js"`);
+    assert(!result.start.includes(`/_vf/assets/${CHAT_HASH}.js`));
+    assertStringIncludes(result.start, `"veryfront/chat":"/_vf_modules/_veryfront/chat/index.js"`);
     assertStringIncludes(result.start, `"@/":"/_vf_modules/"`);
   });
 

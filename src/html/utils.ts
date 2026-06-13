@@ -295,20 +295,12 @@ function stableManifestDependencyKey(manifest?: ReleaseAssetManifest | null): st
 
 function applyManifestDependencies(
   imports: Record<string, string>,
-  manifest?: ReleaseAssetManifest | null,
+  _manifest?: ReleaseAssetManifest | null,
 ): Record<string, string> {
-  if (!manifest) return imports;
-
-  let rewritten: Record<string, string> | null = null;
-  for (const specifier of Object.keys(imports)) {
-    const entry = manifest.dependencies[specifier];
-    if (!entry || entry.contentType !== "text/javascript") continue;
-
-    rewritten ??= { ...imports };
-    rewritten[specifier] = `${manifest.assetBasePath}/${entry.contentHash}.js`;
-  }
-
-  return rewritten ?? imports;
+  // Framework dependency assets are recorded for future S7 vendoring, but they
+  // are not browser-safe until their own relative import closures are rewritten
+  // and uploaded. Keep import-map entries on their existing module URLs.
+  return imports;
 }
 
 function isImportMapOnlyOptions(

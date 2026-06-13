@@ -61,8 +61,9 @@ export const getReleaseAssetManifestSchema = defineSchema((v) =>
     modules: v.record(v.string(), v.object(assetEntryShape(v))),
     css: v.array(v.object(cssEntryShape(v))),
     routes: v.record(v.string(), v.object(routeEntryShape(v))),
-    // `dependencies` is reserved for S7 vendoring — always {} in v1, but the
-    // validator accepts entries shaped like `modules` values keyed by specifier.
+    // `dependencies` records framework dependency artifacts for future S7
+    // vendoring. HTML keeps import-map entries on module URLs until those
+    // artifacts include their own rewritten import closures.
     dependencies: v.record(v.string(), v.object(assetEntryShape(v))),
     fallback: v.object(fallbackShape(v)),
   })

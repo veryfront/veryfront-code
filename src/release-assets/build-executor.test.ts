@@ -168,6 +168,43 @@ describe("release asset build executor", () => {
     assert(!pageUpload.text.includes("/_vf_modules/components/Header.js"));
   });
 
+  it("keeps framework module imports on the module-server path", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "pages/index.tsx",
+        content: 'import { useWorkflow } from "veryfront/workflow"; export default useWorkflow;',
+      },
+    ];
+    const client = makeClient(files, rec);
+    const frameworkUrl = "/_vf_modules/_veryfront/workflow/react/index.js";
+    const transform = (_source: string, sourceFile: string) => {
+      if (sourceFile.endsWith("pages/index.tsx")) {
+        return Promise.resolve(
+          `import { useWorkflow } from "${frameworkUrl}"; export default useWorkflow;`,
+        );
+      }
+      return Promise.resolve("export const useWorkflow = () => null;");
+    };
+
+    await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertExists(manifest.dependencies["veryfront/workflow"]);
+    const pageHash = manifest.modules["pages/index.tsx"]?.contentHash;
+    assertExists(pageHash);
+
+    const pageUpload = rec.uploads.find((u) => u.hash === pageHash);
+    assertExists(pageUpload);
+    assert(pageUpload.text.includes(`"${frameworkUrl}"`));
+    assert(
+      !pageUpload.text.includes(
+        `"/_vf/assets/${manifest.dependencies["veryfront/workflow"]?.contentHash}.js"`,
+      ),
+    );
+  });
+
   it("keeps cyclic project imports on the JIT fallback path", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
@@ -187,11 +224,9 @@ describe("release asset build executor", () => {
     assert(result.gaps.includes("cycle:pages/a.tsx->components/B.tsx->pages/a.tsx"));
     const manifest = parseReleaseAssetManifest(rec.manifest);
     assertExists(manifest);
-    const bHash = manifest.modules["components/B.tsx"]?.contentHash;
-    assertExists(bHash);
-    const bUpload = rec.uploads.find((u) => u.hash === bHash);
-    assertExists(bUpload);
-    assert(bUpload.text.includes("/_vf_modules/pages/a.js"));
+    assertEquals(manifest.modules["pages/a.tsx"], undefined);
+    assertEquals(manifest.modules["components/B.tsx"], undefined);
+    assertEquals(manifest.routes["/a"], undefined);
   });
 
   it("reports failed and does not PUT on a transform error", async () => {
