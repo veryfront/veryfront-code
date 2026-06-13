@@ -352,6 +352,22 @@ describe("integration endpoint specs", () => {
     );
   });
 
+  it("uploads DATEV documents as a multipart form-data request with a binary file part", () => {
+    const upload = getTool("datev", "upload_document");
+    assertEquals(upload.requiresWrite, true);
+    assertEquals(upload.endpoint?.method, "POST");
+    // multipart/form-data needs bodyMode "form-data" so the executor builds a
+    // real multipart body (boundary + parts); contentType alone left the body
+    // JSON-encoded with a boundary-less header, which DATEV (and any multipart
+    // parser) rejects.
+    assertEquals(upload.endpoint?.bodyMode, "form-data");
+    assertEquals(upload.endpoint?.contentType, "multipart/form-data");
+    assertEquals(upload.endpoint?.body?.file?.required, true);
+    assertEquals(upload.endpoint?.body?.file?.encoding, "base64");
+    assertEquals(upload.endpoint?.body?.file?.partFilenameField, "file_name");
+    assertEquals(upload.endpoint?.body?.file_name?.required, true);
+  });
+
   it("registers discord only now that it ships an endpoint-backed tool surface", () => {
     const connectorNames = connectors.map((item) => item.name as string);
 

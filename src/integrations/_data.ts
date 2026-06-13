@@ -13575,7 +13575,14 @@ export const connectors: IntegrationConfig[] = [
           "file": {
             "type": "string",
             "description":
-              "Binary content of the document to upload (e.g. a PDF invoice), sent as the multipart 'file' part",
+              "Base64-encoded content of the document (e.g. a PDF invoice), sent decoded as the binary multipart 'file' part",
+            "required": true,
+            "encoding": "base64",
+            "partFilenameField": "file_name",
+          },
+          "file_name": {
+            "type": "string",
+            "description": "Filename for the uploaded document, e.g. invoice.pdf",
             "required": true,
           },
           "metadata": {
@@ -13584,6 +13591,7 @@ export const connectors: IntegrationConfig[] = [
               'Optional JSON metadata part, e.g. { "document_type": "Rechnungseingang", "note": "..." }. Use List Document Types to find valid document types.',
           },
         },
+        "bodyMode": "form-data",
         "contentType": "multipart/form-data",
       },
     }],
