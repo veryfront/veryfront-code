@@ -47,7 +47,8 @@ npx veryfront init my-app --template minimal
 npx veryfront init my-workflow --template agentic-workflow
 ```
 
-Install the binary for the CLI and TUI:
+Install the binary when you want to run `veryfront` directly for local
+development commands and the TUI:
 
 ```bash
 curl -fsSL https://veryfront.com/install.sh | sh
