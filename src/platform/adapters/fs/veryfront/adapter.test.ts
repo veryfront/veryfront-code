@@ -663,6 +663,59 @@ describe("VeryfrontFSAdapter", () => {
       }
     });
 
+    it("preserves request branch while initializing branch content context", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: false },
+        },
+      });
+
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          getContext: () => { type: string; name?: string; version?: string };
+          listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+
+      let observedContext: ReturnType<typeof client.getContext> | null = null;
+      client.listAllFiles = () => {
+        observedContext = client.getContext();
+        assertEquals(observedContext, { type: "branch", name: "draft" });
+        return Promise.resolve([{
+          path: "pages/index.tsx",
+          content: "export default function Page() { return null }",
+        }]);
+      };
+
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      adapter.setRequestBranch("draft");
+
+      await adapter.initialize();
+
+      assertEquals(adapter.getRequestBranch(), "draft");
+      assertEquals(observedContext, { type: "branch", name: "draft" });
+      assertEquals(adapter.getContentContext(), {
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      });
+    });
+
     it("should rehydrate a missing file list cache in the background", async () => {
       const adapter = createAdapter({
         veryfront: {

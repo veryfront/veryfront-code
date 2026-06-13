@@ -102,6 +102,20 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return this.contentContext ? buildFileListCacheKey(this.contentContext) : undefined;
   }
 
+  private syncClientContext(): void {
+    this.client.clearRequestBranch();
+
+    if (this.contentContext) {
+      this.client.setContext(toClientContext(this.contentContext));
+    } else {
+      this.client.clearContext();
+    }
+
+    if (this.requestBranch) {
+      this.client.setRequestBranch(this.requestBranch);
+    }
+  }
+
   private getCachedFileListSync<T extends { path: string; id?: string }>(): T[] | undefined {
     const cacheKey = this.getCurrentFileListCacheKey();
     if (!cacheKey) return undefined;
@@ -663,7 +677,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   setRequestBranch(branch: string | null): void {
     this.requestBranch = branch;
-    this.client.setRequestBranch(branch);
+    this.syncClientContext();
   }
 
   getRequestBranch(): string | null {
@@ -672,7 +686,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   clearRequestBranch(): void {
     this.requestBranch = null;
-    this.client.clearRequestBranch();
+    this.syncClientContext();
   }
 
   setContentContext(context: ResolvedContentContext): void {
@@ -709,7 +723,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
 
     this.contentContext = context;
-    this.client.setContext(toClientContext(context));
+    this.syncClientContext();
 
     if (contextChanged) {
       this.statOps.clearIndex();
