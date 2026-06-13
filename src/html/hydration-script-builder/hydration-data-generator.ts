@@ -3,6 +3,8 @@ import { resolveRelativePath } from "#veryfront/modules/react-loader/path-resolv
 import { getExtensionName } from "#veryfront/utils/path-utils.ts";
 import { determineClientModuleStrategy } from "#veryfront/rendering/rsc/client-module-strategy.ts";
 import { jsonForInlineScript } from "#veryfront/security/client/html-sanitizer.ts";
+import { releaseAssetUrl } from "#veryfront/release-assets/constants.ts";
+import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import type { HTMLGenerationOptions } from "../types.ts";
 import type { HydrationDataStructure } from "./types.ts";
 
@@ -33,11 +35,27 @@ function inferPageType(pagePath?: string): PageType | undefined {
   return PAGE_TYPE_EXTENSIONS.has(ext as PageType) ? (ext as PageType) : undefined;
 }
 
+type HydrationOptions = HTMLGenerationOptions & {
+  releaseAssetManifest?: ReleaseAssetManifest | null;
+};
+
+function buildReleaseAssetModules(
+  manifest?: ReleaseAssetManifest | null,
+): Record<string, string> | undefined {
+  if (!manifest) return undefined;
+
+  const modules: Record<string, string> = {};
+  for (const [path, entry] of Object.entries(manifest.modules)) {
+    modules[path] = releaseAssetUrl(entry.contentHash, "js");
+  }
+  return Object.keys(modules).length > 0 ? modules : undefined;
+}
+
 export function generateHydrationData(
   slug: string,
   params: Record<string, string | string[]>,
   props: ComponentProps,
-  options: HTMLGenerationOptions,
+  options: HydrationOptions,
   serializeOptions?: { pretty?: boolean },
 ): string {
   const layouts = (options.nestedLayouts ?? [])
@@ -76,6 +94,7 @@ export function generateHydrationData(
       isLocalProject: options.isLocalProject,
       environment: options.environment as HydrationEnvironment | undefined,
     }),
+    releaseAssetModules: buildReleaseAssetModules(options.releaseAssetManifest),
     frontmatter: options.frontmatter,
     layoutProps: options.layoutProps,
     // In dev mode, client uses createRoot instead of hydrateRoot to avoid

@@ -44,6 +44,12 @@ describe("hydration-script-builder/templates/spa-renderer", () => {
       assertIncludes(result, "__veryfrontSetStudioEmbed");
     });
 
+    it("should install release asset modules from initial data", () => {
+      const result = getSpaRendererScript();
+      assertIncludes(result, "initialData.releaseAssetModules");
+      assertIncludes(result, "__veryfrontSetReleaseAssetModules");
+    });
+
     it("should load page component", () => {
       assertIncludes(getSpaRendererScript(), "loadComponent(initialData.pagePath)");
     });

@@ -14,6 +14,8 @@ export interface HydrationDataStructure {
   pagePath?: string;
   pageType?: "mdx" | "md" | "tsx" | "jsx" | "ts" | "js";
   clientModuleStrategy?: ClientModuleStrategy;
+  /** Production release asset URLs keyed by logical source path. */
+  releaseAssetModules?: Record<string, string>;
   frontmatter?: Record<string, unknown>;
   layoutProps?: Record<string, Record<string, unknown>>;
   /**

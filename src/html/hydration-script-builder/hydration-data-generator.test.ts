@@ -3,6 +3,7 @@ import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { generateHydrationData } from "./hydration-data-generator.ts";
 import type { HTMLGenerationOptions } from "../types.ts";
+import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 
 function parseHydrationData(
   slug: string,
@@ -105,6 +106,60 @@ describe("hydration-data-generator", () => {
         pagePath?: unknown;
       };
       assertEquals(typeof parsed.pagePath, "string");
+    });
+
+    it("includes release asset module URLs for hydration when a manifest is provided", () => {
+      const manifest: ReleaseAssetManifest = {
+        schemaVersion: 1,
+        projectId: "project-id",
+        releaseId: "release-id",
+        releaseVersion: 1,
+        manifestVersion: 5,
+        builderVersion: "0.1.784",
+        sourceContentHash: "",
+        createdAt: "2026-06-13T00:00:00.000Z",
+        assetBasePath: "/_vf/assets",
+        modules: {
+          "pages/index.mdx": {
+            contentHash: "a".repeat(64),
+            size: 100,
+            contentType: "text/javascript",
+          },
+          "components/layouts/DefaultLayout.mdx": {
+            contentHash: "b".repeat(64),
+            size: 100,
+            contentType: "text/javascript",
+          },
+        },
+        css: [],
+        routes: {},
+        dependencies: {},
+        fallback: { mode: "jit", gaps: [] },
+      };
+      const parsed = parseHydrationData(
+        "page",
+        {},
+        {},
+        {
+          ...baseOptions,
+          mode: "production",
+          pagePath: "/project/pages/index.mdx",
+          nestedLayouts: [{ kind: "mdx", path: "/project/components/layouts/DefaultLayout.mdx" }],
+          projectDir: "/project",
+          releaseAssetManifest: manifest,
+        } as HTMLGenerationOptions & { releaseAssetManifest: ReleaseAssetManifest },
+      ) as {
+        releaseAssetModules?: Record<string, string>;
+      };
+
+      assertEquals(
+        parsed.releaseAssetModules?.["pages/index.mdx"],
+        `/_vf/assets/${"a".repeat(64)}.js`,
+      );
+      assertEquals(
+        parsed.releaseAssetModules?.["components/layouts/DefaultLayout.mdx"],
+        `/_vf/assets/${"b".repeat(64)}.js`,
+      );
     });
 
     it("should include pageType from options", () => {

@@ -6,6 +6,7 @@ import { getModuleServerUrl, pathToModuleUrl } from "./path-utils.ts";
 function withWindow<T>(fn: () => T): T {
   const globalRecord = globalThis as typeof globalThis & {
     MODULE_SERVER_URL?: string;
+    __veryfrontReleaseAssetModules?: Record<string, string> | null;
     window?: typeof globalThis;
   };
   const previousWindow = globalRecord.window;
@@ -63,5 +64,28 @@ describe("client/spa/path-utils", () => {
         assertEquals(pathToModuleUrl(input, baseUrl), expected);
       });
     }
+
+    it("uses release asset modules when available", () => {
+      const globalRecord = globalThis as typeof globalThis & {
+        __veryfrontReleaseAssetModules?: Record<string, string> | null;
+      };
+      const previousMap = globalRecord.__veryfrontReleaseAssetModules;
+      globalRecord.__veryfrontReleaseAssetModules = {
+        "pages/index.mdx": "/_vf/assets/" + "a".repeat(64) + ".js",
+      };
+
+      try {
+        assertEquals(
+          pathToModuleUrl("pages/index.mdx"),
+          "/_vf/assets/" + "a".repeat(64) + ".js",
+        );
+      } finally {
+        if (previousMap === undefined) {
+          delete globalRecord.__veryfrontReleaseAssetModules;
+        } else {
+          globalRecord.__veryfrontReleaseAssetModules = previousMap;
+        }
+      }
+    });
   });
 });

@@ -133,6 +133,12 @@ describe("hydration-script-builder/templates/router", () => {
       assertIncludes(getRouterScript(), "async function renderPageFromData(pageData, targetPath)");
     });
 
+    it("should install release asset modules from SPA page data before loading components", () => {
+      const result = getRouterScript();
+      assertIncludes(result, "pageData.releaseAssetModules");
+      assertIncludes(result, "__veryfrontSetReleaseAssetModules");
+    });
+
     it("should define prefetching on hover", () => {
       const result = getRouterScript();
       assertIncludes(result, "function prefetchPage(href)");

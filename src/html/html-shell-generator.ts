@@ -238,7 +238,7 @@ async function generateHTMLShellPartsImpl(
     meta.slug || "",
     params ?? {},
     props ?? {},
-    options,
+    { ...options, releaseAssetManifest: releaseManifest },
     { pretty: useDevScripts },
   );
 
