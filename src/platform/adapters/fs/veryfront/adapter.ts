@@ -36,6 +36,7 @@ import {
 } from "./adapter-helpers.ts";
 
 import {
+  clearCachedReleaseAssetManifests,
   registerManifestFetcherForRelease,
   unregisterManifestFetcherForRelease,
 } from "#veryfront/release-assets/manifest-cache.ts";
@@ -247,6 +248,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       getContentSource: () => this.contentSource,
       getProjectDir: () => this.normalizer.getProjectDir(),
       clearMemoryCaches: () => {
+        clearCachedReleaseAssetManifests();
         this.readOps.clearFileListIndex();
         this.statOps.clearIndex();
         this.dirOps.clearTree();
