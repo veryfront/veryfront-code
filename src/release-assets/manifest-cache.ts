@@ -211,9 +211,14 @@ function scheduleFetch(releaseId: string): void {
   inFlight.set(releaseId, promise);
 }
 
-/** Clear the cache (deployment / memory pressure / tests). */
-export function clearReleaseAssetManifestCache(): void {
+/** Clear cached manifest bodies while keeping registered fetchers intact. */
+export function clearCachedReleaseAssetManifests(): void {
   manifestCache.clear();
   inFlight.clear();
+}
+
+/** Clear the cache and fetcher registry (tests / adapter teardown). */
+export function clearReleaseAssetManifestCache(): void {
+  clearCachedReleaseAssetManifests();
   fetcherRegistry.clear();
 }

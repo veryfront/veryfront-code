@@ -213,6 +213,75 @@ describe("VeryfrontFSAdapter", () => {
       assertEquals(fetchCount, 1);
     });
 
+    it("should clear cached release asset manifests on poke without unregistering the fetcher", async () => {
+      setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+      const releaseId = "release-env-poke";
+      let contentHash = "a".repeat(64);
+      const adapter = createAdapter();
+      let fetchCount = 0;
+
+      (adapter.getClient() as unknown as {
+        getReleaseAssetManifest: (releaseId: string) => Promise<{
+          state: string;
+          manifest: unknown;
+        }>;
+      }).getReleaseAssetManifest = async (requestedReleaseId: string) => {
+        fetchCount++;
+        assertEquals(requestedReleaseId, releaseId);
+        return {
+          state: "ready",
+          manifest: {
+            schemaVersion: 1,
+            projectId: "project-123",
+            releaseId,
+            releaseVersion: 1,
+            manifestVersion: 1,
+            builderVersion: "0.1.765",
+            sourceContentHash: "",
+            createdAt: "2026-06-12T00:00:00.000Z",
+            assetBasePath: "/_vf/assets",
+            modules: {
+              "pages/index.tsx": {
+                contentHash,
+                size: 1,
+                contentType: "text/javascript",
+              },
+            },
+            css: [],
+            routes: { "/": { modules: ["pages/index.tsx"], css: [] } },
+            dependencies: {},
+            fallback: { mode: "jit", gaps: [] },
+          },
+        };
+      };
+
+      adapter.setContentContext({
+        sourceType: "environment",
+        projectSlug: "test-project",
+        environmentName: "production",
+        releaseId,
+      });
+
+      assertEquals(getReadyManifestForRender(releaseId), null);
+      await waitFor(async () =>
+        getReadyManifestForRender(releaseId)?.modules["pages/index.tsx"]?.contentHash ===
+          "a".repeat(64)
+      );
+      assertEquals(fetchCount, 1);
+
+      contentHash = "b".repeat(64);
+      (adapter as unknown as {
+        wsManager: { deps: { clearMemoryCaches: () => void } };
+      }).wsManager.deps.clearMemoryCaches();
+
+      assertEquals(getReadyManifestForRender(releaseId), null);
+      await waitFor(async () =>
+        getReadyManifestForRender(releaseId)?.modules["pages/index.tsx"]?.contentHash ===
+          "b".repeat(64)
+      );
+      assertEquals(fetchCount, 2);
+    });
+
     it("should preserve context set before initialize", () => {
       const adapter = createAdapter();
       adapter.setContentContext({
