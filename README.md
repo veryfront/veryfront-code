@@ -22,6 +22,18 @@ Create a new Veryfront Code app with the interactive wizard:
 npm create veryfront
 ```
 
+<details>
+<summary>pnpm, yarn, bun, deno</summary>
+
+```bash
+pnpm create veryfront
+yarn create veryfront
+bun create veryfront
+deno init --npm veryfront
+```
+
+</details>
+
 Use a template flag when you already know which starting point you need:
 
 ```bash
@@ -35,16 +47,6 @@ npx veryfront init my-app --template minimal
 npx veryfront init my-workflow --template agentic-workflow
 ```
 
-<details>
-<summary>pnpm, yarn, bun, deno</summary>
-
-```bash
-pnpm create veryfront
-yarn create veryfront
-bun create veryfront
-deno init --npm veryfront
-```
-
 Install the binary for the CLI and TUI:
 
 ```bash
@@ -52,8 +54,6 @@ curl -fsSL https://veryfront.com/install.sh | sh
 # or
 brew install veryfront/tap/veryfront
 ```
-
-</details>
 
 Follow the [Quickstart guide](https://veryfront.com/docs/code/getting-started/quickstart) to build the agent app end-to-end. Use [Create a project](https://veryfront.com/docs/code/getting-started/create-a-project) for project setup options and template details. For the full documentation, visit [veryfront.com/docs/code](https://veryfront.com/docs/code).
 
