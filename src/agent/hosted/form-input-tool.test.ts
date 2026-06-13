@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { ToolExecutionContext } from "#veryfront/tool";
-import { createHostedFormInputTool } from "../index.ts";
+import { createHostedFormInputTool, findSubmittedFormInputResult } from "../index.ts";
 
 const API_URL = "https://api.example.com";
 const AUTH_TOKEN = "token-123";
@@ -183,6 +183,32 @@ describe("agent/hosted-form-input-tool", () => {
       reason: "A submitted form_input result already exists for this run.",
     });
     assertEquals(calls.length, 2);
+  });
+
+  it("finds a submitted form_input result from persisted UI tool parts", () => {
+    const result = findSubmittedFormInputResult([
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{
+          type: "dynamic-tool",
+          toolCallId: TOOL_CALL_ID,
+          toolName: "form_input",
+          state: "output-available",
+          input: { title: "Plan intake" },
+          output: {
+            submitted: true,
+            values: { idea: "Build a support assistant" },
+            inputRequestId: INPUT_REQUEST_ID,
+          },
+        }],
+      },
+    ]);
+
+    assertEquals(result, {
+      values: { idea: "Build a support assistant" },
+      inputRequestId: INPUT_REQUEST_ID,
+    });
   });
 
   it("publishes a lifecycle data event for the created durable input request", async () => {
