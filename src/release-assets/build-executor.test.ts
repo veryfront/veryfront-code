@@ -107,9 +107,28 @@ describe("release asset build executor", () => {
     // No CSS pipeline injected → css empty + gap recorded.
     assertEquals(manifest.css.length, 0);
     assert(manifest.fallback.gaps.includes("css:no-pipeline"));
-    // Two distinct modules uploaded.
-    assertEquals(rec.uploads.length, 2);
+    // Project modules plus framework import-map dependencies are uploaded.
+    assert(rec.uploads.length >= 2);
     assert(rec.uploads.every((u) => u.contentType === "text/javascript"));
+  });
+
+  it("records framework import-map modules as manifest dependencies", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [{ path: "pages/index.tsx", content: "export default () => null;" }];
+    const client = makeClient(files, rec);
+    const transform = (source: string, sourceFile: string) =>
+      Promise.resolve(`/*${sourceFile}*/\n${source}`);
+
+    await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertExists(manifest.dependencies["veryfront/chat"]);
+    assertExists(manifest.dependencies["veryfront/workflow"]);
+    assertEquals(
+      manifest.dependencies["veryfront/head"]?.contentHash,
+      manifest.dependencies["veryfront/react/head"]?.contentHash,
+    );
   });
 
   it("reports failed and does not PUT on a transform error", async () => {
