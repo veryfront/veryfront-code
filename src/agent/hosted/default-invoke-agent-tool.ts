@@ -51,6 +51,7 @@ import {
   getHostedChildForkToolInputSchema,
   type HostedChildForkRuntimeConfig,
   type HostedChildForkToolInput,
+  withHostedChildInvocationContext,
 } from "./child-tool-input.ts";
 import type {
   DefaultHostedChildForkToolAssemblyResult,
@@ -329,7 +330,7 @@ function buildInstrumentation<TContext extends DefaultHostedInvokeAgentContext>(
 
 async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>(
   options: DefaultHostedInvokeAgentToolOptions<TContext>,
-  input: DefaultHostedInvokeAgentInput,
+  input: HostedChildForkToolInput,
   execution: {
     toolCallId: string;
     abortSignal?: AbortSignal;
@@ -416,6 +417,11 @@ export async function executeDefaultHostedInvokeAgentTool<
   const config = options.getConfig();
   const toolCallId = getToolCallId(executionContext);
   const abortSignal = getAbortSignal(executionContext);
+  const forkInput = withHostedChildInvocationContext(input, {
+    conversationId: options.context.conversationId,
+    parentRunId: options.context.parentRunId,
+    toolCallId,
+  });
   const durableInvokeRecorder = createHostedDurableChildInvokeTraceRecorder({
     traceBase: {
       conversationId: options.context.conversationId,
@@ -431,7 +437,7 @@ export async function executeDefaultHostedInvokeAgentTool<
   const executeLocalInvoke = (runtimeOptions: HostedDurableChildExecutionOptions = {}) =>
     executeForkTask(
       options,
-      input,
+      forkInput,
       {
         toolCallId,
         abortSignal,
@@ -448,7 +454,7 @@ export async function executeDefaultHostedInvokeAgentTool<
 
   if (!config.enableDurableInvokeAgent) {
     return executeHostedLocalChildInvoke({
-      forkInput: input,
+      forkInput,
       abortSignal,
       traceRecorder: durableInvokeRecorder,
       execute: executeLocalInvoke,
@@ -464,7 +470,7 @@ export async function executeDefaultHostedInvokeAgentTool<
     >({
       authToken: options.context.authToken,
       apiUrl: config.apiUrl,
-      forkInput: input,
+      forkInput,
       executionOptions: {
         toolCallId,
         abortSignal,

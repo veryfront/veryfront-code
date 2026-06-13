@@ -49,6 +49,7 @@ import {
   type HostedChildForkToolInput,
   resolveHostedChildForkRuntimeConfig,
   type ResolveHostedChildForkRuntimeConfigInput,
+  withHostedChildInvocationContext,
 } from "./child-tool-input.ts";
 
 /** Default value for hosted child fork stream idle timeout ms. */
@@ -232,8 +233,13 @@ export async function executeHostedChildForkToolInput<
     await input.onRequestedProjectId?.(input.forkInput.project_id);
   }
 
+  const forkInput = withHostedChildInvocationContext(input.forkInput, {
+    conversationId: input.conversationId,
+    parentRunId: input.parentRunId,
+    toolCallId: input.toolCallId,
+  });
   const runtimeConfig = resolveHostedChildForkRuntimeConfig({
-    forkInput: input.forkInput,
+    forkInput,
     contextModel: input.contextModel,
     defaultModel: input.defaultModel,
     defaultMaxSteps: input.defaultMaxSteps,
