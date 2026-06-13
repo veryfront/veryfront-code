@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { RELEASE_ASSET_MAX_SIZE_BYTES } from "./constants.ts";
 import {
   type ReleaseAssetBuildClient,
   type ReleaseAssetBuildInput,
@@ -166,6 +167,306 @@ describe("release asset build executor", () => {
     assertExists(pageUpload);
     assert(pageUpload.text.includes(`"/_vf/assets/${headerHash}.js"`));
     assert(!pageUpload.text.includes("/_vf_modules/components/Header.js"));
+  });
+
+  it("vendors transformed HTTP imports into immutable dependency assets", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "pages/index.tsx",
+        content: 'import motion from "framer-motion"; export default motion;',
+      },
+    ];
+    const client = makeClient(files, rec);
+    const transform = () =>
+      Promise.resolve(
+        'import motion from "https://esm.sh/framer-motion@11"; export default motion;',
+      );
+    const input = {
+      ...baseInput(client, transform),
+      vendorHttpImports: (code: string) =>
+        Promise.resolve({
+          code: code.replace(
+            "https://esm.sh/framer-motion@11",
+            "file:///tmp/veryfront-http-bundle/http-123.mjs",
+          ),
+          dependencies: [{
+            specifier: "file:///tmp/veryfront-http-bundle/http-123.mjs",
+            manifestKey: "https://esm.sh/framer-motion@11",
+            code: "export default function motion() {}",
+          }],
+        }),
+    };
+
+    await runReleaseAssetBuild(input, await tmp());
+
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    const dependencyHash = manifest.dependencies["https://esm.sh/framer-motion@11"]?.contentHash;
+    assertExists(dependencyHash);
+    const pageHash = manifest.modules["pages/index.tsx"]?.contentHash;
+    assertExists(pageHash);
+
+    const dependencyUpload = rec.uploads.find((u) => u.hash === dependencyHash);
+    assertExists(dependencyUpload);
+    assertEquals(dependencyUpload.text, "export default function motion() {}");
+
+    const pageUpload = rec.uploads.find((u) => u.hash === pageHash);
+    assertExists(pageUpload);
+    assert(pageUpload.text.includes(`"/_vf/assets/${dependencyHash}.js"`));
+    assert(!pageUpload.text.includes("https://esm.sh/framer-motion"));
+    assert(!pageUpload.text.includes("file:///tmp/veryfront-http-bundle"));
+  });
+
+  it("rewrites nested vendored HTTP dependency imports to immutable assets", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "pages/index.tsx",
+        content: 'import parent from "remote-parent"; export default parent;',
+      },
+    ];
+    const client = makeClient(files, rec);
+    const transform = () =>
+      Promise.resolve(
+        'import parent from "https://esm.sh/parent@1"; export default parent;',
+      );
+    const input = {
+      ...baseInput(client, transform),
+      vendorHttpImports: (code: string) =>
+        Promise.resolve({
+          code: code.replace(
+            "https://esm.sh/parent@1",
+            "file:///tmp/veryfront-http-bundle/http-aaa.mjs",
+          ),
+          dependencies: [
+            {
+              specifier: "file:///tmp/veryfront-http-bundle/http-aaa.mjs",
+              manifestKey: "https://esm.sh/parent@1",
+              sourcePath: "/tmp/veryfront-http-bundle/http-aaa.mjs",
+              code: 'import child from "./http-bbb.mjs"; export default child;',
+            },
+            {
+              specifier: "file:///tmp/veryfront-http-bundle/http-bbb.mjs",
+              manifestKey: "https://esm.sh/child@1",
+              sourcePath: "/tmp/veryfront-http-bundle/http-bbb.mjs",
+              code: "export default function child() {}",
+            },
+          ],
+        }),
+    };
+
+    await runReleaseAssetBuild(input, await tmp());
+
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    const parentHash = manifest.dependencies["https://esm.sh/parent@1"]?.contentHash;
+    const childHash = manifest.dependencies["https://esm.sh/child@1"]?.contentHash;
+    assertExists(parentHash);
+    assertExists(childHash);
+
+    const parentUpload = rec.uploads.find((u) => u.hash === parentHash);
+    assertExists(parentUpload);
+    assert(parentUpload.text.includes(`"/_vf/assets/${childHash}.js"`));
+    assert(!parentUpload.text.includes("./http-bbb.mjs"));
+  });
+
+  it("resolves vendored dependency relatives from their source file path", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "pages/index.tsx",
+        content: 'import a from "remote-a"; import b from "remote-b"; export default [a, b];',
+      },
+    ];
+    const client = makeClient(files, rec);
+    const transform = () =>
+      Promise.resolve(
+        'import a from "https://esm.sh/a@1"; import b from "https://esm.sh/b@1"; export default [a, b];',
+      );
+    const input = {
+      ...baseInput(client, transform),
+      vendorHttpImports: (code: string) =>
+        Promise.resolve({
+          code: code
+            .replace("https://esm.sh/a@1", "file:///tmp/vf-http/a/parent.mjs")
+            .replace("https://esm.sh/b@1", "file:///tmp/vf-http/b/parent.mjs"),
+          dependencies: [
+            {
+              specifier: "file:///tmp/vf-http/a/parent.mjs",
+              manifestKey: "https://esm.sh/a@1",
+              sourcePath: "/tmp/vf-http/a/parent.mjs",
+              code: 'import shared from "./shared.mjs"; export default shared;',
+            },
+            {
+              specifier: "file:///tmp/vf-http/a/shared.mjs",
+              manifestKey: "https://esm.sh/a-shared@1",
+              sourcePath: "/tmp/vf-http/a/shared.mjs",
+              code: 'export default "a";',
+            },
+            {
+              specifier: "file:///tmp/vf-http/b/parent.mjs",
+              manifestKey: "https://esm.sh/b@1",
+              sourcePath: "/tmp/vf-http/b/parent.mjs",
+              code: 'import shared from "./shared.mjs"; export default shared;',
+            },
+            {
+              specifier: "file:///tmp/vf-http/b/shared.mjs",
+              manifestKey: "https://esm.sh/b-shared@1",
+              sourcePath: "/tmp/vf-http/b/shared.mjs",
+              code: 'export default "b";',
+            },
+          ],
+        }),
+    };
+
+    await runReleaseAssetBuild(input, await tmp());
+
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    const aParentHash = manifest.dependencies["https://esm.sh/a@1"]?.contentHash;
+    const aSharedHash = manifest.dependencies["https://esm.sh/a-shared@1"]?.contentHash;
+    const bParentHash = manifest.dependencies["https://esm.sh/b@1"]?.contentHash;
+    const bSharedHash = manifest.dependencies["https://esm.sh/b-shared@1"]?.contentHash;
+    assertExists(aParentHash);
+    assertExists(aSharedHash);
+    assertExists(bParentHash);
+    assertExists(bSharedHash);
+
+    const aParentUpload = rec.uploads.find((u) => u.hash === aParentHash);
+    const bParentUpload = rec.uploads.find((u) => u.hash === bParentHash);
+    assertExists(aParentUpload);
+    assertExists(bParentUpload);
+    assert(aParentUpload.text.includes(`"/_vf/assets/${aSharedHash}.js"`));
+    assert(!aParentUpload.text.includes(`"/_vf/assets/${bSharedHash}.js"`));
+    assert(bParentUpload.text.includes(`"/_vf/assets/${bSharedHash}.js"`));
+    assert(!bParentUpload.text.includes(`"/_vf/assets/${aSharedHash}.js"`));
+  });
+
+  it("fails the manifest when vendored dependency assets contain a cycle", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "pages/index.tsx",
+        content: 'import parent from "remote-parent"; export default parent;',
+      },
+    ];
+    const client = makeClient(files, rec);
+    const transform = () =>
+      Promise.resolve(
+        'import parent from "https://esm.sh/parent@1"; export default parent;',
+      );
+    const input = {
+      ...baseInput(client, transform),
+      vendorHttpImports: (code: string) =>
+        Promise.resolve({
+          code: code.replace(
+            "https://esm.sh/parent@1",
+            "file:///tmp/veryfront-http-bundle/http-aaa.mjs",
+          ),
+          dependencies: [
+            {
+              specifier: "file:///tmp/veryfront-http-bundle/http-aaa.mjs",
+              manifestKey: "https://esm.sh/parent@1",
+              sourcePath: "/tmp/veryfront-http-bundle/http-aaa.mjs",
+              code: 'import child from "./http-bbb.mjs"; export default child;',
+            },
+            {
+              specifier: "file:///tmp/veryfront-http-bundle/http-bbb.mjs",
+              manifestKey: "https://esm.sh/child@1",
+              sourcePath: "/tmp/veryfront-http-bundle/http-bbb.mjs",
+              code: 'import parent from "./http-aaa.mjs"; export default parent;',
+            },
+          ],
+        }),
+    };
+
+    const result = await runReleaseAssetBuild(input, await tmp());
+
+    assertEquals(result.success, false);
+    assertEquals(result.state, "failed");
+    assert(result.error?.includes("Circular release asset dependency graph"));
+    assertEquals(rec.states.at(-1)?.state, "failed");
+    assertEquals(rec.manifest, null);
+  });
+
+  it("fails the manifest when a vendored dependency keeps an unresolved file import", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "pages/index.tsx",
+        content: 'import parent from "remote-parent"; export default parent;',
+      },
+    ];
+    const client = makeClient(files, rec);
+    const transform = () =>
+      Promise.resolve(
+        'import parent from "https://esm.sh/parent@1"; export default parent;',
+      );
+    const input = {
+      ...baseInput(client, transform),
+      vendorHttpImports: (code: string) =>
+        Promise.resolve({
+          code: code.replace(
+            "https://esm.sh/parent@1",
+            "file:///tmp/veryfront-http-bundle/http-aaa.mjs",
+          ),
+          dependencies: [{
+            specifier: "file:///tmp/veryfront-http-bundle/http-aaa.mjs",
+            manifestKey: "https://esm.sh/parent@1",
+            sourcePath: "/tmp/veryfront-http-bundle/http-aaa.mjs",
+            code: 'import secret from "file:///tmp/outside-secret.mjs"; export default secret;',
+          }],
+        }),
+    };
+
+    const result = await runReleaseAssetBuild(input, await tmp());
+
+    assertEquals(result.success, false);
+    assertEquals(result.state, "failed");
+    assert(result.error?.includes("Unresolved vendored file dependency"));
+    assertEquals(rec.states.at(-1)?.state, "failed");
+    assertEquals(rec.manifest, null);
+  });
+
+  it("fails the manifest when a vendored dependency asset exceeds the size limit", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "pages/index.tsx",
+        content: 'import parent from "remote-parent"; export default parent;',
+      },
+    ];
+    const client = makeClient(files, rec);
+    const transform = () =>
+      Promise.resolve(
+        'import parent from "https://esm.sh/parent@1"; export default parent;',
+      );
+    const input = {
+      ...baseInput(client, transform),
+      vendorHttpImports: (code: string) =>
+        Promise.resolve({
+          code: code.replace(
+            "https://esm.sh/parent@1",
+            "file:///tmp/veryfront-http-bundle/http-aaa.mjs",
+          ),
+          dependencies: [{
+            specifier: "file:///tmp/veryfront-http-bundle/http-aaa.mjs",
+            manifestKey: "https://esm.sh/parent@1",
+            sourcePath: "/tmp/veryfront-http-bundle/http-aaa.mjs",
+            code: "x".repeat(RELEASE_ASSET_MAX_SIZE_BYTES + 1),
+          }],
+        }),
+    };
+
+    const result = await runReleaseAssetBuild(input, await tmp());
+
+    assertEquals(result.success, false);
+    assertEquals(result.state, "failed");
+    assert(result.error?.includes("exceeds release asset size limit"));
+    assertEquals(rec.states.at(-1)?.state, "failed");
+    assertEquals(rec.manifest, null);
+    assertEquals(rec.uploads.length, 0);
   });
 
   it("rewrites transformed relative project imports to immutable asset URLs", async () => {
