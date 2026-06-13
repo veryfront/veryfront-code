@@ -218,6 +218,77 @@ describe("src/agent/runtime skill policy helpers", () => {
       );
     });
 
+    it("keeps agent design tools available after create-agent intake", () => {
+      assertEquals(
+        removeFormInputAfterSubmission("form_input", { submitted: true }, "create-agent", [
+          "form_input",
+          "studio_suggestions",
+          "create_agent",
+          "create_skill",
+          "create_tool",
+          "create_file",
+          "update_file",
+          "list_integrations",
+          "get_integration",
+          "get_user_oauth_status",
+          "list_user_oauth_integrations",
+          "web_fetch",
+        ]),
+        [
+          "studio_suggestions",
+          "create_agent",
+          "create_skill",
+          "create_tool",
+          "create_file",
+          "update_file",
+          "list_integrations",
+          "get_integration",
+          "get_user_oauth_status",
+          "list_user_oauth_integrations",
+          "web_fetch",
+        ],
+      );
+    });
+
+    it("keeps workflow primitive tools available after create-agentic-workflow intake", () => {
+      assertEquals(
+        removeFormInputAfterSubmission(
+          "form_input",
+          { submitted: true },
+          "create-agentic-workflow",
+          [
+            "form_input",
+            "studio_suggestions",
+            "create_workflow",
+            "create_agent",
+            "create_skill",
+            "create_tool",
+            "list_files",
+            "get_file",
+            "search_files",
+            "create_file",
+            "update_file",
+            "web_search",
+            "web_fetch",
+          ],
+        ),
+        [
+          "studio_suggestions",
+          "create_workflow",
+          "create_agent",
+          "create_skill",
+          "create_tool",
+          "list_files",
+          "get_file",
+          "search_files",
+          "create_file",
+          "update_file",
+          "web_search",
+          "web_fetch",
+        ],
+      );
+    });
+
     it("keeps source tools for research after submission but closes project inspection", () => {
       assertEquals(
         removeFormInputAfterSubmission("form_input", { submitted: true }, "research", [

@@ -126,10 +126,13 @@ export function narrowPolicyAfterSubmittedForm(
   }
 
   if (
-    activeSkillId === "plan" ||
     activeSkillId === "create-agent" ||
     activeSkillId === "create-agentic-workflow"
   ) {
+    return activeSkillPolicy.filter((allowedToolName) => allowedToolName !== FORM_INPUT_TOOL_ID);
+  }
+
+  if (activeSkillId === "plan") {
     return activeSkillPolicy.filter((allowedToolName) =>
       [
         "studio_suggestions",
