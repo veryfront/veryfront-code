@@ -14,6 +14,49 @@ It gives you agents, tools, workflows, and a complete React rendering stack in a
   <img src="./assets/banner.svg" alt="Veryfront" width="100%">
 </p>
 
+## Get started
+
+Create a new Veryfront Code app with the interactive wizard:
+
+```bash
+npm create veryfront
+```
+
+Use a template flag when you already know which starting point you need:
+
+```bash
+# Agent app with a chat UI, tool, and AG-UI route
+npx veryfront init support-agent --template ai-agent
+
+# Blank full-stack app with pages and routing
+npx veryfront init my-app --template minimal
+
+# Durable multi-step AI pipeline
+npx veryfront init my-workflow --template agentic-workflow
+```
+
+<details>
+<summary>pnpm, yarn, bun, deno</summary>
+
+```bash
+pnpm create veryfront
+yarn create veryfront
+bun create veryfront
+deno init --npm veryfront
+```
+
+Install the binary for the CLI and TUI:
+
+```bash
+curl -fsSL https://veryfront.com/install.sh | sh
+# or
+brew install veryfront/tap/veryfront
+```
+
+</details>
+
+Follow the [Quickstart guide](https://veryfront.com/docs/code/getting-started/quickstart) to build the agent app end-to-end. Use [Create a project](https://veryfront.com/docs/code/getting-started/create-a-project) for project setup options and template details. For the full documentation, visit [veryfront.com/docs/code](https://veryfront.com/docs/code).
+
 ## Why Veryfront Code?
 
 Purpose-built for TypeScript and React, Veryfront Code gives you everything you need to build agentic full-stack applications out-of-the-box.
@@ -49,50 +92,6 @@ Purpose-built for TypeScript and React, Veryfront Code gives you everything you 
 - [**Data Fetching & API Routes**](https://veryfront.com/docs/code/guides/data-fetching) - Load server data, define API handlers, and add [middleware](https://veryfront.com/docs/code/guides/middleware) with built-in [OAuth](https://veryfront.com/docs/code/guides/oauth).
 
 - [**Extensions**](https://veryfront.com/docs/code/guides/extensions) - Extend Veryfront Code with contract-based packages for LLM providers, bundling, CSS, tracing, caching, and more.
-
-## Get Started
-
-Use the interactive project wizard when you want to compare templates:
-
-```bash
-npm create veryfront
-```
-
-Choose a starting point directly with `npx` when you already know what you want
-to build:
-
-```bash
-# Agent app with a chat UI, tool, and AG-UI route
-npx veryfront init support-agent --template ai-agent
-
-# Blank full-stack app with pages and routing
-npx veryfront init my-app --template minimal
-
-# Durable multi-step AI pipeline
-npx veryfront init my-workflow --template agentic-workflow
-```
-
-<details>
-<summary>pnpm, yarn, bun, deno</summary>
-
-```bash
-pnpm create veryfront
-yarn create veryfront
-bun create veryfront
-deno init --npm veryfront
-```
-
-Binary install (recommended for the CLI/TUI):
-
-```bash
-curl -fsSL https://veryfront.com/install.sh | sh
-# or
-brew install veryfront/tap/veryfront
-```
-
-</details>
-
-Follow the [Quickstart guide](https://veryfront.com/docs/code/getting-started/quickstart) to build the agent app end-to-end, or use [Create a project](https://veryfront.com/docs/code/getting-started/create-a-project) to compare templates before you scaffold. For the full documentation, visit [veryfront.com/docs/code](https://veryfront.com/docs/code).
 
 ## Contributing
 
