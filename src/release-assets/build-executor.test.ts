@@ -12,7 +12,7 @@ import { parseReleaseAssetManifest } from "./manifest-schema.ts";
 
 interface Recorded {
   began: boolean;
-  uploads: Array<{ hash: string; contentType: string }>;
+  uploads: Array<{ hash: string; contentType: string; text: string }>;
   manifest: unknown;
   states: Array<{ state: string; error?: string }>;
 }
@@ -28,8 +28,8 @@ function makeClient(
       return Promise.resolve({ id: "b1", manifest_version: 7, state: "building" });
     },
     listAllReleaseFiles: () => Promise.resolve(files),
-    uploadReleaseAsset: (_v, hash, contentType) => {
-      rec.uploads.push({ hash, contentType });
+    uploadReleaseAsset: (_v, hash, contentType, bytes) => {
+      rec.uploads.push({ hash, contentType, text: new TextDecoder().decode(bytes) });
       return Promise.resolve({ stored: true, existed: false });
     },
     putReleaseAssetManifest: (_v, manifest) => {
@@ -129,6 +129,69 @@ describe("release asset build executor", () => {
       manifest.dependencies["veryfront/head"]?.contentHash,
       manifest.dependencies["veryfront/react/head"]?.contentHash,
     );
+  });
+
+  it("rewrites covered project module imports to immutable asset URLs", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "pages/index.tsx",
+        content: 'import Header from "../components/Header.tsx"; export default Header;',
+      },
+      {
+        path: "components/Header.tsx",
+        content: "export default function Header() { return null; }",
+      },
+    ];
+    const client = makeClient(files, rec);
+    const transform = (_source: string, sourceFile: string) => {
+      if (sourceFile.endsWith("pages/index.tsx")) {
+        return Promise.resolve(
+          'import Header from "/_vf_modules/components/Header.js"; export default Header;',
+        );
+      }
+      return Promise.resolve("export default function Header() { return null; }");
+    };
+
+    await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    const headerHash = manifest.modules["components/Header.tsx"]?.contentHash;
+    assertExists(headerHash);
+    const pageHash = manifest.modules["pages/index.tsx"]?.contentHash;
+    assertExists(pageHash);
+
+    const pageUpload = rec.uploads.find((u) => u.hash === pageHash);
+    assertExists(pageUpload);
+    assert(pageUpload.text.includes(`"/_vf/assets/${headerHash}.js"`));
+    assert(!pageUpload.text.includes("/_vf_modules/components/Header.js"));
+  });
+
+  it("keeps cyclic project imports on the JIT fallback path", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      { path: "pages/a.tsx", content: 'import B from "../components/B.tsx"; export default B;' },
+      { path: "components/B.tsx", content: 'import A from "../pages/a.tsx"; export default A;' },
+    ];
+    const client = makeClient(files, rec);
+    const transform = (_source: string, sourceFile: string) => {
+      if (sourceFile.endsWith("pages/a.tsx")) {
+        return Promise.resolve('import B from "/_vf_modules/components/B.js"; export default B;');
+      }
+      return Promise.resolve('import A from "/_vf_modules/pages/a.js"; export default A;');
+    };
+
+    const result = await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    assert(result.gaps.includes("cycle:pages/a.tsx->components/B.tsx->pages/a.tsx"));
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    const bHash = manifest.modules["components/B.tsx"]?.contentHash;
+    assertExists(bHash);
+    const bUpload = rec.uploads.find((u) => u.hash === bHash);
+    assertExists(bUpload);
+    assert(bUpload.text.includes("/_vf_modules/pages/a.js"));
   });
 
   it("reports failed and does not PUT on a transform error", async () => {
@@ -262,9 +325,10 @@ describe("release asset build executor", () => {
     await runReleaseAssetBuild(baseInput(client, transform), await tmp());
 
     assertExists(seenCandidates);
-    assert(seenCandidates.has("h-16"));
-    assert(seenCandidates.has("md:h-[4.5rem]"));
-    assert(seenCandidates.has("lg:h-[5rem]"));
+    const candidates = seenCandidates as Set<string>;
+    assert(candidates.has("h-16"));
+    assert(candidates.has("md:h-[4.5rem]"));
+    assert(candidates.has("lg:h-[5rem]"));
   });
 
   // B2: route closure includes transitive imports, not just page entrypoint.
