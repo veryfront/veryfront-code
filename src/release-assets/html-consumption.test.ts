@@ -9,6 +9,7 @@ import {
   resolveManifestRoutePreloadUrls,
 } from "./html-consumption.ts";
 import {
+  clearCachedReleaseAssetManifests,
   clearReleaseAssetManifestCache,
   configureReleaseAssetManifestFetcher,
   getReadyManifestForRender,
@@ -18,7 +19,7 @@ import type { ReleaseAssetManifest } from "./manifest-schema.ts";
 
 const MOD_HASH = "a".repeat(64);
 
-function manifest(): ReleaseAssetManifest {
+function manifest(contentHash = MOD_HASH): ReleaseAssetManifest {
   return {
     schemaVersion: 1,
     projectId: "p",
@@ -30,7 +31,7 @@ function manifest(): ReleaseAssetManifest {
     createdAt: "2026-06-12T00:00:00.000Z",
     assetBasePath: "/_vf/assets",
     modules: {
-      "pages/index.tsx": { contentHash: MOD_HASH, size: 1, contentType: "text/javascript" },
+      "pages/index.tsx": { contentHash, size: 1, contentType: "text/javascript" },
     },
     css: [],
     routes: { "/": { modules: ["pages/index.tsx"], css: [] } },
@@ -110,5 +111,50 @@ describe("manifest cache gating", () => {
 
     const cached = getReadyManifestForRender("r");
     assertEquals(cached?.manifestVersion, 3);
+  });
+
+  it("ignores stale in-flight manifest fetches after the cache is cleared", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    const firstHash = "a".repeat(64);
+    const secondHash = "b".repeat(64);
+    let resolveFirst: () => void = () => {};
+    let resolveSecond: () => void = () => {};
+    const firstGate = new Promise<void>((resolve) => (resolveFirst = resolve));
+    const secondGate = new Promise<void>((resolve) => (resolveSecond = resolve));
+    let fetchCount = 0;
+
+    configureReleaseAssetManifestFetcher(async () => {
+      fetchCount++;
+      if (fetchCount === 1) {
+        await firstGate;
+        return { state: "ready", manifest: manifest(firstHash) };
+      }
+
+      await secondGate;
+      return { state: "ready", manifest: manifest(secondHash) };
+    });
+
+    assertEquals(getReadyManifestForRender("r"), null);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assertEquals(fetchCount, 1);
+
+    clearCachedReleaseAssetManifests();
+    assertEquals(getReadyManifestForRender("r"), null);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assertEquals(fetchCount, 2);
+
+    resolveSecond();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assertEquals(
+      getReadyManifestForRender("r")?.modules["pages/index.tsx"]?.contentHash,
+      secondHash,
+    );
+
+    resolveFirst();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assertEquals(
+      getReadyManifestForRender("r")?.modules["pages/index.tsx"]?.contentHash,
+      secondHash,
+    );
   });
 });

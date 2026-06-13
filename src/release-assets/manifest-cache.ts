@@ -48,8 +48,15 @@ interface CacheEntry {
 const manifestCache = new LRUCache<string, CacheEntry>({ maxEntries: MAX_CACHED_MANIFESTS });
 registerLRUCache("release-asset-manifest-cache", manifestCache);
 
+interface InFlightFetch {
+  generation: number;
+  token: symbol;
+}
+
 /** In-flight fetches, deduped per releaseId. */
-const inFlight = new Map<string, Promise<void>>();
+const inFlight = new Map<string, InFlightFetch>();
+/** Monotonic guard that invalidates pending fetch writers after cache clears. */
+let cacheGeneration = 0;
 
 /**
  * Fetcher used to retrieve a manifest for a release. Registered per-releaseId
@@ -170,10 +177,15 @@ function scheduleFetch(releaseId: string): void {
   if (inFlight.has(releaseId)) return;
   const active = resolveFetcher(releaseId);
   if (!active) return;
+  const fetchGeneration = cacheGeneration;
+  const token = Symbol(releaseId);
+  inFlight.set(releaseId, { generation: fetchGeneration, token });
 
-  const promise = (async () => {
+  void Promise.resolve().then(async () => {
     try {
       const result = await active(releaseId);
+      if (fetchGeneration !== cacheGeneration) return;
+
       if (!result) {
         manifestCache.set(releaseId, { manifest: null, expiresAt: Date.now() + NON_READY_TTL_MS });
         return;
@@ -202,17 +214,20 @@ function scheduleFetch(releaseId: string): void {
         releaseId,
         error: error instanceof Error ? error.message : String(error),
       });
+      if (fetchGeneration !== cacheGeneration) return;
       manifestCache.set(releaseId, { manifest: null, expiresAt: Date.now() + NON_READY_TTL_MS });
     } finally {
-      inFlight.delete(releaseId);
+      const current = inFlight.get(releaseId);
+      if (current?.token === token && current.generation === fetchGeneration) {
+        inFlight.delete(releaseId);
+      }
     }
-  })();
-
-  inFlight.set(releaseId, promise);
+  });
 }
 
 /** Clear cached manifest bodies while keeping registered fetchers intact. */
 export function clearCachedReleaseAssetManifests(): void {
+  cacheGeneration++;
   manifestCache.clear();
   inFlight.clear();
 }
