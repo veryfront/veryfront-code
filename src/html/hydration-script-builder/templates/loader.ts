@@ -22,7 +22,41 @@ export const getLoaderScript = (): string => `
       return url + (url.includes('?') ? '&' : '?') + key + '=' + value;
     }
 
+    let __releaseAssetModules = null;
+    function setReleaseAssetModules(value) {
+      __releaseAssetModules =
+        value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+      window.__veryfrontReleaseAssetModules = __releaseAssetModules;
+    }
+    window.__veryfrontSetReleaseAssetModules = setReleaseAssetModules;
+
+    function normalizeReleaseAssetModulePath(path) {
+      return String(path || '')
+        .replace(/^\\/?_vf_modules\\//, '')
+        .replace(/^\\/+/, '')
+        .replace(/[?#].*$/, '');
+    }
+
+    function resolveReleaseAssetModuleUrl(path) {
+      if (!__releaseAssetModules || __studioEmbed || __hmrRefreshTimestamp) return null;
+
+      const key = normalizeReleaseAssetModulePath(path);
+      if (__releaseAssetModules[key]) return __releaseAssetModules[key];
+
+      const withoutExt = key.replace(/\\.(tsx|ts|jsx|mdx|js|mjs)$/, '');
+      const extensions = ['.tsx', '.ts', '.jsx', '.mdx', '.js'];
+      for (const ext of extensions) {
+        const candidate = withoutExt + ext;
+        if (__releaseAssetModules[candidate]) return __releaseAssetModules[candidate];
+      }
+
+      return null;
+    }
+
     function pathToModuleUrl(path, studioEmbed) {
+      const releaseAssetUrl = resolveReleaseAssetModuleUrl(path);
+      if (releaseAssetUrl) return releaseAssetUrl;
+
       const pattern = /(pages|components|app|lib|layouts|shared|features)\\/(.+)\\.(tsx|ts|jsx|mdx)$/;
 
       const match =
@@ -49,12 +83,14 @@ export const getLoaderScript = (): string => `
     let __studioEmbed = false;
     function setStudioEmbed(value) {
       __studioEmbed = value;
+      window.__veryfrontStudioEmbed = value;
     }
     window.__veryfrontSetStudioEmbed = setStudioEmbed;
 
     let __hmrRefreshTimestamp = null;
     function setHMRRefreshTimestamp(timestamp) {
       __hmrRefreshTimestamp = timestamp;
+      window.__veryfrontHMRRefreshTimestamp = timestamp;
     }
     window.__veryfrontSetHMRRefreshTimestamp = setHMRRefreshTimestamp;
 

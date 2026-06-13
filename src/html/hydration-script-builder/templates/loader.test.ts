@@ -44,6 +44,16 @@ describe("hydration-script-builder/templates/loader", () => {
       assertEquals(result.includes("function pathToModuleUrl(path, studioEmbed)"), true);
     });
 
+    it("should expose release asset module map support", () => {
+      const result = getResult();
+      assertEquals(result.includes("let __releaseAssetModules = null"), true);
+      assertEquals(
+        result.includes("window.__veryfrontSetReleaseAssetModules = setReleaseAssetModules"),
+        true,
+      );
+      assertEquals(result.includes("resolveReleaseAssetModuleUrl(path)"), true);
+    });
+
     it("should handle known source file extensions in pathToModuleUrl", () => {
       const result = getResult();
       assertEquals(result.includes("pages|components|app|lib|layouts|shared|features"), true);

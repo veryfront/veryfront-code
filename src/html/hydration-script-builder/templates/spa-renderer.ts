@@ -19,6 +19,9 @@ export const getSpaRendererScript = (): string => `
       if (initialData.studioEmbed && window.__veryfrontSetStudioEmbed) {
         window.__veryfrontSetStudioEmbed(true);
       }
+      if (initialData.releaseAssetModules && window.__veryfrontSetReleaseAssetModules) {
+        window.__veryfrontSetReleaseAssetModules(initialData.releaseAssetModules);
+      }
 
       try {
         const pageComponent = await loadComponent(initialData.pagePath);

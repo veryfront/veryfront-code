@@ -401,6 +401,10 @@ export const getRouterScript = () => `
     // Render page from page data
     // ============================================
     async function renderPageFromData(pageData, targetPath) {
+      if (pageData.releaseAssetModules && window.__veryfrontSetReleaseAssetModules) {
+        window.__veryfrontSetReleaseAssetModules(pageData.releaseAssetModules);
+      }
+
       perfStart('render:loadAll');
       const layoutPaths = (pageData.layouts || []).map((l) => l.path);
       const allPaths = [pageData.pagePath, ...layoutPaths];
