@@ -16,14 +16,14 @@ It gives you agents, tools, workflows, and a complete React rendering stack in a
 
 ## Get started
 
-Create a new Veryfront Code app with the interactive wizard:
+Create a new Veryfront Code app:
 
 ```bash
 npm create veryfront
 ```
 
 <details>
-<summary>pnpm, yarn, bun, deno</summary>
+<summary>Use another package manager</summary>
 
 ```bash
 pnpm create veryfront
@@ -40,10 +40,9 @@ Start from a template directly:
 npx veryfront init <PROJECT_NAME> --template <TEMPLATE>
 ```
 
-Available starters include `ai-agent`, `minimal`, and `agentic-workflow`.
+Available starters: `ai-agent`, `minimal`, `agentic-workflow`.
 
-Install the binary when you want to run `veryfront` directly for local
-development commands and the TUI:
+Install the `veryfront` binary for local development commands and the TUI:
 
 ```bash
 curl -fsSL https://veryfront.com/install.sh | sh
@@ -51,7 +50,7 @@ curl -fsSL https://veryfront.com/install.sh | sh
 brew install veryfront/tap/veryfront
 ```
 
-Follow the [Quickstart guide](https://veryfront.com/docs/code/getting-started/quickstart) to build the agent app end-to-end. Use [Create a project](https://veryfront.com/docs/code/getting-started/create-a-project) for project setup options and template details. For the full documentation, visit [veryfront.com/docs/code](https://veryfront.com/docs/code).
+Follow the [Quickstart guide](https://veryfront.com/docs/code/getting-started/quickstart) to build your first app. For project setup options and template details, see [Create a project](https://veryfront.com/docs/code/getting-started/create-a-project). For the full documentation, visit [veryfront.com/docs/code](https://veryfront.com/docs/code).
 
 ## Why Veryfront Code?
 
