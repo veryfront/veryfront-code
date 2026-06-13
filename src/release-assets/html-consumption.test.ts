@@ -19,13 +19,13 @@ import type { ReleaseAssetManifest } from "./manifest-schema.ts";
 
 const MOD_HASH = "a".repeat(64);
 
-function manifest(contentHash = MOD_HASH): ReleaseAssetManifest {
+function manifest(contentHash = MOD_HASH, manifestVersion = 3): ReleaseAssetManifest {
   return {
     schemaVersion: 1,
     projectId: "p",
     releaseId: "r",
     releaseVersion: 1,
-    manifestVersion: 3,
+    manifestVersion,
     builderVersion: "0.1.765",
     sourceContentHash: "",
     createdAt: "2026-06-12T00:00:00.000Z",
@@ -156,5 +156,38 @@ describe("manifest cache gating", () => {
       getReadyManifestForRender("r")?.modules["pages/index.tsx"]?.contentHash,
       secondHash,
     );
+  });
+
+  it("refreshes cached ready manifests so same-release rebuilds are discovered", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    const firstHash = "a".repeat(64);
+    const secondHash = "b".repeat(64);
+    let now = 1_000;
+    const originalDateNow = Date.now;
+    Date.now = () => now;
+
+    try {
+      let fetchCount = 0;
+      configureReleaseAssetManifestFetcher(async () => {
+        fetchCount++;
+        return fetchCount === 1
+          ? { state: "ready", manifest: manifest(firstHash, 3) }
+          : { state: "ready", manifest: manifest(secondHash, 4) };
+      });
+
+      assertEquals(getReadyManifestForRender("r"), null);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assertEquals(getReadyManifestForRender("r")?.manifestVersion, 3);
+
+      now += 61_000;
+      assertEquals(getReadyManifestForRender("r")?.manifestVersion, 3);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const refreshed = getReadyManifestForRender("r");
+      assertEquals(refreshed?.manifestVersion, 4);
+      assertEquals(refreshed?.modules["pages/index.tsx"]?.contentHash, secondHash);
+    } finally {
+      Date.now = originalDateNow;
+    }
   });
 });

@@ -38,11 +38,15 @@ const MAX_CACHED_MANIFESTS = 500;
 const NON_READY_TTL_MS = 30_000;
 /** TTL for ready manifests — long but finite so superseded entries are picked up (15 min). */
 const READY_TTL_MS = 15 * 60 * 1000;
+/** Background revalidation interval for ready manifests (1 min). */
+const READY_REVALIDATE_MS = 60_000;
 
 interface CacheEntry {
   manifest: ReleaseAssetManifest | null;
   /** Absolute expiry timestamp. */
   expiresAt: number;
+  /** Absolute timestamp after which ready entries should refresh in the background. */
+  refreshAfter?: number;
 }
 
 const manifestCache = new LRUCache<string, CacheEntry>({ maxEntries: MAX_CACHED_MANIFESTS });
@@ -160,7 +164,12 @@ export function getReadyManifestForRender(
     }
   }
 
-  if (best) return best.manifest;
+  if (best) {
+    if ((best.refreshAfter ?? best.expiresAt) <= Date.now()) {
+      scheduleFetch(releaseId);
+    }
+    return best.manifest;
+  }
 
   // Also check the plain releaseId slot (non-ready / null entry).
   const plain = manifestCache.get(releaseId);
@@ -197,11 +206,16 @@ function scheduleFetch(releaseId: string): void {
 
       if (manifest) {
         const key = cacheKey(releaseId, manifest.manifestVersion);
-        manifestCache.set(key, { manifest, expiresAt: Date.now() + READY_TTL_MS });
+        manifestCache.set(key, {
+          manifest,
+          expiresAt: Date.now() + READY_TTL_MS,
+          refreshAfter: Date.now() + READY_REVALIDATE_MS,
+        });
         logger.debug("Cached ready manifest", {
           releaseId,
           manifestVersion: manifest.manifestVersion,
           ttlMs: READY_TTL_MS,
+          refreshMs: READY_REVALIDATE_MS,
         });
       } else {
         manifestCache.set(releaseId, {
