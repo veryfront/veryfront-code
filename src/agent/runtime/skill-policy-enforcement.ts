@@ -94,6 +94,15 @@ export function removeFormInputAfterSubmission(
     return activeSkillPolicy;
   }
 
+  return narrowPolicyAfterSubmittedForm(activeSkillId, activeSkillPolicy);
+}
+
+export function narrowPolicyAfterSubmittedForm(
+  activeSkillId: string | undefined,
+  activeSkillPolicy: string[] | undefined,
+): string[] | undefined {
+  if (!activeSkillPolicy) return activeSkillPolicy;
+
   if (activeSkillId === "research") {
     return activeSkillPolicy.filter((allowedToolName) =>
       [

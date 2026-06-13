@@ -143,7 +143,7 @@ Deno.test("createRuntimeLoadSkillTool makes same-skill reloads concise and idemp
     builtinStore: createBuiltinStore({
       skills: new Map([
         [
-          "plan",
+          "write",
           `---
 allowed-tools:
   - read_file
@@ -155,27 +155,27 @@ max-steps: 8
 Use form_input once, then produce the plan.`,
         ],
       ]),
-      referenceLists: new Map([["plan", ["references/plan.md"]]]),
+      referenceLists: new Map([["write", ["references/write.md"]]]),
     }),
   });
 
-  const firstResult = expectLoadedSkillResponse(await tool.execute({ skillId: "plan" }));
-  const secondResult = expectLoadedSkillResponse(await tool.execute({ skillId: "plan" }));
+  const firstResult = expectLoadedSkillResponse(await tool.execute({ skillId: "write" }));
+  const secondResult = expectLoadedSkillResponse(await tool.execute({ skillId: "write" }));
 
   assertStringIncludes(firstResult.instructions, "Use form_input once");
-  assertStringIncludes(secondResult.instructions, 'Skill "plan" is already loaded');
+  assertStringIncludes(secondResult.instructions, 'Skill "write" is already loaded');
   assertStringIncludes(secondResult.instructions, "Do not call load_skill");
   assertStringIncludes(secondResult.instructions, "do not call form_input again");
   assertEquals(secondResult.allowedTools, ["read_file"]);
   assertEquals(secondResult.delegationTools, ["read_file", "write_file"]);
   assertEquals(secondResult.unavailableCurrentRunTools, ["write_file"]);
   assertEquals(secondResult.maxSteps, 8);
-  assertEquals(secondResult.references, ["references/plan.md"]);
+  assertEquals(secondResult.references, ["references/write.md"]);
 });
 
 Deno.test("createRuntimeLoadSkillTool removes form_input from same-skill reload policy", async () => {
   const context = createProjectContext({
-    availableToolNames: ["form_input", "studio_suggestions", "create_file"],
+    availableToolNames: ["form_input", "studio_suggestions", "list_files", "create_file"],
   });
   const tool = createRuntimeLoadSkillTool({
     context,
@@ -189,6 +189,7 @@ Deno.test("createRuntimeLoadSkillTool removes form_input from same-skill reload 
 allowed-tools:
   - form_input
   - studio_suggestions
+  - list_files
   - create_file
 ---
 # Plan
@@ -202,11 +203,17 @@ Use one form, then write the plan.`,
   const firstResult = expectLoadedSkillResponse(await tool.execute({ skillId: "plan" }));
   const secondResult = expectLoadedSkillResponse(await tool.execute({ skillId: "plan" }));
 
-  assertEquals(firstResult.allowedTools, ["form_input", "studio_suggestions", "create_file"]);
+  assertEquals(firstResult.allowedTools, [
+    "form_input",
+    "studio_suggestions",
+    "list_files",
+    "create_file",
+  ]);
   assertEquals(secondResult.allowedTools, ["studio_suggestions", "create_file"]);
   assertEquals(secondResult.delegationTools, [
     "form_input",
     "studio_suggestions",
+    "list_files",
     "create_file",
   ]);
 });

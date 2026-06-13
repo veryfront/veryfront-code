@@ -27,6 +27,7 @@ import {
   type RuntimeLoadedSkillResponseMessages,
   type RuntimeSkillMetadataLogger,
 } from "./skill-metadata.ts";
+import { narrowPolicyAfterSubmittedForm } from "./skill-policy-enforcement.ts";
 
 /** Shared runtime load skill continuation note value. */
 export const RUNTIME_LOAD_SKILL_CONTINUATION_NOTE =
@@ -162,7 +163,7 @@ function buildAlreadyLoadedSkillResponse(
   skillId: string,
   response: RuntimeLoadedSkillResponse,
 ): RuntimeLoadedSkillResponse {
-  const finishAllowedTools = response.allowedTools?.filter((toolName) => toolName !== "form_input");
+  const finishAllowedTools = narrowPolicyAfterSubmittedForm(skillId, response.allowedTools);
 
   return {
     ...response,
