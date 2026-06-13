@@ -35,7 +35,10 @@ import { HealthHandler } from "../handlers/monitoring/health.handler.ts";
 import { MetricsHandler } from "../handlers/monitoring/metrics.handler.ts";
 import {
   finalizeRequestProfiling,
+  profilePhase,
   runWithRequestProfiling,
+  updateRequestProfileContext,
+  withServerTimingHeader,
 } from "#veryfront/observability/request-profiler.ts";
 import { ClientLogHandler } from "../handlers/monitoring/client-log.handler.ts";
 import { MemoryDebugHandler } from "../handlers/monitoring/memory.handler.ts";
@@ -488,35 +491,51 @@ export function createVeryfrontHandler(
           }
         }
 
+        const profileCategory = url.pathname.startsWith("/_vf_styles/")
+          ? "css"
+          : url.pathname.startsWith("/_vf_modules/")
+          ? "module"
+          : url.pathname.startsWith("/api/")
+          ? "api"
+          : "html";
+        let requestProfileRecord: ReturnType<typeof finalizeRequestProfiling> = null;
+
         const executeHandler = async (): Promise<Response> => {
           // Fast rejection of vulnerability scanner probes before any async work
           if (SCANNER_PATH_PATTERN.test(url.pathname)) {
             return new Response("Not Found", { status: 404 });
           }
 
-          await readyPromise;
+          await profilePhase("runtime.ready", () => readyPromise);
 
-          await timeAsync("security:load", async () => {
-            if (isProxyMode) return;
-            await securityLoader.ensureLoaded();
-          });
+          await timeAsync("security:load", () =>
+            profilePhase("runtime.security_load", async () => {
+              if (isProxyMode) return;
+              await securityLoader.ensureLoaded();
+            }));
 
-          await timeAsync("config:load", async () => {
-            await configPromise;
-          });
+          await timeAsync("config:load", () =>
+            profilePhase("runtime.config_load", async () => {
+              await configPromise;
+            }));
 
           const reqCtx = createRequestContext(req);
 
           const wsSlugOverride = url.searchParams.get("x-project-slug") || undefined;
 
           // Resolve project from various sources
-          const projectRes = await resolveProject(req, url, headers, {
-            config,
-            reqCtx,
-            defaultProjectSlug: opts.defaultProjectSlug,
-            defaultProjectId: opts.defaultProjectId,
-            wsSlugOverride,
-          });
+          const projectRes = await profilePhase(
+            "runtime.resolve_project",
+            () =>
+              resolveProject(req, url, headers, {
+                config,
+                reqCtx,
+                defaultProjectSlug: opts.defaultProjectSlug,
+                defaultProjectId: opts.defaultProjectId,
+                wsSlugOverride,
+              }),
+          );
+          updateRequestProfileContext({ projectSlug: projectRes.projectSlug });
 
           setProjectAttributes(spanInfo.span, projectRes.projectSlug, projectRes.proxyEnv);
 
@@ -543,21 +562,22 @@ export function createVeryfrontHandler(
           // Note: `x-project-path` is NOT forwarded via `headers.projectPath` anymore;
           // `resolveAdapter` reads it directly from `req` and only honours it when the
           // request is proxy-trusted (see isProxyTrusted).
-          const adapterRes = await resolveAdapter({
-            req,
-            projectDir,
-            adapter,
-            config,
-            projectSlug: projectRes.projectSlug,
-            projectId: projectRes.projectId,
-            proxyToken: reqCtx.token,
-            releaseId: projectRes.releaseId,
-            proxyEnv: projectRes.proxyEnv,
-            branch: reqCtx.branch,
-            environmentName: projectRes.environmentName,
-            parsedDomain: projectRes.parsedDomain,
-            isProxyMode,
-          });
+          const adapterRes = await profilePhase("runtime.resolve_adapter", () =>
+            resolveAdapter({
+              req,
+              projectDir,
+              adapter,
+              config,
+              projectSlug: projectRes.projectSlug,
+              projectId: projectRes.projectId,
+              proxyToken: reqCtx.token,
+              releaseId: projectRes.releaseId,
+              proxyEnv: projectRes.proxyEnv,
+              branch: reqCtx.branch,
+              environmentName: projectRes.environmentName,
+              parsedDomain: projectRes.parsedDomain,
+              isProxyMode,
+            }));
 
           // Resolve environment and validate
           const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || url.host;
@@ -578,6 +598,7 @@ export function createVeryfrontHandler(
           if (envRes.errorResponse) {
             return envRes.errorResponse;
           }
+          updateRequestProfileContext({ requestMode: envRes.resolvedEnvironment });
 
           const skipRenderEnrichedContext = shouldSkipEnrichedContext(url.pathname);
 
@@ -612,15 +633,21 @@ export function createVeryfrontHandler(
             reqCtx.token &&
             projectRes.projectSlug
           ) {
-            envVarsForRequest = await envVarCache.get(
-              headers.environmentId,
-              reqCtx.token,
-              projectRes.projectSlug,
+            const environmentId = headers.environmentId;
+            const projectSlug = projectRes.projectSlug;
+            envVarsForRequest = await profilePhase(
+              "runtime.load_env_vars",
+              () =>
+                envVarCache.get(
+                  environmentId,
+                  reqCtx.token,
+                  projectSlug,
+                ),
             );
 
             logDebug("[runtime-handler] Project env vars fetched", {
-              projectSlug: projectRes.projectSlug,
-              environmentId: headers.environmentId,
+              projectSlug,
+              environmentId,
               count: Object.keys(envVarsForRequest).length,
             });
           }
@@ -632,41 +659,19 @@ export function createVeryfrontHandler(
           // reqCtx.token indicates the request came through the proxy with auth.
           // Without it (standalone / test), host env must remain accessible.
           const shouldIsolateEnv = !adapterRes.isLocalProject && !!reqCtx.token;
-          const response = await runWithRequestProfiling(
+          const response = await withSpan(
+            SpanNames.HANDLER_EXECUTE,
+            () =>
+              profilePhase("handler.execute", () => {
+                if (shouldIsolateEnv) {
+                  return runWithProjectEnv(envVarsForRequest, executeRoute);
+                }
+                return executeRoute();
+              }),
             {
-              category: url.pathname.startsWith("/_vf_styles/")
-                ? "css"
-                : url.pathname.startsWith("/_vf_modules/")
-                ? "module"
-                : url.pathname.startsWith("/api/")
-                ? "api"
-                : "html",
-              method: req.method,
-              pathname: url.pathname,
-              projectSlug: projectRes.projectSlug,
-              requestMode: envRes.resolvedEnvironment,
-            },
-            async () => {
-              let routedResponse: Response | null | undefined;
-              try {
-                routedResponse = await withSpan(
-                  SpanNames.HANDLER_EXECUTE,
-                  () => {
-                    if (shouldIsolateEnv) {
-                      return runWithProjectEnv(envVarsForRequest, executeRoute);
-                    }
-                    return executeRoute();
-                  },
-                  {
-                    "handler.project_slug": projectRes.projectSlug || "unknown",
-                    "handler.path": url.pathname,
-                    "handler.method": req.method,
-                  },
-                );
-                return routedResponse;
-              } finally {
-                finalizeRequestProfiling(routedResponse?.status);
-              }
+              "handler.project_slug": projectRes.projectSlug || "unknown",
+              "handler.path": url.pathname,
+              "handler.method": req.method,
             },
           );
 
@@ -684,7 +689,25 @@ export function createVeryfrontHandler(
         };
 
         const { response, error } = await withRequestTimeout(
-          () => executeWithTracingContext(spanInfo, executeHandler),
+          () =>
+            runWithRequestProfiling(
+              {
+                category: profileCategory,
+                method: req.method,
+                pathname: url.pathname,
+                projectSlug: headers.projectSlug,
+                requestMode: headers.environment,
+              },
+              async () => {
+                let profiledResponse: Response | undefined;
+                try {
+                  profiledResponse = await executeWithTracingContext(spanInfo, executeHandler);
+                  return profiledResponse;
+                } finally {
+                  requestProfileRecord = finalizeRequestProfiling(profiledResponse?.status);
+                }
+              },
+            ),
           url.pathname,
           req.method,
         );
@@ -701,7 +724,7 @@ export function createVeryfrontHandler(
         completeRequestTracking(lifecycle.requestId, response.status, isTimeout);
         completeIsolatedRequest(headers.projectSlug, lifecycle.shouldCheckIsolation, isTimeout);
 
-        return response;
+        return withServerTimingHeader(response, requestProfileRecord);
       } finally {
         endRequestLifecycle(lifecycle);
       }

@@ -15,6 +15,11 @@ export interface RequestProfileRecord {
   phases: Record<string, number>;
 }
 
+export interface RequestProfileContextUpdate {
+  projectSlug?: string;
+  requestMode?: string;
+}
+
 interface RequestProfileSession {
   category: string;
   method: string;
@@ -38,15 +43,25 @@ function shouldEnableProfiling(): boolean {
   return getEnv("VERYFRONT_ENABLE_PERF_PROFILING") === "1";
 }
 
+function shouldEnableServerTiming(): boolean {
+  return getEnv("VERYFRONT_ENABLE_SERVER_TIMING") === "1";
+}
+
+function isHtmlPath(pathname: string): boolean {
+  return !pathname.startsWith("/_") && !pathname.startsWith("/api/") &&
+    !/\.[a-zA-Z0-9]+$/.test(pathname);
+}
+
 function shouldProfilePath(pathname: string): boolean {
   return pathname.startsWith("/bench/") ||
     pathname.startsWith("/api/bench/") ||
     pathname.startsWith("/_vf_styles/") ||
-    pathname.startsWith("/_vf_modules/");
+    pathname.startsWith("/_vf_modules/") ||
+    (shouldEnableServerTiming() && isHtmlPath(pathname));
 }
 
 export function isRequestProfilingEnabled(pathname?: string): boolean {
-  if (!shouldEnableProfiling()) return false;
+  if (!shouldEnableProfiling() && !shouldEnableServerTiming()) return false;
   if (!pathname) return true;
   return shouldProfilePath(pathname);
 }
@@ -100,9 +115,17 @@ export function profileSyncPhase<T>(name: string, fn: () => T): T {
   }
 }
 
-export function finalizeRequestProfiling(status?: number): void {
+export function updateRequestProfileContext(update: RequestProfileContextUpdate): void {
   const session = storage.getStore();
   if (!session) return;
+
+  if (update.projectSlug !== undefined) session.projectSlug = update.projectSlug;
+  if (update.requestMode !== undefined) session.requestMode = update.requestMode;
+}
+
+export function finalizeRequestProfiling(status?: number): RequestProfileRecord | null {
+  const session = storage.getStore();
+  if (!session) return null;
 
   const record: RequestProfileRecord = {
     sequence: ++sequence,
@@ -120,6 +143,48 @@ export function finalizeRequestProfiling(status?: number): void {
 
   records.push(record);
   while (records.length > MAX_RECORDS) records.shift();
+
+  return record;
+}
+
+function sanitizeMetricName(name: string): string {
+  return name.replace(/[^A-Za-z0-9!#$%&'*+\-.^_`|~]/g, "_");
+}
+
+function formatDuration(value: number): string {
+  return Math.max(0, roundMs(value)).toFixed(2);
+}
+
+export function buildServerTimingHeader(record: RequestProfileRecord): string {
+  const metrics = [`total;dur=${formatDuration(record.totalMs)}`];
+
+  for (const [name, duration] of Object.entries(record.phases).slice(0, 20)) {
+    metrics.push(`${sanitizeMetricName(name)};dur=${formatDuration(duration)}`);
+  }
+
+  return metrics.join(", ");
+}
+
+export function withServerTimingHeader(
+  response: Response,
+  record: RequestProfileRecord | null,
+): Response {
+  if (!record || !shouldEnableServerTiming()) return response;
+
+  const value = buildServerTimingHeader(record);
+
+  try {
+    response.headers.set("Server-Timing", value);
+    return response;
+  } catch {
+    const headers = new Headers(response.headers);
+    headers.set("Server-Timing", value);
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
+  }
 }
 
 export function snapshotRequestProfiles(): {
@@ -128,7 +193,7 @@ export function snapshotRequestProfiles(): {
   records: RequestProfileRecord[];
 } {
   return {
-    enabled: shouldEnableProfiling(),
+    enabled: shouldEnableProfiling() || shouldEnableServerTiming(),
     last_sequence: sequence,
     records: [...records],
   };
