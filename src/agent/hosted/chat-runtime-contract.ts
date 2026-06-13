@@ -89,6 +89,12 @@ export type HostedChatRuntimeProjectSteering<TRuntimeAgentDefinition> = {
   initialSkills?: RuntimeSkillDefinition[];
 };
 
+/** Submitted form_input result carried across hosted runtime continuations. */
+export type HostedSubmittedFormInputResult = {
+  values: Record<string, unknown>;
+  inputRequestId: string;
+};
+
 /** Options accepted by hosted chat runtime creation. */
 export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingConfig> = {
   projectId: string | null;
@@ -112,4 +118,5 @@ export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingC
   publishParentRunEvents?: (events: ConversationRunEvent[]) => Promise<void>;
   clientProfile?: RuntimeClientProfile | null;
   liveProjectSteering?: HostedChatRuntimeProjectSteering<TRuntimeAgentDefinition>;
+  submittedFormInputResult?: HostedSubmittedFormInputResult;
 };

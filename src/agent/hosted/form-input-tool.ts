@@ -1,5 +1,7 @@
 import { tool, type ToolExecutionContext } from "#veryfront/tool";
 import { containsExactArtifactPathValue } from "../artifacts/slash-command-artifact-policy.ts";
+import type { ChatUiMessage, ChatUiMessagePart } from "../../chat/types.ts";
+import type { HostedSubmittedFormInputResult } from "./chat-runtime-contract.ts";
 import {
   buildInputRequestLifecycleDataEvent,
   createInputRequest,
@@ -13,16 +15,18 @@ import { executeDurableHumanInputFlow, type HumanInputResult } from "../input/hu
 const INPUT_REQUEST_TIMEOUT_MS = 5 * 60_000;
 const INPUT_REQUEST_POLL_INTERVAL_MS = 500;
 
+type PersistedFormInputToolPart = ChatUiMessagePart & {
+  toolCallId: string;
+  output: unknown;
+};
+
 /** Context for hosted form input tool. */
 export interface HostedFormInputToolContext {
   authToken: string;
   conversationId?: string;
   parentRunId?: string;
   slashCommandArtifactPathSeen?: boolean;
-  submittedFormInputResult?: {
-    values: Record<string, unknown>;
-    inputRequestId: string;
-  };
+  submittedFormInputResult?: HostedSubmittedFormInputResult;
 }
 
 /** Create hosted form input tool. */
@@ -144,4 +148,57 @@ function resolveDurableInputRequestResult(
   }
 
   return undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isFormInputToolPart(part: ChatUiMessagePart): part is PersistedFormInputToolPart {
+  if (!isRecord(part)) {
+    return false;
+  }
+  const record = part as Record<string, unknown>;
+  if (typeof record.toolCallId !== "string" || !("output" in record)) {
+    return false;
+  }
+  const toolName = typeof record.toolName === "string" ? record.toolName : undefined;
+
+  return toolName === "form_input" || part.type === "tool-form_input";
+}
+
+function extractSubmittedFormInputResult(
+  part: ChatUiMessagePart,
+): HostedSubmittedFormInputResult | undefined {
+  if (!isFormInputToolPart(part) || !isRecord(part.output)) {
+    return undefined;
+  }
+  if (part.output.submitted !== true || !isRecord(part.output.values)) {
+    return undefined;
+  }
+
+  const inputRequestId = typeof part.output.inputRequestId === "string" &&
+      part.output.inputRequestId.length > 0
+    ? part.output.inputRequestId
+    : part.toolCallId;
+
+  return {
+    values: part.output.values,
+    inputRequestId,
+  };
+}
+
+/** Find the latest submitted form_input result persisted in UI messages. */
+export function findSubmittedFormInputResult(
+  messages: readonly ChatUiMessage[],
+): HostedSubmittedFormInputResult | undefined {
+  let result: HostedSubmittedFormInputResult | undefined;
+
+  for (const message of messages) {
+    for (const part of message.parts) {
+      result = extractSubmittedFormInputResult(part) ?? result;
+    }
+  }
+
+  return result;
 }

@@ -1716,6 +1716,7 @@ export {
 export {
   createHostedFormInputTool,
   createHostedFormInputTool as createAgentServiceFormInputTool,
+  findSubmittedFormInputResult,
   type HostedFormInputToolContext,
   type HostedFormInputToolContext as AgentServiceFormInputToolContext,
 } from "./hosted/form-input-tool.ts";

@@ -43,6 +43,10 @@ Deno.test("createDefaultHostedChatRuntime builds a cloud-backed hosted runtime",
       userId: "user-1",
       parentRunId: "run-1",
       parentMessageId: "message-1",
+      submittedFormInputResult: {
+        values: { topic: "Support FAQ assistant" },
+        inputRequestId: "input-request-1",
+      },
     },
     config: {
       apiUrl: "https://api.example.com",
@@ -64,5 +68,9 @@ Deno.test("createDefaultHostedChatRuntime builds a cloud-backed hosted runtime",
   assertEquals(capturedContext.branchId, "branch-1");
   assertEquals(capturedContext.model, "anthropic/claude-sonnet-4-6");
   assertEquals(capturedContext.userId, "user-1");
+  assertEquals(capturedContext.submittedFormInputResult, {
+    values: { topic: "Support FAQ assistant" },
+    inputRequestId: "input-request-1",
+  });
   assertEquals(capturedContext.availableToolNames, ["sleep"]);
 });

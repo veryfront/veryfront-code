@@ -33,6 +33,7 @@ import {
   type ContextBudgetManagerOptions,
   ContextCompactionError,
 } from "./context-budget-manager.ts";
+import { findSubmittedFormInputResult } from "./form-input-tool.ts";
 
 /** Request payload for normalized hosted chat. */
 export type NormalizedHostedChatRequest = {
@@ -399,6 +400,7 @@ export async function prepareHostedChatExecution<
     fetchSteering: input.fetchSteering,
     buildInstructions: input.buildInstructions,
   });
+  const submittedFormInputResult = findSubmittedFormInputResult(normalized.effectiveMessages);
   const finalMessages = await prepareHostedChatRuntimeMessages(
     normalized.effectiveMessages,
     {
@@ -431,7 +433,10 @@ export async function prepareHostedChatExecution<
       ...budgetedContext.diagnostics,
     });
   }
-  const runtime = await input.createRuntime(runtimePreparation.creationOptions);
+  const runtime = await input.createRuntime({
+    ...runtimePreparation.creationOptions,
+    ...(submittedFormInputResult ? { submittedFormInputResult } : {}),
+  });
 
   return {
     ...normalized,

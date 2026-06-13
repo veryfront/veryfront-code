@@ -83,6 +83,7 @@ export type DefaultHostedChatRuntimeTaskContext = HostedRuntimeStateResolverCont
   skillSourcePaths?: Readonly<Record<string, string>>;
   publishParentRunEvents?: DefaultHostedChatRuntimeCreationOptions["publishParentRunEvents"];
   availableToolNames?: string[];
+  submittedFormInputResult?: DefaultHostedChatRuntimeCreationOptions["submittedFormInputResult"];
 };
 
 /** Input payload for create default hosted chat runtime context. */
@@ -153,6 +154,7 @@ function createDefaultTaskContext(
     availableSkillIds: input.options.availableSkillIds,
     skillSourcePaths: input.options.skillSourcePaths,
     publishParentRunEvents: input.options.publishParentRunEvents,
+    submittedFormInputResult: input.options.submittedFormInputResult,
   };
 }
 
