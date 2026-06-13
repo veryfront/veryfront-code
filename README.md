@@ -34,18 +34,13 @@ deno init --npm veryfront
 
 </details>
 
-Use a template flag when you already know which starting point you need:
+Start from a template directly:
 
 ```bash
-# Agent app with a chat UI, tool, and AG-UI route
-npx veryfront init support-agent --template ai-agent
-
-# Blank full-stack app with pages and routing
-npx veryfront init my-app --template minimal
-
-# Durable multi-step AI pipeline
-npx veryfront init my-workflow --template agentic-workflow
+npx veryfront init <PROJECT_NAME> --template <TEMPLATE>
 ```
+
+Available starters include `ai-agent`, `minimal`, and `agentic-workflow`.
 
 Install the binary when you want to run `veryfront` directly for local
 development commands and the TUI:
