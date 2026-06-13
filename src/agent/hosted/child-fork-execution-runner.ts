@@ -222,6 +222,45 @@ export type ExecuteHostedChildForkToolInputOptions<
     onRuntimeConfig?: (runtimeConfig: HostedChildForkRuntimeConfig) => void | Promise<void>;
   };
 
+function buildHostedChildInvocationContext(input: {
+  conversationId?: string;
+  parentRunId?: string;
+  toolCallId: string;
+}): Record<string, string> {
+  return {
+    ...(input.conversationId
+      ? {
+        root_conversation_id: input.conversationId,
+        parent_conversation_id: input.conversationId,
+      }
+      : {}),
+    ...(input.parentRunId
+      ? {
+        root_run_id: input.parentRunId,
+        parent_run_id: input.parentRunId,
+      }
+      : {}),
+    tool_call_id: input.toolCallId,
+  };
+}
+
+function withHostedChildInvocationContext(
+  forkInput: HostedChildForkToolInput,
+  input: {
+    conversationId?: string;
+    parentRunId?: string;
+    toolCallId: string;
+  },
+): HostedChildForkToolInput {
+  return {
+    ...forkInput,
+    context: {
+      ...(forkInput.context ?? {}),
+      veryfront_invocation_context: buildHostedChildInvocationContext(input),
+    },
+  };
+}
+
 /** Input payload for execute hosted child fork tool. */
 export async function executeHostedChildForkToolInput<
   TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
@@ -232,8 +271,13 @@ export async function executeHostedChildForkToolInput<
     await input.onRequestedProjectId?.(input.forkInput.project_id);
   }
 
+  const forkInput = withHostedChildInvocationContext(input.forkInput, {
+    conversationId: input.conversationId,
+    parentRunId: input.parentRunId,
+    toolCallId: input.toolCallId,
+  });
   const runtimeConfig = resolveHostedChildForkRuntimeConfig({
-    forkInput: input.forkInput,
+    forkInput,
     contextModel: input.contextModel,
     defaultModel: input.defaultModel,
     defaultMaxSteps: input.defaultMaxSteps,

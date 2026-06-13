@@ -272,10 +272,13 @@ Deno.test("executeHostedChildForkToolInput resolves runtime config and prepares 
     authToken: "token",
     apiUrl: "https://api.example.com",
     projectId: "project-1",
+    conversationId: "conversation-parent-1",
+    parentRunId: "run-parent-1",
     kind: "invoke_agent",
     forkInput: {
       description: "Review checkout",
       prompt: "Review the checkout flow.",
+      context: {},
       project_id: "project-2",
       tools: ["noop"],
       model: "sonnet",
@@ -306,6 +309,18 @@ Deno.test("executeHostedChildForkToolInput resolves runtime config and prepares 
       assertEquals(runtimeConfig.maxSteps, 120);
       assertEquals(runtimeConfig.thinkingConfig, { enabled: true, budgetTokens: 256 });
       assertEquals(runtimeConfig.effectivePrompt.includes("Review the checkout flow."), true);
+      assertEquals(
+        runtimeConfig.effectivePrompt.includes('"parent_conversation_id":"conversation-parent-1"'),
+        true,
+      );
+      assertEquals(
+        runtimeConfig.effectivePrompt.includes('"parent_run_id":"run-parent-1"'),
+        true,
+      );
+      assertEquals(
+        runtimeConfig.effectivePrompt.includes('"tool_call_id":"tool-call-1"'),
+        true,
+      );
       return {
         ok: true,
         forkTools: {},
