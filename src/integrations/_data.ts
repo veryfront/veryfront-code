@@ -10005,20 +10005,20 @@ export const connectors: IntegrationConfig[] = [
       "keyName": "CHECKLY_API_KEY",
       "headerPrefix": "Bearer",
       "additionalHeaders": { "X-Checkly-Account": "CHECKLY_ACCOUNT_ID" },
-      "docsUrl": "https://developers.checklyhq.com/reference/authentication",
+      "docsUrl": "https://www.checklyhq.com/docs/api-reference/overview/",
     },
     "envVars": [{
       "name": "CHECKLY_API_KEY",
       "description": "Checkly user API key",
       "required": true,
       "sensitive": true,
-      "docsUrl": "https://developers.checklyhq.com/reference/authentication",
+      "docsUrl": "https://www.checklyhq.com/docs/api-reference/overview/",
     }, {
       "name": "CHECKLY_ACCOUNT_ID",
       "description": "Checkly account ID (sent as the X-Checkly-Account header)",
       "required": true,
       "sensitive": false,
-      "docsUrl": "https://developers.checklyhq.com/reference/authentication",
+      "docsUrl": "https://www.checklyhq.com/docs/api-reference/overview/",
     }],
     "tools": [{
       "id": "list_checks",
@@ -10182,7 +10182,7 @@ export const connectors: IntegrationConfig[] = [
         "Raw check results are kept for 30 days, and a results query window (from/to) may span at most 6 hours",
         "Check results use the newer /v2 path; checks and statuses use /v1",
       ],
-      "documentation": "https://developers.checklyhq.com/reference",
+      "documentation": "https://www.checklyhq.com/docs/api-reference/overview/",
     },
   },
   {
@@ -29799,7 +29799,7 @@ export const connectors: IntegrationConfig[] = [
         "Permissions are configured on the app in the Developer Hub; the authorize URL carries no scope parameter",
         "Requests default to the API version pinned on your app; you can override per-request with the Intercom-Version header",
       ],
-      "documentation": "https://developers.intercom.com/docs/references/rest-api/",
+      "documentation": "https://developers.intercom.com/docs/references/introduction",
     },
   },
   {
@@ -31139,7 +31139,7 @@ export const connectors: IntegrationConfig[] = [
       "description": "Klaviyo private API key (starts with pk_)",
       "required": true,
       "sensitive": true,
-      "docsUrl": "https://developers.klaviyo.com/en/docs/retrieve_api_credentials",
+      "docsUrl": "https://developers.klaviyo.com/en/docs/authenticate_",
     }],
     "tools": [{
       "id": "list_profiles",
@@ -33995,7 +33995,7 @@ export const connectors: IntegrationConfig[] = [
       "description": "Mixpanel Project Token for event tracking",
       "required": false,
       "sensitive": true,
-      "docsUrl": "https://docs.mixpanel.com/docs/tracking-methods/id-management/authentication",
+      "docsUrl": "https://docs.mixpanel.com/docs/tracking/how-tos/api-credentials",
     }, {
       "name": "MIXPANEL_API_SECRET",
       "description":
@@ -34599,7 +34599,7 @@ export const connectors: IntegrationConfig[] = [
       "tokenAuthMethod": "request_body",
       "requiredApis": [{
         "name": "monday.com Developer Center",
-        "enableUrl": "https://monday.com/developers/apps",
+        "enableUrl": "https://developer.monday.com/apps/docs/the-developer-center",
       }],
       "docsUrl": "https://developer.monday.com/apps/docs/oauth",
     },
@@ -34800,7 +34800,7 @@ export const connectors: IntegrationConfig[] = [
         "step": 1,
         "title": "Create a monday.com app",
         "description":
-          "Sign in to monday.com (a free trial account works) and open the Developer Center via your avatar → Developers, or https://monday.com/developers/apps. Click Create App.",
+          "Sign in to monday.com (a free trial account works) and open the Developer Center via your avatar → Developers, or https://developer.monday.com/apps/docs/the-developer-center. Click Create App.",
       }, {
         "step": 2,
         "title": "Configure OAuth scopes and redirect URI",
@@ -51416,7 +51416,7 @@ export const connectors: IntegrationConfig[] = [
       "description": "Default schema to use for queries (defaults to PUBLIC)",
       "required": false,
       "sensitive": false,
-      "docsUrl": "https://docs.snowflake.com/en/user-guide/schemas",
+      "docsUrl": "https://docs.snowflake.com/en/user-guide/databases",
     }],
     "tools": [{
       "id": "run_query",

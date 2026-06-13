@@ -9,7 +9,9 @@
     "provider": "datev",
     "authorizationUrl": "https://login.datev.de/openid/authorize",
     "tokenUrl": "https://api.datev.de/token",
-    "scopes": ["openid"],
+    "scopes": [
+      "openid"
+    ],
     "callbackPath": "/oauth/callback/datev",
     "tokenAuthMethod": "basic",
     "pkce": true,
@@ -87,14 +89,22 @@
         "body": {
           "file": {
             "type": "string",
-            "description": "Binary content of the document to upload (e.g. a PDF invoice), sent as the multipart 'file' part",
+            "description": "Base64-encoded content of the document (e.g. a PDF invoice), sent decoded as the binary multipart 'file' part",
+            "required": true,
+            "encoding": "base64",
+            "partFilenameField": "file_name"
+          },
+          "file_name": {
+            "type": "string",
+            "description": "Filename for the uploaded document, e.g. invoice.pdf",
             "required": true
           },
           "metadata": {
             "type": "object",
             "description": "Optional JSON metadata part, e.g. { \"document_type\": \"Rechnungseingang\", \"note\": \"...\" }. Use List Document Types to find valid document types."
           }
-        }
+        },
+        "bodyMode": "form-data"
       }
     }
   ],
@@ -114,7 +124,11 @@
       "icon": "users"
     }
   ],
-  "suggestedWith": ["gmail", "drive", "slack"],
+  "suggestedWith": [
+    "gmail",
+    "drive",
+    "slack"
+  ],
   "SETUP_GUIDE": {
     "title": "DATEV setup",
     "steps": [
