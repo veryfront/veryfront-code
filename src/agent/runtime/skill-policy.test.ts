@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   enforceSkillPolicy,
   extractSkillPolicy,
+  hasSubmittedFormInputResult,
   hydrateActiveSkillStateFromMessages,
   removeFormInputAfterSubmission,
 } from "./skill-policy-enforcement.ts";
@@ -97,6 +98,19 @@ describe("src/agent/runtime skill policy helpers", () => {
     it("should reject tool not in active policy", () => {
       const result = enforceSkillPolicy("Bash", ["Read", "Write"], false);
       assertEquals(result.allowed, false);
+    });
+
+    it("allows form_input through a narrowed policy only to reuse a submitted form", () => {
+      assertEquals(
+        enforceSkillPolicy("form_input", ["studio_suggestions"], false).allowed,
+        false,
+      );
+      assertEquals(
+        enforceSkillPolicy("form_input", ["studio_suggestions"], false, {
+          allowSubmittedFormInputReuse: true,
+        }),
+        { allowed: true },
+      );
     });
 
     it("should always allow skill system tools regardless of policy", () => {
@@ -215,6 +229,36 @@ describe("src/agent/runtime skill policy helpers", () => {
   });
 
   describe("hydrateActiveSkillStateFromMessages", () => {
+    it("detects a submitted form_input result in message history", () => {
+      const messages: Message[] = [
+        {
+          id: "tool_form_input",
+          role: "tool",
+          parts: [{
+            type: "tool-result",
+            toolCallId: "form_input_1",
+            toolName: "form_input",
+            result: { submitted: true, values: { topic: "Support FAQ assistant" } },
+          }],
+        },
+      ];
+
+      assertEquals(hasSubmittedFormInputResult(messages), true);
+      assertEquals(
+        hasSubmittedFormInputResult([{
+          id: "tool_form_input_pending",
+          role: "tool",
+          parts: [{
+            type: "tool-result",
+            toolCallId: "form_input_2",
+            toolName: "form_input",
+            result: { submitted: false, values: {} },
+          }],
+        }]),
+        false,
+      );
+    });
+
     it("hydrates the latest load_skill policy and delegation overrides from tool history", () => {
       const messages: Message[] = [
         {
