@@ -28,6 +28,7 @@ import {
 } from "#veryfront/utils/route-path-utils.ts";
 import {
   extractRenderedCssHash,
+  hasRenderedReleaseAssetCss,
   serializeLayoutProps,
   serializeLayouts,
 } from "./pipeline-helpers.ts";
@@ -53,6 +54,7 @@ import {
   getCSSByHashAsync,
   regenerateCSSByHash,
 } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
+import { getReadyManifestForRender } from "#veryfront/release-assets/manifest-cache.ts";
 import { createEsmCache, createModuleCache, loadModule } from "./module-loader/index.ts";
 import type { ModuleLoaderConfig } from "./module-loader/index.ts";
 import {
@@ -121,6 +123,7 @@ interface MdxMetadataResult {
 
 interface PageCssResult {
   css: string | undefined;
+  cssAction: PageDataResponse["cssAction"] | undefined;
   cssError: string | undefined;
 }
 
@@ -681,7 +684,11 @@ export class RenderPipeline {
 
     const appPath = await this.resolveAppPath();
 
-    const { css, cssError } = await this.resolvePageDataCss(slug, options, projectUpdatedAt);
+    const { css, cssAction, cssError } = await this.resolvePageDataCss(
+      slug,
+      options,
+      projectUpdatedAt,
+    );
 
     resolvePageDataLog.debug("Resolved page data", {
       slug,
@@ -691,6 +698,7 @@ export class RenderPipeline {
       appPath,
       headingsCount: headings.length,
       hasCss: !!css,
+      cssAction,
       hasCssError: !!cssError,
     });
 
@@ -708,6 +716,7 @@ export class RenderPipeline {
       appPath,
       headings,
       css,
+      cssAction,
       cssError,
     };
   }
@@ -783,6 +792,10 @@ export class RenderPipeline {
     options: RenderOptions | undefined,
     projectUpdatedAt: string | undefined,
   ): Promise<PageCssResult> {
+    if (this.hasReadyReleaseCss(options)) {
+      return { css: undefined, cssAction: "clear", cssError: undefined };
+    }
+
     const cssCacheKey = getPageCssCacheKey(
       options?.projectId,
       options?.environment,
@@ -793,7 +806,7 @@ export class RenderPipeline {
     const cachedCss = getCachedPageCss(cssCacheKey);
     if (cachedCss) {
       resolvePageDataLog.debug("CSS cache hit", { slug, cssLength: cachedCss.length });
-      return { css: cachedCss, cssError: undefined };
+      return { css: cachedCss, cssAction: undefined, cssError: undefined };
     }
 
     try {
@@ -809,9 +822,10 @@ export class RenderPipeline {
       );
 
       if (!renderResult?.html) {
-        return { css: undefined, cssError: undefined };
+        return { css: undefined, cssAction: undefined, cssError: undefined };
       }
 
+      let cssAction: PageDataResponse["cssAction"] | undefined;
       let css = await this.resolveCssFromRenderedHtml(
         renderResult.html,
         options?.projectSlug ?? options?.projectId,
@@ -823,12 +837,17 @@ export class RenderPipeline {
           cssLength: css.length,
           source: "rendered-html-hash",
         });
+      } else if (hasRenderedReleaseAssetCss(renderResult.html)) {
+        cssAction = "clear";
+        resolvePageDataLog.debug("Skipped SPA CSS fallback; rendered HTML uses release CSS asset", {
+          slug,
+        });
       } else {
         css = await this.generatePageCssFromHtml(slug, renderResult.html, options);
       }
 
       if (css) cachePageCss(cssCacheKey, css);
-      return { css, cssError: undefined };
+      return { css, cssAction, cssError: undefined };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       // Surface CSS generation failures instead of silently swallowing them.
@@ -840,9 +859,16 @@ export class RenderPipeline {
       });
       return {
         css: undefined,
+        cssAction: undefined,
         cssError: `CSS generation failed: ${errorMessage}`,
       };
     }
+  }
+
+  private hasReadyReleaseCss(options: RenderOptions | undefined): boolean {
+    if (options?.environment !== "production") return false;
+    const releaseManifest = getReadyManifestForRender(options?.releaseId);
+    return (releaseManifest?.css?.length ?? 0) > 0;
   }
 
   private async generatePageCssFromHtml(

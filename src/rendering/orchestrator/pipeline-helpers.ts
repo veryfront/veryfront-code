@@ -2,9 +2,14 @@ import type { LayoutItem } from "#veryfront/types";
 import { extractRelativePath as extractRelativePathShared } from "#veryfront/utils/route-path-utils.ts";
 
 const RENDERED_CSS_HASH_RE = /href="\/_vf\/css\/([a-z0-9-]{1,16})\.css"/i;
+const RENDERED_RELEASE_ASSET_CSS_RE = /href="\/_vf\/assets\/([a-f0-9]{64})\.css"/i;
 
 export function extractRenderedCssHash(html: string): string | undefined {
   return html.match(RENDERED_CSS_HASH_RE)?.[1];
+}
+
+export function hasRenderedReleaseAssetCss(html: string): boolean {
+  return RENDERED_RELEASE_ASSET_CSS_RE.test(html);
 }
 
 export function serializeLayouts(

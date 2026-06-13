@@ -1,9 +1,19 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { RenderPipeline, type RenderPipelineConfig } from "./pipeline.ts";
 import { cachePageCss, getPageCssCacheKey } from "./css-cache.ts";
 import { cacheCSSAsync } from "#veryfront/html/styles-builder/index.ts";
+import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
+import {
+  clearReleaseAssetManifestCache,
+  configureReleaseAssetManifestFetcher,
+  getReadyManifestForRender,
+} from "#veryfront/release-assets/manifest-cache.ts";
+import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
+import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+
+const RELEASE_CSS_HASH = "c".repeat(64);
 
 function createPipeline(pagePath: string): RenderPipeline {
   const config: RenderPipelineConfig = {
@@ -65,7 +75,48 @@ function primeCssCache(slug: string, projectId: string): void {
   cachePageCss(cssKey, "/* cached css */");
 }
 
+function releaseManifestWithCss(): ReleaseAssetManifest {
+  return {
+    schemaVersion: 1,
+    projectId: "p",
+    releaseId: "rel-css",
+    releaseVersion: 1,
+    manifestVersion: 1,
+    builderVersion: "0.1.793",
+    sourceContentHash: "",
+    createdAt: "2026-06-12T00:00:00.000Z",
+    assetBasePath: "/_vf/assets",
+    modules: {},
+    css: [{
+      contentHash: RELEASE_CSS_HASH,
+      size: 10,
+      contentType: "text/css",
+      styleProfileHash: "style-profile",
+    }],
+    routes: { "/behavior-release-css": { modules: [], css: [RELEASE_CSS_HASH] } },
+    dependencies: {},
+    fallback: { mode: "jit", gaps: [] },
+  };
+}
+
+async function primeReadyReleaseCssManifest(): Promise<void> {
+  configureReleaseAssetManifestFetcher(() =>
+    Promise.resolve({ state: "ready", manifest: releaseManifestWithCss() })
+  );
+  setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+  getReadyManifestForRender("rel-css");
+  await new Promise((r) => setTimeout(r, 0));
+}
+
 describe("RenderPipeline behavior", () => {
+  const originalManifestFlag = getHostEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG);
+
+  afterEach(() => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, originalManifestFlag ?? "");
+    configureReleaseAssetManifestFetcher(undefined);
+    clearReleaseAssetManifestCache();
+  });
+
   it("resolvePageData surfaces notFound from data hooks", async () => {
     const slug = "/behavior-not-found";
     const projectId = "proj-not-found";
@@ -294,6 +345,56 @@ describe("RenderPipeline behavior", () => {
     });
 
     assertEquals(pageData.css, expectedCss);
+    assertEquals(pageData.cssError, undefined);
+  });
+
+  it("resolvePageData skips SPA CSS fallback when SSR uses a release CSS asset", async () => {
+    const slug = "/behavior-release-css";
+    const projectId = "proj-release-css";
+    const pipeline = createPipeline("/project/pages/behavior-release-css.tsx");
+
+    (pipeline as any).loadModule = async () => ({});
+    (pipeline as any).renderPage = async () => ({
+      html:
+        `<!DOCTYPE html><html><head><link rel="stylesheet" href="/_vf/assets/${RELEASE_CSS_HASH}.css"></head><body><button class="hidden dark:block">theme</button></body></html>`,
+    });
+
+    const pageData = await pipeline.resolvePageData(slug, {
+      projectId,
+      request: new Request(`http://localhost${slug}`),
+      url: new URL(`http://localhost${slug}`),
+      environment: "production",
+    });
+
+    assertEquals(pageData.css, undefined);
+    assertEquals(pageData.cssAction, "clear");
+    assertEquals(pageData.cssError, undefined);
+  });
+
+  it("resolvePageData ignores stale cached SPA CSS when ready release CSS is authoritative", async () => {
+    const slug = "/behavior-release-css";
+    const projectId = "proj-release-css";
+    const pipeline = createPipeline("/project/pages/behavior-release-css.tsx");
+    const cssKey = getPageCssCacheKey(projectId, "production", slug, undefined);
+    cachePageCss(cssKey, '.dark\\:block{&:is(.dark,[data-theme="dark"])*{display:block}}');
+
+    await primeReadyReleaseCssManifest();
+
+    (pipeline as any).loadModule = async () => ({});
+    (pipeline as any).renderPage = async () => {
+      throw new Error("renderPage should not run when ready release CSS is cached");
+    };
+
+    const pageData = await pipeline.resolvePageData(slug, {
+      projectId,
+      releaseId: "rel-css",
+      request: new Request(`http://localhost${slug}`),
+      url: new URL(`http://localhost${slug}`),
+      environment: "production",
+    });
+
+    assertEquals(pageData.css, undefined);
+    assertEquals(pageData.cssAction, "clear");
     assertEquals(pageData.cssError, undefined);
   });
 

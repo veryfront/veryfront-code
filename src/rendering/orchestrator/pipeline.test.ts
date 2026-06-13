@@ -7,6 +7,7 @@ import { getPageCssCacheKey } from "./css-cache.ts";
 import { collectModulesToLoad, hasDataFetchingFunction } from "./module-collection.ts";
 import {
   extractRenderedCssHash,
+  hasRenderedReleaseAssetCss,
   serializeLayoutProps,
   serializeLayouts,
 } from "./pipeline-helpers.ts";
@@ -32,6 +33,19 @@ describe("RenderPipeline helpers", () => {
       assertEquals(
         extractRenderedCssHash('<link rel="stylesheet" href="/_vf/css/abc123.css">'),
         "abc123",
+      );
+    });
+
+    it("hasRenderedReleaseAssetCss recognizes immutable release CSS links", () => {
+      assertEquals(
+        hasRenderedReleaseAssetCss(
+          `<link rel="stylesheet" href="/_vf/assets/${"c".repeat(64)}.css">`,
+        ),
+        true,
+      );
+      assertEquals(
+        hasRenderedReleaseAssetCss('<link rel="stylesheet" href="/_vf/css/abc123.css">'),
+        false,
       );
     });
 

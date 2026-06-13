@@ -84,6 +84,8 @@ export interface PageDataResponse {
   headings?: Array<{ id: string; text: string; level: number }>;
   /** JIT-compiled Tailwind CSS for this page (for SPA navigation in prod mode) */
   css?: string;
+  /** Client action for the SPA CSS tag when no route CSS payload is sent. */
+  cssAction?: "clear";
   /**
    * Error message if CSS generation failed.
    * When set, the css field will be undefined and clients should fall back
