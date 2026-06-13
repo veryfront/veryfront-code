@@ -223,6 +223,13 @@ describe("hydration-script-builder/templates/router", () => {
       assertIncludes(result, "styleEl.setAttribute('nonce', nonce)");
     });
 
+    it("should clear stale SPA CSS when page data marks release CSS authoritative", () => {
+      const result = getRouterScript();
+      assertIncludes(result, "pageData.cssAction === 'clear'");
+      assertIncludes(result, "existingStyle.remove()");
+      assertIncludes(result, "Cleared SPA CSS for release stylesheet navigation");
+    });
+
     it("should update document title during SPA navigation", () => {
       assertIncludes(getRouterScript(), "document.title = pageData.frontmatter.title");
     });

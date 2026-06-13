@@ -444,6 +444,12 @@ export const getRouterScript = () => `
           document.head.appendChild(styleEl);
         }
         log('Injected CSS for SPA navigation', { cssLength: pageData.css.length });
+      } else if (pageData.cssAction === 'clear') {
+        const existingStyle = document.getElementById('veryfront-spa-css');
+        if (existingStyle) {
+          existingStyle.remove();
+          log('Cleared SPA CSS for release stylesheet navigation');
+        }
       }
 
       let tree = React.createElement(PageComponent, {
