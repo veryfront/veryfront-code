@@ -271,6 +271,55 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(result.cacheStrategy, "short");
       });
 
+      it("requests buffered delivery when the response is cacheable", async () => {
+        let delivery: unknown;
+        const adapter = createMockRendererAdapter({
+          renderPage: (_slug, options) => {
+            delivery = options?.delivery;
+            return Promise.resolve({
+              html: "<html>rendered</html>",
+              stream: undefined,
+              ssrHash: "hash123",
+              frontmatter: {},
+            });
+          },
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+
+        await service.renderPage(makeCtx(), makeRenderOptions({ useNoCache: false }));
+
+        assertEquals(delivery, "string");
+      });
+
+      it("keeps streaming delivery for no-cache responses", async () => {
+        let delivery: unknown;
+        const adapter = createMockRendererAdapter({
+          renderPage: (_slug, options) => {
+            delivery = options?.delivery;
+            return Promise.resolve({
+              html: "",
+              stream: new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(new TextEncoder().encode("<html>stream</html>"));
+                  controller.close();
+                },
+              }),
+              ssrHash: undefined,
+              frontmatter: {},
+            });
+          },
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+
+        await service.renderPage(makeCtx(), makeRenderOptions({ useNoCache: true }));
+
+        assertEquals(delivery, "stream");
+      });
+
       it("uses no-cache strategy when useNoCache is true", async () => {
         const adapter = createMockRendererAdapter();
         const service = new SSRService({

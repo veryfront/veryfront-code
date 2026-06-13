@@ -49,7 +49,7 @@ export async function buildSSRResponse(
       .withCORS(req, ctx.securityConfig?.cors)
       .withSecurity(ctx.securityConfig ?? undefined, req)
       .withClientHints()
-      .withCache("no-cache")
+      .withCache(result.cacheStrategy)
       .withContentType(
         getContentType(".html"),
         addNonceToHtmlStream(result.stream, builder.nonce),

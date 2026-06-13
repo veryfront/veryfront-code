@@ -176,13 +176,14 @@ export class SSRService implements SSRServiceLike {
       // Bind the render session to this async context so modules fetched
       // during the render are attributed to THIS render, not whichever
       // concurrent session started first.
+      const delivery = useNoCache ? "stream" : "string";
       const result = await runInRenderSession(renderSessionId, () =>
         profilePhase(
           "ssr.render_page",
           () =>
             timeAsync("render-page", () =>
               renderer.renderPage(slug, {
-                delivery: "stream",
+                delivery,
                 request,
                 url,
                 nonce,
