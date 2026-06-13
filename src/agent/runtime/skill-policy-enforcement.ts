@@ -81,6 +81,16 @@ function isSubmittedFormInputResult(result: unknown): boolean {
     (result as { submitted?: unknown }).submitted === true;
 }
 
+export function hasSubmittedFormInputResult(messages: readonly Message[]): boolean {
+  return messages.some((message) =>
+    message.parts.some((part) =>
+      isToolResultPart(part) &&
+      part.toolName === FORM_INPUT_TOOL_ID &&
+      isSubmittedFormInputResult(part.result)
+    )
+  );
+}
+
 export function removeFormInputAfterSubmission(
   toolName: string,
   result: unknown,
@@ -132,13 +142,25 @@ export type SkillPolicyResult =
   | { allowed: true }
   | { allowed: false; error: string };
 
+export type SkillPolicyOptions = {
+  allowSubmittedFormInputReuse?: boolean;
+};
+
 export function enforceSkillPolicy(
   toolName: string,
   activeSkillPolicy: string[] | undefined,
   mustLoadSkillFirst: boolean,
+  options: SkillPolicyOptions = {},
 ): SkillPolicyResult {
   if (mustLoadSkillFirst && toolName !== LOAD_SKILL_TOOL_ID) {
     return { allowed: false, error: getSkillActivationRequiredError(toolName) };
+  }
+
+  if (
+    toolName === FORM_INPUT_TOOL_ID &&
+    options.allowSubmittedFormInputReuse === true
+  ) {
+    return { allowed: true };
   }
 
   if (activeSkillPolicy && !isToolAllowedBySkill(toolName, activeSkillPolicy)) {

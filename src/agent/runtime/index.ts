@@ -66,6 +66,7 @@ import {
   enforceSkillPolicy,
   extractSkillId,
   extractSkillPolicy,
+  hasSubmittedFormInputResult,
   hydrateActiveSkillStateFromMessages,
   LOAD_SKILL_TOOL_ID,
   removeFormInputAfterSubmission,
@@ -690,6 +691,9 @@ export class AgentRuntime {
               tc.toolName,
               activeSkillPolicy,
               mustLoadSkillFirst,
+              {
+                allowSubmittedFormInputReuse: hasSubmittedFormInputResult(currentMessages),
+              },
             );
             if (!policyCheck.allowed) {
               toolCall.status = "error";
@@ -1122,7 +1126,14 @@ export class AgentRuntime {
           continue;
         }
 
-        const policyCheck = enforceSkillPolicy(tc.name, activeSkillPolicy, mustLoadSkillFirst);
+        const policyCheck = enforceSkillPolicy(
+          tc.name,
+          activeSkillPolicy,
+          mustLoadSkillFirst,
+          {
+            allowSubmittedFormInputReuse: hasSubmittedFormInputResult(currentMessages),
+          },
+        );
         if (!policyCheck.allowed) {
           await this.recordToolError(
             toolCall,
