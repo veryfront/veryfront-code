@@ -175,6 +175,28 @@ describe("server/handlers/request/ssr/ssr-response-builder", () => {
       assertEquals(body, "<p>Streamed</p>");
     });
 
+    it("uses the render result cache strategy for streaming responses", async () => {
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("<p>Streamed</p>"));
+          controller.close();
+        },
+      });
+      const req = new Request("http://localhost/");
+      const ctx = makeCtx();
+      const result = makeResult({
+        cacheStrategy: "short",
+        isStreaming: true,
+        stream,
+        html: undefined,
+      });
+      const builder = new ResponseBuilder();
+
+      const response = await buildSSRResponse(req, ctx, result, builder);
+
+      assertEquals(response.headers.get("cache-control"), "public, max-age=0");
+    });
+
     it("preserves streaming while adding nonces to inline tags", async () => {
       let releaseSecondChunk: (() => void) | undefined;
       const secondChunkReady = new Promise<void>((resolve) => {
