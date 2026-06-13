@@ -30,6 +30,7 @@ import {
   RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
   RELEASE_ASSET_MAX_SIZE_BYTES,
   RELEASE_ASSET_UPLOAD_CONCURRENCY,
+  releaseAssetUrl,
 } from "./constants.ts";
 import type {
   ReleaseAssetCssEntry,
@@ -140,6 +141,11 @@ interface PreparedAsset {
   contentType: string;
 }
 
+interface TransformedProjectModule {
+  logicalPath: string;
+  code: string;
+}
+
 function frameworkModuleUrlToSourceKey(moduleUrl: string): string | null {
   if (!moduleUrl.startsWith(FRAMEWORK_MODULE_URL_PREFIX)) return null;
   return moduleUrl
@@ -239,6 +245,134 @@ function resolveStaticImports(
   }
 
   return results;
+}
+
+function resolveKnownModulePath(path: string, knownPaths: Set<string>): string | null {
+  const normalized = path
+    .replace(/^\/?_vf_modules\//, "")
+    .replace(/^\/+/, "")
+    .replace(/[?#].*$/, "");
+
+  if (normalized.startsWith("_veryfront/")) return null;
+  if (knownPaths.has(normalized)) return normalized;
+
+  const withoutExt = normalized.replace(/\.(tsx|ts|jsx|mdx|js)$/, "");
+  for (const ext of BROWSER_MODULE_EXTENSIONS) {
+    const candidate = `${withoutExt}${ext}`;
+    if (knownPaths.has(candidate)) return candidate;
+  }
+
+  return null;
+}
+
+function collectVfModuleImports(
+  code: string,
+  knownPaths: Set<string>,
+): Map<string, string> {
+  const imports = new Map<string, string>();
+  const re = /(["'])(\/_vf_modules\/[^"']+)\1/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = re.exec(code)) !== null) {
+    const specifier = match[2]!;
+    const logicalPath = resolveKnownModulePath(specifier, knownPaths);
+    if (logicalPath) imports.set(specifier, logicalPath);
+  }
+
+  return imports;
+}
+
+function rewriteVfModuleImports(
+  code: string,
+  moduleAssets: Map<string, PreparedAsset>,
+  knownPaths: Set<string>,
+  dependencyUrls: Map<string, string>,
+): string {
+  return code.replace(/(["'])(\/_vf_modules\/[^"']+)\1/g, (full, quote, specifier) => {
+    const dependencyUrl = dependencyUrls.get(specifier.replace(/[?#].*$/, ""));
+    if (dependencyUrl) return `${quote}${dependencyUrl}${quote}`;
+
+    const logicalPath = resolveKnownModulePath(specifier, knownPaths);
+    const asset = logicalPath ? moduleAssets.get(logicalPath) : undefined;
+    if (!asset) return full;
+
+    return `${quote}${releaseAssetUrl(asset.contentHash, "js")}${quote}`;
+  });
+}
+
+function buildDependencyUrlMap(dependencies: Record<string, PreparedAsset>): Map<string, string> {
+  const urls = new Map<string, string>();
+
+  for (const [specifier, moduleUrl] of Object.entries(PLATFORM_UTILITIES)) {
+    const entry = dependencies[specifier];
+    if (!entry) continue;
+    urls.set(moduleUrl, releaseAssetUrl(entry.contentHash, "js"));
+  }
+
+  return urls;
+}
+
+async function finalizeProjectModules(
+  transformedModules: Map<string, TransformedProjectModule>,
+  knownPaths: Set<string>,
+  dependencyUrls: Map<string, string>,
+  uploadQueue: PreparedAsset[],
+  pendingBytes: Map<string, { bytes: Uint8Array<ArrayBuffer>; contentType: string }>,
+  gaps: string[],
+): Promise<Record<string, PreparedAsset>> {
+  const finalized = new Map<string, PreparedAsset>();
+  const unresolvedCycles = new Set<string>();
+
+  async function finalize(logicalPath: string, stack: string[]): Promise<PreparedAsset | null> {
+    const existing = finalized.get(logicalPath);
+    if (existing) return existing;
+
+    if (stack.includes(logicalPath)) {
+      const cycle = [...stack.slice(stack.indexOf(logicalPath)), logicalPath].join("->");
+      const gap = `cycle:${cycle}`;
+      if (!unresolvedCycles.has(gap)) {
+        unresolvedCycles.add(gap);
+        gaps.push(gap);
+      }
+      return null;
+    }
+
+    const transformed = transformedModules.get(logicalPath);
+    if (!transformed) return null;
+
+    const nextStack = [...stack, logicalPath];
+    const imports = collectVfModuleImports(transformed.code, knownPaths);
+    for (const importedPath of imports.values()) {
+      await finalize(importedPath, nextStack);
+    }
+
+    const rewritten = rewriteVfModuleImports(
+      transformed.code,
+      finalized,
+      knownPaths,
+      dependencyUrls,
+    );
+    const entry = await addPreparedJavaScriptAsset(
+      logicalPath,
+      rewritten,
+      uploadQueue,
+      pendingBytes,
+    );
+
+    if (!entry) return null;
+    finalized.set(logicalPath, entry);
+    return entry;
+  }
+
+  for (const logicalPath of transformedModules.keys()) {
+    const entry = await finalize(logicalPath, []);
+    if (!entry) {
+      const gap = `oversized:${logicalPath}`;
+      if (!gaps.includes(gap)) gaps.push(gap);
+    }
+  }
+
+  return Object.fromEntries(finalized);
 }
 
 async function addPreparedJavaScriptAsset(
@@ -434,7 +568,7 @@ async function runBuildInner(
 
   // 3 + 4. Collect the browser module closure and transform each module
   // through the SAME pipeline serveModule uses (browser, non-SSR).
-  const modules: Record<string, PreparedAsset> = {};
+  const transformedModules = new Map<string, TransformedProjectModule>();
   const gaps: string[] = [];
   const uploadQueue: PreparedAsset[] = [];
   // Bytes are held per-hash only until uploaded, then dropped (M3).
@@ -478,23 +612,7 @@ async function runBuildInner(
       };
     }
 
-    const entry = await addPreparedJavaScriptAsset(
-      logicalPath,
-      code,
-      uploadQueue,
-      pendingBytes,
-    );
-    // M2: enforce 10 MB client-side limit — skip oversized modules with a gap.
-    if (!entry) {
-      gaps.push(`oversized:${logicalPath}`);
-      logger.warn("Module exceeds max size, skipping", {
-        path: logicalPath,
-        limit: RELEASE_ASSET_MAX_SIZE_BYTES,
-      });
-      continue;
-    }
-
-    modules[logicalPath] = entry;
+    transformedModules.set(logicalPath, { logicalPath, code });
   }
 
   const dependencies = await buildFrameworkDependencies(
@@ -505,6 +623,24 @@ async function runBuildInner(
     pendingBytes,
     gaps,
   );
+  const dependencyUrls = buildDependencyUrlMap(dependencies);
+
+  const modules = await finalizeProjectModules(
+    transformedModules,
+    knownPaths,
+    dependencyUrls,
+    uploadQueue,
+    pendingBytes,
+    gaps,
+  );
+
+  for (const logicalPath of transformedModules.keys()) {
+    if (modules[logicalPath]) continue;
+    logger.warn("Module exceeds max size, skipping", {
+      path: logicalPath,
+      limit: RELEASE_ASSET_MAX_SIZE_BYTES,
+    });
+  }
 
   // 5b. CSS: compile project CSS where reachable, else record css:[] and note.
   const css: ReleaseAssetCssEntry[] = [];
