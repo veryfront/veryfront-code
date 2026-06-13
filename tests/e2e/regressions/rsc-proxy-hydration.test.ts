@@ -247,6 +247,7 @@ async function withProxyBrowserPage(
         "x-veryfront-dispatch-jws": await mintTrustedDispatchJws(context.projectId),
       },
     });
+    await installEsmShCorsShim(browserContext);
 
     try {
       const page = await browserContext.newPage();
@@ -255,6 +256,7 @@ async function withProxyBrowserPage(
       assertEquals(response?.status(), 200);
       await run(page, diagnostics);
     } finally {
+      await browserContext.unrouteAll({ behavior: "ignoreErrors" });
       await browserContext.close();
     }
   } finally {
@@ -266,6 +268,50 @@ async function withProxyBrowserPage(
       Deno.env.set(DISPATCH_PUBLIC_KEY_ENV, previousDispatchPublicKey);
     }
   }
+}
+
+async function installEsmShCorsShim(
+  browserContext: import("npm:playwright").BrowserContext,
+): Promise<void> {
+  await browserContext.route("https://esm.sh/**", async (route) => {
+    const request = route.request();
+    const corsHeaders = {
+      "access-control-allow-origin": "*",
+      "access-control-allow-methods": "GET, HEAD, OPTIONS",
+      "access-control-allow-headers": request.headers()["access-control-request-headers"] ?? "*",
+    };
+
+    try {
+      if (request.method().toUpperCase() === "OPTIONS") {
+        await route.fulfill({
+          status: 204,
+          headers: corsHeaders,
+          body: "",
+        });
+        return;
+      }
+
+      const response = await route.fetch();
+      await route.fulfill({
+        response,
+        headers: {
+          ...response.headers(),
+          ...corsHeaders,
+        },
+      });
+    } catch (error) {
+      if (isClosedRouteError(error)) {
+        return;
+      }
+      throw error;
+    }
+  });
+}
+
+function isClosedRouteError(error: unknown): boolean {
+  return error instanceof Error &&
+    (error.message.includes("Target page, context or browser has been closed") ||
+      error.message.includes("Route is already handled"));
 }
 
 async function assertCounterHydration(

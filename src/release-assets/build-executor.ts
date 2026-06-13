@@ -19,7 +19,9 @@ import { serverLogger } from "#veryfront/utils";
 import { VERSION } from "#veryfront/utils/version.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { dirname, join } from "#veryfront/compat/path/index.ts";
+import { resolveFrameworkSourcePath } from "#veryfront/platform/compat/framework-source-resolver.ts";
 import { transformToESM } from "#veryfront/transforms/esm-transform.ts";
+import { PLATFORM_UTILITIES } from "#veryfront/html/utils.ts";
 import { sha256HexBytes } from "./hash.ts";
 import {
   RELEASE_ASSET_BASE_PATH,
@@ -40,6 +42,7 @@ const logger = serverLogger.component("release-asset-build");
 const BROWSER_MODULE_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
 /** Directories whose modules are part of the browser closure. */
 const BROWSER_MODULE_DIRS = ["pages/", "components/", "layouts/", "lib/", "src/"];
+const FRAMEWORK_MODULE_URL_PREFIX = "/_vf_modules/_veryfront/";
 
 export interface ReleaseAssetBuildInput {
   /** Project reference (slug or id) used for API calls. */
@@ -136,6 +139,13 @@ interface PreparedAsset {
   contentType: string;
 }
 
+function frameworkModuleUrlToSourceKey(moduleUrl: string): string | null {
+  if (!moduleUrl.startsWith(FRAMEWORK_MODULE_URL_PREFIX)) return null;
+  return moduleUrl
+    .slice(FRAMEWORK_MODULE_URL_PREFIX.length)
+    .replace(/\.(mjs|cjs|js|jsx|ts|tsx)$/, "");
+}
+
 /** Sanitize an error for state reporting (no internal paths / stack traces). */
 function sanitizeError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
@@ -228,6 +238,87 @@ function resolveStaticImports(
   }
 
   return results;
+}
+
+async function addPreparedJavaScriptAsset(
+  logicalPath: string,
+  code: string,
+  uploadQueue: PreparedAsset[],
+  pendingBytes: Map<string, { bytes: Uint8Array<ArrayBuffer>; contentType: string }>,
+): Promise<PreparedAsset | null> {
+  const bytes = new TextEncoder().encode(code) as Uint8Array<ArrayBuffer>;
+  if (bytes.byteLength > RELEASE_ASSET_MAX_SIZE_BYTES) return null;
+
+  const contentHash = await sha256HexBytes(bytes);
+  const entry: PreparedAsset = {
+    logicalPath,
+    contentHash,
+    size: bytes.byteLength,
+    contentType: RELEASE_ASSET_CONTENT_TYPES.js,
+  };
+  if (!pendingBytes.has(contentHash)) {
+    pendingBytes.set(contentHash, { bytes, contentType: RELEASE_ASSET_CONTENT_TYPES.js });
+    uploadQueue.push(entry);
+  }
+  return entry;
+}
+
+async function buildFrameworkDependencies(
+  input: ReleaseAssetBuildInput,
+  tempDir: string,
+  transform: ReleaseAssetTransform,
+  uploadQueue: PreparedAsset[],
+  pendingBytes: Map<string, { bytes: Uint8Array<ArrayBuffer>; contentType: string }>,
+  gaps: string[],
+): Promise<Record<string, PreparedAsset>> {
+  const fs = createFileSystem();
+  const dependencies: Record<string, PreparedAsset> = {};
+
+  for (const [specifier, moduleUrl] of Object.entries(PLATFORM_UTILITIES)) {
+    const sourceKey = frameworkModuleUrlToSourceKey(moduleUrl);
+    if (!sourceKey) continue;
+
+    const frameworkSource = await resolveFrameworkSourcePath(sourceKey, {
+      extraLookupDirs: [join(tempDir, "src")],
+    });
+    if (!frameworkSource) {
+      gaps.push(`dependency-missing:${specifier}`);
+      continue;
+    }
+
+    let code: string;
+    try {
+      const source = await fs.readTextFile(frameworkSource.path);
+      code = await transform(source, frameworkSource.path, tempDir, input.adapter, {
+        projectId: input.projectId,
+        dev: false,
+        ssr: false,
+        reactVersion: input.reactVersion,
+      });
+    } catch (error) {
+      gaps.push(`dependency-transform-failed:${specifier}`);
+      logger.warn("Framework dependency transform failed during release asset build", {
+        specifier,
+        error: sanitizeError(error),
+      });
+      continue;
+    }
+
+    const entry = await addPreparedJavaScriptAsset(
+      `__dependencies__/${specifier}`,
+      code,
+      uploadQueue,
+      pendingBytes,
+    );
+    if (!entry) {
+      gaps.push(`dependency-oversized:${specifier}`);
+      continue;
+    }
+
+    dependencies[specifier] = entry;
+  }
+
+  return dependencies;
 }
 
 /**
@@ -386,33 +477,33 @@ async function runBuildInner(
       };
     }
 
-    // L2: hash the bytes, not the string.
-    const bytes = new TextEncoder().encode(code) as Uint8Array<ArrayBuffer>;
-
+    const entry = await addPreparedJavaScriptAsset(
+      logicalPath,
+      code,
+      uploadQueue,
+      pendingBytes,
+    );
     // M2: enforce 10 MB client-side limit — skip oversized modules with a gap.
-    if (bytes.byteLength > RELEASE_ASSET_MAX_SIZE_BYTES) {
+    if (!entry) {
       gaps.push(`oversized:${logicalPath}`);
       logger.warn("Module exceeds max size, skipping", {
         path: logicalPath,
-        size: bytes.byteLength,
         limit: RELEASE_ASSET_MAX_SIZE_BYTES,
       });
       continue;
     }
 
-    const contentHash = await sha256HexBytes(bytes);
-    const entry: PreparedAsset = {
-      logicalPath,
-      contentHash,
-      size: bytes.byteLength,
-      contentType: RELEASE_ASSET_CONTENT_TYPES.js,
-    };
     modules[logicalPath] = entry;
-    if (!pendingBytes.has(contentHash)) {
-      pendingBytes.set(contentHash, { bytes, contentType: RELEASE_ASSET_CONTENT_TYPES.js });
-      uploadQueue.push(entry);
-    }
   }
+
+  const dependencies = await buildFrameworkDependencies(
+    input,
+    tempDir,
+    transform,
+    uploadQueue,
+    pendingBytes,
+    gaps,
+  );
 
   // 5b. CSS: compile project CSS where reachable, else record css:[] and note.
   const css: ReleaseAssetCssEntry[] = [];
@@ -531,7 +622,13 @@ async function runBuildInner(
     ),
     css,
     routes,
-    dependencies: {},
+    dependencies: Object.fromEntries(
+      Object.entries(dependencies).map(([specifier, entry]) => [specifier, {
+        contentHash: entry.contentHash,
+        size: entry.size,
+        contentType: entry.contentType,
+      }]),
+    ),
     fallback: { mode: "jit", gaps },
   };
 

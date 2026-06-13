@@ -1,6 +1,7 @@
 import { escapeHTML } from "./html-escape.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { VERYFRONT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import {
   DEFAULT_REACT_VERSION,
@@ -103,7 +104,7 @@ const AI_MODULE_UTILITIES: Record<string, string> = {
   "veryfront/workflow": PLATFORM_UTILITY_PATHS.workflow,
 };
 
-const PLATFORM_UTILITIES: Record<string, string> = {
+export const PLATFORM_UTILITIES: Record<string, string> = {
   ...CORE_PLATFORM_UTILITIES,
   ...AI_MODULE_UTILITIES,
 };
@@ -268,6 +269,7 @@ interface BuildImportMapOptions {
   config?: VeryfrontConfig;
   customImports?: Record<string, string>;
   pretty?: boolean;
+  releaseAssetManifest?: ReleaseAssetManifest | null;
 }
 
 function stringifyImportMap(imports: Record<string, string>, pretty = true): string {
@@ -280,12 +282,42 @@ function stableMapKey(imports?: Record<string, string>): string {
     : "";
 }
 
+function stableManifestDependencyKey(manifest?: ReleaseAssetManifest | null): string {
+  return manifest
+    ? JSON.stringify({
+      assetBasePath: manifest.assetBasePath,
+      dependencies: Object.entries(manifest.dependencies)
+        .map(([specifier, entry]) => [specifier, entry.contentHash])
+        .sort(([a], [b]) => String(a).localeCompare(String(b))),
+    })
+    : "";
+}
+
+function applyManifestDependencies(
+  imports: Record<string, string>,
+  manifest?: ReleaseAssetManifest | null,
+): Record<string, string> {
+  if (!manifest) return imports;
+
+  let rewritten: Record<string, string> | null = null;
+  for (const specifier of Object.keys(imports)) {
+    const entry = manifest.dependencies[specifier];
+    if (!entry || entry.contentType !== "text/javascript") continue;
+
+    rewritten ??= { ...imports };
+    rewritten[specifier] = `${manifest.assetBasePath}/${entry.contentHash}.js`;
+  }
+
+  return rewritten ?? imports;
+}
+
 function isImportMapOnlyOptions(
   options: BuildImportMapOptions | Record<string, string>,
 ): options is Record<string, string> {
   return !("projectDir" in options) &&
     !("config" in options) &&
     !("customImports" in options) &&
+    !("releaseAssetManifest" in options) &&
     !("pretty" in options);
 }
 
@@ -299,21 +331,22 @@ export async function buildImportMap(
     }
   }
 
-  const { projectDir, config, customImports, pretty = true } =
+  const { projectDir, config, customImports, pretty = true, releaseAssetManifest } =
     (options ?? {}) as BuildImportMapOptions;
   const mode = config?.client?.moduleResolution ?? "cdn";
   const versions = projectDir ? await resolveVersions(projectDir, config) : DEFAULT_VERSIONS;
 
   if (mode === "bundled") {
     const reactTemplates = CDN_URL_TEMPLATES["esm.sh"];
-    const imports: Record<string, string> = {
+    let imports: Record<string, string> = {
       react: reactTemplates.react(versions.react),
       "react-dom": reactTemplates.reactDom(versions.react),
       "react-dom/client": reactTemplates.reactDomClient(versions.react),
       "react/jsx-runtime": reactTemplates.jsxRuntime(versions.react),
       "react/jsx-dev-runtime": reactTemplates.jsxDevRuntime(versions.react),
-      ...customImports,
     };
+    imports = applyManifestDependencies(imports, releaseAssetManifest);
+    imports = { ...imports, ...customImports };
 
     return { imports, json: stringifyImportMap(imports, pretty) };
   }
@@ -329,6 +362,7 @@ export async function buildImportMap(
   }
 
   imports["@/"] = "/_vf_modules/";
+  imports = applyManifestDependencies(imports, releaseAssetManifest);
 
   if (customImports) {
     imports = { ...imports, ...customImports };
@@ -342,6 +376,7 @@ export async function buildImportMap(
     veryfront: versions.veryfront,
     pretty,
     customImports: stableMapKey(customImports),
+    manifestDependencies: stableManifestDependencyKey(releaseAssetManifest),
   });
   const cached = importMapJsonCache.get(cacheKey);
   if (cached) return cached;

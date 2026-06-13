@@ -224,12 +224,14 @@ async function generateHTMLShellPartsImpl(
   // Enable dev scripts for local dev OR preview mode (for HMR support in Studio),
   // unless a caller explicitly forces production client scripts for fair benchmarking.
   const useDevScripts = !options.forceProductionScripts && (isLocalProject || isPreviewMode);
+  const releaseManifest = options.studioEmbed ? null : getReadyManifestForRender(options.releaseId);
 
   const importMapPromise = buildImportMap({
     projectDir: options.projectDir,
     config: options.config,
     customImports: options.importMap,
     pretty: useDevScripts,
+    releaseAssetManifest: releaseManifest,
   });
 
   const hydrationDataJson = generateHydrationData(
