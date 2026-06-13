@@ -213,6 +213,100 @@ describe("VeryfrontFSAdapter", () => {
       assertEquals(fetchCount, 1);
     });
 
+    it("should register a release asset manifest fetcher when initialize resolves the release id", async () => {
+      setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+      const releaseId = "release-env-initialize";
+      const contentHash = "c".repeat(64);
+      const files = [{
+        path: "pages/index.tsx",
+        content: "export default function Page() { return null }",
+      }];
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "environment", name: "production" },
+          cache: { enabled: false },
+        },
+      });
+      let fetchCount = 0;
+
+      const client = adapter.getClient() as unknown as {
+        initialize: () => Promise<void>;
+        getProjectSlug: () => string;
+        getProjectId: () => string;
+        getCachedProject: () => { provider: string; layout: string };
+        listEnvironmentFiles: (environmentName: string) => Promise<{
+          files: Array<{ path: string; content?: string }>;
+          page_info: { has_more: boolean; next: null };
+          release_id: string;
+        }>;
+        listAllEnvironmentFiles: (
+          environmentName: string,
+        ) => Promise<Array<{ path: string; content?: string }>>;
+        getReleaseAssetManifest: (releaseId: string) => Promise<{
+          state: string;
+          manifest: unknown;
+        }>;
+      };
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listEnvironmentFiles = (environmentName) => {
+        assertEquals(environmentName, "production");
+        return Promise.resolve({
+          files,
+          page_info: { has_more: false, next: null },
+          release_id: releaseId,
+        });
+      };
+      client.listAllEnvironmentFiles = (environmentName) => {
+        assertEquals(environmentName, "production");
+        return Promise.resolve(files);
+      };
+      client.getReleaseAssetManifest = async (requestedReleaseId) => {
+        fetchCount++;
+        assertEquals(requestedReleaseId, releaseId);
+        return {
+          state: "ready",
+          manifest: {
+            schemaVersion: 1,
+            projectId: "project-123",
+            releaseId,
+            releaseVersion: 1,
+            manifestVersion: 3,
+            builderVersion: "0.1.792",
+            sourceContentHash: "",
+            createdAt: "2026-06-12T00:00:00.000Z",
+            assetBasePath: "/_vf/assets",
+            modules: {
+              "pages/index.tsx": {
+                contentHash,
+                size: 1,
+                contentType: "text/javascript",
+              },
+            },
+            css: [],
+            routes: { "/": { modules: ["pages/index.tsx"], css: [] } },
+            dependencies: {},
+            fallback: { mode: "jit", gaps: [] },
+          },
+        };
+      };
+
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.initialize();
+
+      assertEquals(adapter.getContentContext()?.releaseId, releaseId);
+      assertEquals(getReadyManifestForRender(releaseId), null);
+      await waitFor(async () => getReadyManifestForRender(releaseId)?.manifestVersion === 3);
+      assertEquals(fetchCount, 1);
+    });
+
     it("should clear cached release asset manifests on poke without unregistering the fetcher", async () => {
       setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
       const releaseId = "release-env-poke";
@@ -567,6 +661,59 @@ describe("VeryfrontFSAdapter", () => {
           processRef.off("unhandledRejection", nodeStyleHandler);
         }
       }
+    });
+
+    it("preserves request branch while initializing branch content context", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: false },
+        },
+      });
+
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          getContext: () => { type: string; name?: string; version?: string };
+          listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+
+      let observedContext: ReturnType<typeof client.getContext> | null = null;
+      client.listAllFiles = () => {
+        observedContext = client.getContext();
+        assertEquals(observedContext, { type: "branch", name: "draft" });
+        return Promise.resolve([{
+          path: "pages/index.tsx",
+          content: "export default function Page() { return null }",
+        }]);
+      };
+
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      adapter.setRequestBranch("draft");
+
+      await adapter.initialize();
+
+      assertEquals(adapter.getRequestBranch(), "draft");
+      assertEquals(observedContext, { type: "branch", name: "draft" });
+      assertEquals(adapter.getContentContext(), {
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      });
     });
 
     it("should rehydrate a missing file list cache in the background", async () => {

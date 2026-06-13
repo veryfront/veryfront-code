@@ -102,6 +102,20 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return this.contentContext ? buildFileListCacheKey(this.contentContext) : undefined;
   }
 
+  private syncClientContext(): void {
+    this.client.clearRequestBranch();
+
+    if (this.contentContext) {
+      this.client.setContext(toClientContext(this.contentContext));
+    } else {
+      this.client.clearContext();
+    }
+
+    if (this.requestBranch) {
+      this.client.setRequestBranch(this.requestBranch);
+    }
+  }
+
   private getCachedFileListSync<T extends { path: string; id?: string }>(): T[] | undefined {
     const cacheKey = this.getCurrentFileListCacheKey();
     if (!cacheKey) return undefined;
@@ -315,14 +329,15 @@ export class VeryfrontFSAdapter implements FSAdapter {
     if (!this.contentContext) {
       logger.debug("Step 3: resolveContentSource START", { projectSlug });
       const step3Start = performance.now();
-      this.contentContext = await resolveContentContext(
+      const resolvedContext = await resolveContentContext(
         this.client,
         this.contentSource,
         this.projectSlug,
       );
+      this.setContentContext(resolvedContext);
       logger.debug("Step 3: resolveContentSource DONE", {
         projectSlug,
-        sourceType: this.contentContext.sourceType,
+        sourceType: resolvedContext.sourceType,
         duration: `${(performance.now() - step3Start).toFixed(2)}ms`,
       });
     } else {
@@ -332,19 +347,29 @@ export class VeryfrontFSAdapter implements FSAdapter {
       });
     }
 
+    const contentContext = this.contentContext;
+    if (!contentContext) {
+      throw toError(
+        createError({
+          type: "config",
+          message: "Veryfront adapter content context resolution failed",
+        }),
+      );
+    }
+
     logger.debug("Content context resolved", {
-      sourceType: this.contentContext.sourceType,
-      projectSlug: this.contentContext.projectSlug,
-      branch: this.contentContext.branch,
-      environmentName: this.contentContext.environmentName,
-      releaseId: this.contentContext.releaseId,
+      sourceType: contentContext.sourceType,
+      projectSlug: contentContext.projectSlug,
+      branch: contentContext.branch,
+      environmentName: contentContext.environmentName,
+      releaseId: contentContext.releaseId,
     });
 
-    const cacheKey = buildFileListCacheKey(this.contentContext);
+    const cacheKey = buildFileListCacheKey(contentContext);
     logger.debug("Step 4: fetchFileList START", { projectSlug, cacheKey });
 
     try {
-      const files = await fetchFileListForContext(this.client, this.contentContext);
+      const files = await fetchFileListForContext(this.client, contentContext);
       const fileSummary = summarizeFileList(files);
 
       await this.cache.setAsync(cacheKey, files);
@@ -377,11 +402,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
         totalDuration: `${(performance.now() - initStartTime).toFixed(2)}ms`,
       });
 
-      if (this.contentContext.sourceType === "branch") {
+      if (contentContext.sourceType === "branch") {
         logger.debug("Initialized (branch mode)", {
           projectId: this.client.getProjectId(),
           files: files.length,
-          branch: this.contentContext.branch,
+          branch: contentContext.branch,
           proxyMode: this.proxyMode,
         });
         this.wsManager.connect(projectId);
@@ -391,14 +416,14 @@ export class VeryfrontFSAdapter implements FSAdapter {
       logger.debug("Initialized (published mode)", {
         projectId: this.client.getProjectId(),
         files: files.length,
-        sourceType: this.contentContext.sourceType,
-        environmentName: this.contentContext.environmentName,
-        releaseId: this.contentContext.releaseId,
+        sourceType: contentContext.sourceType,
+        environmentName: contentContext.environmentName,
+        releaseId: contentContext.releaseId,
       });
 
       // Keep a WebSocket connection in environment mode to receive deployment pokes.
       // Release mode is immutable, so no need to keep a live connection.
-      if (this.contentContext.sourceType === "environment") {
+      if (contentContext.sourceType === "environment") {
         this.wsManager.connect(projectId);
       }
     } catch (error) {
@@ -652,7 +677,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   setRequestBranch(branch: string | null): void {
     this.requestBranch = branch;
-    this.client.setRequestBranch(branch);
+    this.syncClientContext();
   }
 
   getRequestBranch(): string | null {
@@ -661,7 +686,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   clearRequestBranch(): void {
     this.requestBranch = null;
-    this.client.clearRequestBranch();
+    this.syncClientContext();
   }
 
   setContentContext(context: ResolvedContentContext): void {
@@ -698,7 +723,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
 
     this.contentContext = context;
-    this.client.setContext(toClientContext(context));
+    this.syncClientContext();
 
     if (contextChanged) {
       this.statOps.clearIndex();
