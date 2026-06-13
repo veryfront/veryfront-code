@@ -139,6 +139,13 @@ describe("hydration-script-builder/templates/router", () => {
       assertIncludes(result, "__veryfrontSetReleaseAssetModules");
     });
 
+    it("should clear release asset modules when SPA page data has no map", () => {
+      assertIncludes(
+        getRouterScript(),
+        "window.__veryfrontSetReleaseAssetModules(pageData.releaseAssetModules || null);",
+      );
+    });
+
     it("should define prefetching on hover", () => {
       const result = getRouterScript();
       assertIncludes(result, "function prefetchPage(href)");

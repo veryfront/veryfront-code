@@ -131,17 +131,32 @@ describe("server/handlers/request/ssr/ssr-response-builder", () => {
       assertEquals(response.body, null);
     });
 
-    it("returns 304 for matching etag in production", async () => {
+    it("returns 304 for matching etag in production when no nonce is present", async () => {
       const etag = '"abc123"';
       const req = new Request("http://localhost/", {
         headers: { "if-none-match": etag },
       });
       const ctx = makeCtx({ isLocalProject: false });
       const result = makeResult({ etag });
-      const builder = new ResponseBuilder();
+      const builder = new ResponseBuilder({ nonce: "" });
 
       const response = await buildSSRResponse(req, ctx, result, builder);
       assertEquals(response.status, 304);
+    });
+
+    it("returns fresh nonce-bearing HTML instead of 304 for matching etag", async () => {
+      const etag = '"abc123"';
+      const req = new Request("http://localhost/", {
+        headers: { "if-none-match": etag },
+      });
+      const ctx = makeCtx({ isLocalProject: false });
+      const result = makeResult({ etag, html: "<script>window.__vf=1</script>" });
+      const builder = new ResponseBuilder({ nonce: "nonce-123" });
+
+      const response = await buildSSRResponse(req, ctx, result, builder);
+
+      assertEquals(response.status, 200);
+      assertEquals(await response.text(), '<script nonce="nonce-123">window.__vf=1</script>');
     });
 
     it("does NOT return 304 for matching etag in dev mode", async () => {
