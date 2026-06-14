@@ -213,6 +213,29 @@ function buildAlreadyLoadedSkillReferenceResponse(
   };
 }
 
+function buildRuntimeSkillCacheKey(
+  context: RuntimeLoadSkillToolContext,
+  skillId: string,
+): string {
+  return JSON.stringify([
+    skillId,
+    context.projectId ?? null,
+    context.branchId ?? null,
+    context.skillSourcePaths?.[skillId] ?? null,
+  ]);
+}
+
+function buildRuntimeSkillReferenceCacheKey(
+  context: RuntimeLoadSkillToolContext,
+  skillId: string,
+  normalizedFile: string,
+): string {
+  return JSON.stringify([
+    buildRuntimeSkillCacheKey(context, skillId),
+    normalizedFile,
+  ]);
+}
+
 function buildRuntimeLoadSkillDescription(options: RuntimeLoadSkillToolOptions): string {
   if (options.description) {
     return options.description;
@@ -275,7 +298,11 @@ async function loadRuntimeSkillReferenceFile(
   }
 
   const loadedSkillReferenceResponses = options.context.loadedSkillReferenceResponses ??= {};
-  const referenceKey = `${skillId}/${normalizedFile}`;
+  const referenceKey = buildRuntimeSkillReferenceCacheKey(
+    options.context,
+    skillId,
+    normalizedFile,
+  );
   if (loadedSkillReferenceResponses[referenceKey]) {
     return buildAlreadyLoadedSkillReferenceResponse(skillId, normalizedFile);
   }
@@ -328,7 +355,8 @@ export function createRuntimeLoadSkillTool(
       }
 
       const loadedSkillResponses = options.context.loadedSkillResponses ??= {};
-      const loadedResponse = loadedSkillResponses[skillId];
+      const loadedSkillKey = buildRuntimeSkillCacheKey(options.context, skillId);
+      const loadedResponse = loadedSkillResponses[loadedSkillKey];
       if (loadedResponse) {
         return buildAlreadyLoadedSkillResponse(skillId, loadedResponse);
       }
@@ -341,7 +369,7 @@ export function createRuntimeLoadSkillTool(
           instructions: projectSkill.instructions,
           references: projectSkill.references,
         });
-        loadedSkillResponses[skillId] = response;
+        loadedSkillResponses[loadedSkillKey] = response;
         return response;
       }
 
@@ -353,7 +381,7 @@ export function createRuntimeLoadSkillTool(
           instructions: localContent,
           references: builtinStore.listReferences(options.skillsDir, skillId),
         });
-        loadedSkillResponses[skillId] = response;
+        loadedSkillResponses[loadedSkillKey] = response;
         return response;
       }
 
