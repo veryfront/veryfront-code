@@ -1115,7 +1115,7 @@ async function runBuildInner(
     gaps,
   );
   let httpDependencies: Record<string, PreparedAsset>;
-  let httpDependencyFallbackUrls = new Map<string, string>();
+  let httpDependencyFallbackUrls: Map<string, string>;
   try {
     const finalizedHttpDependencies = await finalizeDependencyModules(
       dependencyModules,
