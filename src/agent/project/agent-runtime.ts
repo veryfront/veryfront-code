@@ -37,6 +37,23 @@ function resolveAgentSystem(system: AgentConfig["system"]): Promise<string> | st
   return typeof system === "function" ? system() : system;
 }
 
+function resolveAgentToolNames(tools: AgentConfig["tools"]): true | string[] | undefined {
+  if (tools === true) {
+    return true;
+  }
+
+  if (!tools) {
+    return undefined;
+  }
+
+  const names = Object.entries(tools)
+    .filter(([, value]) => value === true)
+    .map(([name]) => name)
+    .sort();
+
+  return names.length > 0 ? names : undefined;
+}
+
 /** Clear project agent runtime registries. */
 export function clearProjectAgentRuntimeRegistries(): void {
   clearTrackedAgents();
@@ -83,6 +100,7 @@ export async function createRuntimeAgentDefinitionFromAgent(
   if (markdownDefinition) {
     return markdownDefinition;
   }
+  const toolNames = resolveAgentToolNames(runtimeAgent.config.tools);
 
   return {
     id: runtimeAgent.id,
@@ -94,6 +112,11 @@ export async function createRuntimeAgentDefinitionFromAgent(
       ? {}
       : { temperature: runtimeAgent.config.temperature }),
     maxSteps: runtimeAgent.config.maxSteps,
+    ...(runtimeAgent.config.providerTools
+      ? { providerTools: runtimeAgent.config.providerTools }
+      : {}),
+    ...(runtimeAgent.config.skills === undefined ? {} : { skills: runtimeAgent.config.skills }),
+    ...(toolNames === undefined ? {} : { tools: toolNames }),
   };
 }
 

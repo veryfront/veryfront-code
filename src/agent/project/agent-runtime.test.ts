@@ -35,6 +35,11 @@ Deno.test("project agent runtime resolves code and markdown agent candidates", a
     model: "openai/gpt-5.4",
     maxSteps: 7,
     system: () => "Help from code.",
+    tools: {
+      get_active_agent_run: true,
+      get_agent_run_events: true,
+    },
+    providerTools: ["web_search"],
   });
   const markdownAgent = createRuntimeAgentFromMarkdownDefinition({
     id: "writer",
@@ -80,6 +85,8 @@ Deno.test("project agent runtime resolves code and markdown agent candidates", a
     instructions: "Help from code.",
     model: "openai/gpt-5.4",
     maxSteps: 7,
+    providerTools: ["web_search"],
+    tools: ["get_active_agent_run", "get_agent_run_events"],
   });
   assertEquals(await createRuntimeAgentDefinitionFromAgent(markdownAgent), {
     id: "writer",
