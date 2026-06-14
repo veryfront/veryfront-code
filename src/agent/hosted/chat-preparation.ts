@@ -87,6 +87,7 @@ export type HostedChatRuntimeCreationPreparationInput<TRuntimeAgentDefinition> =
     thinking?: RuntimeAgentThinkingConfig;
     maxSteps?: number;
     allowedRemoteTools?: unknown;
+    providerTools?: unknown;
   };
   projectId: string | null;
   authToken: string;
@@ -120,9 +121,9 @@ export type HostedChatRuntimeCreationPreparationResult<TRuntimeAgentDefinition> 
   runtimeConfig: ResolvedHostedRuntimeRequestConfig;
 };
 
-function getAllowedRemoteToolNames(agentConfig: { allowedRemoteTools?: unknown }): string[] {
-  return Array.isArray(agentConfig.allowedRemoteTools)
-    ? agentConfig.allowedRemoteTools.filter((toolName): toolName is string =>
+function getProviderToolNames(agentConfig: { providerTools?: unknown }): string[] {
+  return Array.isArray(agentConfig.providerTools)
+    ? agentConfig.providerTools.filter((toolName): toolName is string =>
       typeof toolName === "string" && toolName.length > 0
     )
     : [];
@@ -177,6 +178,7 @@ export type HostedChatExecutionPreparationInput<
     thinking?: RuntimeAgentThinkingConfig;
     maxSteps?: number;
     allowedRemoteTools?: unknown;
+    providerTools?: unknown;
   },
   TRuntimeResult extends HostedChatRuntimeCreationResult,
 > = {
@@ -358,6 +360,7 @@ export async function prepareHostedChatExecution<
     thinking?: RuntimeAgentThinkingConfig;
     maxSteps?: number;
     allowedRemoteTools?: unknown;
+    providerTools?: unknown;
   },
   TRuntimeResult extends HostedChatRuntimeCreationResult,
 >(
@@ -407,7 +410,7 @@ export async function prepareHostedChatExecution<
       authToken: input.request.authToken,
       apiUrl: input.apiUrl,
       projectId: input.request.projectId,
-      providerOwnedToolNames: getAllowedRemoteToolNames(input.agentConfig),
+      providerOwnedToolNames: getProviderToolNames(input.agentConfig),
     },
   );
   let budgetedContext: Awaited<ReturnType<typeof applyContextBudget>> | undefined;
