@@ -21,7 +21,7 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { dirname, join, normalize } from "#veryfront/compat/path/index.ts";
 import { resolveFrameworkSourcePath } from "#veryfront/platform/compat/framework-source-resolver.ts";
 import { transformToESM } from "#veryfront/transforms/esm-transform.ts";
-import { cacheHttpImportsToLocal } from "#veryfront/transforms/esm/http-cache.ts";
+import { cacheHttpImportsToLocal, normalizeHttpUrl } from "#veryfront/transforms/esm/http-cache.ts";
 import { extractSourceUrl } from "#veryfront/transforms/esm/source-url-embed.ts";
 import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
 import { getReactUrls } from "#veryfront/transforms/esm/package-registry.ts";
@@ -505,20 +505,35 @@ function normalizeDependencySpecifier(specifier: string): string {
   return specifier.replace(/[?#].*$/, "");
 }
 
+function dependencyLookupKeys(specifier: string): Set<string> {
+  const keys = new Set<string>([specifier, normalizeDependencySpecifier(specifier)]);
+  if (specifier.startsWith("http://") || specifier.startsWith("https://")) {
+    const normalizedHttp = normalizeHttpUrl(specifier);
+    keys.add(normalizedHttp);
+    keys.add(normalizeDependencySpecifier(normalizedHttp));
+  }
+  return keys;
+}
+
 function findDependencyModuleBySpecifier(
   dependencies: Map<string, DependencyModule>,
   specifier: string,
 ): DependencyModule | null {
-  const normalized = normalizeDependencySpecifier(specifier);
-  const direct = dependencies.get(specifier) ?? dependencies.get(normalized);
-  if (direct) return direct;
+  const lookupKeys = dependencyLookupKeys(specifier);
+  for (const key of lookupKeys) {
+    const direct = dependencies.get(key);
+    if (direct) return direct;
+  }
 
   for (const dependency of dependencies.values()) {
-    if (dependency.manifestKey === specifier || dependency.manifestKey === normalized) {
+    if (lookupKeys.has(dependency.manifestKey)) {
       return dependency;
     }
     for (const dependencySpecifier of dependency.specifiers) {
-      if (normalizeDependencySpecifier(dependencySpecifier) === normalized) {
+      for (const key of dependencyLookupKeys(dependencySpecifier)) {
+        if (lookupKeys.has(key)) return dependency;
+      }
+      if (lookupKeys.has(normalizeDependencySpecifier(dependencySpecifier))) {
         return dependency;
       }
     }
