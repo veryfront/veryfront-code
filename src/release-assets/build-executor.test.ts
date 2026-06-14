@@ -6,6 +6,8 @@ import { RELEASE_ASSET_MAX_SIZE_BYTES } from "./constants.ts";
 import {
   type ReleaseAssetBuildClient,
   type ReleaseAssetBuildInput,
+  type ReleaseAssetHttpDependencyVendor,
+  type ReleaseAssetVendorResult,
   routeForPage,
   runReleaseAssetBuild,
 } from "./build-executor.ts";
@@ -58,6 +60,49 @@ function baseInput(
     adapter: {},
     client,
     transform,
+    vendorHttpImports: fakeVendorHttpImports,
+  };
+}
+
+function fakeHttpCachePath(url: string): string {
+  const hash = Array.from(new TextEncoder().encode(url))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("")
+    .slice(0, 32);
+  return `/tmp/veryfront-http-bundle/http-${hash}.mjs`;
+}
+
+function fakeVendorHttpImports(code: string): Promise<ReleaseAssetVendorResult> {
+  const urls = [
+    ...new Set(
+      [...code.matchAll(/["'](https?:\/\/[^"']+)["']/g)]
+        .map((match) => match[1])
+        .filter((url): url is string => typeof url === "string"),
+    ),
+  ];
+  let rewritten = code;
+  const dependencies = urls.map((url) => {
+    const sourcePath = fakeHttpCachePath(url);
+    rewritten = rewritten.replaceAll(url, `file://${sourcePath}`);
+    return {
+      specifier: `file://${sourcePath}`,
+      manifestKey: url,
+      sourcePath,
+      code: `export const sourceUrl = ${JSON.stringify(url)};`,
+    };
+  });
+
+  return Promise.resolve({ code: rewritten, dependencies });
+}
+
+function withFakeReactVendor(
+  vendor: ReleaseAssetHttpDependencyVendor,
+): ReleaseAssetHttpDependencyVendor {
+  return (code, options) => {
+    if (code.includes("https://esm.sh/react@") || code.includes("https://esm.sh/react-dom@")) {
+      return fakeVendorHttpImports(code);
+    }
+    return vendor(code, options);
   };
 }
 
@@ -124,12 +169,36 @@ describe("release asset build executor", () => {
 
     const manifest = parseReleaseAssetManifest(rec.manifest);
     assertExists(manifest);
+    assertExists(manifest.dependencies.react);
+    assertExists(manifest.dependencies["react-dom"]);
+    assertExists(manifest.dependencies["react-dom/client"]);
+    assertExists(manifest.dependencies["react/jsx-runtime"]);
+    assertExists(manifest.dependencies["react/jsx-dev-runtime"]);
     assertExists(manifest.dependencies["veryfront/chat"]);
     assertExists(manifest.dependencies["veryfront/workflow"]);
     assertEquals(
       manifest.dependencies["veryfront/head"]?.contentHash,
       manifest.dependencies["veryfront/react/head"]?.contentHash,
     );
+  });
+
+  it("fails when React import-map dependencies cannot be vendored", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [{ path: "pages/index.tsx", content: "export default () => null;" }];
+    const client = makeClient(files, rec);
+    const transform = (source: string) => Promise.resolve(source);
+    const input = {
+      ...baseInput(client, transform),
+      vendorHttpImports: (code: string) => Promise.resolve({ code, dependencies: [] }),
+    };
+
+    const result = await runReleaseAssetBuild(input, await tmp());
+
+    assertEquals(result.success, false);
+    assertEquals(result.state, "failed");
+    assertEquals(rec.manifest, null);
+    assertEquals(rec.states.at(-1)?.state, "failed");
+    assert(rec.states.at(-1)?.error?.includes("React import-map dependency missing"));
   });
 
   it("rewrites covered project module imports to immutable asset URLs", async () => {
@@ -184,7 +253,7 @@ describe("release asset build executor", () => {
       );
     const input = {
       ...baseInput(client, transform),
-      vendorHttpImports: (code: string) =>
+      vendorHttpImports: withFakeReactVendor((code: string) =>
         Promise.resolve({
           code: code.replace(
             "https://esm.sh/framer-motion@11",
@@ -195,7 +264,8 @@ describe("release asset build executor", () => {
             manifestKey: "https://esm.sh/framer-motion@11",
             code: "export default function motion() {}",
           }],
-        }),
+        })
+      ),
     };
 
     await runReleaseAssetBuild(input, await tmp());
@@ -233,7 +303,7 @@ describe("release asset build executor", () => {
       );
     const input = {
       ...baseInput(client, transform),
-      vendorHttpImports: (code: string) =>
+      vendorHttpImports: withFakeReactVendor((code: string) =>
         Promise.resolve({
           code: code.replace(
             "https://esm.sh/parent@1",
@@ -253,7 +323,8 @@ describe("release asset build executor", () => {
               code: "export default function child() {}",
             },
           ],
-        }),
+        })
+      ),
     };
 
     await runReleaseAssetBuild(input, await tmp());
@@ -286,7 +357,7 @@ describe("release asset build executor", () => {
       );
     const input = {
       ...baseInput(client, transform),
-      vendorHttpImports: (code: string) =>
+      vendorHttpImports: withFakeReactVendor((code: string) =>
         Promise.resolve({
           code: code
             .replace("https://esm.sh/a@1", "file:///tmp/vf-http/a/parent.mjs")
@@ -317,7 +388,8 @@ describe("release asset build executor", () => {
               code: 'export default "b";',
             },
           ],
-        }),
+        })
+      ),
     };
 
     await runReleaseAssetBuild(input, await tmp());
@@ -358,7 +430,7 @@ describe("release asset build executor", () => {
       );
     const input = {
       ...baseInput(client, transform),
-      vendorHttpImports: (code: string) =>
+      vendorHttpImports: withFakeReactVendor((code: string) =>
         Promise.resolve({
           code: code.replace(
             "https://esm.sh/parent@1",
@@ -378,7 +450,8 @@ describe("release asset build executor", () => {
               code: 'import parent from "./http-aaa.mjs"; export default parent;',
             },
           ],
-        }),
+        })
+      ),
     };
 
     const result = await runReleaseAssetBuild(input, await tmp());
@@ -416,7 +489,7 @@ describe("release asset build executor", () => {
       );
     const input = {
       ...baseInput(client, transform),
-      vendorHttpImports: (code: string) =>
+      vendorHttpImports: withFakeReactVendor((code: string) =>
         Promise.resolve({
           code: code.replace(
             "https://esm.sh/parent@1",
@@ -428,7 +501,8 @@ describe("release asset build executor", () => {
             sourcePath: "/tmp/veryfront-http-bundle/http-aaa.mjs",
             code: 'import secret from "file:///tmp/outside-secret.mjs"; export default secret;',
           }],
-        }),
+        })
+      ),
     };
 
     const result = await runReleaseAssetBuild(input, await tmp());
@@ -455,7 +529,7 @@ describe("release asset build executor", () => {
       );
     const input = {
       ...baseInput(client, transform),
-      vendorHttpImports: (code: string) =>
+      vendorHttpImports: withFakeReactVendor((code: string) =>
         Promise.resolve({
           code: code.replace(
             "https://esm.sh/parent@1",
@@ -467,7 +541,8 @@ describe("release asset build executor", () => {
             sourcePath: "/tmp/veryfront-http-bundle/http-aaa.mjs",
             code: "x".repeat(RELEASE_ASSET_MAX_SIZE_BYTES + 1),
           }],
-        }),
+        })
+      ),
     };
 
     const result = await runReleaseAssetBuild(input, await tmp());
@@ -691,7 +766,10 @@ describe("release asset build executor", () => {
 
     assertEquals(result.moduleCount, 2);
     // Same bytes → same hash → one upload.
-    assertEquals(rec.uploads.length, 1);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    const moduleHashes = new Set(Object.values(manifest.modules).map((entry) => entry.contentHash));
+    assertEquals(rec.uploads.filter((upload) => moduleHashes.has(upload.hash)).length, 1);
   });
 
   it("includes compiled CSS when a css pipeline is provided", async () => {
@@ -929,10 +1007,9 @@ describe("release asset build executor", () => {
 
     const result = await runReleaseAssetBuild(baseInput(client, transform), await tmp());
 
-    // Module is skipped — not uploaded, not in manifest modules.
-    assertEquals(rec.uploads.length, 0);
     const manifest = parseReleaseAssetManifest(rec.manifest);
     assertExists(manifest);
+    // Module is skipped — not uploaded as a page asset, not in manifest modules.
     assertEquals(Object.keys(manifest.modules).length, 0);
     // Gap is recorded.
     assert(result.gaps.some((g) => g.startsWith("oversized:")));

@@ -8,6 +8,7 @@ import {
   shouldDisableLayout,
 } from "./utils.ts";
 import { getDefaultImportMap } from "#veryfront/modules/import-map/default-import-map.ts";
+import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 
 describe("html-generation/utils", () => {
   afterEach(() => {
@@ -168,6 +169,53 @@ describe("html-generation/utils", () => {
       const result = await buildImportMapJson({ pretty: false });
 
       assertEquals(result.includes("\n"), false);
+    });
+
+    it("rewrites React import-map aliases from manifest dependency keys", async () => {
+      const dependencies = Object.fromEntries(
+        [
+          "react",
+          "react-dom",
+          "react-dom/client",
+          "react/jsx-runtime",
+          "react/jsx-dev-runtime",
+        ].map((specifier, index) => [
+          specifier,
+          {
+            contentHash: `${index + 1}`.repeat(64),
+            size: 10,
+            contentType: "text/javascript",
+          },
+        ]),
+      );
+      const manifest: ReleaseAssetManifest = {
+        schemaVersion: 1,
+        projectId: "project-id",
+        releaseId: "release-id",
+        releaseVersion: 1,
+        manifestVersion: 1,
+        builderVersion: "0.1.802",
+        sourceContentHash: "source",
+        createdAt: "2026-06-14T00:00:00.000Z",
+        assetBasePath: "/_vf/assets",
+        modules: {},
+        css: [],
+        routes: {},
+        dependencies,
+        fallback: { mode: "jit", gaps: [] },
+      };
+
+      const result = await buildImportMapJson({
+        pretty: false,
+        releaseAssetManifest: manifest,
+      });
+      const imports = JSON.parse(result).imports as Record<string, string>;
+
+      assertEquals(imports.react, `/_vf/assets/${"1".repeat(64)}.js`);
+      assertEquals(imports["react-dom"], `/_vf/assets/${"2".repeat(64)}.js`);
+      assertEquals(imports["react-dom/client"], `/_vf/assets/${"3".repeat(64)}.js`);
+      assertEquals(imports["react/jsx-runtime"], `/_vf/assets/${"4".repeat(64)}.js`);
+      assertEquals(imports["react/jsx-dev-runtime"], `/_vf/assets/${"5".repeat(64)}.js`);
     });
 
     it("refreshes cached import maps when project package versions change", async () => {
