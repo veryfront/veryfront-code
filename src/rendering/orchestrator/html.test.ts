@@ -1,7 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "../../html/styles-builder/__tests__/css-processor-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
+import {
+  clearReleaseAssetManifestCache,
+  configureReleaseAssetManifestFetcher,
+} from "#veryfront/release-assets/manifest-cache.ts";
+import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { type HTMLGeneratorConfig } from "./html.ts";
 import { buildHeadElements, mergeFrontmatter } from "./html-head.ts";
 import { mergeImportedCSS } from "./html-imported-css.ts";
@@ -18,7 +25,43 @@ type Head = {
   styles: string[];
 };
 
+const REACT_HASH = "e".repeat(64);
+const REACT_CDN_URL = "https://esm.sh/react@19.2.4?target=es2022&deps=csstype@3.2.3";
+
+function releaseManifest(): ReleaseAssetManifest {
+  return {
+    schemaVersion: 1,
+    projectId: "p",
+    releaseId: "rel-1",
+    releaseVersion: 1,
+    manifestVersion: 1,
+    builderVersion: "0.1.800",
+    sourceContentHash: "",
+    createdAt: "2026-06-12T00:00:00.000Z",
+    assetBasePath: "/_vf/assets",
+    modules: {},
+    css: [],
+    routes: {},
+    dependencies: {
+      [REACT_CDN_URL]: {
+        contentHash: REACT_HASH,
+        size: 1,
+        contentType: "text/javascript",
+      },
+    },
+    fallback: { mode: "jit", gaps: [] },
+  };
+}
+
 describe("HTMLGenerator helpers", () => {
+  const originalManifestFlag = getHostEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG);
+
+  afterEach(() => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, originalManifestFlag ?? "");
+    configureReleaseAssetManifestFetcher(undefined);
+    clearReleaseAssetManifestCache();
+  });
+
   describe("buildHeadElements", () => {
     it("should return empty string for undefined head", () => {
       assertEquals(buildHeadElements(undefined), { scripts: "", other: "" });
@@ -225,6 +268,26 @@ describe("HTMLGenerator helpers", () => {
       }));
 
       assertEquals(html.includes('<script type="importmap" nonce="nonce-123">'), true);
+    });
+
+    it("treats an undefined manifest option as absent for full HTML import maps", async () => {
+      setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+      configureReleaseAssetManifestFetcher(() =>
+        Promise.resolve({ state: "ready", manifest: releaseManifest() })
+      );
+      const generator = createHTMLGenerator({
+        readFile: async (path: string) => path.endsWith("/app/page.tsx") ? `'use client';` : "",
+      });
+
+      const html = await generator.generateFullHTML(createHTMLContext({
+        options: {
+          environment: "production",
+          releaseId: "rel-1",
+          releaseAssetManifest: undefined,
+        },
+      }));
+
+      assertStringIncludes(html, `/_vf/assets/${REACT_HASH}.js`);
     });
 
     it("injects preview utility CSS into full HTML documents for preview rendering", async () => {

@@ -194,6 +194,25 @@ describe("html shell release asset manifest consumption", () => {
     assertStringIncludes(result.start, `"react":"/_vf/assets/${REACT_HASH}.js"`);
   });
 
+  it("treats an undefined manifest option as absent and fetches the ready manifest", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    configureReleaseAssetManifestFetcher(() =>
+      Promise.resolve({ state: "ready", manifest: manifest() })
+    );
+
+    const result = await generateHTMLShellParts(
+      meta(),
+      prodOptions(
+        {
+          releaseId: "rel-1",
+          releaseAssetManifest: undefined,
+        } as Partial<HTMLGenerationOptions> & { releaseAssetManifest?: ReleaseAssetManifest },
+      ),
+    );
+
+    assertStringIncludes(result.start, `/_vf/assets/${PAGE_HASH}.js`);
+  });
+
   it("keeps covered framework import-map entries on the module-server path", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     configureReleaseAssetManifestFetcher(() =>

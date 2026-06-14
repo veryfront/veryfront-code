@@ -15,6 +15,8 @@ import { addNonceToHtmlTags } from "#veryfront/html/nonce-injection.ts";
 import { injectElementSelectors } from "#veryfront/studio/element-selector-injector.ts";
 import { computeSourceHash } from "#veryfront/studio/hash-utils.ts";
 import { extractRelativePath } from "#veryfront/utils/route-path-utils.ts";
+import { getReadyManifestForRenderAsync } from "#veryfront/release-assets/manifest-cache.ts";
+import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { resolveAppComponentPath } from "../layouts/utils/app-resolver.ts";
 import { StreamTimeoutError, streamToString } from "../utils/stream-utils.ts";
 import { profilePhase, profileSyncPhase } from "#veryfront/observability/request-profiler.ts";
@@ -48,6 +50,25 @@ function resolveReleaseId(
   const source = options?.contentSourceId;
   if (source && source.startsWith("release-")) return source.slice("release-".length);
   return undefined;
+}
+
+type OptionsWithReleaseAssetManifest = {
+  studioEmbed?: boolean;
+  releaseId?: string;
+  contentSourceId?: string;
+  releaseAssetManifest?: ReleaseAssetManifest | null;
+};
+
+async function resolveReleaseAssetManifestForHTML(
+  options: OptionsWithReleaseAssetManifest | undefined,
+): Promise<ReleaseAssetManifest | null> {
+  if (options?.studioEmbed) return null;
+  if (options?.releaseAssetManifest !== undefined) return options.releaseAssetManifest;
+
+  return await profilePhase(
+    "html.release_asset_manifest",
+    () => getReadyManifestForRenderAsync(resolveReleaseId(options)),
+  );
 }
 
 function applyExplicitThemeToDocument(
@@ -221,14 +242,15 @@ export class HTMLGenerator {
     );
 
     const pagePath = context.pageInfo.entity.path;
-    const [isClientPage, importMapJson] = await Promise.all([
+    const [isClientPage, releaseAssetManifest] = await Promise.all([
       this.detectUseClientDirective(pagePath),
-      buildImportMapJson({
-        projectDir: this.config.projectDir,
-        config: this.config.config,
-        releaseAssetManifest: context.options?.releaseAssetManifest,
-      }),
+      resolveReleaseAssetManifestForHTML(context.options),
     ]);
+    const importMapJson = await buildImportMapJson({
+      projectDir: this.config.projectDir,
+      config: this.config.config,
+      releaseAssetManifest,
+    });
 
     const themedHtml = injectThemePersistenceScript(
       applyExplicitThemeToDocument(
@@ -481,7 +503,9 @@ export class HTMLGenerator {
       isLocalProject: this.config.mode === "development",
       noHmr: context.options?.noHmr,
       forceProductionScripts: context.options?.forceProductionScripts,
-      releaseAssetManifest: context.options?.releaseAssetManifest,
+      ...(context.options?.releaseAssetManifest !== undefined
+        ? { releaseAssetManifest: context.options.releaseAssetManifest }
+        : {}),
     }));
   }
 
