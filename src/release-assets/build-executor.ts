@@ -18,9 +18,11 @@
 import { serverLogger } from "#veryfront/utils";
 import { VERSION } from "#veryfront/utils/version.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { dirname, join } from "#veryfront/compat/path/index.ts";
+import { dirname, join, normalize } from "#veryfront/compat/path/index.ts";
 import { resolveFrameworkSourcePath } from "#veryfront/platform/compat/framework-source-resolver.ts";
 import { transformToESM } from "#veryfront/transforms/esm-transform.ts";
+import { cacheHttpImportsToLocal } from "#veryfront/transforms/esm/http-cache.ts";
+import { extractSourceUrl } from "#veryfront/transforms/esm/source-url-embed.ts";
 import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
 import { PLATFORM_UTILITIES } from "#veryfront/html/utils.ts";
 import { extractCandidatesFromFiles } from "#veryfront/html/styles-builder/candidate-extractor.ts";
@@ -79,6 +81,11 @@ export interface ReleaseAssetBuildInput {
    * Injectable for tests.
    */
   transform?: ReleaseAssetTransform;
+  /**
+   * Optional HTTP dependency vendor. Defaults to the existing HTTP module cache
+   * and is injectable so tests do not depend on live package CDN behavior.
+   */
+  vendorHttpImports?: ReleaseAssetHttpDependencyVendor;
 }
 
 export type ReleaseAssetTransform = (
@@ -89,6 +96,30 @@ export type ReleaseAssetTransform = (
   adapter: any,
   options: { projectId: string; dev: boolean; ssr: boolean; reactVersion?: string },
 ) => Promise<string>;
+
+export interface ReleaseAssetVendorDependency {
+  /** Specifier currently used by transformed code after vendoring. */
+  specifier: string;
+  /** Stable manifest key, normally the original HTTP source URL. */
+  manifestKey: string;
+  /** Absolute local cache path when the dependency came from disk. */
+  sourcePath?: string;
+  /** Browser ESM source for this dependency. */
+  code: string;
+}
+
+export interface ReleaseAssetVendorResult {
+  code: string;
+  dependencies: ReleaseAssetVendorDependency[];
+}
+
+export type ReleaseAssetHttpDependencyVendor = (
+  code: string,
+  options: {
+    tempDir: string;
+    reactVersion?: string;
+  },
+) => Promise<ReleaseAssetVendorResult>;
 
 /** Subset of the API client used by the builder (eases testing). */
 export interface ReleaseAssetBuildClient {
@@ -146,6 +177,13 @@ interface PreparedAsset {
 
 interface TransformedProjectModule {
   logicalPath: string;
+  code: string;
+}
+
+interface DependencyModule {
+  manifestKey: string;
+  specifiers: Set<string>;
+  sourcePath?: string;
   code: string;
 }
 
@@ -339,6 +377,9 @@ async function rewriteProjectModuleImports(
   dependencyUrls: Map<string, string>,
 ): Promise<string> {
   function rewriteSpecifier(specifier: string): string | null {
+    const dependencyUrl = dependencyUrls.get(specifier.replace(/[?#].*$/, ""));
+    if (dependencyUrl) return dependencyUrl;
+
     if (specifier.startsWith("/_vf_modules/")) {
       const dependencyUrl = dependencyUrls.get(specifier.replace(/[?#].*$/, ""));
       if (dependencyUrl) return dependencyUrl;
@@ -352,11 +393,254 @@ async function rewriteProjectModuleImports(
   return await replaceSpecifiers(code, (specifier) => rewriteSpecifier(specifier));
 }
 
-function buildDependencyUrlMap(_dependencies: Record<string, PreparedAsset>): Map<string, string> {
-  // Framework barrels can contain their own relative import closure. Keep those
-  // URLs on the module server until the builder rewrites and uploads the full
-  // framework closure, otherwise the browser resolves relatives under /_vf/assets.
-  return new Map<string, string>();
+function buildDependencyUrlMap(
+  dependencies: Record<string, PreparedAsset>,
+  dependencyModules?: Map<string, DependencyModule>,
+): Map<string, string> {
+  const urls = new Map<string, string>();
+  for (const [manifestKey, entry] of Object.entries(dependencies)) {
+    const dependency = dependencyModules?.get(manifestKey);
+    if (!dependency) continue;
+
+    const url = releaseAssetUrl(entry.contentHash, "js");
+    urls.set(manifestKey, url);
+    urls.set(entry.logicalPath, url);
+    for (const specifier of dependency.specifiers) {
+      urls.set(normalizeDependencySpecifier(specifier), url);
+    }
+  }
+  return urls;
+}
+
+function addDependencyModule(
+  dependencies: Map<string, DependencyModule>,
+  dependency: ReleaseAssetVendorDependency,
+): void {
+  const sourcePath = dependency.sourcePath ?? resolveLocalDependencyPath(dependency.specifier) ??
+    undefined;
+  const existing = dependencies.get(dependency.manifestKey);
+  if (existing) {
+    existing.specifiers.add(dependency.specifier);
+    existing.sourcePath ??= sourcePath;
+    return;
+  }
+
+  dependencies.set(dependency.manifestKey, {
+    manifestKey: dependency.manifestKey,
+    specifiers: new Set([dependency.specifier]),
+    sourcePath,
+    code: dependency.code,
+  });
+}
+
+function normalizeDependencySpecifier(specifier: string): string {
+  return specifier.replace(/[?#].*$/, "");
+}
+
+function resolveLocalDependencyPath(specifier: string, parentFilePath?: string): string | null {
+  const normalized = normalizeDependencySpecifier(specifier);
+
+  if (normalized.startsWith("file://")) {
+    try {
+      return normalize(decodeURIComponent(new URL(normalized).pathname));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  if (!parentFilePath || (!normalized.startsWith("./") && !normalized.startsWith("../"))) {
+    return null;
+  }
+
+  return normalize(join(dirname(parentFilePath), normalized));
+}
+
+function isPathInsideRoot(filePath: string, rootPath: string): boolean {
+  const file = normalize(filePath);
+  const root = normalize(rootPath);
+  return file === root || file.startsWith(`${root}/`) || file.startsWith(`${root}\\`);
+}
+
+async function collectLocalHttpDependencyModules(
+  code: string,
+  dependencies: Map<string, DependencyModule>,
+  cacheDir: string,
+): Promise<void> {
+  const fs = createFileSystem();
+  const cacheRoot = normalize(cacheDir);
+  const seen = new Set<string>();
+  const queue: Array<{ specifier: string; parentFilePath?: string }> = [];
+
+  for (const imp of await parseImports(code)) {
+    if (imp.n) queue.push({ specifier: imp.n });
+  }
+
+  while (queue.length > 0) {
+    const { specifier, parentFilePath } = queue.shift()!;
+    const filePath = resolveLocalDependencyPath(specifier, parentFilePath);
+    if (!filePath || seen.has(filePath)) continue;
+    if (!isPathInsideRoot(filePath, cacheRoot)) {
+      throw new Error(`Vendored HTTP dependency resolved outside cache root: ${specifier}`);
+    }
+    seen.add(filePath);
+
+    const depCode = await fs.readTextFile(filePath);
+    const manifestKey = extractSourceUrl(depCode) ?? `file://${filePath}`;
+    const depSpecifiers = new Set<string>([
+      normalizeDependencySpecifier(specifier),
+      `file://${filePath}`,
+    ]);
+
+    const existing = dependencies.get(manifestKey);
+    if (existing) {
+      for (const depSpecifier of depSpecifiers) existing.specifiers.add(depSpecifier);
+      existing.sourcePath ??= filePath;
+    } else {
+      dependencies.set(manifestKey, {
+        manifestKey,
+        specifiers: depSpecifiers,
+        sourcePath: filePath,
+        code: depCode,
+      });
+    }
+
+    for (const imp of await parseImports(depCode)) {
+      if (imp.n) queue.push({ specifier: imp.n, parentFilePath: filePath });
+    }
+  }
+}
+
+async function vendorHttpImportsWithCache(
+  code: string,
+  options: { tempDir: string; reactVersion?: string },
+): Promise<ReleaseAssetVendorResult> {
+  const imports = await parseImports(code);
+  if (
+    !imports.some((imp) =>
+      imp.n &&
+      (imp.n.startsWith("http://") || imp.n.startsWith("https://") || imp.n.startsWith("npm:"))
+    )
+  ) {
+    return { code, dependencies: [] };
+  }
+
+  const cacheDir = join(options.tempDir, ".veryfront-http-bundle");
+  const result = await cacheHttpImportsToLocal(code, {
+    cacheDir,
+    importMap: { imports: {}, scopes: {} },
+    reactVersion: options.reactVersion,
+  });
+
+  const dependencies = new Map<string, DependencyModule>();
+  await collectLocalHttpDependencyModules(result.code, dependencies, cacheDir);
+
+  return {
+    code: result.code,
+    dependencies: [...dependencies.values()].flatMap((dependency) =>
+      [...dependency.specifiers].map((specifier) => ({
+        specifier,
+        manifestKey: dependency.manifestKey,
+        sourcePath: dependency.sourcePath,
+        code: dependency.code,
+      }))
+    ),
+  };
+}
+
+async function finalizeDependencyModules(
+  dependencyModules: Map<string, DependencyModule>,
+  uploadQueue: PreparedAsset[],
+  pendingBytes: Map<string, { bytes: Uint8Array<ArrayBuffer>; contentType: string }>,
+): Promise<Record<string, PreparedAsset>> {
+  const bySpecifier = new Map<string, DependencyModule>();
+  const byFilePath = new Map<string, DependencyModule>();
+  for (const dependency of dependencyModules.values()) {
+    for (const specifier of dependency.specifiers) {
+      bySpecifier.set(normalizeDependencySpecifier(specifier), dependency);
+      const filePath = resolveLocalDependencyPath(specifier);
+      if (filePath) byFilePath.set(filePath, dependency);
+    }
+    if (dependency.sourcePath) byFilePath.set(dependency.sourcePath, dependency);
+  }
+
+  const finalized = new Map<string, PreparedAsset>();
+  const visiting: string[] = [];
+
+  function resolveDependencyImport(
+    specifier: string,
+    parent: DependencyModule,
+  ): DependencyModule | null {
+    const filePath = resolveLocalDependencyPath(specifier, parent.sourcePath);
+    if (filePath) {
+      const localDependency = byFilePath.get(filePath);
+      if (localDependency) return localDependency;
+    }
+
+    return bySpecifier.get(normalizeDependencySpecifier(specifier)) ?? null;
+  }
+
+  async function finalize(manifestKey: string): Promise<PreparedAsset | null> {
+    const existing = finalized.get(manifestKey);
+    if (existing) return existing;
+    if (visiting.includes(manifestKey)) {
+      const cycle = [...visiting.slice(visiting.indexOf(manifestKey)), manifestKey].join(" -> ");
+      throw new Error(`Circular release asset dependency graph: ${cycle}`);
+    }
+
+    const dependency = dependencyModules.get(manifestKey);
+    if (!dependency) return null;
+
+    visiting.push(manifestKey);
+    try {
+      const imports = await parseImports(dependency.code);
+      for (const imp of imports) {
+        if (!imp.n) continue;
+        const filePath = resolveLocalDependencyPath(imp.n, dependency.sourcePath);
+        if (filePath && !byFilePath.has(filePath)) {
+          throw new Error(`Unresolved vendored file dependency: ${imp.n}`);
+        }
+        const child = resolveDependencyImport(imp.n, dependency);
+        if (!child) continue;
+        if (child.manifestKey === manifestKey) {
+          throw new Error(
+            `Circular release asset dependency graph: ${manifestKey} -> ${manifestKey}`,
+          );
+        }
+        await finalize(child.manifestKey);
+      }
+
+      const rewritten = await replaceSpecifiers(dependency.code, (specifier) => {
+        const child = resolveDependencyImport(specifier, dependency);
+        if (!child) return null;
+        const asset = finalized.get(child.manifestKey);
+        return asset ? releaseAssetUrl(asset.contentHash, "js") : null;
+      });
+
+      const entry = await addPreparedJavaScriptAsset(
+        `__dependencies__/${manifestKey}`,
+        rewritten,
+        uploadQueue,
+        pendingBytes,
+      );
+      if (!entry) {
+        throw new Error(`Vendored dependency exceeds release asset size limit: ${manifestKey}`);
+      }
+      for (const specifier of dependency.specifiers) {
+        bySpecifier.set(normalizeDependencySpecifier(specifier), dependency);
+      }
+      finalized.set(manifestKey, entry);
+      return entry;
+    } finally {
+      visiting.pop();
+    }
+  }
+
+  try {
+    for (const manifestKey of dependencyModules.keys()) await finalize(manifestKey);
+  } finally {
+    visiting.length = 0;
+  }
+  return Object.fromEntries(finalized);
 }
 
 async function finalizeProjectModules(
@@ -672,11 +956,13 @@ async function runBuildInner(
   // 3 + 4. Collect the browser module closure and transform each module
   // through the SAME pipeline serveModule uses (browser, non-SSR).
   const transformedModules = new Map<string, TransformedProjectModule>();
+  const dependencyModules = new Map<string, DependencyModule>();
   const gaps: string[] = [];
   const uploadQueue: PreparedAsset[] = [];
   // Bytes are held per-hash only until uploaded, then dropped (M3).
   const pendingBytes = new Map<string, { bytes: Uint8Array<ArrayBuffer>; contentType: string }>();
   const knownPaths = new Set(sourceByPath.keys());
+  const vendorHttpImports = input.vendorHttpImports ?? vendorHttpImportsWithCache;
 
   for (const [logicalPath, source] of sourceByPath) {
     if (!isBrowserModule(logicalPath)) continue;
@@ -715,10 +1001,41 @@ async function runBuildInner(
       };
     }
 
+    try {
+      const vendored = await vendorHttpImports(code, {
+        tempDir,
+        reactVersion: input.reactVersion,
+      });
+      code = vendored.code;
+      for (const dependency of vendored.dependencies) {
+        addDependencyModule(dependencyModules, dependency);
+      }
+    } catch (error) {
+      const sanitized = sanitizeError(error);
+      logger.warn("HTTP dependency vendoring failed during release asset build", {
+        path: logicalPath,
+        error: sanitized,
+      });
+      await client.reportReleaseAssetManifestState(
+        input.releaseVersionRef,
+        "failed",
+        sanitized,
+      );
+      return {
+        success: false,
+        state: "failed",
+        moduleCount: 0,
+        cssCount: 0,
+        routeCount: 0,
+        gaps,
+        error: sanitized,
+      };
+    }
+
     transformedModules.set(logicalPath, { logicalPath, code });
   }
 
-  const dependencies = await buildFrameworkDependencies(
+  const frameworkDependencies = await buildFrameworkDependencies(
     input,
     tempDir,
     transform,
@@ -726,7 +1043,35 @@ async function runBuildInner(
     pendingBytes,
     gaps,
   );
-  const dependencyUrls = buildDependencyUrlMap(dependencies);
+  let httpDependencies: Record<string, PreparedAsset>;
+  try {
+    httpDependencies = await finalizeDependencyModules(
+      dependencyModules,
+      uploadQueue,
+      pendingBytes,
+    );
+  } catch (error) {
+    const sanitized = sanitizeError(error);
+    logger.warn("HTTP dependency finalization failed during release asset build", {
+      error: sanitized,
+    });
+    await client.reportReleaseAssetManifestState(
+      input.releaseVersionRef,
+      "failed",
+      sanitized,
+    );
+    return {
+      success: false,
+      state: "failed",
+      moduleCount: 0,
+      cssCount: 0,
+      routeCount: 0,
+      gaps,
+      error: sanitized,
+    };
+  }
+  const dependencies = { ...frameworkDependencies, ...httpDependencies };
+  const dependencyUrls = buildDependencyUrlMap(dependencies, dependencyModules);
 
   const { modules, skippedModules } = await finalizeProjectModules(
     transformedModules,
