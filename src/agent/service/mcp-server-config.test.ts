@@ -4,8 +4,11 @@ import {
   defaultAgentServiceMcpServers,
 } from "./mcp-server-config.ts";
 
-Deno.test("defaultAgentServiceMcpServers enables the Veryfront API MCP server", () => {
-  assertEquals(defaultAgentServiceMcpServers(), [{ kind: "veryfront-api" }]);
+Deno.test("defaultAgentServiceMcpServers enables first-party MCP servers", () => {
+  assertEquals(defaultAgentServiceMcpServers(), [
+    { kind: "veryfront-api" },
+    { kind: "veryfront-studio" },
+  ]);
 });
 
 Deno.test("createAgentServiceRemoteMcpConfig builds Veryfront API MCP config", async () => {

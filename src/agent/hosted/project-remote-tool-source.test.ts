@@ -269,7 +269,7 @@ Deno.test("createHostedProjectRemoteToolSource skips mutation callbacks for fail
   assertEquals(mutationCount, 0);
 });
 
-Deno.test("createHostedProjectRemoteToolSources defaults to the Veryfront API MCP server", async () => {
+Deno.test("createHostedProjectRemoteToolSources defaults to first-party MCP servers for trusted Studio clients", async () => {
   const configs: RemoteMCPToolSourceConfig[] = [];
   const sources = createHostedProjectRemoteToolSources({
     authToken: "token-1",
@@ -288,8 +288,11 @@ Deno.test("createHostedProjectRemoteToolSources defaults to the Veryfront API MC
     },
   });
 
-  assertEquals(sources.map((source) => source.id), ["veryfront-mcp"]);
-  assertEquals(configs.map((config) => config.endpoint), ["https://api.example/mcp"]);
+  assertEquals(sources.map((source) => source.id), ["veryfront-mcp", "studio-mcp"]);
+  assertEquals(configs.map((config) => config.endpoint), [
+    "https://api.example/mcp",
+    "https://studio.example/mcp",
+  ]);
 });
 
 Deno.test("createHostedProjectRemoteToolSources filters Veryfront API MCP tools with the tool access profile", async () => {
