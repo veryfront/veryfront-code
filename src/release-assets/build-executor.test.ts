@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { normalizeHttpUrl } from "#veryfront/transforms/esm/http-cache.ts";
 import { RELEASE_ASSET_MAX_SIZE_BYTES } from "./constants.ts";
 import {
   type ReleaseAssetBuildClient,
@@ -95,6 +96,17 @@ function fakeVendorHttpImports(code: string): Promise<ReleaseAssetVendorResult> 
   return Promise.resolve({ code: rewritten, dependencies });
 }
 
+async function fakeNormalizedVendorHttpImports(code: string): Promise<ReleaseAssetVendorResult> {
+  const result = await fakeVendorHttpImports(code);
+  return {
+    code: result.code,
+    dependencies: result.dependencies.map((dependency) => ({
+      ...dependency,
+      manifestKey: normalizeHttpUrl(dependency.manifestKey),
+    })),
+  };
+}
+
 function withFakeReactVendor(
   vendor: ReleaseAssetHttpDependencyVendor,
 ): ReleaseAssetHttpDependencyVendor {
@@ -180,6 +192,29 @@ describe("release asset build executor", () => {
       manifest.dependencies["veryfront/head"]?.contentHash,
       manifest.dependencies["veryfront/react/head"]?.contentHash,
     );
+  });
+
+  it("matches React import-map dependencies by normalized HTTP manifest key", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [{ path: "pages/index.tsx", content: "export default () => null;" }];
+    const client = makeClient(files, rec);
+    const transform = (source: string) => Promise.resolve(source);
+
+    const result = await runReleaseAssetBuild(
+      {
+        ...baseInput(client, transform),
+        vendorHttpImports: fakeNormalizedVendorHttpImports,
+      },
+      await tmp(),
+    );
+
+    assertEquals(result.success, true);
+
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertExists(manifest.dependencies.react);
+    assertExists(manifest.dependencies["react-dom/client"]);
+    assertExists(manifest.dependencies["react/jsx-runtime"]);
   });
 
   it("fails when React import-map dependencies cannot be vendored", async () => {
