@@ -212,6 +212,28 @@ export type CreateHostedProjectRemoteToolSourcesInput =
     onStudioProjectSwitch?: HostedProjectRemoteToolSourceProjectSwitchHandler;
   };
 
+function needsStudioMcpSource(input: CreateHostedProjectRemoteToolSourcesInput): boolean {
+  const allowedToolNames = input.allowedToolNames;
+  if (!allowedToolNames) {
+    return false;
+  }
+
+  return Array.from(allowedToolNames).some((toolName) => toolName.startsWith("studio_"));
+}
+
+function resolveHostedProjectMcpServers(
+  input: CreateHostedProjectRemoteToolSourcesInput,
+): readonly AgentServiceMcpServerConfig[] {
+  const servers = [...(input.mcpServers ?? defaultAgentServiceMcpServers())];
+  if (
+    needsStudioMcpSource(input) &&
+    !servers.some((server) => server.kind === "veryfront-studio")
+  ) {
+    servers.push({ kind: "veryfront-studio" });
+  }
+  return servers;
+}
+
 function createHostedProjectRemoteToolSourceFromConfig(
   input: CreateHostedProjectRemoteToolSourcesInput,
   server: AgentServiceMcpServerConfig,
@@ -296,7 +318,7 @@ export function createHostedProjectRemoteToolSources(
 ): RemoteToolSource[] {
   const createRemoteToolSource = input.createRemoteToolSource ?? createRemoteMCPToolSource;
   const sources: RemoteToolSource[] = [];
-  const mcpServers = input.mcpServers ?? defaultAgentServiceMcpServers();
+  const mcpServers = resolveHostedProjectMcpServers(input);
 
   for (const server of mcpServers) {
     const remoteConfig = createAgentServiceRemoteMcpConfig({

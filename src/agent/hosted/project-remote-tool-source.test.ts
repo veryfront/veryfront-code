@@ -440,6 +440,44 @@ Deno.test("createHostedProjectRemoteToolSources builds API and explicit gated St
   assertEquals(blockedSources.map((source) => source.id), ["veryfront-mcp"]);
 });
 
+Deno.test("createHostedProjectRemoteToolSources infers Studio MCP from allowed Studio tools", async () => {
+  const configs: RemoteMCPToolSourceConfig[] = [];
+  const sources = createHostedProjectRemoteToolSources({
+    authToken: "token-1",
+    apiMcpUrl: "https://api.example/mcp",
+    studioMcpUrl: "https://studio.example/mcp",
+    mcpServers: [{ kind: "veryfront-api" }],
+    clientProfile: {
+      id: "veryfront-studio",
+      type: "web",
+      trusted: true,
+      capabilities: ["ui_panels"],
+    },
+    getProjectId: () => "project-1",
+    conversationId: "conversation-1",
+    allowedToolNames: new Set(["invoke_agent", "studio_todo_write"]),
+    createRemoteToolSource: (config) => {
+      configs.push(config);
+      return createRemoteSource({
+        id: config.id,
+        tools: config.id === "studio-mcp"
+          ? [simpleTool("studio_todo_write")]
+          : [projectFileTool("update_file")],
+      });
+    },
+  });
+
+  assertEquals(sources.map((source) => source.id), ["veryfront-mcp", "studio-mcp"]);
+  assertEquals(configs.map((config) => config.endpoint), [
+    "https://api.example/mcp",
+    "https://studio.example/mcp",
+  ]);
+  assertEquals(
+    (await sources[1]?.listTools({ projectId: "project-1" }))?.map((tool) => tool.name),
+    ["studio_todo_write"],
+  );
+});
+
 Deno.test("createHostedProjectRemoteToolSources builds explicit MCP server lists", async () => {
   const configs: RemoteMCPToolSourceConfig[] = [];
   let activeProjectId = "project-1";
