@@ -17,13 +17,7 @@ import type {
   TextGenerationRuntimeToolResultPart,
 } from "./text-generation-runtime-message-types.ts";
 import { buildDataFileAnnotation } from "#veryfront/chat/types.ts";
-import {
-  getTextFromParts,
-  getToolArguments,
-  type Message,
-  type ToolCallPart,
-  type ToolResultPart,
-} from "../types.ts";
+import { getTextFromParts, getToolArguments, type Message, type ToolCallPart } from "../types.ts";
 
 function getStringPartField(part: unknown, key: string): string | undefined {
   if (!part || typeof part !== "object" || Array.isArray(part)) return undefined;
@@ -297,22 +291,19 @@ export function convertToTextGenerationRuntimeMessage(
 
     case "tool": {
       const content: TextGenerationRuntimeToolMessage["content"] = [];
+      const toolNamesById = new Map<string, string>();
 
       for (const part of msg.parts) {
-        if (part.type !== "tool-result") continue;
-
-        const resultPart = part as ToolResultPart;
         if (
-          shouldSkipProviderExecutedToolResult(resultPart, providerExecutedToolCallIds)
+          shouldSkipProviderExecutedToolResult(part, providerExecutedToolCallIds)
         ) {
           continue;
         }
-        content.push({
-          type: "tool-result",
-          toolCallId: resultPart.toolCallId,
-          toolName: resultPart.toolName ?? "unknown",
-          output: { type: "json", value: resultPart.result },
-        });
+
+        const toolResultPart = getTextGenerationToolResultPart(part, toolNamesById);
+        if (toolResultPart) {
+          content.push(toolResultPart);
+        }
       }
 
       const toolMessage: TextGenerationRuntimeToolMessage = { role: "tool", content };

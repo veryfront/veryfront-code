@@ -212,6 +212,33 @@ describe("text-generation-runtime-message-converter", () => {
       });
     });
 
+    it("converts a stored snake_case tool result message", () => {
+      const msg = {
+        id: "t-snake",
+        role: "tool",
+        parts: [
+          {
+            type: "tool_result",
+            tool_call_id: "tc-snake",
+            tool_name: "harvest__list_users",
+            output: { users: [{ id: 1, name: "Ada" }] },
+          },
+        ],
+      } as unknown as Message;
+
+      const result = convertToTextGenerationRuntimeMessage(msg);
+
+      assertEquals(result.role, "tool");
+      assertEquals((result as TextGenerationRuntimeToolMessage).content, [
+        {
+          type: "tool-result",
+          toolCallId: "tc-snake",
+          toolName: "harvest__list_users",
+          output: { type: "json", value: { users: [{ id: 1, name: "Ada" }] } },
+        },
+      ]);
+    });
+
     it("handles tool result with missing toolName", () => {
       const msg: Message = {
         id: "t2",
