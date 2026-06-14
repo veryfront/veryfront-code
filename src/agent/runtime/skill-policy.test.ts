@@ -393,5 +393,43 @@ describe("src/agent/runtime skill policy helpers", () => {
         maxSteps: 8,
       });
     });
+
+    it("hydrates load_skill state from hosted inline snake_case tool history", () => {
+      const messages = [
+        {
+          id: "assistant_inline_tools",
+          role: "assistant",
+          parts: [
+            { type: "text", text: "Loading the skill." },
+            {
+              type: "tool_call",
+              id: "toolu_load_skill",
+              name: "load_skill",
+              input: { skillId: "review-timesheets" },
+              state: "completed",
+            },
+            {
+              type: "tool_result",
+              tool_call_id: "toolu_load_skill",
+              output: {
+                skillId: "review-timesheets",
+                allowedTools: ["get-current-date", "harvest__list_users"],
+                model: "anthropic/claude-opus-4-6",
+                maxSteps: 100,
+              },
+            },
+          ],
+        },
+      ] as unknown as Message[];
+
+      const hydrated = hydrateActiveSkillStateFromMessages(messages);
+
+      assertEquals(hydrated.activeSkillId, "review-timesheets");
+      assertEquals(hydrated.activeSkillPolicy, ["get-current-date", "harvest__list_users"]);
+      assertEquals(hydrated.activeSkillDelegationOverrides, {
+        model: "anthropic/claude-opus-4-6",
+        maxSteps: 100,
+      });
+    });
   });
 });

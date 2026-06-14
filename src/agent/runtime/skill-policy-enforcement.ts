@@ -15,6 +15,35 @@ const logger = serverLogger.component("agent");
 export const LOAD_SKILL_TOOL_ID = "load_skill";
 export const FORM_INPUT_TOOL_ID = "form_input";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function getStringField(value: unknown, key: string): string | undefined {
+  if (!isRecord(value)) return undefined;
+  const field = value[key];
+  return typeof field === "string" && field.length > 0 ? field : undefined;
+}
+
+function getToolCallId(part: unknown): string | undefined {
+  return getStringField(part, "toolCallId") ??
+    getStringField(part, "tool_call_id") ??
+    getStringField(part, "id");
+}
+
+function getToolName(part: unknown): string | undefined {
+  return getStringField(part, "toolName") ??
+    getStringField(part, "tool_name") ??
+    getStringField(part, "name");
+}
+
+function getToolResultPayload(part: unknown): unknown {
+  if (!isRecord(part)) return undefined;
+  if (Object.hasOwn(part, "result")) return part.result;
+  if (Object.hasOwn(part, "output")) return part.output;
+  return undefined;
+}
+
 function getSkillActivationRequiredError(toolName: string): string {
   return `Tool "${toolName}" cannot run before load_skill succeeds in the same step. ` +
     `Call "${LOAD_SKILL_TOOL_ID}" first to establish the active skill context.`;
@@ -30,13 +59,28 @@ export function hydrateActiveSkillStateFromMessages(
   let activeSkillId: string | undefined;
   let activeSkillPolicy: string[] | undefined;
   let activeSkillDelegationOverrides: SkillDelegationOverrides | undefined;
+  const toolNamesById = new Map<string, string>();
 
   for (const message of messages) {
     for (const part of message.parts) {
-      if (!isToolResultPart(part) || part.toolName !== LOAD_SKILL_TOOL_ID) continue;
-      activeSkillId = extractSkillId(part.result);
-      activeSkillPolicy = extractSkillPolicy(part.result);
-      activeSkillDelegationOverrides = extractSkillDelegationOverrides(part.result);
+      const toolCallId = getToolCallId(part);
+      const toolName = getToolName(part);
+      if (toolCallId && toolName) {
+        toolNamesById.set(toolCallId, toolName);
+      }
+
+      const isToolResult = isToolResultPart(part) ||
+        (isRecord(part) && part.type === "tool_result");
+      if (!isToolResult) continue;
+
+      const resultToolName = toolName ??
+        (toolCallId ? toolNamesById.get(toolCallId) : undefined);
+      if (resultToolName !== LOAD_SKILL_TOOL_ID) continue;
+
+      const result = getToolResultPayload(part);
+      activeSkillId = extractSkillId(result);
+      activeSkillPolicy = extractSkillPolicy(result);
+      activeSkillDelegationOverrides = extractSkillDelegationOverrides(result);
     }
   }
 
