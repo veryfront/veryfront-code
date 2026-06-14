@@ -1,6 +1,7 @@
 import { escapeHTML } from "./html-escape.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import { releaseAssetUrl } from "#veryfront/release-assets/constants.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { VERYFRONT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import {
@@ -293,14 +294,50 @@ function stableManifestDependencyKey(manifest?: ReleaseAssetManifest | null): st
     : "";
 }
 
+function canonicalDependencyUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return value;
+
+    const sortedParams = [...url.searchParams.entries()].sort(([leftKey, leftValue], [
+      rightKey,
+      rightValue,
+    ]) => leftKey.localeCompare(rightKey) || leftValue.localeCompare(rightValue));
+    url.search = "";
+    for (const [key, paramValue] of sortedParams) {
+      url.searchParams.append(key, paramValue);
+    }
+    return url.toString();
+  } catch {
+    return value;
+  }
+}
+
 function applyManifestDependencies(
   imports: Record<string, string>,
-  _manifest?: ReleaseAssetManifest | null,
+  manifest?: ReleaseAssetManifest | null,
 ): Record<string, string> {
-  // Framework dependency assets are recorded for future S7 vendoring, but they
-  // are not browser-safe until their own relative import closures are rewritten
-  // and uploaded. Keep import-map entries on their existing module URLs.
-  return imports;
+  if (!manifest) return imports;
+
+  const dependencyAssets = new Map<string, string>();
+  for (const [specifier, entry] of Object.entries(manifest.dependencies)) {
+    const assetUrl = releaseAssetUrl(entry.contentHash, "js");
+    dependencyAssets.set(specifier, assetUrl);
+    dependencyAssets.set(canonicalDependencyUrl(specifier), assetUrl);
+  }
+
+  return Object.fromEntries(
+    Object.entries(imports).map(([specifier, url]) => {
+      if (!url.startsWith("http://") && !url.startsWith("https://")) {
+        return [specifier, url];
+      }
+
+      return [
+        specifier,
+        dependencyAssets.get(url) ?? dependencyAssets.get(canonicalDependencyUrl(url)) ?? url,
+      ];
+    }),
+  );
 }
 
 function isImportMapOnlyOptions(

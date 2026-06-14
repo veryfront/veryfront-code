@@ -17,6 +17,7 @@ import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-sc
 const PAGE_HASH = "a".repeat(64);
 const CHAT_HASH = "b".repeat(64);
 const COMPONENT_HASH = "d".repeat(64);
+const REACT_HASH = "e".repeat(64);
 
 function meta(): RenderMetadata {
   return { title: "T", slug: "index", frontmatter: {} };
@@ -152,6 +153,31 @@ describe("html shell release asset manifest consumption", () => {
     assertStringIncludes(result.start, `/_vf/assets/${CSS_HASH}.css`);
     // The JIT project-CSS link is replaced, not duplicated.
     assert(!result.start.includes("/_vf/css/"));
+  });
+
+  it("rewrites covered HTTP import-map dependencies to immutable asset URLs", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    configureReleaseAssetManifestFetcher(() =>
+      Promise.resolve({
+        state: "ready",
+        manifest: {
+          ...manifest(),
+          dependencies: {
+            "https://esm.sh/react@19.2.4?deps=csstype%403.2.3&target=es2022": {
+              contentHash: REACT_HASH,
+              size: 10,
+              contentType: "text/javascript",
+            },
+          },
+        },
+      })
+    );
+    await generateHTMLShellParts(meta(), prodOptions({ releaseId: "rel-1" }));
+    await new Promise((r) => setTimeout(r, 0));
+
+    const result = await generateHTMLShellParts(meta(), prodOptions({ releaseId: "rel-1" }));
+    assertStringIncludes(result.start, `"react":"/_vf/assets/${REACT_HASH}.js"`);
+    assertStringIncludes(result.start, `"react-dom/client":"https://esm.sh/react-dom@19.2.4`);
   });
 
   it("keeps covered framework import-map entries on the module-server path", async () => {
