@@ -34,8 +34,13 @@ import { rendererLogger } from "#veryfront/utils";
 import { MDXCacheAdapter } from "#veryfront/transforms/mdx/index.ts";
 import { INITIALIZATION_ERROR, SERVICE_OVERLOADED } from "#veryfront/errors/error-registry.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { buildQueryAwareCacheKey, type QueryParamCacheOptions } from "#veryfront/cache/keys.ts";
+import {
+  buildQueryAwareCacheKey,
+  buildRenderCachePrefix,
+  type QueryParamCacheOptions,
+} from "#veryfront/cache/keys.ts";
 import { getEnvNumber } from "#veryfront/compat/process.ts";
+import { getReadyManifestForRenderAsync } from "#veryfront/release-assets/manifest-cache.ts";
 import {
   createRenderContext,
   createRenderContextFromEnriched,
@@ -80,6 +85,7 @@ import {
   RENDER_PER_PROJECT_LIMIT,
   renderSemaphore,
 } from "./renderer-concurrency.ts";
+import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 
 const logger = rendererLogger.component("renderer");
 
@@ -129,7 +135,9 @@ interface CachedRenderData {
  * be consumed once). This prevents "body already consumed" errors while
  * still avoiding duplicate render work.
  *
- * The Singleflight key includes: projectId, environment, releaseId, slug, colorScheme
+ * The Singleflight key includes cache prefix, slug, and colorScheme. The prefix
+ * includes release and manifest version when a ready release asset manifest is
+ * consumed, so JIT and manifest-backed renders never share in-flight work.
  */
 export class Renderer {
   private cache: ContextAwareCacheCoordinator;
@@ -140,7 +148,7 @@ export class Renderer {
   /**
    * Singleflight for render deduplication. Caches HTML string results so
    * concurrent requests for the same page share the render work.
-   * Key format: {projectId}:{environment}:{releaseId}:{slug}:{colorScheme}
+   * Key format: {cachePrefix}:{slug}:{colorScheme}
    */
   private renderFlight = new Singleflight<CachedRenderData>();
 
@@ -185,25 +193,31 @@ export class Renderer {
           environment: ctx.environment,
         });
 
-        const cacheKey = this.buildCacheKey(slug, ctx, options);
+        const releaseManifest = await this.resolveReleaseAssetManifest(ctx, options);
+        const effectiveCtx = this.withManifestCachePrefix(ctx, releaseManifest);
+        const effectiveOptions = {
+          ...options,
+          releaseAssetManifest: releaseManifest,
+        };
+        const cacheKey = this.buildCacheKey(slug, effectiveCtx, effectiveOptions);
         const cacheResult = cacheKey
-          ? await this.cache.checkCache(slug, ctx, options?.colorScheme, cacheKey)
+          ? await this.cache.checkCache(slug, effectiveCtx, effectiveOptions?.colorScheme, cacheKey)
           : { hit: false, cacheKey: "" };
         if (cacheResult.hit && cacheResult.cachedResult) {
           logger.debug("Cache hit", {
             slug,
-            projectId: ctx.projectId,
-            colorScheme: options?.colorScheme,
+            projectId: effectiveCtx.projectId,
+            colorScheme: effectiveOptions?.colorScheme,
             duration: `${(performance.now() - startTime).toFixed(2)}ms`,
           });
           return cacheResult.cachedResult;
         }
 
-        if (!(await acquireProjectSlot(ctx.projectId))) {
-          const activeCount = projectRenderCounts.get(ctx.projectId) ?? 0;
+        if (!(await acquireProjectSlot(effectiveCtx.projectId))) {
+          const activeCount = projectRenderCounts.get(effectiveCtx.projectId) ?? 0;
           logger.error("Per-project render limit reached", {
             slug,
-            projectId: ctx.projectId,
+            projectId: effectiveCtx.projectId,
             activeRenders: activeCount,
             limit: RENDER_PER_PROJECT_LIMIT,
           });
@@ -221,10 +235,10 @@ export class Renderer {
 
         const acquired = await renderSemaphore.tryAcquire(RENDER_ACQUIRE_TIMEOUT_MS);
         if (!acquired) {
-          await releaseProjectSlot(ctx.projectId);
+          await releaseProjectSlot(effectiveCtx.projectId);
           logger.error("Render capacity exceeded - service overloaded", {
             slug,
-            projectId: ctx.projectId,
+            projectId: effectiveCtx.projectId,
             waiting: renderSemaphore.waiting,
             available: renderSemaphore.available,
           });
@@ -236,10 +250,10 @@ export class Renderer {
         }
 
         try {
-          return await this.doRenderPage(slug, ctx, options, startTime, cacheKey);
+          return await this.doRenderPage(slug, effectiveCtx, effectiveOptions, startTime, cacheKey);
         } finally {
           renderSemaphore.release();
-          await releaseProjectSlot(ctx.projectId);
+          await releaseProjectSlot(effectiveCtx.projectId);
         }
       },
       {
@@ -248,6 +262,34 @@ export class Renderer {
         "renderer.environment": ctx.environment,
       },
     );
+  }
+
+  private async resolveReleaseAssetManifest(
+    ctx: RenderContext,
+    options?: RenderOptions,
+  ): Promise<ReleaseAssetManifest | null> {
+    if (options && "releaseAssetManifest" in options) {
+      return options.releaseAssetManifest ?? null;
+    }
+    if (options?.studioEmbed || ctx.environment !== "production") return null;
+    return await getReadyManifestForRenderAsync(ctx.releaseId);
+  }
+
+  private withManifestCachePrefix(
+    ctx: RenderContext,
+    releaseManifest: ReleaseAssetManifest | null,
+  ): RenderContext {
+    if (!releaseManifest || ctx.environment !== "production") return ctx;
+    const releaseKey = ctx.releaseId ?? ctx.contentSourceId.replace(/^release-/, "");
+    return {
+      ...ctx,
+      cachePrefix: buildRenderCachePrefix(
+        ctx.projectId,
+        ctx.environment,
+        releaseKey,
+        releaseManifest.manifestVersion,
+      ),
+    };
   }
 
   /**
@@ -259,9 +301,7 @@ export class Renderer {
     ctx: RenderContext,
     colorScheme?: "light" | "dark",
   ): string {
-    return `${ctx.projectId}:${ctx.environment}:${ctx.contentSourceId ?? "draft"}:${slug}:${
-      colorScheme ?? "default"
-    }`;
+    return `${ctx.cachePrefix}:${slug}:${colorScheme ?? "default"}`;
   }
 
   /**
