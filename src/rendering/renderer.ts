@@ -268,8 +268,8 @@ export class Renderer {
     ctx: RenderContext,
     options?: RenderOptions,
   ): Promise<ReleaseAssetManifest | null> {
-    if (options && "releaseAssetManifest" in options) {
-      return options.releaseAssetManifest ?? null;
+    if (options?.releaseAssetManifest !== undefined) {
+      return options.releaseAssetManifest;
     }
     if (options?.studioEmbed || ctx.environment !== "production") return null;
     return await getReadyManifestForRenderAsync(ctx.releaseId);

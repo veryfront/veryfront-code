@@ -233,11 +233,13 @@ async function generateHTMLShellPartsImpl(
   // Enable dev scripts for local dev OR preview mode (for HMR support in Studio),
   // unless a caller explicitly forces production client scripts for fair benchmarking.
   const useDevScripts = !options.forceProductionScripts && (isLocalProject || isPreviewMode);
+  const explicitReleaseManifest =
+    (options as HTMLGenerationOptions & { releaseAssetManifest?: ReleaseAssetManifest | null })
+      .releaseAssetManifest;
   const releaseManifest = options.studioEmbed
     ? null
-    : "releaseAssetManifest" in options
-    ? (options as HTMLGenerationOptions & { releaseAssetManifest?: ReleaseAssetManifest | null })
-      .releaseAssetManifest ?? null
+    : explicitReleaseManifest !== undefined
+    ? explicitReleaseManifest
     : await profilePhase("html.release_asset_manifest", () =>
       getReadyManifestForRenderAsync(options.releaseId));
 
