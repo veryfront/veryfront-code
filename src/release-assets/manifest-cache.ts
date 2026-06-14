@@ -11,9 +11,9 @@
  * When the flag is off, `getReadyManifestForRender` always returns null so the
  * HTML output is byte-identical to today.
  *
- * The HTML shell is synchronous, so reads are non-blocking: a cache miss kicks
- * off a background fetch and returns null for the current render. Subsequent
- * renders for the same release pick up the cached result.
+ * Most callers use the non-blocking read so fallback stays cheap. HTML shell
+ * generation uses the awaited read so import maps, preload hints, CSS, and
+ * hydration data are generated from one manifest snapshot.
  *
  * Multi-tenancy: each releaseId is served by the fetcher registered for that
  * specific releaseId (the adapter that owns it). There is no cross-project
@@ -55,6 +55,7 @@ registerLRUCache("release-asset-manifest-cache", manifestCache);
 interface InFlightFetch {
   generation: number;
   token: symbol;
+  promise: Promise<ReleaseAssetManifest | null>;
 }
 
 /** In-flight fetches, deduped per releaseId. */
@@ -135,6 +136,28 @@ function cacheKey(releaseId: string, manifestVersion?: number): string {
   return manifestVersion !== undefined ? `${releaseId}:${manifestVersion}` : releaseId;
 }
 
+function findCachedReadyEntry(releaseId: string): CacheEntry | null {
+  let best: CacheEntry | null = null;
+  for (const [k, v] of manifestCache.entries()) {
+    if (k !== releaseId && !k.startsWith(`${releaseId}:`)) continue;
+    if (v.expiresAt > Date.now() && v.manifest) {
+      const existingVersion = best?.manifest?.manifestVersion ?? -1;
+      if ((v.manifest.manifestVersion ?? 0) > existingVersion) {
+        best = v;
+      }
+    }
+  }
+  return best;
+}
+
+function maybeScheduleReadyRefresh(releaseId: string, entry: CacheEntry): void {
+  const now = Date.now();
+  if ((entry.refreshAfter ?? entry.expiresAt) <= now) {
+    entry.refreshAfter = now + READY_REVALIDATE_MS;
+    scheduleFetch(releaseId);
+  }
+}
+
 /**
  * Return a ready manifest for `releaseId` if one is cached, else null.
  *
@@ -149,27 +172,9 @@ export function getReadyManifestForRender(
   if (!isReleaseAssetManifestEnabled()) return null;
   if (!resolveFetcher(releaseId)) return null;
 
-  // Look up the most recent cached entry for this release. We do a prefix scan
-  // of the LRU to find any `releaseId:*` entry; if we find a live ready one we
-  // return it without scheduling another fetch.
-  let best: CacheEntry | null = null;
-  for (const [k, v] of manifestCache.entries()) {
-    if (k !== releaseId && !k.startsWith(`${releaseId}:`)) continue;
-    if (v.expiresAt > Date.now() && v.manifest) {
-      // Prefer the entry with the highest manifest version.
-      const existingVersion = best?.manifest?.manifestVersion ?? -1;
-      if ((v.manifest.manifestVersion ?? 0) > existingVersion) {
-        best = v;
-      }
-    }
-  }
-
+  const best = findCachedReadyEntry(releaseId);
   if (best) {
-    const now = Date.now();
-    if ((best.refreshAfter ?? best.expiresAt) <= now) {
-      best.refreshAfter = now + READY_REVALIDATE_MS;
-      scheduleFetch(releaseId);
-    }
+    maybeScheduleReadyRefresh(releaseId, best);
     return best.manifest;
   }
 
@@ -184,22 +189,53 @@ export function getReadyManifestForRender(
   return null;
 }
 
+/**
+ * Await a ready manifest for `releaseId`.
+ *
+ * HTML generation uses this path so a cold process cannot emit a mixed shell
+ * where preload hints see the manifest but the import map does not. It still
+ * falls back to null when the flag is off, no fetcher is registered, the
+ * manifest is unavailable, or the fetch fails.
+ */
+export async function getReadyManifestForRenderAsync(
+  releaseId: string | null | undefined,
+): Promise<ReleaseAssetManifest | null> {
+  if (!releaseId) return null;
+  if (!isReleaseAssetManifestEnabled()) return null;
+  if (!resolveFetcher(releaseId)) return null;
+
+  const best = findCachedReadyEntry(releaseId);
+  if (best) {
+    maybeScheduleReadyRefresh(releaseId, best);
+    return best.manifest;
+  }
+
+  const plain = manifestCache.get(releaseId);
+  if (plain && plain.expiresAt > Date.now()) return null;
+
+  return await fetchManifest(releaseId);
+}
+
 function scheduleFetch(releaseId: string): void {
-  if (inFlight.has(releaseId)) return;
+  void fetchManifest(releaseId);
+}
+
+function fetchManifest(releaseId: string): Promise<ReleaseAssetManifest | null> {
+  const existing = inFlight.get(releaseId);
+  if (existing) return existing.promise;
   const active = resolveFetcher(releaseId);
-  if (!active) return;
+  if (!active) return Promise.resolve(null);
   const fetchGeneration = cacheGeneration;
   const token = Symbol(releaseId);
-  inFlight.set(releaseId, { generation: fetchGeneration, token });
 
-  void Promise.resolve().then(async () => {
+  const promise = Promise.resolve().then(async () => {
     try {
       const result = await active(releaseId);
-      if (fetchGeneration !== cacheGeneration) return;
+      if (fetchGeneration !== cacheGeneration) return null;
 
       if (!result) {
         manifestCache.set(releaseId, { manifest: null, expiresAt: Date.now() + NON_READY_TTL_MS });
-        return;
+        return null;
       }
 
       const manifest = result.state === "ready" && result.manifest
@@ -219,19 +255,22 @@ function scheduleFetch(releaseId: string): void {
           ttlMs: READY_TTL_MS,
           refreshMs: READY_REVALIDATE_MS,
         });
+        return manifest;
       } else {
         manifestCache.set(releaseId, {
           manifest: null,
           expiresAt: Date.now() + NON_READY_TTL_MS,
         });
+        return null;
       }
     } catch (error) {
       logger.debug("Manifest fetch failed", {
         releaseId,
         error: error instanceof Error ? error.message : String(error),
       });
-      if (fetchGeneration !== cacheGeneration) return;
+      if (fetchGeneration !== cacheGeneration) return null;
       manifestCache.set(releaseId, { manifest: null, expiresAt: Date.now() + NON_READY_TTL_MS });
+      return null;
     } finally {
       const current = inFlight.get(releaseId);
       if (current?.token === token && current.generation === fetchGeneration) {
@@ -239,6 +278,9 @@ function scheduleFetch(releaseId: string): void {
       }
     }
   });
+
+  inFlight.set(releaseId, { generation: fetchGeneration, token, promise });
+  return promise;
 }
 
 /** Clear cached manifest bodies while keeping registered fetchers intact. */

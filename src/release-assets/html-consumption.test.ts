@@ -13,6 +13,7 @@ import {
   clearReleaseAssetManifestCache,
   configureReleaseAssetManifestFetcher,
   getReadyManifestForRender,
+  getReadyManifestForRenderAsync,
 } from "./manifest-cache.ts";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "./constants.ts";
 import type { ReleaseAssetManifest } from "./manifest-schema.ts";
@@ -111,6 +112,42 @@ describe("manifest cache gating", () => {
 
     const cached = getReadyManifestForRender("r");
     assertEquals(cached?.manifestVersion, 3);
+  });
+
+  it("awaits a ready manifest on the first async read", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    configureReleaseAssetManifestFetcher(() =>
+      Promise.resolve({ state: "ready", manifest: manifest() })
+    );
+
+    const ready = await getReadyManifestForRenderAsync("r");
+
+    assertEquals(ready?.manifestVersion, 3);
+    assertEquals(getReadyManifestForRender("r")?.manifestVersion, 3);
+  });
+
+  it("dedupes concurrent async ready-manifest reads", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    let resolveFetch: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (resolveFetch = resolve));
+    let fetchCount = 0;
+
+    configureReleaseAssetManifestFetcher(async () => {
+      fetchCount++;
+      await gate;
+      return { state: "ready", manifest: manifest() };
+    });
+
+    const first = getReadyManifestForRenderAsync("r");
+    const second = getReadyManifestForRenderAsync("r");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assertEquals(fetchCount, 1);
+
+    resolveFetch();
+    const [firstReady, secondReady] = await Promise.all([first, second]);
+    assertEquals(firstReady?.manifestVersion, 3);
+    assertEquals(secondReady?.manifestVersion, 3);
+    assertEquals(fetchCount, 1);
   });
 
   it("ignores stale in-flight manifest fetches after the cache is cleared", async () => {

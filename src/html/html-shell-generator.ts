@@ -9,7 +9,7 @@ import {
   generateModulePreloadHintsFromManifest,
   getRouteManifest,
 } from "#veryfront/modules/manifest/route-module-manifest.ts";
-import { getReadyManifestForRender } from "#veryfront/release-assets/manifest-cache.ts";
+import { getReadyManifestForRenderAsync } from "#veryfront/release-assets/manifest-cache.ts";
 import {
   resolveManifestModuleUrl,
   resolveManifestRoutePreloadUrls,
@@ -76,16 +76,14 @@ function resolveProjectCSSScope(
   return options.projectSlug || options.projectId || metaSlug || "default";
 }
 
-function generateModulePreloadHints(options: HTMLGenerationOptions): string {
+function generateModulePreloadHints(
+  options: HTMLGenerationOptions,
+  releaseManifest: ReleaseAssetManifest | null,
+): string {
   const hints: string[] = [];
   const addedUrls = new Set<string>();
   const projectDir = options.projectDir ?? "";
   const studioEmbed = options.studioEmbed;
-
-  // Release asset manifest (production only, env-gated, ready manifests only).
-  // Never consulted in studio-embed; returns null when the flag is off so the
-  // emitted HTML is byte-identical to today.
-  const releaseManifest = studioEmbed ? null : getReadyManifestForRender(options.releaseId);
 
   function addHint(moduleUrl: string): void {
     if (!moduleUrl || addedUrls.has(moduleUrl)) return;
@@ -235,7 +233,10 @@ async function generateHTMLShellPartsImpl(
   // Enable dev scripts for local dev OR preview mode (for HMR support in Studio),
   // unless a caller explicitly forces production client scripts for fair benchmarking.
   const useDevScripts = !options.forceProductionScripts && (isLocalProject || isPreviewMode);
-  const releaseManifest = options.studioEmbed ? null : getReadyManifestForRender(options.releaseId);
+  const releaseManifest = options.studioEmbed
+    ? null
+    : await profilePhase("html.release_asset_manifest", () =>
+      getReadyManifestForRenderAsync(options.releaseId));
 
   const importMapPromise = buildImportMap({
     projectDir: options.projectDir,
@@ -264,7 +265,7 @@ async function generateHTMLShellPartsImpl(
 
   const modeStyles = useDevScripts ? getErrorOverlayStyles(nonce) : "";
 
-  const modulePreloadHints = generateModulePreloadHints(options);
+  const modulePreloadHints = generateModulePreloadHints(options, releaseManifest);
   const importMap = await profilePhase("html.import_map", () => importMapPromise);
   const importMapJson = importMap.json;
 
@@ -330,8 +331,7 @@ async function generateHTMLShellPartsImpl(
   // Manifest-consumed CSS: when a ready release asset manifest carries a
   // compiled CSS entry, serve it from the immutable asset path (no renderer
   // involvement). Per-entry fallback: no manifest CSS → existing JIT link.
-  const manifestForCss = options.studioEmbed ? null : getReadyManifestForRender(options.releaseId);
-  const manifestCssEntry = useProductionCSS ? manifestForCss?.css?.[0] : undefined;
+  const manifestCssEntry = useProductionCSS ? releaseManifest?.css?.[0] : undefined;
   if (manifestCssEntry) {
     tailwindCSSBlock =
       `<link rel="stylesheet" href="/_vf/assets/${manifestCssEntry.contentHash}.css">`;
