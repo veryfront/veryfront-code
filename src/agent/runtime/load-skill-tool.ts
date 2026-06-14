@@ -53,6 +53,7 @@ export type RuntimeLoadSkillToolContext = RuntimeProjectSkillContext & {
   availableSkillIds?: readonly string[];
   availableToolNames?: readonly string[];
   loadedSkillResponses?: Record<string, RuntimeLoadedSkillResponse>;
+  loadedSkillReferenceResponses?: Record<string, RuntimeLoadSkillReferenceFileOutput>;
 };
 
 /** Public API contract for runtime load skill builtin store. */
@@ -199,6 +200,19 @@ function buildMissingSkillError(
   };
 }
 
+function buildAlreadyLoadedSkillReferenceResponse(
+  skillId: string,
+  file: string,
+): RuntimeLoadSkillReferenceFileOutput {
+  return {
+    skillId,
+    file,
+    content:
+      `Reference file "${skillId}/${file}" is already loaded in this turn. Do not call load_skill for this file again. ` +
+      "Continue from the existing reference content and produce the next useful response now.",
+  };
+}
+
 function buildRuntimeLoadSkillDescription(options: RuntimeLoadSkillToolOptions): string {
   if (options.description) {
     return options.description;
@@ -260,13 +274,21 @@ async function loadRuntimeSkillReferenceFile(
     return { error: `Invalid reference file path: ${file}` };
   }
 
+  const loadedSkillReferenceResponses = options.context.loadedSkillReferenceResponses ??= {};
+  const referenceKey = `${skillId}/${normalizedFile}`;
+  if (loadedSkillReferenceResponses[referenceKey]) {
+    return buildAlreadyLoadedSkillReferenceResponse(skillId, normalizedFile);
+  }
+
   const projectFileContent = await options.projectSkillLoader.loadProjectSkillReference(
     options.context,
     skillId,
     normalizedFile,
   );
   if (projectFileContent) {
-    return { skillId, file: normalizedFile, content: projectFileContent };
+    const response = { skillId, file: normalizedFile, content: projectFileContent };
+    loadedSkillReferenceResponses[referenceKey] = response;
+    return response;
   }
 
   const localContent = getBuiltinStore(options).readReferenceFile(
@@ -275,7 +297,9 @@ async function loadRuntimeSkillReferenceFile(
     normalizedFile,
   );
   if (localContent) {
-    return { skillId, file: normalizedFile, content: localContent };
+    const response = { skillId, file: normalizedFile, content: localContent };
+    loadedSkillReferenceResponses[referenceKey] = response;
+    return response;
   }
 
   return { error: `Reference file not found: ${skillId}/${normalizedFile}` };

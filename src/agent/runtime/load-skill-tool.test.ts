@@ -242,6 +242,39 @@ Deno.test("createRuntimeLoadSkillTool loads project and builtin reference files"
   });
 });
 
+Deno.test("createRuntimeLoadSkillTool makes same-reference reloads concise and idempotent", async () => {
+  let projectReferenceReads = 0;
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext(),
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: () => Promise.resolve([]),
+      loadProjectSkill: () => Promise.resolve(null),
+      loadProjectSkillReference: (_context, skillId, normalizedFile) => {
+        projectReferenceReads++;
+        return Promise.resolve(`${skillId}/${normalizedFile} content`);
+      },
+    },
+    builtinStore: createBuiltinStore({}),
+  });
+
+  const firstResult = await tool.execute({ skillId: "plan", file: "references/project.md" });
+  const secondResult = await tool.execute({ skillId: "plan", file: "references/project.md" });
+
+  assertEquals(projectReferenceReads, 1);
+  assertEquals(firstResult, {
+    skillId: "plan",
+    file: "references/project.md",
+    content: "plan/references/project.md content",
+  });
+  assertEquals(secondResult, {
+    skillId: "plan",
+    file: "references/project.md",
+    content:
+      'Reference file "plan/references/project.md" is already loaded in this turn. Do not call load_skill for this file again. Continue from the existing reference content and produce the next useful response now.',
+  });
+});
+
 Deno.test("createRuntimeLoadSkillTool rejects unsafe and unknown manifest skill inputs", async () => {
   const tool = createRuntimeLoadSkillTool({
     context: createProjectContext({

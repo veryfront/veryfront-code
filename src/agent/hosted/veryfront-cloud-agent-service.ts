@@ -25,6 +25,7 @@ import {
   sleepTool,
   toolRegistry,
 } from "#veryfront/tool";
+import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 import { parseProviderError } from "../../chat/provider-errors.ts";
 import { DEFAULT_PROJECT_DISCOVERY_DIRS } from "../../discovery/index.ts";
 import type { DiscoveryResult } from "../../discovery/types.ts";
@@ -602,7 +603,9 @@ export function getDiscoveredHostTools(scope?: { agentId?: string }): HostToolSe
   // tools are available to their owner and hidden from other agents.
   return Object.fromEntries(
     [...toolRegistry.getAll()]
-      .filter(([, registryTool]) => isToolVisibleTo(registryTool, scope))
+      .filter(([toolId, registryTool]) =>
+        !SKILL_TOOL_IDS.has(toolId) && isToolVisibleTo(registryTool, scope)
+      )
       .sort(([left], [right]) => left.localeCompare(right)),
   );
 }
