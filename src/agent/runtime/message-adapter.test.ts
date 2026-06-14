@@ -339,6 +339,82 @@ describe("agent runtime message adapter", () => {
     ]);
   });
 
+  it("replays same-message stored tool results after their matching assistant tool call", () => {
+    const providerMessages = convertAgentRuntimeMessagesToProviderMessages([
+      {
+        role: "assistant",
+        parts: [
+          {
+            type: "tool_call",
+            id: TOOL_CALL_ID,
+            name: TOOL_NAME,
+            input: { query: "rollout" },
+          },
+          {
+            type: "tool_result",
+            tool_call_id: TOOL_CALL_ID,
+            output: { matches: 2 },
+          },
+        ],
+      },
+    ]);
+
+    assertEquals(providerMessages, [
+      {
+        role: "assistant",
+        content: [providerToolCallPart({ query: "rollout" })],
+      },
+      {
+        role: "tool",
+        content: [
+          providerToolResultPart(jsonOutput({ matches: 2 })),
+        ],
+      },
+    ]);
+  });
+
+  it("keeps assistant text after same-message tool results in a later assistant message", () => {
+    const providerMessages = convertAgentRuntimeMessagesToProviderMessages([
+      {
+        role: "assistant",
+        parts: [
+          {
+            type: "tool_call",
+            id: TOOL_CALL_ID,
+            name: TOOL_NAME,
+            input: { query: "rollout" },
+          },
+          {
+            type: "tool_result",
+            tool_call_id: TOOL_CALL_ID,
+            output: { matches: 2 },
+          },
+          {
+            type: "text",
+            text: "Found two matches.",
+          },
+        ],
+      },
+    ]);
+
+    assertEquals(providerMessages, [
+      {
+        role: "assistant",
+        content: [providerToolCallPart({ query: "rollout" })],
+      },
+      {
+        role: "tool",
+        content: [
+          providerToolResultPart(jsonOutput({ matches: 2 })),
+        ],
+      },
+      {
+        role: "assistant",
+        content: [providerTextPart("Found two matches.")],
+      },
+    ]);
+  });
+
   it("preserves reasoning replay metadata when replaying agent runtime messages", () => {
     const providerMessages = convertAgentRuntimeMessagesToProviderMessages([
       agentRuntimeMessage(

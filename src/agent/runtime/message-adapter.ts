@@ -367,6 +367,7 @@ export function getAgentRuntimeToolCallPart(
 /** Return a runtime tool-result part when the value carries a tool result. */
 export function getAgentRuntimeToolResultPart(
   part: unknown,
+  toolNameFallback?: string,
 ): { toolCallId: string; toolName: string; output: unknown } | null {
   if (!isRecord(part) || part.type !== "tool-result" && part.type !== "tool_result") {
     return null;
@@ -375,7 +376,8 @@ export function getAgentRuntimeToolResultPart(
   const toolCallId = getOptionalStringField(part, "toolCallId") ??
     getOptionalStringField(part, "tool_call_id");
   const toolName = getOptionalStringField(part, "toolName") ??
-    getOptionalStringField(part, "tool_name");
+    getOptionalStringField(part, "tool_name") ??
+    toolNameFallback;
   if (!toolCallId || !toolName) {
     return null;
   }
@@ -389,6 +391,15 @@ export function getAgentRuntimeToolResultPart(
       ? part.output
       : null,
   };
+}
+
+function getAgentRuntimeToolResultCallId(part: unknown): string | undefined {
+  if (!isRecord(part) || part.type !== "tool-result" && part.type !== "tool_result") {
+    return undefined;
+  }
+
+  return getOptionalStringField(part, "toolCallId") ??
+    getOptionalStringField(part, "tool_call_id");
 }
 
 /** Create a chat tool-result part. */
@@ -417,6 +428,7 @@ function collectAgentRuntimeProviderContentParts(
   const toolCallParts: ProviderToolCallPart[] = [];
   const toolResultParts: ChatToolResultPart[] = [];
   const fileParts: ChatModelFilePart[] = [];
+  const toolNamesById = new Map<string, string>();
 
   for (const part of parts) {
     const textPart = getAgentRuntimeTextPart(part);
@@ -439,7 +451,11 @@ function collectAgentRuntimeProviderContentParts(
       }
     }
 
-    const toolResultPart = getAgentRuntimeToolResultPart(part);
+    const toolResultCallId = getAgentRuntimeToolResultCallId(part);
+    const toolResultPart = getAgentRuntimeToolResultPart(
+      part,
+      toolResultCallId ? toolNamesById.get(toolResultCallId) : undefined,
+    );
     if (toolResultPart) {
       toolResultParts.push(createToolResultPart(toolResultPart));
       continue;
@@ -447,6 +463,7 @@ function collectAgentRuntimeProviderContentParts(
 
     const toolCallPart = getAgentRuntimeToolCallPart(part);
     if (toolCallPart) {
+      toolNamesById.set(toolCallPart.toolCallId, toolCallPart.toolName);
       toolCallParts.push({
         type: "tool-call",
         toolCallId: toolCallPart.toolCallId,
@@ -459,63 +476,167 @@ function collectAgentRuntimeProviderContentParts(
   return { textParts, reasoningParts, toolCallParts, toolResultParts, fileParts };
 }
 
-function createProviderMessageFromAgentRuntimeMessage(
+function convertAssistantAgentRuntimePartsToProviderMessages(
+  parts: ReadonlyArray<AgentRuntimeMessageLikePart>,
+): ProviderModelMessage[] {
+  const assistantContent: Array<ProviderReasoningPart | ProviderTextPart | ProviderToolCallPart> =
+    [];
+  const deferredAssistantContent: Array<
+    ProviderReasoningPart | ProviderTextPart | ProviderToolCallPart
+  > = [];
+  const toolResults: ChatToolResultPart[] = [];
+  const pendingToolCallIds = new Set<string>();
+  const toolNamesById = new Map<string, string>();
+  const providerMessages: ProviderModelMessage[] = [];
+
+  const flushAssistantMessage = (
+    content: Array<ProviderReasoningPart | ProviderTextPart | ProviderToolCallPart>,
+  ) => {
+    if (content.length === 0) {
+      return;
+    }
+
+    providerMessages.push({ role: "assistant", content: [...content] });
+    content.length = 0;
+  };
+
+  const flushToolMessage = () => {
+    if (toolResults.length === 0) {
+      return;
+    }
+
+    providerMessages.push({ role: "tool", content: [...toolResults] });
+    toolResults.length = 0;
+  };
+
+  const pushAssistantPart = (
+    part: ProviderReasoningPart | ProviderTextPart | ProviderToolCallPart,
+  ) => {
+    if (part.type === "tool-call") {
+      if (deferredAssistantContent.length > 0) {
+        flushAssistantMessage(assistantContent);
+        flushToolMessage();
+        flushAssistantMessage(deferredAssistantContent);
+      }
+
+      assistantContent.push(part);
+      pendingToolCallIds.add(part.toolCallId);
+      toolNamesById.set(part.toolCallId, part.toolName);
+      return;
+    }
+
+    if (pendingToolCallIds.size > 0) {
+      deferredAssistantContent.push(part);
+      return;
+    }
+
+    if (toolResults.length > 0) {
+      flushAssistantMessage(assistantContent);
+      flushToolMessage();
+      flushAssistantMessage(deferredAssistantContent);
+    }
+
+    assistantContent.push(part);
+  };
+
+  const pushToolResult = (part: ChatToolResultPart) => {
+    toolResults.push(part);
+    pendingToolCallIds.delete(part.toolCallId);
+  };
+
+  for (const part of parts) {
+    const textPart = getAgentRuntimeTextPart(part);
+    if (textPart) {
+      pushAssistantPart(textPart);
+      continue;
+    }
+
+    const reasoningPart = getAgentRuntimeReasoningPart(part);
+    if (reasoningPart) {
+      pushAssistantPart(reasoningPart);
+      continue;
+    }
+
+    const toolResultCallId = getAgentRuntimeToolResultCallId(part);
+    const toolResultPart = getAgentRuntimeToolResultPart(
+      part,
+      toolResultCallId ? toolNamesById.get(toolResultCallId) : undefined,
+    );
+    if (toolResultPart) {
+      pushToolResult(createToolResultPart(toolResultPart));
+      continue;
+    }
+
+    const toolCallPart = getAgentRuntimeToolCallPart(part);
+    if (toolCallPart) {
+      pushAssistantPart({
+        type: "tool-call",
+        toolCallId: toolCallPart.toolCallId,
+        toolName: toolCallPart.toolName,
+        input: toolCallPart.input,
+      });
+    }
+  }
+
+  flushAssistantMessage(assistantContent);
+  flushToolMessage();
+  flushAssistantMessage(deferredAssistantContent);
+
+  return providerMessages;
+}
+
+function createProviderMessagesFromAgentRuntimeMessage(
   message: Pick<AgentRuntimeMessage, "role"> & {
     parts: ReadonlyArray<AgentRuntimeMessageLikePart>;
   },
-): ProviderModelMessage | null {
-  const { textParts, reasoningParts, toolCallParts, toolResultParts, fileParts } =
-    collectAgentRuntimeProviderContentParts(message.parts);
+): ProviderModelMessage[] {
+  if (message.role === "assistant") {
+    return convertAssistantAgentRuntimePartsToProviderMessages(message.parts);
+  }
+
+  const { textParts, toolResultParts, fileParts } = collectAgentRuntimeProviderContentParts(
+    message.parts,
+  );
 
   switch (message.role) {
-    case "assistant":
-      if (reasoningParts.length === 0 && textParts.length === 0 && toolCallParts.length === 0) {
-        return null;
-      }
-
-      return {
-        role: "assistant",
-        content: [...reasoningParts, ...textParts, ...toolCallParts],
-      };
-
     case "tool":
       if (toolResultParts.length === 0) {
-        return null;
+        return [];
       }
 
-      return {
+      return [{
         role: "tool",
         content: toolResultParts,
-      };
+      }];
 
     case "user": {
       if (textParts.length === 0 && fileParts.length === 0) {
-        return null;
+        return [];
       }
 
       if (fileParts.length === 0) {
-        return {
+        return [{
           role: "user",
           content: joinTextParts(textParts),
-        };
+        }];
       }
 
       const content: ChatUserContentPart[] = [...textParts, ...fileParts];
-      return {
+      return [{
         role: "user",
         content,
-      };
+      }];
     }
 
     case "system": {
       if (textParts.length === 0) {
-        return null;
+        return [];
       }
 
-      return {
+      return [{
         role: "system",
         content: joinTextParts(textParts),
-      };
+      }];
     }
 
     default: {
@@ -550,10 +671,7 @@ export function convertAgentRuntimeMessagesToProviderMessages(
   const converted: ProviderModelMessage[] = [];
 
   for (const message of messages) {
-    const convertedMessage = createProviderMessageFromAgentRuntimeMessage(message);
-    if (convertedMessage) {
-      converted.push(convertedMessage);
-    }
+    converted.push(...createProviderMessagesFromAgentRuntimeMessage(message));
   }
 
   return converted;
