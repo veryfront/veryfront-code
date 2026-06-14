@@ -343,7 +343,7 @@ describe("release asset build executor", () => {
     assert(!bParentUpload.text.includes(`"/_vf/assets/${aSharedHash}.js"`));
   });
 
-  it("fails the manifest when vendored dependency assets contain a cycle", async () => {
+  it("falls back to source URLs when vendored dependency assets contain a cycle", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
       {
@@ -383,11 +383,22 @@ describe("release asset build executor", () => {
 
     const result = await runReleaseAssetBuild(input, await tmp());
 
-    assertEquals(result.success, false);
-    assertEquals(result.state, "failed");
-    assert(result.error?.includes("Circular release asset dependency graph"));
-    assertEquals(rec.states.at(-1)?.state, "failed");
-    assertEquals(rec.manifest, null);
+    assertEquals(result.success, true);
+    assertEquals(result.state, "ready");
+    assert(result.gaps.some((gap) => gap.startsWith("dependency-cycle:")));
+
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.dependencies["https://esm.sh/parent@1"], undefined);
+    assertEquals(manifest.dependencies["https://esm.sh/child@1"], undefined);
+
+    const pageHash = manifest.modules["pages/index.tsx"]?.contentHash;
+    assertExists(pageHash);
+    const pageUpload = rec.uploads.find((u) => u.hash === pageHash);
+    assertExists(pageUpload);
+    assert(pageUpload.text.includes('"https://esm.sh/parent@1"'));
+    assert(!pageUpload.text.includes("file:///tmp/veryfront-http-bundle"));
+    assertEquals(rec.states.find((state) => state.state === "failed"), undefined);
   });
 
   it("fails the manifest when a vendored dependency keeps an unresolved file import", async () => {
