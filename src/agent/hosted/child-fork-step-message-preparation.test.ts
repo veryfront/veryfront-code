@@ -64,6 +64,68 @@ Deno.test("prepareHostedChildForkRuntimeStepMessages compacts messages and resol
   ]);
 });
 
+Deno.test("prepareHostedChildForkRuntimeStepMessages preserves same-message assistant tool results", () => {
+  const messages: AgentRuntimeMessage[] = [
+    {
+      id: "assistant-message-1",
+      role: "assistant",
+      parts: [
+        {
+          type: "tool-call",
+          toolCallId: "tool-call-1",
+          toolName: "read_file",
+          args: { path: "README.md" },
+        },
+        {
+          type: "tool-result",
+          toolCallId: "tool-call-1",
+          toolName: "read_file",
+          result: { content: "hello" },
+        },
+      ],
+      timestamp: 1,
+    },
+  ];
+
+  const prepared = prepareHostedChildForkRuntimeStepMessages({
+    messages,
+    buildInstructions: () => "Base instructions",
+    forkToolNames: ["read_file"],
+  });
+
+  assertEquals(prepared.messages, [
+    {
+      id: "agent-runtime-assistant-1",
+      role: "assistant",
+      parts: [
+        {
+          type: "tool-read_file",
+          toolCallId: "tool-call-1",
+          toolName: "read_file",
+          args: { path: "README.md" },
+        },
+      ],
+      timestamp: 0,
+    },
+    {
+      id: "agent-runtime-tool-2",
+      role: "tool",
+      parts: [
+        {
+          type: "tool-result",
+          toolCallId: "tool-call-1",
+          toolName: "read_file",
+          result: {
+            type: "json",
+            value: { content: "hello" },
+          },
+        },
+      ],
+      timestamp: 1,
+    },
+  ]);
+});
+
 Deno.test("prepareHostedChildForkRuntimeStepMessages falls back to current instructions", () => {
   const prepared = prepareHostedChildForkRuntimeStepMessages({
     messages: [],
