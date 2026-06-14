@@ -593,6 +593,122 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(capturedAllowedTools, ["gmail:list-emails", "gmail:get-email"]);
   });
 
+  it("auto-exposes Studio MCP tools for trusted Studio project-agent requests", async () => {
+    let capturedAllowedRemoteTools: string[] | undefined;
+    let capturedRemoteToolNames: string[] = [];
+    const originalFetch = globalThis.fetch;
+    const originalStudioMcpUrl = Deno.env.get("VERYFRONT_STUDIO_MCP_URL");
+
+    Deno.env.set("VERYFRONT_STUDIO_MCP_URL", "https://studio.veryfront.org/mcp");
+    globalThis.fetch = ((url, init) => {
+      assertEquals(String(url), "https://studio.veryfront.org/mcp");
+      const headers = new Headers(init?.headers);
+      assertEquals(headers.get("authorization"), "Bearer request-scoped-user-token");
+      assertEquals(headers.get("x-project-id"), "proj-1");
+      assertEquals(headers.get("x-conversation-id"), "10000000-1000-4000-8000-100000000001");
+
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: "veryfront-studio-mcp:tools:list",
+            result: {
+              tools: [
+                {
+                  name: "studio_todo_write",
+                  description: "Write the assistant task list",
+                  inputSchema: { type: "object", properties: {} },
+                },
+                {
+                  name: "studio_panel_control",
+                  description: "Control Studio panels",
+                  inputSchema: { type: "object", properties: {} },
+                },
+              ],
+            },
+          }),
+          { headers: { "content-type": "application/json" } },
+        ),
+      );
+    }) as typeof fetch;
+
+    try {
+      const handler = new AgentStreamHandler({
+        ensureProjectDiscovery: async () => {},
+        getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
+        getAllAgentIds: () => ["assistant-1"],
+        sessionManager: new AgentRunSessionManager(),
+        createRuntime: (runtimeAgent) => ({
+          stream: async (_messages, _context, callbacks) => {
+            const runtimeConfig = runtimeAgent.config as
+              & typeof runtimeAgent.config
+              & RuntimeRemoteToolConfig;
+            capturedAllowedRemoteTools = runtimeConfig.__vfAllowedRemoteTools;
+            capturedRemoteToolNames = (await runtimeConfig.__vfRemoteToolSources?.[0]?.listTools({
+              projectId: "proj-1",
+            }))?.map((tool) => tool.name) ?? [];
+            callbacks?.onFinish?.({
+              text: "ok",
+              messages: [],
+              toolCalls: [],
+              status: "completed",
+              usage: {
+                promptTokens: 1,
+                completionTokens: 1,
+                totalTokens: 2,
+              },
+            });
+
+            return new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            });
+          },
+        }),
+      });
+
+      const body = createAgentStreamRequestBody({
+        credentials: { authToken: "request-scoped-user-token" },
+        forwardedProps: {
+          clientId: "veryfront-studio",
+          veryfront: {
+            client: {
+              id: "veryfront-studio",
+              type: "web",
+              platform: "browser",
+            },
+          },
+          runtimeOverrides: {
+            allowedTools: ["studio_todo_write"],
+          },
+        },
+      });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+
+      const result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        createCtx(publicKeyPem),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      assertEquals(capturedAllowedRemoteTools, ["studio_todo_write"]);
+      assertEquals(capturedRemoteToolNames, ["studio_todo_write", "studio_panel_control"]);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalStudioMcpUrl === undefined) Deno.env.delete("VERYFRONT_STUDIO_MCP_URL");
+      else Deno.env.set("VERYFRONT_STUDIO_MCP_URL", originalStudioMcpUrl);
+    }
+  });
+
   it("fails closed for malformed runtime integration tool allowlists from forwarded props", async () => {
     let capturedAllowedTools: string[] | undefined;
 

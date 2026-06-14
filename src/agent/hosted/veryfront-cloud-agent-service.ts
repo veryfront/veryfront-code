@@ -73,7 +73,10 @@ import {
   fetchDefaultHostedProjectSteering,
 } from "./default-project-steering-refresh.ts";
 import { type HostedProjectSkillIdsContext } from "./project-steering-adapter.ts";
-import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.ts";
+import {
+  type AgentServiceMcpServerConfig,
+  defaultAgentServiceMcpServers,
+} from "../service/mcp-server-config.ts";
 import type { AgentVeryfrontMcpServerConfig } from "../types.ts";
 import type { RuntimeLoadSkillToolContext } from "../runtime/load-skill-tool.ts";
 import type { RuntimeProjectSteeringLookup } from "../runtime/project-skill-catalog.ts";
@@ -350,7 +353,7 @@ function resolveDefaultProcessTarget(): NodeVeryfrontCloudAgentServiceProcessTar
 function resolveMcpServers(
   options: Pick<NodeVeryfrontCloudAgentServiceOptions, "mcpServers">,
 ): readonly NodeVeryfrontCloudAgentServiceMcpServer[] {
-  return options.mcpServers ?? [veryfrontApiMcpServer()];
+  return options.mcpServers ?? defaultAgentServiceMcpServers();
 }
 
 async function loadDefaultCreateBashTool(): Promise<
