@@ -187,6 +187,11 @@ interface DependencyModule {
   code: string;
 }
 
+interface FinalizedDependencyModules {
+  assets: Record<string, PreparedAsset>;
+  fallbackUrls: Map<string, string>;
+}
+
 function frameworkModuleUrlToSourceKey(moduleUrl: string): string | null {
   if (!moduleUrl.startsWith(FRAMEWORK_MODULE_URL_PREFIX)) return null;
   return moduleUrl
@@ -412,6 +417,35 @@ function buildDependencyUrlMap(
   return urls;
 }
 
+function dependencyFallbackUrl(dependency: DependencyModule): string | null {
+  if (
+    dependency.manifestKey.startsWith("http://") ||
+    dependency.manifestKey.startsWith("https://")
+  ) {
+    return dependency.manifestKey;
+  }
+
+  for (const specifier of dependency.specifiers) {
+    if (specifier.startsWith("http://") || specifier.startsWith("https://")) {
+      return specifier;
+    }
+  }
+
+  return null;
+}
+
+function addDependencyUrlAliases(
+  urls: Map<string, string>,
+  dependency: DependencyModule,
+  url: string,
+): void {
+  urls.set(dependency.manifestKey, url);
+  if (dependency.sourcePath) urls.set(`file://${dependency.sourcePath}`, url);
+  for (const specifier of dependency.specifiers) {
+    urls.set(normalizeDependencySpecifier(specifier), url);
+  }
+}
+
 function addDependencyModule(
   dependencies: Map<string, DependencyModule>,
   dependency: ReleaseAssetVendorDependency,
@@ -551,7 +585,8 @@ async function finalizeDependencyModules(
   dependencyModules: Map<string, DependencyModule>,
   uploadQueue: PreparedAsset[],
   pendingBytes: Map<string, { bytes: Uint8Array<ArrayBuffer>; contentType: string }>,
-): Promise<Record<string, PreparedAsset>> {
+  gaps: string[],
+): Promise<FinalizedDependencyModules> {
   const bySpecifier = new Map<string, DependencyModule>();
   const byFilePath = new Map<string, DependencyModule>();
   for (const dependency of dependencyModules.values()) {
@@ -564,6 +599,9 @@ async function finalizeDependencyModules(
   }
 
   const finalized = new Map<string, PreparedAsset>();
+  const fallbackUrls = new Map<string, string>();
+  const skippedCycles = new Set<string>();
+  const recordedCycleGaps = new Set<string>();
   const visiting: string[] = [];
 
   function resolveDependencyImport(
@@ -579,13 +617,31 @@ async function finalizeDependencyModules(
     return bySpecifier.get(normalizeDependencySpecifier(specifier)) ?? null;
   }
 
+  function recordDependencyCycle(cycleKeys: string[]): void {
+    // Separate content-hashed ESM files cannot represent cyclic imports without
+    // release-scoped aliases or bundling, so keep only that component on source URL fallback.
+    for (const key of cycleKeys) skippedCycles.add(key);
+
+    const gap = `dependency-cycle:${cycleKeys.join("->")}`;
+    if (!recordedCycleGaps.has(gap)) {
+      recordedCycleGaps.add(gap);
+      gaps.push(gap);
+    }
+  }
+
+  function cycleFallbackFor(dependency: DependencyModule): string | null {
+    if (!skippedCycles.has(dependency.manifestKey)) return null;
+    return dependencyFallbackUrl(dependency);
+  }
+
   async function finalize(manifestKey: string): Promise<PreparedAsset | null> {
     const existing = finalized.get(manifestKey);
     if (existing) return existing;
     if (visiting.includes(manifestKey)) {
-      const cycle = [...visiting.slice(visiting.indexOf(manifestKey)), manifestKey].join(" -> ");
-      throw new Error(`Circular release asset dependency graph: ${cycle}`);
+      recordDependencyCycle([...visiting.slice(visiting.indexOf(manifestKey)), manifestKey]);
+      return null;
     }
+    if (skippedCycles.has(manifestKey)) return null;
 
     const dependency = dependencyModules.get(manifestKey);
     if (!dependency) return null;
@@ -602,18 +658,20 @@ async function finalizeDependencyModules(
         const child = resolveDependencyImport(imp.n, dependency);
         if (!child) continue;
         if (child.manifestKey === manifestKey) {
-          throw new Error(
-            `Circular release asset dependency graph: ${manifestKey} -> ${manifestKey}`,
-          );
+          recordDependencyCycle([manifestKey, manifestKey]);
+          continue;
         }
         await finalize(child.manifestKey);
       }
+
+      if (skippedCycles.has(manifestKey)) return null;
 
       const rewritten = await replaceSpecifiers(dependency.code, (specifier) => {
         const child = resolveDependencyImport(specifier, dependency);
         if (!child) return null;
         const asset = finalized.get(child.manifestKey);
-        return asset ? releaseAssetUrl(asset.contentHash, "js") : null;
+        if (asset) return releaseAssetUrl(asset.contentHash, "js");
+        return cycleFallbackFor(child);
       });
 
       const entry = await addPreparedJavaScriptAsset(
@@ -640,7 +698,20 @@ async function finalizeDependencyModules(
   } finally {
     visiting.length = 0;
   }
-  return Object.fromEntries(finalized);
+
+  for (const manifestKey of skippedCycles) {
+    const dependency = dependencyModules.get(manifestKey);
+    if (!dependency) continue;
+
+    const fallbackUrl = dependencyFallbackUrl(dependency);
+    if (!fallbackUrl) {
+      throw new Error(`Unrepresentable vendored dependency cycle: ${manifestKey}`);
+    }
+
+    addDependencyUrlAliases(fallbackUrls, dependency, fallbackUrl);
+  }
+
+  return { assets: Object.fromEntries(finalized), fallbackUrls };
 }
 
 async function finalizeProjectModules(
@@ -1044,12 +1115,16 @@ async function runBuildInner(
     gaps,
   );
   let httpDependencies: Record<string, PreparedAsset>;
+  let httpDependencyFallbackUrls = new Map<string, string>();
   try {
-    httpDependencies = await finalizeDependencyModules(
+    const finalizedHttpDependencies = await finalizeDependencyModules(
       dependencyModules,
       uploadQueue,
       pendingBytes,
+      gaps,
     );
+    httpDependencies = finalizedHttpDependencies.assets;
+    httpDependencyFallbackUrls = finalizedHttpDependencies.fallbackUrls;
   } catch (error) {
     const sanitized = sanitizeError(error);
     logger.warn("HTTP dependency finalization failed during release asset build", {
@@ -1072,6 +1147,9 @@ async function runBuildInner(
   }
   const dependencies = { ...frameworkDependencies, ...httpDependencies };
   const dependencyUrls = buildDependencyUrlMap(dependencies, dependencyModules);
+  for (const [specifier, url] of httpDependencyFallbackUrls) {
+    dependencyUrls.set(specifier, url);
+  }
 
   const { modules, skippedModules } = await finalizeProjectModules(
     transformedModules,
