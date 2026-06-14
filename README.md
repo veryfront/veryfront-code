@@ -14,6 +14,44 @@ It gives you agents, tools, workflows, and a complete React rendering stack in a
   <img src="./assets/banner.svg" alt="Veryfront" width="100%">
 </p>
 
+## Get started
+
+Create a new Veryfront Code app:
+
+```bash
+npm create veryfront
+```
+
+<details>
+<summary>Use another package manager</summary>
+
+```bash
+pnpm create veryfront
+yarn create veryfront
+bun create veryfront
+deno init --npm veryfront
+```
+
+</details>
+
+Start from a template directly:
+
+```bash
+npx veryfront init <PROJECT_NAME> --template <TEMPLATE>
+```
+
+Available starters: `ai-agent`, `minimal`, `agentic-workflow`.
+
+Install the `veryfront` binary for local development commands and the TUI:
+
+```bash
+curl -fsSL https://veryfront.com/install.sh | sh
+# or
+brew install veryfront/tap/veryfront
+```
+
+Follow the [Quickstart guide](https://veryfront.com/docs/code/getting-started/quickstart) to build your first app. For project setup options and template details, see [Create a project](https://veryfront.com/docs/code/getting-started/create-a-project). For the full documentation, visit [veryfront.com/docs/code](https://veryfront.com/docs/code).
+
 ## Why Veryfront Code?
 
 Purpose-built for TypeScript and React, Veryfront Code gives you everything you need to build agentic full-stack applications out-of-the-box.
@@ -50,98 +88,11 @@ Purpose-built for TypeScript and React, Veryfront Code gives you everything you 
 
 - [**Extensions**](https://veryfront.com/docs/code/guides/extensions) - Extend Veryfront Code with contract-based packages for LLM providers, bundling, CSS, tracing, caching, and more.
 
-## Get Started
-
-Use the interactive project wizard when you want to compare templates:
-
-```bash
-npm create veryfront
-```
-
-Choose a starting point directly with `npx` when you already know what you want
-to build:
-
-```bash
-# Agent app with a chat UI, tool, and AG-UI route
-npx veryfront init support-agent --template ai-agent
-
-# Blank full-stack app with pages and routing
-npx veryfront init my-app --template minimal
-
-# Durable multi-step AI pipeline
-npx veryfront init my-workflow --template agentic-workflow
-```
-
-<details>
-<summary>pnpm, yarn, bun, deno</summary>
-
-```bash
-pnpm create veryfront
-yarn create veryfront
-bun create veryfront
-deno init --npm veryfront
-```
-
-Binary install (recommended for the CLI/TUI):
-
-```bash
-curl -fsSL https://veryfront.com/install.sh | sh
-# or
-brew install veryfront/tap/veryfront
-```
-
-</details>
-
-Follow the [Quickstart guide](https://veryfront.com/docs/code/getting-started/quickstart) to build the agent app end-to-end, or use [Create a project](https://veryfront.com/docs/code/getting-started/create-a-project) to compare templates before you scaffold. For the full documentation, visit [veryfront.com/docs/code](https://veryfront.com/docs/code).
-
-## Project Structure
-
-```
-veryfront/
-├── src/                  # Framework core modules
-│   ├── agent/           # Agent runtime, AG-UI, hosted execution
-│   ├── tool/            # Tool definitions and registry
-│   ├── workflow/        # Durable DAG workflows with crash recovery
-│   ├── mcp/             # Model Context Protocol server
-│   ├── skill/           # Agent skills system (SKILL.md)
-│   ├── chat/            # Chat UI components and streaming
-│   ├── discovery/       # Auto-discovery of tools, agents, workflows
-│   ├── sandbox/         # Ephemeral compute environments
-│   ├── runs/            # Durable runs client
-│   ├── task/            # Task definitions and runner
-│   ├── channels/        # Control-plane agent routing
-│   ├── integrations/    # Third-party connector metadata
-│   ├── provider/        # AI model provider adapters
-│   ├── rendering/       # SSR/RSC engine
-│   ├── server/          # HTTP servers (dev + production)
-│   ├── routing/         # File-based routing
-│   ├── security/        # Rate limiting, CORS, CSP, validation
-│   └── ...              # See src/README.md for full list
-├── cli/                  # CLI and TUI dashboard
-├── extensions/           # First-party extension packages
-├── docs/                 # Architecture diagrams and guides
-├── tests/                # Integration and E2E tests
-└── scripts/              # Development and build scripts
-```
-
-## Examples
-
-You can find standalone, runnable examples in the [veryfront-examples](https://github.com/veryfront/veryfront-examples) repo.
-
 ## Contributing
 
 Looking to contribute? All types of help are appreciated, from coding to testing and feature specification. Read [CONTRIBUTING.md](./CONTRIBUTING.md) for more details on how to get involved.
 
 If you are a developer and would like to contribute with code, please open an issue to discuss before opening a Pull Request.
-
-## Supply-Chain Hardening
-
-Veryfront Code treats dependency changes as reviewed code changes.
-
-- Workspace Deno dependencies use exact versions and are resolved through the checked-in `deno.lock`.
-- `deno.json` sets `minimumDependencyAge` to delay freshly published dependency versions during Deno resolution.
-- `.npmrc` sets `save-exact=true` so npm-compatible tooling records exact versions.
-- The npm package generator pins automatic `dependencies`, `optionalDependencies`, and `devDependencies`; peer ranges remain available only for opt-in compatibility constraints.
 
 ## Support
 
