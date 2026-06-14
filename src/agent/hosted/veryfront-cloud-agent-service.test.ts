@@ -5,10 +5,13 @@ import { pathToFileURL } from "node:url";
 import type { CreateSandboxBashTool } from "#veryfront/sandbox";
 import { register, unregister } from "#veryfront/extensions/contracts.ts";
 import { SandboxShellToolsProviderName } from "#veryfront/extensions/sandbox/index.ts";
-import { toolRegistry } from "#veryfront/tool";
+import { tool, toolRegistry } from "#veryfront/tool";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import { createLoadSkillReferenceTool } from "#veryfront/skill/tools.ts";
 import { agentRegistry } from "../composition/index.ts";
 import {
   createNodeVeryfrontCloudAgentServiceRuntime,
+  getDiscoveredHostTools,
   startNodeVeryfrontCloudAgentService,
   veryfrontApiMcpServer,
   veryfrontStudioMcpServer,
@@ -105,6 +108,28 @@ function getRuntimeAgent(
   assert(runtimeAgent);
   return runtimeAgent;
 }
+
+Deno.test("getDiscoveredHostTools excludes shared skill infrastructure tools", () => {
+  try {
+    toolRegistry.registerShared("load_skill_reference", createLoadSkillReferenceTool());
+    toolRegistry.registerShared(
+      "shared_echo",
+      tool({
+        id: "shared_echo",
+        description: "Echo shared input",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: () => ({ ok: true }),
+      }),
+    );
+
+    const tools = getDiscoveredHostTools();
+
+    assertEquals("shared_echo" in tools, true);
+    assertEquals("load_skill_reference" in tools, false);
+  } finally {
+    toolRegistry.clearAll();
+  }
+});
 
 Deno.test("createNodeVeryfrontCloudAgentServiceRuntime loads the markdown agent and binds service routes", async () => {
   await withTempDir(async (rootDir) => {

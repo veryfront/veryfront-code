@@ -173,6 +173,38 @@ Use form_input once, then produce the plan.`,
   assertEquals(secondResult.references, ["references/write.md"]);
 });
 
+Deno.test("createRuntimeLoadSkillTool reloads same skill after project context changes", async () => {
+  const context = createProjectContext();
+  let projectSkillReads = 0;
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: () => Promise.resolve([]),
+      loadProjectSkill: (activeContext, skillId) => {
+        projectSkillReads++;
+        return Promise.resolve({
+          instructions: `# ${activeContext.projectId} ${skillId}`,
+          references: [`references/${activeContext.projectId}.md`],
+        });
+      },
+      loadProjectSkillReference: () => Promise.resolve(null),
+    },
+    builtinStore: createBuiltinStore({}),
+  });
+
+  const firstResult = expectLoadedSkillResponse(await tool.execute({ skillId: "plan" }));
+  context.projectId = "project-2";
+  context.branchId = null;
+  context.skillSourcePaths = { plan: "agents/planner/skills/plan/SKILL.md" };
+  const secondResult = expectLoadedSkillResponse(await tool.execute({ skillId: "plan" }));
+
+  assertEquals(projectSkillReads, 2);
+  assertEquals(firstResult.instructions, "# project-1 plan");
+  assertEquals(secondResult.instructions, "# project-2 plan");
+  assertEquals(secondResult.references, ["references/project-2.md"]);
+});
+
 Deno.test("createRuntimeLoadSkillTool removes form_input from same-skill reload policy", async () => {
   const context = createProjectContext({
     availableToolNames: ["form_input", "studio_suggestions", "list_files", "create_file"],
@@ -239,6 +271,75 @@ Deno.test("createRuntimeLoadSkillTool loads project and builtin reference files"
     skillId: "plan",
     file: "references/builtin.md",
     content: "builtin reference",
+  });
+});
+
+Deno.test("createRuntimeLoadSkillTool makes same-reference reloads concise and idempotent", async () => {
+  let projectReferenceReads = 0;
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext(),
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: () => Promise.resolve([]),
+      loadProjectSkill: () => Promise.resolve(null),
+      loadProjectSkillReference: (_context, skillId, normalizedFile) => {
+        projectReferenceReads++;
+        return Promise.resolve(`${skillId}/${normalizedFile} content`);
+      },
+    },
+    builtinStore: createBuiltinStore({}),
+  });
+
+  const firstResult = await tool.execute({ skillId: "plan", file: "references/project.md" });
+  const secondResult = await tool.execute({ skillId: "plan", file: "references/project.md" });
+
+  assertEquals(projectReferenceReads, 1);
+  assertEquals(firstResult, {
+    skillId: "plan",
+    file: "references/project.md",
+    content: "plan/references/project.md content",
+  });
+  assertEquals(secondResult, {
+    skillId: "plan",
+    file: "references/project.md",
+    content:
+      'Reference file "plan/references/project.md" is already loaded in this turn. Do not call load_skill for this file again. Continue from the existing reference content and produce the next useful response now.',
+  });
+});
+
+Deno.test("createRuntimeLoadSkillTool reloads same reference after project context changes", async () => {
+  const context = createProjectContext();
+  let projectReferenceReads = 0;
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: () => Promise.resolve([]),
+      loadProjectSkill: () => Promise.resolve(null),
+      loadProjectSkillReference: (activeContext, skillId, normalizedFile) => {
+        projectReferenceReads++;
+        return Promise.resolve(`${activeContext.projectId}/${skillId}/${normalizedFile}`);
+      },
+    },
+    builtinStore: createBuiltinStore({}),
+  });
+
+  const firstResult = await tool.execute({ skillId: "plan", file: "references/project.md" });
+  context.projectId = "project-2";
+  context.branchId = null;
+  context.skillSourcePaths = { plan: "agents/planner/skills/plan/SKILL.md" };
+  const secondResult = await tool.execute({ skillId: "plan", file: "references/project.md" });
+
+  assertEquals(projectReferenceReads, 2);
+  assertEquals(firstResult, {
+    skillId: "plan",
+    file: "references/project.md",
+    content: "project-1/plan/references/project.md",
+  });
+  assertEquals(secondResult, {
+    skillId: "plan",
+    file: "references/project.md",
+    content: "project-2/plan/references/project.md",
   });
 });
 
