@@ -72,8 +72,11 @@ function createVeryfrontApiRemoteMcpConfig(
   return {
     id: server.id ?? input.defaultSourceId ?? "veryfront-mcp",
     endpoint: input.apiMcpUrl,
-    headers: {
-      Authorization: `Bearer ${input.authToken}`,
+    headers: (context) => {
+      const authToken = typeof context?.authToken === "string" && context.authToken.length > 0
+        ? context.authToken
+        : input.authToken;
+      return { Authorization: `Bearer ${authToken}` };
     },
   };
 }

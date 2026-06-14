@@ -8,19 +8,26 @@ Deno.test("defaultAgentServiceMcpServers enables the Veryfront API MCP server", 
   assertEquals(defaultAgentServiceMcpServers(), [{ kind: "veryfront-api" }]);
 });
 
-Deno.test("createAgentServiceRemoteMcpConfig builds Veryfront API MCP config", () => {
+Deno.test("createAgentServiceRemoteMcpConfig builds Veryfront API MCP config", async () => {
+  const config = createAgentServiceRemoteMcpConfig({
+    server: { kind: "veryfront-api" },
+    authToken: "token-1",
+    apiMcpUrl: "https://api.example/mcp",
+  });
+  assertEquals(config?.id, "veryfront-mcp");
+  assertEquals(config?.endpoint, "https://api.example/mcp");
   assertEquals(
-    createAgentServiceRemoteMcpConfig({
-      server: { kind: "veryfront-api" },
-      authToken: "token-1",
-      apiMcpUrl: "https://api.example/mcp",
-    }),
+    typeof config?.headers === "function" ? await config.headers() : config?.headers,
     {
-      id: "veryfront-mcp",
-      endpoint: "https://api.example/mcp",
-      headers: {
-        Authorization: "Bearer token-1",
-      },
+      Authorization: "Bearer token-1",
+    },
+  );
+  assertEquals(
+    typeof config?.headers === "function"
+      ? await config.headers({ authToken: "run-token-1" })
+      : config?.headers,
+    {
+      Authorization: "Bearer run-token-1",
     },
   );
 

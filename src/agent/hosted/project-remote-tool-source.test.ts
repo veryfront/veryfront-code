@@ -66,8 +66,9 @@ function createRemoteSource(input: {
 
 async function resolveTestHeaders(
   headers: RemoteMCPToolSourceConfig["headers"],
+  context?: ToolExecutionContext,
 ): Promise<HeadersInit | undefined> {
-  return typeof headers === "function" ? await headers() : headers;
+  return typeof headers === "function" ? await headers(context) : headers;
 }
 
 Deno.test("hosted remote tool sources do not carry legacy end-user identity plumbing", async () => {
@@ -406,7 +407,12 @@ Deno.test("createHostedProjectRemoteToolSources builds API and explicit gated St
     "https://api.example/mcp",
     "https://studio.example/mcp",
   ]);
-  assertEquals(configs[0]?.headers, { Authorization: "Bearer token-1" });
+  assertEquals(await resolveTestHeaders(configs[0]?.headers), {
+    Authorization: "Bearer token-1",
+  });
+  assertEquals(await resolveTestHeaders(configs[0]?.headers, { authToken: "run-token-1" }), {
+    Authorization: "Bearer run-token-1",
+  });
 
   activeProjectId = "project-2";
   assertEquals(await resolveTestHeaders(configs[1]?.headers), {
@@ -470,7 +476,12 @@ Deno.test("createHostedProjectRemoteToolSources builds explicit MCP server lists
     "https://studio.example/mcp",
     "https://linear.example/mcp",
   ]);
-  assertEquals(configs[0]?.headers, { Authorization: "Bearer token-1" });
+  assertEquals(await resolveTestHeaders(configs[0]?.headers), {
+    Authorization: "Bearer token-1",
+  });
+  assertEquals(await resolveTestHeaders(configs[0]?.headers, { authToken: "run-token-1" }), {
+    Authorization: "Bearer run-token-1",
+  });
   assertEquals(configs[2]?.headers, { Authorization: "Bearer linear-token" });
 
   activeProjectId = "project-2";
