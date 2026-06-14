@@ -334,7 +334,8 @@ function applyManifestDependencies(
 
       return [
         specifier,
-        dependencyAssets.get(url) ?? dependencyAssets.get(canonicalDependencyUrl(url)) ?? url,
+        dependencyAssets.get(specifier) ?? dependencyAssets.get(url) ??
+          dependencyAssets.get(canonicalDependencyUrl(url)) ?? url,
       ];
     }),
   );

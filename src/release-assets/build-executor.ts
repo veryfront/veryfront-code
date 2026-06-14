@@ -24,6 +24,7 @@ import { transformToESM } from "#veryfront/transforms/esm-transform.ts";
 import { cacheHttpImportsToLocal } from "#veryfront/transforms/esm/http-cache.ts";
 import { extractSourceUrl } from "#veryfront/transforms/esm/source-url-embed.ts";
 import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
+import { getReactUrls } from "#veryfront/transforms/esm/package-registry.ts";
 import { PLATFORM_UTILITIES } from "#veryfront/html/utils.ts";
 import { extractCandidatesFromFiles } from "#veryfront/html/styles-builder/candidate-extractor.ts";
 import { sha256HexBytes } from "./hash.ts";
@@ -50,6 +51,13 @@ const BROWSER_MODULE_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
 /** Directories whose modules are part of the browser closure. */
 const BROWSER_MODULE_DIRS = ["pages/", "components/", "layouts/", "lib/", "src/"];
 const FRAMEWORK_MODULE_URL_PREFIX = "/_vf_modules/_veryfront/";
+const REACT_IMPORT_MAP_DEPENDENCIES = [
+  "react",
+  "react-dom",
+  "react-dom/client",
+  "react/jsx-runtime",
+  "react/jsx-dev-runtime",
+] as const;
 
 export interface ReleaseAssetBuildInput {
   /** Project reference (slug or id) used for API calls. */
@@ -417,6 +425,32 @@ function buildDependencyUrlMap(
   return urls;
 }
 
+function exposeDependencySpecifierAliases(
+  assets: Record<string, PreparedAsset>,
+  dependencyModules: Map<string, DependencyModule>,
+): Record<string, PreparedAsset> {
+  const aliased = { ...assets };
+  for (const dependency of dependencyModules.values()) {
+    const asset = assets[dependency.manifestKey];
+    if (!asset) continue;
+
+    for (const specifier of dependency.specifiers) {
+      const normalized = normalizeDependencySpecifier(specifier);
+      if (
+        normalized.startsWith("http://") ||
+        normalized.startsWith("https://") ||
+        normalized.startsWith("file://") ||
+        normalized.startsWith("./") ||
+        normalized.startsWith("../")
+      ) {
+        continue;
+      }
+      aliased[normalized] = asset;
+    }
+  }
+  return aliased;
+}
+
 function dependencyFallbackUrl(dependency: DependencyModule): string | null {
   if (
     dependency.manifestKey.startsWith("http://") ||
@@ -469,6 +503,61 @@ function addDependencyModule(
 
 function normalizeDependencySpecifier(specifier: string): string {
   return specifier.replace(/[?#].*$/, "");
+}
+
+function findDependencyModuleBySpecifier(
+  dependencies: Map<string, DependencyModule>,
+  specifier: string,
+): DependencyModule | null {
+  const normalized = normalizeDependencySpecifier(specifier);
+  const direct = dependencies.get(specifier) ?? dependencies.get(normalized);
+  if (direct) return direct;
+
+  for (const dependency of dependencies.values()) {
+    if (dependency.manifestKey === specifier || dependency.manifestKey === normalized) {
+      return dependency;
+    }
+    for (const dependencySpecifier of dependency.specifiers) {
+      if (normalizeDependencySpecifier(dependencySpecifier) === normalized) {
+        return dependency;
+      }
+    }
+  }
+
+  return null;
+}
+
+async function collectReactImportMapDependencyModules(
+  input: ReleaseAssetBuildInput,
+  tempDir: string,
+  vendorHttpImports: ReleaseAssetHttpDependencyVendor,
+  dependencies: Map<string, DependencyModule>,
+): Promise<void> {
+  const reactUrls = getReactUrls(input.reactVersion);
+  const entries: Array<readonly [string, string]> = [];
+  for (const specifier of REACT_IMPORT_MAP_DEPENDENCIES) {
+    const url = reactUrls[specifier];
+    if (url) entries.push([specifier, url] as const);
+  }
+
+  const source = entries.map(([, url]) => `import ${JSON.stringify(url)};`).join("\n");
+  if (!source) return;
+
+  const vendored = await vendorHttpImports(source, {
+    tempDir,
+    reactVersion: input.reactVersion,
+  });
+  for (const dependency of vendored.dependencies) {
+    addDependencyModule(dependencies, dependency);
+  }
+
+  for (const [specifier, url] of entries) {
+    const dependency = findDependencyModuleBySpecifier(dependencies, url);
+    if (!dependency) {
+      throw new Error(`React import-map dependency missing: ${specifier}`);
+    }
+    dependency.specifiers.add(specifier);
+  }
 }
 
 function resolveLocalDependencyPath(specifier: string, parentFilePath?: string): string | null {
@@ -1106,6 +1195,34 @@ async function runBuildInner(
     transformedModules.set(logicalPath, { logicalPath, code });
   }
 
+  try {
+    await collectReactImportMapDependencyModules(
+      input,
+      tempDir,
+      vendorHttpImports,
+      dependencyModules,
+    );
+  } catch (error) {
+    const sanitized = sanitizeError(error);
+    logger.warn("React import-map dependency vendoring failed during release asset build", {
+      error: sanitized,
+    });
+    await client.reportReleaseAssetManifestState(
+      input.releaseVersionRef,
+      "failed",
+      sanitized,
+    );
+    return {
+      success: false,
+      state: "failed",
+      moduleCount: 0,
+      cssCount: 0,
+      routeCount: 0,
+      gaps,
+      error: sanitized,
+    };
+  }
+
   const frameworkDependencies = await buildFrameworkDependencies(
     input,
     tempDir,
@@ -1145,6 +1262,7 @@ async function runBuildInner(
       error: sanitized,
     };
   }
+  httpDependencies = exposeDependencySpecifierAliases(httpDependencies, dependencyModules);
   const dependencies = { ...frameworkDependencies, ...httpDependencies };
   const dependencyUrls = buildDependencyUrlMap(dependencies, dependencyModules);
   for (const [specifier, url] of httpDependencyFallbackUrls) {
