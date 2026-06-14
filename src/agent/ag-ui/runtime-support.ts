@@ -18,12 +18,15 @@ function parseToolArguments(serializedArguments: string): Record<string, unknown
 export function normalizeAgUiRuntimeMessages(
   messages: AgUiRuntimeRequest["messages"],
 ): Message[] {
+  const toolNamesById = new Map<string, string>();
+
   return messages.map((message) => {
     const parts: Message["parts"] = [];
 
     switch (message.role) {
       case "system":
       case "user":
+        toolNamesById.clear();
         parts.push({ type: "text", text: message.content });
         break;
       case "assistant":
@@ -37,13 +40,14 @@ export function normalizeAgUiRuntimeMessages(
             toolName: toolCall.function.name,
             args: parseToolArguments(toolCall.function.arguments),
           });
+          toolNamesById.set(toolCall.id, toolCall.function.name);
         }
         break;
       case "tool":
         parts.push({
           type: "tool-result",
           toolCallId: message.toolCallId,
-          toolName: "unknown",
+          toolName: toolNamesById.get(message.toolCallId) ?? "unknown",
           result: message.error
             ? {
               content: message.content,

@@ -205,7 +205,10 @@ function shouldKeepProviderVisibleToolPart(
   return false;
 }
 
-function normalizeMessagePart(part: Record<string, unknown>): Message["parts"][number] | null {
+function normalizeMessagePart(
+  part: Record<string, unknown>,
+  toolNamesById: ReadonlyMap<string, string> = new Map(),
+): Message["parts"][number] | null {
   if (
     part.type === "text" && typeof part.text === "string" &&
     part.text.length <= MAX_TEXT_PART_LENGTH
@@ -254,7 +257,9 @@ function normalizeMessagePart(part: Record<string, unknown>): Message["parts"][n
     return {
       type: "tool-result",
       toolCallId: part.tool_call_id,
-      toolName: typeof part.tool_name === "string" ? part.tool_name : "unknown",
+      toolName: typeof part.tool_name === "string"
+        ? part.tool_name
+        : toolNamesById.get(part.tool_call_id) ?? "unknown",
       result: "output" in part ? part.output : undefined,
     };
   }
@@ -263,7 +268,9 @@ function normalizeMessagePart(part: Record<string, unknown>): Message["parts"][n
     return {
       type: "tool-result",
       toolCallId: part.toolCallId,
-      toolName: typeof part.toolName === "string" ? part.toolName : "unknown",
+      toolName: typeof part.toolName === "string"
+        ? part.toolName
+        : toolNamesById.get(part.toolCallId) ?? "unknown",
       result: "result" in part ? part.result : undefined,
     };
   }
@@ -284,6 +291,7 @@ function normalizeAssistantMessage(
   message: AgUiMessage,
   providerOwnedToolNames: ReadonlySet<string>,
   providerOwnedToolCallIds: Set<string>,
+  toolNamesById: Map<string, string>,
 ): Message[] {
   const messages: Message[] = [];
   const metadataFields = buildMessageMetadataFields(message);
@@ -303,8 +311,11 @@ function normalizeAssistantMessage(
   };
 
   for (const part of message.parts) {
-    const normalizedPart = normalizeMessagePart(part);
+    const normalizedPart = normalizeMessagePart(part, toolNamesById);
     if (!normalizedPart) continue;
+    if (normalizedPart.type !== "tool-result" && "toolCallId" in normalizedPart) {
+      toolNamesById.set(normalizedPart.toolCallId, normalizedPart.toolName);
+    }
 
     if (
       !shouldKeepProviderVisibleToolPart(
@@ -361,10 +372,12 @@ export function normalizeAgUiMessages(
 ): Message[] {
   const providerOwnedToolNames = new Set(options.providerOwnedToolNames ?? []);
   const providerOwnedToolCallIds = new Set<string>();
+  const toolNamesById = new Map<string, string>();
 
   return messages.flatMap((message) => {
     if (message.role === "user" || message.role === "system") {
       providerOwnedToolCallIds.clear();
+      toolNamesById.clear();
     }
 
     if (message.role === "assistant") {
@@ -372,6 +385,7 @@ export function normalizeAgUiMessages(
         message,
         providerOwnedToolNames,
         providerOwnedToolCallIds,
+        toolNamesById,
       );
     }
 
@@ -379,7 +393,7 @@ export function normalizeAgUiMessages(
       id: message.id,
       role: message.role,
       parts: message.parts
-        .map((part) => normalizeMessagePart(part))
+        .map((part) => normalizeMessagePart(part, toolNamesById))
         .filter((part): part is Message["parts"][number] => part !== null)
         .filter((part) =>
           shouldKeepProviderVisibleToolPart(

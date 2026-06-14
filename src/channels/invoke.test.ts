@@ -286,6 +286,34 @@ describe("channels/invoke", () => {
         timestamp: Date.parse("2026-03-13T10:00:00.000Z"),
       }]);
     });
+
+    it("infers tool result names from preceding persisted tool calls", () => {
+      const normalized = normalizeConversationHistoryForRuntime([
+        {
+          id: "msg-1",
+          role: "assistant",
+          parts: [
+            { type: "tool_call", id: "tool-1", name: "search", input: { query: "docs" } },
+            { type: "tool_result", tool_call_id: "tool-1", output: { answer: 42 } },
+          ],
+        },
+      ]);
+
+      assertEquals(normalized[0]?.parts, [
+        {
+          type: "tool-search",
+          toolCallId: "tool-1",
+          toolName: "search",
+          args: { query: "docs" },
+        },
+        {
+          type: "tool-result",
+          toolCallId: "tool-1",
+          toolName: "search",
+          result: { answer: 42 },
+        },
+      ]);
+    });
   });
 
   describe("listChannelAssistants", () => {
