@@ -72,6 +72,7 @@ describe("createHostedChatRuntimeAgentAdapter", () => {
       runtimeAgent,
       agentId: "agent-1",
       runId: "run-1",
+      authToken: "run-token-1",
       runStream: async (operation) => {
         runnerCalled = true;
         return await operation();
@@ -98,7 +99,8 @@ describe("createHostedChatRuntimeAgentAdapter", () => {
     assertEquals(capturedInput?.context?.abortSignal, abortController.signal);
     assertEquals(capturedInput?.context?.agentId, "agent-1");
     assertEquals(capturedInput?.context?.runId, "run-1");
-    assertEquals(chunks, [
+    assertEquals(capturedInput?.context?.authToken, "run-token-1");
+    const expectedChunks = [
       { type: "start", messageId: "assistant-message" },
       { type: "start-step" },
       { type: "text-start", id: "assistant-message", contentId: "text-1" },
@@ -111,7 +113,8 @@ describe("createHostedChatRuntimeAgentAdapter", () => {
       { type: "finish-step" },
       { type: "text-end", id: "assistant-message", contentId: "text-1" },
       { type: "finish", finishReason: "stop" },
-    ]);
+    ] as unknown as ChatUiMessageChunk[];
+    assertEquals(chunks, expectedChunks);
   });
 
   it("bridges host-published tool data events into the UI message stream", async () => {

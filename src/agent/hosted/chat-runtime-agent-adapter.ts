@@ -23,6 +23,7 @@ export type HostedChatRuntimeAgentAdapterInput = {
   runtimeAgent: Pick<Agent, "stream">;
   runId?: string;
   agentId?: string;
+  authToken?: string;
   runStream?: HostedChatRuntimeAgentAdapterRunner;
   warnOrphanedToolInput?: (
     message: string,
@@ -49,6 +50,7 @@ export function createHostedChatRuntimeAgentAdapter(
           context: {
             ...(input.runId ? { runId: input.runId } : {}),
             ...(input.agentId ? { agentId: input.agentId } : {}),
+            ...(input.authToken ? { authToken: input.authToken } : {}),
             abortSignal: streamInput.abortSignal,
             publishDataEvent: (event: ToolExecutionDataEvent) => publishDataEvent(event),
           },
