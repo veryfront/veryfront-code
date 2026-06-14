@@ -235,6 +235,9 @@ async function generateHTMLShellPartsImpl(
   const useDevScripts = !options.forceProductionScripts && (isLocalProject || isPreviewMode);
   const releaseManifest = options.studioEmbed
     ? null
+    : "releaseAssetManifest" in options
+    ? (options as HTMLGenerationOptions & { releaseAssetManifest?: ReleaseAssetManifest | null })
+      .releaseAssetManifest ?? null
     : await profilePhase("html.release_asset_manifest", () =>
       getReadyManifestForRenderAsync(options.releaseId));
 

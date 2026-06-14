@@ -1,6 +1,16 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { buildRenderCachePrefix } from "#veryfront/cache/keys.ts";
+import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
+import {
+  clearReleaseAssetManifestCache,
+  configureReleaseAssetManifestFetcher,
+} from "#veryfront/release-assets/manifest-cache.ts";
+import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
+import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import type { CachePayload, CacheStore } from "./cache/types.ts";
+import type { RenderContext } from "./context/render-context.ts";
 import { destroyRenderer, getRenderer, initializeRenderer, Renderer } from "./renderer.ts";
 
 function getEnv(name: string): string | undefined {
@@ -49,6 +59,73 @@ function createProjectSlotManager(limit: number) {
   }
 
   return { acquire, release, getCount, getCounts };
+}
+
+function createInMemoryStore(): CacheStore & { data: Map<string, CachePayload> } {
+  const data = new Map<string, CachePayload>();
+  return {
+    data,
+    get: (key: string) => Promise.resolve(data.get(key)),
+    set(key: string, value: CachePayload) {
+      data.set(key, value);
+      return Promise.resolve();
+    },
+    delete(key: string) {
+      data.delete(key);
+      return Promise.resolve();
+    },
+    deleteByPrefix(prefix: string) {
+      let deleted = 0;
+      for (const key of data.keys()) {
+        if (!key.startsWith(prefix)) continue;
+        data.delete(key);
+        deleted++;
+      }
+      return Promise.resolve(deleted);
+    },
+    clear() {
+      data.clear();
+      return Promise.resolve();
+    },
+    destroy() {
+      data.clear();
+      return Promise.resolve();
+    },
+  };
+}
+
+function makeReadyManifest(): ReleaseAssetManifest {
+  return {
+    schemaVersion: 1,
+    projectId: "proj-1",
+    releaseId: "rel-1",
+    releaseVersion: 1,
+    manifestVersion: 1,
+    builderVersion: "0.1.799",
+    sourceContentHash: "",
+    createdAt: "2026-06-14T00:00:00.000Z",
+    assetBasePath: "/_vf/assets",
+    modules: {},
+    css: [],
+    routes: {},
+    dependencies: {},
+    fallback: { mode: "jit", gaps: [] },
+  };
+}
+
+function makeRenderContext(): RenderContext {
+  return {
+    projectId: "proj-1",
+    projectSlug: "proj-1",
+    projectDir: "/project",
+    config: {} as RenderContext["config"],
+    mode: "production",
+    adapter: {} as RenderContext["adapter"],
+    cachePrefix: buildRenderCachePrefix("proj-1", "production", "rel-1"),
+    environment: "production",
+    contentSourceId: "release-rel-1",
+    releaseId: "rel-1",
+  };
 }
 
 describe("Renderer helpers", () => {
@@ -168,6 +245,100 @@ describe("Renderer helpers", () => {
     it("should parse default max concurrent as 30", () => {
       assertEquals(parseInt("30", 10), 30);
     });
+  });
+});
+
+describe("Renderer release asset cache isolation", () => {
+  const originalManifestFlag = getHostEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG);
+
+  afterEach(() => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, originalManifestFlag ?? "");
+    configureReleaseAssetManifestFetcher(undefined);
+    clearReleaseAssetManifestCache();
+  });
+
+  it("checks the manifest-versioned cache prefix after awaiting a ready manifest", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    configureReleaseAssetManifestFetcher(() =>
+      Promise.resolve({ state: "ready", manifest: makeReadyManifest() })
+    );
+
+    const store = createInMemoryStore();
+    const manifestPrefix = buildRenderCachePrefix("proj-1", "production", "rel-1", 1);
+    store.data.set(`${manifestPrefix}:page:/cached`, {
+      result: {
+        html: "<html>manifest cache hit</html>",
+        frontmatter: {},
+        headings: [],
+        stream: null,
+        ssrHash: "cached",
+      },
+      storedAt: Date.now(),
+    });
+
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    (renderer as unknown as {
+      createServicesForContext: () => never;
+    }).createServicesForContext = () => {
+      throw new Error("renderer should hit the manifest-versioned cache");
+    };
+
+    const result = await renderer.renderPage("/cached", makeRenderContext(), {
+      environment: "production",
+      releaseId: "rel-1",
+    });
+
+    assertEquals(result.html, "<html>manifest cache hit</html>");
+  });
+
+  it("persists rendered HTML under the manifest-versioned cache prefix", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    configureReleaseAssetManifestFetcher(() =>
+      Promise.resolve({ state: "ready", manifest: makeReadyManifest() })
+    );
+
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: { releaseAssetManifest?: ReleaseAssetManifest | null },
+          ) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (_slug, options) => {
+          assertEquals(options?.releaseAssetManifest?.manifestVersion, 1);
+          return Promise.resolve({
+            html: "<html>fresh manifest render</html>",
+            frontmatter: {},
+            headings: [],
+            stream: null,
+          });
+        },
+      },
+    });
+
+    const result = await renderer.renderPage("/fresh", makeRenderContext(), {
+      environment: "production",
+      releaseId: "rel-1",
+    });
+
+    const manifestPrefix = buildRenderCachePrefix("proj-1", "production", "rel-1", 1);
+    const jitPrefix = buildRenderCachePrefix("proj-1", "production", "rel-1");
+    assertEquals(result.html, "<html>fresh manifest render</html>");
+    assertEquals(store.data.has(`${manifestPrefix}:page:/fresh`), true);
+    assertEquals(store.data.has(`${jitPrefix}:page:/fresh`), false);
   });
 });
 

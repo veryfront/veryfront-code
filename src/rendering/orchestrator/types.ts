@@ -2,6 +2,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { RenderResult } from "#veryfront/types";
 import type { BuildVersion } from "#veryfront/utils/version.ts";
+import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 
 export type { RenderResult };
 
@@ -50,6 +51,8 @@ export interface RenderOptions {
   contentSourceId?: string;
   /** Release ID for production renders (drives release asset manifest consumption) */
   releaseId?: string;
+  /** Request-scoped ready release asset manifest, shared by cache keys and HTML generation. */
+  releaseAssetManifest?: ReleaseAssetManifest | null;
   /** Skip cache check in pipeline (cache already checked by Renderer) */
   skipCacheCheck?: boolean;
   /** Skip cache persistence (used for prefetch/aux renders like CSS generation) */

@@ -226,6 +226,7 @@ export class HTMLGenerator {
       buildImportMapJson({
         projectDir: this.config.projectDir,
         config: this.config.config,
+        releaseAssetManifest: context.options?.releaseAssetManifest,
       }),
     ]);
 
@@ -480,6 +481,7 @@ export class HTMLGenerator {
       isLocalProject: this.config.mode === "development",
       noHmr: context.options?.noHmr,
       forceProductionScripts: context.options?.forceProductionScripts,
+      releaseAssetManifest: context.options?.releaseAssetManifest,
     }));
   }
 
