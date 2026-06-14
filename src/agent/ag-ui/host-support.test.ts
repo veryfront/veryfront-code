@@ -183,6 +183,190 @@ describe("agent/ag-ui-host-support", () => {
     ]);
   });
 
+  it("infers stored snake_case tool-result names from preceding tool calls", () => {
+    const messages = normalizeAgUiMessages([
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool_call",
+            id: "tool-1",
+            name: "harvest__list_users",
+            input: { accountId: "2029314" },
+            state: "completed",
+          },
+          {
+            type: "tool_result",
+            tool_call_id: "tool-1",
+            output: { users: [{ id: 1, name: "Ada" }] },
+          },
+        ],
+      },
+    ]);
+
+    assertEquals(messages, [
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-call",
+            toolCallId: "tool-1",
+            toolName: "harvest__list_users",
+            args: { accountId: "2029314" },
+          },
+          {
+            type: "tool-result",
+            toolCallId: "tool-1",
+            toolName: "harvest__list_users",
+            result: { users: [{ id: 1, name: "Ada" }] },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("infers camelCase tool-result names from preceding tool calls", () => {
+    const messages = normalizeAgUiMessages([
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-call",
+            toolCallId: "tool-1",
+            toolName: "search_docs",
+            args: { query: "docs" },
+          },
+          {
+            type: "tool-result",
+            toolCallId: "tool-1",
+            result: { matches: 2 },
+          },
+        ],
+      },
+    ]);
+
+    assertEquals(messages[0]?.parts, [
+      {
+        type: "tool-call",
+        toolCallId: "tool-1",
+        toolName: "search_docs",
+        args: { query: "docs" },
+      },
+      {
+        type: "tool-result",
+        toolCallId: "tool-1",
+        toolName: "search_docs",
+        result: { matches: 2 },
+      },
+    ]);
+  });
+
+  it("infers tool-result names across assistant and tool messages", () => {
+    const messages = normalizeAgUiMessages([
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{
+          type: "tool_call",
+          id: "tool-1",
+          name: "harvest__list_users",
+          input: { accountId: "2029314" },
+        }],
+      },
+      {
+        id: "tool-1-result",
+        role: "tool",
+        parts: [{
+          type: "tool_result",
+          tool_call_id: "tool-1",
+          output: { users: [{ id: 1, name: "Ada" }] },
+        }],
+      },
+    ]);
+
+    assertEquals(messages[1]?.parts, [{
+      type: "tool-result",
+      toolCallId: "tool-1",
+      toolName: "harvest__list_users",
+      result: { users: [{ id: 1, name: "Ada" }] },
+    }]);
+  });
+
+  it("keeps unknown for tool results without a preceding call", () => {
+    const messages = normalizeAgUiMessages([
+      {
+        id: "tool-1-result",
+        role: "tool",
+        parts: [{ type: "tool_result", tool_call_id: "tool-1", output: { ok: true } }],
+      },
+    ]);
+
+    assertEquals(messages[0]?.parts, [{
+      type: "tool-result",
+      toolCallId: "tool-1",
+      toolName: "unknown",
+      result: { ok: true },
+    }]);
+  });
+
+  it("does not infer tool-result names across user boundaries", () => {
+    const messages = normalizeAgUiMessages([
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{
+          type: "tool_call",
+          id: "tool-1",
+          name: "search_docs",
+          input: { query: "docs" },
+        }],
+      },
+      { id: "user-2", role: "user", parts: [{ type: "text", text: "new turn" }] },
+      {
+        id: "tool-1-result",
+        role: "tool",
+        parts: [{ type: "tool_result", tool_call_id: "tool-1", output: { matches: 2 } }],
+      },
+    ]);
+
+    assertEquals(messages[2]?.parts, [{
+      type: "tool-result",
+      toolCallId: "tool-1",
+      toolName: "unknown",
+      result: { matches: 2 },
+    }]);
+  });
+
+  it("infers tool-result names from preceding tool-prefixed call parts", () => {
+    const messages = normalizeAgUiMessages([
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{
+          type: "tool-search_docs",
+          toolCallId: "tool-1",
+          toolName: "search_docs",
+          input: { query: "docs" },
+        }],
+      },
+      {
+        id: "tool-1-result",
+        role: "tool",
+        parts: [{ type: "tool_result", tool_call_id: "tool-1", output: { matches: 2 } }],
+      },
+    ]);
+
+    assertEquals(messages[1]?.parts, [{
+      type: "tool-result",
+      toolCallId: "tool-1",
+      toolName: "search_docs",
+      result: { matches: 2 },
+    }]);
+  });
+
   it("preserves tool outputs stored on assistant tool parts as tool messages", () => {
     const messages = normalizeAgUiMessages([
       {

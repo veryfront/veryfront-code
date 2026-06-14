@@ -222,6 +222,7 @@ export { verifyDispatchJws, verifyDispatchJwsSignature } from "./control-plane.t
 
 function normalizeConversationPart(
   part: InferSchema<ReturnType<typeof getRawHistoryPartSchema>>,
+  toolNamesById: ReadonlyMap<string, string> = new Map(),
 ): Message["parts"][number] | null {
   if (part.type === "text" && typeof part.text === "string") {
     return { type: "text", text: part.text };
@@ -247,7 +248,9 @@ function normalizeConversationPart(
     return {
       type: "tool-result",
       toolCallId: part.tool_call_id,
-      toolName: typeof part.tool_name === "string" ? part.tool_name : "unknown",
+      toolName: typeof part.tool_name === "string"
+        ? part.tool_name
+        : toolNamesById.get(part.tool_call_id) ?? "unknown",
       result: "output" in part ? part.output : undefined,
     };
   }
@@ -259,15 +262,33 @@ function normalizeConversationPart(
 export function normalizeConversationHistoryForRuntime(
   messages: ChannelInvokeRequest["conversationHistory"],
 ): Message[] {
-  return messages.map((message): Message => ({
-    id: message.id,
-    role: message.role,
-    parts: message.parts
-      .map((part) => normalizeConversationPart(part))
-      .filter((part): part is NonNullable<typeof part> => part !== null),
-    ...(message.createdAt ? { timestamp: Date.parse(message.createdAt) || undefined } : {}),
-    ...(message.metadata ? { metadata: message.metadata } : {}),
-  }));
+  const toolNamesById = new Map<string, string>();
+
+  return messages.map((message): Message => {
+    if (message.role === "user" || message.role === "system") {
+      toolNamesById.clear();
+    }
+
+    const parts = message.parts
+      .map((part) => {
+        const normalizedPart = normalizeConversationPart(part, toolNamesById);
+        if (
+          normalizedPart?.type !== "tool-result" && normalizedPart && "toolCallId" in normalizedPart
+        ) {
+          toolNamesById.set(normalizedPart.toolCallId, normalizedPart.toolName);
+        }
+        return normalizedPart;
+      })
+      .filter((part): part is NonNullable<typeof part> => part !== null);
+
+    return {
+      id: message.id,
+      role: message.role,
+      parts,
+      ...(message.createdAt ? { timestamp: Date.parse(message.createdAt) || undefined } : {}),
+      ...(message.metadata ? { metadata: message.metadata } : {}),
+    };
+  });
 }
 
 /** Resolves channel invoke agent. */
