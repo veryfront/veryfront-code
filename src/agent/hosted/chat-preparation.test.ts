@@ -308,6 +308,115 @@ Deno.test("prepareHostedChatExecution prepares root run, runtime, and final mess
   ]);
 });
 
+Deno.test("prepareHostedChatExecution preserves allowed remote tool history", async () => {
+  const messages: ChatUiMessage[] = [
+    {
+      id: "user-1",
+      role: "user",
+      parts: [{ type: "text", text: "Check my Harvest account." }],
+    },
+    {
+      id: "assistant-1",
+      role: "assistant",
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolName: "harvest__list_accounts",
+          toolCallId: "toolu_harvest_accounts",
+          input: {},
+          state: "output-available",
+          output: {
+            accounts: [{ id: "acct-1", name: "Test Account", product: "harvest" }],
+            summary: { count: 1 },
+          },
+        },
+      ],
+    },
+    {
+      id: "tool-1",
+      role: "tool",
+      parts: [
+        {
+          type: "tool-harvest__list_accounts",
+          toolCallId: "toolu_harvest_accounts",
+          toolName: "harvest__list_accounts",
+          input: {},
+          state: "output-available",
+          output: {
+            accounts: [{ id: "acct-1", name: "Test Account", product: "harvest" }],
+            summary: { count: 1 },
+          },
+        },
+      ],
+    },
+    {
+      id: "user-2",
+      role: "user",
+      parts: [{ type: "text", text: "Use that account." }],
+    },
+  ];
+
+  const result = await prepareHostedChatExecution({
+    request: createParsedHostedChatRequest({
+      messages,
+      conversationId: "conversation-1",
+      projectId: "project-1",
+      durableRootRun: {
+        runId: "run-1",
+        messageId: "message-1",
+        latestEventId: 3,
+        latestExternalEventSequence: 2,
+      },
+    }),
+    agentConfig: {
+      id: "agent-1",
+      model: "configured-model",
+      allowedRemoteTools: ["harvest__list_accounts"],
+    },
+    apiUrl: "https://api.example.com",
+    abortSignal: new AbortController().signal,
+    resolveModelId: (modelId) => modelId,
+    fetchSteering: () =>
+      Promise.resolve({
+        instructions: "Project instructions",
+        skills: [],
+      }),
+    buildInstructions: (input) => input.instructions,
+    createRuntime: (options) =>
+      Promise.resolve({
+        runtimeKind: "framework",
+        modelId: options.model ?? "configured-model",
+        cleanup: () => Promise.resolve(),
+        agent: {
+          stream: () =>
+            Promise.resolve({
+              steps: Promise.resolve([]),
+              toUIMessageStream: async function* () {},
+            }),
+        },
+      }),
+  });
+
+  assertEquals(
+    result.finalMessages.some((message) =>
+      message.parts.some((part) =>
+        part.type === "tool-result" &&
+        part.toolName === "harvest__list_accounts" &&
+        "result" in part &&
+        typeof part.result === "object" &&
+        part.result !== null &&
+        "type" in part.result &&
+        part.result.type === "json" &&
+        "value" in part.result &&
+        typeof part.result.value === "object" &&
+        part.result.value !== null &&
+        "accounts" in part.result.value
+      )
+    ),
+    true,
+  );
+});
+
 Deno.test("prepareHostedChatExecution compacts oversized context and appends a durable event", async () => {
   const originalFetch = globalThis.fetch;
   const appendedBodies: unknown[] = [];
