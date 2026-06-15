@@ -19,6 +19,14 @@ export const state: MetricsState = {
   cacheMisses: 0,
   cacheSets: 0,
   cacheInvalidations: 0,
+  moduleServeTotal: 0,
+  moduleServeOk: 0,
+  moduleServeNotFound: 0,
+  moduleServeError: 0,
+  moduleTransformTotal: 0,
+  moduleTransformDurationMsTotal: 0,
+  routeManifestLruHits: 0,
+  routeManifestLruMisses: 0,
   ssrHistogram: undefined,
   rscStreamHistogram: undefined,
   corsRejections: 0,
@@ -64,6 +72,14 @@ export function createSnapshot(): VeryfrontMetrics {
     cacheMisses: state.cacheMisses,
     cacheSets: state.cacheSets,
     cacheInvalidations: state.cacheInvalidations,
+    moduleServeTotal: state.moduleServeTotal,
+    moduleServeOk: state.moduleServeOk,
+    moduleServeNotFound: state.moduleServeNotFound,
+    moduleServeError: state.moduleServeError,
+    moduleTransformTotal: state.moduleTransformTotal,
+    moduleTransformDurationMsTotal: state.moduleTransformDurationMsTotal,
+    routeManifestLruHits: state.routeManifestLruHits,
+    routeManifestLruMisses: state.routeManifestLruMisses,
     corsRejections: state.corsRejections,
     securityHeadersApplied: state.securityHeadersApplied,
     apiRequests2xx: state.apiRequests2xx,
@@ -110,6 +126,14 @@ export function resetMetrics(): void {
   state.cacheMisses = 0;
   state.cacheSets = 0;
   state.cacheInvalidations = 0;
+  state.moduleServeTotal = 0;
+  state.moduleServeOk = 0;
+  state.moduleServeNotFound = 0;
+  state.moduleServeError = 0;
+  state.moduleTransformTotal = 0;
+  state.moduleTransformDurationMsTotal = 0;
+  state.routeManifestLruHits = 0;
+  state.routeManifestLruMisses = 0;
   state.corsRejections = 0;
   state.securityHeadersApplied = 0;
   state.apiRequests2xx = 0;

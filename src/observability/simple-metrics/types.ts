@@ -42,6 +42,14 @@ export interface VeryfrontMetrics {
   cacheMisses: number;
   cacheSets: number;
   cacheInvalidations: number;
+  moduleServeTotal: number;
+  moduleServeOk: number;
+  moduleServeNotFound: number;
+  moduleServeError: number;
+  moduleTransformTotal: number;
+  moduleTransformDurationMsTotal: number;
+  routeManifestLruHits: number;
+  routeManifestLruMisses: number;
   ssrHistogram?: { boundaries: number[]; counts: number[] };
   corsRejections: number;
   securityHeadersApplied: number;
@@ -78,4 +86,8 @@ export interface OtelInstruments {
   cacheMissCounter?: Counter;
   cacheSetCounter?: Counter;
   cacheInvalidateCounter?: Counter;
+  moduleServeCounter?: Counter;
+  moduleTransformCounter?: Counter;
+  moduleTransformDurationHistogram?: Histogram;
+  routeManifestLookupCounter?: Counter;
 }

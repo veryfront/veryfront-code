@@ -41,13 +41,16 @@ export {
   recordContentNetworkFetch,
   recordCorsRejection,
   recordHttp,
+  recordModuleServe,
+  recordModuleTransform,
+  recordRouteManifestLookup,
   recordRSC,
   recordRSCStreamDuration,
   recordSecurityHeaders,
   recordSSR,
 } from "./metrics-recorder.ts";
 
-export type { ContentCacheLayer } from "./metrics-recorder.ts";
+export type { ContentCacheLayer, ModuleServeStatus } from "./metrics-recorder.ts";
 
 import {
   incRequest,
@@ -60,6 +63,9 @@ import {
   recordContentNetworkFetch,
   recordCorsRejection,
   recordHttp,
+  recordModuleServe,
+  recordModuleTransform,
+  recordRouteManifestLookup,
   recordRSC,
   recordRSCStreamDuration,
   recordSecurityHeaders,
@@ -82,6 +88,9 @@ export const metrics = {
   recordApiRetry,
   recordContentCacheHit,
   recordContentNetworkFetch,
+  recordModuleServe,
+  recordModuleTransform,
+  recordRouteManifestLookup,
   snapshot: createSnapshot,
   reset: resetMetrics,
   getRequestCount,
