@@ -4,6 +4,7 @@
 
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
 import type { Tool, ToolExecutionContext } from "#veryfront/tool";
+import type { WorkReference } from "#veryfront/work";
 import { INVALID_ARGUMENT } from "#veryfront/errors/error-registry.ts";
 import type { Memory } from "./memory/memory-interface.ts";
 
@@ -206,6 +207,13 @@ export interface AgentConfig {
    * and registers the skill tools.
    */
   skills?: true | string[];
+  /**
+   * Business process definitions this agent is expected to observe and update.
+   *
+   * Work is outcome/state context, not workflow control flow. Use source
+   * declarations from work/ and persist executions through Work tools.
+   */
+  work?: WorkReference | WorkReference[];
   suggestions?: Suggestions;
   /** Set to false to disable the default security middleware */
   security?: false;

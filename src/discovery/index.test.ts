@@ -44,6 +44,7 @@ describe("src/discovery/index", () => {
         resourceDirs: ["resources"],
         promptDirs: ["prompts"],
         workflowDirs: ["workflows"],
+        workDirs: ["work"],
         verbose: true,
       };
 
@@ -61,6 +62,7 @@ describe("src/discovery/index", () => {
         resources: new Map(),
         prompts: new Map(),
         workflows: new Map(),
+        works: new Map(),
         tasks: new Map(),
         errors: [],
       };
@@ -70,6 +72,7 @@ describe("src/discovery/index", () => {
       assertEquals(result.resources.size, 0);
       assertEquals(result.prompts.size, 0);
       assertEquals(result.workflows.size, 0);
+      assertEquals(result.works.size, 0);
       assertEquals(result.tasks.size, 0);
       assertEquals(result.errors.length, 0);
     });

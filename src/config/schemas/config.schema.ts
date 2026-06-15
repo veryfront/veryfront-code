@@ -473,6 +473,18 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
             })
             .partial()
             .optional(),
+          work: v
+            .object({
+              discovery: v
+                .object({
+                  enabled: v.boolean().optional(),
+                  paths: v.array(v.string()).optional(),
+                })
+                .partial()
+                .optional(),
+            })
+            .partial()
+            .optional(),
           tasks: v
             .object({
               discovery: v

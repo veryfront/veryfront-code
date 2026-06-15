@@ -37,4 +37,5 @@ order: 1
 | [`veryfront/testing`](./veryfront/testing.md) | Test utilities. |
 | [`veryfront/tool`](./veryfront/tool.md) | Tool definitions and execution. |
 | [`veryfront/utils`](./veryfront/utils.md) | Runtime utilities. |
+| [`veryfront/work`](./veryfront/work.md) | Business process outcome definitions. |
 | [`veryfront/workflow`](./veryfront/workflow.md) | Workflows. |

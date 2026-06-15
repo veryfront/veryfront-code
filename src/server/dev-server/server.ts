@@ -289,6 +289,7 @@ export class DevServer {
       resourceDirs: ["resources"],
       promptDirs: ["prompts"],
       workflowDirs: ["workflows"],
+      workDirs: ["work"],
       fsAdapter: this.adapter.fs,
       verbose: this.isDebug(),
     };
@@ -299,11 +300,13 @@ export class DevServer {
       const config = this.buildDiscoveryConfig();
       const result = await discoverAll(config);
       const total = result.tools.size + result.agents.size + result.skills.size +
-        result.workflows.size + result.prompts.size + result.resources.size;
+        result.workflows.size + result.works.size + result.prompts.size +
+        result.resources.size;
       if (total > 0) {
         logger.debug(
           `[Discovery] Registered ${result.tools.size} tools, ${result.agents.size} agents, ` +
             `${result.skills.size} skills, ${result.workflows.size} workflows, ` +
+            `${result.works.size} Work definitions, ` +
             `${result.prompts.size} prompts, ${result.resources.size} resources`,
         );
       }

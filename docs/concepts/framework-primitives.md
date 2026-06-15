@@ -21,6 +21,7 @@ that explains the work clearly.
 | [Skill](./skill.md)                     | Reusable agent instructions and tool policy.    |
 | [Prompt](./prompt.md)                   | Reusable instruction templates.                 |
 | [Resource](./resource.md)               | Readable project data for MCP.                  |
+| [Work](./work.md)                       | Business process outcomes and criteria.         |
 | [Task](./task.md)                       | A background work target.                       |
 | [Workflow](./workflow.md)               | Multi-step coordination.                        |
 | [Run](./run.md)                         | Durable execution of work.                      |
@@ -40,8 +41,9 @@ response. A task can run slow background work. An agent can reason about a
 user-facing decision. A skill can give the agent task-specific instructions.
 
 This keeps the project understandable. The app owns entry points. Agents own
-model decisions. Tools own deterministic actions. Workflows own process. Runs own
-durable execution. Extensions own replaceable runtime infrastructure.
+model decisions. Tools own deterministic actions. Work owns business process
+state. Workflows own automation logic. Runs own durable execution. Extensions
+own replaceable runtime infrastructure.
 
 For task-focused selection, see [Choose a primitive](../guides/choose-a-primitive.md).
 For exact agent runtime APIs, see

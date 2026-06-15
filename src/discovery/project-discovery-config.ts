@@ -9,6 +9,7 @@ export const DEFAULT_PROJECT_DISCOVERY_DIRS = {
   resourceDirs: ["resources"],
   promptDirs: ["prompts"],
   workflowDirs: ["workflows"],
+  workDirs: ["work"],
   taskDirs: ["tasks"],
 };
 
@@ -31,6 +32,7 @@ export type ProjectDiscoveryConfig = DiscoveryConfig & {
   resourceDirs: string[];
   promptDirs: string[];
   workflowDirs: string[];
+  workDirs: string[];
   taskDirs: string[];
 };
 
@@ -78,6 +80,10 @@ export function createProjectDiscoveryConfig(
     workflowDirs: resolveDiscoveryPaths(
       aiConfig?.workflows?.discovery,
       DEFAULT_PROJECT_DISCOVERY_DIRS.workflowDirs,
+    ),
+    workDirs: resolveDiscoveryPaths(
+      aiConfig?.work?.discovery,
+      DEFAULT_PROJECT_DISCOVERY_DIRS.workDirs,
     ),
     taskDirs: resolveDiscoveryPaths(
       aiConfig?.tasks?.discovery,

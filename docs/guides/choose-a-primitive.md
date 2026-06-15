@@ -17,6 +17,7 @@ clear and prevents overlapping agents, workflows, runs, and integrations.
 | Package reusable agent behavior                             | Skill                  | [Skills](./skills.md)                       |
 | Reuse assistant instructions                                | Prompt                 | [MCP server](./mcp-server.md)               |
 | Expose readable context to assistants                       | Resource               | [MCP server](./mcp-server.md)               |
+| Define a business process outcome and observable done state | Work                   | [Work](../concepts/work.md)                 |
 | Define project-owned background work                        | Task                   | [Tasks](./tasks.md)                         |
 | Coordinate multiple steps, branches, approvals, or retries  | Workflow               | [Workflows](./workflows.md)                 |
 | Run durable background work now or on a schedule            | Run or schedule        | [Runs](./runs.md)                           |
@@ -35,6 +36,7 @@ clear and prevents overlapping agents, workflows, runs, and integrations.
 | Skill       | An agent needs reusable instructions, references, scripts, and tool policy.   | The work is deterministic or needs durable process state.                     |
 | Prompt      | An assistant needs reusable instruction text.                                 | The project needs to execute code or read data.                               |
 | Resource    | An assistant needs readable project context.                                  | The operation changes state or starts work.                                   |
+| Work        | You need business outcome criteria and execution observability.               | You need to prescribe automation sequence, retries, branches, or scheduling.  |
 | Task        | You own a reusable background function in `tasks/`.                           | The user needs conversational reasoning or streaming output.                  |
 | Workflow    | Work has ordered steps, parallel branches, retries, or human review.          | A single agent response or one background function is enough.                 |
 | Run         | You need durable execution, scheduling, batch status, or run history.         | The work can finish inside a request without durability.                      |
@@ -52,6 +54,7 @@ clear and prevents overlapping agents, workflows, runs, and integrations.
 | Nightly sync from an external API      | Task + schedule + optional integration credentials |
 | Assistant help with a repeatable task  | Agent + skill + optional tools                     |
 | Assistant reads project context        | MCP server + resources                             |
+| Observable invoice processing          | Work + agent + Work execution tools                |
 | User-authorized GitHub automation      | Integration + OAuth + tools                        |
 | Assistant-accessible project commands  | MCP server + tools                                 |
 | Isolated repo inspection or code edits | Agent + sandbox + tools                            |

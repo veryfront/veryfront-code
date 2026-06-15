@@ -260,6 +260,7 @@ function hasDiscoveryRoot(baseDir: string): boolean {
     ...DEFAULT_PROJECT_DISCOVERY_DIRS.resourceDirs,
     ...DEFAULT_PROJECT_DISCOVERY_DIRS.promptDirs,
     ...DEFAULT_PROJECT_DISCOVERY_DIRS.workflowDirs,
+    ...DEFAULT_PROJECT_DISCOVERY_DIRS.workDirs,
     ...DEFAULT_PROJECT_DISCOVERY_DIRS.taskDirs,
   ];
 

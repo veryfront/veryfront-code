@@ -116,6 +116,8 @@
       "#veryfront/types/*": ["./src/types/*"],
       "#veryfront/utils": ["./src/utils/index.ts"],
       "#veryfront/utils/*": ["./src/utils/*"],
+      "#veryfront/work": ["./src/work/index.ts"],
+      "#veryfront/work/*": ["./src/work/*"],
       "#veryfront/workflow": ["./src/workflow/index.ts"],
       "#veryfront/workflow/*": ["./src/workflow/*"],
       "#veryfront/proxy/*": ["./src/proxy/*"],
