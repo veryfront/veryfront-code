@@ -81,6 +81,8 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
   ) {
     const fileInputRef = React.useRef<HTMLInputElement>(null!);
     const [attachmentMenuOpen, setAttachmentMenuOpen] = React.useState(false);
+    const inputPlaceholder = isListening ? "Listening..." : placeholder;
+    const inputLabel = inputPlaceholder || "Message";
 
     return (
       <div
@@ -193,7 +195,8 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
                   value={isListening ? transcript || input : input}
                   onChange={onChange}
                   onSubmit={() => onSubmit?.()}
-                  placeholder={isListening ? "Listening..." : placeholder}
+                  placeholder={inputPlaceholder}
+                  aria-label={inputLabel}
                   disabled={isLoading || isListening}
                   multiline
                   className={cn(

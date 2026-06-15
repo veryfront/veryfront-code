@@ -37,9 +37,14 @@ function normalizeImportMapForRuntime(importMap: ImportMapConfig): ImportMapConf
   // Override React mappings AFTER all other processing to ensure single instance.
   // Remove any "react/" prefix match since we have explicit mappings.
   if (imports) {
+    const veryfrontSsrMap = Object.fromEntries(
+      Object.entries(getDefaultImportMap().imports ?? {}).filter(([key]) =>
+        key.startsWith("veryfront/")
+      ),
+    );
     const reactMap = getReactImportMap();
     delete imports["react/"];
-    imports = { ...imports, ...reactMap };
+    imports = { ...imports, ...veryfrontSsrMap, ...reactMap };
   }
 
   return { imports, scopes };

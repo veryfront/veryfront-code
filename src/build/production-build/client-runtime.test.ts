@@ -105,6 +105,15 @@ describe(
             "client runtime bundle should resolve internal aliases before browser delivery",
           );
         });
+
+        it("should match a freshly generated source bundle", async () => {
+          const sourceBundle = await generateClientModule({ forceSourceBundle: true });
+          assertEquals(
+            result,
+            sourceBundle,
+            "embedded router bundle should match source generation output",
+          );
+        });
       },
     );
 
@@ -184,6 +193,18 @@ describe(
             "prefetch script should differ from router script",
           );
         });
+
+        it("should match a freshly generated source bundle", async () => {
+          // deno-lint-ignore no-explicit-any
+          const sourceBundle = await generatePrefetchScript(null as any, {
+            forceSourceBundle: true,
+          });
+          assertEquals(
+            result,
+            sourceBundle,
+            "embedded prefetch bundle should match source generation output",
+          );
+        });
       },
     );
 
@@ -204,7 +225,7 @@ describe(
         const jsonMatch = importMap.match(/<script type="importmap">\s*([\s\S]*?)\s*<\/script>/);
         assertEquals(jsonMatch !== null, true);
         if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[1]);
+          const parsed = JSON.parse(jsonMatch[1]!);
           assertEquals(typeof parsed.imports, "object");
         }
       });
