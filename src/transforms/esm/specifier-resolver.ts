@@ -8,6 +8,7 @@
  */
 
 import { basename } from "#veryfront/compat/path/index.ts";
+import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
 import { parseImports, replaceSpecifiers } from "./lexer.ts";
 import {
   type CacheOptions,
@@ -21,6 +22,12 @@ import {
 
 /** Function signature for caching an HTTP module and returning its local path. */
 export type CacheHttpModuleFn = (url: string, options: CacheOptions) => Promise<string | null>;
+
+function isLocalMappedSpecifier(specifier: string): boolean {
+  return specifier.startsWith("/_vf_modules/") ||
+    specifier.startsWith("_vf_modules/") ||
+    specifier.startsWith("file://");
+}
 
 /**
  * Resolve a single import specifier to a local cached path.
@@ -48,6 +55,12 @@ async function resolveSpecifier(
   }
 
   if (isHttpUrl(specifier)) {
+    const mapped = resolveImport(specifier, options.importMap);
+    if (mapped !== specifier) {
+      if (isLocalMappedSpecifier(mapped)) return mapped;
+      return resolveSpecifier(mapped, baseUrl, options, cacheHttpModule);
+    }
+
     const cached = await cacheHttpModule(specifier, options);
     if (!cached) return null;
 
@@ -71,6 +84,7 @@ async function resolveSpecifier(
 
   const mapped = resolveBareSpecifier(specifier, options.importMap, options.reactVersion);
   if (mapped === specifier) return null;
+  if (isLocalMappedSpecifier(mapped)) return mapped;
 
   return resolveSpecifier(mapped, baseUrl, options, cacheHttpModule);
 }

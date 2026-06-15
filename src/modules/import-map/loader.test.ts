@@ -133,6 +133,35 @@ describe("modules/import-map/loader", () => {
       assert("valid-lib" in imports, "https:// path should be kept");
     });
 
+    it("should keep veryfront framework mappings local when deno.json uses npm overrides", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/project-with-npm-overrides/deno.json",
+        JSON.stringify({
+          imports: {
+            "veryfront": "npm:veryfront@0.1.759",
+            "veryfront/chat": "npm:veryfront@0.1.759/chat",
+            "veryfront/router": "npm:veryfront@0.1.759/router",
+            "react": "npm:react@19.1.1",
+          },
+        }),
+      );
+
+      const { imports } = await loadImportMap("/project-with-npm-overrides", adapter);
+
+      assertExists(imports);
+      assertEquals(
+        imports["veryfront/chat"]?.startsWith("/_vf_modules/_veryfront/chat/"),
+        true,
+      );
+      assertEquals(
+        imports["veryfront/router"]?.startsWith("/_vf_modules/_veryfront/react/runtime/core.js"),
+        true,
+      );
+      assertEquals(imports["veryfront/chat"]?.includes("esm.sh"), false);
+      assertEquals(imports["veryfront/router"]?.includes("esm.sh"), false);
+    });
+
     it("should filter out relative paths from deno.json scopes", async () => {
       const adapter = createMockAdapter();
       adapter.fs.files.set(
