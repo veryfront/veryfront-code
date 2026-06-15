@@ -1,5 +1,4 @@
 import type { FileChangeEvent, FileChangeKind } from "../../base.ts";
-import { join } from "node:path";
 import { createFileWatcher, createWatcherIterator, enqueueWatchEvent } from "./watcher-queue.ts";
 
 export { createFileWatcher, createWatcherIterator, enqueueWatchEvent };
@@ -20,6 +19,7 @@ export async function setupNodeFsWatcher(
   try {
     const fs = await import("node:fs");
     const fsPromises = await import("node:fs/promises");
+    const { join } = await import("node:path");
 
     let exists: boolean;
     try {

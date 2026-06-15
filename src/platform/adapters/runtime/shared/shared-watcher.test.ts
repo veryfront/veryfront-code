@@ -14,6 +14,13 @@ describe("shared-watcher", () => {
       assertExists(setupNodeFsWatcher);
       assertEquals(typeof setupNodeFsWatcher, "function");
     });
+
+    it("keeps node:path out of the shared module top level", async () => {
+      const source = await Deno.readTextFile(new URL("./shared-watcher.ts", import.meta.url));
+
+      assertEquals(source.includes(`from "node:path"`), false);
+      assertEquals(source.includes(`from 'node:path'`), false);
+    });
   });
 
   describe("createWatcherIterator", () => {
