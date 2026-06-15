@@ -8,9 +8,12 @@ import {
 } from "#veryfront/release-assets/constants.ts";
 import {
   buildCachedHttpDependencyAssets,
+  buildFrameworkDependencyAssets,
   buildReactImportMapDependencyAssets,
+  buildReleaseAssetDependencyUrlMap,
   type PreparedReleaseAsset,
   type ReleaseAssetHttpDependencyVendor,
+  type ReleaseAssetTransform,
 } from "#veryfront/release-assets/build-executor.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { sha256HexBytes } from "#veryfront/release-assets/hash.ts";
@@ -27,6 +30,7 @@ export interface LocalReleaseAssetOptions {
   projectId?: string;
   releaseId?: string;
   vendorHttpImports?: ReleaseAssetHttpDependencyVendor;
+  frameworkTransform?: ReleaseAssetTransform;
 }
 
 function shouldBuildLocalDependencyAssets(): boolean {
@@ -65,12 +69,22 @@ export async function generateLocalReleaseAssetManifest(
       const cached = await buildCachedHttpDependencyAssets({
         cacheDir: join(options.projectDir, ".cache", "veryfront-http-bundle"),
       });
-      const dependencies = { ...cached.dependencies, ...built.dependencies };
+      let dependencies = { ...cached.dependencies, ...built.dependencies };
+      const dependencyUrls = buildReleaseAssetDependencyUrlMap(dependencies);
+      const framework = await buildFrameworkDependencyAssets({
+        tempDir,
+        adapter: options.adapter,
+        reactVersion,
+        projectId: options.projectId ?? "local",
+        transform: options.frameworkTransform,
+        dependencyUrls,
+      });
+      dependencies = { ...dependencies, ...framework.dependencies };
       const assetsByHash = new Map<string, PreparedReleaseAsset>();
-      for (const asset of [...cached.assets, ...built.assets]) {
+      for (const asset of [...cached.assets, ...built.assets, ...framework.assets]) {
         assetsByHash.set(asset.contentHash, asset);
       }
-      const gaps = [...cached.gaps, ...built.gaps];
+      const gaps = [...cached.gaps, ...built.gaps, ...framework.gaps];
       const sourceContentHash = await sha256HexBytes(
         new TextEncoder().encode(
           [

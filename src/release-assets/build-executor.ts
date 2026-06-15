@@ -20,7 +20,12 @@ import { VERSION } from "#veryfront/utils/version.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { dirname, join, normalize } from "#veryfront/compat/path/index.ts";
-import { resolveFrameworkSourcePath } from "#veryfront/platform/compat/framework-source-resolver.ts";
+import {
+  FRAMEWORK_EMBEDDED_SRC_DIR,
+  FRAMEWORK_SRC_DIR,
+  resolveFrameworkSourcePath,
+  resolveRelativeFrameworkSourceImport,
+} from "#veryfront/platform/compat/framework-source-resolver.ts";
 import { transformToESM } from "#veryfront/transforms/esm-transform.ts";
 import { cacheHttpImportsToLocal, normalizeHttpUrl } from "#veryfront/transforms/esm/http-cache.ts";
 import { extractSourceUrl } from "#veryfront/transforms/esm/source-url-embed.ts";
@@ -217,6 +222,22 @@ function frameworkModuleUrlToSourceKey(moduleUrl: string): string | null {
     .replace(/\.(mjs|cjs|js|jsx|ts|tsx)$/, "");
 }
 
+function frameworkSourceKeyToModuleUrl(sourceKey: string): string {
+  return `${FRAMEWORK_MODULE_URL_PREFIX}${sourceKey}.js`;
+}
+
+function frameworkSourcePathToSourceKey(sourcePath: string, lookupDirs: string[]): string | null {
+  for (const lookupDir of lookupDirs) {
+    if (!sourcePath.startsWith(`${lookupDir}/`)) continue;
+    const relativePath = sourcePath.slice(lookupDir.length + 1)
+      .replace(/\.src$/, "")
+      .replace(/\.(tsx?|jsx?|mjs|mdx?|js)$/, "");
+    return normalizeLogicalPath(relativePath);
+  }
+
+  return null;
+}
+
 /** Sanitize an error for state reporting (no internal paths / stack traces). */
 function sanitizeError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
@@ -400,11 +421,11 @@ async function rewriteProjectModuleImports(
   dependencyUrls: Map<string, string>,
 ): Promise<string> {
   function rewriteSpecifier(specifier: string): string | null {
-    const dependencyUrl = dependencyUrls.get(specifier.replace(/[?#].*$/, ""));
+    const dependencyUrl = dependencyUrlForSpecifier(dependencyUrls, specifier);
     if (dependencyUrl) return dependencyUrl;
 
     if (specifier.startsWith("/_vf_modules/")) {
-      const dependencyUrl = dependencyUrls.get(specifier.replace(/[?#].*$/, ""));
+      const dependencyUrl = dependencyUrlForSpecifier(dependencyUrls, specifier);
       if (dependencyUrl) return dependencyUrl;
     }
 
@@ -416,6 +437,30 @@ async function rewriteProjectModuleImports(
   return await replaceSpecifiers(code, (specifier) => rewriteSpecifier(specifier));
 }
 
+function dependencyUrlForSpecifier(
+  dependencyUrls: Map<string, string>,
+  specifier: string,
+): string | null {
+  const direct = dependencyUrls.get(specifier) ??
+    dependencyUrls.get(normalizeDependencySpecifier(specifier));
+  if (direct) return direct;
+
+  if (specifier.startsWith("http://") || specifier.startsWith("https://")) {
+    const normalized = normalizeHttpUrl(specifier);
+    return dependencyUrls.get(normalized) ??
+      dependencyUrls.get(normalizeDependencySpecifier(normalized)) ?? null;
+  }
+
+  return null;
+}
+
+export function releaseAssetDependencyUrlForSpecifier(
+  dependencyUrls: Map<string, string>,
+  specifier: string,
+): string | null {
+  return dependencyUrlForSpecifier(dependencyUrls, specifier);
+}
+
 function buildDependencyUrlMap(
   dependencies: Record<string, PreparedAsset>,
   dependencyModules?: Map<string, DependencyModule>,
@@ -423,16 +468,36 @@ function buildDependencyUrlMap(
   const urls = new Map<string, string>();
   for (const [manifestKey, entry] of Object.entries(dependencies)) {
     const dependency = dependencyModules?.get(manifestKey);
+    const url = releaseAssetUrl(entry.contentHash, "js");
+
+    urls.set(manifestKey, url);
+    urls.set(normalizeDependencySpecifier(manifestKey), url);
+    if (manifestKey.startsWith("http://") || manifestKey.startsWith("https://")) {
+      const normalized = normalizeHttpUrl(manifestKey);
+      urls.set(normalized, url);
+      urls.set(normalizeDependencySpecifier(normalized), url);
+    }
+
     if (!dependency) continue;
 
-    const url = releaseAssetUrl(entry.contentHash, "js");
-    urls.set(manifestKey, url);
     urls.set(entry.logicalPath, url);
     for (const specifier of dependency.specifiers) {
+      urls.set(specifier, url);
       urls.set(normalizeDependencySpecifier(specifier), url);
+      if (specifier.startsWith("http://") || specifier.startsWith("https://")) {
+        const normalized = normalizeHttpUrl(specifier);
+        urls.set(normalized, url);
+        urls.set(normalizeDependencySpecifier(normalized), url);
+      }
     }
   }
   return urls;
+}
+
+export function buildReleaseAssetDependencyUrlMap(
+  dependencies: Record<string, PreparedAsset>,
+): Map<string, string> {
+  return buildDependencyUrlMap(dependencies);
 }
 
 function exposeDependencySpecifierAliases(
@@ -1112,25 +1177,54 @@ async function buildFrameworkDependencies(
   input: ReleaseAssetBuildInput,
   tempDir: string,
   transform: ReleaseAssetTransform,
+  dependencyUrls: Map<string, string>,
   uploadQueue: PreparedAsset[],
   pendingBytes: Map<string, { bytes: Uint8Array<ArrayBuffer>; contentType: string }>,
   gaps: string[],
 ): Promise<Record<string, PreparedAsset>> {
   const fs = createFileSystem();
   const dependencies: Record<string, PreparedAsset> = {};
+  const lookupDirs = [FRAMEWORK_SRC_DIR, FRAMEWORK_EMBEDDED_SRC_DIR, join(tempDir, "src")];
+  const moduleAssets = new Map<string, PreparedAsset>();
+  const visiting = new Set<string>();
 
-  for (const [specifier, moduleUrl] of Object.entries(PLATFORM_UTILITIES)) {
-    const sourceKey = frameworkModuleUrlToSourceKey(moduleUrl);
-    if (!sourceKey) continue;
+  async function resolveFrameworkImport(
+    specifier: string,
+    fromSourcePath: string,
+  ): Promise<string | null> {
+    if (specifier.startsWith("./") || specifier.startsWith("../")) {
+      const resolvedPath = await resolveRelativeFrameworkSourceImport(specifier, fromSourcePath);
+      return resolvedPath ? frameworkSourcePathToSourceKey(resolvedPath, lookupDirs) : null;
+    }
+
+    if (specifier.startsWith(FRAMEWORK_MODULE_URL_PREFIX)) {
+      return frameworkModuleUrlToSourceKey(specifier);
+    }
+
+    return null;
+  }
+
+  async function processFrameworkModule(
+    sourceKey: string,
+    publicSpecifier: string,
+  ): Promise<PreparedAsset | null> {
+    const existing = moduleAssets.get(sourceKey);
+    if (existing) return existing;
+
+    if (visiting.has(sourceKey)) {
+      gaps.push(`dependency-cycle:${publicSpecifier}:${sourceKey}`);
+      return null;
+    }
 
     const frameworkSource = await resolveFrameworkSourcePath(sourceKey, {
       extraLookupDirs: [join(tempDir, "src")],
     });
     if (!frameworkSource) {
-      gaps.push(`dependency-missing:${specifier}`);
-      continue;
+      gaps.push(`dependency-missing:${publicSpecifier}:${sourceKey}`);
+      return null;
     }
 
+    visiting.add(sourceKey);
     let code: string;
     try {
       const source = await fs.readTextFile(frameworkSource.path);
@@ -1140,23 +1234,67 @@ async function buildFrameworkDependencies(
         ssr: false,
         reactVersion: input.reactVersion,
       });
+
+      const frameworkImportUrls = new Map<string, string>();
+      let hasUnresolvedFrameworkImport = false;
+      for (const imp of await parseImports(code)) {
+        if (!imp.n) continue;
+
+        const importedSourceKey = await resolveFrameworkImport(imp.n, frameworkSource.path);
+        if (!importedSourceKey) continue;
+
+        const importedAsset = await processFrameworkModule(importedSourceKey, publicSpecifier);
+        if (!importedAsset) {
+          hasUnresolvedFrameworkImport = true;
+          break;
+        }
+        frameworkImportUrls.set(imp.n, releaseAssetUrl(importedAsset.contentHash, "js"));
+      }
+      if (hasUnresolvedFrameworkImport) {
+        visiting.delete(sourceKey);
+        return null;
+      }
+
+      code = await replaceSpecifiers(
+        code,
+        (specifier) =>
+          frameworkImportUrls.get(specifier) ??
+            dependencyUrlForSpecifier(dependencyUrls, specifier),
+      );
     } catch (error) {
-      gaps.push(`dependency-transform-failed:${specifier}`);
+      gaps.push(`dependency-transform-failed:${publicSpecifier}:${sourceKey}`);
       logger.warn("Framework dependency transform failed during release asset build", {
-        specifier,
+        specifier: publicSpecifier,
+        sourceKey,
         error: sanitizeError(error),
       });
-      continue;
+      visiting.delete(sourceKey);
+      return null;
     }
 
+    visiting.delete(sourceKey);
+
     const entry = await addPreparedJavaScriptAsset(
-      `__dependencies__/${specifier}`,
+      `__dependencies__/${frameworkSourceKeyToModuleUrl(sourceKey)}`,
       code,
       uploadQueue,
       pendingBytes,
     );
     if (!entry) {
-      gaps.push(`dependency-oversized:${specifier}`);
+      gaps.push(`dependency-oversized:${publicSpecifier}:${sourceKey}`);
+      return null;
+    }
+
+    moduleAssets.set(sourceKey, entry);
+    return entry;
+  }
+
+  for (const [specifier, moduleUrl] of Object.entries(PLATFORM_UTILITIES)) {
+    const sourceKey = frameworkModuleUrlToSourceKey(moduleUrl);
+    if (!sourceKey) continue;
+
+    const entry = await processFrameworkModule(sourceKey, specifier);
+    if (!entry) {
       continue;
     }
 
@@ -1164,6 +1302,70 @@ async function buildFrameworkDependencies(
   }
 
   return dependencies;
+}
+
+export async function buildFrameworkDependencyAssets(options: {
+  tempDir: string;
+  // deno-lint-ignore no-explicit-any -- adapter is passed through to transformToESM
+  adapter: any;
+  reactVersion?: string;
+  projectId?: string;
+  transform?: ReleaseAssetTransform;
+  dependencyUrls: Map<string, string>;
+}): Promise<{
+  dependencies: Record<string, PreparedAsset>;
+  assets: PreparedReleaseAsset[];
+  gaps: string[];
+}> {
+  const uploadQueue: PreparedAsset[] = [];
+  const pendingBytes = new Map<string, { bytes: Uint8Array<ArrayBuffer>; contentType: string }>();
+  const gaps: string[] = [];
+  const transform = options.transform ?? transformToESM;
+  const dependencies = await buildFrameworkDependencies(
+    {
+      projectReference: options.projectId ?? "local",
+      projectId: options.projectId ?? "local",
+      releaseId: "local",
+      releaseVersion: 0,
+      releaseVersionRef: "local",
+      reactVersion: options.reactVersion,
+      client: undefined as unknown as ReleaseAssetBuildClient,
+      adapter: options.adapter,
+      transform,
+    },
+    options.tempDir,
+    transform,
+    options.dependencyUrls,
+    uploadQueue,
+    pendingBytes,
+    gaps,
+  );
+
+  return {
+    dependencies,
+    assets: uploadQueue.flatMap((asset) => {
+      const stored = pendingBytes.get(asset.contentHash);
+      if (!stored) return [];
+      return [{
+        ...asset,
+        bytes: stored.bytes,
+      }];
+    }),
+    gaps,
+  };
+}
+
+function addFrameworkDependencyUrlAliases(
+  urls: Map<string, string>,
+  dependencies: Record<string, PreparedAsset>,
+): void {
+  for (const [specifier, entry] of Object.entries(dependencies)) {
+    const url = releaseAssetUrl(entry.contentHash, "js");
+    urls.set(specifier, url);
+
+    const moduleUrl = PLATFORM_UTILITIES[specifier];
+    if (moduleUrl) urls.set(moduleUrl, url);
+  }
 }
 
 /**
@@ -1391,14 +1593,6 @@ async function runBuildInner(
     }
   }
 
-  const frameworkDependencies = await buildFrameworkDependencies(
-    input,
-    tempDir,
-    transform,
-    uploadQueue,
-    pendingBytes,
-    gaps,
-  );
   let httpDependencies: Record<string, PreparedAsset>;
   let httpDependencyFallbackUrls: Map<string, string>;
   try {
@@ -1431,11 +1625,21 @@ async function runBuildInner(
     };
   }
   httpDependencies = exposeDependencySpecifierAliases(httpDependencies, dependencyModules);
-  const dependencies = { ...frameworkDependencies, ...httpDependencies };
-  const dependencyUrls = buildDependencyUrlMap(dependencies, dependencyModules);
+  const dependencyUrls = buildDependencyUrlMap(httpDependencies, dependencyModules);
   for (const [specifier, url] of httpDependencyFallbackUrls) {
     dependencyUrls.set(specifier, url);
   }
+  const frameworkDependencies = await buildFrameworkDependencies(
+    input,
+    tempDir,
+    transform,
+    dependencyUrls,
+    uploadQueue,
+    pendingBytes,
+    gaps,
+  );
+  if (vendorDependencies) addFrameworkDependencyUrlAliases(dependencyUrls, frameworkDependencies);
+  const dependencies = { ...frameworkDependencies, ...httpDependencies };
 
   const { modules, skippedModules } = await finalizeProjectModules(
     transformedModules,

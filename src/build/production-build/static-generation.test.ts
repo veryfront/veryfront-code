@@ -1,12 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { buildAppRoutes, buildPagesRoutes } from "./static-generation.ts";
 import { clearCSSCache, getCSSByHash } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontRenderer } from "#veryfront/rendering/orchestrator/ssr.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { createMockAdapter as createMemoryAdapter } from "#veryfront/platform/adapters/mock.ts";
+import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
+import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 
 function createMockAdapter(): RuntimeAdapter {
   const files = new Map<string, string>();
@@ -50,10 +53,34 @@ function createMockConfig(): VeryfrontConfig {
   return {} as VeryfrontConfig;
 }
 
+function extractImportMapImports(html: string): Record<string, string> {
+  const match = html.match(/<script type="importmap">([\s\S]*?)<\/script>/);
+  assertExists(match?.[1], "expected import map script");
+  return JSON.parse(match[1]).imports ?? {};
+}
+
+function hasEsmShReactImportMapValue(imports: Record<string, string>): boolean {
+  for (const value of Object.values(imports)) {
+    try {
+      const url = new URL(value);
+      if (url.hostname === "esm.sh" && url.pathname.startsWith("/react")) return true;
+    } catch {
+      // Not an absolute URL import-map value.
+    }
+  }
+  return false;
+}
+
 describe(
   "build/production-build/static-generation",
   { sanitizeOps: false, sanitizeResources: false },
   () => {
+    const originalFlag = getHostEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG);
+
+    afterEach(() => {
+      setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, originalFlag ?? "");
+    });
+
     describe("buildAppRoutes", () => {
       it("should return empty stats for empty routes", async () => {
         const stats = await buildAppRoutes([], {
@@ -281,6 +308,144 @@ describe(
         assertEquals(pageData.html, "<main><div>Page content</div></main>");
         assertEquals(pageData.html.includes("<script"), false);
         assertEquals(pageData.html.includes("<!DOCTYPE html>"), false);
+      });
+
+      it("does not inject a second import map when the renderer already emitted one", async () => {
+        const adapter = createMemoryAdapter();
+        const renderer = {
+          renderPage: () =>
+            Promise.resolve({
+              html:
+                '<html><head><script type="importmap">{"imports":{"react":"/react.js"}}</script></head><body><div>content</div></body></html>',
+              frontmatter: {},
+              headings: [],
+            }),
+          destroy: () => Promise.resolve(),
+        } as unknown as VeryfrontRenderer;
+
+        await buildPagesRoutes(
+          [{ slug: "blog", path: "/blog", file: "pages/blog.mdx" }],
+          {
+            adapter,
+            projectDir: "/tmp/project",
+            outputDir: "/tmp/output",
+            renderer,
+            config: createMockConfig(),
+            enablePrefetch: false,
+            chunkManifest: null,
+            dryRun: false,
+          },
+        );
+
+        const html = adapter.fs.files.get("/tmp/output/blog/index.html") ?? "";
+        const importMapCount = html.match(/<script type="importmap">/g)?.length ?? 0;
+        assertEquals(importMapCount, 1);
+        assertStringIncludes(html, "Basic styles");
+      });
+
+      it("uses the release asset manifest for rendered and injected import maps", async () => {
+        setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+        const adapter = createMemoryAdapter();
+        const reactHash = "1".repeat(64);
+        const reactDomHash = "2".repeat(64);
+        const reactDomClientHash = "3".repeat(64);
+        const jsxRuntimeHash = "4".repeat(64);
+        const jsxDevRuntimeHash = "5".repeat(64);
+        const headHash = "6".repeat(64);
+        const manifest: ReleaseAssetManifest = {
+          schemaVersion: 1,
+          projectId: "local-project",
+          releaseId: "standalone-dev",
+          releaseVersion: 0,
+          manifestVersion: 1,
+          builderVersion: "0.1.810",
+          sourceContentHash: "source",
+          createdAt: "2026-06-15T00:00:00.000Z",
+          assetBasePath: "/_vf/assets",
+          modules: {},
+          css: [],
+          routes: {},
+          dependencies: {
+            react: {
+              contentHash: reactHash,
+              size: 10,
+              contentType: "text/javascript",
+            },
+            "react-dom": {
+              contentHash: reactDomHash,
+              size: 10,
+              contentType: "text/javascript",
+            },
+            "react-dom/client": {
+              contentHash: reactDomClientHash,
+              size: 10,
+              contentType: "text/javascript",
+            },
+            "react/jsx-runtime": {
+              contentHash: jsxRuntimeHash,
+              size: 10,
+              contentType: "text/javascript",
+            },
+            "react/jsx-dev-runtime": {
+              contentHash: jsxDevRuntimeHash,
+              size: 10,
+              contentType: "text/javascript",
+            },
+            "veryfront/head": {
+              contentHash: headHash,
+              size: 10,
+              contentType: "text/javascript",
+            },
+            "veryfront/react/head": {
+              contentHash: headHash,
+              size: 10,
+              contentType: "text/javascript",
+            },
+          },
+          fallback: { mode: "jit", gaps: [] },
+        };
+        const renderer = {
+          renderPage: (
+            _slug: string,
+            options?: { releaseAssetManifest?: ReleaseAssetManifest | null },
+          ) => {
+            assertEquals(options?.releaseAssetManifest, manifest);
+            return Promise.resolve({
+              html: "<html><head></head><body><div>content</div></body></html>",
+              frontmatter: {},
+              headings: [],
+            });
+          },
+          destroy: () => Promise.resolve(),
+        } as unknown as VeryfrontRenderer;
+
+        await buildPagesRoutes(
+          [{ slug: "blog", path: "/blog", file: "pages/blog.mdx" }],
+          {
+            adapter,
+            projectDir: "/tmp/project",
+            outputDir: "/tmp/output",
+            renderer,
+            config: createMockConfig(),
+            enablePrefetch: false,
+            chunkManifest: null,
+            dryRun: false,
+            releaseAssetManifest: manifest,
+          },
+        );
+
+        const html = adapter.fs.files.get("/tmp/output/blog/index.html") ?? "";
+        assertStringIncludes(html, `"/_vf/assets/${reactHash}.js"`);
+        assertStringIncludes(html, `"/_vf/assets/${headHash}.js"`);
+        assertEquals(hasEsmShReactImportMapValue(extractImportMapImports(html)), false);
+        assertEquals(
+          html.includes('"veryfront/head": "/_vf_modules/_veryfront/react/runtime/core.js"'),
+          false,
+        );
+        assertEquals(
+          html.includes('"veryfront/react/head": "/_vf_modules/_veryfront/react/runtime/core.js"'),
+          false,
+        );
       });
 
       it("records generated Pages Router paths in SSG stats", async () => {

@@ -1,11 +1,17 @@
 import "#veryfront/schemas/_test-setup.ts";
 
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 import { parseReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import type { ReleaseAssetHttpDependencyVendor } from "#veryfront/release-assets/build-executor.ts";
+import { parseImports } from "#veryfront/transforms/esm/lexer.ts";
 import { generateLocalReleaseAssetManifest } from "./local-release-assets.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
 
@@ -72,6 +78,24 @@ const fakeVendorHttpImports: ReleaseAssetHttpDependencyVendor = (code) => {
   });
 };
 
+async function hasEsmShReactImport(code: string): Promise<boolean> {
+  for (const imp of await parseImports(code)) {
+    if (!imp.n) continue;
+    try {
+      const url = new URL(imp.n);
+      if (url.hostname === "esm.sh" && url.pathname.startsWith("/react")) return true;
+    } catch {
+      // Not an absolute URL import.
+    }
+  }
+  return false;
+}
+
+const fakeFrameworkTransform = () =>
+  Promise.resolve(
+    'import React from "react"; export const Head = () => React.createElement("title");',
+  );
+
 describe("build/production-build/local-release-assets", () => {
   const originalFlag = getHostEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG);
 
@@ -109,6 +133,7 @@ describe("build/production-build/local-release-assets", () => {
       projectId: "local-project",
       releaseId: "standalone-dev",
       vendorHttpImports: fakeVendorHttpImports,
+      frameworkTransform: fakeFrameworkTransform,
     });
 
     assertExists(manifest);
@@ -119,12 +144,26 @@ describe("build/production-build/local-release-assets", () => {
     assertExists(manifestText);
     const parsed = parseReleaseAssetManifest(JSON.parse(manifestText));
     assertExists(parsed);
+    assertExists(parsed.dependencies.react);
     assertEquals(parsed.dependencies.react.contentHash, manifest.dependencies.react.contentHash);
 
     const reactAssetPath = `/project/dist/_vf/assets/${manifest.dependencies.react.contentHash}.js`;
     const reactAsset = writes.get(reactAssetPath);
     assertExists(reactAsset);
     assertEquals(reactAsset.includes("sourceUrl"), true);
+    assertExists(manifest.dependencies["veryfront/head"]);
+    assertExists(manifest.dependencies["veryfront/react/head"]);
+
+    const headAssetPath = `/project/dist/_vf/assets/${
+      manifest.dependencies["veryfront/head"].contentHash
+    }.js`;
+    const headAsset = writes.get(headAssetPath);
+    assertExists(headAsset);
+    assertStringIncludes(
+      headAsset,
+      `/_vf/assets/${manifest.dependencies.react.contentHash}.js`,
+    );
+    assertEquals(await hasEsmShReactImport(headAsset), false);
     assertEquals(removed.includes("/tmp/vf-local-release-assets-test"), true);
   });
 
@@ -149,6 +188,7 @@ describe("build/production-build/local-release-assets", () => {
         projectId: "local-project",
         releaseId: "standalone-dev",
         vendorHttpImports: fakeVendorHttpImports,
+        frameworkTransform: fakeFrameworkTransform,
       });
 
       assertExists(manifest);

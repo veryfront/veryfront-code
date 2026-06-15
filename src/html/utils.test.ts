@@ -271,6 +271,54 @@ describe("html-generation/utils", () => {
       assertEquals(imports["react/jsx-dev-runtime"], `/_vf/assets/${"5".repeat(64)}.js`);
     });
 
+    it("rewrites local Veryfront import-map aliases from manifest dependency keys", async () => {
+      setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+      const headHash = "a".repeat(64);
+      const workflowHash = "b".repeat(64);
+      const manifest: ReleaseAssetManifest = {
+        schemaVersion: 1,
+        projectId: "project-id",
+        releaseId: "release-id",
+        releaseVersion: 1,
+        manifestVersion: 1,
+        builderVersion: "0.1.810",
+        sourceContentHash: "source",
+        createdAt: "2026-06-15T00:00:00.000Z",
+        assetBasePath: "/_vf/assets",
+        modules: {},
+        css: [],
+        routes: {},
+        dependencies: {
+          "veryfront/head": {
+            contentHash: headHash,
+            size: 10,
+            contentType: "text/javascript",
+          },
+          "veryfront/react/head": {
+            contentHash: headHash,
+            size: 10,
+            contentType: "text/javascript",
+          },
+          "veryfront/workflow": {
+            contentHash: workflowHash,
+            size: 10,
+            contentType: "text/javascript",
+          },
+        },
+        fallback: { mode: "jit", gaps: [] },
+      };
+
+      const result = await buildImportMapJson({
+        pretty: false,
+        releaseAssetManifest: manifest,
+      });
+      const imports = JSON.parse(result).imports as Record<string, string>;
+
+      assertEquals(imports["veryfront/head"], `/_vf/assets/${headHash}.js`);
+      assertEquals(imports["veryfront/react/head"], `/_vf/assets/${headHash}.js`);
+      assertEquals(imports["veryfront/workflow"], `/_vf/assets/${workflowHash}.js`);
+    });
+
     it("refreshes cached import maps when project package versions change", async () => {
       const dir = await Deno.makeTempDir({ prefix: "vf-import-map-cache-" });
 

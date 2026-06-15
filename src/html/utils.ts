@@ -333,15 +333,14 @@ function applyManifestDependencies(
 
   return Object.fromEntries(
     Object.entries(imports).map(([specifier, url]) => {
-      if (!url.startsWith("http://") && !url.startsWith("https://")) {
-        return [specifier, url];
-      }
+      const directAsset = dependencyAssets.get(specifier);
+      if (directAsset) return [specifier, directAsset];
 
-      return [
-        specifier,
-        dependencyAssets.get(specifier) ?? dependencyAssets.get(url) ??
-          dependencyAssets.get(canonicalDependencyUrl(url)) ?? url,
-      ];
+      const urlAsset = dependencyAssets.get(url) ??
+        dependencyAssets.get(canonicalDependencyUrl(url));
+      if (urlAsset) return [specifier, urlAsset];
+
+      return [specifier, url];
     }),
   );
 }

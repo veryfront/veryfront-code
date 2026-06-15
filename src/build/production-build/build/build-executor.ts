@@ -5,6 +5,7 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import type { VeryfrontRenderer } from "#veryfront/rendering/index.ts";
 import type { AppRouteInfo, RouteInfo } from "#veryfront/server/build-types.ts";
 import type { ChunkManifest } from "#veryfront/build/bundler/index.ts";
+import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 
 const logger = serverLogger.component("build");
 
@@ -18,6 +19,7 @@ export interface BuildExecutorOptions {
   chunkManifest: ChunkManifest | null;
   baseUrl: string;
   dryRun: boolean;
+  releaseAssetManifest?: ReleaseAssetManifest | null;
 }
 
 export interface BuildResult {

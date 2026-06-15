@@ -25,6 +25,7 @@ import {
 } from "../client-runtime.ts";
 import { generateLocalReleaseAssetManifest } from "../local-release-assets.ts";
 import { generateManifest, generateRedirects } from "../manifest.ts";
+import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 
 export interface OutputGeneratorOptions {
   adapter: RuntimeAdapter;
@@ -38,6 +39,7 @@ export interface OutputGeneratorOptions {
   enableCompression: boolean;
   chunkManifest: ChunkManifest | null;
   dryRun: boolean;
+  releaseAssetManifest?: ReleaseAssetManifest | null;
 }
 
 /**
@@ -135,15 +137,17 @@ export function copyAssets(
  * Generate all output files
  */
 export async function generateAllOutputs(options: OutputGeneratorOptions): Promise<void> {
-  const { adapter, projectDir, outputDir, dryRun, stats } = options;
+  const { adapter, projectDir, outputDir, dryRun, stats, releaseAssetManifest } = options;
 
   await generateClientScripts(adapter, outputDir, dryRun);
-  await generateLocalReleaseAssetManifest({
-    adapter,
-    projectDir,
-    outputDir,
-    dryRun,
-  });
+  if (releaseAssetManifest === undefined) {
+    await generateLocalReleaseAssetManifest({
+      adapter,
+      projectDir,
+      outputDir,
+      dryRun,
+    });
+  }
 
   const assetStats = await copyAssets(adapter, projectDir, outputDir, dryRun);
   stats.assets = assetStats.assets;

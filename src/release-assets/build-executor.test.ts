@@ -4,6 +4,7 @@ import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { normalizeHttpUrl } from "#veryfront/transforms/esm/http-cache.ts";
+import { parseImports } from "#veryfront/transforms/esm/lexer.ts";
 import {
   RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG,
   RELEASE_ASSET_MAX_SIZE_BYTES,
@@ -75,6 +76,19 @@ function fakeHttpCachePath(url: string): string {
     .join("")
     .slice(0, 32);
   return `/tmp/veryfront-http-bundle/http-${hash}.mjs`;
+}
+
+async function hasEsmShReactImport(code: string): Promise<boolean> {
+  for (const imp of await parseImports(code)) {
+    if (!imp.n) continue;
+    try {
+      const url = new URL(imp.n);
+      if (url.hostname === "esm.sh" && url.pathname.startsWith("/react")) return true;
+    } catch {
+      // Not an absolute URL import.
+    }
+  }
+  return false;
 }
 
 function fakeVendorHttpImports(code: string): Promise<ReleaseAssetVendorResult> {
@@ -235,6 +249,103 @@ describe("release asset build executor", () => {
       manifest.dependencies["veryfront/head"]?.contentHash,
       manifest.dependencies["veryfront/react/head"]?.contentHash,
     );
+  });
+
+  it("keeps framework dependency assets on the vendored React instance", async () => {
+    enableDependencyImportMap();
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const frameworkUrl = "/_vf_modules/_veryfront/react/runtime/core.js";
+    const files = [{
+      path: "pages/blog.mdx",
+      content: 'import { Head } from "veryfront/head"; export default Head;',
+    }];
+    const client = makeClient(files, rec);
+    const transform = (_source: string, sourceFile: string) => {
+      if (sourceFile.endsWith("pages/blog.mdx")) {
+        return Promise.resolve(`import { Head } from "${frameworkUrl}"; export default Head;`);
+      }
+      if (sourceFile.endsWith("src/react/runtime/core.ts")) {
+        return Promise.resolve(
+          'import React, { useEffect } from "https://esm.sh/react@19.2.4?target=es2022&deps=csstype@3.2.3"; export function Head() { useEffect(() => {}, []); return React.createElement("div"); }',
+        );
+      }
+      return Promise.resolve("export const value = true;");
+    };
+
+    await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    const reactHash = manifest.dependencies.react?.contentHash;
+    const headHash = manifest.dependencies["veryfront/head"]?.contentHash;
+    const pageHash = manifest.modules["pages/blog.mdx"]?.contentHash;
+    assertExists(reactHash);
+    assertExists(headHash);
+    assertExists(pageHash);
+
+    const headUpload = rec.uploads.find((u) => u.hash === headHash);
+    assertExists(headUpload);
+    assert(headUpload.text.includes(`"/_vf/assets/${reactHash}.js"`));
+    assertEquals(await hasEsmShReactImport(headUpload.text), false);
+
+    const pageUpload = rec.uploads.find((u) => u.hash === pageHash);
+    assertExists(pageUpload);
+    assert(pageUpload.text.includes(`"/_vf/assets/${headHash}.js"`));
+    assert(!pageUpload.text.includes(frameworkUrl));
+  });
+
+  it("rewrites transitive framework dependency imports to immutable assets", async () => {
+    enableDependencyImportMap();
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const fontsUrl = "/_vf_modules/_veryfront/react/fonts/index.js";
+    const files = [{
+      path: "pages/fonts.mdx",
+      content: 'import { FontHead } from "veryfront/fonts"; export default FontHead;',
+    }];
+    const client = makeClient(files, rec);
+    const transform = (_source: string, sourceFile: string) => {
+      if (sourceFile.endsWith("pages/fonts.mdx")) {
+        return Promise.resolve(`import { FontHead } from "${fontsUrl}"; export default FontHead;`);
+      }
+      if (sourceFile.endsWith("src/react/fonts/index.ts")) {
+        return Promise.resolve(
+          'import { InternalHead } from "../components/Head.js"; export const FontHead = InternalHead;',
+        );
+      }
+      if (sourceFile.endsWith("src/react/components/Head.tsx")) {
+        return Promise.resolve(
+          'import React from "https://esm.sh/react@19.2.4?target=es2022&deps=csstype@3.2.3"; export function InternalHead() { return React.createElement("title"); }',
+        );
+      }
+      return Promise.resolve("export const value = true;");
+    };
+
+    await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    const reactHash = manifest.dependencies.react?.contentHash;
+    const fontsHash = manifest.dependencies["veryfront/fonts"]?.contentHash;
+    const pageHash = manifest.modules["pages/fonts.mdx"]?.contentHash;
+    assertExists(reactHash);
+    assertExists(fontsHash);
+    assertExists(pageHash);
+
+    const fontsUpload = rec.uploads.find((u) => u.hash === fontsHash);
+    assertExists(fontsUpload);
+    assert(!fontsUpload.text.includes("../components/Head"));
+    const internalHeadMatch = fontsUpload.text.match(/"\/_vf\/assets\/([a-f0-9]{64})\.js"/);
+    assertExists(internalHeadMatch?.[1]);
+
+    const internalHeadUpload = rec.uploads.find((u) => u.hash === internalHeadMatch[1]);
+    assertExists(internalHeadUpload);
+    assert(internalHeadUpload.text.includes(`"/_vf/assets/${reactHash}.js"`));
+    assertEquals(await hasEsmShReactImport(internalHeadUpload.text), false);
+
+    const pageUpload = rec.uploads.find((u) => u.hash === pageHash);
+    assertExists(pageUpload);
+    assert(pageUpload.text.includes(`"/_vf/assets/${fontsHash}.js"`));
+    assert(!pageUpload.text.includes(fontsUrl));
   });
 
   it("matches React import-map dependencies by normalized HTTP manifest key", async () => {
