@@ -10,6 +10,8 @@ import { getContentTypeForPath } from "#veryfront/server/handlers/utils/content-
 import { createSecureFs } from "#veryfront/security";
 import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
 import { getApiBaseUrlEnv } from "#veryfront/config/env.ts";
+import { profilePhase } from "#veryfront/observability/request-profiler.ts";
+import { metrics, type ModuleServeStatus } from "#veryfront/observability/simple-metrics/index.ts";
 import { injectContext, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { injectNodePositions } from "#veryfront/transforms/plugins/babel-node-positions.ts";
 import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
@@ -237,12 +239,14 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         });
 
         try {
-          let transformedCode = await transformToESM(
-            snippetCode,
-            `_snippets/${hash}.tsx`,
-            projectDir,
-            adapter,
-            { projectId: effectiveProjectId, dev, ssr: isSSR, reactVersion },
+          let transformedCode = await profileModuleTransform(() =>
+            transformToESM(
+              snippetCode,
+              `_snippets/${hash}.tsx`,
+              projectDir,
+              adapter,
+              { projectId: effectiveProjectId, dev, ssr: isSSR, reactVersion },
+            )
           );
 
           if (isSSR) {
@@ -334,13 +338,15 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           const userAgent = req.headers.get("user-agent") ?? "";
           const isSSR = url.searchParams.get("ssr") === "true" || userAgent.startsWith("Deno/");
 
-          let code = await transformToESM(source, crossPath, projectDir, adapter, {
-            projectId: effectiveProjectId,
-            dev,
-            ssr: isSSR,
-            moduleServerUrl: `http://${url.host}`,
-            reactVersion,
-          });
+          let code = await profileModuleTransform(() =>
+            transformToESM(source, crossPath, projectDir, adapter, {
+              projectId: effectiveProjectId,
+              dev,
+              ssr: isSSR,
+              moduleServerUrl: `http://${url.host}`,
+              reactVersion,
+            })
+          );
 
           if (isSSR) {
             code = await applySSRImportRewritesAsync(code, {
@@ -393,18 +399,22 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
       }
 
       try {
-        const findResult = await findSourceFile(
-          secureFs,
-          projectDir,
-          filePathWithoutExt,
-          {
-            projectId: effectiveProjectId,
-            projectSlug,
-            branch,
-            releaseId: options.releaseId,
-            reactVersion,
-          },
-          modulePath,
+        const findResult = await profilePhase(
+          "module.source_lookup",
+          () =>
+            findSourceFile(
+              secureFs,
+              projectDir,
+              filePathWithoutExt,
+              {
+                projectId: effectiveProjectId,
+                projectSlug,
+                branch,
+                releaseId: options.releaseId,
+                reactVersion,
+              },
+              modulePath,
+            ),
         );
         if (!findResult) {
           logger.warn("Module not found", {
@@ -413,9 +423,8 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             projectSlug,
             projectDir,
           });
-          return new Response("Module not found", {
-            status: HTTP_NOT_FOUND,
-            headers: { "Content-Type": "text/plain" },
+          return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
+            "Content-Type": "text/plain",
           });
         }
 
@@ -466,7 +475,9 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             reactVersion,
           };
 
-          code = await transformToESM(source, sourceFile, projectDir, adapter, transformOpts);
+          code = await profileModuleTransform(() =>
+            transformToESM(source, sourceFile, projectDir, adapter, transformOpts)
+          );
 
           if (isSSR) {
             code = await applySSRImportRewritesAsync(code, {
@@ -933,12 +944,28 @@ function createDevModuleErrorBody(modulePath: string, errorMessage: string): str
   return `// Transform Error\nthrow new Error(${JSON.stringify(errorMessage)});`;
 }
 
+async function profileModuleTransform<T>(fn: () => Promise<T>): Promise<T> {
+  const startedAt = performance.now();
+  try {
+    return await profilePhase("module.transform", fn);
+  } finally {
+    metrics.recordModuleTransform(performance.now() - startedAt);
+  }
+}
+
+function classifyModuleServeStatus(status: number): ModuleServeStatus {
+  if (status >= 200 && status < 300) return "ok";
+  if (status === HTTP_NOT_FOUND) return "not_found";
+  return "error";
+}
+
 function createModuleResponse(
   method: string,
   body: string,
   status: number,
   headers: Record<string, string>,
 ): Response {
+  metrics.recordModuleServe(classifyModuleServeStatus(status));
   return new Response(method === "HEAD" ? null : body, { status, headers });
 }
 

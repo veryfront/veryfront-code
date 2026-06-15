@@ -129,6 +129,53 @@ export function recordCacheInvalidate(n: number): void {
   );
 }
 
+export type ModuleServeStatus = "ok" | "not_found" | "error";
+
+export function recordModuleServe(status: ModuleServeStatus): void {
+  state.moduleServeTotal++;
+
+  switch (status) {
+    case "ok":
+      state.moduleServeOk++;
+      break;
+    case "not_found":
+      state.moduleServeNotFound++;
+      break;
+    case "error":
+      state.moduleServeError++;
+      break;
+  }
+
+  const otel = getOtelInstruments();
+  void safeOtelOperation(
+    () => otel.moduleServeCounter?.add(1, { status }),
+    "module serve counter add failed",
+  );
+}
+
+export function recordModuleTransform(durationMs: number): void {
+  const duration = Math.max(0, Math.floor(durationMs));
+  state.moduleTransformTotal++;
+  state.moduleTransformDurationMsTotal += duration;
+
+  const otel = getOtelInstruments();
+  void safeOtelOperation(() => {
+    otel.moduleTransformCounter?.add(1);
+    otel.moduleTransformDurationHistogram?.record(duration);
+  }, "module transform metrics record failed");
+}
+
+export function recordRouteManifestLookup(hit: boolean): void {
+  if (hit) state.routeManifestLruHits++;
+  else state.routeManifestLruMisses++;
+
+  const otel = getOtelInstruments();
+  void safeOtelOperation(
+    () => otel.routeManifestLookupCounter?.add(1, { hit: hit ? "true" : "false" }),
+    "route manifest lookup counter add failed",
+  );
+}
+
 /**
  * Record SSR render duration
  *

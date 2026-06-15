@@ -7,6 +7,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { resetMetrics, state } from "#veryfront/observability/simple-metrics/index.ts";
 import {
   clearAllManifests,
   clearProjectManifests,
@@ -97,6 +98,18 @@ describe("Route Module Manifest", () => {
   it("handles undefined projectSlug gracefully", () => {
     recordSSRModules(undefined, "home", ["pages/home.js"]);
     assertEquals(getRouteModulePaths(undefined, "home"), ["pages/home.js"]);
+  });
+
+  it("records route manifest LRU hit and miss totals", () => {
+    clearAllManifests();
+    resetMetrics();
+
+    assertEquals(getRouteManifest("test-project", "missing"), null);
+    recordSSRModules("test-project", "index", ["_vf_modules/pages/index.js"]);
+    assertExists(getRouteManifest("test-project", "index"));
+
+    assertEquals(state.routeManifestLruMisses, 1);
+    assertEquals(state.routeManifestLruHits, 1);
   });
 
   clearAllManifests();
