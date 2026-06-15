@@ -53,6 +53,35 @@ describe("transforms/esm/specifier-resolver", () => {
       assertEquals(result.get("https://esm.sh/lodash@4"), "file:///tmp/cache/http-99999.mjs");
     });
 
+    it("rewrites mapped esm.sh veryfront URLs to local framework modules without caching", async () => {
+      const specifier = "https://esm.sh/veryfront@0.1.759/chat";
+      const code = `import { Chat } from "${specifier}";`;
+      const cacheCalls: string[] = [];
+
+      const result = await buildReplacements(
+        code,
+        undefined,
+        {
+          ...defaultOptions,
+          importMap: {
+            imports: {
+              "veryfront/chat": "/_vf_modules/_veryfront/chat/index.js?ssr=true",
+            },
+          },
+        },
+        async (url) => {
+          cacheCalls.push(url);
+          return "/tmp/cache/http-veryfront.mjs";
+        },
+      );
+
+      assertEquals(
+        result.get(specifier),
+        "/_vf_modules/_veryfront/chat/index.js?ssr=true",
+      );
+      assertEquals(cacheCalls, []);
+    });
+
     it("uses relative path when parent is an HTTP module", async () => {
       const code = `import lodash from "https://esm.sh/lodash@4";`;
       const mockCache: CacheHttpModuleFn = async () => "/tmp/cache/http-99999.mjs";
