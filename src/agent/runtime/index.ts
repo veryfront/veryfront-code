@@ -76,6 +76,7 @@ import {
   getRuntimeProviderTools,
 } from "./runtime-tool-config.ts";
 import { prepareAgentRuntimeStep } from "./agent-runtime-step.ts";
+import { buildStreamedAssistantMessage } from "./streamed-assistant-message.ts";
 
 // Re-export from submodules
 export { closeSSEStream, generateMessageId, sendSSE } from "./sse-utils.ts";
@@ -896,27 +897,13 @@ export class AgentRuntime {
       throwIfAborted(abortSignal);
       finalFinishReason = state.finishReason ?? finalFinishReason;
 
-      const streamParts: MessagePart[] = [];
-      for (const reasoningPart of state.reasoningParts) {
-        if (
-          reasoningPart.text.length === 0 &&
-          !reasoningPart.signature &&
-          !reasoningPart.redactedData
-        ) {
-          continue;
-        }
-        streamParts.push({
-          type: "reasoning",
-          ...(reasoningPart.text.length > 0 ? { text: reasoningPart.text } : {}),
-          ...(reasoningPart.signature ? { signature: reasoningPart.signature } : {}),
-          ...(reasoningPart.redactedData ? { redactedData: reasoningPart.redactedData } : {}),
-        });
-      }
-      if (state.accumulatedText) streamParts.push({ type: "text", text: state.accumulatedText });
+      const assistantMessage = buildStreamedAssistantMessage(state, {
+        id: `msg_${Date.now()}_${step}`,
+        timestamp: Date.now(),
+      });
 
       for (const tc of state.toolCalls.values()) {
         const materialized = materializeStreamedToolCall(tc);
-        streamParts.push(materialized.part);
 
         if (materialized.kind === "incomplete" && isRecoverablePlaceholderToolCall(tc)) {
           // Provisional empty-object placeholder that never finalized. The
@@ -956,12 +943,6 @@ export class AgentRuntime {
         }
       }
 
-      const assistantMessage: Message = {
-        id: `msg_${Date.now()}_${step}`,
-        role: "assistant",
-        parts: streamParts,
-        timestamp: Date.now(),
-      };
       latestAssistantText = getTextFromParts(assistantMessage.parts);
       currentMessages.push(assistantMessage);
       await this.memory.add(assistantMessage);
