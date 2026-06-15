@@ -50,6 +50,7 @@ export class ContextAwareCacheCoordinator {
       new MemoryCacheStore({
         maxEntries: options.memory?.maxEntries ?? DEFAULT_MAX_ENTRIES,
         ttlMs: options.memory?.ttlMs ?? this.ttlMs,
+        enforceStoreTtl: false,
       });
   }
 

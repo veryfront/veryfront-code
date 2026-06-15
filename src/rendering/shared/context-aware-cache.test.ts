@@ -58,6 +58,31 @@ function makeMockCtx(overrides: Partial<RenderContext> = {}): RenderContext {
   };
 }
 
+async function withStoreTtlEnabled(fn: () => Promise<void>): Promise<void> {
+  const globalState = globalThis as Record<string, unknown>;
+  const previousGlobal = globalState.__vfDisableLruInterval;
+  const previousEnv = Deno.env.get("VF_DISABLE_LRU_INTERVAL");
+
+  globalState.__vfDisableLruInterval = false;
+  Deno.env.delete("VF_DISABLE_LRU_INTERVAL");
+
+  try {
+    await fn();
+  } finally {
+    if (previousGlobal === undefined) {
+      delete globalState.__vfDisableLruInterval;
+    } else {
+      globalState.__vfDisableLruInterval = previousGlobal;
+    }
+
+    if (previousEnv === undefined) {
+      Deno.env.delete("VF_DISABLE_LRU_INTERVAL");
+    } else {
+      Deno.env.set("VF_DISABLE_LRU_INTERVAL", previousEnv);
+    }
+  }
+}
+
 describe("rendering/shared/context-aware-cache", () => {
   describe("ContextAwareCacheCoordinator", () => {
     it("should create with default options", () => {
@@ -158,6 +183,30 @@ describe("rendering/shared/context-aware-cache", () => {
       assertEquals(lookup.hit, false);
       assertEquals(lookup.status, "expired");
       assertEquals(typeof lookup.lookupDurationMs, "number");
+    });
+
+    it("should report expired when the memory store TTL path is enabled", async () => {
+      await withStoreTtlEnabled(async () => {
+        const cache = new ContextAwareCacheCoordinator({ ttlMs: 1 });
+        const ctx = makeMockCtx();
+
+        const renderResult = {
+          html: "<h1>Expired</h1>",
+          frontmatter: {},
+          headings: [],
+          stream: null,
+          ssrHash: "exp",
+        };
+
+        await cache.persistResult(renderResult as any, "store-ttl-page", ctx);
+        await new Promise((r) => setTimeout(r, 10));
+
+        const lookup = await cache.checkCache("store-ttl-page", ctx);
+        assertEquals(lookup.hit, false);
+        assertEquals(lookup.status, "expired");
+
+        await cache.destroy();
+      });
     });
 
     it("should use color scheme in cache key", async () => {

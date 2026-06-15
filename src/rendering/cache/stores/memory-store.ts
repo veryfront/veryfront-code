@@ -25,6 +25,8 @@ interface CacheLike<K, V> {
 export interface MemoryCacheStoreOptions {
   maxEntries?: number;
   ttlMs?: number;
+  /** Disable store-level TTL when callers classify payload expiration themselves. */
+  enforceStoreTtl?: boolean;
   /** Optional cache implementation for testing */
   cache?: CacheLike<string, CachePayload>;
 }
@@ -39,9 +41,10 @@ export class MemoryCacheStore implements CacheStore {
     }
 
     const disableIntervals = isLruIntervalDisabled();
+    const enforceStoreTtl = options.enforceStoreTtl ?? true;
     this.cache = new LRUCache<string, CachePayload>({
       maxEntries: options.maxEntries ?? DEFAULT_MAX_ENTRIES,
-      ttlMs: disableIntervals ? undefined : options.ttlMs,
+      ttlMs: disableIntervals || !enforceStoreTtl ? undefined : options.ttlMs,
     });
   }
 

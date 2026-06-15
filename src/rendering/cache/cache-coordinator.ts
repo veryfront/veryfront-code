@@ -73,6 +73,7 @@ export class CacheCoordinator {
       new MemoryCacheStore({
         maxEntries: options.memory?.maxEntries,
         ttlMs: options.memory?.ttlMs ?? this.ttlMs,
+        enforceStoreTtl: false,
       });
   }
 
