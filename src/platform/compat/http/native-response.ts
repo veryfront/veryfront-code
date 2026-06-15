@@ -13,12 +13,38 @@
  * @module platform/compat/http/native-response
  */
 
+type NativeResponseHost = {
+  Response: typeof Response;
+};
+
+type NativeDenoHost = {
+  Deno?: unknown;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isNativeDeno(value: unknown): value is typeof Deno {
+  if (!isRecord(value)) return false;
+  return typeof value.serve === "function" && typeof value.upgradeWebSocket === "function";
+}
+
+export function getNativeResponseFromHost(host: NativeResponseHost): typeof Response {
+  return host.Response;
+}
+
+export function getNativeDenoFromHost(host: NativeDenoHost): typeof Deno | undefined {
+  if (!isNativeDeno(host.Deno)) return undefined;
+  return host.Deno;
+}
+
 /**
  * The native `Response` constructor, accessed via `self` to bypass the dnt
  * shim transform (dnt rewrites bare `Response` to undici's polyfill).
  */
 export function getNativeResponse(): typeof Response {
-  return (self as unknown as { Response: typeof Response }).Response;
+  return getNativeResponseFromHost(self);
 }
 
 /**
@@ -35,7 +61,7 @@ export function getNativeResponse(): typeof Response {
  * Deno runtime can use a non-null assertion on the result.
  */
 export function getNativeDeno(): typeof Deno | undefined {
-  return (self as unknown as Record<string, typeof Deno | undefined>)["Deno"];
+  return getNativeDenoFromHost(self);
 }
 
 /**
