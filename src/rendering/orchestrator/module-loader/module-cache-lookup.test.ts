@@ -51,6 +51,29 @@ describe("module-loader/module-cache-lookup", () => {
     });
   });
 
+  it("keeps the fallback filesystem reader bound to its receiver", async () => {
+    const moduleCache = new Map([["cache-key", "module.js"]]);
+
+    const fileSystem = {
+      prefix: "export",
+      readTextFile(path: string): Promise<string> {
+        return Promise.resolve(`${this.prefix} const path = ${JSON.stringify(path)};`);
+      },
+    };
+
+    assertEquals(
+      await resolveCachedModulePath({
+        cacheKey: "cache-key",
+        filePath: "/project/app/page.tsx",
+        projectDir: "/project",
+        moduleCache,
+        fileSystem,
+      }),
+      "module.js",
+    );
+    assertEquals(moduleCache.get("cache-key"), "module.js");
+  });
+
   it("invalidates in-memory cached modules that still contain unresolved vf imports", async () => {
     await withCachedFile(`import x from "/_vf_modules/react.js";`, async (cachedPath) => {
       const moduleCache = new Map([["cache-key", cachedPath]]);

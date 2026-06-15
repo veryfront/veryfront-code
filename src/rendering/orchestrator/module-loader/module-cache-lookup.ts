@@ -28,6 +28,7 @@ export function getModuleCacheKey(
 }
 
 type LookupMdxCache = typeof lookupMdxEsmCache;
+type FileSystemReader = Pick<ReturnType<typeof createFileSystem>, "readTextFile">;
 
 export interface ResolveCachedModulePathInput {
   cacheKey: string;
@@ -38,20 +39,23 @@ export interface ResolveCachedModulePathInput {
   reactVersion?: string;
   moduleCache: Map<string, string>;
   readTextFile?: (path: string) => Promise<string>;
+  fileSystem?: FileSystemReader;
   lookupMdxCache?: LookupMdxCache;
 }
 
 async function resolveInMemoryCachedPath(
   input: Pick<
     ResolveCachedModulePathInput,
-    "cacheKey" | "filePath" | "moduleCache" | "readTextFile"
+    "cacheKey" | "filePath" | "moduleCache" | "readTextFile" | "fileSystem"
   >,
 ): Promise<string | undefined> {
   const cachedPath = input.moduleCache.get(input.cacheKey);
   if (!cachedPath) return undefined;
 
   try {
-    const readTextFile = input.readTextFile ?? createFileSystem().readTextFile;
+    const fileSystem = input.fileSystem ?? createFileSystem();
+    const readTextFile = input.readTextFile ??
+      ((path: string) => fileSystem.readTextFile(path));
     const cachedCode = await readTextFile(cachedPath);
     if (!UNRESOLVED_VF_MODULES_RE.test(cachedCode)) return cachedPath;
 
