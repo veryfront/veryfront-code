@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { handleDashboardAPI } from "./api.ts";
+import { getDashboardApiRoutePaths, handleDashboardAPI } from "./api.ts";
 import type { HandlerContext } from "../../types.ts";
 
 // Minimal mock adapter with fs that tracks readDir/readFile calls
@@ -39,6 +39,38 @@ describe("Dashboard API - auth", () => {
     const req = new Request("http://localhost/_dev/api/stats");
     const res = await handleDashboardAPI(req, ctx);
     assertEquals(res?.status, 401);
+  });
+});
+
+describe("Dashboard API - route table", () => {
+  it("registers the expected GET and POST API routes", () => {
+    assertEquals(getDashboardApiRoutePaths("GET"), [
+      "/_dev/api/agents",
+      "/_dev/api/build",
+      "/_dev/api/config",
+      "/_dev/api/errors",
+      "/_dev/api/file-content",
+      "/_dev/api/files",
+      "/_dev/api/handlers",
+      "/_dev/api/infrastructure",
+      "/_dev/api/live-errors",
+      "/_dev/api/live-logs",
+      "/_dev/api/memory",
+      "/_dev/api/metrics",
+      "/_dev/api/prompts",
+      "/_dev/api/resources",
+      "/_dev/api/stats",
+      "/_dev/api/tools",
+      "/_dev/api/workflows",
+    ]);
+
+    assertEquals(getDashboardApiRoutePaths("POST"), [
+      "/_dev/api/execute-tool",
+      "/_dev/api/hmr-trigger",
+      "/_dev/api/read-resource",
+      "/_dev/api/render-prompt",
+      "/_dev/api/start-workflow",
+    ]);
   });
 });
 

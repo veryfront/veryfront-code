@@ -69,6 +69,54 @@ const TEXT_EXTENSIONS = new Set([
   "dockerignore",
 ]);
 
+type DashboardApiMethod = "GET" | "POST";
+type DashboardApiRouteHandler = (
+  req: Request,
+  ctx: HandlerContext,
+) => Promise<Response> | Response;
+
+const GET_DASHBOARD_API_ROUTES: Record<string, DashboardApiRouteHandler> = {
+  "/_dev/api/stats": () => handleStats(),
+  "/_dev/api/tools": () => handleListTools(),
+  "/_dev/api/resources": () => handleListResources(),
+  "/_dev/api/prompts": () => handleListPrompts(),
+  "/_dev/api/agents": () => handleListAgents(),
+  "/_dev/api/workflows": () => handleListWorkflows(),
+  "/_dev/api/handlers": (_req, ctx) => handleListHandlers(ctx),
+  "/_dev/api/metrics": () => handleGetMetrics(),
+  "/_dev/api/files": (req, ctx) => handleListFiles(req, ctx),
+  "/_dev/api/file-content": (req, ctx) => handleReadFileContent(req, ctx),
+  "/_dev/api/infrastructure": () => handleGetInfrastructure(),
+  "/_dev/api/memory": () => handleGetMemory(),
+  "/_dev/api/build": () => handleGetBuild(),
+  "/_dev/api/errors": () => handleGetErrors(),
+  "/_dev/api/config": (_req, ctx) => handleGetConfig(ctx),
+  "/_dev/api/live-errors": (req) => handleLiveErrors(req),
+  "/_dev/api/live-logs": (req) => handleLiveLogs(req),
+};
+
+const POST_DASHBOARD_API_ROUTES: Record<string, DashboardApiRouteHandler> = {
+  "/_dev/api/hmr-trigger": (req) => handleHmrTrigger(req),
+  "/_dev/api/execute-tool": (req) => handleExecuteTool(req),
+  "/_dev/api/read-resource": (req) => handleReadResource(req),
+  "/_dev/api/render-prompt": (req) => handleRenderPrompt(req),
+  "/_dev/api/start-workflow": (req) => handleStartWorkflow(req),
+};
+
+function getDashboardRouteHandler(
+  method: string,
+  pathname: string,
+): DashboardApiRouteHandler | undefined {
+  if (method === "GET") return GET_DASHBOARD_API_ROUTES[pathname];
+  if (method === "POST") return POST_DASHBOARD_API_ROUTES[pathname];
+  return undefined;
+}
+
+export function getDashboardApiRoutePaths(method: DashboardApiMethod): string[] {
+  const routes = method === "GET" ? GET_DASHBOARD_API_ROUTES : POST_DASHBOARD_API_ROUTES;
+  return Object.keys(routes).sort();
+}
+
 export function handleDashboardAPI(
   req: Request,
   ctx: HandlerContext,
@@ -76,66 +124,10 @@ export function handleDashboardAPI(
   if (!ctx.isLocalProject) return errorResponse("Unauthorized", 401);
 
   const { pathname } = new URL(req.url);
+  const handler = getDashboardRouteHandler(req.method, pathname);
+  if (!handler) return null;
 
-  if (req.method === "GET") {
-    switch (pathname) {
-      case "/_dev/api/stats":
-        return handleStats();
-      case "/_dev/api/tools":
-        return handleListTools();
-      case "/_dev/api/resources":
-        return handleListResources();
-      case "/_dev/api/prompts":
-        return handleListPrompts();
-      case "/_dev/api/agents":
-        return handleListAgents();
-      case "/_dev/api/workflows":
-        return handleListWorkflows();
-      case "/_dev/api/handlers":
-        return handleListHandlers(ctx);
-      case "/_dev/api/metrics":
-        return handleGetMetrics();
-      case "/_dev/api/files":
-        return handleListFiles(req, ctx);
-      case "/_dev/api/file-content":
-        return handleReadFileContent(req, ctx);
-      case "/_dev/api/infrastructure":
-        return handleGetInfrastructure();
-      case "/_dev/api/memory":
-        return handleGetMemory();
-      case "/_dev/api/build":
-        return handleGetBuild();
-      case "/_dev/api/errors":
-        return handleGetErrors();
-      case "/_dev/api/config":
-        return handleGetConfig(ctx);
-      case "/_dev/api/live-errors":
-        return handleLiveErrors(req);
-      case "/_dev/api/live-logs":
-        return handleLiveLogs(req);
-      default:
-        return null;
-    }
-  }
-
-  if (req.method === "POST") {
-    switch (pathname) {
-      case "/_dev/api/hmr-trigger":
-        return handleHmrTrigger(req);
-      case "/_dev/api/execute-tool":
-        return handleExecuteTool(req);
-      case "/_dev/api/read-resource":
-        return handleReadResource(req);
-      case "/_dev/api/render-prompt":
-        return handleRenderPrompt(req);
-      case "/_dev/api/start-workflow":
-        return handleStartWorkflow(req);
-      default:
-        return null;
-    }
-  }
-
-  return null;
+  return handler(req, ctx);
 }
 
 function handleStats(): Response {
