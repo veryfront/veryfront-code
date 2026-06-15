@@ -46,6 +46,12 @@ import { createHttpServer, upgradeWebSocket } from "#veryfront/platform/compat/h
 import { createProxyErrorResponse, jsonErrorResponse } from "./error-response.ts";
 import { handleReleaseAssetRequest, isReleaseAssetPath } from "./asset-handler.ts";
 import { type ProxyRequestLifecycle, runProxyRequestLifecycle } from "./request-lifecycle.ts";
+import {
+  createUpstreamFailureResponse,
+  createUpstreamTimeoutResponse,
+  UPSTREAM_FAILURE_STATUS,
+  UPSTREAM_TIMEOUT_STATUS,
+} from "./upstream-error-response.ts";
 
 function getLocalProjects(): Record<string, string> {
   const raw = getEnv("LOCAL_PROJECTS");
@@ -410,16 +416,12 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
 
               if (error instanceof Error && error.name === "AbortError") {
                 const ms = Math.round(performance.now() - startTime);
-                proxyLogger.error(`504 ${req.method} ${url.pathname}`, {
+                proxyLogger.error(`${UPSTREAM_TIMEOUT_STATUS} ${req.method} ${url.pathname}`, {
                   ms,
                   timeoutMs: VERYFRONT_SERVER_REQUEST_TIMEOUT_MS,
                 });
-                lifecycle.end(504, error);
-                return jsonErrorResponse(504, {
-                  error: "Gateway Timeout",
-                  message:
-                    `Server request timed out after ${VERYFRONT_SERVER_REQUEST_TIMEOUT_MS}ms`,
-                });
+                lifecycle.end(UPSTREAM_TIMEOUT_STATUS, error);
+                return createUpstreamTimeoutResponse(VERYFRONT_SERVER_REQUEST_TIMEOUT_MS);
               }
 
               // Check if this is a retryable error and we have retries left
@@ -454,13 +456,18 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
 
           // All retries exhausted or non-retryable error
           const ms = Math.round(performance.now() - startTime);
-          const logLevel = getProxyFailureLogLevel(502, req.method, url.pathname);
-          proxyLogger[logLevel](`502 ${req.method} ${url.pathname}`, { ms }, lastError as Error);
-          lifecycle.end(502, lastError as Error);
-          return jsonErrorResponse(502, {
-            error: "Proxy Error",
-            message: lastError instanceof Error ? lastError.message : "Unknown error",
-          });
+          const logLevel = getProxyFailureLogLevel(
+            UPSTREAM_FAILURE_STATUS,
+            req.method,
+            url.pathname,
+          );
+          proxyLogger[logLevel](
+            `${UPSTREAM_FAILURE_STATUS} ${req.method} ${url.pathname}`,
+            { ms },
+            lastError as Error,
+          );
+          lifecycle.end(UPSTREAM_FAILURE_STATUS, lastError as Error);
+          return createUpstreamFailureResponse(lastError);
         },
       );
     } catch (error) {
