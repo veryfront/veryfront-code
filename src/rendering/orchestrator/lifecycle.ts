@@ -136,6 +136,7 @@ export class RendererLifecycle {
           maxEntries: renderCacheConfig.maxEntries ??
             (debugMode ? DEBUG_MODE_MAX_ENTRIES : PRODUCTION_MAX_ENTRIES),
           ttlMs: renderCacheConfig.ttl,
+          enforceStoreTtl: false,
         });
         break;
     }

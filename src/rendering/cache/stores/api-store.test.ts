@@ -3,6 +3,30 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { APICacheStore } from "./api-store.ts";
 
+async function withStoreTtlEnabled(fn: () => Promise<void>): Promise<void> {
+  const previousGlobal = (globalThis as Record<string, unknown>).__vfDisableLruInterval;
+  const previousEnv = Deno.env.get("VF_DISABLE_LRU_INTERVAL");
+
+  (globalThis as Record<string, unknown>).__vfDisableLruInterval = false;
+  Deno.env.delete("VF_DISABLE_LRU_INTERVAL");
+
+  try {
+    await fn();
+  } finally {
+    if (previousGlobal === undefined) {
+      delete (globalThis as Record<string, unknown>).__vfDisableLruInterval;
+    } else {
+      (globalThis as Record<string, unknown>).__vfDisableLruInterval = previousGlobal;
+    }
+
+    if (previousEnv === undefined) {
+      Deno.env.delete("VF_DISABLE_LRU_INTERVAL");
+    } else {
+      Deno.env.set("VF_DISABLE_LRU_INTERVAL", previousEnv);
+    }
+  }
+}
+
 describe("rendering/cache/stores/api-store", () => {
   describe("APICacheStore constructor", () => {
     it("should create with default options", () => {
@@ -238,6 +262,31 @@ describe("rendering/cache/stores/api-store", () => {
       await store.set("no-local", payload);
       const result = await store.get("no-local");
       assertEquals(result, undefined);
+    });
+
+    it("expires local entries without payload expiresAt using store TTL", async () => {
+      await withStoreTtlEnabled(async () => {
+        const store = new APICacheStore({ enableLocalCache: true, ttlSeconds: 1 });
+        try {
+          const payload = {
+            result: {
+              html: "<p>ttl</p>",
+              frontmatter: {},
+              headings: [],
+              stream: null,
+            },
+            storedAt: Date.now(),
+          } as any;
+
+          await store.set("ttl-key", payload);
+          await new Promise((resolve) => setTimeout(resolve, 1_100));
+
+          const result = await store.get("ttl-key");
+          assertEquals(result, undefined);
+        } finally {
+          await store.destroy();
+        }
+      });
     });
   });
 });

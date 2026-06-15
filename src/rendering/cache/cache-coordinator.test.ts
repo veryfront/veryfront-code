@@ -17,6 +17,31 @@ function makeResult(html: string): RenderResult {
   };
 }
 
+async function withStoreTtlEnabled(fn: () => Promise<void>): Promise<void> {
+  const globalState = globalThis as Record<string, unknown>;
+  const previousGlobal = globalState.__vfDisableLruInterval;
+  const previousEnv = Deno.env.get("VF_DISABLE_LRU_INTERVAL");
+
+  globalState.__vfDisableLruInterval = false;
+  Deno.env.delete("VF_DISABLE_LRU_INTERVAL");
+
+  try {
+    await fn();
+  } finally {
+    if (previousGlobal === undefined) {
+      delete globalState.__vfDisableLruInterval;
+    } else {
+      globalState.__vfDisableLruInterval = previousGlobal;
+    }
+
+    if (previousEnv === undefined) {
+      Deno.env.delete("VF_DISABLE_LRU_INTERVAL");
+    } else {
+      Deno.env.set("VF_DISABLE_LRU_INTERVAL", previousEnv);
+    }
+  }
+}
+
 describe("CacheCoordinator", () => {
   it("returns cached result on second lookup", async () => {
     const coordinator = new CacheCoordinator({ ttlMs: 10_000 });
@@ -50,6 +75,22 @@ describe("CacheCoordinator", () => {
     assertEquals(typeof lookup.lookupDurationMs, "number");
 
     await coordinator.destroy();
+  });
+
+  it("reports expired when the memory store TTL path is enabled", async () => {
+    await withStoreTtlEnabled(async () => {
+      const coordinator = new CacheCoordinator({ ttlMs: scaleMs(20) });
+      const slug = "store-ttl-test";
+
+      await coordinator.persistResult(makeResult("first"), slug);
+      await delay(40);
+
+      const lookup = await coordinator.checkCache(slug);
+      assertEquals(lookup.cachedResult, undefined);
+      assertEquals(lookup.cacheStatus, "expired");
+
+      await coordinator.destroy();
+    });
   });
 
   it("isolates cache entries by projectId", async () => {
