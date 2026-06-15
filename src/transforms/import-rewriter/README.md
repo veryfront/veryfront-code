@@ -47,6 +47,29 @@ Strategies are applied in priority order (lower number = higher priority):
 | 6        | `BareStrategy`         | NPM packages (`lodash`, `@org/pkg`) |
 | 7        | `URLStrategy`          | `https://`, `http://` URLs          |
 
+## Intentional non-strategy rewrites
+
+`rewriteDntImports` in
+`src/transforms/mdx/esm-module-loader/module-fetcher/import-rewriter.ts`
+intentionally remains outside this strategy pipeline.
+
+The unified import-rewriter strategies are synchronous specifier transforms. They
+decide a replacement from the parsed import specifier and the transform context.
+DNT rewriting is a later MDX/framework module relocation step:
+
+- It only applies to Veryfront framework files from `FRAMEWORK_ROOT`,
+  embedded framework source, or `node_modules`.
+- It resolves relative imports from the actual source file directory.
+- It probes the local filesystem for generated `.src`, TypeScript, TSX, JSX,
+  JavaScript, and MJS fallback targets before choosing the replacement.
+- It rewrites both `from` imports and side-effect imports to absolute `file://`
+  URLs so cached framework modules do not resolve relative imports from the
+  cache directory.
+
+Do not move this path into the synchronous strategy pipeline unless the strategy
+contract gains an async filesystem-aware phase and the MDX framework relocation
+tests move with it.
+
 ## Framework Imports
 
 User-facing imports map to internal framework paths via `deno.json`:
