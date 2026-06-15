@@ -44,6 +44,9 @@ describe("observability/simple-metrics/metrics-state", () => {
       assertEquals(typeof snap.cacheGets, "number");
       assertEquals(typeof snap.cacheHits, "number");
       assertEquals(typeof snap.cacheMisses, "number");
+      assertEquals(typeof snap.moduleServeTotal, "number");
+      assertEquals(typeof snap.moduleTransformTotal, "number");
+      assertEquals(typeof snap.routeManifestLruHits, "number");
       assertEquals(typeof snap.corsRejections, "number");
     });
 
@@ -69,10 +72,14 @@ describe("observability/simple-metrics/metrics-state", () => {
     it("should reset all counters to zero", () => {
       state.requests = 100;
       state.cacheHits = 50;
+      state.moduleServeTotal = 12;
+      state.routeManifestLruMisses = 4;
       state.corsRejections = 5;
       resetMetrics();
       assertEquals(state.requests, 0);
       assertEquals(state.cacheHits, 0);
+      assertEquals(state.moduleServeTotal, 0);
+      assertEquals(state.routeManifestLruMisses, 0);
       assertEquals(state.corsRejections, 0);
     });
 

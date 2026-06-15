@@ -63,6 +63,22 @@ export async function ensureOtelInstruments(): Promise<void> {
     otel.cacheInvalidateCounter = meter.createCounter("veryfront.cache.invalidations", {
       description: "Cache invalidations",
     });
+    otel.moduleServeCounter = meter.createCounter("veryfront.module.serve.total", {
+      description: "Module server responses by status",
+    });
+    otel.moduleTransformCounter = meter.createCounter("veryfront.module.transform.total", {
+      description: "Module transforms",
+    });
+    otel.moduleTransformDurationHistogram = meter.createHistogram(
+      "veryfront.module.transform.duration",
+      {
+        description: "Module transform duration (ms)",
+        unit: "ms",
+      },
+    );
+    otel.routeManifestLookupCounter = meter.createCounter("veryfront.route_manifest.lookup.total", {
+      description: "Route module manifest LRU lookups by hit status",
+    });
   } catch (e) {
     safeLogWarn("[metrics] OpenTelemetry init failed", e);
   }

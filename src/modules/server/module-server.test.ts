@@ -11,6 +11,12 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  buildServerTimingHeader,
+  finalizeRequestProfiling,
+  resetRequestProfiles,
+  runWithRequestProfiling,
+} from "#veryfront/observability/request-profiler.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
@@ -75,8 +81,10 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
   afterEach(() => {
     deleteEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG);
     deleteEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG);
+    deleteEnv("VERYFRONT_ENABLE_SERVER_TIMING");
     configureReleaseAssetManifestFetcher(undefined);
     clearReleaseAssetManifestCache();
+    resetRequestProfiles();
   });
 
   async function serve(req: Request, projectDir = "/tmp/test"): Promise<Response> {
@@ -357,6 +365,47 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(response.status, 200);
     const contentType = response.headers.get("content-type") ?? "";
     assertEquals(contentType.includes("javascript"), true);
+  });
+
+  it("marks source lookup and transform phases for module Server-Timing", async () => {
+    setEnv("VERYFRONT_ENABLE_SERVER_TIMING", "1");
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-timing-" });
+    let record: ReturnType<typeof finalizeRequestProfiling> = null;
+
+    try {
+      await Deno.mkdir(`${projectDir}/components`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/components/App.ts`,
+        `export const value = 1;\n`,
+      );
+
+      const response = await runWithRequestProfiling(
+        {
+          category: "module",
+          method: "GET",
+          pathname: "/_vf_modules/components/App.js",
+        },
+        async () => {
+          let profiledResponse: Response | undefined;
+          try {
+            profiledResponse = await serve(
+              new Request("http://localhost:3000/_vf_modules/components/App.js"),
+              projectDir,
+            );
+            return profiledResponse;
+          } finally {
+            record = finalizeRequestProfiling(profiledResponse?.status);
+          }
+        },
+      );
+
+      assertEquals(response.status, 200);
+      const header = buildServerTimingHeader(record!);
+      assertEquals(header.includes("module.source_lookup"), true);
+      assertEquals(header.includes("module.transform"), true);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
   });
 
   it("rewrites browser module HTTP bundle imports through the release manifest", async () => {

@@ -12,6 +12,7 @@
 
 import { serverLogger } from "#veryfront/utils";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import { metrics } from "#veryfront/observability/simple-metrics/index.ts";
 
 const logger = serverLogger.component("route-module-manifest");
 
@@ -124,6 +125,7 @@ export function getRouteManifest(
 ): RouteManifest | null {
   const key = buildKey(projectSlug, route);
   const manifest = manifestStore.get(key);
+  metrics.recordRouteManifestLookup(!!manifest);
 
   logger.debug("Get manifest", {
     key,

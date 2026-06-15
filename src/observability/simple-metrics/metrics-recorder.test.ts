@@ -10,6 +10,9 @@ import {
   recordCacheSet,
   recordCorsRejection,
   recordHttp,
+  recordModuleServe,
+  recordModuleTransform,
+  recordRouteManifestLookup,
   recordRSC,
   recordSecurityHeaders,
   recordSSR,
@@ -49,6 +52,39 @@ describe("observability/simple-metrics/metrics-recorder", () => {
       resetMetrics();
       recordCacheSet();
       assertEquals(state.cacheSets, 1);
+    });
+  });
+
+  describe("module performance metrics", () => {
+    it("records module serve status totals", () => {
+      resetMetrics();
+      recordModuleServe("ok");
+      recordModuleServe("not_found");
+      recordModuleServe("error");
+
+      assertEquals(state.moduleServeTotal, 3);
+      assertEquals(state.moduleServeOk, 1);
+      assertEquals(state.moduleServeNotFound, 1);
+      assertEquals(state.moduleServeError, 1);
+    });
+
+    it("records module transform count and total duration", () => {
+      resetMetrics();
+      recordModuleTransform(12.8);
+      recordModuleTransform(-5);
+
+      assertEquals(state.moduleTransformTotal, 2);
+      assertEquals(state.moduleTransformDurationMsTotal, 12);
+    });
+
+    it("records route manifest LRU hits and misses", () => {
+      resetMetrics();
+      recordRouteManifestLookup(true);
+      recordRouteManifestLookup(false);
+      recordRouteManifestLookup(false);
+
+      assertEquals(state.routeManifestLruHits, 1);
+      assertEquals(state.routeManifestLruMisses, 2);
     });
   });
 
