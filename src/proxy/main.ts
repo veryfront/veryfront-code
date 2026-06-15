@@ -45,6 +45,7 @@ import { exit, getEnv, onSignal } from "#veryfront/platform/compat/process.ts";
 import { createHttpServer, upgradeWebSocket } from "#veryfront/platform/compat/http/index.ts";
 import { createProxyErrorResponse, jsonErrorResponse } from "./error-response.ts";
 import { handleReleaseAssetRequest, isReleaseAssetPath } from "./asset-handler.ts";
+import { type ProxyRequestLifecycle, runProxyRequestLifecycle } from "./request-lifecycle.ts";
 
 function getLocalProjects(): Record<string, string> {
   const raw = getEnv("LOCAL_PROJECTS");
@@ -282,10 +283,7 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
   const requestId = crypto.randomUUID();
   const host = req.headers.get("host") || "";
 
-  const parentContext = extractContext(req.headers);
-  const spanInfo = startServerSpan(req.method, url.pathname, parentContext);
-
-  const execute = async (): Promise<Response> => {
+  const execute = async (lifecycle: ProxyRequestLifecycle): Promise<Response> => {
     try {
       const ctx = await proxyHandler.processRequest(req, { url });
 
@@ -305,7 +303,7 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
             const ms = Math.round(performance.now() - startTime);
             const logLevel = getProxyFailureLogLevel(ctx.error.status, req.method, url.pathname);
             proxyLogger[logLevel](`${ctx.error.status} ${req.method} ${url.pathname}`, { ms });
-            endSpan(spanInfo?.span, ctx.error.status);
+            lifecycle.end(ctx.error.status);
             return createProxyErrorResponse(ctx.error);
           }
 
@@ -401,8 +399,6 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
                 reqLogger.info(`${response.status} ${req.method} ${url.pathname}`, { ms });
               }
 
-              endSpan(spanInfo?.span, response.status);
-
               return new Response(response.body, {
                 status: response.status,
                 statusText: response.statusText,
@@ -418,7 +414,7 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
                   ms,
                   timeoutMs: VERYFRONT_SERVER_REQUEST_TIMEOUT_MS,
                 });
-                endSpan(spanInfo?.span, 504, error);
+                lifecycle.end(504, error);
                 return jsonErrorResponse(504, {
                   error: "Gateway Timeout",
                   message:
@@ -460,7 +456,7 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
           const ms = Math.round(performance.now() - startTime);
           const logLevel = getProxyFailureLogLevel(502, req.method, url.pathname);
           proxyLogger[logLevel](`502 ${req.method} ${url.pathname}`, { ms }, lastError as Error);
-          endSpan(spanInfo?.span, 502, lastError as Error);
+          lifecycle.end(502, lastError as Error);
           return jsonErrorResponse(502, {
             error: "Proxy Error",
             message: lastError instanceof Error ? lastError.message : "Unknown error",
@@ -470,7 +466,7 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
     } catch (error) {
       const ms = Math.round(performance.now() - startTime);
       proxyLogger.error(`500 ${req.method} ${url.pathname}`, { ms }, error as Error);
-      endSpan(spanInfo?.span, 500, error as Error);
+      lifecycle.end(500, error as Error);
       return jsonErrorResponse(500, {
         error: "Internal Proxy Error",
         message: error instanceof Error ? error.message : "Unknown error",
@@ -478,7 +474,15 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
     }
   };
 
-  return spanInfo?.context ? withContext(spanInfo.context, execute) : execute();
+  return runProxyRequestLifecycle({
+    req,
+    url,
+    startServerSpan,
+    endSpan,
+    extractContext,
+    withContext,
+    handle: execute,
+  });
 }
 
 /**
