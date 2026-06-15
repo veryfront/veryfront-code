@@ -15,6 +15,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { ChunkManifest } from "#veryfront/build/bundler/index.ts";
 import type { AppRouteInfo, BuildStats, RouteInfo } from "#veryfront/server/build-types.ts";
 import { generateServiceWorker } from "#veryfront/server/build-service-worker.ts";
+import { generateProdHydrationModule } from "../../../html/hydration-script-builder/prod-scripts.ts";
 import { copyStaticAssets } from "../asset-generation.ts";
 import {
   generateAppModule,
@@ -22,6 +23,7 @@ import {
   generatePrefetchScript,
   generateRouterScript,
 } from "../client-runtime.ts";
+import { generateLocalReleaseAssetManifest } from "../local-release-assets.ts";
 import { generateManifest, generateRedirects } from "../manifest.ts";
 
 export interface OutputGeneratorOptions {
@@ -59,6 +61,10 @@ export async function generateClientScripts(
   await adapter.fs.writeFile(
     join(outputDir, "_veryfront/prefetch.js"),
     await generatePrefetchScript(adapter),
+  );
+  await adapter.fs.writeFile(
+    join(outputDir, "_veryfront/hydration-runtime.js"),
+    generateProdHydrationModule(),
   );
 }
 
@@ -132,6 +138,12 @@ export async function generateAllOutputs(options: OutputGeneratorOptions): Promi
   const { adapter, projectDir, outputDir, dryRun, stats } = options;
 
   await generateClientScripts(adapter, outputDir, dryRun);
+  await generateLocalReleaseAssetManifest({
+    adapter,
+    projectDir,
+    outputDir,
+    dryRun,
+  });
 
   const assetStats = await copyAssets(adapter, projectDir, outputDir, dryRun);
   stats.assets = assetStats.assets;

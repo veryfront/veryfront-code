@@ -23,6 +23,97 @@ function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
 }
 
 describe("server/handlers/request/static.handler", () => {
+  it("serves generated production build assets under /_veryfront", async () => {
+    const handler = new StaticHandler();
+    let resolvedPath = "";
+    (handler as any).staticService = {
+      resolveFile: async (pathname: string) => {
+        resolvedPath = pathname;
+        return {
+          path: "/tmp/test-project/dist/_veryfront/chunks/index.js",
+          data: new TextEncoder().encode("export const page = true;"),
+          etag: '"asset-etag"',
+          contentType: "application/javascript; charset=utf-8",
+          cacheStrategy: "immutable",
+          source: "dist",
+        };
+      },
+      isAssetRequest: () => true,
+    };
+
+    const result = await handler.handle(
+      new Request("http://localhost/_veryfront/chunks/index.js"),
+      makeCtx(),
+    );
+
+    assertExists(result.response);
+    assertEquals(resolvedPath, "/_veryfront/chunks/index.js");
+    assertEquals(result.response.status, 200);
+    assertEquals(
+      result.response.headers.get("content-type"),
+      "application/javascript; charset=utf-8",
+    );
+    assertEquals(await result.response.text(), "export const page = true;");
+  });
+
+  it("serves generated hydration runtime under /_veryfront", async () => {
+    const handler = new StaticHandler();
+    let resolvedPath = "";
+    (handler as any).staticService = {
+      resolveFile: async (pathname: string) => {
+        resolvedPath = pathname;
+        return {
+          path: "/tmp/test-project/dist/_veryfront/hydration-runtime.js",
+          data: new TextEncoder().encode("export const hydrate = true;"),
+          etag: '"asset-etag"',
+          contentType: "application/javascript; charset=utf-8",
+          cacheStrategy: "immutable",
+          source: "dist",
+        };
+      },
+      isAssetRequest: () => true,
+    };
+
+    const result = await handler.handle(
+      new Request("http://localhost/_veryfront/hydration-runtime.js"),
+      makeCtx(),
+    );
+
+    assertExists(result.response);
+    assertEquals(resolvedPath, "/_veryfront/hydration-runtime.js");
+    assertEquals(result.response.status, 200);
+    assertEquals(await result.response.text(), "export const hydrate = true;");
+  });
+
+  it("serves local release assets under /_vf/assets", async () => {
+    const handler = new StaticHandler();
+    let resolvedPath = "";
+    (handler as any).staticService = {
+      resolveFile: async (pathname: string) => {
+        resolvedPath = pathname;
+        return {
+          path: "/tmp/test-project/dist/_vf/assets/hash.js",
+          data: new TextEncoder().encode("export const react = true;"),
+          etag: '"asset-etag"',
+          contentType: "application/javascript; charset=utf-8",
+          cacheStrategy: "immutable",
+          source: "dist",
+        };
+      },
+      isAssetRequest: () => true,
+    };
+
+    const result = await handler.handle(
+      new Request("http://localhost/_vf/assets/hash.js"),
+      makeCtx(),
+    );
+
+    assertExists(result.response);
+    assertEquals(resolvedPath, "/_vf/assets/hash.js");
+    assertEquals(result.response.status, 200);
+    assertEquals(await result.response.text(), "export const react = true;");
+  });
+
   it("adds matching nonces to static HTML responses before applying CSP", async () => {
     const handler = new StaticHandler();
     (handler as any).staticService = {

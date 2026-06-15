@@ -36,6 +36,32 @@ describe("validateTrustedHtml", () => {
     });
   });
 
+  describe("allows inline scripts only when explicitly requested", () => {
+    it("passes framework-managed script tags with allowInlineScripts", () => {
+      const html =
+        '<div><script nonce="">document.documentElement.dataset.theme="dark"</script></div>';
+      assertEquals(validateTrustedHtml(html, { allowInlineScripts: true, strict: true }), html);
+    });
+
+    it("still blocks javascript: URLs when inline scripts are allowed", () => {
+      const html = '<div><script>init()</script><a href="javascript:alert(1)">link</a></div>';
+      assertThrows(
+        () => validateTrustedHtml(html, { allowInlineScripts: true, strict: true }),
+        Error,
+        "javascript: URL",
+      );
+    });
+
+    it("still blocks event handlers when inline scripts are allowed", () => {
+      const html = '<div><script>init()</script><button onclick="alert(1)">Open</button></div>';
+      assertThrows(
+        () => validateTrustedHtml(html, { allowInlineScripts: true, strict: true }),
+        Error,
+        "event handler",
+      );
+    });
+  });
+
   describe("blocks javascript: URLs", () => {
     it("throws on javascript: in href", () => {
       const svg = '<svg><a href="javascript:alert(1)"><text>click</text></a></svg>';

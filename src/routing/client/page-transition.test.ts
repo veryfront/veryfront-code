@@ -317,6 +317,28 @@ describe("PageTransition", () => {
     );
 
     it(
+      "should allow framework-managed inline scripts in transition HTML",
+      withMocks(async (mocks) => {
+        const pageTransition = new PageTransition(() => {});
+        const data: RouteData = {
+          html:
+            '<main>Theme page</main><script nonce="">document.documentElement.dataset.theme="dark"</script>',
+          frontmatter: {},
+        };
+
+        pageTransition.updatePage(data, false, 0);
+
+        await delay(200);
+
+        assertEquals(
+          mocks.mockRoot.innerHTML,
+          data.html,
+          "Root element should accept trusted transition HTML that contains scripts",
+        );
+      }),
+    );
+
+    it(
       "should not perform transition when root element is missing",
       withMocks((mocks) => {
         mocks.mockDocument.getElementById = () => null;

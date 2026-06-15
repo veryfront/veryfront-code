@@ -20,8 +20,12 @@ export const buildHelp: CommandHelp = {
       description: "Disable code splitting",
     },
     {
+      flag: "--ssg",
+      description: "Enable static generation",
+    },
+    {
       flag: "--no-ssg",
-      description: "Disable static generation",
+      description: "Disable static generation when another option enables it",
     },
     {
       flag: "--include <paths>",
@@ -43,9 +47,9 @@ export const buildHelp: CommandHelp = {
   examples: [
     "veryfront build",
     "veryfront build --output dist",
-    "veryfront build --no-ssg",
+    "veryfront build --ssg",
     "veryfront build --preset embedded  # writes dist/embedded/*",
-    "veryfront build --include /docs --exclude /api",
+    "veryfront build --ssg --include /docs --exclude /api",
     "veryfront build --dry-run",
   ],
 };

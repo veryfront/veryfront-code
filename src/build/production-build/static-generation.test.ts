@@ -248,6 +248,41 @@ describe(
         assertEquals(stats.totalSize > 0, true);
       });
 
+      it("writes transition data with root content instead of the full HTML document", async () => {
+        const adapter = createMemoryAdapter();
+        const renderer = {
+          renderPage: () =>
+            Promise.resolve({
+              html:
+                '<!DOCTYPE html><html><head><script>globalThis.__docScript=1</script></head><body><div id="root"><main><div>Page content</div></main></div><div id="veryfront-portals"></div><script type="module">globalThis.__boot=1</script></body></html>',
+              frontmatter: { title: "About" },
+              headings: [],
+            }),
+          destroy: () => Promise.resolve(),
+        } as unknown as VeryfrontRenderer;
+
+        await buildPagesRoutes(
+          [{ slug: "about", path: "/about", file: "pages/about.mdx" }],
+          {
+            adapter,
+            projectDir: "/tmp/project",
+            outputDir: "/tmp/output",
+            renderer,
+            config: createMockConfig(),
+            enablePrefetch: false,
+            chunkManifest: null,
+            dryRun: false,
+          },
+        );
+
+        const rawData = adapter.fs.files.get("/tmp/output/_veryfront/data/about.json") ?? "";
+        const pageData = JSON.parse(rawData) as { html: string };
+
+        assertEquals(pageData.html, "<main><div>Page content</div></main>");
+        assertEquals(pageData.html.includes("<script"), false);
+        assertEquals(pageData.html.includes("<!DOCTYPE html>"), false);
+      });
+
       it("records generated Pages Router paths in SSG stats", async () => {
         const stats = await buildPagesRoutes(
           [

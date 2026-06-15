@@ -273,6 +273,8 @@ export interface RuntimeHandlerOptions {
   defaultProjectSlug?: string;
   /** Default project ID when not provided via proxy headers (for tests/local mode) */
   defaultProjectId?: string;
+  /** Default release ID when not provided via proxy headers (for standalone production mode) */
+  defaultReleaseId?: string;
   /** Default environment for standalone mode (preview or production). Defaults to preview for safety. */
   defaultEnvironment?: "preview" | "production";
 }
@@ -532,6 +534,7 @@ export function createVeryfrontHandler(
                 reqCtx,
                 defaultProjectSlug: opts.defaultProjectSlug,
                 defaultProjectId: opts.defaultProjectId,
+                defaultReleaseId: opts.defaultReleaseId,
                 wsSlugOverride,
               }),
           );

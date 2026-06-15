@@ -34,6 +34,10 @@ interface GlobalWithRouter {
 
 export type { RouteData, SpaPageData };
 
+export interface RouterBootOptions extends RouterOptions {
+  slug?: string;
+}
+
 export interface RouterOptions {
   baseUrl?: string;
   spaMode?: boolean;
@@ -252,8 +256,14 @@ export class VeryfrontRouter {
   }
 }
 
-if (typeof window !== "undefined" && globalThis.document) {
-  const router = new VeryfrontRouter();
+export function boot(options: RouterBootOptions = {}): VeryfrontRouter | null {
+  if (typeof window === "undefined" || !globalThis.document) return null;
+
+  const globalWithRouter = globalThis as GlobalWithRouter;
+  if (globalWithRouter.veryFrontRouter) return globalWithRouter.veryFrontRouter;
+
+  const { slug: _slug, ...routerOptions } = options;
+  const router = new VeryfrontRouter(routerOptions);
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", () => router.init(), { once: true });
@@ -261,5 +271,10 @@ if (typeof window !== "undefined" && globalThis.document) {
     router.init();
   }
 
-  (globalThis as GlobalWithRouter).veryFrontRouter = router;
+  globalWithRouter.veryFrontRouter = router;
+  return router;
+}
+
+if (typeof window !== "undefined" && globalThis.document) {
+  boot();
 }

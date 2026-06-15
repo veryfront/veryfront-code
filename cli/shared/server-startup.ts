@@ -8,6 +8,13 @@ import {
 } from "veryfront/server";
 import type { RuntimeAdapter } from "veryfront/platform";
 import { ensureBuiltinContentProcessor } from "./ensure-content-processor.ts";
+import { join } from "#veryfront/compat/path";
+import { parseReleaseAssetManifest } from "#veryfront/release-assets/index.ts";
+import {
+  clearReleaseAssetManifestCache,
+  configureReleaseAssetManifestFetcher,
+} from "#veryfront/release-assets/index.ts";
+import { LOCAL_RELEASE_ASSET_MANIFEST_PATH } from "#veryfront/build";
 
 export interface StartCliProxyModeServerOptions {
   port: number;
@@ -95,6 +102,23 @@ export async function startCliProductionServer(
   options: StartCliProductionServerOptions,
 ): Promise<Awaited<ReturnType<typeof startProductionServer>>> {
   const adapter = options.adapter ?? (await runtime.get());
+  const manifestPath = join(options.projectDir, "dist", LOCAL_RELEASE_ASSET_MANIFEST_PATH);
+  let registeredLocalManifest = false;
+  let localReleaseId: string | undefined;
+
+  try {
+    const manifestRaw = await adapter.fs.readFile(manifestPath);
+    const manifest = parseReleaseAssetManifest(JSON.parse(manifestRaw));
+    if (manifest) {
+      clearReleaseAssetManifestCache();
+      configureReleaseAssetManifestFetcher(() => Promise.resolve({ state: "ready", manifest }));
+      registeredLocalManifest = true;
+      localReleaseId = manifest.releaseId;
+    }
+  } catch (_) {
+    /* expected: builds without local release asset manifests keep CDN fallback */
+  }
+
   const serverOptions: StartProductionServerOptions = {
     projectDir: options.projectDir,
     port: options.port,
@@ -104,6 +128,8 @@ export async function startCliProductionServer(
     signal: options.signal,
     defaultProjectSlug: options.defaultProjectSlug,
     defaultProjectId: options.defaultProjectId,
+    defaultReleaseId: localReleaseId,
+    defaultEnvironment: "production",
     // Do NOT register a `localProjects` mapping here. `vf serve` and the
     // compiled binary are production deployments, and `isLocalProject: true`
     // flips `isDev` on in security headers (suppressing CSP) and in the SSR
@@ -115,5 +141,14 @@ export async function startCliProductionServer(
   };
   const result = await startProductionServer(serverOptions);
   ensureBuiltinContentProcessor();
-  return result;
+  return {
+    ...result,
+    stop: async () => {
+      if (registeredLocalManifest) {
+        configureReleaseAssetManifestFetcher(undefined);
+        clearReleaseAssetManifestCache();
+      }
+      await result.stop();
+    },
+  };
 }

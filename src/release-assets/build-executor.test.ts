@@ -2,8 +2,12 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { normalizeHttpUrl } from "#veryfront/transforms/esm/http-cache.ts";
-import { RELEASE_ASSET_MAX_SIZE_BYTES } from "./constants.ts";
+import {
+  RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG,
+  RELEASE_ASSET_MAX_SIZE_BYTES,
+} from "./constants.ts";
 import {
   type ReleaseAssetBuildClient,
   type ReleaseAssetBuildInput,
@@ -120,6 +124,7 @@ function withFakeReactVendor(
 
 describe("release asset build executor", () => {
   const tempDirs: string[] = [];
+  const originalDependencyFlag = getHostEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG);
 
   async function tmp(): Promise<string> {
     const dir = await Deno.makeTempDir({ prefix: "vf-rab-test-" });
@@ -127,7 +132,12 @@ describe("release asset build executor", () => {
     return dir;
   }
 
+  function enableDependencyImportMap(): void {
+    setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+  }
+
   afterEach(async () => {
+    setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, originalDependencyFlag ?? "");
     for (const dir of tempDirs.splice(0)) {
       await Deno.remove(dir, { recursive: true }).catch(() => undefined);
     }
@@ -170,7 +180,40 @@ describe("release asset build executor", () => {
     assert(rec.uploads.every((u) => u.contentType === "text/javascript"));
   });
 
-  it("records framework import-map modules as manifest dependencies", async () => {
+  it("keeps transformed HTTP imports on their source URLs by default", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "pages/index.tsx",
+        content: 'import React from "react"; export default React;',
+      },
+    ];
+    const client = makeClient(files, rec);
+    const transform = () =>
+      Promise.resolve(
+        'import React from "https://esm.sh/react@19.2.4?target=es2022&deps=csstype@3.2.3"; export default React;',
+      );
+
+    await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.dependencies.react, undefined);
+    const pageHash = manifest.modules["pages/index.tsx"]?.contentHash;
+    assertExists(pageHash);
+
+    const pageUpload = rec.uploads.find((u) => u.hash === pageHash);
+    assertExists(pageUpload);
+    assert(
+      pageUpload.text.includes(
+        '"https://esm.sh/react@19.2.4?target=es2022&deps=csstype@3.2.3"',
+      ),
+    );
+    assert(!pageUpload.text.includes("/_vf/assets/"));
+  });
+
+  it("records framework import-map modules as manifest dependencies when dependency vendoring is enabled", async () => {
+    enableDependencyImportMap();
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [{ path: "pages/index.tsx", content: "export default () => null;" }];
     const client = makeClient(files, rec);
@@ -195,6 +238,7 @@ describe("release asset build executor", () => {
   });
 
   it("matches React import-map dependencies by normalized HTTP manifest key", async () => {
+    enableDependencyImportMap();
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [{ path: "pages/index.tsx", content: "export default () => null;" }];
     const client = makeClient(files, rec);
@@ -218,6 +262,7 @@ describe("release asset build executor", () => {
   });
 
   it("fails when React import-map dependencies cannot be vendored", async () => {
+    enableDependencyImportMap();
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [{ path: "pages/index.tsx", content: "export default () => null;" }];
     const client = makeClient(files, rec);
@@ -274,6 +319,7 @@ describe("release asset build executor", () => {
   });
 
   it("vendors transformed HTTP imports into immutable dependency assets", async () => {
+    enableDependencyImportMap();
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
       {
@@ -324,6 +370,7 @@ describe("release asset build executor", () => {
   });
 
   it("rewrites nested vendored HTTP dependency imports to immutable assets", async () => {
+    enableDependencyImportMap();
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
       {
@@ -378,6 +425,7 @@ describe("release asset build executor", () => {
   });
 
   it("resolves vendored dependency relatives from their source file path", async () => {
+    enableDependencyImportMap();
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
       {
@@ -451,6 +499,7 @@ describe("release asset build executor", () => {
   });
 
   it("falls back to source URLs when vendored dependency assets contain a cycle", async () => {
+    enableDependencyImportMap();
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
       {
@@ -510,6 +559,7 @@ describe("release asset build executor", () => {
   });
 
   it("fails the manifest when a vendored dependency keeps an unresolved file import", async () => {
+    enableDependencyImportMap();
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
       {
@@ -550,6 +600,7 @@ describe("release asset build executor", () => {
   });
 
   it("fails the manifest when a vendored dependency asset exceeds the size limit", async () => {
+    enableDependencyImportMap();
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
       {

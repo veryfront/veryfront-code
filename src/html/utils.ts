@@ -1,8 +1,12 @@
 import { escapeHTML } from "./html-escape.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
-import { releaseAssetUrl } from "#veryfront/release-assets/constants.ts";
+import {
+  RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG,
+  releaseAssetUrl,
+} from "#veryfront/release-assets/constants.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { VERYFRONT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import {
   DEFAULT_REACT_VERSION,
@@ -318,6 +322,7 @@ function applyManifestDependencies(
   manifest?: ReleaseAssetManifest | null,
 ): Record<string, string> {
   if (!manifest) return imports;
+  if (getHostEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG) !== "1") return imports;
 
   const dependencyAssets = new Map<string, string>();
   for (const [specifier, entry] of Object.entries(manifest.dependencies)) {
@@ -406,6 +411,7 @@ export async function buildImportMap(
     veryfront: versions.veryfront,
     pretty,
     customImports: stableMapKey(customImports),
+    dependencyImportMapEnabled: getHostEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG) === "1",
     manifestDependencies: stableManifestDependencyKey(releaseAssetManifest),
   });
   const cached = importMapJsonCache.get(cacheKey);

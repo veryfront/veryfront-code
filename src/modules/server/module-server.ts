@@ -27,6 +27,7 @@ import {
 import { getReactUrls, REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { readLimitedCrossProjectSource } from "./cross-project-source-limit.ts";
 import { sha256Short } from "#veryfront/cache/hash.ts";
+import { rewriteReleaseDependencyImportsForModule } from "#veryfront/release-assets/module-consumption.ts";
 import {
   buildSourceMissCacheKey,
   hasSourceMiss,
@@ -185,6 +186,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           });
         },
       });
+      const platformFs = createFileSystem();
 
       const debugUserAgent = req.headers.get("user-agent") ?? "";
       logger.debug("Request", {
@@ -257,6 +259,11 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
                 releaseId: options.releaseId,
                 reactVersion,
               }),
+            });
+          } else {
+            transformedCode = await rewriteReleaseDependencyImportsForModule(transformedCode, {
+              releaseId: options.releaseId,
+              readDependencySource: (path) => platformFs.readTextFile(path),
             });
           }
 
@@ -348,6 +355,11 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
                 reactVersion,
               }),
             });
+          } else {
+            code = await rewriteReleaseDependencyImportsForModule(code, {
+              releaseId: options.releaseId,
+              readDependencySource: (path) => platformFs.readTextFile(path),
+            });
           }
 
           return createModuleResponse(method, code, HTTP_OK, {
@@ -421,7 +433,6 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
               contentLength: embeddedContent.length,
             });
           } else {
-            const platformFs = createFileSystem();
             source = isFrameworkFile
               ? await platformFs.readTextFile(sourceFile)
               : await secureFs.readFile(sourceFile);
@@ -480,6 +491,13 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             logger.debug("HMR timestamp injection", {
               path: modulePath,
               timestamp: hmrTimestamp,
+            });
+          }
+
+          if (!isSSR) {
+            code = await rewriteReleaseDependencyImportsForModule(code, {
+              releaseId: options.releaseId,
+              readDependencySource: (path) => platformFs.readTextFile(path),
             });
           }
         }

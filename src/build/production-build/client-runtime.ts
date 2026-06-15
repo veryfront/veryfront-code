@@ -57,9 +57,17 @@ async function readTextFile(path: string): Promise<string> {
 const moduleDir = dirname(fromFileUrl(import.meta.url));
 const packageRoot = resolve(join(moduleDir, "..", "..", ".."));
 const vfSrcPrefix = "@vf-src/";
+const veryfrontInternalPrefix = "#veryfront/";
 const moduleExtensions = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".mts", ".cjs", ".cts"] as const;
 const externalSpecifier = /^(std\/|@std\/|node:|deno:|https?:)/;
 const relativeSpecifier = /^\.{1,2}(?:\/|$)/;
+const unresolvedInternalAlias = /(?:^|["'])#veryfront\//;
+
+const clientAliasPaths = new Map([
+  ["#veryfront/config", "src/rendering/client/browser-stubs/config.ts"],
+  ["#veryfront/errors/error-registry.ts", "src/rendering/client/browser-stubs/error-registry.ts"],
+  ["#veryfront/routing", "src/routing/client/index.ts"],
+]);
 
 /**
  * Generate app.js module
@@ -120,7 +128,11 @@ function loadClientScript(
   sourceEntry: string,
   options?: ClientScriptGenerationOptions,
 ): Promise<string> {
-  if (preBundledScript && !options?.forceSourceBundle) {
+  if (
+    preBundledScript &&
+    !options?.forceSourceBundle &&
+    !unresolvedInternalAlias.test(preBundledScript)
+  ) {
     logger.debug(`Using pre-bundled client ${scriptName} script`);
     return Promise.resolve(preBundledScript);
   }
@@ -205,6 +217,21 @@ function createPathResolverPlugin(): Plugin {
           return resolved ? { path: resolved } : null;
         }
 
+        const aliasPath = clientAliasPaths.get(specifier);
+        if (aliasPath) {
+          return { path: resolve(packageRoot, aliasPath) };
+        }
+
+        if (specifier.startsWith(veryfrontInternalPrefix)) {
+          const lookupBase = resolve(
+            packageRoot,
+            "src",
+            specifier.slice(veryfrontInternalPrefix.length),
+          );
+          const resolved = await resolveFromCandidates(lookupBase);
+          return resolved ? { path: resolved } : null;
+        }
+
         if (relativeSpecifier.test(specifier)) {
           const importerDir = determineImporterDir(args);
           const lookupBase = resolve(importerDir, specifier);
@@ -267,7 +294,7 @@ function stripTrailingSeparator(path: string): string {
 
 function stripSpecifier(specifier: string): string {
   const queryIndex = specifier.indexOf("?");
-  const hashIndex = specifier.indexOf("#");
+  const hashIndex = specifier.startsWith("#") ? -1 : specifier.indexOf("#");
 
   if (queryIndex === -1 && hashIndex === -1) return specifier;
   if (queryIndex === -1) return specifier.slice(0, hashIndex);
@@ -345,8 +372,8 @@ async function bundleClientEntry(entryRelative: string): Promise<string> {
         "react/jsx-dev-runtime",
       ],
       plugins: [
-        createPathResolverPlugin(),
         createClientShimPlugin(shimPath),
+        createPathResolverPlugin(),
         createFsLoaderPlugin(),
       ],
     });

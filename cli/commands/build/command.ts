@@ -42,7 +42,7 @@ export function buildCommand(options: BuildOptions): Promise<void> {
           enableSplitting: options.splitting ?? true,
           enableCompression: options.compress ?? true,
           enablePrefetch: options.prefetch ?? true,
-          ssg: options.ssg ?? true,
+          ssg: options.ssg ?? false,
           include: options.include,
           exclude: options.exclude,
           dryRun,

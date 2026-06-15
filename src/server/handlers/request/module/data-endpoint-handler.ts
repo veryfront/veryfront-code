@@ -17,7 +17,8 @@ export function handleDataEndpoint(
     "module.data.handle",
     async () => {
       try {
-        const encSlug = pathname.replace("/_veryfront/data/", "").replace(/\.json$/, "");
+        const rawSlug = pathname.replace("/_veryfront/data/", "").replace(/\.json$/, "");
+        const encSlug = rawSlug === "index" ? "" : rawSlug;
         const renderer = await getRendererForProject(ctx);
         const result = await renderer.renderPage(encSlug);
 

@@ -20,6 +20,37 @@ describe("build/production-build/build/output-generator", () => {
       await generateClientScripts(adapter as any, "/output", true);
       assertEquals(writes.length, 0);
     });
+
+    it("should write all production client scripts", async () => {
+      const writes: { path: string; content: string }[] = [];
+      const adapter = {
+        fs: {
+          writeFile(path: string, content: string) {
+            writes.push({ path, content });
+            return Promise.resolve();
+          },
+        },
+      };
+
+      // deno-lint-ignore no-explicit-any
+      await generateClientScripts(adapter as any, "/output", false);
+
+      assertEquals(writes.some((write) => write.path.endsWith("_veryfront/app.js")), true);
+      assertEquals(writes.some((write) => write.path.endsWith("_veryfront/client.js")), true);
+      assertEquals(writes.some((write) => write.path.endsWith("_veryfront/router.js")), true);
+      assertEquals(writes.some((write) => write.path.endsWith("_veryfront/prefetch.js")), true);
+      assertEquals(
+        writes.some((write) => write.path.endsWith("_veryfront/hydration-runtime.js")),
+        true,
+      );
+      assertEquals(
+        writes.some((write) =>
+          write.path.endsWith("_veryfront/hydration-runtime.js") &&
+          write.content.includes("RouterProvider")
+        ),
+        true,
+      );
+    });
   });
 
   describe("generateRedirectsFile", () => {

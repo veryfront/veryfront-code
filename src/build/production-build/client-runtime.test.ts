@@ -89,6 +89,22 @@ describe(
             "bundled output should contain VeryfrontRouter class",
           );
         });
+
+        it("should export the static page boot function", () => {
+          assertEquals(
+            result.includes("boot"),
+            true,
+            "bundled output should contain the static page boot export",
+          );
+        });
+
+        it("should not emit unresolved internal aliases", () => {
+          assertEquals(
+            result.includes("#veryfront/"),
+            false,
+            "client runtime bundle should resolve internal aliases before browser delivery",
+          );
+        });
       },
     );
 
@@ -111,6 +127,14 @@ describe(
         it("should return the same output as generateClientModule", async () => {
           const clientResult = await generateClientModule();
           assertEquals(result, clientResult);
+        });
+
+        it("should not emit unresolved internal aliases", () => {
+          assertEquals(
+            result.includes("#veryfront/"),
+            false,
+            "router runtime bundle should resolve internal aliases before browser delivery",
+          );
         });
       },
     );

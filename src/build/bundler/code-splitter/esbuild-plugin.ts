@@ -20,7 +20,7 @@ export function createSplitterPlugin(projectDir: string): Plugin {
         },
       );
 
-      build.onResolve({ filter: /\.mdx$/ }, (args: OnResolveArgs) => ({
+      build.onResolve({ filter: /\.mdx?$/ }, (args: OnResolveArgs) => ({
         path: join(projectDir, args.path),
         namespace: "mdx",
       }));

@@ -8,10 +8,15 @@ import {
   shouldDisableLayout,
 } from "./utils.ts";
 import { getDefaultImportMap } from "#veryfront/modules/import-map/default-import-map.ts";
+import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 
 describe("html-generation/utils", () => {
+  const originalDependencyFlag = getHostEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG);
+
   afterEach(() => {
+    setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, originalDependencyFlag ?? "");
     clearImportMapCache();
   });
 
@@ -171,7 +176,55 @@ describe("html-generation/utils", () => {
       assertEquals(result.includes("\n"), false);
     });
 
-    it("rewrites React import-map aliases from manifest dependency keys", async () => {
+    it("keeps React import-map aliases on CDN URLs by default", async () => {
+      const dependencies = Object.fromEntries(
+        [
+          "react",
+          "react-dom",
+          "react-dom/client",
+          "react/jsx-runtime",
+          "react/jsx-dev-runtime",
+        ].map((specifier, index) => [
+          specifier,
+          {
+            contentHash: `${index + 1}`.repeat(64),
+            size: 10,
+            contentType: "text/javascript",
+          },
+        ]),
+      );
+      const manifest: ReleaseAssetManifest = {
+        schemaVersion: 1,
+        projectId: "project-id",
+        releaseId: "release-id",
+        releaseVersion: 1,
+        manifestVersion: 1,
+        builderVersion: "0.1.802",
+        sourceContentHash: "source",
+        createdAt: "2026-06-14T00:00:00.000Z",
+        assetBasePath: "/_vf/assets",
+        modules: {},
+        css: [],
+        routes: {},
+        dependencies,
+        fallback: { mode: "jit", gaps: [] },
+      };
+
+      const result = await buildImportMapJson({
+        pretty: false,
+        releaseAssetManifest: manifest,
+      });
+      const imports = JSON.parse(result).imports as Record<string, string>;
+
+      assertStringIncludes(imports.react, "https://esm.sh/react@");
+      assertStringIncludes(imports["react-dom"], "https://esm.sh/react-dom@");
+      assertStringIncludes(imports["react-dom/client"], "https://esm.sh/react-dom@");
+      assertStringIncludes(imports["react/jsx-runtime"], "https://esm.sh/react@");
+      assertStringIncludes(imports["react/jsx-dev-runtime"], "https://esm.sh/react@");
+    });
+
+    it("rewrites React import-map aliases from manifest dependency keys when explicitly enabled", async () => {
+      setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
       const dependencies = Object.fromEntries(
         [
           "react",

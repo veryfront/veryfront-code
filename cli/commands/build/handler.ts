@@ -19,7 +19,7 @@ export const getBuildArgsSchema = defineSchema((v) =>
     split: v.boolean().default(true),
     compress: v.boolean().default(true),
     prefetch: v.boolean().default(true),
-    ssg: v.boolean().default(true),
+    ssg: v.boolean().default(false),
     noSsg: v.boolean().default(false),
     include: v.array(v.string()).optional(),
     exclude: v.array(v.string()).optional(),

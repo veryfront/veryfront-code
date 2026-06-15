@@ -204,7 +204,8 @@ export class StaticFileService {
   ): CacheStrategy {
     if (options.isPreviewMode && !options.isLocalProject) return "no-cache";
 
-    const isVeryfrontAsset = requestPath.includes("/_veryfront/");
+    const isVeryfrontAsset = requestPath.includes("/_veryfront/") ||
+      requestPath.includes("/_vf/assets/");
     if (
       hasHashedFilename(candidate.path) ||
       (isVeryfrontAsset && (candidate.source === "dist" || candidate.source === "manifest"))
@@ -319,7 +320,8 @@ export class StaticFileService {
     if (pathname.includes("/.veryfront/") || pathname.startsWith("/.veryfront")) return false;
     if (pathname.endsWith(".md")) return false;
     if (this.isDeniedDotfile(pathname)) return false;
-    return pathname.includes(".") || pathname.startsWith("/_veryfront/");
+    return pathname.includes(".") || pathname.startsWith("/_veryfront/") ||
+      pathname.startsWith("/_vf/assets/");
   }
 
   private isDeniedDotfile(pathname: string): boolean {

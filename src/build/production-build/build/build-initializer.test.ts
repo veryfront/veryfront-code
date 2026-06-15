@@ -38,8 +38,13 @@ describe("build/production-build/build/build-initializer", () => {
       assertEquals(result.enablePrefetch, true);
     });
 
-    it("should default ssg to true", () => {
+    it("should default ssg to false", () => {
       const result = normalizeBuildOptions({ projectDir: "/project" });
+      assertEquals(result.ssg, false);
+    });
+
+    it("should respect explicitly enabled ssg", () => {
+      const result = normalizeBuildOptions({ projectDir: "/project", ssg: true });
       assertEquals(result.ssg, true);
     });
 
