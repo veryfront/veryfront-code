@@ -149,6 +149,8 @@ describe("hydration-script-builder/templates/router", () => {
     it("should define prefetching on hover", () => {
       const result = getRouterScript();
       assertIncludes(result, "function prefetchPage(href)");
+      assertIncludes(result, "function preloadModulesForPageData(pageData, path)");
+      assertIncludes(result, "loadComponent(modulePath)");
       assertIncludes(result, "PREFETCH_DELAY_MS");
       assertIncludes(result, "MAX_PREFETCH_PATHS = 100");
     });

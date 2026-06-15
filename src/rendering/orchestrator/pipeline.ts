@@ -22,6 +22,7 @@ import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { VeryfrontError } from "#veryfront/errors/index.ts";
 import { FILE_NOT_FOUND, RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
 import { buildQueryAwareCacheKey } from "#veryfront/cache/keys.ts";
+import { requestHasCacheSensitiveState } from "#veryfront/cache/request-cacheability.ts";
 import {
   extractRelativePath as extractRelativePathShared,
   extractRouteParams as extractRouteParamsShared,
@@ -50,6 +51,7 @@ import { LAYOUT_EXTENSIONS } from "../layouts/types.ts";
 import type { LayoutItem } from "#veryfront/types";
 import { withTimeout, withTimeoutThrow } from "../utils/stream-utils.ts";
 import { extractCandidates, generateTailwindCSS } from "#veryfront/html/styles-builder/index.ts";
+import { buildReleaseAssetModules } from "#veryfront/release-assets/client-module-map.ts";
 import {
   getCSSByHashAsync,
   regenerateCSSByHash,
@@ -391,7 +393,7 @@ export class RenderPipeline {
     let cacheResult: Awaited<ReturnType<typeof this.config.cacheCoordinator.checkCache>> | null =
       null;
 
-    const shouldCache = !!cacheKey && options?.delivery !== "stream";
+    const shouldCache = cacheKey !== null && options?.delivery !== "stream";
 
     if (shouldCache && !options?.skipCacheCheck) {
       const cacheCheckStart = performance.now();
@@ -698,6 +700,7 @@ export class RenderPipeline {
       layoutProps,
       buildVersion: createBuildVersion(projectUpdatedAt),
       appPath,
+      releaseAssetModules: buildReleaseAssetModules(options?.releaseAssetManifest),
       headings,
       css,
       cssAction,
@@ -851,7 +854,9 @@ export class RenderPipeline {
 
   private hasReadyReleaseCss(options: RenderOptions | undefined): boolean {
     if (options?.environment !== "production") return false;
-    const releaseManifest = getReadyManifestForRender(options?.releaseId);
+    const releaseManifest = options.releaseAssetManifest !== undefined
+      ? options.releaseAssetManifest
+      : getReadyManifestForRender(options?.releaseId);
     return (releaseManifest?.css?.length ?? 0) > 0;
   }
 
@@ -885,15 +890,9 @@ export class RenderPipeline {
     if (options?.cacheKey) return options.cacheKey;
     const req = options?.request;
     if (req) {
-      const hasAuth = req.headers.has("authorization") ||
-        req.headers.has("cookie") ||
-        req.headers.has("x-api-key");
-      if (hasAuth) return null;
+      if (requestHasCacheSensitiveState(req)) return null;
     }
 
-    const url = options?.url;
-    if (!url) return slug;
-
-    return buildQueryAwareCacheKey(slug, url, this.config.queryParamOptions);
+    return buildQueryAwareCacheKey(slug, options?.url, this.config.queryParamOptions);
   }
 }

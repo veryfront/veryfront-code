@@ -3,7 +3,7 @@ import { resolveRelativePath } from "#veryfront/modules/react-loader/path-resolv
 import { getExtensionName } from "#veryfront/utils/path-utils.ts";
 import { determineClientModuleStrategy } from "#veryfront/rendering/rsc/client-module-strategy.ts";
 import { jsonForInlineScript } from "#veryfront/security/client/html-sanitizer.ts";
-import { releaseAssetUrl } from "#veryfront/release-assets/constants.ts";
+import { buildReleaseAssetModules } from "#veryfront/release-assets/client-module-map.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import type { HTMLGenerationOptions } from "../types.ts";
 import type { HydrationDataStructure } from "./types.ts";
@@ -38,18 +38,6 @@ function inferPageType(pagePath?: string): PageType | undefined {
 type HydrationOptions = HTMLGenerationOptions & {
   releaseAssetManifest?: ReleaseAssetManifest | null;
 };
-
-function buildReleaseAssetModules(
-  manifest?: ReleaseAssetManifest | null,
-): Record<string, string> | undefined {
-  if (!manifest) return undefined;
-
-  const modules: Record<string, string> = {};
-  for (const [path, entry] of Object.entries(manifest.modules)) {
-    modules[path] = releaseAssetUrl(entry.contentHash, "js");
-  }
-  return Object.keys(modules).length > 0 ? modules : undefined;
-}
 
 export function generateHydrationData(
   slug: string,

@@ -306,9 +306,11 @@ export const getRouterScript = () => `
 
     async function fetchPageDataForPrefetch(path) {
       if (getCachedPageData(path)) return;
-      return fetchPageDataFresh(path, null).catch((error) => {
-        logBackgroundFetchFailure('Page data prefetch', path, error);
-      });
+      return fetchPageDataFresh(path, null)
+        .then((data) => preloadModulesForPageData(data, path))
+        .catch((error) => {
+          logBackgroundFetchFailure('Page data prefetch', path, error);
+        });
     }
 
     // ============================================
@@ -406,11 +408,7 @@ export const getRouterScript = () => `
       }
 
       perfStart('render:loadAll');
-      const layoutPaths = (pageData.layouts || []).map((l) => l.path);
-      const allPaths = [pageData.pagePath, ...layoutPaths];
-
-      if (pageData.appPath) allPaths.push(pageData.appPath);
-
+      const allPaths = getPageDataModulePaths(pageData);
       const components = await Promise.all(allPaths.map((path) => loadComponent(path)));
       perfEnd('render:loadAll');
 
@@ -517,14 +515,47 @@ export const getRouterScript = () => `
     }
 
     // ============================================
-    // Prefetching on hover (page data only, no module preloading)
+    // Prefetching on hover
     // ============================================
     let prefetchTimeout = null;
     const prefetchedPaths = new Set();
     const inFlightPrefetches = new Set();
 
+    function getPageDataModulePaths(pageData) {
+      const layoutPaths = (pageData.layouts || []).map((l) => l.path).filter(Boolean);
+      const allPaths = [pageData.pagePath, ...layoutPaths].filter(Boolean);
+
+      if (pageData.appPath) allPaths.push(pageData.appPath);
+
+      return allPaths;
+    }
+
+    async function preloadModulesForPageData(pageData, path) {
+      if (!pageData) return;
+      if (pageData.releaseAssetModules && window.__veryfrontSetReleaseAssetModules) {
+        window.__veryfrontSetReleaseAssetModules(pageData.releaseAssetModules);
+      }
+
+      const modulePaths = getPageDataModulePaths(pageData);
+      if (modulePaths.length === 0) return;
+
+      try {
+        await Promise.all(modulePaths.map((modulePath) => loadComponent(modulePath)));
+      } catch (error) {
+        logBackgroundFetchFailure('Module prefetch', path, error);
+      }
+    }
+
     function prefetchPage(href) {
-      if (prefetchedPaths.has(href) || getCachedPageData(href) || inFlightPrefetches.has(href)) return;
+      if (prefetchedPaths.has(href) || inFlightPrefetches.has(href)) return;
+
+      const cachedPageData = getCachedPageData(href);
+      if (cachedPageData) {
+        preloadModulesForPageData(cachedPageData, href).catch((error) => {
+          logBackgroundFetchFailure('Module prefetch', href, error);
+        });
+        return;
+      }
 
       if (prefetchedPaths.size >= MAX_PREFETCH_PATHS) {
         const oldest = prefetchedPaths.values().next().value;

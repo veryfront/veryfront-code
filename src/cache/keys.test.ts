@@ -334,6 +334,11 @@ describe("cache/keys", () => {
       assertEquals(buildQueryAwareCacheKey("/blog"), "/blog");
     });
 
+    it("should normalize the root slug to a non-empty key", () => {
+      assertEquals(buildQueryAwareCacheKey(""), "index");
+      assertEquals(buildQueryAwareCacheKey("", new URL("https://example.com/")), "index");
+    });
+
     it("should return slug when URL has no query params", () => {
       const url = new URL("https://example.com/blog");
       assertEquals(buildQueryAwareCacheKey("/blog", url), "/blog");

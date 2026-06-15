@@ -126,8 +126,9 @@ export function buildQueryAwareCacheKey(
   url?: URL,
   options?: QueryParamCacheOptions,
 ): string {
-  if (!url) return slug;
+  const normalizedSlug = slug || "index";
+  if (!url) return normalizedSlug;
 
   const queryPart = sanitizeQueryParamsForCacheKey(url, options);
-  return queryPart ? `${slug}:q:${queryPart}` : slug;
+  return queryPart ? `${normalizedSlug}:q:${queryPart}` : normalizedSlug;
 }
