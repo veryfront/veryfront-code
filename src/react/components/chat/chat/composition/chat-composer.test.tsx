@@ -38,6 +38,37 @@ function installDomGlobals(dom: JSDOM): () => void {
 }
 
 describe("react/components/chat/chat/composition/chat-composer", () => {
+  it("labels the multiline message input for assistive technology", () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { url: "https://example.com/" },
+    );
+    const restore = installDomGlobals(dom);
+
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement, "Expected root element to exist");
+
+      const root = createRoot(rootElement);
+      flushSync(() => {
+        root.render(
+          <ChatComposer
+            input=""
+            onChange={() => {}}
+            placeholder="Ask Veryfront"
+          />,
+        );
+      });
+
+      const textarea = document.querySelector("textarea");
+      assert(textarea, "Expected multiline composer input to render");
+      assertEquals(textarea.getAttribute("aria-label"), "Ask Veryfront");
+      root.unmount();
+    } finally {
+      restore();
+    }
+  });
+
   it("opens upload and select document actions from the attachment button", () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
