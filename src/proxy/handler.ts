@@ -1,56 +1,16 @@
 import { TokenManager, type TokenScope } from "./token-manager.ts";
 import { type ParsedDomain, parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 import type { TokenCache } from "./cache/types.ts";
-import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { injectContext, ProxySpanNames, withSpan } from "./tracing.ts";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
-import { resolve as resolveContract } from "../extensions/contracts.ts";
-import type { AuthProvider } from "../extensions/auth/index.ts";
+import { checkProtectedProxyAccess } from "./proxy-access-control.ts";
 import { createLocalProjectResolver } from "./local-project-resolver.ts";
 import {
   isMissingCustomDomainProjectError,
   resolveProxyRequestToken,
 } from "./proxy-token-resolution.ts";
 
-/**
- * Cache the resolved AuthProvider at module scope so the proxy does not pay
- * the registry lookup on every request. The cache is cleared implicitly when
- * `ExtensionLoader.teardownAll()` clears the registry — the next call
- * re-resolves (or surfaces the "install ext-auth-jwt" hint if the extension was
- * removed).
- */
-let cachedAuthProvider: AuthProvider | undefined;
-
-function getAuthProvider(): AuthProvider {
-  if (cachedAuthProvider) return cachedAuthProvider;
-
-  try {
-    cachedAuthProvider = resolveContract<AuthProvider>("AuthProvider");
-    return cachedAuthProvider;
-  } catch (err) {
-    // resolve() already throws with a helpful "Recommended: @veryfront/ext-auth-jwt"
-    // message, but the proxy is a load-bearing code path — append a concrete
-    // remediation hint that names the project-root extension directory so
-    // the user knows exactly what's missing.
-    const base = err instanceof Error ? err.message : String(err);
-    throw new Error(
-      `${base}\nTo enable JWT verification in the proxy, install ext-auth-jwt ` +
-        `(scaffold with \`deno task cli extension init ext-auth-jwt\` or add the ` +
-        `npm package @veryfront/ext-auth-jwt).`,
-      { cause: err },
-    );
-  }
-}
-
-/**
- * Reset the cached AuthProvider. Intended for tests that `register()` a mock
- * after the handler module has been imported.
- *
- * @internal
- */
-export function __resetCachedAuthProviderForTests(): void {
-  cachedAuthProvider = undefined;
-}
+export { __resetCachedAuthProviderForTests } from "./proxy-access-control.ts";
 
 export const INTERNAL_PROXY_HEADERS = [
   "x-token",
@@ -106,18 +66,6 @@ interface DomainLookupResult {
     active_release_id?: string | null;
     protected?: boolean;
   }>;
-}
-
-function resolveApiJwksUrl(apiBaseUrl: string, logger?: ProxyLogger): string | undefined {
-  try {
-    const normalizedBaseUrl = apiBaseUrl.endsWith("/") ? apiBaseUrl : `${apiBaseUrl}/`;
-    return new URL(".well-known/jwks.json", normalizedBaseUrl).toString();
-  } catch (error) {
-    logger?.error("Invalid API base URL for JWKS lookup", error as Error, {
-      apiBaseUrl,
-    });
-    return undefined;
-  }
 }
 
 async function lookupProjectByDomain(
@@ -244,72 +192,6 @@ function parseStatusFromError(error: unknown): number | null {
   return match ? Number(match[1]) : null;
 }
 
-async function extractUserIdFromToken(
-  token: string,
-  apiBaseUrl: string,
-  log?: ProxyLogger,
-): Promise<string | undefined> {
-  const auth = getAuthProvider();
-
-  const header = auth.decode(token);
-  if (!header) {
-    log?.debug("Failed to decode JWT header");
-    return undefined;
-  }
-
-  const algorithm = header.alg;
-
-  if (algorithm === "RS256") {
-    const jwksUrl = resolveApiJwksUrl(apiBaseUrl, log);
-    if (!jwksUrl) return undefined;
-
-    try {
-      const payload = await auth.verifyWithJwks(token, jwksUrl, {
-        algorithms: ["RS256"],
-      });
-      return (payload as { userId?: string }).userId;
-    } catch (error) {
-      log?.debug("RS256 JWT verification failed", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return undefined;
-    }
-  }
-
-  if (algorithm !== "HS256") {
-    log?.debug("Unsupported JWT algorithm", { algorithm: algorithm ?? null });
-    return undefined;
-  }
-
-  const jwtSecret = getEnv("JWT_SECRET");
-
-  if (!jwtSecret) {
-    log?.warn("JWT_SECRET not configured — cannot verify user token");
-    return undefined;
-  }
-
-  try {
-    // ext-auth-jwt reads JWT_SECRET from the environment when no `secret` was
-    // passed to the extension factory; the explicit env check above is kept
-    // so callers can warn once before we attempt verification.
-    const payload = await auth.verify(token, { algorithms: ["HS256"] });
-    return (payload as { userId?: string }).userId;
-  } catch (error) {
-    log?.debug("JWT verification failed", {
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return undefined;
-  }
-}
-
-function isProjectMember(
-  users: Array<{ id: string }> | undefined,
-  userId: string | undefined,
-): boolean {
-  if (!users || !userId) return false;
-  return users.some((u) => u.id === userId);
-}
-
 export function createProxyHandler(options: ProxyHandlerOptions) {
   const { config, cache, logger } = options;
   const localProjects = config.localProjects ?? {};
@@ -359,26 +241,6 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     };
   }
 
-  function makeAuthRedirectUrl(url: URL): string {
-    // Collapse leading slashes to prevent protocol-relative open redirects (e.g. "//evil.com/path")
-    const safePath = url.pathname.replace(/^\/\/+/, "/");
-    let returnPath = safePath + url.search;
-
-    // Ensure the return path stays within the application and is not an absolute URL.
-    // - It must start with "/".
-    // - It must not contain a scheme delimiter ("://").
-    // If it fails validation, fall back to the root path.
-    if (!returnPath.startsWith("/") || returnPath.includes("://")) {
-      returnPath = "/";
-    }
-
-    const isHostedProductionDeployment = url.hostname.endsWith(".production.veryfront.org") ||
-      url.hostname.endsWith(".production.veryfront.com");
-    const returnTarget = isHostedProductionDeployment ? url.toString() : returnPath;
-
-    return `https://veryfront.com/sign-in?from=${encodeURIComponent(returnTarget)}`;
-  }
-
   function makeProjectNotFoundContext(
     base: {
       scope: TokenScope;
@@ -398,64 +260,6 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     );
   }
 
-  async function checkProtectedAccess(
-    req: Request,
-    url: URL,
-    matchingEnv: NonNullable<DomainLookupResult["environments"]>[number] | undefined,
-    userToken: string | undefined,
-    users: DomainLookupResult["users"],
-    logContext: Record<string, unknown>,
-  ): Promise<{ status: number; message: string; redirectUrl?: string } | null> {
-    if (!matchingEnv?.protected) return null;
-
-    if (isSignedInternalControlPlaneRequest(req, url)) {
-      logger?.debug(
-        "Allowing signed internal control-plane request through protected environment",
-        {
-          ...logContext,
-          environmentName: matchingEnv.name,
-          pathname: url.pathname,
-        },
-      );
-      return null;
-    }
-
-    if (!userToken) {
-      const redirectUrl = makeAuthRedirectUrl(url);
-      logger?.info("Protected environment requires authentication", {
-        ...logContext,
-        environmentName: matchingEnv.name,
-        redirectUrl,
-      });
-      return { status: 302, message: "Authentication required", redirectUrl };
-    }
-
-    const userId = await extractUserIdFromToken(
-      userToken,
-      config.apiBaseUrl,
-      logger,
-    );
-    if (!userId) {
-      const redirectUrl = makeAuthRedirectUrl(url);
-      logger?.info("Could not extract userId from token", {
-        ...logContext,
-        environmentName: matchingEnv.name,
-        redirectUrl,
-      });
-      return { status: 302, message: "Authentication required", redirectUrl };
-    }
-    if (!isProjectMember(users, userId)) {
-      logger?.info("User is not a member of the project", {
-        ...logContext,
-        environmentName: matchingEnv.name,
-        userId,
-      });
-      return { status: 403, message: "Access denied" };
-    }
-
-    return null;
-  }
-
   async function resolveReleaseAndProtection(
     req: Request,
     url: URL,
@@ -473,14 +277,17 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
     const matchingEnv = lookupResult.environments?.find(envMatcher);
 
-    const protectionError = await checkProtectedAccess(
+    const protectionError = await checkProtectedProxyAccess({
       req,
       url,
       matchingEnv,
       userToken,
-      lookupResult.users,
+      users: lookupResult.users,
+      apiBaseUrl: config.apiBaseUrl,
+      logger,
       logContext,
-    );
+      isSignedInternalControlPlaneRequest: isSignedInternalControlPlaneRequest(req, url),
+    });
     if (protectionError) return { error: protectionError };
 
     return {
@@ -612,14 +419,17 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         releaseId = matchingEnv?.active_release_id ?? undefined;
         environmentId = matchingEnv?.id;
 
-        const protectionError = await checkProtectedAccess(
+        const protectionError = await checkProtectedProxyAccess({
           req,
           url,
           matchingEnv,
           userToken,
-          lookupResult.users,
-          { domain: host },
-        );
+          users: lookupResult.users,
+          apiBaseUrl: config.apiBaseUrl,
+          logger,
+          logContext: { domain: host },
+          isSignedInternalControlPlaneRequest: isSignedInternalControlPlaneRequest(req, url),
+        });
         if (protectionError) {
           return makeErrorContext(
             base,
