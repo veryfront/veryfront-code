@@ -3,6 +3,8 @@ import type { RenderResult } from "../orchestrator/types.ts";
 import type { CachePayload, CacheStore } from "./types.ts";
 import { MemoryCacheStore, type MemoryCacheStoreOptions } from "./stores/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { markRequestProfilePhase } from "#veryfront/observability/request-profiler.ts";
+import { metrics } from "#veryfront/observability/simple-metrics/index.ts";
 
 /** Default TTL for cache entries (5 minutes) */
 const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1_000;
@@ -30,11 +32,15 @@ export interface CacheCoordinatorOptions {
   contentSourceId?: string;
 }
 
+export type CacheLookupStatus = "hit" | "miss" | "expired";
+
 export interface CacheLookupResult {
   cachedResult?: RenderResult;
   depAwareSlug: string;
   moduleCacheKey: string;
   cachedModule?: RenderResult["pageModule"];
+  cacheStatus: CacheLookupStatus;
+  lookupDurationMs: number;
 }
 
 export class CacheCoordinator {
@@ -86,22 +92,36 @@ export class CacheCoordinator {
     return withSpan(
       "cache.checkCache",
       async () => {
+        const lookupStart = performance.now();
         const cached = await this.store.get(key);
 
         if (!cached) {
-          return { depAwareSlug: slug, moduleCacheKey: key };
+          const lookupDurationMs = roundDurationMs(performance.now() - lookupStart);
+          recordCacheLookup("miss", lookupDurationMs);
+          return { depAwareSlug: slug, moduleCacheKey: key, cacheStatus: "miss", lookupDurationMs };
         }
 
         if (this.isExpired(cached)) {
           await this.store.delete(key);
-          return { depAwareSlug: slug, moduleCacheKey: key };
+          const lookupDurationMs = roundDurationMs(performance.now() - lookupStart);
+          recordCacheLookup("expired", lookupDurationMs);
+          return {
+            depAwareSlug: slug,
+            moduleCacheKey: key,
+            cacheStatus: "expired",
+            lookupDurationMs,
+          };
         }
 
+        const lookupDurationMs = roundDurationMs(performance.now() - lookupStart);
+        recordCacheLookup("hit", lookupDurationMs);
         return {
           cachedResult: this.hydrateResult(cached),
           depAwareSlug: slug,
           moduleCacheKey: key,
           cachedModule: cached.result.pageModule,
+          cacheStatus: "hit",
+          lookupDurationMs,
         };
       },
       { "cache.slug": slug, "cache.key": key, "cache.projectId": this.projectId ?? "unknown" },
@@ -192,4 +212,14 @@ export class CacheCoordinator {
       stream: null,
     };
   }
+}
+
+function roundDurationMs(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function recordCacheLookup(status: CacheLookupStatus, durationMs: number): void {
+  markRequestProfilePhase("render.cache_lookup", durationMs);
+  markRequestProfilePhase(`render.cache_${status}`);
+  metrics.recordCacheGet(status === "hit");
 }

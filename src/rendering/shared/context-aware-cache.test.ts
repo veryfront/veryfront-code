@@ -78,6 +78,8 @@ describe("rendering/shared/context-aware-cache", () => {
 
       const result = await cache.checkCache("index", ctx);
       assertEquals(result.hit, false);
+      assertEquals(result.status, "miss");
+      assertEquals(typeof result.lookupDurationMs, "number");
       assertEquals(result.cachedResult, undefined);
       assertEquals(typeof result.cacheKey, "string");
     });
@@ -99,6 +101,8 @@ describe("rendering/shared/context-aware-cache", () => {
 
       const lookup = await cache.checkCache("index", ctx);
       assertEquals(lookup.hit, true);
+      assertEquals(lookup.status, "hit");
+      assertEquals(typeof lookup.lookupDurationMs, "number");
       assertEquals(lookup.cachedResult?.html, "<h1>Hello</h1>");
       assertEquals(lookup.cachedResult?.ssrHash, "abc123");
     });
@@ -152,6 +156,8 @@ describe("rendering/shared/context-aware-cache", () => {
 
       const lookup = await cache.checkCache("ttl-page", ctx);
       assertEquals(lookup.hit, false);
+      assertEquals(lookup.status, "expired");
+      assertEquals(typeof lookup.lookupDurationMs, "number");
     });
 
     it("should use color scheme in cache key", async () => {

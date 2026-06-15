@@ -1,8 +1,11 @@
 import { rendererLogger } from "#veryfront/utils";
+import { markRequestProfilePhase } from "#veryfront/observability/request-profiler.ts";
+import { metrics } from "#veryfront/observability/simple-metrics/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import type { RenderResult } from "../orchestrator/types.ts";
 import type { CacheStore } from "../cache/types.ts";
+import type { CacheLookupStatus } from "../cache/cache-coordinator.ts";
 import { MemoryCacheStore, type MemoryCacheStoreOptions } from "../cache/stores/index.ts";
 import type { RenderContext } from "../context/render-context.ts";
 import { createCacheKey } from "../context/render-context.ts";
@@ -32,6 +35,8 @@ export interface ContextAwareCacheLookupResult {
   cachedResult?: RenderResult;
   cacheKey: string;
   hit: boolean;
+  status: CacheLookupStatus;
+  lookupDurationMs: number;
 }
 
 export class ContextAwareCacheCoordinator {
@@ -59,41 +64,53 @@ export class ContextAwareCacheCoordinator {
     return withSpan(
       SpanNames.CACHE_CHECK_SPECULATIVE,
       async () => {
+        const lookupStart = performance.now();
         const cached = (await this.store.get(cacheKey)) as CachePayload | undefined;
 
         if (!cached) {
+          const lookupDurationMs = roundDurationMs(performance.now() - lookupStart);
+          recordCacheLookup("miss", lookupDurationMs);
           logger.debug("Cache miss", {
             slug,
             cacheKey,
             projectId: ctx.projectId,
             environment: ctx.environment,
+            lookupDurationMs,
           });
-          return { cacheKey, hit: false };
+          return { cacheKey, hit: false, status: "miss", lookupDurationMs };
         }
 
         if (this.isExpired(cached)) {
           await this.store.delete(cacheKey);
 
+          const lookupDurationMs = roundDurationMs(performance.now() - lookupStart);
+          recordCacheLookup("expired", lookupDurationMs);
           logger.debug("Cache expired", {
             slug,
             cacheKey,
             projectId: ctx.projectId,
             environment: ctx.environment,
+            lookupDurationMs,
           });
 
-          return { cacheKey, hit: false };
+          return { cacheKey, hit: false, status: "expired", lookupDurationMs };
         }
 
+        const lookupDurationMs = roundDurationMs(performance.now() - lookupStart);
+        recordCacheLookup("hit", lookupDurationMs);
         logger.debug("Cache hit", {
           slug,
           projectId: ctx.projectId,
           environment: ctx.environment,
+          lookupDurationMs,
         });
 
         return {
           cachedResult: this.cloneResult(cached.result, cached.nodeMapEntries),
           cacheKey,
           hit: true,
+          status: "hit",
+          lookupDurationMs,
         };
       },
       {
@@ -276,4 +293,14 @@ export class ContextAwareCacheCoordinator {
 
     return cloned;
   }
+}
+
+function roundDurationMs(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function recordCacheLookup(status: CacheLookupStatus, durationMs: number): void {
+  markRequestProfilePhase("render.cache_lookup", durationMs);
+  markRequestProfilePhase(`render.cache_${status}`);
+  metrics.recordCacheGet(status === "hit");
 }
