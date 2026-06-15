@@ -818,7 +818,9 @@ describe("agent/durable", () => {
   });
 
   it("merges events enqueued during an in-flight retry flush", async () => {
-    let resolveAppend: ((response: Response) => void) | null = null;
+    let resolveAppend: (response: Response) => void = (_response) => {
+      throw new Error("Append request was not started");
+    };
     globalThis.fetch = ((input: RequestInfo | URL) => {
       if (String(input).endsWith("/events")) {
         return new Promise<Response>((resolve) => {
@@ -843,7 +845,7 @@ describe("agent/durable", () => {
 
     const flushPromise = controller.flush();
     controller.enqueue([{ type: "CUSTOM", id: 2 }]);
-    resolveAppend?.(jsonResponse({ detail: "internal failure" }, 500));
+    resolveAppend(jsonResponse({ detail: "internal failure" }, 500));
 
     assertEquals(await flushPromise, {
       outcome: "retry_scheduled",
