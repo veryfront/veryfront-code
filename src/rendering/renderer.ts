@@ -39,6 +39,7 @@ import {
   buildRenderCachePrefix,
   type QueryParamCacheOptions,
 } from "#veryfront/cache/keys.ts";
+import { requestHasCacheSensitiveState } from "#veryfront/cache/request-cacheability.ts";
 import { getEnvNumber } from "#veryfront/compat/process.ts";
 import { getReadyManifestForRenderAsync } from "#veryfront/release-assets/manifest-cache.ts";
 import {
@@ -200,7 +201,7 @@ export class Renderer {
           releaseAssetManifest: releaseManifest,
         };
         const cacheKey = this.buildCacheKey(slug, effectiveCtx, effectiveOptions);
-        const cacheResult = cacheKey
+        const cacheResult = cacheKey !== null
           ? await this.cache.checkCache(slug, effectiveCtx, effectiveOptions?.colorScheme, cacheKey)
           : { hit: false, cacheKey: "", status: "miss" as const, lookupDurationMs: 0 };
         if (cacheResult.hit && cacheResult.cachedResult) {
@@ -323,19 +324,13 @@ export class Renderer {
 
     const req = options?.request;
     if (req) {
-      const hasAuth = req.headers.has("authorization") ||
-        req.headers.has("cookie") ||
-        req.headers.has("x-api-key");
-      if (hasAuth) return null;
+      if (requestHasCacheSensitiveState(req)) return null;
     }
-
-    const url = options?.url;
-    if (!url) return slug;
 
     // Get query param handling options from config
     const queryParamOptions = ctx.config?.cache?.queryParams as QueryParamCacheOptions | undefined;
 
-    return buildQueryAwareCacheKey(slug, url, queryParamOptions);
+    return buildQueryAwareCacheKey(slug, options?.url, queryParamOptions);
   }
 
   private async doRenderPage(
@@ -347,7 +342,7 @@ export class Renderer {
   ): Promise<RenderResult> {
     const effectiveKey = cacheKey ?? crypto.randomUUID();
     const flightKey = this.getSingleflightKey(effectiveKey, ctx, options?.colorScheme);
-    const isFollower = cacheKey ? this.renderFlight.has(flightKey) : false;
+    const isFollower = cacheKey !== null ? this.renderFlight.has(flightKey) : false;
 
     const runRender = async () => {
       const services = this.createServicesForContext(ctx, options?.colorScheme);
@@ -379,7 +374,7 @@ export class Renderer {
         throw error;
       }
 
-      if (cacheKey) {
+      if (cacheKey !== null) {
         await this.cache.persistResult(result, slug, ctx, options?.colorScheme, cacheKey);
       }
 
@@ -399,7 +394,7 @@ export class Renderer {
       };
     };
 
-    const cachedData = cacheKey
+    const cachedData = cacheKey !== null
       ? await this.renderFlight.do(flightKey, runRender)
       : await runRender();
 
@@ -433,14 +428,24 @@ export class Renderer {
       });
     }
 
-    const services = this.createServicesForContext(ctx);
+    return withSpan("renderer.resolvePageData", async () => {
+      const releaseManifest = await this.resolveReleaseAssetManifest(ctx, options);
+      const effectiveCtx = this.withManifestCachePrefix(ctx, releaseManifest);
+      const services = this.createServicesForContext(effectiveCtx);
 
-    return services.pipeline.resolvePageData(slug, {
-      ...options,
-      projectId: ctx.projectId,
-      projectSlug: ctx.projectSlug,
-      environment: ctx.environment,
-      contentSourceId: ctx.contentSourceId,
+      return services.pipeline.resolvePageData(slug, {
+        ...options,
+        projectId: effectiveCtx.projectId,
+        projectSlug: effectiveCtx.projectSlug,
+        environment: effectiveCtx.environment,
+        contentSourceId: effectiveCtx.contentSourceId,
+        releaseId: effectiveCtx.releaseId,
+        releaseAssetManifest: releaseManifest,
+      });
+    }, {
+      "renderer.slug": slug,
+      "renderer.projectId": ctx.projectId,
+      "renderer.environment": ctx.environment,
     });
   }
 

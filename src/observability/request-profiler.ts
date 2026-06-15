@@ -57,6 +57,7 @@ function shouldProfilePath(pathname: string): boolean {
     pathname.startsWith("/api/bench/") ||
     pathname.startsWith("/_vf_styles/") ||
     pathname.startsWith("/_vf_modules/") ||
+    (shouldEnableServerTiming() && pathname.startsWith("/_veryfront/page-data/")) ||
     (shouldEnableServerTiming() && isHtmlPath(pathname));
 }
 

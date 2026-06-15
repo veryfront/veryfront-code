@@ -15,7 +15,10 @@ import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 
 const RELEASE_CSS_HASH = "c".repeat(64);
 
-function createPipeline(pagePath: string): RenderPipeline {
+function createPipeline(
+  pagePath: string,
+  overrides: Partial<RenderPipelineConfig> = {},
+): RenderPipeline {
   const config: RenderPipelineConfig = {
     pageResolver: {
       resolvePage: async () =>
@@ -32,6 +35,7 @@ function createPipeline(pagePath: string): RenderPipeline {
     } as any,
     pageRenderer: {
       preparePageBundles: async () => ({
+        pageElement: {},
         pageBundle: {},
       }),
     } as any,
@@ -65,6 +69,7 @@ function createPipeline(pagePath: string): RenderPipeline {
     } as any,
     mode: "production",
     projectDir: "/project",
+    ...overrides,
   };
 
   return new RenderPipeline(config);
@@ -115,6 +120,32 @@ describe("RenderPipeline behavior", () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, originalManifestFlag ?? "");
     configureReleaseAssetManifestFetcher(undefined);
     clearReleaseAssetManifestCache();
+  });
+
+  it("renderPage uses a non-empty cache key for the root slug", async () => {
+    const checks: Array<{ slug: string; cacheKey?: string }> = [];
+    const persists: Array<{ slug: string; cacheKey?: string }> = [];
+    const pipeline = createPipeline("/project/pages/index.mdx", {
+      cacheCoordinator: {
+        checkCache: async (slug, cacheKey) => {
+          checks.push({ slug, cacheKey });
+          return {
+            depAwareSlug: slug,
+            moduleCacheKey: cacheKey ?? slug,
+            cacheStatus: "miss",
+            lookupDurationMs: 0,
+          };
+        },
+        persistResult: async (_result, slug, cacheKey) => {
+          persists.push({ slug, cacheKey });
+        },
+      },
+    } as Partial<RenderPipelineConfig>);
+
+    await pipeline.renderPage("", { delivery: "string" });
+
+    assertEquals(checks, [{ slug: "", cacheKey: "index" }]);
+    assertEquals(persists, [{ slug: "", cacheKey: "index" }]);
   });
 
   it("resolvePageData surfaces notFound from data hooks", async () => {
@@ -229,6 +260,34 @@ describe("RenderPipeline behavior", () => {
     });
 
     assertEquals(pageData.appPath, "components/app.tsx");
+  });
+
+  it("resolvePageData includes release asset modules when a manifest is provided", async () => {
+    const slug = "/behavior-release-modules";
+    const projectId = "proj-release-modules";
+    const pipeline = createPipeline("/project/pages/behavior-release-modules.mdx");
+    primeCssCache(slug, projectId);
+
+    const manifest = releaseManifestWithCss();
+    manifest.modules = {
+      "pages/behavior-release-modules.mdx": {
+        contentHash: "a".repeat(64),
+        size: 100,
+        contentType: "application/javascript",
+      },
+    };
+
+    const pageData = await pipeline.resolvePageData(slug, {
+      projectId,
+      request: new Request(`http://localhost${slug}`),
+      url: new URL(`http://localhost${slug}`),
+      releaseAssetManifest: manifest,
+    });
+
+    assertEquals(
+      pageData.releaseAssetModules?.["pages/behavior-release-modules.mdx"],
+      `/_vf/assets/${"a".repeat(64)}.js`,
+    );
   });
 
   it("resolvePageData includes projectUpdated in buildVersion when available", async () => {

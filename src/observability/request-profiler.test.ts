@@ -57,6 +57,12 @@ describe("request profiler", () => {
     assertEquals(result.phases["render.cache_hit"], 0);
   });
 
+  it("profiles page-data requests when Server-Timing diagnostics are enabled", () => {
+    Deno.env.set("VERYFRONT_ENABLE_SERVER_TIMING", "1");
+
+    assertEquals(isRequestProfilingEnabled("/_veryfront/page-data/blog.json"), true);
+  });
+
   it("formats a Server-Timing header from total and phase durations", () => {
     const header = buildServerTimingHeader({
       sequence: 1,
