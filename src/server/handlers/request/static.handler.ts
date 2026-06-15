@@ -26,6 +26,19 @@ function isHtmlResponse(contentType: string): boolean {
   return /\btext\/html\b/i.test(contentType);
 }
 
+function isProductionBuildAssetPath(pathname: string): boolean {
+  return pathname === "/_veryfront/app.js" ||
+    pathname === "/_veryfront/client.js" ||
+    pathname === "/_veryfront/router.js" ||
+    pathname === "/_veryfront/prefetch.js" ||
+    pathname === "/_veryfront/hydration-runtime.js" ||
+    pathname === "/_veryfront/manifest.json" ||
+    pathname.startsWith("/_veryfront/chunks/") ||
+    pathname.startsWith("/_veryfront/pages/") ||
+    pathname.startsWith("/_veryfront/data/") ||
+    pathname.startsWith("/_vf/assets/");
+}
+
 export class StaticHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "StaticHandler",
@@ -43,7 +56,9 @@ export class StaticHandler extends BaseHandler {
     if (method !== "GET" && method !== "HEAD") return Promise.resolve(this.continue());
 
     const pathname = new URL(req.url).pathname;
-    if (pathname.startsWith("/_")) return Promise.resolve(this.continue());
+    if (pathname.startsWith("/_") && !isProductionBuildAssetPath(pathname)) {
+      return Promise.resolve(this.continue());
+    }
 
     return this.withProxyContext(ctx, async () => {
       const response = await this.tryServeStatic(req, pathname, ctx);

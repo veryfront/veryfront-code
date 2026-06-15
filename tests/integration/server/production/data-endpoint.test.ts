@@ -4,6 +4,7 @@ import { join } from "#veryfront/compat/path";
 import { afterAll, describe, it } from "#veryfront/testing/bdd";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
+import { buildProduction } from "../../../../src/build/production-build/index.ts";
 
 describe(
   "Production data endpoint",
@@ -16,6 +17,15 @@ describe(
     it("returns JSON with ETag/304 and no-cache", async () => {
       await withTestContext("production-data", async (context) => {
         await writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home\n");
+        await buildProduction({
+          projectDir: context.projectDir,
+          outputDir: join(context.projectDir, "dist"),
+          enableSplitting: false,
+          enableCompression: false,
+          enablePrefetch: false,
+          ssg: true,
+        });
+
         const server = await context.createProductionServer();
 
         const url = `http://127.0.0.1:${server.port}/_veryfront/data/index.json`;

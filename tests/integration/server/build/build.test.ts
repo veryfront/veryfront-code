@@ -122,6 +122,7 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
           enableCompression: false,
           enablePrefetch: false,
           dryRun: true,
+          ssg: true,
         });
 
         assert(stats.pages >= 2);
@@ -199,6 +200,7 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
           enableCompression: false,
           enablePrefetch: false,
           dryRun: true,
+          ssg: true,
         });
         assert(stats.pages >= 2);
       });
@@ -375,6 +377,7 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
           enableCompression: false,
           enablePrefetch: false,
           dryRun: true,
+          ssg: true,
         });
 
         assertExists(stats);
@@ -401,6 +404,7 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
           enableCompression: false,
           enablePrefetch: false,
           dryRun: true,
+          ssg: true,
         });
 
         assert(stats.pages >= 4);
@@ -425,6 +429,7 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
           enableCompression: false,
           enablePrefetch: false,
           dryRun: true,
+          ssg: true,
         });
 
         assert(stats.pages >= 3, `Expected at least 3 pages, got ${stats.pages}`);
@@ -452,6 +457,7 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
           enableCompression: false,
           enablePrefetch: false,
           dryRun: true,
+          ssg: true,
         });
 
         assertExists(stats);
@@ -477,6 +483,7 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
           enableCompression: false,
           enablePrefetch: false,
           dryRun: true,
+          ssg: true,
         });
 
         assertEquals(stats.pages, 25);
@@ -501,6 +508,7 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
           enableCompression: false,
           enablePrefetch: false,
           dryRun: true,
+          ssg: true,
         });
 
         assertExists(stats);
@@ -525,6 +533,7 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
               enableCompression: false,
               enablePrefetch: false,
               dryRun: true,
+              ssg: true,
             })),
         );
 
@@ -550,6 +559,7 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
           enableCompression: true,
           enablePrefetch: false,
           dryRun: true,
+          ssg: true,
         });
 
         assertExists(stats);

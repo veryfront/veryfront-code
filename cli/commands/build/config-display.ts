@@ -9,7 +9,7 @@ export function displayBuildConfig(options: BuildOptions): void {
     splitting = true,
     compress = true,
     prefetch = true,
-    ssg = true,
+    ssg = false,
     include,
     exclude,
     dryRun = false,

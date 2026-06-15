@@ -48,4 +48,9 @@ export {
   generateRedirectsFile,
   type OutputGeneratorOptions,
 } from "./build/index.ts";
+export {
+  generateLocalReleaseAssetManifest,
+  LOCAL_RELEASE_ASSET_MANIFEST_PATH,
+  type LocalReleaseAssetOptions,
+} from "./local-release-assets.ts";
 export { collectAllRoutes, type CollectedRoutes } from "./build/index.ts";

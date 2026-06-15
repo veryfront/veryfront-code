@@ -43,15 +43,24 @@ describe("commands/build/handler", () => {
       if (result.success) assertEquals(result.data.preset, "embedded");
     });
 
-    it("parses feature flags with defaults", () => {
+    it("defaults to runtime SSR output unless SSG is requested", () => {
       const result = parseBuildArgs({ _: ["build"] });
       assertEquals(result.success, true);
       if (result.success) {
         assertEquals(result.data.split, true);
         assertEquals(result.data.compress, true);
         assertEquals(result.data.prefetch, true);
-        assertEquals(result.data.ssg, true);
+        assertEquals(result.data.ssg, false);
       }
+    });
+
+    it("parses ssg flag for static generation", () => {
+      const result = parseBuildArgs({
+        _: ["build"],
+        ssg: true,
+      });
+      assertEquals(result.success, true);
+      if (result.success) assertEquals(result.data.ssg, true);
     });
 
     it("overrides feature flags when set to false", () => {

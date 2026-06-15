@@ -1,0 +1,2 @@
+export const DEFAULT_PREFETCH_DELAY_MS = 100;
+export const PAGE_TRANSITION_DELAY_MS = 150;

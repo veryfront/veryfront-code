@@ -220,6 +220,52 @@ describe("server/runtime-handler/project-resolution", () => {
       assertEquals(result.projectId, "default-id");
     });
 
+    it("uses defaultReleaseId when no header release is present", async () => {
+      __injectDepsForTests({
+        parseProjectDomain: () => defaultParsedDomain,
+        lookupProjectByDomain: () => Promise.resolve(null),
+        getEnvironmentType: () => undefined,
+      });
+
+      const req = new Request("http://localhost/");
+      const url = new URL(req.url);
+      const headers = extractRequestHeaders(req, url);
+      const result = await resolveProject(req, url, headers, {
+        config: undefined,
+        reqCtx: { slug: undefined, mode: undefined, branch: null, token: undefined },
+        defaultProjectSlug: "default-slug",
+        defaultProjectId: "default-id",
+        defaultReleaseId: "local-release",
+        wsSlugOverride: undefined,
+      });
+
+      assertEquals(result.releaseId, "local-release");
+    });
+
+    it("preserves header releaseId over defaultReleaseId", async () => {
+      __injectDepsForTests({
+        parseProjectDomain: () => defaultParsedDomain,
+        lookupProjectByDomain: () => Promise.resolve(null),
+        getEnvironmentType: () => undefined,
+      });
+
+      const req = new Request("http://localhost/", {
+        headers: { "x-release-id": "header-release" },
+      });
+      const url = new URL(req.url);
+      const headers = extractRequestHeaders(req, url);
+      const result = await resolveProject(req, url, headers, {
+        config: undefined,
+        reqCtx: { slug: undefined, mode: undefined, branch: null, token: undefined },
+        defaultProjectSlug: "default-slug",
+        defaultProjectId: "default-id",
+        defaultReleaseId: "local-release",
+        wsSlugOverride: undefined,
+      });
+
+      assertEquals(result.releaseId, "header-release");
+    });
+
     it("does not apply defaultProjectId when request resolved slug is different", async () => {
       __injectDepsForTests({
         parseProjectDomain: () => defaultParsedDomain,

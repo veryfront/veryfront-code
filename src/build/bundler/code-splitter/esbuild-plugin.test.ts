@@ -116,6 +116,30 @@ describe("build/bundler/code-splitter/esbuild-plugin", () => {
       assertEquals(result?.path.includes("content/page.mdx"), true);
     });
 
+    it("should handle .md resolve with mdx namespace", () => {
+      const plugin = createSplitterPlugin("/my-project");
+      // deno-lint-ignore no-explicit-any
+      let mdxResolver: (args: any) => any = () => null;
+
+      const mockBuild = {
+        // deno-lint-ignore no-explicit-any
+        onResolve(opts: { filter: RegExp }, cb: (args: any) => any) {
+          if (opts.filter.test("test.md")) {
+            mdxResolver = cb;
+          }
+        },
+        onLoad() {},
+        onDispose() {},
+      };
+
+      // deno-lint-ignore no-explicit-any
+      plugin.setup(mockBuild as any);
+
+      const result = mdxResolver({ path: "pages/testxxx.md" });
+      assertEquals(result?.namespace, "mdx");
+      assertEquals(result?.path.includes("pages/testxxx.md"), true);
+    });
+
     it("should provide stub content for MDX files", () => {
       const plugin = createSplitterPlugin("/project");
       // deno-lint-ignore no-explicit-any

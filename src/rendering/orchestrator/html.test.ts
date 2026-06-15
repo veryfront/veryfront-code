@@ -3,7 +3,10 @@ import "../../html/styles-builder/__tests__/css-processor-setup.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
-import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
+import {
+  RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG,
+  RELEASE_ASSET_MANIFEST_ENV_FLAG,
+} from "#veryfront/release-assets/constants.ts";
 import {
   clearReleaseAssetManifestCache,
   configureReleaseAssetManifestFetcher,
@@ -55,9 +58,11 @@ function releaseManifest(): ReleaseAssetManifest {
 
 describe("HTMLGenerator helpers", () => {
   const originalManifestFlag = getHostEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG);
+  const originalDependencyFlag = getHostEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG);
 
   afterEach(() => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, originalManifestFlag ?? "");
+    setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, originalDependencyFlag ?? "");
     configureReleaseAssetManifestFetcher(undefined);
     clearReleaseAssetManifestCache();
   });
@@ -272,6 +277,7 @@ describe("HTMLGenerator helpers", () => {
 
     it("treats an undefined manifest option as absent for full HTML import maps", async () => {
       setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+      setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
       configureReleaseAssetManifestFetcher(() =>
         Promise.resolve({ state: "ready", manifest: releaseManifest() })
       );

@@ -50,7 +50,7 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
       const enableSplitting = normalizedOptions.enableSplitting ?? true;
       const enablePrefetch = normalizedOptions.enablePrefetch ?? true;
       const enableCompression = normalizedOptions.enableCompression ?? true;
-      const ssg = normalizedOptions.ssg ?? true;
+      const ssg = normalizedOptions.ssg ?? false;
 
       await withSpan(
         "build.setupDirectories",

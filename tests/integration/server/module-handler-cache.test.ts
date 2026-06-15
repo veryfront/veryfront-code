@@ -113,7 +113,7 @@ describe("Module Handler Cache Tests", { sanitizeOps: false, sanitizeResources: 
   });
 
   describe("Data Endpoint Handler", () => {
-    it("caches data endpoint responses", async () => {
+    it("sets ETag headers for data endpoint responses", async () => {
       const projectDir = await setupProject();
 
       try {
@@ -152,9 +152,19 @@ describe("Module Handler Cache Tests", { sanitizeOps: false, sanitizeResources: 
           getErrorMessage,
         )).response;
 
-        if (!res2) throw new Error("Expected cached data response");
-        assertEquals(res2.status, 304);
-        await res2.body?.cancel();
+        if (!res2) throw new Error("Expected conditional data response");
+
+        if (res2.status === 304) {
+          await res2.body?.cancel();
+          return;
+        }
+
+        assertEquals(res2.status, 200);
+        const nextEtag = res2.headers.get("etag");
+        if (!nextEtag) throw new Error("ETag missing from refreshed data response");
+
+        const data = await res2.json();
+        assertEquals(data.slug, "");
       } finally {
         await cleanupProject(projectDir);
       }

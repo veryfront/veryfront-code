@@ -37,6 +37,10 @@ export const RELEASE_ASSET_UPLOAD_CONCURRENCY = 8;
 /** Env flag that enables HTML manifest consumption in production (default OFF). */
 export const RELEASE_ASSET_MANIFEST_ENV_FLAG = "VERYFRONT_RELEASE_ASSET_MANIFEST";
 
+/** Env flag that enables manifest dependency import-map rewrites (default OFF). */
+export const RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG =
+  "VERYFRONT_RELEASE_ASSET_DEPENDENCY_IMPORT_MAP";
+
 /** Map a 64-hex content hash + extension to its public asset URL. */
 export function releaseAssetUrl(contentHash: string, extension: ReleaseAssetExtension): string {
   return `${RELEASE_ASSET_BASE_PATH}/${contentHash}.${extension}`;

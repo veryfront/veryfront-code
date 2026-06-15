@@ -133,6 +133,8 @@ interface ProjectResolutionOptions {
   defaultProjectSlug: string | undefined;
   /** Default project ID for standalone mode */
   defaultProjectId: string | undefined;
+  /** Default release ID for standalone mode */
+  defaultReleaseId?: string | undefined;
   /** WS slug override from query param */
   wsSlugOverride: string | undefined;
 }
@@ -170,7 +172,7 @@ export async function resolveProject(
     resolvedSlugBeforeDefault === opts.defaultProjectSlug;
   let projectId: string | undefined = headers.projectId ??
     (slugMatchesDefault ? opts.defaultProjectId : undefined);
-  let releaseId: string | undefined = headers.releaseId;
+  let releaseId: string | undefined = headers.releaseId ?? opts.defaultReleaseId;
   let environmentName: string | undefined;
   let proxyEnv = parseProxyEnvironment(headers.environment ?? null);
 

@@ -76,6 +76,20 @@ function getByteLength(text: string): number {
   return new TextEncoder().encode(text).length;
 }
 
+function extractClientNavigationHtml(html: string): string {
+  const rootOpen = html.match(/<div\b(?=[^>]*\bid=(["'])root\1)[^>]*>/i);
+  if (!rootOpen || rootOpen.index === undefined) return html;
+
+  const contentStart = rootOpen.index + rootOpen[0].length;
+  const portalsStart = html.indexOf('<div id="veryfront-portals"></div>', contentStart);
+  if (portalsStart === -1) return html;
+
+  const rootClose = html.lastIndexOf("</div>", portalsStart);
+  if (rootClose < contentStart) return html;
+
+  return html.slice(contentStart, rootClose);
+}
+
 const APP_ROUTE_STYLE_SOURCE_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js", ".mdx", ".md"];
 const APP_ROUTE_STYLE_SKIP_DIRS = new Set([
   ".deno_cache",
@@ -254,7 +268,7 @@ ${clientStyles}
         path: route.path,
         frontmatter: result.frontmatter,
         headings: result.headings,
-        html: result.html,
+        html: extractClientNavigationHtml(enhancedHtml),
       };
 
       const dataPath = join(outputDir, "_veryfront/data", `${route.slug}.json`);

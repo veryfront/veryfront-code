@@ -85,6 +85,8 @@ interface ValidateTrustedHtmlOptions {
   strict?: boolean;
   /** Log warnings for suspicious patterns */
   warn?: boolean;
+  /** Allow framework-emitted script tags in trusted navigation HTML */
+  allowInlineScripts?: boolean;
 }
 
 /**
@@ -102,9 +104,11 @@ export function validateTrustedHtml(
   html: string,
   options: ValidateTrustedHtmlOptions = {},
 ): string {
-  const { strict = false, warn = true } = options;
+  const { allowInlineScripts = false, strict = false, warn = true } = options;
 
   for (const { pattern, name } of createSuspiciousPatterns()) {
+    if (allowInlineScripts && name === "inline script") continue;
+
     pattern.lastIndex = 0;
     if (!pattern.test(html)) continue;
 

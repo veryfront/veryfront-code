@@ -18,6 +18,7 @@
 import { serverLogger } from "#veryfront/utils";
 import { VERSION } from "#veryfront/utils/version.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { dirname, join, normalize } from "#veryfront/compat/path/index.ts";
 import { resolveFrameworkSourcePath } from "#veryfront/platform/compat/framework-source-resolver.ts";
 import { transformToESM } from "#veryfront/transforms/esm-transform.ts";
@@ -31,6 +32,7 @@ import { sha256HexBytes } from "./hash.ts";
 import {
   RELEASE_ASSET_BASE_PATH,
   RELEASE_ASSET_CONTENT_TYPES,
+  RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG,
   RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
   RELEASE_ASSET_MAX_SIZE_BYTES,
   RELEASE_ASSET_UPLOAD_CONCURRENCY,
@@ -58,6 +60,10 @@ const REACT_IMPORT_MAP_DEPENDENCIES = [
   "react/jsx-runtime",
   "react/jsx-dev-runtime",
 ] as const;
+
+function isDependencyImportMapEnabled(): boolean {
+  return getHostEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG) === "1";
+}
 
 export interface ReleaseAssetBuildInput {
   /** Project reference (slug or id) used for API calls. */
@@ -181,6 +187,10 @@ interface PreparedAsset {
   contentHash: string;
   size: number;
   contentType: string;
+}
+
+export interface PreparedReleaseAsset extends PreparedAsset {
+  bytes: Uint8Array;
 }
 
 interface TransformedProjectModule {
@@ -543,7 +553,7 @@ function findDependencyModuleBySpecifier(
 }
 
 async function collectReactImportMapDependencyModules(
-  input: ReleaseAssetBuildInput,
+  input: { reactVersion?: string },
   tempDir: string,
   vendorHttpImports: ReleaseAssetHttpDependencyVendor,
   dependencies: Map<string, DependencyModule>,
@@ -682,6 +692,144 @@ async function vendorHttpImportsWithCache(
         code: dependency.code,
       }))
     ),
+  };
+}
+
+export async function buildReactImportMapDependencyAssets(options: {
+  tempDir: string;
+  reactVersion?: string;
+  vendorHttpImports?: ReleaseAssetHttpDependencyVendor;
+}): Promise<{
+  dependencies: Record<string, PreparedAsset>;
+  assets: PreparedReleaseAsset[];
+  gaps: string[];
+}> {
+  const dependencyModules = new Map<string, DependencyModule>();
+  const uploadQueue: PreparedAsset[] = [];
+  const pendingBytes = new Map<string, { bytes: Uint8Array<ArrayBuffer>; contentType: string }>();
+  const gaps: string[] = [];
+  const vendorHttpImports = options.vendorHttpImports ?? vendorHttpImportsWithCache;
+
+  await collectReactImportMapDependencyModules(
+    { reactVersion: options.reactVersion },
+    options.tempDir,
+    vendorHttpImports,
+    dependencyModules,
+  );
+
+  const finalized = await finalizeDependencyModules(
+    dependencyModules,
+    uploadQueue,
+    pendingBytes,
+    gaps,
+  );
+  const dependencies = exposeDependencySpecifierAliases(finalized.assets, dependencyModules);
+
+  return {
+    dependencies,
+    assets: uploadQueue.flatMap((asset) => {
+      const stored = pendingBytes.get(asset.contentHash);
+      if (!stored) return [];
+      return [{
+        ...asset,
+        bytes: stored.bytes,
+      }];
+    }),
+    gaps,
+  };
+}
+
+async function collectCachedHttpDependencyModules(
+  cacheDir: string,
+  dependencies: Map<string, DependencyModule>,
+): Promise<void> {
+  const fs = createFileSystem();
+  const cacheRoot = normalize(cacheDir);
+
+  async function visit(dir: string): Promise<void> {
+    let entries: AsyncIterable<{ name: string; isFile?: boolean; isDirectory?: boolean }>;
+    try {
+      entries = fs.readDir(dir);
+    } catch {
+      return;
+    }
+
+    for await (const entry of entries) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory) {
+        await visit(path);
+        continue;
+      }
+      if (!entry.isFile || !/^http-[a-z0-9]+\.mjs$/i.test(entry.name)) continue;
+      const filePath = normalize(path);
+      if (!isPathInsideRoot(filePath, cacheRoot)) {
+        throw new Error(`Cached HTTP dependency resolved outside cache root: ${filePath}`);
+      }
+
+      const code = await fs.readTextFile(filePath);
+      const manifestKey = extractSourceUrl(code) ?? `file://${filePath}`;
+      const specifiers = [`file://${filePath}`];
+      if (manifestKey.startsWith("http://") || manifestKey.startsWith("https://")) {
+        specifiers.push(manifestKey);
+      }
+
+      const existing = dependencies.get(manifestKey);
+      if (existing) {
+        for (const specifier of specifiers) existing.specifiers.add(specifier);
+        existing.sourcePath ??= filePath;
+      } else {
+        dependencies.set(manifestKey, {
+          manifestKey,
+          specifiers: new Set(specifiers),
+          sourcePath: filePath,
+          code,
+        });
+      }
+    }
+  }
+
+  await visit(cacheDir);
+}
+
+export async function buildCachedHttpDependencyAssets(options: {
+  cacheDir: string;
+}): Promise<{
+  dependencies: Record<string, PreparedAsset>;
+  assets: PreparedReleaseAsset[];
+  gaps: string[];
+}> {
+  const fs = createFileSystem();
+  const cacheStat = await fs.stat(options.cacheDir).catch(() => null);
+  if (!cacheStat?.isDirectory) {
+    return { dependencies: {}, assets: [], gaps: [] };
+  }
+
+  const dependencyModules = new Map<string, DependencyModule>();
+  const uploadQueue: PreparedAsset[] = [];
+  const pendingBytes = new Map<string, { bytes: Uint8Array<ArrayBuffer>; contentType: string }>();
+  const gaps: string[] = [];
+
+  await collectCachedHttpDependencyModules(options.cacheDir, dependencyModules);
+
+  const finalized = await finalizeDependencyModules(
+    dependencyModules,
+    uploadQueue,
+    pendingBytes,
+    gaps,
+  );
+  const dependencies = exposeDependencySpecifierAliases(finalized.assets, dependencyModules);
+
+  return {
+    dependencies,
+    assets: uploadQueue.flatMap((asset) => {
+      const stored = pendingBytes.get(asset.contentHash);
+      if (!stored) return [];
+      return [{
+        ...asset,
+        bytes: stored.bytes,
+      }];
+    }),
+    gaps,
   };
 }
 
@@ -1138,6 +1286,7 @@ async function runBuildInner(
   const pendingBytes = new Map<string, { bytes: Uint8Array<ArrayBuffer>; contentType: string }>();
   const knownPaths = new Set(sourceByPath.keys());
   const vendorHttpImports = input.vendorHttpImports ?? vendorHttpImportsWithCache;
+  const vendorDependencies = isDependencyImportMapEnabled();
 
   for (const [logicalPath, source] of sourceByPath) {
     if (!isBrowserModule(logicalPath)) continue;
@@ -1176,19 +1325,53 @@ async function runBuildInner(
       };
     }
 
-    try {
-      const vendored = await vendorHttpImports(code, {
-        tempDir,
-        reactVersion: input.reactVersion,
-      });
-      code = vendored.code;
-      for (const dependency of vendored.dependencies) {
-        addDependencyModule(dependencyModules, dependency);
+    if (vendorDependencies) {
+      try {
+        const vendored = await vendorHttpImports(code, {
+          tempDir,
+          reactVersion: input.reactVersion,
+        });
+        code = vendored.code;
+        for (const dependency of vendored.dependencies) {
+          addDependencyModule(dependencyModules, dependency);
+        }
+      } catch (error) {
+        const sanitized = sanitizeError(error);
+        logger.warn("HTTP dependency vendoring failed during release asset build", {
+          path: logicalPath,
+          error: sanitized,
+        });
+        await client.reportReleaseAssetManifestState(
+          input.releaseVersionRef,
+          "failed",
+          sanitized,
+        );
+        return {
+          success: false,
+          state: "failed",
+          moduleCount: 0,
+          cssCount: 0,
+          routeCount: 0,
+          gaps,
+          error: sanitized,
+        };
       }
+    }
+
+    transformedModules.set(logicalPath, { logicalPath, code });
+  }
+
+  if (vendorDependencies) {
+    try {
+      await collectReactImportMapDependencyModules(
+        input,
+        tempDir,
+        vendorHttpImports,
+        dependencyModules,
+      );
     } catch (error) {
       const sanitized = sanitizeError(error);
-      logger.warn("HTTP dependency vendoring failed during release asset build", {
-        path: logicalPath,
+      logger.warn("React import-map dependency vendoring failed during release asset build", {
         error: sanitized,
       });
       await client.reportReleaseAssetManifestState(
@@ -1206,36 +1389,6 @@ async function runBuildInner(
         error: sanitized,
       };
     }
-
-    transformedModules.set(logicalPath, { logicalPath, code });
-  }
-
-  try {
-    await collectReactImportMapDependencyModules(
-      input,
-      tempDir,
-      vendorHttpImports,
-      dependencyModules,
-    );
-  } catch (error) {
-    const sanitized = sanitizeError(error);
-    logger.warn("React import-map dependency vendoring failed during release asset build", {
-      error: sanitized,
-    });
-    await client.reportReleaseAssetManifestState(
-      input.releaseVersionRef,
-      "failed",
-      sanitized,
-    );
-    return {
-      success: false,
-      state: "failed",
-      moduleCount: 0,
-      cssCount: 0,
-      routeCount: 0,
-      gaps,
-      error: sanitized,
-    };
   }
 
   const frameworkDependencies = await buildFrameworkDependencies(

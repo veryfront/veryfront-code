@@ -50,7 +50,7 @@ export function normalizeBuildOptions(options: BuildOptions): BuildOptions {
     enableSplitting: options.enableSplitting ?? true,
     enableCompression: options.enableCompression ?? true,
     enablePrefetch: options.enablePrefetch ?? true,
-    ssg: options.ssg ?? true,
+    ssg: options.ssg ?? false,
     include: options.include,
     exclude: options.exclude,
     dryRun: options.dryRun ?? false,

@@ -11,7 +11,10 @@ import {
   clearReleaseAssetManifestCache,
   configureReleaseAssetManifestFetcher,
 } from "#veryfront/release-assets/manifest-cache.ts";
-import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
+import {
+  RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG,
+  RELEASE_ASSET_MANIFEST_ENV_FLAG,
+} from "#veryfront/release-assets/constants.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 
 const PAGE_HASH = "a".repeat(64);
@@ -58,10 +61,12 @@ function manifest(): ReleaseAssetManifest {
 
 describe("html shell release asset manifest consumption", () => {
   const originalFlag = getHostEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG);
+  const originalDependencyFlag = getHostEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG);
 
   beforeEach(() => clearReleaseAssetManifestCache());
   afterEach(() => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, originalFlag ?? "");
+    setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, originalDependencyFlag ?? "");
     configureReleaseAssetManifestFetcher(undefined);
     clearReleaseAssetManifestCache();
   });
@@ -142,8 +147,32 @@ describe("html shell release asset manifest consumption", () => {
     assert(!result.start.includes("/_vf/css/"));
   });
 
-  it("rewrites covered HTTP import-map dependencies to immutable asset URLs", async () => {
+  it("keeps covered HTTP import-map dependencies on CDN URLs by default", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    configureReleaseAssetManifestFetcher(() =>
+      Promise.resolve({
+        state: "ready",
+        manifest: {
+          ...manifest(),
+          dependencies: {
+            "https://esm.sh/react@19.2.4?deps=csstype%403.2.3&target=es2022": {
+              contentHash: REACT_HASH,
+              size: 10,
+              contentType: "text/javascript",
+            },
+          },
+        },
+      })
+    );
+    const result = await generateHTMLShellParts(meta(), prodOptions({ releaseId: "rel-1" }));
+    assertStringIncludes(result.start, `"react":"https://esm.sh/react@19.2.4`);
+    assert(!result.start.includes(`"react":"/_vf/assets/${REACT_HASH}.js"`));
+    assertStringIncludes(result.start, `"react-dom/client":"https://esm.sh/react-dom@19.2.4`);
+  });
+
+  it("rewrites covered HTTP import-map dependencies when explicitly enabled", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
     configureReleaseAssetManifestFetcher(() =>
       Promise.resolve({
         state: "ready",
@@ -191,7 +220,7 @@ describe("html shell release asset manifest consumption", () => {
     const result = await generateHTMLShellParts(meta(), prodOptions({ releaseId: "rel-1" }));
     assertStringIncludes(result.start, `/_vf/assets/${PAGE_HASH}.js`);
     assertStringIncludes(result.start, `/_vf/assets/${"f".repeat(64)}.css`);
-    assertStringIncludes(result.start, `"react":"/_vf/assets/${REACT_HASH}.js"`);
+    assertStringIncludes(result.start, `"react":"https://esm.sh/react@19.2.4`);
   });
 
   it("treats an undefined manifest option as absent and fetches the ready manifest", async () => {

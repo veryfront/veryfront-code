@@ -133,6 +133,8 @@ interface ServerOptions {
   defaultProjectSlug?: string;
   /** Default project ID when not provided via proxy headers (for tests/local mode) */
   defaultProjectId?: string;
+  /** Default release ID when not provided via proxy headers (for standalone production mode) */
+  defaultReleaseId?: string;
   /** Default environment for standalone mode (preview or production). Defaults to preview for safety. */
   defaultEnvironment?: "preview" | "production";
   /**
@@ -176,6 +178,7 @@ export function startProductionServer(
         debug,
         defaultProjectSlug,
         defaultProjectId,
+        defaultReleaseId,
         defaultEnvironment,
         requestInterceptor,
         bootstrapResult,
@@ -260,6 +263,7 @@ export function startProductionServer(
           config: bootstrap.config,
           defaultProjectSlug,
           defaultProjectId,
+          defaultReleaseId,
           defaultEnvironment,
           localProjects,
         });

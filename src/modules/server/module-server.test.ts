@@ -10,12 +10,23 @@ import "#veryfront/schemas/_test-setup.ts";
  */
 
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
 import { isModuleRequest } from "./module-server.ts";
 import { clearSourceMissCache } from "./module-source-resolution-cache.ts";
+import { deleteEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import {
+  RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG,
+  RELEASE_ASSET_MANIFEST_ENV_FLAG,
+  RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
+} from "#veryfront/release-assets/constants.ts";
+import {
+  clearReleaseAssetManifestCache,
+  configureReleaseAssetManifestFetcher,
+} from "#veryfront/release-assets/manifest-cache.ts";
+import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 
 describe("isModuleRequest", () => {
   it("should return true for /_vf_modules/ path", () => {
@@ -61,6 +72,13 @@ describe("isModuleRequest", () => {
 // pipeline which spawns a long-lived child process. This is a pre-existing
 // resource that cannot be torn down inside a unit test.
 describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, () => {
+  afterEach(() => {
+    deleteEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG);
+    deleteEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG);
+    configureReleaseAssetManifestFetcher(undefined);
+    clearReleaseAssetManifestCache();
+  });
+
   async function serve(req: Request, projectDir = "/tmp/test"): Promise<Response> {
     const { serveModule } = await import("./module-server.ts");
     return await serveModule(req, {
@@ -73,6 +91,25 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
   function extractChildVersion(code: string): string {
     const match = code.match(/\.\/child\.js\?ssr=true&v=([^"']+)/);
     return match?.[1] ?? "";
+  }
+
+  function manifest(dependencies: ReleaseAssetManifest["dependencies"]): ReleaseAssetManifest {
+    return {
+      schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
+      projectId: "project-id",
+      releaseId: "release-id",
+      releaseVersion: 1,
+      manifestVersion: 1,
+      builderVersion: "test",
+      sourceContentHash: "source",
+      createdAt: new Date(0).toISOString(),
+      assetBasePath: "/_vf/assets",
+      modules: {},
+      css: [],
+      routes: {},
+      dependencies,
+      fallback: { mode: "jit", gaps: [] },
+    };
   }
 
   it("should return 404 for non-module path prefix", async () => {
@@ -320,6 +357,61 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(response.status, 200);
     const contentType = response.headers.get("content-type") ?? "";
     assertEquals(contentType.includes("javascript"), true);
+  });
+
+  it("rewrites browser module HTTP bundle imports through the release manifest", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-release-assets-" });
+    const cacheDir = await Deno.makeTempDir({ prefix: "vf-module-cache-" });
+    const dependencyDir = `${cacheDir}/veryfront-http-bundle`;
+    const dependencyPath = `${dependencyDir}/http-123abc.mjs`;
+    const sourceUrl = "https://esm.sh/react@19.2.4?deps=csstype%403.2.3&target=es2022";
+    const hash = "a".repeat(64);
+
+    try {
+      await Deno.mkdir(dependencyDir, { recursive: true });
+      await Deno.writeTextFile(
+        dependencyPath,
+        `/*! @vf-source: ${sourceUrl} */\nexport default {};`,
+      );
+      await Deno.mkdir(`${projectDir}/components`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/components/App.tsx`,
+        `import React from ${JSON.stringify(`file://${dependencyPath}`)};\nexport default React;\n`,
+      );
+      configureReleaseAssetManifestFetcher(() =>
+        Promise.resolve({
+          state: "ready",
+          manifest: manifest({
+            [sourceUrl]: {
+              contentHash: hash,
+              size: 100,
+              contentType: "text/javascript",
+            },
+          }),
+        })
+      );
+
+      const { serveModule } = await import("./module-server.ts");
+      const response = await serveModule(
+        new Request("http://localhost:3000/_vf_modules/components/App.js"),
+        {
+          projectId: "test",
+          projectDir,
+          adapter: denoAdapter,
+          releaseId: "release-id",
+        },
+      );
+
+      assertEquals(response.status, 200);
+      const text = await response.text();
+      assertEquals(text.includes(`"/_vf/assets/${hash}.js"`), true);
+      assertEquals(text.includes("file://"), false);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(cacheDir, { recursive: true });
+    }
   });
 
   it("uses child source content for SSR import cache busters", async () => {

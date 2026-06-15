@@ -55,7 +55,7 @@ describe("mcp/tools/build-tool", () => {
       const parsed = vfBuild.inputSchema.parse({});
       assertEquals(parsed.splitting, true);
       assertEquals(parsed.compress, true);
-      assertEquals(parsed.ssg, true);
+      assertEquals(parsed.ssg, false);
       assertEquals(parsed.dryRun, false);
       assertEquals(parsed.outputDir, undefined);
     });
