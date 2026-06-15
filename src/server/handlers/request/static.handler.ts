@@ -39,6 +39,11 @@ function isProductionBuildAssetPath(pathname: string): boolean {
     pathname.startsWith("/_vf/assets/");
 }
 
+function isDynamicBuildFallbackPath(pathname: string): boolean {
+  return pathname.startsWith("/_veryfront/pages/") ||
+    pathname.startsWith("/_veryfront/data/");
+}
+
 export class StaticHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "StaticHandler",
@@ -89,6 +94,7 @@ export class StaticHandler extends BaseHandler {
         });
 
         if (!result) {
+          if (isDynamicBuildFallbackPath(pathname)) return null;
           if (!this.staticService.isAssetRequest(pathname)) return null;
 
           return builder
