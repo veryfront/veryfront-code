@@ -61,6 +61,7 @@ import {
   getCSSImports,
   runWithCSSCollector,
 } from "#veryfront/modules/react-loader/css-import-collector.ts";
+import { assembleRenderResult } from "./render-result-assembly.ts";
 
 // Extracted modules
 import { EMPTY_LAYOUT_RESULT, isDotPath } from "./path-helpers.ts";
@@ -584,35 +585,18 @@ export class RenderPipeline {
               });
             }
 
-            const pageModule = pageBundleResult.clientModuleCode && pageBundleResult.pageModuleType
-              ? {
-                slug,
-                code: pageBundleResult.clientModuleCode,
-                type: pageBundleResult.pageModuleType,
-              }
-              : undefined;
-
-            const result: RenderResult = {
-              html: ssrResult.fullHtml,
-              frontmatter: (pageBundleResult.pageBundle as MdxBundle).frontmatter || {},
-              headings: pageBundleResult.pageBundle.headings || [],
-              nodeMap: pageBundleResult.pageBundle.nodeMap,
-              stream: ssrResult.finalStream,
-              ssrHash: ssrResult.ssrHash,
-              ...(pageModule ? { pageModule } : {}),
-            };
-
-            if (shouldCache && !options?.skipCachePersist) {
-              void this.config.cacheCoordinator.persistResult(result, slug, cacheKey).catch(
-                (error) => {
-                  renderPipelineLog.error("Cache persist failed", {
-                    slug,
-                    error: error instanceof Error ? error.message : String(error),
-                    stack: error instanceof Error ? error.stack : undefined,
-                  });
-                },
-              );
-            }
+            const result = assembleRenderResult({
+              slug,
+              cacheKey,
+              ssrResult,
+              pageBundle: pageBundleResult.pageBundle,
+              clientModuleCode: pageBundleResult.clientModuleCode,
+              pageModuleType: pageBundleResult.pageModuleType,
+              shouldCache,
+              skipCachePersist: options?.skipCachePersist,
+              cacheCoordinator: this.config.cacheCoordinator,
+              logger: renderPipelineLog,
+            });
 
             timing.total = Math.round(performance.now() - pipelineStartTime);
             renderPipelineLog.debug("Complete", { slug, timing });
