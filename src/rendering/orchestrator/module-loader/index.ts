@@ -10,40 +10,23 @@
 import { rendererLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getProjectTmpDir } from "#veryfront/modules/react-loader/index.ts";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { join } from "#veryfront/compat/path/index.ts";
-import {
-  invalidateMdxEsmModule,
-  lookupMdxEsmCache,
-} from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
+import { invalidateMdxEsmModule } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 import {
   resolveModuleDependencies,
   rewriteResolvedDependencyImports,
 } from "./dependency-resolver.ts";
 import { persistTransformedModule } from "./module-persistence.ts";
-import {
-  transformModuleCodeWithCache,
-  UNRESOLVED_VF_MODULES_RE,
-} from "./module-transform-cache.ts";
+import { transformModuleCodeWithCache } from "./module-transform-cache.ts";
+import { getModuleCacheKey, resolveCachedModulePath } from "./module-cache-lookup.ts";
 
 const logger = rendererLogger.component("module-loader");
 
 // Re-export utilities
 export { createEsmCache, createModuleCache, generateHash } from "./cache.ts";
 export { fetchEsmModule, rewriteEsmPaths } from "./esm-rewriter.ts";
-
-function getModuleCacheKey(
-  filePath: string,
-  projectId?: string,
-  projectDir?: string,
-  contentSourceId?: string,
-): string {
-  const base = projectId ?? projectDir ?? "default";
-  const source = contentSourceId ?? "default";
-  return `${base}:${source}:${filePath}`;
-}
 
 function decodeFileContent(fileContent: string | Uint8Array): string {
   if (typeof fileContent === "string") return fileContent;
@@ -70,59 +53,17 @@ export async function transformModuleWithDeps(
   const { moduleCache, projectDir, projectId, contentSourceId, adapter, mode } = config;
   const cacheKey = getModuleCacheKey(filePath, projectId, projectDir, contentSourceId);
 
-  const cachedPath = moduleCache.get(cacheKey);
+  const cachedPath = await resolveCachedModulePath({
+    cacheKey,
+    filePath,
+    projectDir,
+    projectId,
+    contentSourceId,
+    moduleCache,
+    reactVersion: config.reactVersion,
+  });
   if (cachedPath) {
-    // Validate cached file doesn't contain unresolved /_vf_modules/ imports
-    // These would fail at runtime and indicate stale cache from before framework import fix
-    try {
-      const cachedCode = await createFileSystem().readTextFile(cachedPath);
-      if (UNRESOLVED_VF_MODULES_RE.test(cachedCode)) {
-        logger.warn(
-          "[ModuleLoader] In-memory cache contains unresolved _vf_modules, invalidating",
-          {
-            filePath: filePath.slice(-60),
-            cachedPath: cachedPath.slice(-60),
-          },
-        );
-        moduleCache.delete(cacheKey);
-        // Don't return - fall through to re-transform
-      } else {
-        return cachedPath;
-      }
-    } catch (_) {
-      /* expected: cached file may no longer exist on disk */
-      moduleCache.delete(cacheKey);
-    }
-  }
-
-  if (projectId && contentSourceId) {
-    const baseCacheDir = getMdxEsmCacheDir();
-    const projectKey = encodeURIComponent(projectId);
-    const sourceKey = encodeURIComponent(contentSourceId);
-    const mdxCacheDir = join(baseCacheDir, projectKey, sourceKey);
-
-    const mdxCacheResult = await lookupMdxEsmCache(
-      filePath,
-      mdxCacheDir,
-      projectDir,
-      undefined,
-      {
-        projectId,
-        contentSourceId,
-      },
-      config.reactVersion,
-    );
-    if (mdxCacheResult.status === "hit") {
-      moduleCache.set(cacheKey, mdxCacheResult.path);
-      return mdxCacheResult.path;
-    }
-
-    if (mdxCacheResult.status === "corrupted") {
-      logger.warn("MDX-ESM cache corrupted, will re-transform", {
-        filePath,
-        reason: mdxCacheResult.reason,
-      });
-    }
+    return cachedPath;
   }
 
   const readAdapter = useLocalAdapter ? localAdapter : adapter;
