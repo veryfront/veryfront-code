@@ -36,7 +36,6 @@ import {
 } from "#veryfront/observability/tracing/index.ts";
 import { convertToTextGenerationRuntimeMessages } from "./text-generation-runtime-message-converter.ts";
 import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
-import { resolveProviderOptionsWithDefaults } from "./default-provider-options.ts";
 import { getRuntimeRemoteToolSources } from "./mcp-server-tool-sources.ts";
 import {
   createStreamState,
@@ -143,7 +142,7 @@ import { closeSSEStream, generateMessageId, sendSSE } from "./sse-utils.ts";
 import { executeConfiguredTool, getAvailableTools, isDynamicTool } from "./tool-helpers.ts";
 import { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
 import { filterToolsForSkill } from "#veryfront/skill/allowed-tools.ts";
-import { resolveConfiguredAgentModel, resolveRuntimeModel } from "./model-resolution.ts";
+import { resolveRuntimeModel } from "./model-resolution.ts";
 import type { RuntimeGenerateToolResult } from "./runtime-tool-types.ts";
 import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
 import { supportsTemperatureParameter } from "./model-capabilities.ts";
@@ -151,6 +150,7 @@ import {
   applySkillDelegationOverridesToToolInput,
   extractSkillDelegationOverrides,
 } from "./skill-delegation-overrides.ts";
+import { resolveAgentModelTransport, type ResolvedModelTransport } from "./model-transport.ts";
 
 const logger = serverLogger.component("agent");
 
@@ -170,14 +170,6 @@ function warnLocalToolSkipping(agentId: string, modelId: string): void {
       "OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY for full tool support.",
   );
 }
-
-type ResolvedModelTransport = {
-  requestedModel: string;
-  resolvedModelString: string;
-  languageModel: ModelRuntime;
-  headers?: HeadersInit;
-  providerOptions?: Record<string, unknown>;
-};
 
 type RuntimeStepState = {
   systemPrompt: string;
@@ -221,26 +213,13 @@ export class AgentRuntime {
     modelOverride: string | undefined,
     mode: "generate" | "stream",
   ): Promise<ResolvedModelTransport> {
-    const requestedModel = resolveConfiguredAgentModel(modelOverride || this.config.model);
-    const resolvedModelString = resolveRuntimeModel(modelOverride || this.config.model);
-    const transport = await this.config.resolveModelTransport?.({
+    return await resolveAgentModelTransport({
       agentId: this.id,
-      requestedModel,
-      resolvedModel: resolvedModelString,
+      config: this.config,
       context,
+      modelOverride,
       mode,
     });
-
-    return {
-      requestedModel,
-      resolvedModelString,
-      languageModel: transport?.model ?? resolveModel(resolvedModelString),
-      headers: transport?.headers,
-      providerOptions: resolveProviderOptionsWithDefaults(
-        resolvedModelString,
-        transport?.providerOptions,
-      ),
-    };
   }
 
   private async resolveRuntimeState(
