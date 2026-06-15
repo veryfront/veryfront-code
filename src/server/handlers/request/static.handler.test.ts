@@ -114,6 +114,48 @@ describe("server/handlers/request/static.handler", () => {
     assertEquals(await result.response.text(), "export const react = true;");
   });
 
+  it("lets missing generated page modules fall through to ModuleHandler", async () => {
+    const handler = new StaticHandler();
+    let resolvedPath = "";
+    (handler as any).staticService = {
+      resolveFile: async (pathname: string) => {
+        resolvedPath = pathname;
+        return null;
+      },
+      isAssetRequest: () => true,
+    };
+
+    const result = await handler.handle(
+      new Request("http://localhost/_veryfront/pages/index.js"),
+      makeCtx(),
+    );
+
+    assertEquals(resolvedPath, "/_veryfront/pages/index.js");
+    assertEquals(result.continue, true);
+    assertEquals(result.response, undefined);
+  });
+
+  it("lets missing generated data endpoints fall through to ModuleHandler", async () => {
+    const handler = new StaticHandler();
+    let resolvedPath = "";
+    (handler as any).staticService = {
+      resolveFile: async (pathname: string) => {
+        resolvedPath = pathname;
+        return null;
+      },
+      isAssetRequest: () => true,
+    };
+
+    const result = await handler.handle(
+      new Request("http://localhost/_veryfront/data/index.json"),
+      makeCtx(),
+    );
+
+    assertEquals(resolvedPath, "/_veryfront/data/index.json");
+    assertEquals(result.continue, true);
+    assertEquals(result.response, undefined);
+  });
+
   it("adds matching nonces to static HTML responses before applying CSP", async () => {
     const handler = new StaticHandler();
     (handler as any).staticService = {
