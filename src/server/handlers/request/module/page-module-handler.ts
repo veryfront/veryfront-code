@@ -5,6 +5,12 @@ import { getRendererForProject } from "../../../shared/renderer-factory.ts";
 import { shouldUseNoCacheHeadersFromHandler } from "../../../context/enriched-context.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { serverLogger } from "#veryfront/utils";
+import { VeryfrontError } from "#veryfront/errors";
+
+function isPageModuleNotFound(error: unknown): boolean {
+  return error instanceof VeryfrontError &&
+    (error.status === 404 || error.slug === "file-not-found" || error.slug === "page-not-found");
+}
 
 export function handlePageModule(
   req: Request,
@@ -55,6 +61,15 @@ export function handlePageModule(
           builder.withCache(cacheMode).withETag(etag).javascript(code, 200),
         );
       } catch (error) {
+        if (isPageModuleNotFound(error)) {
+          return respond(
+            ResponseBuilder.error(404, "Module not found", req, {
+              securityConfig: ctx.securityConfig,
+              corsConfig: ctx.securityConfig?.cors,
+            }),
+          );
+        }
+
         // Log the full error server-side but return a generic message
         // to avoid leaking internal details (Babel/TS errors, file paths, etc.)
         serverLogger.error("[page-module] Failed to generate module", {

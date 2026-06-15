@@ -1,9 +1,16 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { ModuleHandler } from "./module.handler.ts";
 import type { HandlerContext } from "../../types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { FILE_NOT_FOUND } from "#veryfront/errors/error-registry.ts";
+import type { Renderer } from "#veryfront/rendering/renderer.ts";
+import {
+  destroyRendererAdapter,
+  type RendererInitializer,
+  setRendererInitializer,
+} from "../../../shared/renderer/index.ts";
 
 function createMockAdapter(): RuntimeAdapter {
   return {
@@ -47,7 +54,21 @@ function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
   };
 }
 
+function createInitializer(renderer: Partial<Renderer>): RendererInitializer {
+  return {
+    initialize: () => Promise.resolve(renderer as Renderer),
+    isInitialized: () => true,
+    get: () => renderer as Renderer,
+    destroy: () => Promise.resolve(),
+  };
+}
+
 describe("server/handlers/request/module/module.handler", () => {
+  afterEach(async () => {
+    await destroyRendererAdapter();
+    setRendererInitializer(undefined);
+  });
+
   describe("ModuleHandler metadata", () => {
     it("has correct name", () => {
       const handler = new ModuleHandler();
@@ -119,6 +140,27 @@ describe("server/handlers/request/module/module.handler", () => {
       const ctx = makeCtx();
       const result = await handler.handle(req, ctx);
       assertEquals(result.continue, true);
+    });
+  });
+
+  describe("handle - page modules", () => {
+    it("returns 404 when a missing page module falls through from static handling", async () => {
+      setRendererInitializer(createInitializer({
+        renderPage: () => {
+          throw FILE_NOT_FOUND.create({
+            detail: "Page not found: no-such",
+            context: { slug: "no-such" },
+          });
+        },
+      }));
+
+      const handler = new ModuleHandler();
+      const req = new Request("http://localhost/_veryfront/pages/no-such.js");
+      const ctx = makeCtx();
+      const result = await handler.handle(req, ctx);
+
+      assertEquals(result.continue, false);
+      assertEquals(result.response?.status, 404);
     });
   });
 });
