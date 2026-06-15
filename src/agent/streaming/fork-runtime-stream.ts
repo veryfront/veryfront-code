@@ -25,6 +25,12 @@ import {
 } from "../runtime/provider-native-tool-inventory.ts";
 import { AgentRuntime } from "../runtime/index.ts";
 import type { AgentResponse, Message as AgentMessage } from "../schemas/index.ts";
+import {
+  commitForkRuntimeStep,
+  createForkRuntimeProgress,
+  getForkRuntimeProgressUsage,
+  shouldContinueForkRuntimeStep,
+} from "./fork-runtime-step-progress.ts";
 
 export {
   buildRecoveredStepParts,
@@ -45,6 +51,10 @@ export type {
   RecoveredToolObservation,
 } from "./fork-runtime-part-mapper.ts";
 export type { StreamedStepState } from "./fork-runtime-step-state.ts";
+export {
+  buildForkRuntimeStepFromResponse,
+  shouldContinueForkRuntimeStep,
+} from "./fork-runtime-step-progress.ts";
 
 interface ForkStreamPart {
   type: "reasoning-delta" | "text-delta";
@@ -410,45 +420,6 @@ export type ForkRuntimeContinuationPromptResolver = (input: {
   stepIndex: number;
 }) => Promise<string | null> | string | null;
 
-/** Response payload for build fork runtime step from. */
-export function buildForkRuntimeStepFromResponse(response: AgentResponse): ForkRuntimeStep {
-  const toolCalls = response.toolCalls.map((toolCall) => ({
-    toolCallId: toolCall.id,
-    toolName: toolCall.name,
-    input: toolCall.args,
-  }));
-  const toolResults = response.toolCalls.flatMap((toolCall) =>
-    toolCall.status === "completed"
-      ? [
-        {
-          toolCallId: toolCall.id,
-          toolName: toolCall.name,
-          input: toolCall.args,
-          output: toolCall.result,
-        },
-      ]
-      : []
-  );
-  const finishReasonValue = response.metadata?.finishReason;
-
-  return {
-    text: response.text,
-    messages: structuredClone(response.messages),
-    toolCalls,
-    toolResults,
-    finishReason: typeof finishReasonValue === "string" ? finishReasonValue : null,
-  };
-}
-
-/** Should continue fork runtime step helper. */
-export function shouldContinueForkRuntimeStep(
-  step: ForkRuntimeStep,
-  response: AgentResponse,
-): boolean {
-  return step.finishReason === "tool-calls" &&
-    response.toolCalls.some((toolCall) => toolCall.status !== "error");
-}
-
 /** Message shape for create fork runtime user. */
 export function createForkRuntimeUserMessage(input: {
   text: string;
@@ -527,9 +498,6 @@ export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRu
     }
     | undefined
   >();
-  const steps: ForkRuntimeStep[] = [];
-  let accumulatedInputTokens = 0;
-  let accumulatedOutputTokens = 0;
   const runStep = input.runStep ?? runAgentRuntimeForkStep;
 
   return {
@@ -540,17 +508,17 @@ export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRu
         );
       }
 
-      let currentMessages = createInitialForkRuntimeMessages({
+      const progress = createForkRuntimeProgress(createInitialForkRuntimeMessages({
         initialMessages: input.initialMessages,
         prompt: input.prompt,
-      });
+      }));
       let continuationStepsRemaining = input.maxContinuationSteps ?? 0;
 
       try {
-        while (steps.length < getMaxForkRuntimeStepCount(input)) {
+        while (progress.steps.length < getMaxForkRuntimeStepCount(input)) {
           const prepared = await prepareForkRuntimeStep({
             prepareStep: input.prepareStep,
-            messages: currentMessages,
+            messages: progress.currentMessages,
             buildInstructions: input.buildInstructions,
             forkToolNames: input.forkToolNames,
           });
@@ -582,40 +550,33 @@ export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRu
             responsePromise,
             responseTimeoutMs: input.responseTimeoutMs ?? DEFAULT_FORK_RESPONSE_PROMISE_TIMEOUT_MS,
             ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
-            currentMessages,
+            currentMessages: progress.currentMessages,
             streamedStepState,
           });
-          const step = buildForkRuntimeStepFromResponse(response);
+          const step = commitForkRuntimeStep(progress, response);
           for (const recoveredPart of buildRecoveredStepParts(step, state)) {
             yield recoveredPart;
           }
-          steps.push(step);
-          accumulatedInputTokens += response.usage?.promptTokens ?? 0;
-          accumulatedOutputTokens += response.usage?.completionTokens ?? 0;
-          currentMessages = response.messages;
 
           if (!shouldContinueForkRuntimeStep(step, response)) {
             const followUpState = await resolveForkRuntimeContinuationState({
               continuationStepsRemaining,
               onBeforeStop: input.onBeforeStop,
               step,
-              currentMessages,
-              stepIndex: steps.length - 1,
+              currentMessages: progress.currentMessages,
+              stepIndex: progress.steps.length - 1,
             });
             if (followUpState) {
               continuationStepsRemaining = followUpState.continuationStepsRemaining;
-              currentMessages = followUpState.currentMessages;
+              progress.currentMessages = followUpState.currentMessages;
               continue;
             }
             break;
           }
         }
 
-        stepsDeferred.resolve(steps);
-        totalUsageDeferred.resolve({
-          inputTokens: accumulatedInputTokens,
-          outputTokens: accumulatedOutputTokens,
-        });
+        stepsDeferred.resolve(progress.steps);
+        totalUsageDeferred.resolve(getForkRuntimeProgressUsage(progress));
       } catch (error) {
         stepsDeferred.reject(error);
         totalUsageDeferred.reject(error);
