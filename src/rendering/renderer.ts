@@ -202,7 +202,7 @@ export class Renderer {
         const cacheKey = this.buildCacheKey(slug, effectiveCtx, effectiveOptions);
         const cacheResult = cacheKey
           ? await this.cache.checkCache(slug, effectiveCtx, effectiveOptions?.colorScheme, cacheKey)
-          : { hit: false, cacheKey: "" };
+          : { hit: false, cacheKey: "", status: "miss" as const, lookupDurationMs: 0 };
         if (cacheResult.hit && cacheResult.cachedResult) {
           logger.debug("Cache hit", {
             slug,
@@ -540,6 +540,8 @@ export class Renderer {
           depAwareSlug: slug,
           moduleCacheKey: cacheKey ?? slug,
           cachedModule: result.cachedResult?.pageModule,
+          cacheStatus: result.status,
+          lookupDurationMs: result.lookupDurationMs,
         };
       },
       persistResult: async (result: RenderResult, slug: string, cacheKey?: string) => {

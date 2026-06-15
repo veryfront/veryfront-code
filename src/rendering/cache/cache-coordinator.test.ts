@@ -24,11 +24,15 @@ describe("CacheCoordinator", () => {
 
     const lookupMiss = await coordinator.checkCache(slug);
     assertEquals(lookupMiss.cachedResult, undefined);
+    assertEquals(lookupMiss.cacheStatus, "miss");
+    assertEquals(typeof lookupMiss.lookupDurationMs, "number");
 
     await coordinator.persistResult(makeResult("<html>hello</html>"), slug);
 
     const lookupHit = await coordinator.checkCache(slug);
     assertObjectMatch(lookupHit.cachedResult ?? {}, { html: "<html>hello</html>" });
+    assertEquals(lookupHit.cacheStatus, "hit");
+    assertEquals(typeof lookupHit.lookupDurationMs, "number");
 
     await coordinator.destroy();
   });
@@ -42,6 +46,8 @@ describe("CacheCoordinator", () => {
 
     const lookup = await coordinator.checkCache(slug);
     assertEquals(lookup.cachedResult, undefined);
+    assertEquals(lookup.cacheStatus, "expired");
+    assertEquals(typeof lookup.lookupDurationMs, "number");
 
     await coordinator.destroy();
   });

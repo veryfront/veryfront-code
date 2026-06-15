@@ -102,6 +102,13 @@ export async function profilePhase<T>(name: string, fn: () => Promise<T>): Promi
   }
 }
 
+export function markRequestProfilePhase(name: string, durationMs = 0): void {
+  const session = storage.getStore();
+  if (!session) return;
+
+  session.phases.set(name, roundMs((session.phases.get(name) ?? 0) + durationMs));
+}
+
 export function profileSyncPhase<T>(name: string, fn: () => T): T {
   const session = storage.getStore();
   if (!session) return fn();

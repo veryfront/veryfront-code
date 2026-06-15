@@ -4,6 +4,7 @@ import {
   buildServerTimingHeader,
   finalizeRequestProfiling,
   isRequestProfilingEnabled,
+  markRequestProfilePhase,
   profilePhase,
   resetRequestProfiles,
   runWithRequestProfiling,
@@ -43,6 +44,7 @@ describe("request profiler", () => {
       async () => {
         updateRequestProfileContext({ projectSlug: "site", requestMode: "production" });
         await profilePhase("runtime.resolve_project", () => Promise.resolve());
+        markRequestProfilePhase("render.cache_hit");
         return finalizeRequestProfiling(200);
       },
     );
@@ -52,6 +54,7 @@ describe("request profiler", () => {
     assertEquals(result.requestMode, "production");
     assertEquals(result.status, 200);
     assert("runtime.resolve_project" in result.phases);
+    assertEquals(result.phases["render.cache_hit"], 0);
   });
 
   it("formats a Server-Timing header from total and phase durations", () => {
