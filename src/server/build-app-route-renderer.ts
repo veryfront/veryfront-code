@@ -10,6 +10,7 @@ import { loadComponentFromSource } from "#veryfront/modules/react-loader/index.t
 import { COMPILATION_ERROR } from "#veryfront/errors/index.ts";
 import { generateHydrationData, getProdScripts } from "#veryfront/html";
 import { buildImportMapJson } from "#veryfront/html/utils.ts";
+import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { getPreviewStylesheetLink } from "#veryfront/html/dev-scripts.ts";
 import {
   shouldUnwrapAppRouterDocumentLayout,
@@ -79,6 +80,7 @@ export async function renderAppRouteToHTML(args: {
   pageFile: string;
   contentSourceId: string;
   reactVersion?: string;
+  releaseAssetManifest?: ReleaseAssetManifest | null;
   stylesheetHref?: string;
   includePreviewStylesheet?: boolean;
 }): Promise<string> {
@@ -88,6 +90,7 @@ export async function renderAppRouteToHTML(args: {
     routePath,
     pageFile,
     contentSourceId,
+    releaseAssetManifest,
     stylesheetHref,
     includePreviewStylesheet,
   } = args;
@@ -143,7 +146,7 @@ export async function renderAppRouteToHTML(args: {
   const htmlInner = await renderToStringAdapter(element);
   const title = "Veryfront App";
   const slug = routePathToSlug(routePath);
-  const importMapJson = await buildImportMapJson({ projectDir });
+  const importMapJson = await buildImportMapJson({ projectDir, releaseAssetManifest });
   const hydrationData = hasUseClientDirective(pageSource)
     ? generateHydrationData(
       slug,
@@ -155,6 +158,7 @@ export async function renderAppRouteToHTML(args: {
         projectDir,
         pagePath: pageFile,
         pageType: "tsx",
+        releaseAssetManifest,
         isLocalProject: false,
         forceProductionScripts: true,
         nestedLayouts: layouts.map((layoutPath) => ({ kind: "tsx", path: layoutPath })),

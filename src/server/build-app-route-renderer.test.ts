@@ -3,6 +3,9 @@ import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/tes
 import { denoAdapter } from "#veryfront/platform/adapters/deno.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { renderAppRouteToHTML } from "./build-app-route-renderer.ts";
+import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
+import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 
 async function makeProject(): Promise<{ projectDir: string; pageFile: string }> {
   const projectDir = await Deno.makeTempDir({ prefix: "vf-app-route-renderer-" });
@@ -64,12 +67,19 @@ function extractHydrationData(html: string): Record<string, unknown> {
   return JSON.parse(match[1]);
 }
 
+function extractImportMapImports(html: string): Record<string, string> {
+  const match = html.match(/<script type="importmap">([\s\S]*?)<\/script>/);
+  assertExists(match?.[1], "expected import map script");
+  return JSON.parse(match[1]).imports ?? {};
+}
+
 Deno.test({
   name:
     "server/build-app-route-renderer renders App Router HTML with Veryfront hydration data and runtime",
   sanitizeOps: false,
   sanitizeResources: false,
   async fn() {
+    const originalFlag = getHostEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG);
     const { projectDir, pageFile } = await makeProject();
 
     try {
@@ -93,7 +103,68 @@ Deno.test({
       assertEquals(hydrationData.slug, "");
       assertEquals(hydrationData.clientModuleStrategy, "rsc-module");
       assertEquals(hydrationData.layouts, [{ kind: "tsx", path: "app/layout.tsx" }]);
+
+      setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+      const reactHash = "1".repeat(64);
+      const reactDomHash = "2".repeat(64);
+      const reactDomClientHash = "3".repeat(64);
+      const jsxRuntimeHash = "4".repeat(64);
+      const jsxDevRuntimeHash = "5".repeat(64);
+      const manifest: ReleaseAssetManifest = {
+        schemaVersion: 1,
+        projectId: "local-project",
+        releaseId: "standalone-dev",
+        releaseVersion: 0,
+        manifestVersion: 1,
+        builderVersion: "0.1.810",
+        sourceContentHash: "source",
+        createdAt: "2026-06-15T00:00:00.000Z",
+        assetBasePath: "/_vf/assets",
+        modules: {},
+        css: [],
+        routes: {},
+        dependencies: {
+          react: {
+            contentHash: reactHash,
+            size: 10,
+            contentType: "text/javascript",
+          },
+          "react-dom": {
+            contentHash: reactDomHash,
+            size: 10,
+            contentType: "text/javascript",
+          },
+          "react-dom/client": {
+            contentHash: reactDomClientHash,
+            size: 10,
+            contentType: "text/javascript",
+          },
+          "react/jsx-runtime": {
+            contentHash: jsxRuntimeHash,
+            size: 10,
+            contentType: "text/javascript",
+          },
+          "react/jsx-dev-runtime": {
+            contentHash: jsxDevRuntimeHash,
+            size: 10,
+            contentType: "text/javascript",
+          },
+        },
+        fallback: { mode: "jit", gaps: [] },
+      };
+      const releaseHtml = await renderAppRouteToHTML({
+        adapter: denoAdapter,
+        projectDir,
+        routePath: "/",
+        pageFile,
+        contentSourceId: "test-content-source",
+        releaseAssetManifest: manifest,
+      });
+
+      assertStringIncludes(releaseHtml, `"/_vf/assets/${reactHash}.js"`);
+      assertEquals(extractImportMapImports(releaseHtml).react, `/_vf/assets/${reactHash}.js`);
     } finally {
+      setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, originalFlag ?? "");
       await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
     }
   },

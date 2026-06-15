@@ -12,7 +12,8 @@ import type { ChunkManifest } from "#veryfront/build/bundler/index.ts";
 import { renderAppRouteToHTML } from "#veryfront/server/build-app-route-renderer.ts";
 import type { AppRouteInfo, RouteInfo } from "#veryfront/server/build-types.ts";
 import { loadClientStyles } from "./asset-generation.ts";
-import { generateImportMap } from "./client-runtime.ts";
+import { buildImportMap } from "#veryfront/html/utils.ts";
+import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import {
   cacheCSSAsync,
   extractCandidatesFromFiles,
@@ -56,6 +57,7 @@ export interface SSGOptions {
   traceStep?: <T>(name: string, fn: () => Promise<T>) => Promise<T>;
   /** React version for import map generation */
   reactVersion?: string;
+  releaseAssetManifest?: ReleaseAssetManifest | null;
 }
 
 function getOutputPath(outputDir: string, slug: string): string {
@@ -74,6 +76,10 @@ function defaultTraceStep<T>(_: string, fn: () => Promise<T>): Promise<T> {
 
 function getByteLength(text: string): number {
   return new TextEncoder().encode(text).length;
+}
+
+function hasImportMapScript(html: string): boolean {
+  return /<script\b[^>]*\btype=(["'])importmap\1/i.test(html);
 }
 
 function extractClientNavigationHtml(html: string): string {
@@ -211,7 +217,11 @@ export async function buildPagesRoutes(
     try {
       const result = await traceStep(
         `page:${route.slug}`,
-        () => renderer.renderPage(route.slug, { contentSourceId }),
+        () =>
+          renderer.renderPage(route.slug, {
+            contentSourceId,
+            releaseAssetManifest: options.releaseAssetManifest,
+          }),
       );
 
       let enhancedHtml = result.html;
@@ -228,18 +238,37 @@ export async function buildPagesRoutes(
         enhancedHtml = enhancedHtml.replace("</head>", `${preloadLinks}\n</head>`);
       }
 
-      const importMap = await generateImportMap();
-      enhancedHtml = enhancedHtml.replace(
-        "</head>",
-        `
-${importMap}
+      if (!hasImportMapScript(enhancedHtml)) {
+        const importMap = await buildImportMap({
+          projectDir: options.projectDir,
+          config: options.config,
+          releaseAssetManifest: options.releaseAssetManifest,
+        });
+        enhancedHtml = enhancedHtml.replace(
+          "</head>",
+          `
+  <!-- Import map for React dependencies -->
+  <script type="importmap">
+  ${importMap.json}
+  </script>
 
   <!-- Basic styles -->
   <style>
 ${clientStyles}
   </style>
 </head>`,
-      );
+        );
+      } else {
+        enhancedHtml = enhancedHtml.replace(
+          "</head>",
+          `
+  <!-- Basic styles -->
+  <style>
+${clientStyles}
+  </style>
+</head>`,
+        );
+      }
 
       enhancedHtml = enhancedHtml.replace(
         "</body>",
@@ -327,6 +356,7 @@ export async function buildAppRoutes(
           pageFile: route.pageFile,
           contentSourceId,
           reactVersion,
+          releaseAssetManifest: options.releaseAssetManifest,
           stylesheetHref,
           includePreviewStylesheet: false,
         }));

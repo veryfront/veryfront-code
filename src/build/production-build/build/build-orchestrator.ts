@@ -15,6 +15,7 @@ import { runCodeSplitting } from "./code-splitter-orchestrator.ts";
 import { generateAllOutputs } from "./output-generator.ts";
 import { collectAllRoutes } from "./route-collector.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { generateLocalReleaseAssetManifest } from "../local-release-assets.ts";
 
 export function buildProduction(options: BuildOptions): Promise<BuildStats> {
   return withSpan(
@@ -58,6 +59,18 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
         {},
       );
 
+      const releaseAssetManifest = await withSpan(
+        "build.localReleaseAssets",
+        () =>
+          generateLocalReleaseAssetManifest({
+            adapter: context.adapter,
+            projectDir: normalizedOptions.projectDir,
+            outputDir,
+            dryRun,
+          }),
+        {},
+      );
+
       const routes = await withSpan(
         "build.collectRoutes",
         () =>
@@ -98,6 +111,7 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
             chunkManifest: splitResult.manifest,
             baseUrl: "",
             dryRun,
+            releaseAssetManifest,
           }),
         {},
       );
@@ -120,6 +134,7 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
             enableCompression,
             chunkManifest: splitResult.manifest,
             dryRun,
+            releaseAssetManifest,
           }),
         {},
       );
