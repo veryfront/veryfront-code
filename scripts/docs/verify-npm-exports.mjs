@@ -58,6 +58,7 @@ const REQUIRED_EXPORTS = {
   ],
   "./tool": ["tool", "dynamicTool", "executeTool", "toolRegistry", "createRemoteMCPToolSource"],
   "./workflow": ["workflow", "step", "parallel", "branch", "dag", "waitForApproval", "createWorkflowClient"],
+  "./work": ["work", "workRegistry"],
   "./prompt": ["prompt", "promptRegistry"],
   "./resource": ["resource", "resourceRegistry"],
   "./mcp": ["createMCPServer", "registerTool", "registerPrompt", "registerResource"],

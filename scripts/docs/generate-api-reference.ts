@@ -287,6 +287,7 @@ const IMPORT_PRIORITY: Record<string, string[]> = {
     "waitForApproval",
     "createWorkflowClient",
   ],
+  "veryfront/work": ["work", "workRegistry"],
   "veryfront/prompt": ["prompt", "promptRegistry"],
   "veryfront/resource": ["resource", "resourceRegistry"],
   "veryfront/mcp": [
@@ -587,6 +588,15 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     WorkflowContext: "Step runtime context",
   },
 
+  "veryfront/work": {
+    work: "Define source-backed Work outcome",
+    workRegistry: "Project-scoped Work registry",
+    WorkDefinition: "`work()` return type",
+    WorkConfig: "`work()` config",
+    WorkAcceptanceCriterion: "Outcome acceptance criterion",
+    WorkReference: "Agent Work reference",
+  },
+
   "veryfront/prompt": {
     prompt: "Create MCP-discoverable prompt",
     promptRegistry: "Global prompt registry",
@@ -821,6 +831,7 @@ const API_REFERENCE_INDEX_DESCRIPTIONS: Record<string, string> = {
   "veryfront/testing": "Test utilities.",
   "veryfront/tool": "Tool definitions and execution.",
   "veryfront/utils": "Runtime utilities.",
+  "veryfront/work": "Business process outcome definitions.",
   "veryfront/workflow": "Workflows.",
 };
 
@@ -1653,6 +1664,10 @@ const API_DOCS: Record<string, APIDocs> = {
     functions: { workflow: { configType: "WorkflowOptions" } },
     expandTypes: ["StepOptions", "BranchOptions", "ParallelOptions"],
   },
+  "veryfront/work": {
+    functions: { work: { configType: "WorkConfig" } },
+    expandTypes: ["WorkConfig", "WorkAcceptanceCriterion"],
+  },
   "veryfront/middleware": {
     methods: { MiddlewarePipeline: "Composable middleware chain" },
     expandTypes: [
@@ -2012,6 +2027,17 @@ const PROPERTY_DESCRIPTIONS: Record<string, Record<string, string>> = {
     description: "Human-readable description",
     arguments: "Named arguments with descriptions",
     handler: "Function returning prompt messages",
+  },
+  WorkConfig: {
+    id: "Unique Work identifier",
+    name: "Human-readable Work name",
+    outcome: "Business outcome to make true",
+    acceptanceCriteria: "Outcome criteria tracked by executions",
+  },
+  WorkAcceptanceCriterion: {
+    id: "Stable criterion identifier",
+    description: "Measurable condition to satisfy",
+    optional: "Whether completion can ignore this criterion",
   },
   ResourceConfig: {
     uri: "Resource URI pattern",

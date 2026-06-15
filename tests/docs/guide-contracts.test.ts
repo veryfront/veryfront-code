@@ -21,6 +21,7 @@ const CONCEPT_FILES = new Set<string>([
   "concepts/schedule.md",
   "concepts/prompt.md",
   "concepts/resource.md",
+  "concepts/work.md",
   "concepts/skill.md",
   "concepts/integration.md",
   "concepts/mcp-server.md",
@@ -380,6 +381,15 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   "concepts/resource.md": {
     references: ["../api-reference/veryfront/resource.md"],
     snippets: ["readable project data", "URI pattern", "MCP"],
+  },
+  "concepts/work.md": {
+    references: ["../api-reference/veryfront/work.md"],
+    snippets: [
+      "business process state",
+      "acceptanceCriteria",
+      "Work is not a workflow",
+      "agent({ work:",
+    ],
   },
   "concepts/skill.md": {
     references: ["../guides/skills.md"],

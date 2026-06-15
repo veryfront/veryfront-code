@@ -11,6 +11,7 @@ describe("discovery/import-rewriter", () => {
         'import { defineSchema } from "veryfront/schemas";',
         'import { tool } from "veryfront/tool";',
         'import { step, workflow } from "veryfront/workflow";',
+        'import { work } from "veryfront/work";',
       ].join("\n"),
       "/project/workflows",
     );
@@ -18,6 +19,7 @@ describe("discovery/import-rewriter", () => {
     assertStringIncludes(transformed, import.meta.resolve("veryfront/schemas"));
     assertStringIncludes(transformed, import.meta.resolve("veryfront/tool"));
     assertStringIncludes(transformed, import.meta.resolve("veryfront/workflow"));
+    assertStringIncludes(transformed, import.meta.resolve("veryfront/work"));
     assertEquals(transformed.includes('from "veryfront/'), false);
   });
 
@@ -27,6 +29,7 @@ describe("discovery/import-rewriter", () => {
         'import { defineSchema } from "veryfront/schemas";',
         'import { tool } from "veryfront/tool";',
         'import { step, workflow } from "veryfront/workflow";',
+        'import { work } from "veryfront/work";',
       ].join("\n"),
       "/project/workflows",
       { compiled: true },
@@ -43,6 +46,10 @@ describe("discovery/import-rewriter", () => {
     assertStringIncludes(
       transformed,
       'const { step, workflow } = globalThis.__VERYFRONT_MODULES__["veryfront/workflow"]',
+    );
+    assertStringIncludes(
+      transformed,
+      'const { work } = globalThis.__VERYFRONT_MODULES__["veryfront/work"]',
     );
     assertEquals(transformed.includes('from "veryfront/'), false);
   });

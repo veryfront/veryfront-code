@@ -18,6 +18,10 @@ import { toolRegistry } from "#veryfront/tool";
 import { skillRegistry } from "#veryfront/skill/registry.ts";
 import { buildSkillManifestPrompt } from "#veryfront/skill/prompt-augmentation.ts";
 import {
+  buildWorkManifestPrompt,
+  resolveWorkReferences,
+} from "#veryfront/work/prompt-augmentation.ts";
+import {
   createExecuteSkillScriptTool,
   createLoadSkillReferenceTool,
   createLoadSkillTool,
@@ -108,22 +112,33 @@ export function agent(config: AgentConfig): Agent {
     }
   }
 
-  // System prompt augmentation with skill manifest.
-  // Re-resolve skills at invocation time so HMR changes are picked up.
+  // System prompt augmentation with Work context and skill manifest.
+  // Re-resolve registry-backed entries at invocation time so HMR changes are picked up.
   const originalSystem = config.system;
+  const workAugmentedSystem = config.work
+    ? async () => {
+      const basePrompt = typeof originalSystem === "function"
+        ? await originalSystem()
+        : originalSystem;
+      const workPrompt = buildWorkManifestPrompt(resolveWorkReferences(config.work!));
+      if (!workPrompt) return basePrompt ?? "You are a helpful assistant.";
+      return `${basePrompt ?? "You are a helpful assistant."}\n\n${workPrompt}`;
+    }
+    : originalSystem;
+
   const augmentedSystem = config.skills
     ? async () => {
       // Owner-aware: the manifest only ever advertises skills visible to this
       // agent (unowned project skills plus its own), matching skill-tool
       // enforcement at execution time.
       const currentSkills = skillRegistry.resolveForAgent(config.skills!, { agentId: id });
-      const basePrompt = typeof originalSystem === "function"
-        ? await originalSystem()
-        : originalSystem;
+      const basePrompt = typeof workAugmentedSystem === "function"
+        ? await workAugmentedSystem()
+        : workAugmentedSystem;
       if (!currentSkills.size) return basePrompt ?? "You are a helpful assistant.";
       return `${basePrompt}\n\n${buildSkillManifestPrompt(currentSkills)}`;
     }
-    : originalSystem;
+    : workAugmentedSystem;
 
   const resolvedMiddleware = resolveSecurityMiddleware(config);
 

@@ -25,6 +25,7 @@ import {
   taskHandler,
   toolHandler,
   workflowHandler,
+  workHandler,
 } from "./handlers/index.ts";
 import { discoverRuntimeAgentMarkdownDefinitions } from "./handlers/runtime-agent-markdown-handler.ts";
 import { filenameToId } from "./discovery-utils.ts";
@@ -167,6 +168,7 @@ export async function discoverAll(config: DiscoveryConfig): Promise<DiscoveryRes
     resources: new Map(),
     prompts: new Map(),
     workflows: new Map(),
+    works: new Map(),
     tasks: new Map(),
     errors: [],
   };
@@ -222,6 +224,11 @@ export async function discoverAll(config: DiscoveryConfig): Promise<DiscoveryRes
   // Discover workflows
   for (const dir of config.workflowDirs ?? ["workflows"]) {
     await discoverItems(`${baseDir}/${dir}`, result, context, workflowHandler, config.verbose);
+  }
+
+  // Discover Work definitions
+  for (const dir of config.workDirs ?? ["work"]) {
+    await discoverItems(`${baseDir}/${dir}`, result, context, workHandler, config.verbose);
   }
 
   // Discover tasks

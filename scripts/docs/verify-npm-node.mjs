@@ -175,6 +175,19 @@ try {
   console.log(`  FAIL  workflow — ${err.message}`);
 }
 
+// --- Work ---
+console.log("veryfront/work:");
+try {
+  const workMod = await imp("./work");
+  assertType(workMod.work, "function", "work is function");
+  assert(workMod.workRegistry !== undefined, "workRegistry exists");
+  console.log("  OK    work — 2 checks");
+} catch (err) {
+  failed++;
+  errors.push(`work: ${err.message}`);
+  console.log(`  FAIL  work — ${err.message}`);
+}
+
 // --- Provider ---
 console.log("veryfront/provider:");
 try {
