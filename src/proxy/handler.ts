@@ -9,6 +9,11 @@ import {
   isMissingCustomDomainProjectError,
   resolveProxyRequestToken,
 } from "./proxy-token-resolution.ts";
+import {
+  createProjectNotFoundProxyContext,
+  createProxyErrorContext,
+  createReleaseNotFoundProxyContext,
+} from "./proxy-error-context.ts";
 
 export { __resetCachedAuthProviderForTests } from "./proxy-access-control.ts";
 
@@ -215,51 +220,6 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     return missing;
   }
 
-  function makeErrorContext(
-    base: {
-      scope: TokenScope;
-      host: string;
-      parsedDomain: ParsedDomain;
-    },
-    status: number,
-    message: string,
-    token?: string,
-    redirectUrl?: string,
-    slug?: string,
-  ): ProxyContext {
-    return {
-      token,
-      projectSlug: undefined,
-      projectId: undefined,
-      environment: base.scope,
-      contentSourceId: "error",
-      localPath: undefined,
-      host: base.host,
-      parsedDomain: base.parsedDomain,
-      isLocalProject: false,
-      error: { status, message, redirectUrl, slug },
-    };
-  }
-
-  function makeProjectNotFoundContext(
-    base: {
-      scope: TokenScope;
-      host: string;
-      parsedDomain: ParsedDomain;
-    },
-    message: "Preview project not found" | "Project not found",
-    token?: string,
-  ): ProxyContext {
-    return makeErrorContext(
-      base,
-      404,
-      message,
-      token,
-      undefined,
-      "project-not-found",
-    );
-  }
-
   async function resolveReleaseAndProtection(
     req: Request,
     url: URL,
@@ -368,11 +328,11 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         if (status === 404) {
           if (scope === "preview") {
             logger?.info("Preview project not found", { projectSlug, host });
-            return makeProjectNotFoundContext(base, "Preview project not found");
+            return createProjectNotFoundProxyContext(base, "Preview project not found");
           }
 
           logger?.info("Project not found", { projectSlug, host, scope });
-          return makeProjectNotFoundContext(base, "Project not found");
+          return createProjectNotFoundProxyContext(base, "Project not found");
         }
 
         const message = scope === "preview"
@@ -386,7 +346,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           hadUserToken: !!userToken,
           hadTokenFetchError: !!tokenFetchError,
         });
-        return makeErrorContext(base, 502, message);
+        return createProxyErrorContext(base, { status: 502, message });
       }
 
       if (isCustomDomain && !projectSlug) {
@@ -395,17 +355,28 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
             logger?.info("Custom domain project not found during token fetch", {
               domain: host,
             });
-            return makeErrorContext(base, 404, `No project configured for domain: ${host}`);
+            return createProxyErrorContext(base, {
+              status: 404,
+              message: `No project configured for domain: ${host}`,
+            });
           }
 
           logger?.error("Cannot process custom domain without token", undefined, { domain: host });
-          return makeErrorContext(base, 502, `Failed to authenticate for domain: ${host}`, token);
+          return createProxyErrorContext(base, {
+            status: 502,
+            message: `Failed to authenticate for domain: ${host}`,
+            token,
+          });
         }
 
         const lookupResult = await lookupProjectByDomain(host, config.apiBaseUrl, token, logger);
         if (!lookupResult) {
           logger?.info("Custom domain not found", { domain: host });
-          return makeErrorContext(base, 404, `No project configured for domain: ${host}`, token);
+          return createProxyErrorContext(base, {
+            status: 404,
+            message: `No project configured for domain: ${host}`,
+            token,
+          });
         }
 
         projectSlug = lookupResult.slug;
@@ -431,13 +402,12 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           isSignedInternalControlPlaneRequest: isSignedInternalControlPlaneRequest(req, url),
         });
         if (protectionError) {
-          return makeErrorContext(
-            base,
-            protectionError.status,
-            protectionError.message,
+          return createProxyErrorContext(base, {
+            status: protectionError.status,
+            message: protectionError.message,
             token,
-            protectionError.redirectUrl,
-          );
+            redirectUrl: protectionError.redirectUrl,
+          });
         }
 
         logger?.info("Resolved custom domain to project", {
@@ -461,13 +431,12 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         );
 
         if ("error" in resolved) {
-          return makeErrorContext(
-            base,
-            resolved.error.status,
-            resolved.error.message,
+          return createProxyErrorContext(base, {
+            status: resolved.error.status,
+            message: resolved.error.message,
             token,
-            resolved.error.redirectUrl,
-          );
+            redirectUrl: resolved.error.redirectUrl,
+          });
         }
 
         if (!resolved.projectId) {
@@ -477,7 +446,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
             scope,
             targetEnvName: parsedDomain.environment,
           });
-          return makeProjectNotFoundContext(base, "Project not found", token);
+          return createProjectNotFoundProxyContext(base, "Project not found", token);
         }
 
         projectId = resolved.projectId;
@@ -505,18 +474,17 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         );
 
         if ("error" in resolved) {
-          return makeErrorContext(
-            base,
-            resolved.error.status,
-            resolved.error.message,
+          return createProxyErrorContext(base, {
+            status: resolved.error.status,
+            message: resolved.error.message,
             token,
-            resolved.error.redirectUrl,
-          );
+            redirectUrl: resolved.error.redirectUrl,
+          });
         }
 
         if (!resolved.projectId) {
           logger?.info("Preview project not found after lookup", { projectSlug, host });
-          return makeProjectNotFoundContext(base, "Preview project not found", token);
+          return createProjectNotFoundProxyContext(base, "Preview project not found", token);
         }
 
         projectId = resolved.projectId;
@@ -539,14 +507,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         host,
         environment: scope,
       });
-      return makeErrorContext(
-        { scope, host, parsedDomain },
-        404,
-        "No active release found",
-        token,
-        undefined,
-        "release-not-found",
-      );
+      return createReleaseNotFoundProxyContext({ scope, host, parsedDomain }, token);
     }
 
     const contentSourceId = computeContentSourceId(
