@@ -1,12 +1,24 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { getNativeDeno, getNativeResponse, toNativeResponse } from "./native-response.ts";
+import {
+  getNativeDeno,
+  getNativeDenoFromHost,
+  getNativeResponse,
+  getNativeResponseFromHost,
+  toNativeResponse,
+} from "./native-response.ts";
 
 describe("getNativeResponse", () => {
   it("returns the native Response constructor", () => {
     const NativeResponse = getNativeResponse();
     // In Deno, `self` equals `globalThis`, so this is the real Response.
+    assertStrictEquals(NativeResponse, Response);
+  });
+
+  it("reads Response through the typed host accessor", () => {
+    const NativeResponse = getNativeResponseFromHost({ Response });
+
     assertStrictEquals(NativeResponse, Response);
   });
 
@@ -22,6 +34,14 @@ describe("getNativeDeno", () => {
   it("returns the native Deno namespace in the Deno runtime", () => {
     const nativeDeno = getNativeDeno();
     assertStrictEquals(nativeDeno, Deno);
+  });
+
+  it("returns undefined when the typed host has no native Deno namespace", () => {
+    assertEquals(getNativeDenoFromHost({}), undefined);
+  });
+
+  it("ignores non-object Deno values on the typed host", () => {
+    assertEquals(getNativeDenoFromHost({ Deno: "not-deno" }), undefined);
   });
 
   it("exposes native APIs absent from the dnt shim", () => {
