@@ -75,6 +75,7 @@ import {
   getRuntimeForwardedIntegrationToolDefs,
   getRuntimeProviderTools,
 } from "./runtime-tool-config.ts";
+import { prepareAgentRuntimeStep } from "./agent-runtime-step.ts";
 
 // Re-export from submodules
 export { closeSSEStream, generateMessageId, sendSSE } from "./sse-utils.ts";
@@ -141,7 +142,6 @@ import { DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE, getModelMaxOutputTokens } from
 import { closeSSEStream, generateMessageId, sendSSE } from "./sse-utils.ts";
 import { executeConfiguredTool, getAvailableTools, isDynamicTool } from "./tool-helpers.ts";
 import { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
-import { filterToolsForSkill } from "#veryfront/skill/allowed-tools.ts";
 import { resolveRuntimeModel } from "./model-resolution.ts";
 import type { RuntimeGenerateToolResult } from "./runtime-tool-types.ts";
 import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
@@ -527,30 +527,27 @@ export class AgentRuntime {
         this.status = "thinking";
         addSpanEvent(loopSpan, "step_start", { step });
 
-        const runtimeState = await this.resolveRuntimeState(
-          currentMessages,
-          currentRuntimeContext,
-          "generate",
-          step,
-          currentSystemPrompt,
-        );
-        currentSystemPrompt = runtimeState.systemPrompt;
-        currentRuntimeContext = runtimeState.context;
-        const toolContext = { ...toolContextBase, ...currentRuntimeContext };
-
-        let tools = isLocal ? [] : await getAvailableTools(this.config.tools, {
-          callerAgentId: this.id,
-          includeSkillTools: Boolean(this.config.skills),
+        const preparedStep = await prepareAgentRuntimeStep({
+          agentId: this.id,
+          activeSkillPolicy,
           allowedRemoteToolNames,
+          config: this.config,
           forwardedRemoteToolDefinitions,
+          getAvailableTools,
+          isLocalModel: isLocal,
+          messages: currentMessages,
+          mode: "generate",
           remoteToolSources,
-          remoteToolContext: toolContext,
+          resolveRuntimeState: this.resolveRuntimeState.bind(this),
+          runtimeContext: currentRuntimeContext,
+          step,
+          systemPrompt: currentSystemPrompt,
+          toolContextBase,
         });
-
-        // Layer 1: Filter tools based on active skill policy (planning-time)
-        if (activeSkillPolicy) {
-          tools = filterToolsForSkill(tools, activeSkillPolicy);
-        }
+        currentSystemPrompt = preparedStep.systemPrompt;
+        currentRuntimeContext = preparedStep.runtimeContext;
+        const toolContext = preparedStep.toolContext;
+        const tools = preparedStep.tools;
 
         const temperature = this.resolveTemperature(temperatureModelString ?? effectiveModel);
         const response = await withSpan("agent.generate_text", async (span) => {
@@ -849,30 +846,27 @@ export class AgentRuntime {
       sendSSE(controller, encoder, { type: "step-start" });
       const currentStepToolResults = new Map<string, ToolResultPart>();
 
-      const runtimeState = await this.resolveRuntimeState(
-        currentMessages,
-        currentRuntimeContext,
-        "stream",
-        step,
-        currentSystemPrompt,
-      );
-      currentSystemPrompt = runtimeState.systemPrompt;
-      currentRuntimeContext = runtimeState.context;
-      const toolContext = { ...toolContextBase, ...currentRuntimeContext };
-
-      let tools = isLocalStreaming ? [] : await getAvailableTools(this.config.tools, {
-        callerAgentId: this.id,
-        includeSkillTools: Boolean(this.config.skills),
+      const preparedStep = await prepareAgentRuntimeStep({
+        agentId: this.id,
+        activeSkillPolicy,
         allowedRemoteToolNames,
+        config: this.config,
         forwardedRemoteToolDefinitions,
+        getAvailableTools,
+        isLocalModel: isLocalStreaming,
+        messages: currentMessages,
+        mode: "stream",
         remoteToolSources,
-        remoteToolContext: toolContext,
+        resolveRuntimeState: this.resolveRuntimeState.bind(this),
+        runtimeContext: currentRuntimeContext,
+        step,
+        systemPrompt: currentSystemPrompt,
+        toolContextBase,
       });
-
-      // Layer 1: Filter tools based on active skill policy (planning-time)
-      if (activeSkillPolicy) {
-        tools = filterToolsForSkill(tools, activeSkillPolicy);
-      }
+      currentSystemPrompt = preparedStep.systemPrompt;
+      currentRuntimeContext = preparedStep.runtimeContext;
+      const toolContext = preparedStep.toolContext;
+      const tools = preparedStep.tools;
 
       const runtimeTools = convertToolsToRuntimeTools(tools, {
         model: effectiveModel,
