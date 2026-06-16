@@ -73,20 +73,11 @@ flowchart TD
 
 ## Runtime caches
 
-The split proxy caches successful project metadata lookups for service and
-static-token requests. The cache is per proxy handler, bounded, and short lived.
-It does not cache lookup misses, preview user-token lookups, signed internal
-request lookups, or protected-access decisions. Protected environments still run
-their access check on every request.
-
-Default proxy lookup cache controls:
-
-| Environment variable                               | Default |
-| -------------------------------------------------- | ------- |
-| `VERYFRONT_PROXY_PROJECT_LOOKUP_CACHE_TTL_MS`      | `30000` |
-| `VERYFRONT_PROXY_PROJECT_LOOKUP_CACHE_MAX_ENTRIES` | `1000`  |
-
-Set either value to `0` to disable the proxy project lookup cache.
+Project metadata lookups are not cached in the proxy. The current lookup
+response carries both routing data and access-control state (`protected`
+environment flags and project members), so caching it can authorize with stale
+metadata after protection or membership changes. Add a routing-only control
+plane contract before introducing a proxy lookup cache.
 
 Release-backed production page-data requests use a fresh cache window plus a
 bounded stale-while-revalidate window. The cache key includes the project,
