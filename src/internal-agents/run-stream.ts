@@ -687,10 +687,17 @@ export async function createRuntimeAgentStreamResponse(
       clientAttached = false;
       stopHeartbeat?.();
       stopHeartbeat = undefined;
+      const status = deps.sessionManager.getRunStatus(input.runId);
+      const shouldCancelActiveRun = status !== null && status !== "waiting";
+      if (shouldCancelActiveRun) {
+        deps.sessionManager.cancelRun(input.runId);
+      }
       logger.info("Internal agent runtime client detached", {
         runId: input.runId,
         threadId: input.threadId,
         agentId: agent.id,
+        status,
+        cancelledActiveRun: shouldCancelActiveRun,
       });
       return Promise.resolve();
     },
