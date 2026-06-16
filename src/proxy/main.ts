@@ -52,6 +52,12 @@ import {
   UPSTREAM_FAILURE_STATUS,
   UPSTREAM_TIMEOUT_STATUS,
 } from "./upstream-error-response.ts";
+import {
+  createProxyServerTiming,
+  markProxyServerTimingPhase,
+  profileProxyServerTimingPhase,
+  withProxyServerTimingHeader,
+} from "./server-timing.ts";
 
 function getLocalProjects(): Record<string, string> {
   const raw = getEnv("LOCAL_PROJECTS");
@@ -286,12 +292,19 @@ function handleWebSocketUpgrade(req: Request, url: URL): Response {
 
 function forwardToServer(req: Request, url: URL): Promise<Response> {
   const startTime = performance.now();
+  const proxyTiming = createProxyServerTiming();
+  const withProxyTiming = (response: Response): Response =>
+    withProxyServerTimingHeader(response, proxyTiming, performance.now() - startTime);
   const requestId = crypto.randomUUID();
   const host = req.headers.get("host") || "";
 
   const execute = async (lifecycle: ProxyRequestLifecycle): Promise<Response> => {
     try {
-      const ctx = await proxyHandler.processRequest(req, { url });
+      const ctx = await profileProxyServerTimingPhase(
+        proxyTiming,
+        "proxy.resolve_request",
+        () => proxyHandler.processRequest(req, { url }),
+      );
 
       return runWithProxyRequestContext(
         {
@@ -310,7 +323,7 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
             const logLevel = getProxyFailureLogLevel(ctx.error.status, req.method, url.pathname);
             proxyLogger[logLevel](`${ctx.error.status} ${req.method} ${url.pathname}`, { ms });
             lifecycle.end(ctx.error.status);
-            return createProxyErrorResponse(ctx.error);
+            return withProxyTiming(createProxyErrorResponse(ctx.error));
           }
 
           const reqLogger = proxyLogger.child({
@@ -343,9 +356,11 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
 
           for (let attempt = 0; attempt <= maxRetries; attempt++) {
             // Resolve dedicated server per attempt so retries can fall back to shared pool
-            const dedicatedServerUrl = skipDedicated
-              ? null
-              : await serverResolver.resolve(ctx.environmentId);
+            const dedicatedServerUrl = skipDedicated ? null : await profileProxyServerTimingPhase(
+              proxyTiming,
+              "proxy.resolve_server",
+              () => serverResolver.resolve(ctx.environmentId),
+            );
             const baseUrl = dedicatedServerUrl ??
               rendererRouter?.resolve(ctx.projectSlug) ??
               PRODUCTION_SERVER_URL;
@@ -363,7 +378,13 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
                   method: req.method,
                 },
               );
+              const retryDelayStartedAt = performance.now();
               await new Promise((resolve) => setTimeout(resolve, VERYFRONT_SERVER_RETRY_DELAY_MS)); // no cleanup needed: one-shot
+              markProxyServerTimingPhase(
+                proxyTiming,
+                "proxy.retry_delay",
+                performance.now() - retryDelayStartedAt,
+              );
             }
 
             const abortController = new AbortController();
@@ -372,25 +393,30 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
             }, VERYFRONT_SERVER_REQUEST_TIMEOUT_MS);
 
             try {
-              const response = await withSpan(
-                ProxySpanNames.HTTP_CLIENT_FETCH,
+              const response = await profileProxyServerTimingPhase(
+                proxyTiming,
+                "proxy.upstream",
                 () =>
-                  fetch(serverUrl.toString(), {
-                    method: req.method,
-                    headers: newHeaders,
-                    body: req.body,
-                    redirect: "manual",
-                    signal: abortController.signal,
-                  }),
-                {
-                  "http.method": req.method,
-                  "http.url": serverUrl.toString(),
-                  "http.host": serverUrl.host,
-                  "proxy.target": "server",
-                  "proxy.project_slug": ctx.projectSlug || "",
-                  "proxy.timeout_ms": VERYFRONT_SERVER_REQUEST_TIMEOUT_MS,
-                  "proxy.retry_attempt": attempt,
-                },
+                  withSpan(
+                    ProxySpanNames.HTTP_CLIENT_FETCH,
+                    () =>
+                      fetch(serverUrl.toString(), {
+                        method: req.method,
+                        headers: newHeaders,
+                        body: req.body,
+                        redirect: "manual",
+                        signal: abortController.signal,
+                      }),
+                    {
+                      "http.method": req.method,
+                      "http.url": serverUrl.toString(),
+                      "http.host": serverUrl.host,
+                      "proxy.target": "server",
+                      "proxy.project_slug": ctx.projectSlug || "",
+                      "proxy.timeout_ms": VERYFRONT_SERVER_REQUEST_TIMEOUT_MS,
+                      "proxy.retry_attempt": attempt,
+                    },
+                  ),
               );
 
               clearTimeout(timeoutId);
@@ -405,11 +431,13 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
                 reqLogger.info(`${response.status} ${req.method} ${url.pathname}`, { ms });
               }
 
-              return new Response(response.body, {
-                status: response.status,
-                statusText: response.statusText,
-                headers: response.headers,
-              });
+              return withProxyTiming(
+                new Response(response.body, {
+                  status: response.status,
+                  statusText: response.statusText,
+                  headers: response.headers,
+                }),
+              );
             } catch (error) {
               clearTimeout(timeoutId);
               lastError = error as Error;
@@ -421,7 +449,9 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
                   timeoutMs: VERYFRONT_SERVER_REQUEST_TIMEOUT_MS,
                 });
                 lifecycle.end(UPSTREAM_TIMEOUT_STATUS, error);
-                return createUpstreamTimeoutResponse(VERYFRONT_SERVER_REQUEST_TIMEOUT_MS);
+                return withProxyTiming(
+                  createUpstreamTimeoutResponse(VERYFRONT_SERVER_REQUEST_TIMEOUT_MS),
+                );
               }
 
               // Check if this is a retryable error and we have retries left
@@ -467,17 +497,19 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
             lastError as Error,
           );
           lifecycle.end(UPSTREAM_FAILURE_STATUS, lastError as Error);
-          return createUpstreamFailureResponse(lastError);
+          return withProxyTiming(createUpstreamFailureResponse(lastError));
         },
       );
     } catch (error) {
       const ms = Math.round(performance.now() - startTime);
       proxyLogger.error(`500 ${req.method} ${url.pathname}`, { ms }, error as Error);
       lifecycle.end(500, error as Error);
-      return jsonErrorResponse(500, {
-        error: "Internal Proxy Error",
-        message: error instanceof Error ? error.message : "Unknown error",
-      });
+      return withProxyTiming(
+        jsonErrorResponse(500, {
+          error: "Internal Proxy Error",
+          message: error instanceof Error ? error.message : "Unknown error",
+        }),
+      );
     }
   };
 
