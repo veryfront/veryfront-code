@@ -208,6 +208,11 @@ export class MultiProjectFSAdapter implements FSAdapter {
     return adapter.resolveFile(basePath, options);
   }
 
+  async refreshSourceSnapshot(reason?: string): Promise<void> {
+    const adapter = await this.getAdapter();
+    await adapter.refreshSourceSnapshot(reason);
+  }
+
   dispose(): void {
     this.manager.dispose();
     this.defaultAdapter?.dispose();

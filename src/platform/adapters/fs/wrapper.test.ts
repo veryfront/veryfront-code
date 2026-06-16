@@ -185,6 +185,29 @@ describe("FSAdapterWrapper", () => {
     });
   });
 
+  describe("refreshSourceSnapshot", () => {
+    it("should not expose refreshSourceSnapshot when the wrapped adapter does not support it", () => {
+      const wrapper = new FSAdapterWrapper(createMockFSAdapter());
+
+      assertEquals(wrapper.refreshSourceSnapshot, undefined);
+    });
+
+    it("should delegate refreshSourceSnapshot to the wrapped adapter", async () => {
+      let refreshedReason: string | undefined;
+      const fsAdapter = createMockFSAdapter({
+        refreshSourceSnapshot(reason?: string) {
+          refreshedReason = reason;
+          return Promise.resolve();
+        },
+      });
+      const wrapper = new FSAdapterWrapper(fsAdapter);
+
+      await wrapper.refreshSourceSnapshot?.("review-comment");
+
+      assertEquals(refreshedReason, "review-comment");
+    });
+  });
+
   describe("readFile", () => {
     it("should read file using readTextFile if available", async () => {
       const fsAdapter = createMockFSAdapter({
