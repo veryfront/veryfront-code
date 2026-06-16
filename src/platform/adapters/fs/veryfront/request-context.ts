@@ -51,6 +51,13 @@ export function setRequestScopedFile(cacheKey: string, content: string): void {
   asyncLocalStorage.getStore()?.fileCache?.set(cacheKey, content);
 }
 
+export function clearRequestScopedFileCache(): number {
+  const fileCache = asyncLocalStorage.getStore()?.fileCache;
+  const cleared = fileCache?.size ?? 0;
+  fileCache?.clear();
+  return cleared;
+}
+
 /**
  * Run a function within a request context.
  * Standalone version that doesn't require an adapter instance.
@@ -91,6 +98,7 @@ interface VfMultiProjectAdapterGlobal {
   getCurrentRequestContext: () => RequestContext | null;
   getRequestScopedFile: (cacheKey: string) => string | undefined;
   setRequestScopedFile: (cacheKey: string, content: string) => void;
+  clearRequestScopedFileCache: () => number;
 }
 
 declare global {
@@ -102,4 +110,5 @@ globalThis.__vf_multi_project_adapter = {
   getCurrentRequestContext,
   getRequestScopedFile,
   setRequestScopedFile,
+  clearRequestScopedFileCache,
 };

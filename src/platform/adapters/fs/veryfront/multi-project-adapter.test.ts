@@ -3,6 +3,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  clearRequestScopedFileCache,
   getCurrentRequestContext,
   getRequestScopedFile,
   isMultiProjectAdapter,
@@ -124,13 +125,15 @@ describe("MultiProjectFSAdapter", () => {
       await withAdapterAsync((adapter) => adapter.initialize());
     });
 
-    it("refreshSourceSnapshot should delegate to the request-scoped adapter", async () => {
+    it("refreshSourceSnapshot should delegate and clear request-scoped file cache", async () => {
       await withAdapterAsync(async (adapter) => {
         const originalManager = (adapter as any).manager;
         let refreshedReason: string | undefined;
         let capturedProjectSlug: string | undefined;
         let capturedProjectId: string | undefined;
         let capturedBranch: string | null | undefined;
+        let cachedBeforeRefresh: string | undefined;
+        let cachedAfterRefresh: string | undefined;
 
         (adapter as any).manager = {
           getAdapter(
@@ -160,7 +163,12 @@ describe("MultiProjectFSAdapter", () => {
           await adapter.runWithContext(
             "project-a",
             "test-token",
-            () => adapter.refreshSourceSnapshot("review-comment"),
+            async () => {
+              setRequestScopedFile("file:pages/index.mdx", "stale-content");
+              cachedBeforeRefresh = getRequestScopedFile("file:pages/index.mdx");
+              await adapter.refreshSourceSnapshot("review-comment");
+              cachedAfterRefresh = getRequestScopedFile("file:pages/index.mdx");
+            },
             "project-id-a",
             { branch: "main" },
           );
@@ -172,6 +180,8 @@ describe("MultiProjectFSAdapter", () => {
         assertEquals(capturedProjectSlug, "project-a");
         assertEquals(capturedProjectId, "project-id-a");
         assertEquals(capturedBranch, "main");
+        assertEquals(cachedBeforeRefresh, "stale-content");
+        assertEquals(cachedAfterRefresh, undefined);
       });
     });
   });
@@ -334,6 +344,24 @@ describe("getRequestScopedFile / setRequestScopedFile", () => {
       },
     );
   });
+
+  it("should clear all files in the current context", async () => {
+    await runWithRequestContext(
+      { projectSlug: "proj", token: "tok" },
+      async () => {
+        setRequestScopedFile("file:a.ts", "a");
+        setRequestScopedFile("file:b.ts", "b");
+
+        assertEquals(clearRequestScopedFileCache(), 2);
+        assertEquals(getRequestScopedFile("file:a.ts"), undefined);
+        assertEquals(getRequestScopedFile("file:b.ts"), undefined);
+      },
+    );
+  });
+
+  it("should return zero when no context is active", () => {
+    assertEquals(clearRequestScopedFileCache(), 0);
+  });
 });
 
 describe("wrapWithCurrentContext", () => {
@@ -376,5 +404,12 @@ describe("globalThis.__vf_multi_project_adapter", () => {
 
   it("should have setRequestScopedFile function", () => {
     assertEquals(typeof globalThis.__vf_multi_project_adapter!.setRequestScopedFile, "function");
+  });
+
+  it("should have clearRequestScopedFileCache function", () => {
+    assertEquals(
+      typeof globalThis.__vf_multi_project_adapter!.clearRequestScopedFileCache,
+      "function",
+    );
   });
 });

@@ -5,8 +5,13 @@ import type { FileInfo, ResolveFileOptions } from "../../base.ts";
 import { ProxyFSAdapterManager } from "./proxy-manager.ts";
 import type { VeryfrontFSAdapter } from "./adapter.ts";
 import { runWithCacheBatching } from "#veryfront/cache/request-cache-batcher.ts";
-import { asyncLocalStorage, type RequestContext } from "./request-context.ts";
+import {
+  asyncLocalStorage,
+  clearRequestScopedFileCache,
+  type RequestContext,
+} from "./request-context.ts";
 export {
+  clearRequestScopedFileCache,
   getCurrentRequestContext,
   getRequestScopedFile,
   runWithRequestContext,
@@ -211,6 +216,13 @@ export class MultiProjectFSAdapter implements FSAdapter {
   async refreshSourceSnapshot(reason?: string): Promise<void> {
     const adapter = await this.getAdapter();
     await adapter.refreshSourceSnapshot(reason);
+    const cleared = clearRequestScopedFileCache();
+    if (cleared > 0) {
+      logger.debug("Cleared request-scoped file cache after source snapshot refresh", {
+        reason,
+        cleared,
+      });
+    }
   }
 
   dispose(): void {
