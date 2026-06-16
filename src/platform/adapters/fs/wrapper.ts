@@ -120,7 +120,9 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
     const adapter = this.contextual;
     const method = adapter[key];
     if (!method) throw new NotSupportedError(operation, this.adapterType);
-    return method as NonNullable<ContextualFSAdapter[K]>;
+    return (typeof method === "function" ? method.bind(adapter) : method) as NonNullable<
+      ContextualFSAdapter[K]
+    >;
   }
 
   setRequestToken(token: string): void {

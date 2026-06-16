@@ -7,6 +7,7 @@ import {
   NotSupportedError,
   wrapFSAdapter,
 } from "./wrapper.ts";
+import { MultiProjectFSAdapter } from "./veryfront/multi-project-adapter.ts";
 import type { ContextualFSAdapter, FSAdapter } from "./veryfront/types.ts";
 
 function createMockFSAdapter(overrides: Partial<FSAdapter> = {}): FSAdapter {
@@ -586,6 +587,53 @@ describe("FSAdapterWrapper", () => {
       );
       assertEquals(captured, { slug: "my-slug", token: "my-token" });
       assertEquals(result, "result");
+    });
+
+    it("runWithContext should preserve adapter binding for production release materialization", async () => {
+      const adapter = new MultiProjectFSAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          cache: { enabled: false },
+        },
+      });
+      const wrapper = new FSAdapterWrapper(adapter);
+      const originalManager = (adapter as any).manager;
+      let getAdapterCalled = false;
+      let callbackSawMaterializedAdapter = false;
+
+      (adapter as any).manager = {
+        getAdapter() {
+          getAdapterCalled = true;
+          return Promise.resolve(createMockFSAdapter());
+        },
+        getStats: () => ({ adapters: 0, stats: [] }),
+        dispose: () => {},
+      };
+
+      try {
+        const result = await wrapper.runWithContext(
+          "project-release",
+          "test-token",
+          async () => {
+            callbackSawMaterializedAdapter = getAdapterCalled;
+            return "result";
+          },
+          "project-id-release",
+          {
+            productionMode: true,
+            releaseId: "rel-first-hit",
+            environmentName: "production",
+          },
+        );
+
+        assertEquals(result, "result");
+        assertEquals(callbackSawMaterializedAdapter, true);
+      } finally {
+        (adapter as any).manager = originalManager;
+        adapter.dispose();
+      }
     });
   });
 });
