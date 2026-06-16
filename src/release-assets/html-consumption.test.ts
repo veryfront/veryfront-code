@@ -57,6 +57,22 @@ describe("html consumption helpers", () => {
     assertEquals(url, `/_vf/assets/${MOD_HASH}.js`);
   });
 
+  it("matches arbitrary-folder module URLs with query parameters", () => {
+    const customManifest = manifest();
+    customManifest.modules["providers/BreakpointsProvider.tsx"] = {
+      contentHash: MOD_HASH,
+      size: 1,
+      contentType: "text/javascript",
+    };
+
+    const url = resolveManifestModuleUrl(
+      customManifest,
+      "/_vf_modules/providers/BreakpointsProvider.js?studio_embed=true",
+    );
+
+    assertEquals(url, `/_vf/assets/${MOD_HASH}.js`);
+  });
+
   it("returns null (fallback) for an uncovered module", () => {
     assertEquals(resolveManifestModuleUrl(manifest(), "pages/missing.tsx"), null);
   });

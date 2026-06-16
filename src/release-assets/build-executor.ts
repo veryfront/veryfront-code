@@ -17,6 +17,8 @@
 
 import { serverLogger } from "#veryfront/utils";
 import { VERSION } from "#veryfront/utils/version.ts";
+import { resolve } from "#veryfront/extensions/contracts.ts";
+import type { CodeParser, NodePath } from "#veryfront/extensions/parser/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { dirname, join, normalize } from "#veryfront/compat/path/index.ts";
@@ -215,6 +217,18 @@ interface FinalizedDependencyModules {
   fallbackUrls: Map<string, string>;
 }
 
+interface ModuleSpecifierNode {
+  importKind?: string;
+  exportKind?: string;
+}
+
+interface ModuleSourceNode {
+  source?: { value?: unknown };
+  importKind?: string;
+  exportKind?: string;
+  specifiers?: ModuleSpecifierNode[];
+}
+
 function frameworkModuleUrlToSourceKey(moduleUrl: string): string | null {
   if (!moduleUrl.startsWith(FRAMEWORK_MODULE_URL_PREFIX)) return null;
   return moduleUrl
@@ -258,75 +272,57 @@ function isBrowserModule(path: string): boolean {
 }
 
 /**
- * Statically resolve relative imports in a source file to logical paths.
- *
- * Parses `import/export ... from "..."` and bare `import "..."` statements.
- * Only relative specifiers (`./` or `../`) are resolved; package imports and
- * absolute URLs are skipped. Extension-less specifiers try each browser module
- * extension in order.
+ * Statically resolve runtime imports in a TS/JSX source file to logical paths.
+ * Uses the CodeParser AST contract so type-only imports do not enter route
+ * preload closure.
  */
-function resolveStaticImports(
+async function collectStaticProjectModuleImports(
   source: string,
   moduleLogicalPath: string,
   knownPaths: Set<string>,
-): string[] {
-  const importRe = /(?:^|;|\n)\s*(?:import|export)\s+(?:[^'"]+\s+from\s+)?['"]([^'"]+)['"]/gm;
-  const results: string[] = [];
-  let m: RegExpExecArray | null;
+): Promise<string[]> {
+  return await collectAstStaticProjectModuleImports(source, moduleLogicalPath, knownPaths);
+}
 
-  while ((m = importRe.exec(source)) !== null) {
-    const specifier = m[1]!;
-    const isAlias = specifier.startsWith("@/");
-    if (!isAlias && !specifier.startsWith("./") && !specifier.startsWith("../")) continue;
+function readModuleSource(node: ModuleSourceNode): string | null {
+  return typeof node.source?.value === "string" ? node.source.value : null;
+}
 
-    const dir = moduleLogicalPath.includes("/")
-      ? moduleLogicalPath.slice(0, moduleLogicalPath.lastIndexOf("/"))
-      : ".";
+function isTypeOnlyModuleDeclaration(node: ModuleSourceNode): boolean {
+  if (node.importKind === "type" || node.exportKind === "type") return true;
+  if (!node.specifiers?.length) return false;
+  return node.specifiers.every((specifier) =>
+    specifier.importKind === "type" || specifier.exportKind === "type"
+  );
+}
 
-    // `@/x` is a project-root alias (mirrors transforms/esm/path-resolver.ts).
-    // Resolve the path segments manually (no path library needed for simple cases).
-    const segments = (isAlias ? specifier.substring(2) : `${dir}/${specifier}`)
-      .split("/").filter((s) => s !== "");
-    const resolved: string[] = [];
-    for (const seg of segments) {
-      if (seg === "..") {
-        resolved.pop();
-      } else if (seg !== ".") {
-        resolved.push(seg);
-      }
-    }
-    const candidate = resolved.join("/");
+async function collectAstStaticProjectModuleImports(
+  source: string,
+  moduleLogicalPath: string,
+  knownPaths: Set<string>,
+): Promise<string[]> {
+  const parser = resolve<CodeParser>("CodeParser");
+  const ast = await parser.parse({ code: source, filePath: moduleLogicalPath });
+  const results = new Set<string>();
 
-    // If the specifier already has a known extension and exists, use it.
-    if (knownPaths.has(candidate)) {
-      results.push(candidate);
-      continue;
-    }
+  const visit = (path: NodePath) => {
+    const node = path.node as ModuleSourceNode;
+    if (isTypeOnlyModuleDeclaration(node)) return;
 
-    // Try appending each browser module extension.
-    let found = false;
-    for (const ext of BROWSER_MODULE_EXTENSIONS) {
-      const withExt = `${candidate}${ext}`;
-      if (knownPaths.has(withExt)) {
-        results.push(withExt);
-        found = true;
-        break;
-      }
-    }
+    const specifier = readModuleSource(node);
+    if (!specifier) return;
 
-    // Also try /index variants for directory imports.
-    if (!found) {
-      for (const ext of BROWSER_MODULE_EXTENSIONS) {
-        const indexPath = `${candidate}/index${ext}`;
-        if (knownPaths.has(indexPath)) {
-          results.push(indexPath);
-          break;
-        }
-      }
-    }
-  }
+    const importedPath = resolveProjectModuleSpecifier(specifier, moduleLogicalPath, knownPaths);
+    if (importedPath) results.add(importedPath);
+  };
 
-  return results;
+  parser.traverse(ast, {
+    ImportDeclaration: visit,
+    ExportNamedDeclaration: visit,
+    ExportAllDeclaration: visit,
+  });
+
+  return [...results];
 }
 
 function resolveKnownModulePath(path: string, knownPaths: Set<string>): string | null {
@@ -376,6 +372,7 @@ function normalizeProjectSpecifier(specifier: string, logicalPath: string): stri
   if (specifier.startsWith("/_vf_modules/_veryfront/")) return null;
   if (specifier.startsWith("/_vf_modules/")) return specifier;
   if (specifier.startsWith("_veryfront/")) return null;
+  if (specifier.startsWith("@/")) return specifier.slice(2);
 
   if (specifier.startsWith("./") || specifier.startsWith("../")) {
     const dir = logicalPath.includes("/")
@@ -1379,11 +1376,11 @@ function addFrameworkDependencyUrlAliases(
  * Returns all reachable logical paths (entries included).
  * Modules not in `sourceByPath` are recorded as closure gaps.
  */
-function collectClosure(
+async function collectClosure(
   entrypoints: string[],
   sourceByPath: Map<string, string>,
   knownPaths: Set<string>,
-): { modules: string[]; gaps: string[] } {
+): Promise<{ modules: string[]; gaps: string[] }> {
   const visited = new Set<string>();
   const queue = [...entrypoints];
   const gaps: string[] = [];
@@ -1400,7 +1397,7 @@ function collectClosure(
       continue;
     }
 
-    const imports = resolveStaticImports(source, current, knownPaths);
+    const imports = await collectStaticProjectModuleImports(source, current, knownPaths);
     for (const imp of imports) {
       if (!visited.has(imp)) queue.push(imp);
     }
@@ -1762,7 +1759,7 @@ async function runBuildInner(
     const route = routeForPage(logicalPath);
     if (!route) continue;
 
-    const { modules: closureModules, gaps: closureGaps } = collectClosure(
+    const { modules: closureModules, gaps: closureGaps } = await collectClosure(
       [logicalPath],
       sourceByPath,
       knownPaths,

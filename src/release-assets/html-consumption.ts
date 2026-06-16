@@ -21,11 +21,13 @@ const logger = serverLogger.component("release-asset-consume");
  * The HTML shell works with relative source paths like `pages/index.tsx` and
  * `/_vf_modules/pages/index.js` URLs. Manifest module keys use the logical
  * source path (e.g. `pages/index.tsx`). This strips a leading `/_vf_modules/`
- * and any `.js` URL extension so both forms resolve.
+ * prefix and URL query/hash data before the resolver compares source
+ * extensions.
  */
 export function normalizeManifestModuleKey(path: string): string {
-  let key = path.replace(/^\/?_vf_modules\//, "");
+  let key = String(path || "").replace(/^\/?_vf_modules\//, "");
   key = key.replace(/^\/+/, "");
+  key = key.replace(/[?#].*$/, "");
   return key;
 }
 

@@ -11,11 +11,12 @@ const SOURCE_EXTENSIONS = ["tsx", "ts", "jsx", "mdx"] as const;
 
 /** Regex pattern for matching source paths */
 const SOURCE_PATH_PATTERN = new RegExp(
-  `(${SOURCE_DIRS.join("|")})/(.+)\\.(${SOURCE_EXTENSIONS.join("|")})$`,
+  `(${SOURCE_DIRS.join("|")})/(.+)\\.(${SOURCE_EXTENSIONS.join("|")})([?#].*)?$`,
 );
 
-const KNOWN_EXT_PATTERN = /\.(tsx|ts|jsx|mdx|js|mjs)$/;
-const SOURCE_EXT_REPLACE_PATTERN = /\.(tsx|ts|jsx|mdx)$/;
+const MODULE_SERVER_PATH_PATTERN = /^\/?_vf_modules\//;
+const KNOWN_EXT_PATTERN = /\.(tsx|ts|jsx|mdx|js|mjs)([?#].*)?$/;
+const SOURCE_EXT_REPLACE_PATTERN = /\.(tsx|ts|jsx|mdx)([?#].*)?$/;
 
 /** Precomputed regex for absolute paths containing a source directory */
 const ABSOLUTE_SOURCE_PATH_PATTERN = new RegExp(`/${SOURCE_PATH_PATTERN.source}`);
@@ -58,6 +59,22 @@ function resolveReleaseAssetModuleUrl(path: string): string | null {
   return null;
 }
 
+function normalizeModuleRequestPath(path: string): string {
+  const key = String(path || "")
+    .replace(MODULE_SERVER_PATH_PATTERN, "")
+    .replace(/^\/+/, "");
+
+  if (SOURCE_EXT_REPLACE_PATTERN.test(key)) {
+    return key.replace(SOURCE_EXT_REPLACE_PATTERN, ".js$2");
+  }
+
+  if (KNOWN_EXT_PATTERN.test(key)) {
+    return key;
+  }
+
+  return `${key}.js`;
+}
+
 export function getModuleServerUrl(): string {
   if (typeof window === "undefined") return "/_vf_modules";
   return (globalThis as typeof globalThis & { MODULE_SERVER_URL?: string }).MODULE_SERVER_URL ??
@@ -70,18 +87,18 @@ export function pathToModuleUrl(path: string, baseUrl?: string): string {
 
   const base = baseUrl ?? getModuleServerUrl();
 
+  if (MODULE_SERVER_PATH_PATTERN.test(path)) {
+    return `${base}/${normalizeModuleRequestPath(path)}`;
+  }
+
   const match = path.match(ABSOLUTE_SOURCE_PATH_PATTERN) ??
     path.match(RELATIVE_SOURCE_PATH_PATTERN);
 
   if (match) {
-    return `${base}/${match[1]}/${match[2]}.js`;
+    return `${base}/${match[1]}/${match[2]}.js${match[4] ?? ""}`;
   }
 
-  if (KNOWN_EXT_PATTERN.test(path)) {
-    return `${base}/${path.replace(SOURCE_EXT_REPLACE_PATTERN, ".js")}`;
-  }
-
-  return `${base}/${path}.js`;
+  return `${base}/${normalizeModuleRequestPath(path)}`;
 }
 
 export function getPathToModuleUrlScript(): string {
@@ -118,25 +135,41 @@ export function getPathToModuleUrlScript(): string {
       return null;
     }
 
+    function normalizeModuleRequestPath(path) {
+      const key = String(path || '')
+        .replace(/^\\/?_vf_modules\\//, '')
+        .replace(/^\\/+/, '');
+
+      if (/\\.(tsx|ts|jsx|mdx)([?#].*)?$/.test(key)) {
+        return key.replace(/\\.(tsx|ts|jsx|mdx)([?#].*)?$/, '.js$2');
+      }
+
+      if (/\\.(tsx|ts|jsx|mdx|js|mjs)([?#].*)?$/.test(key)) {
+        return key;
+      }
+
+      return key + '.js';
+    }
+
     function pathToModuleUrl(path, baseUrl) {
       const releaseAssetUrl = resolveReleaseAssetModuleUrl(path);
       if (releaseAssetUrl) return releaseAssetUrl;
 
       const base = baseUrl || MODULE_SERVER_URL;
-      const pattern = /(pages|components|app|lib|layouts|shared|features)\\/(.+)\\.(tsx|ts|jsx|mdx)$/;
+      if (/^\\/?_vf_modules\\//.test(path)) {
+        return base + '/' + normalizeModuleRequestPath(path);
+      }
+
+      const pattern = /(pages|components|app|lib|layouts|shared|features)\\/(.+)\\.(tsx|ts|jsx|mdx)([?#].*)?$/;
 
       let match = path.match(new RegExp('/' + pattern.source));
       match = match || path.match(new RegExp('^' + pattern.source));
 
-      if (!match) {
-        const hasKnownExt = /\\.(tsx|ts|jsx|mdx|js|mjs)$/.test(path);
-        if (hasKnownExt) {
-          return base + '/' + path.replace(/\\.(tsx|ts|jsx|mdx)$/, '.js');
-        }
-        return base + '/' + path + '.js';
+      if (match) {
+        return base + '/' + match[1] + '/' + match[2] + '.js' + (match[4] || '');
       }
 
-      return base + '/' + match[1] + '/' + match[2] + '.js';
+      return base + '/' + normalizeModuleRequestPath(path);
     }
   `.trim();
 }
