@@ -50,6 +50,52 @@ function createMockAdapter(): RuntimeAdapter {
   } as unknown as RuntimeAdapter;
 }
 
+function createMultiProjectMockAdapter(
+  onRunWithContext: (
+    projectSlug: string,
+    token: string,
+    projectId: string | undefined,
+    options: {
+      productionMode?: boolean;
+      releaseId?: string | null;
+      branch?: string | null;
+      environmentName?: string | null;
+    } | undefined,
+  ) => void,
+): RuntimeAdapter {
+  const adapter = createMockAdapter() as RuntimeAdapter & {
+    fs: RuntimeAdapter["fs"] & {
+      getUnderlyingAdapter: () => RuntimeAdapter["fs"];
+      isVeryfrontAdapter: () => boolean;
+      isMultiProjectMode: () => boolean;
+      isContextualMode: () => boolean;
+      runWithContext: <T>(
+        projectSlug: string,
+        token: string,
+        fn: () => Promise<T>,
+        projectId?: string,
+        options?: {
+          productionMode?: boolean;
+          releaseId?: string | null;
+          branch?: string | null;
+          environmentName?: string | null;
+        },
+      ) => Promise<T>;
+    };
+  };
+
+  adapter.fs.getUnderlyingAdapter = () => adapter.fs;
+  adapter.fs.isVeryfrontAdapter = () => true;
+  adapter.fs.isMultiProjectMode = () => true;
+  adapter.fs.isContextualMode = () => true;
+  adapter.fs.runWithContext = async (projectSlug, token, fn, projectId, options) => {
+    onRunWithContext(projectSlug, token, projectId, options);
+    return await fn();
+  };
+
+  return adapter;
+}
+
 function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
   return {
     projectDir: "/tmp/test-project",
@@ -293,6 +339,65 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
       assertEquals(JSON.parse(await second.text()).frontmatter.sequence, 2);
       assertEquals(calls, 2);
       assertEquals(first.headers.get("cache-control"), "public, max-age=60");
+    });
+  });
+
+  it("resolves page data inside the multi-project production release context", async () => {
+    let insideContext = false;
+    const calls: Array<{
+      projectSlug: string;
+      token: string;
+      projectId: string | undefined;
+      productionMode?: boolean;
+      releaseId?: string | null;
+      branch?: string | null;
+      environmentName?: string | null;
+    }> = [];
+
+    const adapter = createMultiProjectMockAdapter(
+      (projectSlug, token, projectId, options) => {
+        calls.push({
+          projectSlug,
+          token,
+          projectId,
+          productionMode: options?.productionMode,
+          releaseId: options?.releaseId,
+          branch: options?.branch,
+          environmentName: options?.environmentName,
+        });
+        insideContext = true;
+      },
+    );
+
+    setRendererInitializer(
+      createInitializer((slug) => {
+        assertEquals(insideContext, true);
+        insideContext = false;
+        return Promise.resolve(createPageData(slug, 1));
+      }),
+    );
+
+    const ctx = makeCtx({
+      adapter,
+      proxyToken: "tok-page-data",
+      environmentName: "production",
+    });
+
+    const response = await callPageDataEndpoint(
+      new Request("http://localhost/_veryfront/page-data/index.json"),
+      ctx,
+    );
+
+    assertEquals(response.status, 200);
+    assertEquals(calls.length > 0, true);
+    assertEquals(calls.at(-1), {
+      projectSlug: "test-project",
+      token: "tok-page-data",
+      projectId: "proj-page-data",
+      productionMode: true,
+      releaseId: "rel-page-data",
+      branch: null,
+      environmentName: "production",
     });
   });
 });

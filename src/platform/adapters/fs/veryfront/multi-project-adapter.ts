@@ -89,6 +89,12 @@ export class MultiProjectFSAdapter implements FSAdapter {
         duration: `${(performance.now() - startTime).toFixed(2)}ms`,
       });
 
+      // Release asset manifest fetchers are registered by the concrete adapter.
+      // Materialize it before renderers can ask for the manifest on a first hit.
+      if (productionMode && releaseId) {
+        await this.getAdapter();
+      }
+
       const result = await runWithCacheBatching(fn);
 
       logger.debug("runWithContext callback complete", {
