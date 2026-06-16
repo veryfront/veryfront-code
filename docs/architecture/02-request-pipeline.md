@@ -71,6 +71,40 @@ flowchart TD
 5. Protocol and control-plane paths enter their dedicated handlers.
 6. Response helpers normalize headers, CORS, errors, and not-found behavior.
 
+## Runtime caches
+
+The split proxy caches successful project metadata lookups for service and
+static-token requests. The cache is per proxy handler, bounded, and short lived.
+It does not cache lookup misses, preview user-token lookups, signed internal
+request lookups, or protected-access decisions. Protected environments still run
+their access check on every request.
+
+Default proxy lookup cache controls:
+
+| Environment variable                               | Default |
+| -------------------------------------------------- | ------- |
+| `VERYFRONT_PROXY_PROJECT_LOOKUP_CACHE_TTL_MS`      | `30000` |
+| `VERYFRONT_PROXY_PROJECT_LOOKUP_CACHE_MAX_ENTRIES` | `1000`  |
+
+Set either value to `0` to disable the proxy project lookup cache.
+
+Release-backed production page-data requests use a fresh cache window plus a
+bounded stale-while-revalidate window. The cache key includes the project,
+environment, release content source, slug, and sorted query. Requests with
+cache-sensitive state are not cached. Preview branch page data keeps the fresh
+TTL cache but does not serve stale responses after expiry.
+
+Default page-data cache controls:
+
+| Environment variable                    | Default   |
+| --------------------------------------- | --------- |
+| `VERYFRONT_PAGE_DATA_CACHE_TTL_MS`      | `60000`   |
+| `VERYFRONT_PAGE_DATA_CACHE_STALE_MS`    | `1800000` |
+| `VERYFRONT_PAGE_DATA_CACHE_MAX_ENTRIES` | `500`     |
+
+Set `VERYFRONT_PAGE_DATA_CACHE_MAX_ENTRIES` to `0` to disable the page-data
+endpoint cache.
+
 ## Boundaries
 
 - Rendering details belong in [rendering runtime](./03-rendering-runtime.md).

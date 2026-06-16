@@ -34,6 +34,9 @@ proxy also appends proxy-prefixed phases:
 
 - `proxy.total`: time from proxy request receipt to response header return.
 - `proxy.resolve_request`: project, token, domain, and access resolution.
+- `proxy.project_lookup`: project metadata lookup fetch time.
+- `proxy.project_lookup_cache_hit`: project metadata cache hit marker.
+- `proxy.project_lookup_pending`: project metadata lookup singleflight marker.
 - `proxy.resolve_server`: dedicated renderer server lookup.
 - `proxy.retry_delay`: retry backoff time.
 - `proxy.upstream`: fetch time from proxy to renderer response headers.

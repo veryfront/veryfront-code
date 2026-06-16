@@ -85,6 +85,13 @@ describe("security/http/response/cache-handler", () => {
         );
       });
 
+      it("should include stale-while-revalidate when configured", () => {
+        assertEquals(
+          buildCacheControl({ maxAge: 60, staleWhileRevalidate: 1800 }),
+          "public, max-age=60, stale-while-revalidate=1800",
+        );
+      });
+
       it("should combine all flags", () => {
         const result = buildCacheControl({
           maxAge: 3600,

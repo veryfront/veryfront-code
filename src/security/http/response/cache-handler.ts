@@ -30,5 +30,9 @@ export function buildCacheControl(strategy: CacheStrategy): string {
     parts.push("must-revalidate");
   }
 
+  if (typeof strategy.staleWhileRevalidate === "number") {
+    parts.push(`stale-while-revalidate=${strategy.staleWhileRevalidate}`);
+  }
+
   return parts.join(", ");
 }

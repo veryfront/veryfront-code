@@ -101,6 +101,15 @@ describe("hydration-script-builder/templates/router", () => {
       assertIncludes(result, "function setCachedPageData(path, data)");
     });
 
+    it("should dedupe and throttle background page-data refreshes", () => {
+      const result = getRouterScript();
+      assertIncludes(result, "BACKGROUND_REFRESH_INTERVAL_MS = 30 * 1000");
+      assertIncludes(result, "const pendingPageDataFetches = new Map()");
+      assertIncludes(result, "function refreshPageDataInBackground(path)");
+      assertIncludes(result, "pendingPageDataFetches.set(path, refreshPromise)");
+      assertIncludes(result, "refreshPageDataInBackground(path)");
+    });
+
     it("should define scroll position memory", () => {
       const result = getRouterScript();
       assertIncludes(result, "function saveScrollPosition(path)");

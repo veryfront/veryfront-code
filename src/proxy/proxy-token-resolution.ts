@@ -37,6 +37,7 @@ export interface ResolveProxyRequestTokenOptions {
 
 export interface ResolvedProxyRequestToken {
   token?: string;
+  tokenSource?: "signed-internal" | "user" | "service" | "static";
   userToken?: string;
   tokenFetchError?: unknown;
 }
@@ -72,16 +73,19 @@ export async function resolveProxyRequestToken(
     options.signedInternalControlPlaneRequest;
 
   let token: string | undefined;
+  let tokenSource: ResolvedProxyRequestToken["tokenSource"];
   let tokenFetchError: unknown;
 
   if (useSignedInternalControlPlaneToken) {
     token = req.headers.get("x-token") ?? undefined;
+    if (token) tokenSource = "signed-internal";
     logger?.debug("Using signed control-plane token for internal request", {
       pathname: url.pathname,
       scope,
     });
   } else if (scope === "preview" && userToken) {
     token = userToken;
+    tokenSource = "user";
     logger?.debug("Using user auth token for preview");
   }
 
@@ -90,6 +94,7 @@ export async function resolveProxyRequestToken(
     if (projectSlug || customDomain) {
       try {
         token = await tokenManager.getToken(scope, projectSlug, customDomain);
+        tokenSource = "service";
       } catch (error) {
         tokenFetchError = error;
         if (!(customDomain && isMissingCustomDomainProjectError(error))) {
@@ -104,8 +109,9 @@ export async function resolveProxyRequestToken(
 
   if (!token && config.apiToken) {
     token = config.apiToken;
+    tokenSource = "static";
     logger?.debug("Using static API token fallback");
   }
 
-  return { token, userToken, tokenFetchError };
+  return { token, tokenSource, userToken, tokenFetchError };
 }
