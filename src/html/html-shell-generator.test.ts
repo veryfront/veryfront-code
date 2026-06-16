@@ -9,6 +9,7 @@ import {
 import { wrapInHTMLShell } from "./html-shell-generator.ts";
 import type { RenderMetadata } from "#veryfront/types";
 import type { HTMLGenerationOptions } from "./types.ts";
+import { getProdHydrationModulePath } from "./hydration-script-builder/prod-scripts.ts";
 
 describe("html-generation/html-shell-generator", () => {
   const mockConfig = {
@@ -302,9 +303,10 @@ describe("html-generation/html-shell-generator", () => {
         createMeta(),
         createOptions({ mode: "production", isLocalProject: false }),
       );
+      const runtimePath = getProdHydrationModulePath();
 
-      assertStringIncludes(result, "/_veryfront/hydration-runtime.js");
-      assertStringIncludes(result, 'rel="modulepreload" href="/_veryfront/hydration-runtime.js"');
+      assertStringIncludes(result, runtimePath);
+      assertStringIncludes(result, `rel="modulepreload" href="${runtimePath}"`);
       assert(!result.includes("Client-side error logger"));
     });
 
@@ -320,7 +322,7 @@ describe("html-generation/html-shell-generator", () => {
         }),
       );
 
-      assertStringIncludes(result, "/_veryfront/hydration-runtime.js");
+      assertStringIncludes(result, getProdHydrationModulePath());
       assert(!result.includes("Client-side error logger"));
       assert(!result.includes("veryfront-error-overlay"));
     });

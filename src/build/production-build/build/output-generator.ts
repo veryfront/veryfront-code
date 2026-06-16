@@ -15,7 +15,10 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { ChunkManifest } from "#veryfront/build/bundler/index.ts";
 import type { AppRouteInfo, BuildStats, RouteInfo } from "#veryfront/server/build-types.ts";
 import { generateServiceWorker } from "#veryfront/server/build-service-worker.ts";
-import { generateProdHydrationModule } from "../../../html/hydration-script-builder/prod-scripts.ts";
+import {
+  generateProdHydrationModule,
+  getProdHydrationModulePath,
+} from "../../../html/hydration-script-builder/prod-scripts.ts";
 import { copyStaticAssets } from "../asset-generation.ts";
 import {
   generateAppModule,
@@ -64,9 +67,14 @@ export async function generateClientScripts(
     join(outputDir, "_veryfront/prefetch.js"),
     await generatePrefetchScript(adapter),
   );
+  const hydrationRuntime = generateProdHydrationModule();
   await adapter.fs.writeFile(
     join(outputDir, "_veryfront/hydration-runtime.js"),
-    generateProdHydrationModule(),
+    hydrationRuntime,
+  );
+  await adapter.fs.writeFile(
+    join(outputDir, getProdHydrationModulePath().slice(1)),
+    hydrationRuntime,
   );
 }
 

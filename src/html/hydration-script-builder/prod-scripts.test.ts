@@ -3,20 +3,34 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   generateProdHydrationModule,
+  getProdHydrationModulePath,
   getProdScripts,
   PROD_HYDRATION_MODULE_PATH,
 } from "./prod-scripts.ts";
 
 describe("hydration-script-builder/prod-scripts", () => {
   describe("getProdScripts", () => {
-    it("should return an external module script tag", () => {
+    it("should return an external module script tag with the versioned runtime path", () => {
       const result = getProdScripts("my-page");
+      const runtimePath = getProdHydrationModulePath();
       assertEquals(
-        result.includes(`<script type="module" src="${PROD_HYDRATION_MODULE_PATH}"`),
+        result.includes(`<script type="module" src="${runtimePath}"`),
         true,
       );
+      assertEquals(result.includes(PROD_HYDRATION_MODULE_PATH), false);
       assertEquals(result.includes("</script>"), true);
       assertEquals(result.includes("renderPage"), false);
+    });
+
+    it("should derive a stable content-addressed runtime path", () => {
+      const runtimePath = getProdHydrationModulePath();
+
+      assertEquals(
+        /^\/_veryfront\/hydration-runtime\.[0-9a-f]+\.js$/.test(runtimePath),
+        true,
+      );
+      assertEquals(getProdHydrationModulePath(), runtimePath);
+      assertEquals(runtimePath === PROD_HYDRATION_MODULE_PATH, false);
     });
 
     it("should include nonce attribute when provided", () => {

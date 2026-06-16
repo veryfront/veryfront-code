@@ -6,6 +6,7 @@ import { renderAppRouteToHTML } from "./build-app-route-renderer.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
+import { getProdHydrationModulePath } from "#veryfront/html/hydration-script-builder/prod-scripts.ts";
 
 async function makeProject(): Promise<{ projectDir: string; pageFile: string }> {
   const projectDir = await Deno.makeTempDir({ prefix: "vf-app-route-renderer-" });
@@ -95,7 +96,7 @@ Deno.test({
       assertStringIncludes(html, "Open uploads");
       assertStringIncludes(html, 'data-testid="app-layout"');
       assertStringIncludes(html, 'id="veryfront-hydration-data"');
-      assertStringIncludes(html, "/_veryfront/hydration-runtime.js");
+      assertStringIncludes(html, getProdHydrationModulePath());
       assertEquals(html.includes("/_veryfront/app.js"), false);
 
       const hydrationData = extractHydrationData(html);

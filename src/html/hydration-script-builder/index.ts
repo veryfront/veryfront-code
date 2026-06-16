@@ -15,7 +15,10 @@ export { generateDevClientRendererScript } from "./dev-client-renderer.ts";
 
 export {
   generateProdHydrationModule,
+  getProdHydrationModulePath,
   getProdScripts,
+  isVersionedProdHydrationModulePath,
   PROD_HYDRATION_MODULE_PATH,
+  PROD_HYDRATION_MODULE_VERSIONED_PATH_PATTERN,
 } from "./prod-scripts.ts";
 export { generateProdHydrationScript } from "./prod-hydration.ts";

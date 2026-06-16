@@ -60,7 +60,7 @@ export const LIGHTWEIGHT_PATH_PREFIXES = [
   "/_vf_modules/",
   "/_vf_styles/",
   "/_veryfront/modules/",
-  "/_veryfront/hydration-runtime.js",
+  "/_veryfront/hydration-runtime",
   "/_veryfront/preview-hmr.js",
   "/_veryfront/studio-bridge.js",
   "/_vf/css/",
