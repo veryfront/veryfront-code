@@ -20,8 +20,8 @@ import { buildNonceAttribute, escapeHTML } from "./html-escape.ts";
 import {
   generateHydrationData,
   getDevScripts,
+  getProdHydrationModulePath,
   getProdScripts,
-  PROD_HYDRATION_MODULE_PATH,
 } from "./hydration-script-builder/index.ts";
 import { getPreviewStylesheetLink, getStudioScripts } from "./dev-scripts.ts";
 import { processMetadata } from "./metadata-builder.ts";
@@ -282,7 +282,7 @@ async function generateHTMLShellPartsImpl(
     : "";
   const prodHydrationModulePreload = useDevScripts
     ? ""
-    : `<link rel="modulepreload" href="${PROD_HYDRATION_MODULE_PATH}">`;
+    : `<link rel="modulepreload" href="${getProdHydrationModulePath()}">`;
 
   const nonceAttr = buildNonceAttribute(nonce);
 

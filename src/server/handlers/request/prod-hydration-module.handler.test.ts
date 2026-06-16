@@ -4,7 +4,13 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ProdHydrationModuleHandler } from "./prod-hydration-module.handler.ts";
 import type { HandlerContext } from "../types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { PROD_HYDRATION_MODULE_PATH } from "#veryfront/html/hydration-script-builder/prod-scripts.ts";
+import {
+  getProdHydrationModulePath,
+  PROD_HYDRATION_MODULE_PATH,
+} from "#veryfront/html/hydration-script-builder/prod-scripts.ts";
+
+const IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable";
+const NO_CACHE_CONTROL = "no-cache, no-store, must-revalidate";
 
 function createMockAdapter(): RuntimeAdapter {
   return {
@@ -49,10 +55,10 @@ function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
 }
 
 describe("server/handlers/request/prod-hydration-module.handler", () => {
-  it("serves the production hydration runtime module", async () => {
+  it("serves the versioned production hydration runtime module with immutable caching", async () => {
     const handler = new ProdHydrationModuleHandler();
     const result = await handler.handle(
-      new Request(`http://localhost${PROD_HYDRATION_MODULE_PATH}`),
+      new Request(`http://localhost${getProdHydrationModulePath()}`),
       makeCtx(),
     );
 
@@ -63,28 +69,48 @@ describe("server/handlers/request/prod-hydration-module.handler", () => {
       result.response.headers.get("content-type"),
       "application/javascript; charset=utf-8",
     );
+    assertEquals(result.response.headers.get("cache-control"), IMMUTABLE_CACHE_CONTROL);
+    assertEquals(result.response.headers.get("pragma"), null);
+    assertEquals(result.response.headers.get("expires"), null);
 
     const body = await result.response.text();
     assertStringIncludes(body, "MODULE_SERVER_URL");
     assertStringIncludes(body, "renderPage");
   });
 
-  it("returns not modified when ETag matches", async () => {
+  it("keeps the legacy production hydration runtime path revalidated", async () => {
     const handler = new ProdHydrationModuleHandler();
-    const first = await handler.handle(
+    const result = await handler.handle(
       new Request(`http://localhost${PROD_HYDRATION_MODULE_PATH}`),
+      makeCtx(),
+    );
+
+    assertEquals(result.response?.status, 200);
+    assertEquals(result.response?.headers.get("cache-control"), NO_CACHE_CONTROL);
+    assertEquals(result.response?.headers.get("pragma"), "no-cache");
+    assertEquals(result.response?.headers.get("expires"), "0");
+  });
+
+  it("returns not modified with immutable caching when the versioned ETag matches", async () => {
+    const handler = new ProdHydrationModuleHandler();
+    const runtimePath = getProdHydrationModulePath();
+    const first = await handler.handle(
+      new Request(`http://localhost${runtimePath}`),
       makeCtx(),
     );
     const etag = first.response?.headers.get("etag");
     assertExists(etag);
 
     const second = await handler.handle(
-      new Request(`http://localhost${PROD_HYDRATION_MODULE_PATH}`, {
+      new Request(`http://localhost${runtimePath}`, {
         headers: { "if-none-match": etag },
       }),
       makeCtx(),
     );
 
     assertEquals(second.response?.status, 304);
+    assertEquals(second.response?.headers.get("cache-control"), IMMUTABLE_CACHE_CONTROL);
+    assertEquals(second.response?.headers.get("pragma"), null);
+    assertEquals(second.response?.headers.get("expires"), null);
   });
 });

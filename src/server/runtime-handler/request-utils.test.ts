@@ -12,6 +12,7 @@ import {
   shouldSkipEnrichedContext,
   TIMEOUT_SENTINEL,
 } from "./request-utils.ts";
+import { getProdHydrationModulePath } from "#veryfront/html/hydration-script-builder/prod-scripts.ts";
 
 describe("request-utils", () => {
   describe("constants", () => {
@@ -34,7 +35,7 @@ describe("request-utils", () => {
       assertEquals(LIGHTWEIGHT_PATH_PREFIXES.includes("/_vf_modules/"), true);
       assertEquals(LIGHTWEIGHT_PATH_PREFIXES.includes("/_vf_styles/"), true);
       assertEquals(LIGHTWEIGHT_PATH_PREFIXES.includes("/_veryfront/modules/"), true);
-      assertEquals(LIGHTWEIGHT_PATH_PREFIXES.includes("/_veryfront/hydration-runtime.js"), true);
+      assertEquals(LIGHTWEIGHT_PATH_PREFIXES.includes("/_veryfront/hydration-runtime"), true);
     });
   });
 
@@ -100,6 +101,7 @@ describe("request-utils", () => {
       assertEquals(isLightweightPath("/_vf_modules/react.js"), true);
       assertEquals(isLightweightPath("/_veryfront/modules/client.js"), true);
       assertEquals(isLightweightPath("/_veryfront/hydration-runtime.js"), true);
+      assertEquals(isLightweightPath(getProdHydrationModulePath()), true);
       assertEquals(isLightweightPath("/_veryfront/preview-hmr.js"), true);
       assertEquals(isLightweightPath("/_veryfront/studio-bridge.js"), true);
     });

@@ -21,6 +21,7 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { StaticFileService } from "../../services/static/index.ts";
 import { addNonceToHtmlTags } from "#veryfront/html/nonce-injection.ts";
 import { computeEtag } from "../utils/etag.ts";
+import { isVersionedProdHydrationModulePath } from "#veryfront/html/hydration-script-builder/prod-scripts.ts";
 
 function isHtmlResponse(contentType: string): boolean {
   return /\btext\/html\b/i.test(contentType);
@@ -32,6 +33,7 @@ function isProductionBuildAssetPath(pathname: string): boolean {
     pathname === "/_veryfront/router.js" ||
     pathname === "/_veryfront/prefetch.js" ||
     pathname === "/_veryfront/hydration-runtime.js" ||
+    isVersionedProdHydrationModulePath(pathname) ||
     pathname === "/_veryfront/manifest.json" ||
     pathname.startsWith("/_veryfront/chunks/") ||
     pathname.startsWith("/_veryfront/pages/") ||

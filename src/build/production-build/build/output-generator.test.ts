@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { generateClientScripts, generateRedirectsFile } from "./output-generator.ts";
+import { getProdHydrationModulePath } from "#veryfront/html/hydration-script-builder/prod-scripts.ts";
 
 describe("build/production-build/build/output-generator", () => {
   describe("generateClientScripts", () => {
@@ -50,6 +51,17 @@ describe("build/production-build/build/output-generator", () => {
         ),
         true,
       );
+      assertEquals(
+        writes.some((write) => write.path.endsWith(getProdHydrationModulePath().slice(1))),
+        true,
+      );
+      assertEquals(
+        writes.some((write) =>
+          write.path.endsWith(getProdHydrationModulePath().slice(1)) &&
+          write.content.includes("RouterProvider")
+        ),
+        true,
+      );
     });
   });
 
@@ -84,8 +96,10 @@ describe("build/production-build/build/output-generator", () => {
       // deno-lint-ignore no-explicit-any
       await generateRedirectsFile(adapter as any, "/output", false);
       assertEquals(writes.length, 1);
-      assertEquals(writes[0].path.includes("_redirects"), true);
-      assertEquals(writes[0].content.includes("/*"), true);
+      const write = writes[0];
+      assertExists(write);
+      assertEquals(write.path.includes("_redirects"), true);
+      assertEquals(write.content.includes("/*"), true);
     });
   });
 });
