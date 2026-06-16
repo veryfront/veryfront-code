@@ -2,8 +2,10 @@ import "#veryfront/schemas/_test-setup.ts";
 import "../transforms/mdx/compiler/__tests__/content-processor-setup.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import type { EntityInfo } from "#veryfront/types";
-import { prepareMDXPageBundles } from "./page-rendering.ts";
+import { handleMDXPage, prepareMDXPageBundles } from "./page-rendering.ts";
 
 function createMDXPageInfo(content: string): EntityInfo {
   return {
@@ -62,5 +64,76 @@ describe("rendering/page-rendering", () => {
     assertEquals(pageBundle.clientModuleCode, precompiledModule);
     assert(serverModuleCode.includes("file:///project/components/Marker.tsx"));
     assertEquals(serverModuleCode.includes("/_veryfront/fs/"), false);
+  });
+
+  it("refreshes preview caches and retries once when MDX ESM imports have stale exports", async () => {
+    const pageInfo = createMDXPageInfo("# MDX Probe");
+    const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+    let loadAttempts = 0;
+    let sourceRefreshes = 0;
+
+    const adapter = {
+      id: "deno",
+      name: "test",
+      capabilities: {
+        typescript: true,
+        jsx: true,
+        http2: false,
+        websocket: false,
+        workers: false,
+        fileWatching: false,
+        shell: false,
+        kvStore: false,
+        writableFs: true,
+      },
+      fs: {
+        refreshSourceSnapshot: () => {
+          sourceRefreshes++;
+          return Promise.resolve();
+        },
+      },
+      env: {},
+      server: {},
+      serve: () => Promise.reject(new Error("not used")),
+    } as unknown as RuntimeAdapter;
+
+    const mutableRenderer = mdxRenderer as unknown as {
+      loadModuleESM: typeof mdxRenderer.loadModuleESM;
+    };
+
+    mutableRenderer.loadModuleESM = () => {
+      loadAttempts++;
+      if (loadAttempts === 1) {
+        throw new Error(
+          "The requested module 'file:///cache/vfmod.mjs' does not provide an export named 'default'",
+        );
+      }
+
+      return Promise.resolve({
+        default: () => null,
+      });
+    };
+
+    try {
+      await handleMDXPage(
+        pageInfo,
+        "probe",
+        "/project",
+        {},
+        async () => ({ compiledCode: "", frontmatter: {}, headings: [] }),
+        adapter,
+        {
+          projectId: "project-1",
+          projectSlug: "project-slug",
+          contentSourceId: "preview-main",
+          studioEmbed: true,
+        },
+      );
+
+      assertEquals(loadAttempts, 2);
+      assertEquals(sourceRefreshes, 1);
+    } finally {
+      mutableRenderer.loadModuleESM = originalLoadModuleESM;
+    }
   });
 });

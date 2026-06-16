@@ -152,6 +152,8 @@ export interface FileSystemAdapter {
   watch(paths: string | string[], options?: WatchOptions): FileWatcher;
   /** Resolve a file path with extension fallback (e.g., pages/test → pages/test.mdx) */
   resolveFile?(basePath: string, options?: ResolveFileOptions): Promise<string | null>;
+  /** Refresh remote source snapshots when a preview render detects stale cached content. */
+  refreshSourceSnapshot?(reason?: string): Promise<void>;
 }
 
 export interface ResolveFileOptions {

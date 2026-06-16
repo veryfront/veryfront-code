@@ -3,6 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import {
+  clearMdxEsmCacheNamespace,
   clearModulePathCache,
   getLocalFs,
   getModulePathCache,
@@ -15,12 +16,50 @@ import {
 } from "./index.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { exists, remove, writeTextFile } from "#veryfront/compat/fs.ts";
+import { runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { cacheModule } from "../module-fetcher/module-cache.ts";
 import { rendererLogger as log } from "#veryfront/utils";
 import { buildMdxEsmModuleFileName, buildMdxEsmPathCacheKey } from "../cache-format.ts";
 import { getCacheStats } from "#veryfront/utils/memory/index.ts";
 
 describe("MDX module path cache", () => {
+  it("clears a project/content-source namespace from disk and memory", async () => {
+    clearModulePathCache();
+
+    const cacheBase = await makeTempDir({ prefix: "vf-mdx-namespace-clear-" });
+    const projectId = "project/with spaces";
+    const contentSourceId = "preview-main";
+    const cacheDir = join(
+      cacheBase,
+      "veryfront-mdx-esm",
+      encodeURIComponent(projectId),
+      encodeURIComponent(contentSourceId),
+    );
+    const cacheKey = buildMdxEsmPathCacheKey("_vf_modules/pages/index.js", "19.1.1");
+    const cachedPath = join(cacheDir, "stale.mjs");
+
+    try {
+      await runWithCacheDir(cacheBase, async () => {
+        await getLocalFs().mkdir(cacheDir, { recursive: true });
+        await writeTextFile(cachedPath, "export default function Stale() {}");
+
+        const cache = await getModulePathCache(cacheDir);
+        cache.set(cacheKey, cachedPath);
+        verifiedModuleDeps.set(`${cachedPath}:${cacheKey}`, true);
+
+        await clearMdxEsmCacheNamespace(projectId, contentSourceId);
+
+        assertEquals(await exists(cachedPath), false);
+        assertEquals((await getModulePathCache(cacheDir)).get(cacheKey), undefined);
+        assertEquals(verifiedModuleDeps.get(`${cachedPath}:${cacheKey}`), undefined);
+        assertEquals(await exists(cacheDir), true);
+      });
+    } finally {
+      await remove(cacheBase, { recursive: true });
+      clearModulePathCache();
+    }
+  });
+
   it("isolates per cache dir", async () => {
     clearModulePathCache();
 

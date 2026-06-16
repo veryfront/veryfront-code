@@ -98,6 +98,7 @@ describe("VeryfrontFSAdapter", () => {
       "getFilePathByEntityId",
       "getPokeMetrics",
       "getClient",
+      "refreshSourceSnapshot",
     ] as const;
 
     for (const method of methods) {

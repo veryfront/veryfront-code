@@ -4,6 +4,7 @@ import type * as BundledReact from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { EntityInfo, MdxBundle, MDXComponents, MDXModule, PageBundle } from "#veryfront/types";
 import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
+import { clearMdxEsmCacheNamespace } from "#veryfront/transforms/mdx/esm-module-loader/index.ts";
 import { getProjectReact } from "#veryfront/react";
 import { compileContent } from "#veryfront/transforms/mdx/compiler/index.ts";
 import { ensureError, getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
@@ -18,6 +19,50 @@ interface MDXPageResult {
 interface PreparedMDXPageBundles {
   pageBundle: PageBundle;
   serverModuleCode: string;
+}
+
+interface StaleMdxEsmRecoveryOptions {
+  adapter: RuntimeAdapter;
+  projectId?: string;
+  projectSlug?: string;
+  contentSourceId?: string;
+  slug: string;
+  pagePath: string;
+}
+
+export function isMdxEsmExportMismatchError(error: unknown): boolean {
+  const message = getErrorMessage(error);
+  return /does not provide an export named/i.test(message) &&
+    /requested module|import/i.test(message);
+}
+
+export async function recoverStaleMdxEsmPreviewCaches(
+  options: StaleMdxEsmRecoveryOptions,
+): Promise<boolean> {
+  let recovered = false;
+  const refreshSourceSnapshot = options.adapter.fs.refreshSourceSnapshot;
+
+  if (typeof refreshSourceSnapshot === "function") {
+    await refreshSourceSnapshot.call(options.adapter.fs, "mdx-esm-export-mismatch");
+    recovered = true;
+  }
+
+  if (options.projectId && options.contentSourceId) {
+    await clearMdxEsmCacheNamespace(options.projectId, options.contentSourceId);
+    recovered = true;
+  }
+
+  if (recovered) {
+    logger.warn("Recovered stale MDX ESM preview caches, retrying render", {
+      slug: options.slug,
+      pagePath: options.pagePath,
+      projectId: options.projectId,
+      projectSlug: options.projectSlug,
+      contentSourceId: options.contentSourceId,
+    });
+  }
+
+  return recovered;
 }
 
 export async function prepareMDXPageBundles(
@@ -106,9 +151,10 @@ export function handleMDXPage(
         precompiledModule: options?.precompiledModule,
         studioEmbed: options?.studioEmbed,
       });
-      let collectedMetadata: Record<string, unknown> = {};
 
-      try {
+      const loadPageElement = async (): Promise<MDXPageResult> => {
+        let collectedMetadata: Record<string, unknown> = {};
+
         const mod = (await mdxRenderer.loadModuleESM(
           serverModuleCode,
           adapter,
@@ -170,7 +216,45 @@ export function handleMDXPage(
         ) as BundledReact.ReactElement;
 
         return { pageElement, pageBundle, collectedMetadata };
+      };
+
+      try {
+        return await loadPageElement();
       } catch (error) {
+        if (isMdxEsmExportMismatchError(error)) {
+          let recovered = false;
+
+          try {
+            recovered = await recoverStaleMdxEsmPreviewCaches({
+              adapter,
+              projectId: options?.projectId,
+              projectSlug: options?.projectSlug,
+              contentSourceId: options?.contentSourceId,
+              slug,
+              pagePath: path,
+            });
+          } catch (recoveryError) {
+            logger.warn("Failed to recover stale MDX ESM preview caches", {
+              slug,
+              path,
+              error: getErrorMessage(recoveryError),
+            });
+          }
+
+          if (recovered) {
+            try {
+              return await loadPageElement();
+            } catch (retryError) {
+              throw RENDER_ERROR.create({
+                detail: `Failed to import MDX page via ESM after cache refresh: ${
+                  getErrorMessage(retryError)
+                }`,
+                context: { slug, error: retryError, recoveredFrom: error },
+              });
+            }
+          }
+        }
+
         throw RENDER_ERROR.create({
           detail: `Failed to import MDX page via ESM: ${getErrorMessage(error)}`,
           context: { slug, error },

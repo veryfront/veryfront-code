@@ -28,6 +28,7 @@ export interface FSAdapter {
   shutdown?(): Promise<void>;
 
   resolveFile?(basePath: string, options?: ResolveFileOptions): Promise<string | null>;
+  refreshSourceSnapshot?(reason?: string): Promise<void>;
 }
 
 export interface ContextualFSAdapter extends FSAdapter {

@@ -5,7 +5,12 @@
  */
 
 // Cache exports
-export { clearESMDiskCache, clearModulePathCache, invalidateModulePaths } from "./cache/index.ts";
+export {
+  clearESMDiskCache,
+  clearMdxEsmCacheNamespace,
+  clearModulePathCache,
+  invalidateModulePaths,
+} from "./cache/index.ts";
 
 // Constants exports
 export { IS_TRUE_NODE, LOG_PREFIX_MDX_LOADER, LOG_PREFIX_MDX_RENDERER } from "./constants.ts";

@@ -283,6 +283,21 @@ export class FileCache {
     return this.fallbackCache.delete(key);
   }
 
+  deleteAsync(key: string): Promise<boolean> {
+    return withSpan(
+      "platform.fs.cache.deleteAsync",
+      async () => {
+        const deletedFromFallback = this.delete(key);
+        const backend = this.getBackend();
+        if (backend) {
+          await backend.del(key);
+        }
+        return deletedFromFallback;
+      },
+      { "cache.key": key },
+    );
+  }
+
   deleteByPrefix(prefix: string): number {
     let count = 0;
 
