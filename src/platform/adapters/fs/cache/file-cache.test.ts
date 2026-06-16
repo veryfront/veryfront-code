@@ -295,6 +295,13 @@ describe("FileCache", () => {
       assertEquals(cache.get("key1"), "value1");
     });
 
+    it("deleteAsync() should delete an exact key", async () => {
+      cache.set("key1", "value1");
+      assertEquals(await cache.deleteAsync("key1"), true);
+      assertEquals(cache.get("key1"), undefined);
+      assertEquals(await cache.deleteAsync("missing"), false);
+    });
+
     it("deleteByPrefixAsync() should delete matching entries", async () => {
       cache.set("p:key1", "v1");
       cache.set("p:key2", "v2");

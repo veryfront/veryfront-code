@@ -397,6 +397,51 @@ export async function clearESMDiskCache(): Promise<void> {
   }
 }
 
+export async function clearMdxEsmCacheNamespace(
+  projectId: string,
+  contentSourceId: string,
+): Promise<void> {
+  const cacheDir = join(
+    getMdxEsmCacheDir(),
+    encodeURIComponent(projectId),
+    encodeURIComponent(contentSourceId),
+  );
+
+  modulePathCaches.delete(cacheDir);
+  modulePathCacheLoaded.delete(cacheDir);
+
+  for (const key of Array.from(verifiedModuleDeps.keys())) {
+    if (String(key).startsWith(cacheDir)) {
+      verifiedModuleDeps.delete(key);
+    }
+  }
+
+  try {
+    await getLocalFs().remove(cacheDir, { recursive: true });
+  } catch (error) {
+    if (!isNotFoundError(error)) {
+      logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to remove MDX-ESM cache namespace`, {
+        cacheDir,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  try {
+    await getLocalFs().mkdir(cacheDir, { recursive: true });
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Cleared MDX-ESM cache namespace`, {
+      projectId,
+      contentSourceId,
+      cacheDir,
+    });
+  } catch (error) {
+    logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to recreate MDX-ESM cache namespace`, {
+      cacheDir,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 export async function clearHttpBundleCache(): Promise<void> {
   const cacheDir = getHttpBundleCacheDir();
   const fs = getLocalFs();

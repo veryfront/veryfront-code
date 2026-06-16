@@ -519,6 +519,51 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.readOps.setFileListReadyPromise(warmupPromise);
   }
 
+  async refreshSourceSnapshot(reason = "manual-refresh"): Promise<void> {
+    await this.ensureInitialized();
+
+    if (!this.contentContext) {
+      logger.debug("Skipping source snapshot refresh without content context", {
+        reason,
+        projectSlug: this.projectSlug,
+      });
+      return;
+    }
+
+    const cacheKey = buildFileListCacheKey(this.contentContext);
+    const refreshContext = this.contentContext;
+
+    this.fileListWarmupPromise = null;
+    this.fileListWarmupKey = null;
+    this.readOps.clearFileListIndex();
+    this.statOps.clearIndex();
+    this.dirOps.clearTree();
+
+    await this.cache.deleteAsync(cacheKey);
+
+    const files = await fetchFileListForContext(this.client, refreshContext);
+    await this.cache.setAsync(cacheKey, files);
+    const fileSummary = summarizeFileList(files);
+
+    if (fileSummary.sourceFilesWithContent > 0 && this.shouldBackgroundPregenerateStyles()) {
+      this.triggerCSSPregeneration(files).catch(() => {
+        // Error already logged in triggerCSSPregeneration
+      });
+    }
+
+    logger.info("Refreshed source snapshot", {
+      reason,
+      cacheKey,
+      projectSlug: this.projectSlug,
+      sourceType: refreshContext.sourceType,
+      branch: refreshContext.branch,
+      environmentName: refreshContext.environmentName,
+      releaseId: refreshContext.releaseId,
+      totalFiles: fileSummary.totalFiles,
+      filesWithContent: fileSummary.filesWithContent,
+    });
+  }
+
   getPokeMetrics(): {
     received: number;
     invalidationsTriggered: number;

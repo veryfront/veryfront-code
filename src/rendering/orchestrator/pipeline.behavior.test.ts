@@ -148,6 +148,50 @@ describe("RenderPipeline behavior", () => {
     assertEquals(persists, [{ slug: "", cacheKey: "index" }]);
   });
 
+  it("renderPage refreshes preview caches and retries stale MDX ESM export mismatches", async () => {
+    const slug = "/behavior-stale-mdx";
+    let renderAttempts = 0;
+    let sourceRefreshes = 0;
+    const pipeline = createPipeline("/project/pages/behavior-stale-mdx.mdx", {
+      adapter: {
+        env: { get: () => undefined },
+        fs: {
+          exists: async () => false,
+          refreshSourceSnapshot: () => {
+            sourceRefreshes++;
+            return Promise.resolve();
+          },
+        },
+      } as any,
+      pageRenderer: {
+        preparePageBundles: async () => {
+          renderAttempts++;
+          if (renderAttempts === 1) {
+            throw new Error(
+              "The requested module 'file:///cache/vfmod.mjs' does not provide an export named 'default'",
+            );
+          }
+
+          return {
+            pageElement: {},
+            pageBundle: {},
+          };
+        },
+      } as any,
+    } as Partial<RenderPipelineConfig>);
+
+    const result = await pipeline.renderPage(slug, {
+      delivery: "string",
+      projectId: "project-1",
+      projectSlug: "project-slug",
+      contentSourceId: "preview-main",
+    });
+
+    assertEquals(result.html, "<!doctype html><html><body>ok</body></html>");
+    assertEquals(renderAttempts, 2);
+    assertEquals(sourceRefreshes, 1);
+  });
+
   it("resolvePageData surfaces notFound from data hooks", async () => {
     const slug = "/behavior-not-found";
     const projectId = "proj-not-found";
