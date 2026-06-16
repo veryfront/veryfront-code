@@ -103,6 +103,10 @@ describe("MultiProjectFSAdapter", () => {
       withAdapter((adapter) => assertMethod(adapter, "runWithContext"));
     });
 
+    it("should have refreshSourceSnapshot method", () => {
+      withAdapter((adapter) => assertMethod(adapter, "refreshSourceSnapshot"));
+    });
+
     it("should have getManagerStats method", () => {
       withAdapter((adapter) => assertMethod(adapter, "getManagerStats"));
     });
@@ -118,6 +122,57 @@ describe("MultiProjectFSAdapter", () => {
 
     it("initialize should resolve immediately", async () => {
       await withAdapterAsync((adapter) => adapter.initialize());
+    });
+
+    it("refreshSourceSnapshot should delegate to the request-scoped adapter", async () => {
+      await withAdapterAsync(async (adapter) => {
+        const originalManager = (adapter as any).manager;
+        let refreshedReason: string | undefined;
+        let capturedProjectSlug: string | undefined;
+        let capturedProjectId: string | undefined;
+        let capturedBranch: string | null | undefined;
+
+        (adapter as any).manager = {
+          getAdapter(
+            projectSlug: string,
+            _token: string,
+            projectId?: string,
+            _productionMode?: boolean,
+            _releaseId?: string | null,
+            _environmentName?: string | null,
+            branch?: string | null,
+          ) {
+            capturedProjectSlug = projectSlug;
+            capturedProjectId = projectId;
+            capturedBranch = branch;
+            return Promise.resolve({
+              refreshSourceSnapshot(reason?: string) {
+                refreshedReason = reason;
+                return Promise.resolve();
+              },
+            });
+          },
+          getStats: () => ({ adapters: 0, stats: [] }),
+          dispose: () => {},
+        };
+
+        try {
+          await adapter.runWithContext(
+            "project-a",
+            "test-token",
+            () => adapter.refreshSourceSnapshot("review-comment"),
+            "project-id-a",
+            { branch: "main" },
+          );
+        } finally {
+          (adapter as any).manager = originalManager;
+        }
+
+        assertEquals(refreshedReason, "review-comment");
+        assertEquals(capturedProjectSlug, "project-a");
+        assertEquals(capturedProjectId, "project-id-a");
+        assertEquals(capturedBranch, "main");
+      });
     });
   });
 });
@@ -289,19 +344,17 @@ describe("wrapWithCurrentContext", () => {
   });
 
   it("should preserve context in wrapped function", async () => {
-    let wrappedFn: (() => string | null) | null = null;
-
-    await runWithRequestContext(
+    const projectSlug = await runWithRequestContext(
       { projectSlug: "proj", token: "tok" },
       async () => {
-        wrappedFn = wrapWithCurrentContext(() => {
+        const wrappedFn = wrapWithCurrentContext(() => {
           return getCurrentRequestContext()?.projectSlug ?? null;
         });
+        return wrappedFn();
       },
     );
 
-    assertExists(wrappedFn);
-    assertEquals(wrappedFn!(), "proj");
+    assertEquals(projectSlug, "proj");
   });
 });
 

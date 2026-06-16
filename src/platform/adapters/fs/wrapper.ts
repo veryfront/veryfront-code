@@ -79,9 +79,14 @@ function isContextualAdapter(adapter: FSAdapter): adapter is ContextualFSAdapter
 
 export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
   private readonly _fsAdapter: FSAdapter;
+  readonly refreshSourceSnapshot?: (reason?: string) => Promise<void>;
 
   constructor(fsAdapter: FSAdapter) {
     this._fsAdapter = fsAdapter;
+    if (typeof fsAdapter.refreshSourceSnapshot === "function") {
+      this.refreshSourceSnapshot = (reason?: string) =>
+        fsAdapter.refreshSourceSnapshot!.call(fsAdapter, reason);
+    }
   }
 
   getUnderlyingAdapter(): FSAdapter {
