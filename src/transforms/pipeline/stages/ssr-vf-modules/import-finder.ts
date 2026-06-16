@@ -2,45 +2,40 @@
  * Import discovery functions for the SSR VF Modules stage.
  */
 
+import { parseImports } from "../../../esm/lexer.ts";
+
+function unique(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
 /**
  * Find all /_vf_modules/_veryfront/ imports in the code.
  * Only matches framework modules, not user project files.
  */
-export function findVfModuleImports(code: string): string[] {
-  const imports: string[] = [];
-  // Note: \s* allows zero whitespace (minified code: from"..." has no space)
-  // Only match _veryfront/ framework modules, not user project files.
-  // Handle both raw "/_vf_modules/..." specifiers and malformed
-  // "file:///_vf_modules/..." variants that can leak out of stale caches.
-  const pattern = /from\s*["']((?:file:\/\/)?\/_vf_modules\/_veryfront\/[^"']+)["']/g;
-
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(code)) !== null) {
-    imports.push(match[1]!);
-  }
-
-  return [...new Set(imports)];
+export async function findVfModuleImports(code: string): Promise<string[]> {
+  const imports = await parseImports(code);
+  return unique(
+    imports
+      .map((imp) => imp.n)
+      .filter((specifier): specifier is string =>
+        specifier?.startsWith("/_vf_modules/_veryfront/") === true ||
+        specifier?.startsWith("file:///_vf_modules/_veryfront/") === true
+      ),
+  );
 }
 
 /**
  * Find all relative imports (./foo, ../bar) in the code.
  * Returns array of specifiers.
  */
-export function findRelativeImports(code: string): string[] {
-  const imports: string[] = [];
-
-  // Match: from "./foo" or from "../bar"
-  const fromPattern = /from\s*["'](\.\.?\/[^"']+)["']/g;
-  // Match side-effect imports: import "./foo" or import "../bar" (no `from`)
-  const sideEffectPattern = /import\s*["'](\.\.?\/[^"']+)["']/g;
-
-  let match: RegExpExecArray | null;
-  while ((match = fromPattern.exec(code)) !== null) {
-    imports.push(match[1]!);
-  }
-  while ((match = sideEffectPattern.exec(code)) !== null) {
-    imports.push(match[1]!);
-  }
-
-  return [...new Set(imports)];
+export async function findRelativeImports(code: string): Promise<string[]> {
+  const imports = await parseImports(code);
+  return unique(
+    imports
+      .map((imp) => imp.n)
+      .filter((specifier): specifier is string =>
+        specifier?.startsWith("./") === true ||
+        specifier?.startsWith("../") === true
+      ),
+  );
 }

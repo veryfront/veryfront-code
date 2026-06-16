@@ -7,43 +7,39 @@
  * @module module-system/react-loader/ssr-module-loader/import-rewriter
  */
 
-const IMPORT_FROM_PREFIX = "from\\s*[\"']";
-const IMPORT_FROM_SUFFIX = "[\"']";
-const REGEX_ESCAPE = /[.*+?^${}()|[\]\\]/g;
-
-function escapeRegExp(value: string): string {
-  return value.replace(REGEX_ESCAPE, "\\$&");
-}
+import { replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
 
 /**
  * Rewrite a cross-project import specifier to use a local temp path.
  */
-export function rewriteCrossProjectImport(
+export async function rewriteCrossProjectImport(
   transformed: string,
   specifier: string,
   tempPath: string,
-): string {
+): Promise<string> {
   const jsSpecifier = toJsExtension(specifier);
-  const escapedSpecifier = escapeRegExp(specifier);
-  const escapedJsSpecifier = escapeRegExp(jsSpecifier);
-  const pattern = new RegExp(
-    `${IMPORT_FROM_PREFIX}(${escapedSpecifier}|${escapedJsSpecifier})${IMPORT_FROM_SUFFIX}`,
-    "g",
-  );
+  const replacement = `file://${tempPath}`;
+  const replacements = new Map<string, string>([
+    [specifier, replacement],
+    [jsSpecifier, replacement],
+  ]);
 
-  return transformed.replace(pattern, `from "file://${tempPath}"`);
+  return await replaceSpecifiers(
+    transformed,
+    (importSpecifier) => replacements.get(importSpecifier) ?? null,
+  );
 }
 
 /**
  * Rewrite local imports to use hashed temp paths.
  * This ensures each content version uses its own cached module file.
  */
-export function rewriteLocalImports(
+export async function rewriteLocalImports(
   transformed: string,
   localImportPaths: Map<string, string>,
   fromFilePath: string,
   projectDir: string,
-): string {
+): Promise<string> {
   if (localImportPaths.size === 0) return transformed;
 
   const normalizedProjectDir = projectDir.replace(/\/$/, "");
@@ -52,27 +48,24 @@ export function rewriteLocalImports(
     ? fromFileDir.substring(normalizedProjectDir.length + 1)
     : fromFileDir;
 
-  const replacementByPattern = new Map<string, string>();
+  const replacements = new Map<string, string>();
 
   for (const [specifierOrPath, tempPath] of localImportPaths) {
     const patterns = buildImportPatterns(specifierOrPath, fromRelativeDir, normalizedProjectDir);
 
     for (const pattern of patterns) {
-      if (!replacementByPattern.has(pattern)) {
-        replacementByPattern.set(pattern, tempPath);
+      if (!replacements.has(pattern)) {
+        replacements.set(pattern, `file://${tempPath}`);
       }
     }
   }
 
-  if (replacementByPattern.size === 0) return transformed;
+  if (replacements.size === 0) return transformed;
 
-  const importPattern = Array.from(replacementByPattern.keys()).map(escapeRegExp).join("|");
-  const regex = new RegExp(`${IMPORT_FROM_PREFIX}(${importPattern})${IMPORT_FROM_SUFFIX}`, "g");
-
-  return transformed.replace(regex, (match, specifier: string) => {
-    const tempPath = replacementByPattern.get(specifier);
-    return tempPath === undefined ? match : `from "file://${tempPath}"`;
-  });
+  return await replaceSpecifiers(
+    transformed,
+    (importSpecifier) => replacements.get(importSpecifier) ?? null,
+  );
 }
 
 /**

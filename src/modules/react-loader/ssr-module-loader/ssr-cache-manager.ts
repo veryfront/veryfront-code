@@ -15,6 +15,7 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { ensureHttpBundlesExist } from "#veryfront/transforms/esm/http-cache.ts";
+import { parseImports } from "#veryfront/transforms/esm/lexer.ts";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { globalModuleCache, globalTmpDirs } from "./cache/index.ts";
 import {
@@ -30,9 +31,6 @@ const logger = rendererLogger.component("ssr-module-loader");
 
 /** Content length threshold: below this, use fast sync hash; above, use async SHA-256 */
 const SYNC_HASH_THRESHOLD = 10_000;
-
-const UNRESOLVED_VF_MODULE_IMPORT_PATTERN =
-  /from\s*["']((?:file:\/\/)?\/?\/?_vf_modules\/[^"']+)["']/;
 
 /**
  * Manages caching concerns for SSR module loading:
@@ -143,7 +141,7 @@ export class SSRCacheManager {
       return false;
     }
 
-    if (this.hasUnresolvedVfModuleImports(code)) {
+    if (await this.hasUnresolvedVfModuleImports(code)) {
       logger.warn(
         source === "memory-cache"
           ? "[SSR-MODULE-LOADER] Memory cache has unresolved _vf_modules imports, invalidating"
@@ -208,8 +206,15 @@ export class SSRCacheManager {
     return this.fs;
   }
 
-  private hasUnresolvedVfModuleImports(code: string): boolean {
-    return UNRESOLVED_VF_MODULE_IMPORT_PATTERN.test(code);
+  private async hasUnresolvedVfModuleImports(code: string): Promise<boolean> {
+    const imports = await parseImports(code);
+    return imports.some((importSpecifier) => {
+      const rawPath = importSpecifier.n;
+      if (!rawPath) return false;
+
+      const path = rawPath.replace(/^(?:file:\/\/)?\/+/, "");
+      return path.startsWith("_vf_modules/");
+    });
   }
 
   private async hasMissingHttpBundles(

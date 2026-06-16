@@ -20,11 +20,12 @@ export async function analyzeComponent(
 
   // Determine component type: directive takes precedence over file naming convention
   const type: ComponentType = hasUseClient || filePath.includes(".client.") ? "client" : "server";
+  const exports = await extractExportNames(content, filePath);
 
   return {
     type,
     filePath,
-    exports: extractExportNames(content),
+    exports,
     id: generateComponentId(filePath),
     hasUseClient,
     hasUseServer,

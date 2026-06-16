@@ -164,4 +164,50 @@ describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, ()
       await remove(projectDir, { recursive: true });
     }
   });
+
+  it("rejects only real unresolved _vf_modules imports", async () => {
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-cache-manager-" });
+    const cacheManager = new SSRCacheManager({
+      projectDir,
+      projectId: `project-${crypto.randomUUID()}`,
+      contentSourceId: `preview-${crypto.randomUUID()}`,
+      adapter: denoAdapter,
+      dev: true,
+    });
+
+    try {
+      const importLookingTextIsValid = await cacheManager.validateCachedCode(
+        [
+          `const text = 'from "/_vf_modules/react@18.3.1/some-module.js"';`,
+          `// import x from "/_vf_modules/commented.js";`,
+          `export default text;`,
+        ].join("\n"),
+        join(projectDir, "pages", "index.tsx"),
+        "redis-cache",
+        {
+          checkLocalPaths: false,
+          checkInvalidEsmShPath: true,
+        },
+      );
+
+      assertEquals(importLookingTextIsValid, true);
+
+      const realImportIsInvalid = await cacheManager.validateCachedCode(
+        [
+          `import x from "/_vf_modules/react@18.3.1/some-module.js";`,
+          `export default x;`,
+        ].join("\n"),
+        join(projectDir, "pages", "index.tsx"),
+        "redis-cache",
+        {
+          checkLocalPaths: false,
+          checkInvalidEsmShPath: true,
+        },
+      );
+
+      assertEquals(realImportIsInvalid, false);
+    } finally {
+      await remove(projectDir, { recursive: true });
+    }
+  });
 });

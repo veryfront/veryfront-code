@@ -34,8 +34,8 @@ export async function buildRscModules(
 
       try {
         const text = await adapter.fs.readFile(e.path);
-        const names = extractExportNames(text);
-        if (names.length > 0) exportsList = ["default", ...names];
+        const names = await extractExportNames(text, e.path);
+        if (names.length > 0) exportsList = [...new Set(["default", ...names])];
       } catch (_) {
         /* expected: file may not be readable, use default exports only */
       }

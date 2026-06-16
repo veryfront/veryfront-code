@@ -4,82 +4,98 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { findRelativeImports, findVfModuleImports } from "./import-finder.ts";
 
 describe("findVfModuleImports", () => {
-  it("finds veryfront module imports", () => {
+  it("finds veryfront module imports", async () => {
     const code = `import { foo } from "/_vf_modules/_veryfront/utils.js";`;
-    assertEquals(findVfModuleImports(code), ["/_vf_modules/_veryfront/utils.js"]);
+    assertEquals(await findVfModuleImports(code), ["/_vf_modules/_veryfront/utils.js"]);
   });
 
-  it("returns empty array when no vf imports", () => {
-    assertEquals(findVfModuleImports(`import { x } from "./local.ts";`), []);
+  it("returns empty array when no vf imports", async () => {
+    assertEquals(await findVfModuleImports(`import { x } from "./local.ts";`), []);
   });
 
-  it("deduplicates repeated imports", () => {
+  it("deduplicates repeated imports", async () => {
     const code = [
       `import { a } from "/_vf_modules/_veryfront/utils.js";`,
       `import { b } from "/_vf_modules/_veryfront/utils.js";`,
     ].join("\n");
-    assertEquals(findVfModuleImports(code), ["/_vf_modules/_veryfront/utils.js"]);
+    assertEquals(await findVfModuleImports(code), ["/_vf_modules/_veryfront/utils.js"]);
   });
 
-  it("finds multiple distinct vf imports", () => {
+  it("finds multiple distinct vf imports", async () => {
     const code = [
       `import { a } from "/_vf_modules/_veryfront/utils.js";`,
       `import { b } from "/_vf_modules/_veryfront/errors.js";`,
     ].join("\n");
-    assertEquals(findVfModuleImports(code).length, 2);
+    assertEquals((await findVfModuleImports(code)).length, 2);
   });
 
-  it("does not match user project vf_modules paths", () => {
+  it("does not match user project vf_modules paths", async () => {
     const code = `import { x } from "/_vf_modules/components/Foo.js";`;
-    assertEquals(findVfModuleImports(code), []);
+    assertEquals(await findVfModuleImports(code), []);
   });
 
-  it("handles minified code without spaces after from", () => {
+  it("handles minified code without spaces after from", async () => {
     const code = `import{foo}from"/_vf_modules/_veryfront/utils.js";`;
-    assertEquals(findVfModuleImports(code), ["/_vf_modules/_veryfront/utils.js"]);
+    assertEquals(await findVfModuleImports(code), ["/_vf_modules/_veryfront/utils.js"]);
   });
 
-  it("handles single-quoted imports", () => {
+  it("handles single-quoted imports", async () => {
     const code = `import { foo } from '/_vf_modules/_veryfront/utils.js';`;
-    assertEquals(findVfModuleImports(code), ["/_vf_modules/_veryfront/utils.js"]);
+    assertEquals(await findVfModuleImports(code), ["/_vf_modules/_veryfront/utils.js"]);
+  });
+
+  it("does not match import-looking text in strings or comments", async () => {
+    const code = `
+      const text = 'from "/_vf_modules/_veryfront/utils.js"';
+      // import { foo } from "/_vf_modules/_veryfront/commented.js";
+    `;
+    assertEquals(await findVfModuleImports(code), []);
   });
 });
 
 describe("findRelativeImports", () => {
-  it("finds relative imports with ./", () => {
+  it("finds relative imports with ./", async () => {
     const code = `import { foo } from "./bar.ts";`;
-    assertEquals(findRelativeImports(code), ["./bar.ts"]);
+    assertEquals(await findRelativeImports(code), ["./bar.ts"]);
   });
 
-  it("finds relative imports with ../", () => {
+  it("finds relative imports with ../", async () => {
     const code = `import { foo } from "../bar.ts";`;
-    assertEquals(findRelativeImports(code), ["../bar.ts"]);
+    assertEquals(await findRelativeImports(code), ["../bar.ts"]);
   });
 
-  it("finds side-effect imports", () => {
+  it("finds side-effect imports", async () => {
     const code = `import "./styles.css";`;
-    assertEquals(findRelativeImports(code), ["./styles.css"]);
+    assertEquals(await findRelativeImports(code), ["./styles.css"]);
   });
 
-  it("ignores non-relative imports", () => {
-    assertEquals(findRelativeImports(`import { x } from "react";`), []);
+  it("ignores non-relative imports", async () => {
+    assertEquals(await findRelativeImports(`import { x } from "react";`), []);
   });
 
-  it("deduplicates", () => {
+  it("deduplicates", async () => {
     const code = `import { a } from "./x.ts";\nimport { b } from "./x.ts";`;
-    assertEquals(findRelativeImports(code), ["./x.ts"]);
+    assertEquals(await findRelativeImports(code), ["./x.ts"]);
   });
 
-  it("finds both from and side-effect imports", () => {
+  it("finds both from and side-effect imports", async () => {
     const code = [
       `import { a } from "./utils.ts";`,
       `import "./styles.css";`,
     ].join("\n");
-    assertEquals(findRelativeImports(code).length, 2);
+    assertEquals((await findRelativeImports(code)).length, 2);
   });
 
-  it("handles single-quoted imports", () => {
+  it("handles single-quoted imports", async () => {
     const code = `import { foo } from '../bar.ts';`;
-    assertEquals(findRelativeImports(code), ["../bar.ts"]);
+    assertEquals(await findRelativeImports(code), ["../bar.ts"]);
+  });
+
+  it("does not match import-looking text in strings or comments", async () => {
+    const code = `
+      const text = 'from "./fake.js"';
+      // import "./commented.js";
+    `;
+    assertEquals(await findRelativeImports(code), []);
   });
 });

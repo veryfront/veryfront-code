@@ -99,7 +99,7 @@ export const ssrVfModulesPlugin: TransformPlugin = {
   async transform(ctx) {
     logInitOnce();
 
-    const vfModuleImports = findVfModuleImports(ctx.code);
+    const vfModuleImports = await findVfModuleImports(ctx.code);
     logger.debug(`${LOG_PREFIX} Transform called`, {
       file: ctx.filePath?.slice(-60) ?? "<unknown>",
       count: vfModuleImports.length,

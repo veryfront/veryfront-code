@@ -4,9 +4,9 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { rewriteCrossProjectImport, rewriteLocalImports } from "./import-rewriter.ts";
 
 describe("rewriteCrossProjectImport", () => {
-  it("rewrites .tsx specifier to file:// path", () => {
+  it("rewrites .tsx specifier to file:// path", async () => {
     const code = `import { Foo } from "@acme/ui@1.0.0/@/components/Button.tsx";`;
-    const result = rewriteCrossProjectImport(
+    const result = await rewriteCrossProjectImport(
       code,
       "@acme/ui@1.0.0/@/components/Button.tsx",
       "/tmp/cache/cross-project/Button.js",
@@ -14,9 +14,9 @@ describe("rewriteCrossProjectImport", () => {
     assertEquals(result, `import { Foo } from "file:///tmp/cache/cross-project/Button.js";`);
   });
 
-  it("rewrites .js version of .tsx specifier", () => {
+  it("rewrites .js version of .tsx specifier", async () => {
     const code = `import { Foo } from "@acme/ui@1.0.0/@/components/Button.js";`;
-    const result = rewriteCrossProjectImport(
+    const result = await rewriteCrossProjectImport(
       code,
       "@acme/ui@1.0.0/@/components/Button.tsx",
       "/tmp/cache/cross-project/Button.js",
@@ -24,30 +24,30 @@ describe("rewriteCrossProjectImport", () => {
     assertEquals(result, `import { Foo } from "file:///tmp/cache/cross-project/Button.js";`);
   });
 
-  it("rewrites multiple occurrences", () => {
+  it("rewrites multiple occurrences", async () => {
     const code = [
       `import { A } from "@acme/ui@1.0.0/@/A.tsx";`,
       `import { B } from "@acme/ui@1.0.0/@/A.tsx";`,
     ].join("\n");
-    const result = rewriteCrossProjectImport(code, "@acme/ui@1.0.0/@/A.tsx", "/tmp/A.js");
+    const result = await rewriteCrossProjectImport(code, "@acme/ui@1.0.0/@/A.tsx", "/tmp/A.js");
     assertEquals(result.match(/file:\/\//g)?.length, 2);
   });
 
-  it("handles specifiers with special regex characters", () => {
+  it("handles specifiers with special characters", async () => {
     const code = `import { X } from "pkg+foo(bar)";`;
-    const result = rewriteCrossProjectImport(code, "pkg+foo(bar)", "/tmp/pkg.js");
+    const result = await rewriteCrossProjectImport(code, "pkg+foo(bar)", "/tmp/pkg.js");
     assertEquals(result, `import { X } from "file:///tmp/pkg.js";`);
   });
 
-  it("handles single-quoted imports", () => {
+  it("handles single-quoted imports", async () => {
     const code = `import { Foo } from 'my-pkg';`;
-    const result = rewriteCrossProjectImport(code, "my-pkg", "/tmp/my-pkg.js");
-    assertEquals(result, `import { Foo } from "file:///tmp/my-pkg.js";`);
+    const result = await rewriteCrossProjectImport(code, "my-pkg", "/tmp/my-pkg.js");
+    assertEquals(result, `import { Foo } from 'file:///tmp/my-pkg.js';`);
   });
 
-  it("leaves unrelated imports untouched", () => {
+  it("leaves unrelated imports untouched", async () => {
     const code = `import { Foo } from "react";\nimport { Bar } from "other";`;
-    const result = rewriteCrossProjectImport(code, "react", "/tmp/react.js");
+    const result = await rewriteCrossProjectImport(code, "react", "/tmp/react.js");
     assertEquals(result.includes(`from "other"`), true);
   });
 });
@@ -55,118 +55,106 @@ describe("rewriteCrossProjectImport", () => {
 describe("rewriteLocalImports", () => {
   const projectDir = "/project";
 
-  it("returns unchanged code when map is empty", () => {
+  it("returns unchanged code when map is empty", async () => {
     const code = `import { A } from "./A.js";`;
-    const result = rewriteLocalImports(code, new Map(), "/project/pages/index.tsx", projectDir);
+    const result = await rewriteLocalImports(
+      code,
+      new Map(),
+      "/project/pages/index.tsx",
+      projectDir,
+    );
     assertEquals(result, code);
   });
 
-  it("rewrites @/ alias import from depth-1 directory", () => {
+  it("rewrites @/ alias import from depth-1 directory", async () => {
     const map = new Map([["@/components/Button", "/tmp/Button.js"]]);
     const code = `import { Button } from "../components/Button.js";`;
-    const result = rewriteLocalImports(code, map, "/project/pages/index.tsx", projectDir);
+    const result = await rewriteLocalImports(code, map, "/project/pages/index.tsx", projectDir);
     assertEquals(result, `import { Button } from "file:///tmp/Button.js";`);
   });
 
-  it("rewrites @/ alias import from root-level file", () => {
+  it("rewrites @/ alias import from root-level file", async () => {
     const map = new Map([["@/components/Button", "/tmp/Button.js"]]);
     const code = `import { Button } from "./components/Button.js";`;
-    const result = rewriteLocalImports(code, map, "/project/index.tsx", projectDir);
+    const result = await rewriteLocalImports(code, map, "/project/index.tsx", projectDir);
     assertEquals(result, `import { Button } from "file:///tmp/Button.js";`);
   });
 
-  it("rewrites @/ alias import from nested directory", () => {
+  it("rewrites @/ alias import from nested directory", async () => {
     const map = new Map([["@/utils/helpers", "/tmp/helpers.js"]]);
     const code = `import { h } from "../../utils/helpers.js";`;
-    const result = rewriteLocalImports(code, map, "/project/pages/blog/post.tsx", projectDir);
+    const result = await rewriteLocalImports(code, map, "/project/pages/blog/post.tsx", projectDir);
     assertEquals(result, `import { h } from "file:///tmp/helpers.js";`);
   });
 
-  it("rewrites relative import (./)", () => {
+  it("rewrites relative import (./)", async () => {
     const map = new Map([["./sibling", "/tmp/sibling.js"]]);
     const code = `import { S } from "./sibling.js";`;
-    const result = rewriteLocalImports(code, map, "/project/components/parent.tsx", projectDir);
+    const result = await rewriteLocalImports(
+      code,
+      map,
+      "/project/components/parent.tsx",
+      projectDir,
+    );
     assertEquals(result, `import { S } from "file:///tmp/sibling.js";`);
   });
 
-  it("rewrites relative import (../)", () => {
+  it("rewrites relative import (../)", async () => {
     const map = new Map([["../utils/log", "/tmp/log.js"]]);
     const code = `import { log } from "../utils/log.js";`;
-    const result = rewriteLocalImports(code, map, "/project/components/Button.tsx", projectDir);
+    const result = await rewriteLocalImports(
+      code,
+      map,
+      "/project/components/Button.tsx",
+      projectDir,
+    );
     assertEquals(result, `import { log } from "file:///tmp/log.js";`);
   });
 
-  it("rewrites absolute path starting with projectDir", () => {
+  it("rewrites absolute path starting with projectDir", async () => {
     const map = new Map([["/project/lib/api.ts", "/tmp/api.js"]]);
     const code = `import { fetch } from "../lib/api.js";`;
-    const result = rewriteLocalImports(code, map, "/project/pages/index.tsx", projectDir);
+    const result = await rewriteLocalImports(code, map, "/project/pages/index.tsx", projectDir);
     assertEquals(result, `import { fetch } from "file:///tmp/api.js";`);
   });
 
-  it("strips trailing slash from projectDir", () => {
+  it("strips trailing slash from projectDir", async () => {
     const map = new Map([["@/utils/log", "/tmp/log.js"]]);
     const code = `import { log } from "../utils/log.js";`;
-    const result = rewriteLocalImports(code, map, "/project/pages/index.tsx", "/project/");
+    const result = await rewriteLocalImports(code, map, "/project/pages/index.tsx", "/project/");
     assertEquals(result, `import { log } from "file:///tmp/log.js";`);
   });
 
-  it("rewrites .tsx extensions to .js in alias patterns", () => {
+  it("rewrites .tsx extensions to .js in alias patterns", async () => {
     const map = new Map([["@/components/Card.tsx", "/tmp/Card.js"]]);
     const code = `import { Card } from "../components/Card.js";`;
-    const result = rewriteLocalImports(code, map, "/project/pages/index.tsx", projectDir);
+    const result = await rewriteLocalImports(code, map, "/project/pages/index.tsx", projectDir);
     assertEquals(result, `import { Card } from "file:///tmp/Card.js";`);
   });
 
-  it("handles multiple imports in the same code", () => {
+  it("handles multiple imports in the same code", async () => {
     const map = new Map([
       ["./A", "/tmp/A.js"],
       ["./B", "/tmp/B.js"],
     ]);
     const code = `import { A } from "./A.js";\nimport { B } from "./B.js";`;
-    const result = rewriteLocalImports(code, map, "/project/src/index.tsx", projectDir);
+    const result = await rewriteLocalImports(code, map, "/project/src/index.tsx", projectDir);
     assertEquals(result.includes("file:///tmp/A.js"), true);
     assertEquals(result.includes("file:///tmp/B.js"), true);
   });
 
-  it("uses one replacement regex for local imports", () => {
-    const originalRegExp = globalThis.RegExp;
-    const constructedPatterns: string[] = [];
+  it("does not rewrite import-looking text in strings or comments", async () => {
+    const map = new Map([["./A", "/tmp/A.js"]]);
+    const code = [
+      `const text = 'from "./A.js"';`,
+      `// import { A } from "./A.js";`,
+      `import { A } from "./A.js";`,
+    ].join("\n");
 
-    class CountingRegExp extends originalRegExp {
-      constructor(pattern: string | RegExp, flags?: string) {
-        constructedPatterns.push(String(pattern));
-        super(pattern, flags);
-      }
-    }
+    const result = await rewriteLocalImports(code, map, "/project/src/index.tsx", projectDir);
 
-    Object.defineProperty(globalThis, "RegExp", {
-      configurable: true,
-      value: CountingRegExp,
-    });
-
-    try {
-      const map = new Map([
-        ["./A", "/tmp/A.js"],
-        ["./B", "/tmp/B.js"],
-        ["./C", "/tmp/C.js"],
-      ]);
-      const code = [
-        `import { A } from "./A.js";`,
-        `import { B } from "./B.js";`,
-        `import { C } from "./C.js";`,
-      ].join("\n");
-
-      const result = rewriteLocalImports(code, map, "/project/src/index.tsx", projectDir);
-
-      assertEquals(result.includes("file:///tmp/A.js"), true);
-      assertEquals(result.includes("file:///tmp/B.js"), true);
-      assertEquals(result.includes("file:///tmp/C.js"), true);
-      assertEquals(constructedPatterns.length, 1);
-    } finally {
-      Object.defineProperty(globalThis, "RegExp", {
-        configurable: true,
-        value: originalRegExp,
-      });
-    }
+    assertEquals(result.includes(`const text = 'from "./A.js"';`), true);
+    assertEquals(result.includes(`// import { A } from "./A.js";`), true);
+    assertEquals(result.includes(`import { A } from "file:///tmp/A.js";`), true);
   });
 });
