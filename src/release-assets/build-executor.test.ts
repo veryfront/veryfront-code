@@ -91,6 +91,12 @@ async function hasEsmShReactImport(code: string): Promise<boolean> {
   return false;
 }
 
+async function moduleSpecifiers(code: string): Promise<string[]> {
+  return (await parseImports(code))
+    .map((imp) => imp.n)
+    .filter((specifier): specifier is string => typeof specifier === "string");
+}
+
 function fakeVendorHttpImports(code: string): Promise<ReleaseAssetVendorResult> {
   const urls = [
     ...new Set(
@@ -475,9 +481,9 @@ describe("release asset build executor", () => {
 
     const pageUpload = rec.uploads.find((u) => u.hash === pageHash);
     assertExists(pageUpload);
-    assert(pageUpload.text.includes(`"/_vf/assets/${dependencyHash}.js"`));
-    assert(!pageUpload.text.includes("https://esm.sh/framer-motion"));
-    assert(!pageUpload.text.includes("file:///tmp/veryfront-http-bundle"));
+    assertEquals(await moduleSpecifiers(pageUpload.text), [
+      `/_vf/assets/${dependencyHash}.js`,
+    ]);
   });
 
   it("rewrites nested vendored HTTP dependency imports to immutable assets", async () => {
