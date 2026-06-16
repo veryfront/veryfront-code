@@ -6,7 +6,7 @@
 
 import type { Logger } from "#veryfront/utils/logger/logger.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
-import { cacheModule } from "./module-cache.ts";
+import { cacheModule, ensureFilenameDefaultExport } from "./module-cache.ts";
 import { writeDistributedCache } from "./distributed-cache.ts";
 
 type CacheLocalModuleFn = typeof cacheModule;
@@ -39,6 +39,7 @@ export async function persistResolvedModule(
 ): Promise<string | null> {
   const writeToDistributedCache = input.writeToDistributedCache ?? writeDistributedCache;
   const cacheLocalModule = input.cacheLocalModule ?? cacheModule;
+  const moduleCode = ensureFilenameDefaultExport(input.normalizedPath, input.moduleCode);
 
   if (input.distributedCacheWrite) {
     writeToDistributedCache(
@@ -46,7 +47,7 @@ export async function persistResolvedModule(
       input.distributedCacheWrite.transformCacheKey,
       input.distributedCacheWrite.projectId,
       input.distributedCacheWrite.contentSourceId,
-      input.moduleCode,
+      moduleCode,
       input.normalizedPath,
       input.log,
     );
@@ -59,7 +60,7 @@ export async function persistResolvedModule(
   const cacheStart = performance.now();
   const finalCachedPath = await cacheLocalModule(
     input.normalizedPath,
-    input.moduleCode,
+    moduleCode,
     input.esmCacheDir,
     input.pathCache,
     input.log,
