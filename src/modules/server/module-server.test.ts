@@ -9,7 +9,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * @module modules/server/module-server.test
  */
 
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildServerTimingHeader,
@@ -403,6 +403,64 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       const header = buildServerTimingHeader(record!);
       assertEquals(header.includes("module.source_lookup"), true);
       assertEquals(header.includes("module.transform"), true);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("adds a default export for filename-matched browser modules", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-client-default-module-" });
+
+    try {
+      await Deno.mkdir(`${projectDir}/components`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/components/PlatformOverview.ts`,
+        `export const PlatformOverview = () => "ok";\n`,
+      );
+
+      const response = await serve(
+        new Request("http://localhost:3000/_vf_modules/components/PlatformOverview.js"),
+        projectDir,
+      );
+
+      assertEquals(response.status, 200);
+      const text = await response.text();
+      assertStringIncludes(text, "export { PlatformOverview as default };");
+      assertEquals(
+        /export \{ PlatformOverview as default \};\n\/\/# sourceMappingURL=/.test(text),
+        true,
+      );
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("adds a default export for filename-matched browser barrel modules", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-client-barrel-default-module-" });
+
+    try {
+      await Deno.mkdir(`${projectDir}/components`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/components/impl.ts`,
+        `export const PlatformOverview = () => "ok";\n`,
+      );
+      await Deno.writeTextFile(
+        `${projectDir}/components/PlatformOverview.ts`,
+        `export { PlatformOverview } from "./impl.ts";\n`,
+      );
+
+      const response = await serve(
+        new Request("http://localhost:3000/_vf_modules/components/PlatformOverview.js"),
+        projectDir,
+      );
+
+      assertEquals(response.status, 200);
+      const text = await response.text();
+      assertStringIncludes(text, "export { PlatformOverview as default };");
+      assertEquals(
+        /export \{ PlatformOverview as default \};\n\/\/# sourceMappingURL=/.test(text),
+        true,
+      );
     } finally {
       await Deno.remove(projectDir, { recursive: true });
     }

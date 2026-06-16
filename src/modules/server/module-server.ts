@@ -35,6 +35,7 @@ import {
   hasSourceMiss,
   rememberSourceMiss,
 } from "./module-source-resolution-cache.ts";
+import { ensureFilenameDefaultExport } from "#veryfront/modules/loader-shared/filename-default-export.ts";
 
 const logger = serverLogger.component("module-server");
 const PROJECT_FALLBACK_EMBEDDED_POLYFILLS = new Set(["deno"]);
@@ -478,6 +479,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           code = await profileModuleTransform(() =>
             transformToESM(source, sourceFile, projectDir, adapter, transformOpts)
           );
+          code = ensureFilenameDefaultExport(modulePath, code);
 
           if (isSSR) {
             code = await applySSRImportRewritesAsync(code, {
