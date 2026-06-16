@@ -55,7 +55,7 @@ const logger = serverLogger.component("release-asset-build");
 
 /** Browser module source extensions eligible for transform. */
 const BROWSER_MODULE_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
-/** Directories whose modules are part of the browser closure. */
+/** Directories used as browser graph entry seeds. Imports may reach any project directory. */
 const BROWSER_MODULE_DIRS = ["pages/", "components/", "layouts/", "lib/", "src/"];
 const FRAMEWORK_MODULE_URL_PREFIX = "/_vf_modules/_veryfront/";
 const REACT_IMPORT_MAP_DEPENDENCIES = [
@@ -245,9 +245,15 @@ function sanitizeError(error: unknown): string {
 }
 
 /** True when a logical path is an eligible browser module. */
-function isBrowserModule(path: string): boolean {
+function isTransformableBrowserModule(path: string): boolean {
   if (!BROWSER_MODULE_EXTENSIONS.some((ext) => path.endsWith(ext))) return false;
   if (path.endsWith(".d.ts")) return false;
+  return true;
+}
+
+/** True when a logical path should seed the browser module graph. */
+function isBrowserModule(path: string): boolean {
+  if (!isTransformableBrowserModule(path)) return false;
   return BROWSER_MODULE_DIRS.some((dir) => path.startsWith(dir));
 }
 
@@ -1489,57 +1495,35 @@ async function runBuildInner(
   const knownPaths = new Set(sourceByPath.keys());
   const vendorHttpImports = input.vendorHttpImports ?? vendorHttpImportsWithCache;
   const vendorDependencies = isDependencyImportMapEnabled();
+  const transformingModules = new Set<string>();
 
-  for (const [logicalPath, source] of sourceByPath) {
-    if (!isBrowserModule(logicalPath)) continue;
+  async function transformProjectModule(
+    logicalPath: string,
+  ): Promise<ReleaseAssetBuildResult | null> {
+    if (transformedModules.has(logicalPath) || transformingModules.has(logicalPath)) return null;
+    if (!isTransformableBrowserModule(logicalPath)) return null;
 
-    // M2: enforce client-side size limit before transform (source is a proxy;
-    // transformed output is checked after encoding below).
-    const sourceFile = join(tempDir, logicalPath);
-    let code: string;
+    const source = sourceByPath.get(logicalPath);
+    if (typeof source !== "string") return null;
+
+    transformingModules.add(logicalPath);
+
     try {
-      code = await transform(source, sourceFile, tempDir, input.adapter, {
-        projectId: input.projectId,
-        dev: false,
-        ssr: false,
-        reactVersion: input.reactVersion,
-      });
-    } catch (error) {
-      // Hard requirement: any module transform failure → report failed, stop.
-      const sanitized = sanitizeError(error);
-      logger.warn("Module transform failed during release asset build", {
-        path: logicalPath,
-        error: sanitized,
-      });
-      await client.reportReleaseAssetManifestState(
-        input.releaseVersionRef,
-        "failed",
-        sanitized,
-      );
-      return {
-        success: false,
-        state: "failed",
-        moduleCount: 0,
-        cssCount: 0,
-        routeCount: 0,
-        gaps,
-        error: sanitized,
-      };
-    }
-
-    if (vendorDependencies) {
+      // M2: enforce client-side size limit before transform (source is a proxy;
+      // transformed output is checked after encoding below).
+      const sourceFile = join(tempDir, logicalPath);
+      let code: string;
       try {
-        const vendored = await vendorHttpImports(code, {
-          tempDir,
+        code = await transform(source, sourceFile, tempDir, input.adapter, {
+          projectId: input.projectId,
+          dev: false,
+          ssr: false,
           reactVersion: input.reactVersion,
         });
-        code = vendored.code;
-        for (const dependency of vendored.dependencies) {
-          addDependencyModule(dependencyModules, dependency);
-        }
       } catch (error) {
+        // Hard requirement: any module transform failure -> report failed, stop.
         const sanitized = sanitizeError(error);
-        logger.warn("HTTP dependency vendoring failed during release asset build", {
+        logger.warn("Module transform failed during release asset build", {
           path: logicalPath,
           error: sanitized,
         });
@@ -1558,9 +1542,59 @@ async function runBuildInner(
           error: sanitized,
         };
       }
+
+      if (vendorDependencies) {
+        try {
+          const vendored = await vendorHttpImports(code, {
+            tempDir,
+            reactVersion: input.reactVersion,
+          });
+          code = vendored.code;
+          for (const dependency of vendored.dependencies) {
+            addDependencyModule(dependencyModules, dependency);
+          }
+        } catch (error) {
+          const sanitized = sanitizeError(error);
+          logger.warn("HTTP dependency vendoring failed during release asset build", {
+            path: logicalPath,
+            error: sanitized,
+          });
+          await client.reportReleaseAssetManifestState(
+            input.releaseVersionRef,
+            "failed",
+            sanitized,
+          );
+          return {
+            success: false,
+            state: "failed",
+            moduleCount: 0,
+            cssCount: 0,
+            routeCount: 0,
+            gaps,
+            error: sanitized,
+          };
+        }
+      }
+
+      transformedModules.set(logicalPath, { logicalPath, code });
+
+      const imports = await collectProjectModuleImports(code, logicalPath, knownPaths);
+      for (const importedPath of imports.values()) {
+        const failure = await transformProjectModule(importedPath);
+        if (failure) return failure;
+      }
+    } finally {
+      transformingModules.delete(logicalPath);
     }
 
-    transformedModules.set(logicalPath, { logicalPath, code });
+    return null;
+  }
+
+  for (const logicalPath of sourceByPath.keys()) {
+    if (!isBrowserModule(logicalPath)) continue;
+
+    const failure = await transformProjectModule(logicalPath);
+    if (failure) return failure;
   }
 
   if (vendorDependencies) {

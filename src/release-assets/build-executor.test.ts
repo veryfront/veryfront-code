@@ -840,6 +840,55 @@ describe("release asset build executor", () => {
     assert(!pageUpload.text.includes("/components/Button.js"));
   });
 
+  it("rewrites browser-reachable imports from arbitrary project folders", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "pages/index.tsx",
+        content: 'import Header from "../components/Header.tsx"; export default Header;',
+      },
+      {
+        path: "components/Header.tsx",
+        content: 'import { BreakpointsProvider } from "../custom-client/BreakpointsProvider.tsx";',
+      },
+      {
+        path: "custom-client/BreakpointsProvider.tsx",
+        content: "export const BreakpointsProvider = ({ children }) => children;",
+      },
+    ];
+    const client = makeClient(files, rec);
+    const transform = (_source: string, sourceFile: string) => {
+      if (sourceFile.endsWith("pages/index.tsx")) {
+        return Promise.resolve(
+          'import Header from "/_vf_modules/components/Header.js"; export default Header;',
+        );
+      }
+      if (sourceFile.endsWith("components/Header.tsx")) {
+        return Promise.resolve(
+          'import { BreakpointsProvider } from "../../custom-client/BreakpointsProvider.js"; export { BreakpointsProvider };',
+        );
+      }
+      return Promise.resolve("export const BreakpointsProvider = ({ children }) => children;");
+    };
+
+    await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    const providerHash = manifest.modules["custom-client/BreakpointsProvider.tsx"]?.contentHash;
+    assertExists(providerHash);
+    const headerHash = manifest.modules["components/Header.tsx"]?.contentHash;
+    assertExists(headerHash);
+
+    const headerUpload = rec.uploads.find((u) => u.hash === headerHash);
+    assertExists(headerUpload);
+    assert(headerUpload.text.includes(`"/_vf/assets/${providerHash}.js"`));
+    assert(!headerUpload.text.includes("../../custom-client/BreakpointsProvider.js"));
+
+    const routeModules = manifest.routes["/"]?.modules ?? [];
+    assert(routeModules.includes("custom-client/BreakpointsProvider.tsx"));
+  });
+
   it("does not rewrite import-like strings or comments in transformed modules", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
