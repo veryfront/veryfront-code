@@ -302,15 +302,46 @@ describe("Proxy Handler", () => {
       }
     });
 
-    it("fetches custom domain project metadata on each request", async () => {
-      let projectLookups = 0;
+    it("caches custom domain routing metadata but fetches access metadata on each request", async () => {
+      let routingLookups = 0;
+      let accessLookups = 0;
+      let fullProjectLookups = 0;
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
 
         if (pathname === "/auth/token") return createTokenResponse();
 
+        if (pathname.startsWith("/projects/-/proxy-routing/")) {
+          routingLookups++;
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            name: "My Project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["example.com"],
+              active_release_id: "rel-123",
+            }],
+          });
+        }
+
+        if (pathname.startsWith("/projects/-/proxy-access/")) {
+          accessLookups++;
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["example.com"],
+              protected: false,
+            }],
+          });
+        }
+
         if (pathname.startsWith("/projects/")) {
-          projectLookups++;
+          fullProjectLookups++;
           return Response.json({
             id: "proj-123",
             slug: "my-project",
@@ -341,7 +372,9 @@ describe("Proxy Handler", () => {
         assertEquals(second.error, undefined);
         assertEquals(first.projectSlug, "my-project");
         assertEquals(second.projectSlug, "my-project");
-        assertEquals(projectLookups, 2);
+        assertEquals(routingLookups, 1);
+        assertEquals(accessLookups, 2);
+        assertEquals(fullProjectLookups, 0);
 
         await handler.close();
       } finally {
@@ -810,14 +843,16 @@ describe("Proxy Handler", () => {
     });
 
     it("uses fresh custom domain protection metadata on each request", async () => {
-      let projectLookups = 0;
+      let routingLookups = 0;
+      let accessLookups = 0;
+      let fullProjectLookups = 0;
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
 
         if (pathname === "/auth/token") return createTokenResponse();
 
-        if (pathname.startsWith("/projects/")) {
-          projectLookups++;
+        if (pathname.startsWith("/projects/-/proxy-routing/")) {
+          routingLookups++;
           return Response.json({
             id: "proj-123",
             slug: "protected-project",
@@ -827,7 +862,36 @@ describe("Proxy Handler", () => {
               name: "production",
               domains: ["protected.example.com"],
               active_release_id: "rel-123",
-              protected: projectLookups >= 2,
+            }],
+          });
+        }
+
+        if (pathname.startsWith("/projects/-/proxy-access/")) {
+          accessLookups++;
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["protected.example.com"],
+              protected: accessLookups >= 2,
+            }],
+          });
+        }
+
+        if (pathname.startsWith("/projects/")) {
+          fullProjectLookups++;
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            name: "Protected Project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["protected.example.com"],
+              active_release_id: "rel-123",
+              protected: fullProjectLookups >= 2,
             }],
           });
         }
@@ -848,7 +912,9 @@ describe("Proxy Handler", () => {
         assertEquals(publicAccess.error, undefined);
         assertEquals(protectedAccess.error?.status, 302);
         assertEquals(protectedAccess.error?.message, "Authentication required");
-        assertEquals(projectLookups, 2);
+        assertEquals(routingLookups, 1);
+        assertEquals(accessLookups, 2);
+        assertEquals(fullProjectLookups, 0);
 
         await handler.close();
       } finally {
@@ -858,19 +924,51 @@ describe("Proxy Handler", () => {
 
     it("uses fresh custom domain project membership on each request", async () => {
       const memberToken = await signTestJwt({ userId: "user-123", sub: "user-123" });
-      let projectLookups = 0;
+      let routingLookups = 0;
+      let accessLookups = 0;
+      let fullProjectLookups = 0;
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
 
         if (pathname === "/auth/token") return createTokenResponse();
 
-        if (pathname.startsWith("/projects/")) {
-          projectLookups++;
+        if (pathname.startsWith("/projects/-/proxy-routing/")) {
+          routingLookups++;
           return Response.json({
             id: "proj-123",
             slug: "protected-project",
             name: "Protected Project",
-            users: projectLookups === 1 ? [{ id: "user-123" }] : [],
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["protected.example.com"],
+              active_release_id: "rel-123",
+            }],
+          });
+        }
+
+        if (pathname.startsWith("/projects/-/proxy-access/")) {
+          accessLookups++;
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            users: accessLookups === 1 ? [{ id: "user-123" }] : [],
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["protected.example.com"],
+              protected: true,
+            }],
+          });
+        }
+
+        if (pathname.startsWith("/projects/")) {
+          fullProjectLookups++;
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            name: "Protected Project",
+            users: fullProjectLookups === 1 ? [{ id: "user-123" }] : [],
             environments: [{
               id: "env-1",
               name: "production",
@@ -907,7 +1005,9 @@ describe("Proxy Handler", () => {
         assertEquals(allowed.error, undefined);
         assertEquals(rejected.error?.status, 403);
         assertEquals(rejected.error?.message, "Access denied");
-        assertEquals(projectLookups, 2);
+        assertEquals(routingLookups, 1);
+        assertEquals(accessLookups, 2);
+        assertEquals(fullProjectLookups, 0);
 
         await handler.close();
       } finally {

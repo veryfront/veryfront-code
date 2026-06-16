@@ -3,6 +3,7 @@ import { type ParsedDomain, parseProjectDomain } from "#veryfront/server/utils/d
 import type { TokenCache } from "./cache/types.ts";
 import { injectContext, ProxySpanNames, withSpan } from "./tracing.ts";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { checkProtectedProxyAccess } from "./proxy-access-control.ts";
 import { createLocalProjectResolver } from "./local-project-resolver.ts";
 import {
@@ -60,10 +61,31 @@ function isSignedInternalControlPlaneRequest(req: Request, url: URL): boolean {
   return !!req.headers.get("x-token");
 }
 
-interface DomainLookupResult {
+interface ProjectRoutingLookupResult {
   id: string;
   slug: string;
   name: string;
+  environments?: Array<{
+    id: string;
+    name: string;
+    domains?: string[];
+    active_release_id?: string | null;
+  }>;
+}
+
+interface ProjectAccessLookupResult {
+  id: string;
+  slug: string;
+  users?: Array<{ id: string }>;
+  environments?: Array<{
+    id: string;
+    name: string;
+    domains?: string[];
+    protected?: boolean;
+  }>;
+}
+
+interface DomainLookupResult extends ProjectRoutingLookupResult {
   users?: Array<{ id: string }>;
   environments?: Array<{
     id: string;
@@ -72,6 +94,31 @@ interface DomainLookupResult {
     active_release_id?: string | null;
     protected?: boolean;
   }>;
+}
+
+type ProjectLookupEnvironment = {
+  id: string;
+  name: string;
+  domains?: string[];
+};
+
+interface ProjectRoutingCacheEntry {
+  value: ProjectRoutingLookupResult;
+  expiresAt: number;
+}
+
+const DEFAULT_PROXY_ROUTING_CACHE_TTL_MS = 60_000;
+const DEFAULT_PROXY_ROUTING_CACHE_MAX_ENTRIES = 1_000;
+
+function readNonNegativeIntegerEnv(name: string, fallback: number): number {
+  const raw = getEnv(name);
+  if (!raw) return fallback;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
+}
+
+function normalizeProjectLookupKey(lookupKey: string): string {
+  return lookupKey.trim().replace(/:\d+$/, "").toLowerCase();
 }
 
 async function lookupProjectByDomain(
@@ -132,6 +179,134 @@ async function lookupProjectByDomain(
       }
     },
     { "proxy.domain": domain },
+  );
+}
+
+async function lookupProjectRoutingMetadata(
+  lookupKey: string,
+  apiBaseUrl: string,
+  token: string,
+  logger?: ProxyLogger,
+): Promise<ProjectRoutingLookupResult | null> {
+  return withSpan(
+    ProxySpanNames.PROXY_DOMAIN_LOOKUP,
+    async () => {
+      const normalizedLookupKey = normalizeProjectLookupKey(lookupKey);
+      const url = `${apiBaseUrl}/projects/-/proxy-routing/${
+        encodeURIComponent(normalizedLookupKey)
+      }`;
+      const urlObj = new URL(url);
+
+      logger?.debug("Looking up project proxy routing metadata", { lookupKey, url });
+
+      const headers = new Headers({
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+      });
+      injectContext(headers);
+
+      try {
+        const response = await withSpan(
+          ProxySpanNames.HTTP_CLIENT_FETCH,
+          () => fetch(url, { headers }),
+          {
+            "http.method": "GET",
+            "http.url": url,
+            "http.host": urlObj.host,
+            "proxy.routing_lookup": normalizedLookupKey,
+          },
+        );
+
+        if (!response.ok) {
+          await response.body?.cancel();
+          if (response.status !== 404) {
+            logger?.error("Proxy routing metadata API error", undefined, {
+              lookupKey,
+              status: response.status,
+              statusText: response.statusText,
+            });
+          }
+          return null;
+        }
+
+        const result = (await response.json()) as ProjectRoutingLookupResult;
+        logger?.debug("Proxy routing metadata lookup successful", {
+          lookupKey,
+          projectSlug: result.slug,
+          environments: result.environments?.map((e) => e.name),
+        });
+        return result;
+      } catch (error) {
+        logger?.error("Proxy routing metadata lookup failed", error as Error, { lookupKey });
+        return null;
+      }
+    },
+    { "proxy.lookup_key": lookupKey },
+  );
+}
+
+async function lookupProjectAccessMetadata(
+  lookupKey: string,
+  apiBaseUrl: string,
+  token: string,
+  includeUsers: boolean,
+  logger?: ProxyLogger,
+): Promise<ProjectAccessLookupResult | null> {
+  return withSpan(
+    ProxySpanNames.PROXY_DOMAIN_LOOKUP,
+    async () => {
+      const normalizedLookupKey = normalizeProjectLookupKey(lookupKey);
+      const url = `${apiBaseUrl}/projects/-/proxy-access/${
+        encodeURIComponent(normalizedLookupKey)
+      }?include_users=${includeUsers ? "true" : "false"}`;
+      const urlObj = new URL(url);
+
+      logger?.debug("Looking up project proxy access metadata", { lookupKey, includeUsers, url });
+
+      const headers = new Headers({
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+      });
+      injectContext(headers);
+
+      try {
+        const response = await withSpan(
+          ProxySpanNames.HTTP_CLIENT_FETCH,
+          () => fetch(url, { headers }),
+          {
+            "http.method": "GET",
+            "http.url": url,
+            "http.host": urlObj.host,
+            "proxy.access_lookup": normalizedLookupKey,
+          },
+        );
+
+        if (!response.ok) {
+          await response.body?.cancel();
+          if (response.status !== 404) {
+            logger?.error("Proxy access metadata API error", undefined, {
+              lookupKey,
+              status: response.status,
+              statusText: response.statusText,
+            });
+          }
+          return null;
+        }
+
+        const result = (await response.json()) as ProjectAccessLookupResult;
+        logger?.debug("Proxy access metadata lookup successful", {
+          lookupKey,
+          projectSlug: result.slug,
+          environments: result.environments?.map((e) => e.name),
+          userCount: result.users?.length ?? 0,
+        });
+        return result;
+      } catch (error) {
+        logger?.error("Proxy access metadata lookup failed", error as Error, { lookupKey });
+        return null;
+      }
+    },
+    { "proxy.lookup_key": lookupKey },
   );
 }
 
@@ -214,6 +389,16 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     },
     { cache },
   );
+  const routingCacheTtlMs = readNonNegativeIntegerEnv(
+    "VERYFRONT_PROXY_ROUTING_CACHE_TTL_MS",
+    DEFAULT_PROXY_ROUTING_CACHE_TTL_MS,
+  );
+  const routingCacheMaxEntries = readNonNegativeIntegerEnv(
+    "VERYFRONT_PROXY_ROUTING_CACHE_MAX_ENTRIES",
+    DEFAULT_PROXY_ROUTING_CACHE_MAX_ENTRIES,
+  );
+  const routingLookupCache = new Map<string, ProjectRoutingCacheEntry>();
+  const routingLookupInflight = new Map<string, Promise<ProjectRoutingLookupResult | null>>();
 
   async function resolveProjectLookup(
     lookupKey: string,
@@ -227,6 +412,101 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     );
   }
 
+  function getCachedRoutingLookup(cacheKey: string): ProjectRoutingLookupResult | null {
+    if (routingCacheTtlMs <= 0 || routingCacheMaxEntries <= 0) {
+      return null;
+    }
+
+    const cached = routingLookupCache.get(cacheKey);
+    if (!cached) {
+      return null;
+    }
+
+    if (cached.expiresAt <= Date.now()) {
+      routingLookupCache.delete(cacheKey);
+      return null;
+    }
+
+    routingLookupCache.delete(cacheKey);
+    routingLookupCache.set(cacheKey, cached);
+    return cached.value;
+  }
+
+  function setCachedRoutingLookup(cacheKey: string, value: ProjectRoutingLookupResult): void {
+    if (routingCacheTtlMs <= 0 || routingCacheMaxEntries <= 0) {
+      return;
+    }
+
+    if (!routingLookupCache.has(cacheKey)) {
+      while (routingLookupCache.size >= routingCacheMaxEntries) {
+        const oldestKey = routingLookupCache.keys().next().value;
+        if (!oldestKey) break;
+        routingLookupCache.delete(oldestKey);
+      }
+    }
+
+    routingLookupCache.set(cacheKey, {
+      value,
+      expiresAt: Date.now() + routingCacheTtlMs,
+    });
+  }
+
+  async function resolveProjectRoutingLookup(
+    lookupKey: string,
+    token: string,
+    timing?: ProxyServerTiming,
+  ): Promise<ProjectRoutingLookupResult | null> {
+    const cacheKey = normalizeProjectLookupKey(lookupKey);
+    return await profileProxyServerTimingPhase(
+      timing ?? { enabled: false, startedAt: 0, phases: new Map() },
+      "proxy.routing_lookup",
+      async () => {
+        const cached = getCachedRoutingLookup(cacheKey);
+        if (cached) {
+          logger?.debug("Proxy routing metadata cache hit", { lookupKey });
+          return cached;
+        }
+
+        const existingLookup = routingLookupInflight.get(cacheKey);
+        if (existingLookup) {
+          logger?.debug("Proxy routing metadata lookup joined in-flight request", { lookupKey });
+          return await existingLookup;
+        }
+
+        const lookupPromise = lookupProjectRoutingMetadata(
+          lookupKey,
+          config.apiBaseUrl,
+          token,
+          logger,
+        )
+          .then((result) => {
+            if (result) {
+              setCachedRoutingLookup(cacheKey, result);
+            }
+            return result;
+          })
+          .finally(() => {
+            routingLookupInflight.delete(cacheKey);
+          });
+        routingLookupInflight.set(cacheKey, lookupPromise);
+        return await lookupPromise;
+      },
+    );
+  }
+
+  async function resolveProjectAccessLookup(
+    lookupKey: string,
+    token: string,
+    includeUsers: boolean,
+    timing?: ProxyServerTiming,
+  ): Promise<ProjectAccessLookupResult | null> {
+    return await profileProxyServerTimingPhase(
+      timing ?? { enabled: false, startedAt: 0, phases: new Map() },
+      "proxy.access_lookup",
+      () => lookupProjectAccessMetadata(lookupKey, config.apiBaseUrl, token, includeUsers, logger),
+    );
+  }
+
   function validateConfig(): string[] {
     const missing: string[] = [];
     if (!config.apiClientId) missing.push("VERYFRONT_PROXY_API_CLIENT_ID");
@@ -234,17 +514,17 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     return missing;
   }
 
-  async function resolveReleaseAndProtection(
+  async function resolveFullProjectLookupAndProtection(
     req: Request,
     url: URL,
     token: string,
     userToken: string | undefined,
     lookupKey: string,
-    envMatcher: (env: NonNullable<DomainLookupResult["environments"]>[number]) => boolean,
+    envMatcher: (env: ProjectLookupEnvironment) => boolean,
     timing: ProxyServerTiming | undefined,
     logContext: Record<string, unknown>,
   ): Promise<
-    | { projectId?: string; releaseId?: string; environmentId?: string }
+    | { projectId?: string; projectSlug?: string; releaseId?: string; environmentId?: string }
     | { error: { status: number; message: string; redirectUrl?: string } }
   > {
     const lookupResult = await resolveProjectLookup(lookupKey, token, timing);
@@ -267,9 +547,87 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
     return {
       projectId: lookupResult.id,
+      projectSlug: lookupResult.slug,
       releaseId: matchingEnv?.active_release_id ?? undefined,
       environmentId: matchingEnv?.id,
     };
+  }
+
+  async function resolveProjectMetadataAndProtection(
+    req: Request,
+    url: URL,
+    token: string,
+    userToken: string | undefined,
+    lookupKey: string,
+    envMatcher: (env: ProjectLookupEnvironment) => boolean,
+    timing: ProxyServerTiming | undefined,
+    logContext: Record<string, unknown>,
+  ): Promise<
+    | { projectId?: string; projectSlug?: string; releaseId?: string; environmentId?: string }
+    | { error: { status: number; message: string; redirectUrl?: string } }
+  > {
+    return await profileProxyServerTimingPhase(
+      timing ?? { enabled: false, startedAt: 0, phases: new Map() },
+      "proxy.project_lookup",
+      async () => {
+        const routingResult = await resolveProjectRoutingLookup(lookupKey, token, timing);
+        if (!routingResult) {
+          return await resolveFullProjectLookupAndProtection(
+            req,
+            url,
+            token,
+            userToken,
+            lookupKey,
+            envMatcher,
+            undefined,
+            logContext,
+          );
+        }
+
+        const accessResult = await resolveProjectAccessLookup(
+          lookupKey,
+          token,
+          !!userToken,
+          timing,
+        );
+        if (!accessResult || accessResult.id !== routingResult.id) {
+          routingLookupCache.delete(normalizeProjectLookupKey(lookupKey));
+          return await resolveFullProjectLookupAndProtection(
+            req,
+            url,
+            token,
+            userToken,
+            lookupKey,
+            envMatcher,
+            undefined,
+            logContext,
+          );
+        }
+
+        const routingEnv = routingResult.environments?.find(envMatcher);
+        const accessEnv = accessResult.environments?.find(envMatcher);
+
+        const protectionError = await checkProtectedProxyAccess({
+          req,
+          url,
+          matchingEnv: accessEnv,
+          userToken,
+          users: accessResult.users,
+          apiBaseUrl: config.apiBaseUrl,
+          logger,
+          logContext,
+          isSignedInternalControlPlaneRequest: isSignedInternalControlPlaneRequest(req, url),
+        });
+        if (protectionError) return { error: protectionError };
+
+        return {
+          projectId: routingResult.id,
+          projectSlug: routingResult.slug,
+          releaseId: routingEnv?.active_release_id ?? undefined,
+          environmentId: routingEnv?.id,
+        };
+      },
+    );
   }
 
   async function processRequest(
@@ -384,12 +742,28 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           });
         }
 
-        const lookupResult = await resolveProjectLookup(
-          host,
+        const normalizedHost = host.toLowerCase().replace(/:\d+$/, "");
+        const resolved = await resolveProjectMetadataAndProtection(
+          req,
+          url,
           token,
+          userToken,
+          host,
+          (env) => env.domains?.some((d) => d.toLowerCase() === normalizedHost) ?? false,
           options.timing,
+          { domain: host },
         );
-        if (!lookupResult) {
+
+        if ("error" in resolved) {
+          return createProxyErrorContext(base, {
+            status: resolved.error.status,
+            message: resolved.error.message,
+            token,
+            redirectUrl: resolved.error.redirectUrl,
+          });
+        }
+
+        if (!resolved.projectId || !resolved.projectSlug) {
           logger?.info("Custom domain not found", { domain: host });
           return createProxyErrorContext(base, {
             status: 404,
@@ -398,48 +772,22 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           });
         }
 
-        projectSlug = lookupResult.slug;
-        projectId = lookupResult.id;
-
-        const normalizedHost = host.toLowerCase().replace(/:\d+$/, "");
-        const matchingEnv = lookupResult.environments?.find((env) =>
-          env.domains?.some((d) => d.toLowerCase() === normalizedHost)
-        );
-
-        releaseId = matchingEnv?.active_release_id ?? undefined;
-        environmentId = matchingEnv?.id;
-
-        const protectionError = await checkProtectedProxyAccess({
-          req,
-          url,
-          matchingEnv,
-          userToken,
-          users: lookupResult.users,
-          apiBaseUrl: config.apiBaseUrl,
-          logger,
-          logContext: { domain: host },
-          isSignedInternalControlPlaneRequest: isSignedInternalControlPlaneRequest(req, url),
-        });
-        if (protectionError) {
-          return createProxyErrorContext(base, {
-            status: protectionError.status,
-            message: protectionError.message,
-            token,
-            redirectUrl: protectionError.redirectUrl,
-          });
-        }
+        projectSlug = resolved.projectSlug;
+        projectId = resolved.projectId;
+        releaseId = resolved.releaseId;
+        environmentId = resolved.environmentId;
 
         logger?.info("Resolved custom domain to project", {
           domain: host,
           projectSlug,
           projectId,
           releaseId,
-          environmentName: matchingEnv?.name,
+          environmentId,
         });
       } else if (projectSlug && scope === "production" && token && parsedDomain.environment) {
         const targetEnv = parsedDomain.environment.toLowerCase();
 
-        const resolved = await resolveReleaseAndProtection(
+        const resolved = await resolveProjectMetadataAndProtection(
           req,
           url,
           token,
@@ -483,7 +831,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       } else if (projectSlug && scope === "preview" && token) {
         // Preview uses branch-based content (no releaseId needed), but must
         // still enforce the environment's `protected` flag like other scopes.
-        const resolved = await resolveReleaseAndProtection(
+        const resolved = await resolveProjectMetadataAndProtection(
           req,
           url,
           token,

@@ -73,11 +73,20 @@ flowchart TD
 
 ## Runtime caches
 
-Project metadata lookups are not cached in the proxy. The current lookup
-response carries both routing data and access-control state (`protected`
-environment flags and project members), so caching it can authorize with stale
-metadata after protection or membership changes. Add a routing-only control
-plane contract before introducing a proxy lookup cache.
+The proxy caches routing-only project metadata from the control plane. That
+payload contains project identity, environments, domains, and active release
+ids, but it does not contain `protected` flags or project members. Protection
+state and project membership are fetched through a separate access metadata
+lookup on every request, so protection toggles and membership changes stay
+fresh while release routing avoids the full project relation query on warm
+paths.
+
+Default routing cache controls:
+
+| Environment variable                        | Default |
+| ------------------------------------------- | ------- |
+| `VERYFRONT_PROXY_ROUTING_CACHE_TTL_MS`      | `60000` |
+| `VERYFRONT_PROXY_ROUTING_CACHE_MAX_ENTRIES` | `1000`  |
 
 Release-backed production page-data requests use a fresh cache window plus a
 bounded stale-while-revalidate window. The cache key includes the project,
