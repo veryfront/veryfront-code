@@ -99,8 +99,10 @@ export interface PendingRapidHeapGrowth {
 export interface RapidHeapGrowthEvaluationInput {
   previousHeapUsedMB: number;
   currentHeapUsedMB: number;
+  currentHeapUsedPercent?: number;
   pending: PendingRapidHeapGrowth | undefined;
   thresholdMB: number;
+  memoryPressureWarningThresholdPercent?: number;
 }
 
 export interface RapidHeapGrowthEvaluation {
@@ -259,6 +261,17 @@ export function getRapidHeapGrowthEvaluation(
       input.currentHeapUsedMB - input.pending.baselineHeapUsedMB,
     );
     if (sustainedGrowthMB > input.thresholdMB) {
+      if (
+        input.currentHeapUsedPercent !== undefined &&
+        input.memoryPressureWarningThresholdPercent !== undefined &&
+        input.currentHeapUsedPercent <= input.memoryPressureWarningThresholdPercent
+      ) {
+        return {
+          shouldWarn: false,
+          pending: input.pending,
+        };
+      }
+
       return {
         shouldWarn: true,
         growthMB: sustainedGrowthMB,
@@ -329,8 +342,10 @@ export function startMemoryMonitoring(intervalMs = DEFAULT_MEMORY_MONITORING_INT
     const rapidGrowthEvaluation = getRapidHeapGrowthEvaluation({
       previousHeapUsedMB: lastHeapUsed,
       currentHeapUsedMB: heap.usedHeapSizeMB,
+      currentHeapUsedPercent: heap.heapUsedPercent,
       pending: pendingRapidHeapGrowth,
       thresholdMB: HEAP_RAPID_GROWTH_THRESHOLD_MB,
+      memoryPressureWarningThresholdPercent: thresholdPercent,
     });
     pendingRapidHeapGrowth = rapidGrowthEvaluation.pending;
     if (rapidGrowthEvaluation.shouldWarn) {

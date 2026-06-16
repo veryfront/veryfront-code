@@ -193,6 +193,30 @@ describe("memory/profiler", () => {
       assertEquals(sustained.growthMB, 135);
       assertEquals(sustained.pending, undefined);
     });
+
+    it("defers sustained rapid heap growth warnings while heap pressure is low", () => {
+      const first = getRapidHeapGrowthEvaluation({
+        previousHeapUsedMB: 99.16,
+        currentHeapUsedMB: 212.69,
+        pending: undefined,
+        thresholdMB: 100,
+        currentHeapUsedPercent: 4.15,
+        memoryPressureWarningThresholdPercent: 75,
+      });
+
+      const sustainedLowPressure = getRapidHeapGrowthEvaluation({
+        previousHeapUsedMB: 212.69,
+        currentHeapUsedMB: 235.59,
+        pending: first.pending,
+        thresholdMB: 100,
+        currentHeapUsedPercent: 4.6,
+        memoryPressureWarningThresholdPercent: 75,
+      });
+
+      assertEquals(sustainedLowPressure.shouldWarn, false);
+      assertEquals(sustainedLowPressure.pending?.baselineHeapUsedMB, 99.16);
+      assertEquals(sustainedLowPressure.pending?.observedGrowthMB, 113.53);
+    });
   });
 
   describe("checkMemoryPressure", () => {
