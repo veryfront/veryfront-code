@@ -697,6 +697,61 @@ describe("internal-agents/run-stream", () => {
     await reader.cancel();
   });
 
+  it("cancels an active runtime stream when the client disconnects before a tool wait", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    const agent = {
+      id: "disconnect-agent",
+      config: {
+        id: "disconnect-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+
+    const input = {
+      agentId: "disconnect-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_disconnect",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    let runtimeCancelCalls = 0;
+    const response = await createRuntimeAgentStreamResponse(
+      input,
+      agent,
+      {
+        sessionManager,
+        createRuntime: () => ({
+          stream: async () =>
+            new ReadableStream<Uint8Array>({
+              cancel() {
+                runtimeCancelCalls++;
+              },
+            }),
+        }),
+      },
+    );
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error("Expected a runtime response body");
+    }
+
+    const decoder = new TextDecoder();
+    const started = await reader.read();
+    assertStringIncludes(decoder.decode(started.value), "event: RunStarted");
+
+    await reader.cancel();
+    for (let attempt = 0; attempt < 20 && runtimeCancelCalls === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    assertEquals(runtimeCancelCalls, 1);
+    assertEquals(sessionManager.getRunStatus(input.runId), null);
+  });
+
   it("debug logs runtime reader cancellation failures during abort cleanup", async () => {
     const logs = captureConsoleJsonLogs();
     try {
