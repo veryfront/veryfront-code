@@ -120,6 +120,14 @@ describe("hydration-script-builder/templates/router", () => {
       );
     });
 
+    it("should emit fresh page-data timing only for navigation fetches", () => {
+      const result = getRouterScript();
+      assertIncludes(result, "recordRouteTiming = false");
+      assertIncludes(result, "if (recordRouteTiming) {");
+      assertIncludes(result, "fetchPageDataFresh(path, null).finally");
+      assertIncludes(result, "recordRouteTiming: true");
+    });
+
     it("should emit route transition timing events", () => {
       const result = getRouterScript();
       assertIncludes(result, "function emitRouteTiming(phase, path, startedAt, detail = {})");

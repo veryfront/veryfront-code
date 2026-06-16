@@ -300,10 +300,14 @@ export const getRouterScript = () => `
     // Page data fetching with caching
     // ============================================
     async function fetchPageDataFresh(path, signal, options = {}) {
-      const { triggerReloadOnVersionMismatch = false, timingSource = 'network' } = options;
+      const {
+        triggerReloadOnVersionMismatch = false,
+        recordRouteTiming = false,
+        timingSource = 'network'
+      } = options;
       const normalizedPath = path === '/' ? '' : path.replace(/^\\//, '');
       const endpoint = '/_veryfront/page-data/' + normalizedPath + '.json';
-      const startedAt = routeTimingNow();
+      const startedAt = recordRouteTiming ? routeTimingNow() : 0;
 
       log('Fetching page data:', path);
       perfStart('fetch:' + path);
@@ -315,7 +319,9 @@ export const getRouterScript = () => `
 
       if (!response.ok) {
         perfEnd('fetch:' + path);
-        emitRouteTiming('page-data', path, startedAt, { source: timingSource, status: response.status });
+        if (recordRouteTiming) {
+          emitRouteTiming('page-data', path, startedAt, { source: timingSource, status: response.status });
+        }
         const error = new Error('Failed to fetch page data: ' + response.status);
         error.status = response.status;
         throw error;
@@ -325,7 +331,9 @@ export const getRouterScript = () => `
       const data = await response.json();
       perfEnd('parse:' + path);
       perfEnd('fetch:' + path);
-      emitRouteTiming('page-data', path, startedAt, { source: timingSource, status: response.status });
+      if (recordRouteTiming) {
+        emitRouteTiming('page-data', path, startedAt, { source: timingSource, status: response.status });
+      }
 
       if (triggerReloadOnVersionMismatch) {
         const checkedData = handlePageDataVersionMismatch(path, data);
@@ -388,6 +396,7 @@ export const getRouterScript = () => `
 
       return fetchPageDataFresh(path, signal, {
         triggerReloadOnVersionMismatch: true,
+        recordRouteTiming: true,
         timingSource: 'network'
       });
     }
