@@ -6,7 +6,8 @@
 
 import type { Logger } from "#veryfront/utils/logger/logger.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
-import { cacheModule, ensureFilenameDefaultExport } from "./module-cache.ts";
+import { ensureFilenameDefaultExport } from "#veryfront/modules/loader-shared/filename-default-export.ts";
+import { cacheModule } from "./module-cache.ts";
 import { writeDistributedCache } from "./distributed-cache.ts";
 
 type CacheLocalModuleFn = typeof cacheModule;
