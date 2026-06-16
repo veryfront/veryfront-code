@@ -7,8 +7,10 @@ import {
   forceGC,
   getCacheStats,
   getHeapStats,
+  getInitialRapidHeapGrowthState,
   getMemoryMonitoringLogContext,
   getMemorySnapshot,
+  getRapidHeapGrowthEvaluation,
   registerCache,
   setHeapWarningThreshold,
   startMemoryMonitoring,
@@ -133,6 +135,63 @@ describe("memory/profiler", () => {
   describe("forceGC", () => {
     it("should return a boolean", async () => {
       assertEquals(typeof (await forceGC()), "boolean");
+    });
+  });
+
+  describe("getRapidHeapGrowthEvaluation", () => {
+    it("seeds restart baselines from current heap so stable warm heaps do not warn", () => {
+      const initialState = getInitialRapidHeapGrowthState(153.01);
+
+      const flatSample = getRapidHeapGrowthEvaluation({
+        previousHeapUsedMB: initialState.lastHeapUsedMB,
+        currentHeapUsedMB: 153.01,
+        pending: initialState.pending,
+        thresholdMB: 100,
+      });
+
+      assertEquals(flatSample.shouldWarn, false);
+      assertEquals(flatSample.pending, undefined);
+    });
+
+    it("does not warn when a one-interval spike is reclaimed on the next sample", () => {
+      const first = getRapidHeapGrowthEvaluation({
+        previousHeapUsedMB: 99.16,
+        currentHeapUsedMB: 212.69,
+        pending: undefined,
+        thresholdMB: 100,
+      });
+
+      assertEquals(first.shouldWarn, false);
+      assertEquals(first.pending?.baselineHeapUsedMB, 99.16);
+
+      const settled = getRapidHeapGrowthEvaluation({
+        previousHeapUsedMB: 212.69,
+        currentHeapUsedMB: 153.01,
+        pending: first.pending,
+        thresholdMB: 100,
+      });
+
+      assertEquals(settled.shouldWarn, false);
+      assertEquals(settled.pending, undefined);
+    });
+
+    it("warns when rapid heap growth remains sustained after the next sample", () => {
+      const first = getRapidHeapGrowthEvaluation({
+        previousHeapUsedMB: 100,
+        currentHeapUsedMB: 225,
+        pending: undefined,
+        thresholdMB: 100,
+      });
+      const sustained = getRapidHeapGrowthEvaluation({
+        previousHeapUsedMB: 225,
+        currentHeapUsedMB: 235,
+        pending: first.pending,
+        thresholdMB: 100,
+      });
+
+      assertEquals(sustained.shouldWarn, true);
+      assertEquals(sustained.growthMB, 135);
+      assertEquals(sustained.pending, undefined);
     });
   });
 
