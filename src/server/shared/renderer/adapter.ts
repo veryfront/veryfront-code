@@ -31,6 +31,8 @@ import type {
 import type { MdxBundle } from "#veryfront/types";
 import { APICacheStore } from "#veryfront/rendering/cache/stores/api-store.ts";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
+import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
 const logger = rendererLogger.component("renderer-adapter");
 
@@ -289,22 +291,63 @@ async function createContextFromHandler(ctx: HandlerContext): Promise<RenderCont
   return renderContext;
 }
 
+function shouldUseMultiProjectContext(ctx: HandlerContext): boolean {
+  if (!ctx.projectSlug) return false;
+  const fs = ctx.adapter?.fs;
+  if (!fs) return false;
+  return isExtendedFSAdapter(fs) && fs.isMultiProjectMode();
+}
+
+function resolveContextBranch(ctx: HandlerContext): string | null {
+  return ctx.requestContext?.branch ?? ctx.parsedDomain?.branch ?? null;
+}
+
+function runWithProjectContext<T>(ctx: HandlerContext, fn: () => Promise<T>): Promise<T> {
+  if (!shouldUseMultiProjectContext(ctx)) return fn();
+
+  const fs = ctx.adapter?.fs;
+  if (!fs || !isExtendedFSAdapter(fs)) return fn();
+
+  const environment = resolveEnvironment(ctx);
+  const token = ctx.proxyToken || getHostEnv("VERYFRONT_API_TOKEN") || "";
+
+  return fs.runWithContext(
+    ctx.projectSlug!,
+    token,
+    fn,
+    ctx.projectId,
+    {
+      productionMode: environment === "production",
+      releaseId: ctx.releaseId,
+      branch: resolveContextBranch(ctx),
+      environmentName: ctx.environmentName,
+    },
+  );
+}
+
 class RendererAdapterImpl implements RendererAdapter {
   constructor(
     private renderer: Renderer,
     private ctx: RenderContext,
+    private handlerCtx: HandlerContext,
   ) {}
 
   renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
-    return this.renderer.renderPage(slug, this.ctx, options);
+    return runWithProjectContext(
+      this.handlerCtx,
+      () => this.renderer.renderPage(slug, this.ctx, options),
+    );
   }
 
   resolvePageData(slug: string, options?: RenderOptions): Promise<PageDataResponse> {
-    return this.renderer.resolvePageData(slug, this.ctx, options);
+    return runWithProjectContext(
+      this.handlerCtx,
+      () => this.renderer.resolvePageData(slug, this.ctx, options),
+    );
   }
 
   getAllPages(): Promise<string[]> {
-    return this.renderer.getAllPages(this.ctx);
+    return runWithProjectContext(this.handlerCtx, () => this.renderer.getAllPages(this.ctx));
   }
 
   clearCache(slug?: string): void {
@@ -341,21 +384,23 @@ class RendererAdapterImpl implements RendererAdapter {
     frontmatter?: Record<string, unknown>,
     filePath?: string,
   ): Promise<MdxBundle> {
-    const { MDXCompiler } = await import("../../../rendering/orchestrator/mdx.ts");
-    const { MDXCacheAdapter } = await import("#veryfront/transforms/mdx/index.ts");
+    return await runWithProjectContext(this.handlerCtx, async () => {
+      const { MDXCompiler } = await import("../../../rendering/orchestrator/mdx.ts");
+      const { MDXCacheAdapter } = await import("#veryfront/transforms/mdx/index.ts");
 
-    const mdxCacheAdapter = new MDXCacheAdapter({
-      config: this.ctx.config,
-      mode: this.ctx.mode,
+      const mdxCacheAdapter = new MDXCacheAdapter({
+        config: this.ctx.config,
+        mode: this.ctx.mode,
+      });
+
+      const compiler = new MDXCompiler({
+        projectDir: this.ctx.projectDir,
+        mode: this.ctx.mode,
+        mdxCacheAdapter,
+      });
+
+      return compiler.compileMDX(content, frontmatter, filePath);
     });
-
-    const compiler = new MDXCompiler({
-      projectDir: this.ctx.projectDir,
-      mode: this.ctx.mode,
-      mdxCacheAdapter,
-    });
-
-    return compiler.compileMDX(content, frontmatter, filePath);
   }
 
   async destroy(): Promise<void> {}
@@ -381,7 +426,7 @@ export async function getRendererForProject(ctx: HandlerContext): Promise<Render
 
   const contextStartTime = performance.now();
   logger.debug("createContextFromHandler START", { projectSlug });
-  const renderCtx = await createContextFromHandler(ctx);
+  const renderCtx = await runWithProjectContext(ctx, () => createContextFromHandler(ctx));
   logger.debug("createContextFromHandler DONE", {
     projectSlug,
     duration: `${(performance.now() - contextStartTime).toFixed(2)}ms`,
@@ -393,7 +438,7 @@ export async function getRendererForProject(ctx: HandlerContext): Promise<Render
     duration: `${(performance.now() - startTime).toFixed(2)}ms`,
   });
 
-  return new RendererAdapterImpl(renderer, renderCtx);
+  return new RendererAdapterImpl(renderer, renderCtx, ctx);
 }
 
 export async function destroyRendererAdapter(): Promise<void> {

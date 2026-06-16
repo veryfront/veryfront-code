@@ -184,6 +184,65 @@ describe("MultiProjectFSAdapter", () => {
         assertEquals(cachedAfterRefresh, undefined);
       });
     });
+
+    it("materializes production release adapters before running the context callback", async () => {
+      await withAdapterAsync(async (adapter) => {
+        const originalManager = (adapter as any).manager;
+        let getAdapterCalled = false;
+        let callbackSawMaterializedAdapter = false;
+        let capturedProjectSlug: string | undefined;
+        let capturedProjectId: string | undefined;
+        let capturedProductionMode: boolean | undefined;
+        let capturedReleaseId: string | null | undefined;
+        let capturedEnvironmentName: string | null | undefined;
+
+        (adapter as any).manager = {
+          getAdapter(
+            projectSlug: string,
+            _token: string,
+            projectId?: string,
+            productionMode?: boolean,
+            releaseId?: string | null,
+            environmentName?: string | null,
+          ) {
+            getAdapterCalled = true;
+            capturedProjectSlug = projectSlug;
+            capturedProjectId = projectId;
+            capturedProductionMode = productionMode;
+            capturedReleaseId = releaseId;
+            capturedEnvironmentName = environmentName;
+            return Promise.resolve({});
+          },
+          getStats: () => ({ adapters: 0, stats: [] }),
+          dispose: () => {},
+        };
+
+        try {
+          await adapter.runWithContext(
+            "project-release",
+            "test-token",
+            async () => {
+              callbackSawMaterializedAdapter = getAdapterCalled;
+            },
+            "project-id-release",
+            {
+              productionMode: true,
+              releaseId: "rel-first-hit",
+              environmentName: "production",
+            },
+          );
+        } finally {
+          (adapter as any).manager = originalManager;
+        }
+
+        assertEquals(callbackSawMaterializedAdapter, true);
+        assertEquals(capturedProjectSlug, "project-release");
+        assertEquals(capturedProjectId, "project-id-release");
+        assertEquals(capturedProductionMode, true);
+        assertEquals(capturedReleaseId, "rel-first-hit");
+        assertEquals(capturedEnvironmentName, "production");
+      });
+    });
   });
 });
 
