@@ -33,6 +33,7 @@ export const getRouterScript = () => `
     const MAX_RETRIES = 2;
     const MAX_CACHE_SIZE = 50;
     const CACHE_TTL_MS = 5 * 60 * 1000;
+    const BACKGROUND_REFRESH_INTERVAL_MS = 30 * 1000;
     const PREFETCH_DELAY_MS = 100;
     const MAX_PREFETCH_PATHS = 100;
 
@@ -126,6 +127,8 @@ export const getRouterScript = () => `
     // LRU Cache with TTL (single Map to prevent sync issues)
     // ============================================
     const pageDataCache = new Map();
+    const pendingPageDataFetches = new Map();
+    const backgroundRefreshTimestamps = new Map();
 
     function getCachedPageData(path) {
       const entry = pageDataCache.get(path);
@@ -134,13 +137,17 @@ export const getRouterScript = () => `
       if (Date.now() - entry.timestamp < CACHE_TTL_MS) return entry.data;
 
       pageDataCache.delete(path);
+      backgroundRefreshTimestamps.delete(path);
       return null;
     }
 
     function setCachedPageData(path, data) {
       if (pageDataCache.size >= MAX_CACHE_SIZE) {
         const oldest = pageDataCache.keys().next().value;
-        if (oldest) pageDataCache.delete(oldest);
+        if (oldest) {
+          pageDataCache.delete(oldest);
+          backgroundRefreshTimestamps.delete(oldest);
+        }
       }
 
       pageDataCache.set(path, { data, timestamp: Date.now() });
@@ -291,13 +298,33 @@ export const getRouterScript = () => `
       return data;
     }
 
+    function fetchPageDataDeduped(path) {
+      const pending = pendingPageDataFetches.get(path);
+      if (pending) return pending;
+
+      const refreshPromise = fetchPageDataFresh(path, null).finally(() => {
+        pendingPageDataFetches.delete(path);
+      });
+      pendingPageDataFetches.set(path, refreshPromise);
+      return refreshPromise;
+    }
+
+    function refreshPageDataInBackground(path) {
+      const lastRefreshAt = backgroundRefreshTimestamps.get(path) || 0;
+      const now = Date.now();
+      if (now - lastRefreshAt < BACKGROUND_REFRESH_INTERVAL_MS) return;
+
+      backgroundRefreshTimestamps.set(path, now);
+      fetchPageDataDeduped(path).catch((error) => {
+        logBackgroundFetchFailure('Stale page data refresh', path, error);
+      });
+    }
+
     async function fetchPageDataForNavigation(path, signal) {
       const cached = getCachedPageData(path);
       if (cached) {
         log('Using cached page data:', path);
-        fetchPageDataFresh(path, null).catch((error) => {
-          logBackgroundFetchFailure('Stale page data refresh', path, error);
-        });
+        refreshPageDataInBackground(path);
         return cached;
       }
 
@@ -306,7 +333,7 @@ export const getRouterScript = () => `
 
     async function fetchPageDataForPrefetch(path) {
       if (getCachedPageData(path)) return;
-      return fetchPageDataFresh(path, null)
+      return fetchPageDataDeduped(path)
         .then((data) => preloadModulesForPageData(data, path))
         .catch((error) => {
           logBackgroundFetchFailure('Page data prefetch', path, error);

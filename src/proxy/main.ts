@@ -303,7 +303,7 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
       const ctx = await profileProxyServerTimingPhase(
         proxyTiming,
         "proxy.resolve_request",
-        () => proxyHandler.processRequest(req, { url }),
+        () => proxyHandler.processRequest(req, { url, timing: proxyTiming }),
       );
 
       return runWithProxyRequestContext(

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert";
+import { assertEquals, assertExists } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { TracingTokenCache } from "./tracing-cache.ts";
 import type { CacheStats, TokenCache, TokenCacheEntry } from "./types.ts";
@@ -73,9 +73,11 @@ describe("TracingTokenCache", () => {
     await traced.set("k2", entry);
 
     assertEquals(fake.calls.length, 1);
-    assertEquals(fake.calls[0].method, "set");
-    assertEquals(fake.calls[0].args[0], "k2");
-    assertEquals(fake.calls[0].args[1], entry);
+    const call = fake.calls[0];
+    assertExists(call);
+    assertEquals(call.method, "set");
+    assertEquals(call.args[0], "k2");
+    assertEquals(call.args[1], entry);
   });
 
   it("delegates delete()", async () => {

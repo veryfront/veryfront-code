@@ -16,6 +16,8 @@ import {
   handlePageDataEndpoint,
 } from "./page-data-endpoint-handler.ts";
 
+type PageDataEndpointHandler = typeof handlePageDataEndpoint;
+
 function createMockAdapter(): RuntimeAdapter {
   return {
     id: "memory",
@@ -92,11 +94,31 @@ function createInitializer(resolvePageData: Renderer["resolvePageData"]): Render
   };
 }
 
+async function withMockedNow<T>(
+  initialNow: number,
+  fn: (clock: { advance: (ms: number) => void }) => Promise<T>,
+): Promise<T> {
+  const originalNow = Date.now;
+  let now = initialNow;
+  Date.now = () => now;
+
+  try {
+    return await fn({
+      advance(ms: number) {
+        now += ms;
+      },
+    });
+  } finally {
+    Date.now = originalNow;
+  }
+}
+
 async function callPageDataEndpoint(
   req: Request,
   ctx: HandlerContext,
+  handler: PageDataEndpointHandler = handlePageDataEndpoint,
 ): Promise<Response> {
-  const result = await handlePageDataEndpoint(
+  const result = await handler(
     req,
     new URL(req.url).pathname,
     ctx,
@@ -106,6 +128,14 @@ async function callPageDataEndpoint(
   );
 
   return result.response!;
+}
+
+function restoreEnv(name: string, value: string | undefined): void {
+  if (value === undefined) {
+    Deno.env.delete(name);
+  } else {
+    Deno.env.set(name, value);
+  }
 }
 
 describe("server/handlers/request/module/page-data-endpoint-handler", () => {
@@ -181,5 +211,88 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
 
     assertEquals(calls, 2);
     assertEquals(first.headers.get("cache-control"), "no-cache, no-store, must-revalidate");
+  });
+
+  it("can disable the page-data cache with max entries set to zero", async () => {
+    const envName = "VERYFRONT_PAGE_DATA_CACHE_MAX_ENTRIES";
+    const originalMaxEntries = Deno.env.get(envName);
+    Deno.env.set(envName, "0");
+
+    try {
+      const module = await import(
+        `./page-data-endpoint-handler.ts?cache-disabled=${Date.now()}`
+      );
+
+      let calls = 0;
+      setRendererInitializer(
+        createInitializer((slug) => Promise.resolve(createPageData(slug, ++calls))),
+      );
+
+      const ctx = makeCtx();
+      const req = () => new Request("http://localhost/_veryfront/page-data/index.json");
+
+      const first = await callPageDataEndpoint(req(), ctx, module.handlePageDataEndpoint);
+      const second = await callPageDataEndpoint(req(), ctx, module.handlePageDataEndpoint);
+
+      assertEquals(first.status, 200);
+      assertEquals(second.status, 200);
+      assertEquals(calls, 2);
+      assertEquals(first.headers.get("cache-control"), "no-cache, no-store, must-revalidate");
+      module.__clearPageDataEndpointCacheForTests();
+    } finally {
+      restoreEnv(envName, originalMaxEntries);
+    }
+  });
+
+  it("serves stale anonymous page data while refreshing the cache", async () => {
+    let calls = 0;
+    setRendererInitializer(
+      createInitializer((slug) => Promise.resolve(createPageData(slug, ++calls))),
+    );
+
+    await withMockedNow(1_000_000, async (clock) => {
+      const ctx = makeCtx();
+      const req = () => new Request("http://localhost/_veryfront/page-data/index.json");
+
+      const first = await callPageDataEndpoint(req(), ctx);
+      clock.advance(60_001);
+      const second = await callPageDataEndpoint(req(), ctx);
+      await Promise.resolve();
+      const third = await callPageDataEndpoint(req(), ctx);
+
+      assertEquals(JSON.parse(await first.text()).frontmatter.sequence, 1);
+      assertEquals(JSON.parse(await second.text()).frontmatter.sequence, 1);
+      assertEquals(JSON.parse(await third.text()).frontmatter.sequence, 2);
+      assertEquals(calls, 2);
+      assertEquals(
+        first.headers.get("cache-control"),
+        "public, max-age=60, stale-while-revalidate=1800",
+      );
+    });
+  });
+
+  it("does not serve stale page data for preview branch content", async () => {
+    let calls = 0;
+    setRendererInitializer(
+      createInitializer((slug) => Promise.resolve(createPageData(slug, ++calls))),
+    );
+
+    await withMockedNow(1_000_000, async (clock) => {
+      const ctx = makeCtx({
+        releaseId: undefined,
+        resolvedEnvironment: "preview",
+        requestContext: { mode: "preview", branch: "main" } as HandlerContext["requestContext"],
+      });
+      const req = () => new Request("http://localhost/_veryfront/page-data/index.json");
+
+      const first = await callPageDataEndpoint(req(), ctx);
+      clock.advance(60_001);
+      const second = await callPageDataEndpoint(req(), ctx);
+
+      assertEquals(JSON.parse(await first.text()).frontmatter.sequence, 1);
+      assertEquals(JSON.parse(await second.text()).frontmatter.sequence, 2);
+      assertEquals(calls, 2);
+      assertEquals(first.headers.get("cache-control"), "public, max-age=60");
+    });
   });
 });

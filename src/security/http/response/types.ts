@@ -21,6 +21,7 @@ export type CacheStrategy =
     public?: boolean;
     immutable?: boolean;
     mustRevalidate?: boolean;
+    staleWhileRevalidate?: number;
   };
 
 export interface ResponseBuilderConfig {
