@@ -20,6 +20,7 @@ import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { buildMdxEsmPathCacheKey, MDX_ESM_ALL_FILE_URL_PATTERN_SOURCE } from "../cache-format.ts";
 import { ensureMdxModuleDependencies } from "../module-fetcher/dependency-recovery.ts";
+import { findStaticImportFromSpans } from "../utils/source-spans.ts";
 export { getLocalFs } from "./local-fs.ts";
 import { getLocalFs } from "./local-fs.ts";
 
@@ -124,15 +125,9 @@ async function findMissingFileDependencies(code: string): Promise<string[]> {
   return missing;
 }
 
-/**
- * Pattern to match unresolved /_vf_modules/ imports that weren't converted to proper file:// paths.
- * Matches both:
- * - `from "/_vf_modules/..."` or `from "_vf_modules/..."` (unresolved)
- * - `from "file:///_vf_modules/..."` (malformed - points to non-existent root /_vf_modules/)
- * Note: Uses \s* instead of \s+ because minified code may have no space after `from`.
- * These imports will fail at runtime because they can't be resolved by Deno's dynamic import.
- */
-const UNRESOLVED_VF_MODULES_PATTERN = /from\s*["']((?:file:\/\/)?\/?\/?_vf_modules\/[^"']+)["']/g;
+function matchUnresolvedVfModuleSpecifier(specifier: string): string | null {
+  return specifier.match(/^((?:file:\/\/)?\/?\/?_vf_modules\/[^?]+)(?:\?.*)?$/)?.[1] ?? null;
+}
 
 /**
  * Check if cached code has unresolved or malformed /_vf_modules/ imports.
@@ -140,12 +135,11 @@ const UNRESOLVED_VF_MODULES_PATTERN = /from\s*["']((?:file:\/\/)?\/?\/?_vf_modul
  * Returns true if any unresolved or malformed imports are found.
  */
 function hasUnresolvedVfModules(code: string): boolean {
-  const pattern = new RegExp(UNRESOLVED_VF_MODULES_PATTERN.source, "g");
-  let match;
-  while ((match = pattern.exec(code)) !== null) {
-    const importPath = match[1] as string;
+  const matches = findStaticImportFromSpans(code, matchUnresolvedVfModuleSpecifier);
+  const first = matches[0];
+  if (first) {
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Cached module has unresolved _vf_modules import`, {
-      importPath,
+      importPath: first.path,
     });
     return true;
   }

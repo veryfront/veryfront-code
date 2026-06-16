@@ -35,20 +35,20 @@ const { findVfModuleImports, findRelativeImports, FRAMEWORK_ROOT, EMBEDDED_SRC_D
 
 describe("ssr-vf-modules", { sanitizeOps: false, sanitizeResources: false }, () => {
   describe("findVfModuleImports", () => {
-    it("finds single /_vf_modules/ import", () => {
+    it("finds single /_vf_modules/ import", async () => {
       const code =
         `import { Head } from "/_vf_modules/_veryfront/react/components/Head.js?ssr=true";`;
-      const imports = findVfModuleImports(code);
+      const imports = await findVfModuleImports(code);
       assertEquals(imports, ["/_vf_modules/_veryfront/react/components/Head.js?ssr=true"]);
     });
 
-    it("finds multiple /_vf_modules/ imports", () => {
+    it("finds multiple /_vf_modules/ imports", async () => {
       const code = `
         import { Head } from "/_vf_modules/_veryfront/react/components/Head.js?ssr=true";
         import { Router } from "/_vf_modules/_veryfront/react/router/index.js?ssr=true";
         import { something } from "other-package";
       `;
-      const imports = findVfModuleImports(code);
+      const imports = await findVfModuleImports(code);
       assertEquals(imports.length, 2);
       assertEquals(
         imports.includes("/_vf_modules/_veryfront/react/components/Head.js?ssr=true"),
@@ -60,103 +60,103 @@ describe("ssr-vf-modules", { sanitizeOps: false, sanitizeResources: false }, () 
       );
     });
 
-    it("deduplicates repeated imports", () => {
+    it("deduplicates repeated imports", async () => {
       const code = `
         import { Head } from "/_vf_modules/_veryfront/react/components/Head.js";
         import { Head as H2 } from "/_vf_modules/_veryfront/react/components/Head.js";
       `;
-      const imports = findVfModuleImports(code);
+      const imports = await findVfModuleImports(code);
       assertEquals(imports.length, 1);
     });
 
-    it("returns empty array for code without /_vf_modules/ imports", () => {
+    it("returns empty array for code without /_vf_modules/ imports", async () => {
       const code = `
         import React from "react";
         import { something } from "./local";
       `;
-      const imports = findVfModuleImports(code);
+      const imports = await findVfModuleImports(code);
       assertEquals(imports, []);
     });
 
-    it("handles single quotes", () => {
+    it("handles single quotes", async () => {
       const code = `import { Head } from '/_vf_modules/_veryfront/react/components/Head.js';`;
-      const imports = findVfModuleImports(code);
+      const imports = await findVfModuleImports(code);
       assertEquals(imports.length, 1);
     });
 
-    it("finds file:///_vf_modules imports", () => {
+    it("finds file:///_vf_modules imports", async () => {
       const code =
         `import { usePageContext } from "file:///_vf_modules/_veryfront/react/runtime/core.js?ssr=true";`;
-      const imports = findVfModuleImports(code);
+      const imports = await findVfModuleImports(code);
       assertEquals(imports, ["file:///_vf_modules/_veryfront/react/runtime/core.js?ssr=true"]);
     });
 
-    it("ignores string literals without from keyword", () => {
+    it("ignores string literals without from keyword", async () => {
       const code = `const path = "/_vf_modules/something";`;
-      const imports = findVfModuleImports(code);
+      const imports = await findVfModuleImports(code);
       assertEquals(imports, []);
     });
   });
 
   describe("findRelativeImports", () => {
-    it("finds from-style relative imports", () => {
+    it("finds from-style relative imports", async () => {
       const code = `
         import { foo } from "./foo.js";
         import { bar } from "../bar.js";
       `;
-      const imports = findRelativeImports(code);
+      const imports = await findRelativeImports(code);
       assertEquals(imports.length, 2);
       assertEquals(imports.includes("./foo.js"), true);
       assertEquals(imports.includes("../bar.js"), true);
     });
 
-    it("finds side-effect relative imports (no from keyword)", () => {
+    it("finds side-effect relative imports (no from keyword)", async () => {
       const code = `import "./polyfills.js";`;
-      const imports = findRelativeImports(code);
+      const imports = await findRelativeImports(code);
       assertEquals(imports, ["./polyfills.js"]);
     });
 
-    it("finds deeply nested side-effect imports like dnt polyfills", () => {
+    it("finds deeply nested side-effect imports like dnt polyfills", async () => {
       const code = `import "../../../_dnt.polyfills.js";`;
-      const imports = findRelativeImports(code);
+      const imports = await findRelativeImports(code);
       assertEquals(imports, ["../../../_dnt.polyfills.js"]);
     });
 
-    it("finds both from and side-effect imports in the same code", () => {
+    it("finds both from and side-effect imports in the same code", async () => {
       const code = `
         import "../../../_dnt.polyfills.js";
         import { shims } from "./_dnt.shims.js";
         import "./setup.js";
       `;
-      const imports = findRelativeImports(code);
+      const imports = await findRelativeImports(code);
       assertEquals(imports.length, 3);
       assertEquals(imports.includes("../../../_dnt.polyfills.js"), true);
       assertEquals(imports.includes("./_dnt.shims.js"), true);
       assertEquals(imports.includes("./setup.js"), true);
     });
 
-    it("deduplicates across from and side-effect patterns", () => {
+    it("deduplicates across from and side-effect patterns", async () => {
       const code = `
         import "./shared.js";
         import { x } from "./shared.js";
       `;
-      const imports = findRelativeImports(code);
+      const imports = await findRelativeImports(code);
       assertEquals(imports.length, 1);
       assertEquals(imports[0], "./shared.js");
     });
 
-    it("ignores non-relative side-effect imports", () => {
+    it("ignores non-relative side-effect imports", async () => {
       const code = `
         import "some-bare-module";
         import "@scope/package";
       `;
-      const imports = findRelativeImports(code);
+      const imports = await findRelativeImports(code);
       assertEquals(imports, []);
     });
 
-    it("handles single quotes in side-effect imports", () => {
+    it("handles single quotes in side-effect imports", async () => {
       const code = `import '../polyfills.js';`;
-      const imports = findRelativeImports(code);
+      const imports = await findRelativeImports(code);
       assertEquals(imports, ["../polyfills.js"]);
     });
   });
@@ -386,7 +386,7 @@ describe("ssr-vf-modules relative import resolution", {
     assertStringIncludes(resolved!, "Head.tsx");
   });
 
-  it("finds relative imports in transformed code", () => {
+  it("finds relative imports in transformed code", async () => {
     // Test the findRelativeImports function
     const { findRelativeImports } = _testExports;
 
@@ -396,7 +396,7 @@ describe("ssr-vf-modules relative import resolution", {
       import React from "react";
     `;
 
-    const imports = findRelativeImports(code);
+    const imports = await findRelativeImports(code);
     assertEquals(imports.length, 2);
     assertEquals(imports.includes("./Head.js"), true);
     assertEquals(imports.includes("../components/Link.js"), true);

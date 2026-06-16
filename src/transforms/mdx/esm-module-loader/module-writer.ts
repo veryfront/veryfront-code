@@ -34,11 +34,7 @@ import { setupSSRGlobals } from "#veryfront/rendering/ssr-globals.ts";
 import type { MDXFrontmatter, MDXModule } from "../types.ts";
 import type { ESMLoaderContext } from "./types.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/index.ts";
-import {
-  LOG_PREFIX_MDX_LOADER,
-  LOG_PREFIX_MDX_RENDERER,
-  UNRESOLVED_VF_MODULES_PATTERN,
-} from "./constants.ts";
+import { LOG_PREFIX_MDX_LOADER, LOG_PREFIX_MDX_RENDERER } from "./constants.ts";
 import { getLocalFs } from "./cache/index.ts";
 import { hashString } from "./utils/hash.ts";
 import { ssrVfModulesPlugin } from "../../pipeline/stages/ssr-vf-modules.ts";
@@ -57,6 +53,7 @@ import {
   processVfModuleImports,
   resolveProjectDir,
 } from "./loader-helpers.ts";
+import { hasUnresolvedImports } from "./module-fetcher/nested-imports.ts";
 
 /** Singleflight for MDX module file writes to prevent race conditions */
 const mdxWriteFlight = new Singleflight<void>();
@@ -103,7 +100,7 @@ export async function doLoadModuleESM(
     const esmCacheDir = await initializeCacheDir(context);
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: initializeCacheDir DONE`, { projectSlug });
 
-    let rewritten = rewriteProjectAliasImports(compiledProgramCode);
+    let rewritten = await rewriteProjectAliasImports(compiledProgramCode);
 
     const projectDir = resolveProjectDir(context);
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: loadImportMap START`, { projectSlug });
@@ -172,13 +169,12 @@ export async function doLoadModuleESM(
     }
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Module cache miss`, { projectSlug, compositeKey });
 
-    const unresolvedMatches = [
-      ...rewritten.matchAll(new RegExp(UNRESOLVED_VF_MODULES_PATTERN.source, "g")),
-    ];
-    if (unresolvedMatches.length > 0) {
-      const unresolvedPaths = unresolvedMatches.map((m) => m[1]).slice(0, 5);
-      const errorMsg = `MDX has ${unresolvedMatches.length} unresolved module imports: ${
-        unresolvedPaths.join(", ")
+    const unresolved = hasUnresolvedImports(rewritten);
+    if (unresolved.count > 0) {
+      const errorMsg = `MDX has ${unresolved.count} unresolved module imports: ${
+        unresolved.paths
+          .slice(0, 5)
+          .join(", ")
       }`;
       logger.error(`${LOG_PREFIX_MDX_RENDERER} ${errorMsg}`);
       throw IMPORT_RESOLUTION_ERROR.create({ detail: errorMsg });

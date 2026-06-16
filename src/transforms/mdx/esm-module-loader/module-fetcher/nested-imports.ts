@@ -4,7 +4,7 @@
  * @module transforms/mdx/esm-module-loader/module-fetcher/nested-imports
  */
 
-import { LOG_PREFIX_MDX_LOADER, UNRESOLVED_VF_MODULES_PATTERN } from "../constants.ts";
+import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import type { NestedImportResult } from "../types.ts";
 import { createStubModule } from "../utils/stub-module.ts";
 import {
@@ -14,6 +14,10 @@ import {
 } from "../utils/source-spans.ts";
 import { buildMissingModuleError } from "../missing-module.ts";
 import type { Logger } from "#veryfront/utils/logger/logger.ts";
+
+function matchUnresolvedVfModuleSpecifier(specifier: string): string | null {
+  return specifier.match(/^((?:file:\/\/)?\/?\/?_vf_modules\/[^?]+)(?:\?.*)?$/)?.[1] ?? null;
+}
 
 /**
  * Find nested module imports in code.
@@ -31,7 +35,7 @@ export function findNestedImports(
   for (
     const { original, path: rawPath, start, end } of findStaticImportFromSpans(
       moduleCode,
-      (specifier) => specifier.match(/^((?:file:\/\/)?\/?\/?_vf_modules\/[^?]+)(?:\?.*)?$/)?.[1],
+      matchUnresolvedVfModuleSpecifier,
     )
   ) {
     // Strip file:// prefix and leading slashes to get clean _vf_modules/... path
@@ -64,11 +68,10 @@ export function findNestedImports(
  * Check for unresolved /_vf_modules/ imports.
  */
 export function hasUnresolvedImports(moduleCode: string): { count: number; paths: string[] } {
-  const pattern = new RegExp(UNRESOLVED_VF_MODULES_PATTERN.source, "g");
-  const matches = [...moduleCode.matchAll(pattern)];
+  const matches = findStaticImportFromSpans(moduleCode, matchUnresolvedVfModuleSpecifier);
   return {
     count: matches.length,
-    paths: matches.map((m) => m[1]).filter((p): p is string => p !== undefined).slice(0, 5),
+    paths: matches.map((match) => match.path).slice(0, 5),
   };
 }
 

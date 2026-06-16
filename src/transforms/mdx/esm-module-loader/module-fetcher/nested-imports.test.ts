@@ -89,6 +89,16 @@ import { bar } from "./local.js";
       const result = hasUnresolvedImports("");
       assertEquals(result.count, 0);
     });
+
+    it("does not count import-looking text in strings or comments", () => {
+      const code = [
+        `const text = 'from "/_vf_modules/_veryfront/lib.js"';`,
+        `// import { foo } from "/_vf_modules/_veryfront/commented.js";`,
+      ].join("\n");
+      const result = hasUnresolvedImports(code);
+      assertEquals(result.count, 0);
+      assertEquals(result.paths, []);
+    });
   });
 
   describe("resolveNestedModuleImports", () => {

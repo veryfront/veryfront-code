@@ -9,16 +9,16 @@ import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
 import {
   createModuleFetcherContext,
   fetchAndCacheModule,
 } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/index.ts";
-import { VF_MODULE_IMPORT_PATTERN } from "#veryfront/transforms/mdx/esm-module-loader/constants.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
 
 interface VfModuleImport {
-  original: string;
+  specifier: string;
   path: string;
 }
 
@@ -35,18 +35,23 @@ interface ResolveVfModuleImportsOptions {
  * Find /_vf_modules/ imports in transformed code.
  * Matches both /_vf_modules/... and file:///_vf_modules/... forms.
  */
-export function findVfModuleImports(code: string): VfModuleImport[] {
+export async function findVfModuleImports(code: string): Promise<VfModuleImport[]> {
   const imports: VfModuleImport[] = [];
-  const pattern = new RegExp(VF_MODULE_IMPORT_PATTERN.source, "g");
+  const parsedImports = await parseImports(code);
 
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(code)) !== null) {
-    const rawPath = match[1];
+  for (const importSpecifier of parsedImports) {
+    const rawPath = importSpecifier.n;
     if (!rawPath) continue;
 
     // Normalize "file:///_vf_modules/..." and "/_vf_modules/..." to "_vf_modules/..."
     const path = rawPath.replace(/^(?:file:\/\/)?\/+/, "");
-    imports.push({ original: match[0], path });
+    if (!path.startsWith("_vf_modules/")) continue;
+
+    const queryStart = path.indexOf("?");
+    imports.push({
+      specifier: rawPath,
+      path: queryStart === -1 ? path : path.slice(0, queryStart),
+    });
   }
 
   return imports;
@@ -59,7 +64,7 @@ export async function resolveVfModuleImports(
   code: string,
   options: ResolveVfModuleImportsOptions,
 ): Promise<string> {
-  const imports = findVfModuleImports(code);
+  const imports = await findVfModuleImports(code);
   if (imports.length === 0) return code;
 
   logger.debug("Processing _vf_modules imports", {
@@ -86,25 +91,25 @@ export async function resolveVfModuleImports(
   );
 
   const results = await Promise.all(
-    imports.map(async ({ original, path }) => {
+    imports.map(async ({ specifier, path }) => {
       try {
         const cachedFilePath = await fetchAndCacheModule(path, fetcherContext);
-        return { original, path, cachedFilePath };
+        return { specifier, path, cachedFilePath };
       } catch (error) {
         logger.warn("Failed to fetch _vf_modules import", {
           file: options.filePath.slice(-40),
           path,
           error: error instanceof Error ? error.message : String(error),
         });
-        return { original, path, cachedFilePath: null };
+        return { specifier, path, cachedFilePath: null };
       }
     }),
   );
 
-  let transformed = code;
-  for (const { original, path, cachedFilePath } of results) {
+  const replacements = new Map<string, string>();
+  for (const { specifier, path, cachedFilePath } of results) {
     if (cachedFilePath) {
-      transformed = transformed.replace(original, `from "file://${cachedFilePath}"`);
+      replacements.set(specifier, `file://${cachedFilePath}`);
     } else {
       logger.warn("Failed to resolve _vf_modules import", {
         file: options.filePath.slice(-40),
@@ -113,5 +118,6 @@ export async function resolveVfModuleImports(
     }
   }
 
-  return transformed;
+  if (replacements.size === 0) return code;
+  return await replaceSpecifiers(code, (specifier) => replacements.get(specifier) ?? null);
 }

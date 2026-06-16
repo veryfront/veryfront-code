@@ -10,46 +10,46 @@
 
 import { join } from "#veryfront/compat/path";
 import { rendererLogger as logger } from "#veryfront/utils";
-import {
-  ESBUILD_JSX_FACTORY,
-  ESBUILD_JSX_FRAGMENT,
-  LOG_PREFIX_MDX_LOADER,
-  MODULE_SERVER_IMPORT_PATTERN,
-  PROJECT_ALIAS_IMPORT_PATTERN,
-  REACT_IMPORT_PATTERN,
-} from "../constants.ts";
+import { ESBUILD_JSX_FACTORY, ESBUILD_JSX_FRAGMENT, LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import type { FSAdapter } from "../types.ts";
 import { hashString } from "../utils/hash.ts";
 import { resolveFileWithExtension } from "../resolution/file-finder.ts";
+import { parseImports, replaceSpecifiers } from "../../../esm/lexer.ts";
 
 type ImportType = "project-alias" | "vf-modules";
 
 interface AliasImport {
-  original: string;
-  importClause?: string;
+  specifier: string;
   relativePath: string;
   type: ImportType;
 }
 
-function findAliasImports(code: string): AliasImport[] {
+async function findAliasImports(code: string): Promise<AliasImport[]> {
   const imports: AliasImport[] = [];
+  const parsedImports = await parseImports(code);
 
-  const projectAliasPattern = new RegExp(PROJECT_ALIAS_IMPORT_PATTERN.source, "g");
-  let match: RegExpExecArray | null;
+  for (const importSpecifier of parsedImports) {
+    const specifier = importSpecifier.n;
+    if (!specifier) continue;
 
-  while ((match = projectAliasPattern.exec(code)) !== null) {
-    const [original, importClause, relativePath] = match;
-    if (!relativePath || !importClause) continue;
-    imports.push({ original, importClause, relativePath, type: "project-alias" });
-  }
+    if (specifier.startsWith("@/")) {
+      imports.push({
+        specifier,
+        relativePath: specifier.slice(2),
+        type: "project-alias",
+      });
+      continue;
+    }
 
-  const moduleServerPattern = new RegExp(MODULE_SERVER_IMPORT_PATTERN.source, "g");
-  while ((match = moduleServerPattern.exec(code)) !== null) {
-    const [original, modulePath] = match;
-    if (!modulePath) continue;
+    const normalized = specifier.replace(/^(?:file:\/\/)?\/+/, "");
+    if (!normalized.startsWith("_vf_modules/")) continue;
+
+    const modulePath = normalized.slice("_vf_modules/".length);
+    const queryStart = modulePath.indexOf("?");
+    const relativePath = queryStart === -1 ? modulePath : modulePath.slice(0, queryStart);
     imports.push({
-      original,
-      relativePath: modulePath.replace(/\.js$/, ""),
+      specifier,
+      relativePath: relativePath.replace(/\.js$/, ""),
       type: "vf-modules",
     });
   }
@@ -84,12 +84,17 @@ function getEsbuildLoader(extension: string): "tsx" | "jsx" | "ts" | null {
   return null;
 }
 
+async function hasReactImport(code: string): Promise<boolean> {
+  const imports = await parseImports(code);
+  return imports.some((importSpecifier) => importSpecifier.n === "react");
+}
+
 async function transformImport(
   imp: AliasImport,
   fs: FSAdapter,
   esmCacheDir: string,
   transform: typeof import("veryfront/extensions/bundler").transform,
-): Promise<{ original: string; replacement: string } | null> {
+): Promise<{ specifier: string; replacement: string } | null> {
   const readFile = createFileReader(fs);
   const resolved = await resolveFileWithExtension(imp.relativePath, readFile);
 
@@ -116,7 +121,7 @@ async function transformImport(
       transformed = esbuildResult.code;
 
       if (
-        (extension === ".tsx" || extension === ".jsx") && !REACT_IMPORT_PATTERN.test(transformed)
+        (extension === ".tsx" || extension === ".jsx") && !(await hasReactImport(transformed))
       ) {
         transformed = `import React from 'react';\n${transformed}`;
       }
@@ -127,13 +132,9 @@ async function transformImport(
     const transformedPath = join(esmCacheDir, transformedFileName);
     await fs.writeFile(transformedPath, transformed);
 
-    const replacement = imp.type === "project-alias" && imp.importClause
-      ? `import ${imp.importClause} from "file://${transformedPath}";`
-      : `from "file://${transformedPath}"`;
-
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Transformed ${getPathDesc(imp)} -> ${transformedPath}`);
 
-    return { original: imp.original, replacement };
+    return { specifier: imp.specifier, replacement: `file://${transformedPath}` };
   } catch (error) {
     logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to transform ${getPathDesc(imp)}`, error);
     return null;
@@ -146,22 +147,23 @@ async function transformAliasImports(
   esmCacheDir: string,
   type: ImportType,
 ): Promise<string> {
-  const imports = findAliasImports(code).filter((imp) => imp.type === type);
+  const imports = (await findAliasImports(code)).filter((imp) => imp.type === type);
   if (imports.length === 0) return code;
 
   const label = type === "project-alias" ? "@/ imports" : "/_vf_modules/ imports";
   logger.debug(`${LOG_PREFIX_MDX_LOADER} Found ${imports.length} ${label} to transform`);
 
   const { transform } = await import("veryfront/extensions/bundler");
-  let result = code;
+  const replacements = new Map<string, string>();
 
   for (const imp of imports) {
     const transformed = await transformImport(imp, fs, esmCacheDir, transform);
     if (!transformed) continue;
-    result = result.replace(transformed.original, transformed.replacement);
+    replacements.set(transformed.specifier, transformed.replacement);
   }
 
-  return result;
+  if (replacements.size === 0) return code;
+  return await replaceSpecifiers(code, (specifier) => replacements.get(specifier) ?? null);
 }
 
 type AliasImportTransformer = (code: string, fs: FSAdapter, esmCacheDir: string) => Promise<string>;

@@ -11,15 +11,13 @@ import { join } from "#veryfront/compat/path";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/index.ts";
-import { replaceSpecifiers } from "../../esm/lexer.ts";
+import { parseImports, replaceSpecifiers } from "../../esm/lexer.ts";
 import { getLocalReactPaths, isReactSpecifier } from "#veryfront/platform/compat/react-paths.ts";
 import {
   ESBUILD_JSX_FACTORY,
   ESBUILD_JSX_FRAGMENT,
   FRAMEWORK_ROOT,
-  JSX_IMPORT_PATTERN,
   LOG_PREFIX_MDX_LOADER,
-  REACT_IMPORT_PATTERN,
 } from "./constants.ts";
 import { getLocalFs } from "./cache/index.ts";
 import { buildMdxJsxCacheFileName } from "./cache-format.ts";
@@ -30,10 +28,12 @@ import type { ESMLoaderContext } from "./types.ts";
 /**
  * Rewrite @/ aliased imports to /_vf_modules/ paths.
  */
-export function rewriteProjectAliasImports(code: string): string {
-  return code.replace(/from\s*["']@\/([^"']+)["']/g, (_match, path) => {
+export async function rewriteProjectAliasImports(code: string): Promise<string> {
+  return await replaceSpecifiers(code, (specifier) => {
+    if (!specifier.startsWith("@/")) return null;
+    const path = specifier.slice(2);
     const jsPath = path.endsWith(".js") ? path : `${path}.js`;
-    return `from "/_vf_modules/${jsPath}"`;
+    return `/_vf_modules/${jsPath}`;
   });
 }
 
@@ -82,6 +82,11 @@ export function transformImports(code: string, importMap: ImportMapConfig): stri
   });
 }
 
+async function hasReactImport(code: string): Promise<boolean> {
+  const imports = await parseImports(code);
+  return imports.some((importSpecifier) => importSpecifier.n === "react");
+}
+
 /**
  * Transform JSX/TSX imports using esbuild.
  * Optimized to process all imports in parallel batches for better performance.
@@ -94,27 +99,21 @@ export async function transformJsxImports(
   const { transform } = await import("veryfront/extensions/bundler");
 
   const importsToProcess: Array<{
-    fullMatch: string;
-    importClause: string;
+    specifier: string;
     filePath: string;
     ext: string;
   }> = [];
 
-  let jsxMatch: RegExpExecArray | null;
-  while ((jsxMatch = JSX_IMPORT_PATTERN.exec(code)) !== null) {
-    const [fullMatch, importClause, filePath, ext] = jsxMatch;
+  const imports = await parseImports(code);
+  for (const importSpecifier of imports) {
+    const specifier = importSpecifier.n;
+    if (!specifier?.startsWith("file://")) continue;
 
-    if (!filePath || !importClause || !ext) {
-      logger.warn(`${LOG_PREFIX_MDX_LOADER} Skipping JSX import with undefined fields`, {
-        fullMatch,
-        hasFilePath: !!filePath,
-        hasImportClause: !!importClause,
-        hasExt: !!ext,
-      });
-      continue;
-    }
+    const filePath = specifier.slice("file://".length);
+    const ext = filePath.match(/\.(tsx?|jsx?)$/)?.[1];
+    if (!ext) continue;
 
-    importsToProcess.push({ fullMatch, importClause, filePath, ext });
+    importsToProcess.push({ specifier, filePath, ext });
   }
 
   if (importsToProcess.length === 0) return code;
@@ -125,7 +124,7 @@ export async function transformJsxImports(
   );
 
   const transformResults = await Promise.all(
-    importsToProcess.map(async ({ fullMatch, importClause, filePath, ext }) => {
+    importsToProcess.map(async ({ specifier, filePath, ext }) => {
       try {
         const isFrameworkFile = filePath.startsWith(FRAMEWORK_ROOT);
         let jsxCode: string | Uint8Array;
@@ -152,8 +151,8 @@ export async function transformJsxImports(
             const useCached = await ensureCachedJsxModulePatched(transformedPath, filePath);
             if (useCached) {
               return {
-                original: fullMatch,
-                transformed: `import ${importClause} from "file://${transformedPath}";`,
+                specifier,
+                replacement: `file://${transformedPath}`,
                 cached: true,
               };
             }
@@ -179,7 +178,7 @@ export async function transformJsxImports(
         });
 
         let transformed = result.code;
-        if (!REACT_IMPORT_PATTERN.test(transformed)) {
+        if (!(await hasReactImport(transformed))) {
           transformed = `import React from 'react';\n${transformed}`;
         }
 
@@ -191,8 +190,8 @@ export async function transformJsxImports(
         await getLocalFs().writeTextFile(transformedPath, transformed);
 
         return {
-          original: fullMatch,
-          transformed: `import ${importClause} from "file://${transformedPath}";`,
+          specifier,
+          replacement: `file://${transformedPath}`,
           cached: false,
         };
       } catch (error) {
@@ -209,10 +208,11 @@ export async function transformJsxImports(
     durationMs: (performance.now() - transformStart).toFixed(1),
   });
 
-  let result = code;
+  const replacements = new Map<string, string>();
   for (const t of transformResults) {
-    if (t) result = result.replace(t.original, t.transformed);
+    if (t) replacements.set(t.specifier, t.replacement);
   }
 
-  return result;
+  if (replacements.size === 0) return code;
+  return await replaceSpecifiers(code, (specifier) => replacements.get(specifier) ?? null);
 }

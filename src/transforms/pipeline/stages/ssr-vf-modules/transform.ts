@@ -10,7 +10,7 @@ import { join } from "#veryfront/compat/path/index.ts";
 import denoConfig from "#deno-config" with { type: "json" };
 import { rendererLogger as logger } from "#veryfront/utils";
 import { IMPORT_RESOLUTION_ERROR } from "#veryfront/errors";
-import { replaceSpecifiers } from "../../../esm/lexer.ts";
+import { parseImports, replaceSpecifiers } from "../../../esm/lexer.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
@@ -240,7 +240,7 @@ async function rewriteFallbackRelativeImports(
 
   // Note: we do not early-return when there are no relative imports, because
   // react/react-dom specifiers still need rewriting below.
-  const relativeImports = findRelativeImports(code);
+  const relativeImports = await findRelativeImports(code);
 
   // Built once and reused for both the relative-import loop (React re-export
   // rewriting) and the final specifier pass below.
@@ -383,8 +383,10 @@ export async function transformFrameworkCode(
 
     // Collect and recursively resolve all #veryfront/ imports
     const veryfrontReplacements = new Map<string, string>();
-    for (const match of transformed.matchAll(/from\s+["'](#veryfront\/[^"']+)["']/g)) {
-      const specifier = match[1]!;
+    const transformedImports = await parseImports(transformed);
+    for (const importSpecifier of transformedImports) {
+      const specifier = importSpecifier.n;
+      if (!specifier?.startsWith("#veryfront/")) continue;
       if (veryfrontReplacements.has(specifier)) continue;
 
       const resolved = await resolveAndTransformVeryfrontImport(specifier, ctx);
@@ -421,7 +423,7 @@ export async function transformFrameworkCode(
     const embeddedSrcDirPrefix = EMBEDDED_SRC_DIR + "/";
 
     {
-      const relativeImports = findRelativeImports(transformed);
+      const relativeImports = await findRelativeImports(transformed);
 
       for (const specifier of relativeImports) {
         // Skip non-code imports (like deno.json, package.json, etc.)

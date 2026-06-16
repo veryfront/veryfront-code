@@ -616,10 +616,10 @@ export class SSRModuleLoader {
         );
 
         for (const [specifier, tempPath] of crossProjectPaths.entries()) {
-          transformed = rewriteCrossProjectImport(transformed, specifier, tempPath);
+          transformed = await rewriteCrossProjectImport(transformed, specifier, tempPath);
         }
 
-        transformed = rewriteLocalImports(
+        transformed = await rewriteLocalImports(
           transformed,
           localImportPaths,
           filePath,
