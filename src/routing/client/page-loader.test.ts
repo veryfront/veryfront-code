@@ -159,7 +159,84 @@ describe("routing/client/page-loader", () => {
 
       assertEquals(result1, data);
       assertEquals(result2, data);
-      assertEquals(fetchCount <= 2, true);
+      assertEquals(fetchCount, 1);
+    });
+
+    it("should deduplicate prefetch and loadPage requests for same path", async () => {
+      const loader = new PageLoader();
+      const data = makeRouteData({ html: "<div>prefetched</div>" });
+      let resolveFetch!: (value: RouteData) => void;
+      const fetchPromise = new Promise<RouteData>((resolve) => {
+        resolveFetch = resolve;
+      });
+      let fetchCount = 0;
+
+      // deno-lint-ignore no-explicit-any
+      (loader as any).fetchPageData = () => {
+        fetchCount++;
+        return fetchPromise;
+      };
+
+      const prefetch = loader.prefetch("/prefetch-dedup");
+      const load = loader.loadPage("/prefetch-dedup");
+
+      resolveFetch(data);
+      const result = await load;
+      await prefetch;
+
+      assertEquals(result, data);
+      assertEquals(fetchCount, 1);
+    });
+
+    it("should deduplicate concurrent prefetchSpaPageData requests for same path", async () => {
+      const loader = new PageLoader();
+      const data = makeSpaPageData({ slug: "spa-prefetch-dedup" });
+      let resolveFetch!: (value: SpaPageData) => void;
+      const fetchPromise = new Promise<SpaPageData>((resolve) => {
+        resolveFetch = resolve;
+      });
+      let fetchCount = 0;
+
+      // deno-lint-ignore no-explicit-any
+      (loader as any).fetchSpaPageData = () => {
+        fetchCount++;
+        return fetchPromise;
+      };
+
+      const prefetch1 = loader.prefetchSpaPageData("/spa-prefetch-dedup");
+      const prefetch2 = loader.prefetchSpaPageData("/spa-prefetch-dedup");
+
+      resolveFetch(data);
+      await Promise.all([prefetch1, prefetch2]);
+
+      assertEquals(fetchCount, 1);
+      assertEquals(loader.getSpaCached("/spa-prefetch-dedup"), data);
+    });
+
+    it("should deduplicate SPA prefetch and load requests for same path", async () => {
+      const loader = new PageLoader();
+      const data = makeSpaPageData({ slug: "spa-load-dedup" });
+      let resolveFetch!: (value: SpaPageData) => void;
+      const fetchPromise = new Promise<SpaPageData>((resolve) => {
+        resolveFetch = resolve;
+      });
+      let fetchCount = 0;
+
+      // deno-lint-ignore no-explicit-any
+      (loader as any).fetchSpaPageData = () => {
+        fetchCount++;
+        return fetchPromise;
+      };
+
+      const prefetch = loader.prefetchSpaPageData("/spa-load-dedup");
+      const load = loader.loadSpaPageData("/spa-load-dedup");
+
+      resolveFetch(data);
+      const result = await load;
+      await prefetch;
+
+      assertEquals(result, data);
+      assertEquals(fetchCount, 1);
     });
   });
 });

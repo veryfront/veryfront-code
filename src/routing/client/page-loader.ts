@@ -127,8 +127,7 @@ export class PageLoader {
     logger.debug(`Prefetching ${path}`);
 
     try {
-      const data = await this.fetchPageData(path);
-      this.setCache(path, data);
+      await this.loadPage(path);
     } catch (error) {
       logger.warn(
         `[Veryfront] Failed to prefetch ${path}`,
@@ -186,8 +185,7 @@ export class PageLoader {
     logger.debug(`Prefetching SPA page data for ${path}`);
 
     try {
-      const data = await this.fetchSpaPageData(path);
-      this.setSpaCache(path, data);
+      await this.loadSpaPageData(path);
     } catch (error) {
       logger.warn(
         `[Veryfront] Failed to prefetch SPA data for ${path}`,

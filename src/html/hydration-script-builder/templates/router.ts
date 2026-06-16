@@ -36,6 +36,7 @@ export const getRouterScript = () => `
     const BACKGROUND_REFRESH_INTERVAL_MS = 30 * 1000;
     const PREFETCH_DELAY_MS = 100;
     const MAX_PREFETCH_PATHS = 100;
+    const MAX_ROUTE_TIMINGS = 100;
 
     // ============================================
     // Debug logging (production-safe)
@@ -122,6 +123,41 @@ export const getRouterScript = () => `
           return duration;
         }
       : () => 0;
+
+    function routeTimingNow() {
+      return typeof performance !== 'undefined' && typeof performance.now === 'function'
+        ? performance.now()
+        : Date.now();
+    }
+
+    function emitRouteTiming(phase, path, startedAt, detail = {}) {
+      const entry = {
+        phase,
+        path,
+        duration: Math.max(0, routeTimingNow() - startedAt),
+        timestamp: Date.now(),
+        ...detail
+      };
+      const timings = Array.isArray(window.__veryfrontRouteTimings)
+        ? window.__veryfrontRouteTimings
+        : [];
+
+      timings.push(entry);
+      if (timings.length > MAX_ROUTE_TIMINGS) {
+        timings.splice(0, timings.length - MAX_ROUTE_TIMINGS);
+      }
+
+      window.__veryfrontRouteTimings = timings;
+
+      try {
+        window.dispatchEvent(new CustomEvent('veryfront:route-timing', { detail: entry }));
+      } catch (_) {
+        // CustomEvent dispatch is best-effort instrumentation.
+      }
+
+      log('Route timing:', entry);
+      return entry;
+    }
 
     // ============================================
     // LRU Cache with TTL (single Map to prevent sync issues)
@@ -264,9 +300,10 @@ export const getRouterScript = () => `
     // Page data fetching with caching
     // ============================================
     async function fetchPageDataFresh(path, signal, options = {}) {
-      const { triggerReloadOnVersionMismatch = false } = options;
+      const { triggerReloadOnVersionMismatch = false, timingSource = 'network' } = options;
       const normalizedPath = path === '/' ? '' : path.replace(/^\\//, '');
       const endpoint = '/_veryfront/page-data/' + normalizedPath + '.json';
+      const startedAt = routeTimingNow();
 
       log('Fetching page data:', path);
       perfStart('fetch:' + path);
@@ -278,6 +315,7 @@ export const getRouterScript = () => `
 
       if (!response.ok) {
         perfEnd('fetch:' + path);
+        emitRouteTiming('page-data', path, startedAt, { source: timingSource, status: response.status });
         const error = new Error('Failed to fetch page data: ' + response.status);
         error.status = response.status;
         throw error;
@@ -287,14 +325,24 @@ export const getRouterScript = () => `
       const data = await response.json();
       perfEnd('parse:' + path);
       perfEnd('fetch:' + path);
+      emitRouteTiming('page-data', path, startedAt, { source: timingSource, status: response.status });
 
-      if (triggerReloadOnVersionMismatch && data.buildVersion && checkVersionMismatch(data.buildVersion)) {
+      if (triggerReloadOnVersionMismatch) {
+        const checkedData = handlePageDataVersionMismatch(path, data);
+        if (checkedData !== data) return checkedData;
+      }
+
+      setCachedPageData(path, data);
+      return data;
+    }
+
+    function handlePageDataVersionMismatch(path, data) {
+      if (data.buildVersion && checkVersionMismatch(data.buildVersion)) {
         log('Version mismatch detected, performing full page reload to:', path);
         window.location.href = path;
         return new Promise(() => {});
       }
 
-      setCachedPageData(path, data);
       return data;
     }
 
@@ -321,14 +369,27 @@ export const getRouterScript = () => `
     }
 
     async function fetchPageDataForNavigation(path, signal) {
+      const startedAt = routeTimingNow();
       const cached = getCachedPageData(path);
       if (cached) {
         log('Using cached page data:', path);
         refreshPageDataInBackground(path);
+        emitRouteTiming('page-data', path, startedAt, { source: 'cache' });
         return cached;
       }
 
-      return fetchPageDataFresh(path, signal, { triggerReloadOnVersionMismatch: true });
+      const pending = pendingPageDataFetches.get(path);
+      if (pending) {
+        log('Reusing pending page data fetch for navigation:', path);
+        const data = await pending;
+        emitRouteTiming('page-data', path, startedAt, { source: 'deduped' });
+        return handlePageDataVersionMismatch(path, data);
+      }
+
+      return fetchPageDataFresh(path, signal, {
+        triggerReloadOnVersionMismatch: true,
+        timingSource: 'network'
+      });
     }
 
     async function fetchPageDataForPrefetch(path) {
@@ -357,6 +418,7 @@ export const getRouterScript = () => `
 
       currentAbortController = new AbortController();
       const signal = currentAbortController.signal;
+      const navigationStartedAt = routeTimingNow();
 
       showNavigationProgress();
       perfStart('nav:total:' + href);
@@ -404,6 +466,7 @@ export const getRouterScript = () => `
 
         hideNavigationProgress();
         perfEnd('nav:total:' + href);
+        emitRouteTiming('total', targetPath, navigationStartedAt, { href, pushState, restoreScroll });
         log('SPA navigation complete');
       } catch (error) {
         hideNavigationProgress();
@@ -436,7 +499,9 @@ export const getRouterScript = () => `
 
       perfStart('render:loadAll');
       const allPaths = getPageDataModulePaths(pageData);
+      const modulesStartedAt = routeTimingNow();
       const components = await Promise.all(allPaths.map((path) => loadComponent(path)));
+      emitRouteTiming('modules', targetPath, modulesStartedAt, { count: allPaths.length });
       perfEnd('render:loadAll');
 
       const [PageComponent, ...rest] = components;

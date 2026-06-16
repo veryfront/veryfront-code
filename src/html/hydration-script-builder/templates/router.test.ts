@@ -110,6 +110,24 @@ describe("hydration-script-builder/templates/router", () => {
       assertIncludes(result, "refreshPageDataInBackground(path)");
     });
 
+    it("should reuse pending page-data fetches for first-hit navigation", () => {
+      const result = getRouterScript();
+      assertIncludes(result, "log('Reusing pending page data fetch for navigation:', path)");
+      assertIncludes(result, "return handlePageDataVersionMismatch(path, data)");
+      assertIncludes(
+        result,
+        "emitRouteTiming('page-data', path, startedAt, { source: 'deduped' });",
+      );
+    });
+
+    it("should emit route transition timing events", () => {
+      const result = getRouterScript();
+      assertIncludes(result, "function emitRouteTiming(phase, path, startedAt, detail = {})");
+      assertIncludes(result, "window.__veryfrontRouteTimings");
+      assertIncludes(result, "veryfront:route-timing");
+      assertIncludes(result, "emitRouteTiming('total', targetPath, navigationStartedAt");
+    });
+
     it("should define scroll position memory", () => {
       const result = getRouterScript();
       assertIncludes(result, "function saveScrollPosition(path)");
