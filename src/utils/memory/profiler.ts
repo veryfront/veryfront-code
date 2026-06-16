@@ -89,6 +89,31 @@ let memoryCheckInterval: ReturnType<typeof setInterval> | undefined;
 let memoryCheckIntervalMs: number | undefined;
 let lastHeapUsed = 0;
 let heapGrowthWarningThreshold = 0.8;
+let pendingRapidHeapGrowth: PendingRapidHeapGrowth | undefined;
+
+export interface PendingRapidHeapGrowth {
+  baselineHeapUsedMB: number;
+  observedGrowthMB: number;
+}
+
+export interface RapidHeapGrowthEvaluationInput {
+  previousHeapUsedMB: number;
+  currentHeapUsedMB: number;
+  pending: PendingRapidHeapGrowth | undefined;
+  thresholdMB: number;
+}
+
+export interface RapidHeapGrowthEvaluation {
+  shouldWarn: boolean;
+  growthMB?: number;
+  observedGrowthMB?: number;
+  pending?: PendingRapidHeapGrowth;
+}
+
+export interface RapidHeapGrowthState {
+  lastHeapUsedMB: number;
+  pending: PendingRapidHeapGrowth | undefined;
+}
 
 export function registerCache(name: string, getStats: () => CacheStats): void {
   cacheRegistry.set(name, getStats);
@@ -213,6 +238,49 @@ export function getMemoryMonitoringConfig(env: MemoryMonitoringEnv): MemoryMonit
   return { enabled, intervalMs };
 }
 
+function roundMemoryMB(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+export function getInitialRapidHeapGrowthState(initialHeapUsedMB: number): RapidHeapGrowthState {
+  return {
+    lastHeapUsedMB: initialHeapUsedMB,
+    pending: undefined,
+  };
+}
+
+export function getRapidHeapGrowthEvaluation(
+  input: RapidHeapGrowthEvaluationInput,
+): RapidHeapGrowthEvaluation {
+  const intervalGrowthMB = roundMemoryMB(input.currentHeapUsedMB - input.previousHeapUsedMB);
+
+  if (input.pending) {
+    const sustainedGrowthMB = roundMemoryMB(
+      input.currentHeapUsedMB - input.pending.baselineHeapUsedMB,
+    );
+    if (sustainedGrowthMB > input.thresholdMB) {
+      return {
+        shouldWarn: true,
+        growthMB: sustainedGrowthMB,
+        observedGrowthMB: input.pending.observedGrowthMB,
+      };
+    }
+    return { shouldWarn: false };
+  }
+
+  if (intervalGrowthMB > input.thresholdMB) {
+    return {
+      shouldWarn: false,
+      pending: {
+        baselineHeapUsedMB: input.previousHeapUsedMB,
+        observedGrowthMB: intervalGrowthMB,
+      },
+    };
+  }
+
+  return { shouldWarn: false };
+}
+
 export function getMemoryMonitoringState(): MemoryMonitoringState {
   return {
     active: memoryCheckInterval !== undefined,
@@ -237,6 +305,9 @@ export function startMemoryMonitoring(intervalMs = DEFAULT_MEMORY_MONITORING_INT
 
   logger.info(`Starting memory monitoring (interval: ${intervalMs}ms)`);
   memoryCheckIntervalMs = intervalMs;
+  const rapidGrowthState = getInitialRapidHeapGrowthState(getHeapStats().usedHeapSizeMB);
+  lastHeapUsed = rapidGrowthState.lastHeapUsedMB;
+  pendingRapidHeapGrowth = rapidGrowthState.pending;
 
   memoryCheckInterval = setInterval(() => {
     const snapshot = getMemorySnapshot();
@@ -255,10 +326,17 @@ export function startMemoryMonitoring(intervalMs = DEFAULT_MEMORY_MONITORING_INT
       });
     }
 
-    const heapGrowthMB = heap.usedHeapSizeMB - lastHeapUsed;
-    if (heapGrowthMB > HEAP_RAPID_GROWTH_THRESHOLD_MB) {
+    const rapidGrowthEvaluation = getRapidHeapGrowthEvaluation({
+      previousHeapUsedMB: lastHeapUsed,
+      currentHeapUsedMB: heap.usedHeapSizeMB,
+      pending: pendingRapidHeapGrowth,
+      thresholdMB: HEAP_RAPID_GROWTH_THRESHOLD_MB,
+    });
+    pendingRapidHeapGrowth = rapidGrowthEvaluation.pending;
+    if (rapidGrowthEvaluation.shouldWarn) {
       logger.warn("Rapid heap growth detected", {
-        growthMB: heapGrowthMB,
+        growthMB: rapidGrowthEvaluation.growthMB,
+        observedGrowthMB: rapidGrowthEvaluation.observedGrowthMB,
         intervalMs,
         topCaches: monitoringContext.topCaches,
       });
@@ -291,6 +369,7 @@ export function stopMemoryMonitoring(): void {
   clearInterval(memoryCheckInterval);
   memoryCheckInterval = undefined;
   memoryCheckIntervalMs = undefined;
+  pendingRapidHeapGrowth = undefined;
   logger.info("Memory monitoring stopped");
 }
 
