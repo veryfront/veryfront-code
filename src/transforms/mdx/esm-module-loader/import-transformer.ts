@@ -127,7 +127,23 @@ export async function transformJsxImports(
   const transformResults = await Promise.all(
     importsToProcess.map(async ({ fullMatch, importClause, filePath, ext }) => {
       try {
-        const transformedFileName = buildMdxJsxCacheFileName(filePath);
+        const isFrameworkFile = filePath.startsWith(FRAMEWORK_ROOT);
+        let jsxCode: string | Uint8Array;
+        if (isFrameworkFile) {
+          jsxCode = await getLocalFs().readTextFile(filePath);
+        } else if (adapter) {
+          jsxCode = await adapter.fs.readFile(filePath);
+        } else {
+          logger.warn(
+            `${LOG_PREFIX_MDX_LOADER} No adapter available to read JSX file: ${filePath}`,
+          );
+          return null;
+        }
+
+        const sourceCode = typeof jsxCode === "string"
+          ? jsxCode
+          : new TextDecoder().decode(jsxCode);
+        const transformedFileName = buildMdxJsxCacheFileName(filePath, sourceCode);
         const transformedPath = join(esmCacheDir, transformedFileName);
 
         try {
@@ -146,19 +162,6 @@ export async function transformJsxImports(
           /* expected: cached JSX module may not exist yet */
         }
 
-        const isFrameworkFile = filePath.startsWith(FRAMEWORK_ROOT);
-        let jsxCode: string | Uint8Array;
-        if (isFrameworkFile) {
-          jsxCode = await getLocalFs().readTextFile(filePath);
-        } else if (adapter) {
-          jsxCode = await adapter.fs.readFile(filePath);
-        } else {
-          logger.warn(
-            `${LOG_PREFIX_MDX_LOADER} No adapter available to read JSX file: ${filePath}`,
-          );
-          return null;
-        }
-
         const loaderMap: Record<string, "js" | "jsx" | "ts" | "tsx"> = {
           tsx: "tsx",
           ts: "ts",
@@ -167,7 +170,7 @@ export async function transformJsxImports(
         };
         const loader = loaderMap[ext] ?? "tsx";
 
-        const result = await transform(jsxCode as string, {
+        const result = await transform(sourceCode, {
           loader,
           jsx: "transform",
           jsxFactory: ESBUILD_JSX_FACTORY,

@@ -64,8 +64,12 @@ function formatMdxEsmModuleRecoveryCacheKey(
   return `${namespace}:${projectId}:${contentSourceId}:${fileName}:vfmod`;
 }
 
-function formatMdxJsxCacheFileName(namespace: string, filePath: string): string {
-  return `jsx-${namespace}-${hashString(filePath)}.mjs`;
+function formatMdxJsxCacheFileName(
+  namespace: string,
+  filePath: string,
+  sourceCode: string,
+): string {
+  return `jsx-${namespace}-${hashString(`${filePath}\0${sourceCode}`)}.mjs`;
 }
 
 function formatFrameworkVfModuleCacheFileName(
@@ -99,13 +103,17 @@ function buildMdxEsmCacheSchemaSample() {
       "preview-main",
       formatMdxEsmModuleFileName(CACHE_NAMESPACE_SENTINEL, "deadbeef"),
     ),
-    jsxFile: formatMdxJsxCacheFileName(CACHE_NAMESPACE_SENTINEL, "/tmp/project/Button.tsx"),
+    jsxFile: formatMdxJsxCacheFileName(
+      CACHE_NAMESPACE_SENTINEL,
+      "/tmp/project/Button.tsx",
+      "export default function Button() {}",
+    ),
     unresolvedVfModulesPattern: UNRESOLVED_VF_MODULES_PATTERN.source,
     allFileUrlPattern: ALL_FILE_URL_PATTERN_SOURCE,
     mjsFileUrlPattern: MJS_FILE_URL_PATTERN_SOURCE,
     sourceHashing: [
       hashString("_vf_modules/pages/index.jsexport default 1;"),
-      hashString("/tmp/project/Button.tsx"),
+      hashString("/tmp/project/Button.tsx\0export default function Button() {}"),
     ],
     publicRuntimeAliases: buildPublicRuntimeAliasSchema({
       "veryfront/head": "./src/react/runtime/core.ts",
@@ -186,8 +194,8 @@ export function buildMdxEsmModuleRecoveryCacheKey(
   );
 }
 
-export function buildMdxJsxCacheFileName(filePath: string): string {
-  return formatMdxJsxCacheFileName(MDX_ESM_CACHE_NAMESPACE, filePath);
+export function buildMdxJsxCacheFileName(filePath: string, sourceCode: string): string {
+  return formatMdxJsxCacheFileName(MDX_ESM_CACHE_NAMESPACE, filePath, sourceCode);
 }
 
 export function buildFrameworkVfModuleCacheFileName(

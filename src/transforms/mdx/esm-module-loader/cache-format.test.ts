@@ -103,16 +103,21 @@ describe("transforms/mdx/esm-module-loader/cache-format", () => {
 
   describe("buildMdxJsxCacheFileName", () => {
     it("produces a jsx-<namespace>-<hash>.mjs filename", () => {
-      const name = buildMdxJsxCacheFileName("fixtures/project/Button.tsx");
+      const name = buildMdxJsxCacheFileName(
+        "fixtures/project/Button.tsx",
+        "export default function Button() {}",
+      );
       assertEquals(name.startsWith(`jsx-${MDX_ESM_CACHE_NAMESPACE}-`), true);
       assertEquals(name.endsWith(".mjs"), true);
     });
 
-    it("derives distinct names from distinct paths but is path-deterministic", () => {
-      const a = buildMdxJsxCacheFileName("fixtures/a/Button.tsx");
-      const b = buildMdxJsxCacheFileName("fixtures/b/Button.tsx");
+    it("derives distinct names from distinct paths and source contents", () => {
+      const a = buildMdxJsxCacheFileName("fixtures/a/Button.tsx", "export const A = 1;");
+      const b = buildMdxJsxCacheFileName("fixtures/b/Button.tsx", "export const A = 1;");
+      const changed = buildMdxJsxCacheFileName("fixtures/a/Button.tsx", "export default 1;");
       assertEquals(a !== b, true);
-      assertEquals(a, buildMdxJsxCacheFileName("fixtures/a/Button.tsx"));
+      assertEquals(a !== changed, true);
+      assertEquals(a, buildMdxJsxCacheFileName("fixtures/a/Button.tsx", "export const A = 1;"));
     });
   });
 
