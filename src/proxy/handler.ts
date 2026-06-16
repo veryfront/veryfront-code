@@ -7,7 +7,6 @@ import { checkProtectedProxyAccess } from "./proxy-access-control.ts";
 import { createLocalProjectResolver } from "./local-project-resolver.ts";
 import {
   isMissingCustomDomainProjectError,
-  type ResolvedProxyRequestToken,
   resolveProxyRequestToken,
 } from "./proxy-token-resolution.ts";
 import {
@@ -15,12 +14,7 @@ import {
   createProxyErrorContext,
   createReleaseNotFoundProxyContext,
 } from "./proxy-error-context.ts";
-import {
-  markProxyServerTimingPhase,
-  profileProxyServerTimingPhase,
-  type ProxyServerTiming,
-} from "./server-timing.ts";
-import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { profileProxyServerTimingPhase, type ProxyServerTiming } from "./server-timing.ts";
 
 export { __resetCachedAuthProviderForTests } from "./proxy-access-control.ts";
 
@@ -42,9 +36,6 @@ const INTERNAL_CONTROL_PLANE_SIGNATURE_HEADERS = [
   "x-veryfront-control-plane-jws",
   "x-veryfront-dispatch-jws",
 ] as const;
-
-const DEFAULT_PROJECT_LOOKUP_CACHE_TTL_MS = 30_000;
-const DEFAULT_PROJECT_LOOKUP_CACHE_MAX_ENTRIES = 1_000;
 
 function isInternalControlPlanePath(pathname: string): boolean {
   return pathname === "/channels/invoke" ||
@@ -194,11 +185,6 @@ export interface ProxyRequestOptions {
   timing?: ProxyServerTiming;
 }
 
-interface ProjectLookupCacheEntry {
-  value: DomainLookupResult;
-  expiresAt: number;
-}
-
 function getRequestHost(req: Request, url: URL): string {
   return req.headers.get("host") ?? url.host;
 }
@@ -213,33 +199,10 @@ function parseStatusFromError(error: unknown): number | null {
   return match ? Number(match[1]) : null;
 }
 
-function readPositiveIntegerEnv(name: string, fallback: number): number {
-  const raw = getEnv(name);
-  if (!raw) return fallback;
-
-  const value = Number(raw);
-  if (!Number.isFinite(value) || value < 0) return fallback;
-  return Math.floor(value);
-}
-
-function normalizeProjectLookupCacheKey(lookupKey: string): string {
-  return lookupKey.toLowerCase().replace(/:\d+$/, "");
-}
-
 export function createProxyHandler(options: ProxyHandlerOptions) {
   const { config, cache, logger } = options;
   const localProjects = config.localProjects ?? {};
   const localProjectResolver = createLocalProjectResolver({ localProjects, logger });
-  const projectLookupCacheTtlMs = readPositiveIntegerEnv(
-    "VERYFRONT_PROXY_PROJECT_LOOKUP_CACHE_TTL_MS",
-    DEFAULT_PROJECT_LOOKUP_CACHE_TTL_MS,
-  );
-  const projectLookupCacheMaxEntries = readPositiveIntegerEnv(
-    "VERYFRONT_PROXY_PROJECT_LOOKUP_CACHE_MAX_ENTRIES",
-    DEFAULT_PROJECT_LOOKUP_CACHE_MAX_ENTRIES,
-  );
-  const projectLookupCache = new Map<string, ProjectLookupCacheEntry>();
-  const pendingProjectLookups = new Map<string, Promise<DomainLookupResult | null>>();
 
   const tokenManager = new TokenManager(
     {
@@ -252,77 +215,16 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     { cache },
   );
 
-  function canCacheProjectLookup(tokenSource: ResolvedProxyRequestToken["tokenSource"]): boolean {
-    return projectLookupCacheTtlMs > 0 &&
-      projectLookupCacheMaxEntries > 0 &&
-      (tokenSource === "service" || tokenSource === "static");
-  }
-
-  function getCachedProjectLookup(cacheKey: string): DomainLookupResult | null {
-    const entry = projectLookupCache.get(cacheKey);
-    if (!entry) return null;
-
-    if (Date.now() > entry.expiresAt) {
-      projectLookupCache.delete(cacheKey);
-      return null;
-    }
-
-    projectLookupCache.delete(cacheKey);
-    projectLookupCache.set(cacheKey, entry);
-    return entry.value;
-  }
-
-  function setCachedProjectLookup(cacheKey: string, value: DomainLookupResult): void {
-    if (
-      projectLookupCache.size >= projectLookupCacheMaxEntries && !projectLookupCache.has(cacheKey)
-    ) {
-      const oldestKey = projectLookupCache.keys().next().value;
-      if (oldestKey !== undefined) projectLookupCache.delete(oldestKey);
-    }
-
-    projectLookupCache.set(cacheKey, {
-      value,
-      expiresAt: Date.now() + projectLookupCacheTtlMs,
-    });
-  }
-
   async function resolveProjectLookup(
     lookupKey: string,
     token: string,
-    cacheable: boolean,
     timing?: ProxyServerTiming,
   ): Promise<DomainLookupResult | null> {
-    const cacheKey = normalizeProjectLookupCacheKey(lookupKey);
-    if (cacheable) {
-      const cached = getCachedProjectLookup(cacheKey);
-      if (cached) {
-        if (timing) markProxyServerTimingPhase(timing, "proxy.project_lookup_cache_hit");
-        return cached;
-      }
-
-      const pending = pendingProjectLookups.get(cacheKey);
-      if (pending) {
-        if (timing) markProxyServerTimingPhase(timing, "proxy.project_lookup_pending");
-        return await pending;
-      }
-    }
-
-    const lookupPromise = profileProxyServerTimingPhase(
+    return await profileProxyServerTimingPhase(
       timing ?? { enabled: false, startedAt: 0, phases: new Map() },
       "proxy.project_lookup",
       () => lookupProjectByDomain(lookupKey, config.apiBaseUrl, token, logger),
     );
-
-    if (!cacheable) return await lookupPromise;
-
-    pendingProjectLookups.set(cacheKey, lookupPromise);
-    try {
-      const result = await lookupPromise;
-      if (result) setCachedProjectLookup(cacheKey, result);
-      return result;
-    } finally {
-      pendingProjectLookups.delete(cacheKey);
-    }
   }
 
   function validateConfig(): string[] {
@@ -339,14 +241,13 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     userToken: string | undefined,
     lookupKey: string,
     envMatcher: (env: NonNullable<DomainLookupResult["environments"]>[number]) => boolean,
-    cacheableLookup: boolean,
     timing: ProxyServerTiming | undefined,
     logContext: Record<string, unknown>,
   ): Promise<
     | { projectId?: string; releaseId?: string; environmentId?: string }
     | { error: { status: number; message: string; redirectUrl?: string } }
   > {
-    const lookupResult = await resolveProjectLookup(lookupKey, token, cacheableLookup, timing);
+    const lookupResult = await resolveProjectLookup(lookupKey, token, timing);
     if (!lookupResult) return { projectId: undefined, releaseId: undefined };
 
     const matchingEnv = lookupResult.environments?.find(envMatcher);
@@ -416,13 +317,12 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
     let userToken: string | undefined;
     let token: string | undefined;
-    let tokenSource: ResolvedProxyRequestToken["tokenSource"];
     let tokenFetchError: unknown;
 
     if (isLocalProject) {
       logger?.debug("Local project, skipping token fetch", { localPath });
     } else {
-      ({ token, tokenSource, userToken, tokenFetchError } = await resolveProxyRequestToken(
+      ({ token, userToken, tokenFetchError } = await resolveProxyRequestToken(
         {
           req,
           url,
@@ -437,7 +337,6 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           tokenFetchErrorMessage: "Token fetch failed",
         },
       ));
-      const cacheableProjectLookup = canCacheProjectLookup(tokenSource);
 
       if (projectSlug && !token) {
         const status = parseStatusFromError(tokenFetchError);
@@ -488,7 +387,6 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         const lookupResult = await resolveProjectLookup(
           host,
           token,
-          cacheableProjectLookup,
           options.timing,
         );
         if (!lookupResult) {
@@ -548,7 +446,6 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           userToken,
           projectSlug,
           (env) => env.name.toLowerCase() === targetEnv,
-          cacheableProjectLookup,
           options.timing,
           { projectSlug },
         );
@@ -593,7 +490,6 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           userToken,
           projectSlug,
           (env) => env.name.toLowerCase() === "preview",
-          cacheableProjectLookup,
           options.timing,
           { projectSlug },
         );

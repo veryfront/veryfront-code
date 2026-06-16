@@ -302,7 +302,7 @@ describe("Proxy Handler", () => {
       }
     });
 
-    it("reuses successful custom domain project lookups across requests", async () => {
+    it("fetches custom domain project metadata on each request", async () => {
       let projectLookups = 0;
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
@@ -341,7 +341,7 @@ describe("Proxy Handler", () => {
         assertEquals(second.error, undefined);
         assertEquals(first.projectSlug, "my-project");
         assertEquals(second.projectSlug, "my-project");
-        assertEquals(projectLookups, 1);
+        assertEquals(projectLookups, 2);
 
         await handler.close();
       } finally {
@@ -809,7 +809,54 @@ describe("Proxy Handler", () => {
       }
     });
 
-    it("rechecks protected custom domain access when project metadata is cached", async () => {
+    it("uses fresh custom domain protection metadata on each request", async () => {
+      let projectLookups = 0;
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+
+        if (pathname.startsWith("/projects/")) {
+          projectLookups++;
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            name: "Protected Project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["protected.example.com"],
+              active_release_id: "rel-123",
+              protected: projectLookups >= 2,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+        const req = () =>
+          new Request("http://protected.example.com/page", {
+            headers: { host: "protected.example.com" },
+          });
+
+        const publicAccess = await handler.processRequest(req());
+        const protectedAccess = await handler.processRequest(req());
+
+        assertEquals(publicAccess.error, undefined);
+        assertEquals(protectedAccess.error?.status, 302);
+        assertEquals(protectedAccess.error?.message, "Authentication required");
+        assertEquals(projectLookups, 2);
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("uses fresh custom domain project membership on each request", async () => {
       const memberToken = await signTestJwt({ userId: "user-123", sub: "user-123" });
       let projectLookups = 0;
       const { server, port } = createMockServer((req: Request) => {
@@ -823,7 +870,7 @@ describe("Proxy Handler", () => {
             id: "proj-123",
             slug: "protected-project",
             name: "Protected Project",
-            users: [{ id: "user-123" }],
+            users: projectLookups === 1 ? [{ id: "user-123" }] : [],
             environments: [{
               id: "env-1",
               name: "production",
@@ -848,16 +895,19 @@ describe("Proxy Handler", () => {
             },
           }),
         );
-        const redirected = await handler.processRequest(
+        const rejected = await handler.processRequest(
           new Request("http://protected.example.com/page", {
-            headers: { host: "protected.example.com" },
+            headers: {
+              host: "protected.example.com",
+              cookie: `authToken=${memberToken}`,
+            },
           }),
         );
 
         assertEquals(allowed.error, undefined);
-        assertEquals(redirected.error?.status, 302);
-        assertEquals(redirected.error?.message, "Authentication required");
-        assertEquals(projectLookups, 1);
+        assertEquals(rejected.error?.status, 403);
+        assertEquals(rejected.error?.message, "Access denied");
+        assertEquals(projectLookups, 2);
 
         await handler.close();
       } finally {
