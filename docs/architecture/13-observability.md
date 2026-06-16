@@ -26,6 +26,23 @@ Primary source areas:
 4. Log subscribers and buffers expose recent runtime output.
 5. Request profiling records route-level timing and resource use.
 
+## Server timing
+
+When `VERYFRONT_ENABLE_SERVER_TIMING=1`, HTML and page-data responses include
+renderer request phases in the `Server-Timing` header. In split proxy mode, the
+proxy also appends proxy-prefixed phases:
+
+- `proxy.total`: time from proxy request receipt to response header return.
+- `proxy.resolve_request`: project, token, domain, and access resolution.
+- `proxy.resolve_server`: dedicated renderer server lookup.
+- `proxy.retry_delay`: retry backoff time.
+- `proxy.upstream`: fetch time from proxy to renderer response headers.
+
+Use client timing such as `curl -w '%{time_pretransfer} %{time_starttransfer}'`
+with `proxy.total` to estimate edge, ingress, and network time before the proxy
+pod receives the request. Use `proxy.upstream` minus the renderer `total` metric
+to estimate proxy-to-renderer network and response header overhead.
+
 ## Boundaries
 
 - Observability records behavior. It does not own business logic.
