@@ -435,6 +435,35 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     }
   });
 
+  it("adds a default export for preview provider modules outside components", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-provider-default-module-" });
+
+    try {
+      await Deno.mkdir(`${projectDir}/providers`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/providers/BreakpointsProvider.tsx`,
+        `export const BreakpointsProvider = ({ children }) => children;\n`,
+      );
+
+      const response = await serve(
+        new Request(
+          "http://localhost:3000/_vf_modules/providers/BreakpointsProvider.js?studio_embed=true",
+        ),
+        projectDir,
+      );
+
+      assertEquals(response.status, 200);
+      const text = await response.text();
+      assertStringIncludes(text, "export { BreakpointsProvider as default };");
+      assertEquals(
+        /export \{ BreakpointsProvider as default \};\n\/\/# sourceMappingURL=/.test(text),
+        true,
+      );
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   it("adds a default export for filename-matched browser barrel modules", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-client-barrel-default-module-" });
 
