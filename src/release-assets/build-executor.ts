@@ -8,8 +8,8 @@
  * uploads each asset, then assembles and PUTs the manifest (→ ready).
  *
  * Defensive by construction:
- * - Any module transform failure reports `failed` and stops without PUTting.
- * - Any other build failure (list/hash/upload/PUT) also reports `failed`.
+ * - Browser graph failures that can fall back to JIT are recorded as gaps.
+ * - Other build failures (list/hash/upload/PUT) report `failed`.
  * - The temp dir is always cleaned up by the caller.
  *
  * @module release-assets/build-executor
@@ -17,8 +17,6 @@
 
 import { serverLogger } from "#veryfront/utils";
 import { VERSION } from "#veryfront/utils/version.ts";
-import { resolve } from "#veryfront/extensions/contracts.ts";
-import type { CodeParser, NodePath } from "#veryfront/extensions/parser/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { dirname, join, normalize } from "#veryfront/compat/path/index.ts";
@@ -218,18 +216,6 @@ interface FinalizedDependencyModules {
   fallbackUrls: Map<string, string>;
 }
 
-interface ModuleSpecifierNode {
-  importKind?: string;
-  exportKind?: string;
-}
-
-interface ModuleSourceNode {
-  source?: { value?: unknown };
-  importKind?: string;
-  exportKind?: string;
-  specifiers?: ModuleSpecifierNode[];
-}
-
 function frameworkModuleUrlToSourceKey(moduleUrl: string): string | null {
   if (!moduleUrl.startsWith(FRAMEWORK_MODULE_URL_PREFIX)) return null;
   return moduleUrl
@@ -270,60 +256,6 @@ function isTransformableBrowserModule(path: string): boolean {
 function isBrowserModule(path: string): boolean {
   if (!isTransformableBrowserModule(path)) return false;
   return BROWSER_MODULE_DIRS.some((dir) => path.startsWith(dir));
-}
-
-/**
- * Statically resolve runtime imports in a TS/JSX source file to logical paths.
- * Uses the CodeParser AST contract so type-only imports do not enter route
- * preload closure.
- */
-async function collectStaticProjectModuleImports(
-  source: string,
-  moduleLogicalPath: string,
-  knownPaths: Set<string>,
-): Promise<string[]> {
-  return await collectAstStaticProjectModuleImports(source, moduleLogicalPath, knownPaths);
-}
-
-function readModuleSource(node: ModuleSourceNode): string | null {
-  return typeof node.source?.value === "string" ? node.source.value : null;
-}
-
-function isTypeOnlyModuleDeclaration(node: ModuleSourceNode): boolean {
-  if (node.importKind === "type" || node.exportKind === "type") return true;
-  if (!node.specifiers?.length) return false;
-  return node.specifiers.every((specifier) =>
-    specifier.importKind === "type" || specifier.exportKind === "type"
-  );
-}
-
-async function collectAstStaticProjectModuleImports(
-  source: string,
-  moduleLogicalPath: string,
-  knownPaths: Set<string>,
-): Promise<string[]> {
-  const parser = resolve<CodeParser>("CodeParser");
-  const ast = await parser.parse({ code: source, filePath: moduleLogicalPath });
-  const results = new Set<string>();
-
-  const visit = (path: NodePath) => {
-    const node = path.node as ModuleSourceNode;
-    if (isTypeOnlyModuleDeclaration(node)) return;
-
-    const specifier = readModuleSource(node);
-    if (!specifier) return;
-
-    const importedPath = resolveProjectModuleSpecifier(specifier, moduleLogicalPath, knownPaths);
-    if (importedPath) results.add(importedPath);
-  };
-
-  parser.traverse(ast, {
-    ImportDeclaration: visit,
-    ExportNamedDeclaration: visit,
-    ExportAllDeclaration: visit,
-  });
-
-  return [...results];
 }
 
 function resolveKnownModulePath(path: string, knownPaths: Set<string>): string | null {
@@ -1401,13 +1333,13 @@ function addFrameworkDependencyUrlAliases(
 }
 
 /**
- * Walk the static import graph from a set of entry points using BFS.
+ * Walk the transformed import graph from a set of entry points using BFS.
  * Returns all reachable logical paths (entries included).
- * Modules not in `sourceByPath` are recorded as closure gaps.
+ * Modules not in `transformedModules` are recorded as closure gaps.
  */
-async function collectClosure(
+async function collectRouteClosure(
   entrypoints: string[],
-  sourceByPath: Map<string, string>,
+  transformedModules: Map<string, TransformedProjectModule>,
   knownPaths: Set<string>,
 ): Promise<{ modules: string[]; gaps: string[] }> {
   const visited = new Set<string>();
@@ -1419,16 +1351,26 @@ async function collectClosure(
     if (visited.has(current)) continue;
     visited.add(current);
 
-    const source = sourceByPath.get(current);
-    if (!source) {
-      // Module referenced but not in the materialized file set.
+    const transformed = transformedModules.get(current);
+    if (!transformed) {
+      // Module referenced but not transformable or not successfully transformed.
       gaps.push(`closure-missing:${current}`);
       continue;
     }
 
-    const imports = await collectStaticProjectModuleImports(source, current, knownPaths);
-    for (const imp of imports) {
-      if (!visited.has(imp)) queue.push(imp);
+    let imports: Map<string, string>;
+    try {
+      imports = await collectProjectModuleImports(transformed.code, current, knownPaths);
+    } catch (error) {
+      pushGap(gaps, `closure-import-parse-failed:${current}`);
+      logger.warn("Route closure import parse failed during release asset build", {
+        path: current,
+        error: sanitizeError(error),
+      });
+      continue;
+    }
+    for (const importedPath of imports.values()) {
+      if (!visited.has(importedPath)) queue.push(importedPath);
     }
   }
 
@@ -1746,8 +1688,8 @@ async function runBuildInner(
     pendingBytes.delete(asset.contentHash);
   });
 
-  // B2. Routes: walk the full static import closure from each page entrypoint.
-  // Modules whose source is not in sourceByPath are recorded as closure gaps.
+  // B2. Routes: walk the transformed browser import closure from each page entrypoint.
+  // Modules missing from transformedModules are recorded as closure gaps.
   const routes: Record<string, ReleaseAssetRouteEntry> = {};
   const pageModules = Object.keys(modules).filter((p) => p.startsWith("pages/"));
 
@@ -1755,9 +1697,9 @@ async function runBuildInner(
     const route = routeForPage(logicalPath);
     if (!route) continue;
 
-    const { modules: closureModules, gaps: closureGaps } = await collectClosure(
+    const { modules: closureModules, gaps: closureGaps } = await collectRouteClosure(
       [logicalPath],
-      sourceByPath,
+      transformedModules,
       knownPaths,
     );
 
