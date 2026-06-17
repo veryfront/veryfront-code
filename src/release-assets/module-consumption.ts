@@ -32,6 +32,26 @@ export function isReleaseDependencyImportMapRewriteEnabled(): boolean {
   return getHostEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG) === "1";
 }
 
+function isHttpImportSpecifier(specifier: string): boolean {
+  try {
+    const url = new URL(specifier);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+export async function hasReleaseDependencyImportSpecifiers(code: string): Promise<boolean> {
+  if (!code.includes("http") && !code.includes("veryfront-http-bundle")) return false;
+
+  for (const imp of await parseImports(code)) {
+    if (!imp.n) continue;
+    if (isHttpImportSpecifier(imp.n) || localHttpBundlePath(imp.n)) return true;
+  }
+
+  return false;
+}
+
 export async function getReleaseDependencyRewriteManifestState(
   releaseId: string | null | undefined,
 ): Promise<ReleaseDependencyRewriteManifestState> {

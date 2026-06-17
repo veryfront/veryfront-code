@@ -394,7 +394,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       await Deno.mkdir(`${projectDir}/components`, { recursive: true });
       await Deno.writeTextFile(
         `${projectDir}/components/App.ts`,
-        `export const value = 1;\n`,
+        `export const value = "https://example.com/docs";\n`,
       );
 
       const response = await runWithRequestProfiling(
@@ -547,6 +547,77 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       assertEquals(first.status, 200);
       assertEquals(second.status, 200);
       assertEquals(second.body, first.body);
+      assertEquals(Boolean(first.record.phases["module.source_lookup"]), true);
+      assertEquals(Boolean(first.record.phases["module.transform"]), true);
+      assertEquals(second.record.phases["module.response_cache_hit"], 0);
+      assertEquals("module.source_lookup" in second.record.phases, false);
+      assertEquals("module.transform" in second.record.phases, false);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("caches release-versioned modules when the dependency manifest is absent but unused", async () => {
+    setEnv("VERYFRONT_ENABLE_SERVER_TIMING", "1");
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-release-module-null-manifest-" });
+    const releaseId = `rel-null-manifest-${crypto.randomUUID()}`;
+    const request = new Request(
+      `http://localhost:3000/_vf_modules/components/App.js?vf_release=${releaseId}&vf_runtime=${VERSION}`,
+    );
+
+    configureReleaseAssetManifestFetcher(() =>
+      Promise.resolve({ state: "building", manifest: null })
+    );
+
+    async function serveWithProfile(): Promise<{
+      body: string;
+      cacheControl: string | null;
+      record: NonNullable<ReturnType<typeof finalizeRequestProfiling>>;
+      status: number;
+    }> {
+      let record: ReturnType<typeof finalizeRequestProfiling> = null;
+      let profiledResponse: Response | undefined;
+      const response = await runWithRequestProfiling(
+        {
+          category: "module",
+          method: "GET",
+          pathname: "/_vf_modules/components/App.js",
+        },
+        async () => {
+          try {
+            profiledResponse = await serveProductionModule(request, projectDir, releaseId);
+            return profiledResponse;
+          } finally {
+            record = finalizeRequestProfiling(profiledResponse?.status);
+          }
+        },
+      );
+
+      return {
+        body: await response.text(),
+        cacheControl: response.headers.get("cache-control"),
+        record: record!,
+        status: response.status,
+      };
+    }
+
+    try {
+      await Deno.mkdir(`${projectDir}/components`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/components/App.ts`,
+        `export const value = 1;\n`,
+      );
+
+      const first = await serveWithProfile();
+      const second = await serveWithProfile();
+
+      assertEquals(first.status, 200);
+      assertEquals(second.status, 200);
+      assertEquals(first.body, second.body);
+      assertEquals(first.cacheControl, "public, max-age=31536000, immutable");
+      assertEquals(second.cacheControl, "public, max-age=31536000, immutable");
       assertEquals(Boolean(first.record.phases["module.source_lookup"]), true);
       assertEquals(Boolean(first.record.phases["module.transform"]), true);
       assertEquals(second.record.phases["module.response_cache_hit"], 0);
@@ -769,6 +840,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
 
     async function serveWithProfile(): Promise<{
       body: string;
+      cacheControl: string | null;
       record: NonNullable<ReturnType<typeof finalizeRequestProfiling>>;
       status: number;
     }> {
@@ -795,6 +867,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
 
       return {
         body: await response.text(),
+        cacheControl: response.headers.get("cache-control"),
         record: record!,
         status: response.status,
       };
@@ -837,9 +910,13 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       assertEquals(first.status, 200);
       assertEquals(second.status, 200);
       assertEquals(third.status, 200);
+      assertEquals(first.cacheControl, "no-cache");
+      assertEquals(second.cacheControl, "public, max-age=31536000, immutable");
+      assertEquals(third.cacheControl, "public, max-age=31536000, immutable");
       assertEquals(first.body.includes(`"/_vf/assets/${hash}.js"`), false);
       assertEquals(second.body.includes(`"/_vf/assets/${hash}.js"`), true);
       assertEquals(third.body, second.body);
+      assertEquals("module.response_cache_store" in first.record.phases, false);
       assertEquals(Boolean(second.record.phases["module.source_lookup"]), true);
       assertEquals("module.response_cache_hit" in second.record.phases, false);
       assertEquals(third.record.phases["module.response_cache_hit"], 0);
