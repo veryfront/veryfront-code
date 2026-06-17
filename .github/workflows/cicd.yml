@@ -440,9 +440,25 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           TAG="v${VERSION}"
-          if npm view veryfront@"${VERSION}" version 2>/dev/null; then
+          wait_for_existing_npm_git_head() {
+            for attempt in $(seq 1 24); do
+              PUBLISHED_GIT_HEAD="$(npm view veryfront@"${VERSION}" gitHead 2>/dev/null || true)"
+              if [ "${PUBLISHED_GIT_HEAD}" = "${GITHUB_SHA}" ]; then
+                return 0
+              fi
+              if [ -n "${PUBLISHED_GIT_HEAD}" ]; then
+                return 1
+              fi
+              echo "Waiting for npm registry metadata for veryfront@${VERSION} (attempt ${attempt}/24)."
+              sleep 5
+            done
+
             PUBLISHED_GIT_HEAD="$(npm view veryfront@"${VERSION}" gitHead 2>/dev/null || true)"
-            if [ "${PUBLISHED_GIT_HEAD}" != "${GITHUB_SHA}" ]; then
+            [ "${PUBLISHED_GIT_HEAD}" = "${GITHUB_SHA}" ]
+          }
+
+          if npm view veryfront@"${VERSION}" version 2>/dev/null; then
+            if ! wait_for_existing_npm_git_head; then
               echo "::error::v${VERSION} already exists on npm for ${PUBLISHED_GIT_HEAD}. Bump deno.json before releasing."
               exit 1
             fi
@@ -476,6 +492,23 @@ jobs:
           deno task build:npm
           cd npm
 
+          wait_for_npm_git_head() {
+            for attempt in $(seq 1 24); do
+              PUBLISHED_GIT_HEAD="$(npm view veryfront@"${VERSION}" gitHead 2>/dev/null || true)"
+              if [ "${PUBLISHED_GIT_HEAD}" = "${GITHUB_SHA}" ]; then
+                return 0
+              fi
+              if [ -n "${PUBLISHED_GIT_HEAD}" ]; then
+                return 1
+              fi
+              echo "Waiting for npm registry metadata for veryfront@${VERSION} (attempt ${attempt}/24)."
+              sleep 5
+            done
+
+            PUBLISHED_GIT_HEAD="$(npm view veryfront@"${VERSION}" gitHead 2>/dev/null || true)"
+            [ "${PUBLISHED_GIT_HEAD}" = "${GITHUB_SHA}" ]
+          }
+
           PUBLISHED_GIT_HEAD="$(npm view veryfront@"${VERSION}" gitHead 2>/dev/null || true)"
           if [ "${PUBLISHED_GIT_HEAD}" = "${GITHUB_SHA}" ]; then
             echo "veryfront@${VERSION} is already published for this commit; skipping npm publish."
@@ -487,9 +520,8 @@ jobs:
             printf '%s\n' "${PUBLISH_OUTPUT}"
 
             if [ "${PUBLISH_STATUS}" -ne 0 ]; then
-              PUBLISHED_GIT_HEAD="$(npm view veryfront@"${VERSION}" gitHead 2>/dev/null || true)"
               if printf '%s\n' "${PUBLISH_OUTPUT}" | grep -Fq "previously published versions: ${VERSION}" \
-                && [ "${PUBLISHED_GIT_HEAD}" = "${GITHUB_SHA}" ]; then
+                && wait_for_npm_git_head; then
                 echo "npm reports veryfront@${VERSION} already exists, and gitHead matches this commit; continuing."
               else
                 exit "${PUBLISH_STATUS}"
@@ -497,8 +529,7 @@ jobs:
             fi
           fi
 
-          PUBLISHED_GIT_HEAD="$(npm view veryfront@"${VERSION}" gitHead 2>/dev/null || true)"
-          if [ "${PUBLISHED_GIT_HEAD}" != "${GITHUB_SHA}" ]; then
+          if ! wait_for_npm_git_head; then
             echo "::error::Published veryfront@${VERSION} gitHead is ${PUBLISHED_GIT_HEAD}, expected ${GITHUB_SHA}."
             exit 1
           fi
