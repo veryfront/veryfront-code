@@ -354,15 +354,21 @@ export const getRouterScript = () => `
       return data;
     }
 
+    function startPageDataFetch(path, signal, options = {}) {
+      const request = fetchPageDataFresh(path, signal, options).finally(() => {
+        if (pendingPageDataFetches.get(path) === request) {
+          pendingPageDataFetches.delete(path);
+        }
+      });
+      pendingPageDataFetches.set(path, request);
+      return request;
+    }
+
     function fetchPageDataDeduped(path) {
       const pending = pendingPageDataFetches.get(path);
       if (pending) return pending;
 
-      const refreshPromise = fetchPageDataFresh(path, null).finally(() => {
-        pendingPageDataFetches.delete(path);
-      });
-      pendingPageDataFetches.set(path, refreshPromise);
-      return refreshPromise;
+      return startPageDataFetch(path, null);
     }
 
     function refreshPageDataInBackground(path) {
@@ -394,7 +400,7 @@ export const getRouterScript = () => `
         return handlePageDataVersionMismatch(path, data);
       }
 
-      return fetchPageDataFresh(path, signal, {
+      return startPageDataFetch(path, signal, {
         triggerReloadOnVersionMismatch: true,
         recordRouteTiming: true,
         timingSource: 'network'
