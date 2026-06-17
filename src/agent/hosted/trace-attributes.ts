@@ -13,6 +13,9 @@ export type AgentTraceUsage = {
   inputTokens?: number;
   outputTokens?: number;
   cachedInputTokens?: number;
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
+  reasoningTokens?: number;
 };
 
 function compactTraceAttributes(attributes: AgentTraceAttributes): AgentTraceAttributes {
@@ -78,8 +81,16 @@ function buildUsageTraceAttributes(usage?: AgentTraceUsage): AgentTraceAttribute
     ...(typeof usage?.outputTokens === "number"
       ? { "gen_ai.usage.output_tokens": usage.outputTokens }
       : {}),
-    ...(typeof usage?.cachedInputTokens === "number"
+    ...(typeof usage?.cacheCreationInputTokens === "number"
+      ? { "gen_ai.usage.cache_creation.input_tokens": usage.cacheCreationInputTokens }
+      : {}),
+    ...(typeof usage?.cacheReadInputTokens === "number"
+      ? { "gen_ai.usage.cache_read.input_tokens": usage.cacheReadInputTokens }
+      : typeof usage?.cachedInputTokens === "number"
       ? { "gen_ai.usage.cache_read.input_tokens": usage.cachedInputTokens }
+      : {}),
+    ...(typeof usage?.reasoningTokens === "number"
+      ? { "gen_ai.usage.reasoning.output_tokens": usage.reasoningTokens }
       : {}),
   });
 }

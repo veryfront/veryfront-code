@@ -6,18 +6,36 @@ import { createAgUiBrowserFinalizeTracker } from "./browser-finalize-tracker.ts"
 describe("agent/ag-ui-browser-finalize-tracker", () => {
   it("builds a final response from observed chunk metadata", () => {
     const tracker = createAgUiBrowserFinalizeTracker<{
-      usage?: { inputTokens?: number; outputTokens?: number };
+      usage?: {
+        inputTokens?: number;
+        outputTokens?: number;
+        cachedInputTokens?: number;
+        cacheCreationInputTokens?: number;
+        cacheReadInputTokens?: number;
+        reasoningTokens?: number;
+      };
       finishReason?: string;
     }>({
       getMetadataFromChunk: (chunk) => ({
         inputTokens: chunk.usage?.inputTokens,
         outputTokens: chunk.usage?.outputTokens,
+        cachedInputTokens: chunk.usage?.cachedInputTokens,
+        cacheCreationInputTokens: chunk.usage?.cacheCreationInputTokens,
+        cacheReadInputTokens: chunk.usage?.cacheReadInputTokens,
+        reasoningTokens: chunk.usage?.reasoningTokens,
         finishReason: chunk.finishReason,
       }),
     });
 
     tracker.observeChunk({
-      usage: { inputTokens: 3, outputTokens: 5 },
+      usage: {
+        inputTokens: 3,
+        outputTokens: 5,
+        cachedInputTokens: 2,
+        cacheCreationInputTokens: 4,
+        cacheReadInputTokens: 2,
+        reasoningTokens: 1,
+      },
       finishReason: "stop",
     });
 
@@ -30,9 +48,17 @@ describe("agent/ag-ui-browser-finalize-tracker", () => {
         promptTokens: 3,
         completionTokens: 5,
         totalTokens: 8,
+        cachedInputTokens: 2,
+        cacheCreationInputTokens: 4,
+        cacheReadInputTokens: 2,
+        reasoningTokens: 1,
       },
       metadata: {
+        cachedInputTokens: 2,
+        cacheCreationInputTokens: 4,
+        cacheReadInputTokens: 2,
         finishReason: "stop",
+        reasoningTokens: 1,
       },
     });
   });

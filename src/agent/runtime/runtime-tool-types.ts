@@ -27,6 +27,10 @@ export interface RuntimeGenerateUsage {
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
+  cachedInputTokens?: number;
+  reasoningTokens?: number;
 }
 
 export interface RuntimeGenerateTextResult {
@@ -128,6 +132,11 @@ export type RuntimeStreamPart =
     totalUsage?: {
       inputTokens?: number;
       outputTokens?: number;
+      totalTokens?: number;
+      cacheCreationInputTokens?: number;
+      cacheReadInputTokens?: number;
+      cachedInputTokens?: number;
+      reasoningTokens?: number;
     } | null;
   }
   | { type: "error"; error: unknown };

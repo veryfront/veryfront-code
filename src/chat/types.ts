@@ -386,6 +386,8 @@ const getMessageMetadataUsageSchema = defineSchema((v) =>
     outputTokens: v.number().optional(),
     reasoningTokens: v.number().optional(),
     cachedInputTokens: v.number().optional(),
+    cacheCreationInputTokens: v.number().optional(),
+    cacheReadInputTokens: v.number().optional(),
   }).strict()
 );
 

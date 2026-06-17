@@ -48,6 +48,21 @@ export function createAgUiBrowserFinalizeTracker<TChunk>(
       if (typeof nextMetadata.totalTokens === "number") {
         metadata.totalTokens = nextMetadata.totalTokens;
       }
+      if (typeof nextMetadata.cachedInputTokens === "number") {
+        metadata.cachedInputTokens = nextMetadata.cachedInputTokens;
+      }
+      if (typeof nextMetadata.cacheCreationInputTokens === "number") {
+        metadata.cacheCreationInputTokens = nextMetadata.cacheCreationInputTokens;
+      }
+      if (typeof nextMetadata.cacheReadInputTokens === "number") {
+        metadata.cacheReadInputTokens = nextMetadata.cacheReadInputTokens;
+      }
+      if (typeof nextMetadata.reasoningTokens === "number") {
+        metadata.reasoningTokens = nextMetadata.reasoningTokens;
+      }
+      if (nextMetadata.usageCaptureStatus) {
+        metadata.usageCaptureStatus = nextMetadata.usageCaptureStatus;
+      }
       if (typeof nextMetadata.finishReason === "string") {
         metadata.finishReason = nextMetadata.finishReason;
       }

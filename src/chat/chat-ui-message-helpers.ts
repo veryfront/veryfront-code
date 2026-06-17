@@ -30,15 +30,36 @@ function normalizeUsageMetadata(value: unknown): ChatMessageMetadata["usage"] | 
     return undefined;
   }
 
+  const inputTokenDetails = isRecord(value.inputTokenDetails) ? value.inputTokenDetails : undefined;
+  const outputTokenDetails = isRecord(value.outputTokenDetails)
+    ? value.outputTokenDetails
+    : undefined;
+  const cacheCreationInputTokens = typeof value.cacheCreationInputTokens === "number"
+    ? value.cacheCreationInputTokens
+    : typeof inputTokenDetails?.cacheWriteTokens === "number"
+    ? inputTokenDetails.cacheWriteTokens
+    : undefined;
+  const cacheReadInputTokens = typeof value.cacheReadInputTokens === "number"
+    ? value.cacheReadInputTokens
+    : typeof inputTokenDetails?.cacheReadTokens === "number"
+    ? inputTokenDetails.cacheReadTokens
+    : undefined;
+  const cachedInputTokens = typeof value.cachedInputTokens === "number"
+    ? value.cachedInputTokens
+    : cacheReadInputTokens;
+  const reasoningTokens = typeof value.reasoningTokens === "number"
+    ? value.reasoningTokens
+    : typeof outputTokenDetails?.reasoningTokens === "number"
+    ? outputTokenDetails.reasoningTokens
+    : undefined;
+
   const usage = {
     ...(typeof value.inputTokens === "number" ? { inputTokens: value.inputTokens } : {}),
     ...(typeof value.outputTokens === "number" ? { outputTokens: value.outputTokens } : {}),
-    ...(typeof value.reasoningTokens === "number"
-      ? { reasoningTokens: value.reasoningTokens }
-      : {}),
-    ...(typeof value.cachedInputTokens === "number"
-      ? { cachedInputTokens: value.cachedInputTokens }
-      : {}),
+    ...(typeof reasoningTokens === "number" ? { reasoningTokens } : {}),
+    ...(typeof cachedInputTokens === "number" ? { cachedInputTokens } : {}),
+    ...(typeof cacheCreationInputTokens === "number" ? { cacheCreationInputTokens } : {}),
+    ...(typeof cacheReadInputTokens === "number" ? { cacheReadInputTokens } : {}),
   };
 
   return Object.keys(usage).length > 0 ? usage : undefined;

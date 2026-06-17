@@ -107,6 +107,10 @@ type DirectGenerateUsage = {
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
+  cachedInputTokens?: number;
+  reasoningTokens?: number;
 };
 
 type DirectGenerateResult = {
@@ -231,15 +235,34 @@ function normalizeUsage(usage: unknown): DirectGenerateUsage | undefined {
     const inputTokens = "total" in usage.inputTokens && typeof usage.inputTokens.total === "number"
       ? usage.inputTokens.total
       : undefined;
+    const cacheReadInputTokens =
+      "cached" in usage.inputTokens && typeof usage.inputTokens.cached === "number"
+        ? usage.inputTokens.cached
+        : "cacheRead" in usage.inputTokens && typeof usage.inputTokens.cacheRead === "number"
+        ? usage.inputTokens.cacheRead
+        : undefined;
+    const cacheCreationInputTokens =
+      "cacheCreation" in usage.inputTokens && typeof usage.inputTokens.cacheCreation === "number"
+        ? usage.inputTokens.cacheCreation
+        : undefined;
     const outputTokens =
       "outputTokens" in usage && typeof usage.outputTokens === "object" && usage.outputTokens &&
         "total" in usage.outputTokens && typeof usage.outputTokens.total === "number"
         ? usage.outputTokens.total
         : undefined;
+    const reasoningTokens =
+      "outputTokens" in usage && typeof usage.outputTokens === "object" && usage.outputTokens &&
+        "reasoning" in usage.outputTokens && typeof usage.outputTokens.reasoning === "number"
+        ? usage.outputTokens.reasoning
+        : undefined;
     return {
       inputTokens,
       outputTokens,
       totalTokens: (inputTokens ?? 0) + (outputTokens ?? 0),
+      ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
+      ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
+      ...(cacheReadInputTokens !== undefined ? { cachedInputTokens: cacheReadInputTokens } : {}),
+      ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
     };
   }
 
@@ -247,12 +270,30 @@ function normalizeUsage(usage: unknown): DirectGenerateUsage | undefined {
     inputTokens?: number;
     outputTokens?: number;
     totalTokens?: number;
+    cacheCreationInputTokens?: number;
+    cacheReadInputTokens?: number;
+    cachedInputTokens?: number;
+    reasoningTokens?: number;
   };
 
   return {
     inputTokens: flatUsage.inputTokens,
     outputTokens: flatUsage.outputTokens,
     totalTokens: flatUsage.totalTokens,
+    ...(typeof flatUsage.cacheCreationInputTokens === "number"
+      ? { cacheCreationInputTokens: flatUsage.cacheCreationInputTokens }
+      : {}),
+    ...(typeof flatUsage.cacheReadInputTokens === "number"
+      ? { cacheReadInputTokens: flatUsage.cacheReadInputTokens }
+      : {}),
+    ...(typeof flatUsage.cachedInputTokens === "number"
+      ? { cachedInputTokens: flatUsage.cachedInputTokens }
+      : typeof flatUsage.cacheReadInputTokens === "number"
+      ? { cachedInputTokens: flatUsage.cacheReadInputTokens }
+      : {}),
+    ...(typeof flatUsage.reasoningTokens === "number"
+      ? { reasoningTokens: flatUsage.reasoningTokens }
+      : {}),
   };
 }
 
@@ -461,6 +502,7 @@ function normalizeStreamPart(part: unknown): unknown {
     finishReason?: unknown;
   };
   const usage = normalizeUsage(finishPart.usage);
+  const recomputedTotal = usage ? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0) : undefined;
 
   return {
     type: "finish",
@@ -470,6 +512,21 @@ function normalizeStreamPart(part: unknown): unknown {
         totalUsage: {
           inputTokens: usage.inputTokens,
           outputTokens: usage.outputTokens,
+          ...(usage.totalTokens !== undefined && usage.totalTokens !== recomputedTotal
+            ? { totalTokens: usage.totalTokens }
+            : {}),
+          ...(usage.cacheCreationInputTokens !== undefined
+            ? { cacheCreationInputTokens: usage.cacheCreationInputTokens }
+            : {}),
+          ...(usage.cacheReadInputTokens !== undefined
+            ? { cacheReadInputTokens: usage.cacheReadInputTokens }
+            : {}),
+          ...(usage.cachedInputTokens !== undefined
+            ? { cachedInputTokens: usage.cachedInputTokens }
+            : {}),
+          ...(usage.reasoningTokens !== undefined
+            ? { reasoningTokens: usage.reasoningTokens }
+            : {}),
         },
       }
       : {}),

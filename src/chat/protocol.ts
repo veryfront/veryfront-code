@@ -99,6 +99,8 @@ export interface ChatMessageMetadataUsage {
   outputTokens?: number;
   reasoningTokens?: number;
   cachedInputTokens?: number;
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
 }
 
 /** Public API contract for child run audit tool call. */

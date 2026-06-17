@@ -7,6 +7,7 @@ export type RuntimeUsage = {
   totalTokens?: number;
   cacheCreationInputTokens?: number;
   cacheReadInputTokens?: number;
+  reasoningTokens?: number;
 };
 
 export function extractAnthropicUsage(payload: unknown): RuntimeUsage | undefined {
@@ -44,6 +45,7 @@ export function extractGoogleUsage(payload: unknown): RuntimeUsage | undefined {
   const outputTokens = usage.candidatesTokenCount;
   const totalTokens = usage.totalTokenCount;
   const cachedContentTokenCount = usage.cachedContentTokenCount;
+  const thoughtsTokenCount = usage.thoughtsTokenCount;
 
   return {
     inputTokens: typeof inputTokens === "number" ? inputTokens : undefined,
@@ -52,6 +54,7 @@ export function extractGoogleUsage(payload: unknown): RuntimeUsage | undefined {
     ...(typeof cachedContentTokenCount === "number"
       ? { cacheReadInputTokens: cachedContentTokenCount }
       : {}),
+    ...(typeof thoughtsTokenCount === "number" ? { reasoningTokens: thoughtsTokenCount } : {}),
   };
 }
 
@@ -67,12 +70,15 @@ export function extractOpenAIUsage(payload: unknown): RuntimeUsage | undefined {
   const totalTokens = usage.total_tokens;
   const promptTokensDetails = readRecord(usage.prompt_tokens_details);
   const cachedTokens = promptTokensDetails?.cached_tokens;
+  const completionTokensDetails = readRecord(usage.completion_tokens_details);
+  const reasoningTokens = completionTokensDetails?.reasoning_tokens;
 
   return {
     inputTokens: typeof inputTokens === "number" ? inputTokens : undefined,
     outputTokens: typeof outputTokens === "number" ? outputTokens : undefined,
     totalTokens: typeof totalTokens === "number" ? totalTokens : undefined,
     ...(typeof cachedTokens === "number" ? { cacheReadInputTokens: cachedTokens } : {}),
+    ...(typeof reasoningTokens === "number" ? { reasoningTokens } : {}),
   };
 }
 
@@ -99,12 +105,15 @@ export function extractOpenAIResponsesUsage(payload: unknown): RuntimeUsage | un
       : undefined);
   const inputDetails = readRecord(usage.input_tokens_details);
   const cachedTokens = inputDetails?.cached_tokens;
+  const outputDetails = readRecord(usage.output_tokens_details);
+  const reasoningTokens = outputDetails?.reasoning_tokens;
 
   return {
     inputTokens,
     outputTokens,
     totalTokens,
     ...(typeof cachedTokens === "number" ? { cacheReadInputTokens: cachedTokens } : {}),
+    ...(typeof reasoningTokens === "number" ? { reasoningTokens } : {}),
   };
 }
 
@@ -126,6 +135,7 @@ export function mergeUsage(
   const cacheCreationInputTokens = next.cacheCreationInputTokens ??
     current.cacheCreationInputTokens;
   const cacheReadInputTokens = next.cacheReadInputTokens ?? current.cacheReadInputTokens;
+  const reasoningTokens = next.reasoningTokens ?? current.reasoningTokens;
 
   // Prefer the provider-reported total (latest non-undefined wins, matching the
   // ?? semantics used for input/output above). Providers like Gemini 2.5
@@ -145,5 +155,6 @@ export function mergeUsage(
     totalTokens,
     ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
     ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
   };
 }

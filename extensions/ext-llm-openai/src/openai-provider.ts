@@ -78,6 +78,7 @@ type RuntimeUsage = {
   totalTokens?: number;
   cacheCreationInputTokens?: number;
   cacheReadInputTokens?: number;
+  reasoningTokens?: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -146,12 +147,15 @@ function extractOpenAIUsage(payload: unknown): RuntimeUsage | undefined {
   const totalTokens = usage.total_tokens;
   const promptTokensDetails = readRecord(usage.prompt_tokens_details);
   const cachedTokens = promptTokensDetails?.cached_tokens;
+  const completionTokensDetails = readRecord(usage.completion_tokens_details);
+  const reasoningTokens = completionTokensDetails?.reasoning_tokens;
 
   return {
     inputTokens: typeof inputTokens === "number" ? inputTokens : undefined,
     outputTokens: typeof outputTokens === "number" ? outputTokens : undefined,
     totalTokens: typeof totalTokens === "number" ? totalTokens : undefined,
     ...(typeof cachedTokens === "number" ? { cacheReadInputTokens: cachedTokens } : {}),
+    ...(typeof reasoningTokens === "number" ? { reasoningTokens } : {}),
   };
 }
 

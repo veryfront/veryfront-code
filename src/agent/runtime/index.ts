@@ -579,7 +579,12 @@ export class AgentRuntime {
           accumulateUsage(totalUsage, {
             promptTokens: input,
             completionTokens: output,
-            totalTokens: input + output,
+            totalTokens: response.usage.totalTokens ?? input + output,
+            cachedInputTokens: response.usage.cachedInputTokens ??
+              response.usage.cacheReadInputTokens,
+            cacheCreationInputTokens: response.usage.cacheCreationInputTokens,
+            cacheReadInputTokens: response.usage.cacheReadInputTokens,
+            reasoningTokens: response.usage.reasoningTokens,
           });
         }
 

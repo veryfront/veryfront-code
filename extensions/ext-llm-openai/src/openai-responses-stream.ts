@@ -6,6 +6,7 @@ type RuntimeUsage = {
   totalTokens?: number;
   cacheCreationInputTokens?: number;
   cacheReadInputTokens?: number;
+  reasoningTokens?: number;
 };
 
 type OpenAIResponsesStreamReasoningState = {
@@ -41,12 +42,15 @@ export function extractOpenAIResponsesUsage(payload: unknown): RuntimeUsage | un
       : undefined);
   const inputDetails = readRecord(usage.input_tokens_details);
   const cachedTokens = inputDetails?.cached_tokens;
+  const outputDetails = readRecord(usage.output_tokens_details);
+  const reasoningTokens = outputDetails?.reasoning_tokens;
 
   return {
     inputTokens,
     outputTokens,
     totalTokens,
     ...(typeof cachedTokens === "number" ? { cacheReadInputTokens: cachedTokens } : {}),
+    ...(typeof reasoningTokens === "number" ? { reasoningTokens } : {}),
   };
 }
 

@@ -99,7 +99,13 @@ describe("hosted-agent-run-lifecycle", () => {
     controller.finalize({
       status: "completed",
       modelId: "veryfront-cloud/anthropic/claude-sonnet-4-6",
-      usage: { inputTokens: 10, outputTokens: 5, cachedInputTokens: 2 },
+      usage: {
+        inputTokens: 10,
+        outputTokens: 5,
+        cachedInputTokens: 2,
+        cacheReadInputTokens: 2,
+        reasoningTokens: 1,
+      },
     });
     controller.finalize({ status: "failed", terminalErrorCode: "LATE" });
 
@@ -114,6 +120,7 @@ describe("hosted-agent-run-lifecycle", () => {
     assertEquals(span.attributes["gen_ai.usage.input_tokens"], 10);
     assertEquals(span.attributes["gen_ai.usage.output_tokens"], 5);
     assertEquals(span.attributes["gen_ai.usage.cache_read.input_tokens"], 2);
+    assertEquals(span.attributes["gen_ai.usage.reasoning.output_tokens"], 1);
   });
 
   it("creates a terminal adapter and finalizes the span", async () => {

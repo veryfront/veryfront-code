@@ -17,12 +17,20 @@ describe("agent/ag-ui-chat-ui-chunk-browser-encoder", () => {
         usage: {
           inputTokens: 12,
           outputTokens: 8,
+          cachedInputTokens: 4,
+          cacheCreationInputTokens: 6,
+          cacheReadInputTokens: 4,
+          reasoningTokens: 2,
         },
       }),
       {
         inputTokens: 12,
         outputTokens: 8,
         totalTokens: 20,
+        cachedInputTokens: 4,
+        cacheCreationInputTokens: 6,
+        cacheReadInputTokens: 4,
+        reasoningTokens: 2,
       },
     );
 
@@ -36,6 +44,10 @@ describe("agent/ag-ui-chat-ui-chunk-browser-encoder", () => {
         inputTokens: undefined,
         outputTokens: 8,
         totalTokens: 8,
+        cachedInputTokens: undefined,
+        cacheCreationInputTokens: undefined,
+        cacheReadInputTokens: undefined,
+        reasoningTokens: undefined,
       },
     );
 
@@ -43,6 +55,10 @@ describe("agent/ag-ui-chat-ui-chunk-browser-encoder", () => {
       inputTokens: undefined,
       outputTokens: undefined,
       totalTokens: undefined,
+      cachedInputTokens: undefined,
+      cacheCreationInputTokens: undefined,
+      cacheReadInputTokens: undefined,
+      reasoningTokens: undefined,
     });
   });
 
@@ -55,6 +71,10 @@ describe("agent/ag-ui-chat-ui-chunk-browser-encoder", () => {
         usage: {
           inputTokens: 2,
           outputTokens: 3,
+          cachedInputTokens: 1,
+          cacheCreationInputTokens: 2,
+          cacheReadInputTokens: 1,
+          reasoningTokens: 4,
         },
       },
     };
@@ -69,6 +89,10 @@ describe("agent/ag-ui-chat-ui-chunk-browser-encoder", () => {
         inputTokens: 2,
         outputTokens: 3,
         totalTokens: 5,
+        cachedInputTokens: 1,
+        cacheCreationInputTokens: 2,
+        cacheReadInputTokens: 1,
+        reasoningTokens: 4,
         finishReason: "stop",
       },
     );
@@ -215,6 +239,10 @@ describe("agent/ag-ui-chat-ui-chunk-browser-encoder", () => {
                 usage: {
                   inputTokens: 2,
                   outputTokens: 3,
+                  cachedInputTokens: 1,
+                  cacheCreationInputTokens: 2,
+                  cacheReadInputTokens: 1,
+                  reasoningTokens: 4,
                 },
               },
             };
@@ -233,6 +261,10 @@ describe("agent/ag-ui-chat-ui-chunk-browser-encoder", () => {
     assertStringIncludes(text, '"inputTokens":2');
     assertStringIncludes(text, '"outputTokens":3');
     assertStringIncludes(text, '"totalTokens":5');
+    assertStringIncludes(text, '"cachedInputTokens":1');
+    assertStringIncludes(text, '"cacheCreationInputTokens":2');
+    assertStringIncludes(text, '"cacheReadInputTokens":1');
+    assertStringIncludes(text, '"reasoningTokens":4');
     assertStringIncludes(text, '"finishReason":"stop"');
   });
 });

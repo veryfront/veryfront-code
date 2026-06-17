@@ -11,6 +11,9 @@ export interface HostedLifecycleTerminalState {
       inputTokens?: number;
       outputTokens?: number;
       cachedInputTokens?: number;
+      cacheCreationInputTokens?: number;
+      cacheReadInputTokens?: number;
+      reasoningTokens?: number;
     };
   };
   terminalErrorCode?: string | null;

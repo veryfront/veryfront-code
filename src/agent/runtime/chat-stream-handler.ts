@@ -68,7 +68,15 @@ export interface ChatStreamState {
   finishReason: string | null;
   toolCalls: Map<string, StreamingToolCall>;
   toolResults: StreamingToolResult[];
-  usage: { promptTokens: number; completionTokens: number; totalTokens: number };
+  usage: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    cachedInputTokens?: number;
+    cacheCreationInputTokens?: number;
+    cacheReadInputTokens?: number;
+    reasoningTokens?: number;
+  };
 }
 
 export interface ChatStreamCallbacks {
@@ -77,6 +85,10 @@ export interface ChatStreamCallbacks {
     promptTokens?: number;
     completionTokens?: number;
     totalTokens?: number;
+    cachedInputTokens?: number;
+    cacheCreationInputTokens?: number;
+    cacheReadInputTokens?: number;
+    reasoningTokens?: number;
   }) => void;
   providerExecutedToolNames?: readonly string[];
   localToolInputIdleTimeoutMs?: number;
@@ -900,10 +912,20 @@ export function processStream(
           if (typedPart.totalUsage) {
             const input = typedPart.totalUsage.inputTokens ?? 0;
             const output = typedPart.totalUsage.outputTokens ?? 0;
+            const cacheReadInputTokens = typedPart.totalUsage.cacheReadInputTokens;
+            const cacheCreationInputTokens = typedPart.totalUsage.cacheCreationInputTokens;
+            const cachedInputTokens = typedPart.totalUsage.cachedInputTokens ??
+              cacheReadInputTokens;
             state.usage = {
               promptTokens: input,
               completionTokens: output,
-              totalTokens: input + output,
+              totalTokens: typedPart.totalUsage.totalTokens ?? input + output,
+              ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+              ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
+              ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
+              ...(typedPart.totalUsage.reasoningTokens !== undefined
+                ? { reasoningTokens: typedPart.totalUsage.reasoningTokens }
+                : {}),
             };
             callbacks?.onUsage?.(state.usage);
           }

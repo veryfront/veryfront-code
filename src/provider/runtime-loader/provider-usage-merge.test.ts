@@ -51,4 +51,19 @@ describe("provider/runtime-loader/provider-usage mergeUsage", () => {
     // so keep the larger to avoid undercounting.
     assertEquals(merged?.totalTokens, 150);
   });
+
+  it("preserves cached and reasoning token details while merging partial usage", () => {
+    const merged = mergeUsage(
+      { inputTokens: 10, cacheReadInputTokens: 4 },
+      { outputTokens: 5, reasoningTokens: 2 },
+    );
+
+    assertEquals(merged, {
+      inputTokens: 10,
+      outputTokens: 5,
+      totalTokens: 15,
+      cacheReadInputTokens: 4,
+      reasoningTokens: 2,
+    });
+  });
 });

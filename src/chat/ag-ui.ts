@@ -135,6 +135,8 @@ export const getAgUiRunFinishedMetadataSchema = defineSchema((v) =>
     outputTokens: v.number().int().nonnegative().optional(),
     totalTokens: v.number().int().nonnegative().optional(),
     cachedInputTokens: v.number().int().nonnegative().optional(),
+    cacheCreationInputTokens: v.number().int().nonnegative().optional(),
+    cacheReadInputTokens: v.number().int().nonnegative().optional(),
     reasoningTokens: v.number().int().nonnegative().optional(),
     finishReason: v.string().optional(),
     providerRequestId: v.string().optional(),
