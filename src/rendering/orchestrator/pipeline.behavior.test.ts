@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { RenderPipeline, type RenderPipelineConfig } from "./pipeline.ts";
 import { cachePageCss, getPageCssCacheKey } from "./css-cache.ts";
@@ -12,6 +12,11 @@ import {
 } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import {
+  finalizeRequestProfiling,
+  resetRequestProfiles,
+  runWithRequestProfiling,
+} from "#veryfront/observability/request-profiler.ts";
 
 const RELEASE_CSS_HASH = "c".repeat(64);
 
@@ -118,6 +123,8 @@ describe("RenderPipeline behavior", () => {
 
   afterEach(() => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, originalManifestFlag ?? "");
+    Deno.env.delete("VERYFRONT_ENABLE_SERVER_TIMING");
+    resetRequestProfiles();
     configureReleaseAssetManifestFetcher(undefined);
     clearReleaseAssetManifestCache();
   });
@@ -192,6 +199,41 @@ describe("RenderPipeline behavior", () => {
     assertEquals(sourceRefreshes, 1);
   });
 
+  it("renderPage emits request-profiler timings for pipeline stages", async () => {
+    Deno.env.set("VERYFRONT_ENABLE_SERVER_TIMING", "1");
+    const slug = "/behavior-profile-render";
+    const pipeline = createPipeline("/project/pages/behavior-profile-render.mdx");
+
+    const record = await runWithRequestProfiling(
+      {
+        category: "html",
+        method: "GET",
+        pathname: slug,
+      },
+      async () => {
+        await pipeline.renderPage(slug, {
+          delivery: "string",
+          request: new Request(`http://localhost${slug}`),
+          url: new URL(`http://localhost${slug}`),
+        });
+        return finalizeRequestProfiling(200);
+      },
+    );
+
+    assert(record);
+    for (
+      const phase of [
+        "render.resolve_page",
+        "render.collect_layouts",
+        "render.prepare_bundles",
+        "render.apply_layouts",
+        "render.ssr",
+      ]
+    ) {
+      assert(phase in record.phases, `missing ${phase}`);
+    }
+  });
+
   it("resolvePageData surfaces notFound from data hooks", async () => {
     const slug = "/behavior-not-found";
     const projectId = "proj-not-found";
@@ -213,6 +255,44 @@ describe("RenderPipeline behavior", () => {
       Error,
       "Page/Layout returned notFound",
     );
+  });
+
+  it("resolvePageData emits request-profiler timings for first-hit stages", async () => {
+    Deno.env.set("VERYFRONT_ENABLE_SERVER_TIMING", "1");
+    const slug = "/behavior-profile-page-data";
+    const projectId = "proj-profile-page-data";
+    const pipeline = createPipeline("/project/pages/behavior-profile-page-data.mdx");
+    primeCssCache(slug, projectId);
+
+    const record = await runWithRequestProfiling(
+      {
+        category: "page-data",
+        method: "GET",
+        pathname: `/_veryfront/page-data${slug}.json`,
+      },
+      async () => {
+        await pipeline.resolvePageData(slug, {
+          projectId,
+          request: new Request(`http://localhost${slug}`),
+          url: new URL(`http://localhost${slug}`),
+        });
+        return finalizeRequestProfiling(200);
+      },
+    );
+
+    assert(record);
+    for (
+      const phase of [
+        "page_data.resolve_page",
+        "page_data.collect_layouts",
+        "page_data.resolve_data",
+        "page_data.extract_mdx_metadata",
+        "page_data.resolve_app_path",
+        "page_data.resolve_css",
+      ]
+    ) {
+      assert(phase in record.phases, `missing ${phase}`);
+    }
   });
 
   it("resolvePageData surfaces redirect from data hooks", async () => {
