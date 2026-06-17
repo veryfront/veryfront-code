@@ -628,8 +628,18 @@ export const getRouterScript = () => `
     // Prefetching on hover
     // ============================================
     let prefetchTimeout = null;
+    let currentHoverLink = null;
     const prefetchedPaths = new Set();
     const inFlightPrefetches = new Set();
+
+    function cancelScheduledPrefetch() {
+      if (prefetchTimeout) {
+        clearTimeout(prefetchTimeout);
+        prefetchTimeout = null;
+      }
+
+      currentHoverLink = null;
+    }
 
     function getPageDataModulePaths(pageData) {
       const layoutPaths = (pageData.layouts || []).map((l) => l.path).filter(Boolean);
@@ -660,6 +670,7 @@ export const getRouterScript = () => `
     }
 
     function prefetchPage(href) {
+      if (isNavigating) return;
       if (prefetchedPaths.has(href) || inFlightPrefetches.has(href)) return;
 
       const cachedPageData = getCachedPageData(href);
@@ -780,10 +791,9 @@ export const getRouterScript = () => `
       }
 
       e.preventDefault();
+      cancelScheduledPrefetch();
       void navigateSPA(href, true);
     });
-
-    let currentHoverLink = null;
 
     document.addEventListener(
       'mouseenter',
@@ -819,11 +829,7 @@ export const getRouterScript = () => `
         const relatedTarget = e.relatedTarget;
         if (currentHoverLink && relatedTarget && currentHoverLink.contains(relatedTarget)) return;
 
-        if (prefetchTimeout) {
-          clearTimeout(prefetchTimeout);
-          prefetchTimeout = null;
-        }
-        currentHoverLink = null;
+        cancelScheduledPrefetch();
       },
       true
     );

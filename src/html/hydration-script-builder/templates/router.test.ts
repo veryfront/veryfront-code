@@ -135,6 +135,18 @@ describe("hydration-script-builder/templates/router", () => {
       assertIncludes(result, "timingSource: 'network'");
     });
 
+    it("should cancel hover prefetch before click navigation", () => {
+      const result = getRouterScript();
+      assertIncludes(result, "function cancelScheduledPrefetch()");
+      assertIncludes(result, "cancelScheduledPrefetch();\n      void navigateSPA(href, true);");
+    });
+
+    it("should skip page-data prefetches while navigation is active", () => {
+      const result = getRouterScript();
+      assertIncludes(result, "let isNavigating = false;");
+      assertIncludes(result, "function prefetchPage(href) {\n      if (isNavigating) return;");
+    });
+
     it("should emit route transition timing events", () => {
       const result = getRouterScript();
       assertIncludes(result, "function emitRouteTiming(phase, path, startedAt, detail = {})");
