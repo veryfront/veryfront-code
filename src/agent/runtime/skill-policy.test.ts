@@ -324,6 +324,32 @@ describe("src/agent/runtime skill policy helpers", () => {
       assertEquals(hasSubmittedFormInputResult(messages), true);
       assertEquals(
         hasSubmittedFormInputResult([{
+          id: "tool_form_input_string",
+          role: "tool",
+          parts: [{
+            type: "tool-result",
+            toolCallId: "form_input_string",
+            toolName: "form_input",
+            result: JSON.stringify({ submitted: true, values: { topic: "Support FAQ assistant" } }),
+          }],
+        }]),
+        true,
+      );
+      assertEquals(
+        hasSubmittedFormInputResult([{
+          id: "tool_form_input_nested",
+          role: "tool",
+          parts: [{
+            type: "tool-result",
+            toolCallId: "form_input_nested",
+            toolName: "form_input",
+            result: { response: { submitted: true, values: { topic: "Support FAQ assistant" } } },
+          }],
+        }]),
+        true,
+      );
+      assertEquals(
+        hasSubmittedFormInputResult([{
           id: "tool_form_input_pending",
           role: "tool",
           parts: [{

@@ -2,6 +2,7 @@ import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "#ve
 import type { AgentConfig, Message } from "../types.ts";
 import { filterToolsForSkill } from "#veryfront/skill/allowed-tools.ts";
 import type { ToolConfigEntry } from "./tool-helpers.ts";
+import { filterToolsAfterSubmittedFormInput } from "./skill-policy-enforcement.ts";
 
 export type AgentRuntimeStepMode = "generate" | "stream";
 
@@ -81,6 +82,7 @@ export async function prepareAgentRuntimeStep(
   if (input.activeSkillPolicy) {
     tools = filterToolsForSkill(tools, input.activeSkillPolicy);
   }
+  tools = filterToolsAfterSubmittedFormInput(tools, input.messages, runtimeState.context);
 
   return {
     runtimeContext: runtimeState.context,

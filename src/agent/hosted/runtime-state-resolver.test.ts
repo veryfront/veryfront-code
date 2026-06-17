@@ -62,6 +62,24 @@ describe("agent/hosted-runtime-state-resolver", () => {
     });
   });
 
+  it("records submitted form input state in runtime context without changing the system prompt", async () => {
+    const resolver = createHostedRuntimeStateResolver({
+      taskContext: {
+        projectId: "project-1",
+        branchId: null,
+        submittedFormInputResult: {
+          values: { brief: "make me an outlook agent" },
+          inputRequestId: "input-1",
+        },
+      },
+    });
+
+    const result = await resolver({ system: "system", messages: [], step: 2 });
+
+    assertEquals(result.context, { hasSubmittedFormInputResult: true });
+    assertEquals(result.system, "system");
+  });
+
   it("applies starter-intent blocking context only while required", async () => {
     const taskContext = {
       projectId: null,

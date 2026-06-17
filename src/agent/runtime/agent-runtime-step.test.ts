@@ -121,4 +121,81 @@ describe("agent/runtime-step", () => {
     assertEquals(prepared.tools, []);
     assertEquals(prepared.toolContext, {});
   });
+
+  it("hides intake and delegation tools after submitted form input", async () => {
+    const messages: Message[] = [{
+      id: "tool_result_1",
+      role: "tool",
+      parts: [{
+        type: "tool-result",
+        toolCallId: "call_form",
+        toolName: "form_input",
+        result: { submitted: true, values: { brief: "make me an outlook agent" } },
+      }],
+      timestamp: 1,
+    }];
+
+    const prepared = await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillPolicy: undefined,
+      allowedRemoteToolNames: undefined,
+      config: { model: "auto", system: "Base", tools: true, skills: true } as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      isLocalModel: false,
+      messages,
+      mode: "stream",
+      remoteToolSources: [],
+      runtimeContext: undefined,
+      step: 1,
+      systemPrompt: "Base",
+      toolContextBase: undefined,
+      getAvailableTools: async () => [
+        toolDefinition("form_input"),
+        toolDefinition("load_skill"),
+        toolDefinition("invoke_agent"),
+        toolDefinition("list_integrations"),
+        toolDefinition("create_agent"),
+      ],
+      resolveRuntimeState: async () => ({ systemPrompt: "Base", context: undefined }),
+    });
+
+    assertEquals(prepared.tools.map((tool) => tool.name), [
+      "list_integrations",
+      "create_agent",
+    ]);
+  });
+
+  it("hides intake and delegation tools when hosted context records submitted form input", async () => {
+    const prepared = await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillPolicy: undefined,
+      allowedRemoteToolNames: undefined,
+      config: { model: "auto", system: "Base", tools: true, skills: true } as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      isLocalModel: false,
+      messages: [],
+      mode: "stream",
+      remoteToolSources: [],
+      runtimeContext: undefined,
+      step: 2,
+      systemPrompt: "Base",
+      toolContextBase: undefined,
+      getAvailableTools: async () => [
+        toolDefinition("form_input"),
+        toolDefinition("load_skill"),
+        toolDefinition("invoke_agent"),
+        toolDefinition("list_integrations"),
+        toolDefinition("create_agent"),
+      ],
+      resolveRuntimeState: async () => ({
+        systemPrompt: "Base",
+        context: { hasSubmittedFormInputResult: true },
+      }),
+    });
+
+    assertEquals(prepared.tools.map((tool) => tool.name), [
+      "list_integrations",
+      "create_agent",
+    ]);
+  });
 });

@@ -1,4 +1,5 @@
 import type { Message } from "../types.ts";
+import type { ToolDefinition } from "#veryfront/tool";
 import { serverLogger } from "#veryfront/utils";
 import {
   isToolAllowedBySkill,
@@ -14,6 +15,14 @@ const logger = serverLogger.component("agent");
 
 export const LOAD_SKILL_TOOL_ID = "load_skill";
 export const FORM_INPUT_TOOL_ID = "form_input";
+export const INVOKE_AGENT_TOOL_ID = "invoke_agent";
+export const SUBMITTED_FORM_INPUT_CONTEXT_KEY = "hasSubmittedFormInputResult";
+
+const POST_SUBMITTED_FORM_INPUT_BLOCKED_TOOL_IDS = new Set([
+  FORM_INPUT_TOOL_ID,
+  LOAD_SKILL_TOOL_ID,
+  INVOKE_AGENT_TOOL_ID,
+]);
 
 function getSkillActivationRequiredError(toolName: string): string {
   return `Tool "${toolName}" cannot run before load_skill succeeds in the same step. ` +
@@ -76,9 +85,29 @@ export function extractSkillPolicy(result: unknown): string[] | undefined {
   }
 }
 
+function parseToolResultJson(result: string): unknown {
+  try {
+    return JSON.parse(result);
+  } catch {
+    return null;
+  }
+}
+
+function containsSubmittedFormInputResult(result: unknown, depth = 0): boolean {
+  const normalized = typeof result === "string" ? parseToolResultJson(result) : result;
+  if (!normalized || typeof normalized !== "object" || depth > 3) {
+    return false;
+  }
+  if ((normalized as { submitted?: unknown }).submitted === true) {
+    return true;
+  }
+  return Object.values(normalized).some((value) =>
+    containsSubmittedFormInputResult(value, depth + 1)
+  );
+}
+
 function isSubmittedFormInputResult(result: unknown): boolean {
-  return Boolean(result) && typeof result === "object" &&
-    (result as { submitted?: unknown }).submitted === true;
+  return containsSubmittedFormInputResult(result);
 }
 
 export function hasSubmittedFormInputResult(messages: readonly Message[]): boolean {
@@ -89,6 +118,20 @@ export function hasSubmittedFormInputResult(messages: readonly Message[]): boole
       isSubmittedFormInputResult(part.result)
     )
   );
+}
+
+export function filterToolsAfterSubmittedFormInput(
+  tools: readonly ToolDefinition[],
+  messages: readonly Message[],
+  runtimeContext?: Record<string, unknown>,
+): ToolDefinition[] {
+  const hasSubmittedFormInput = hasSubmittedFormInputResult(messages) ||
+    runtimeContext?.[SUBMITTED_FORM_INPUT_CONTEXT_KEY] === true;
+  if (!hasSubmittedFormInput) {
+    return [...tools];
+  }
+
+  return tools.filter((tool) => !POST_SUBMITTED_FORM_INPUT_BLOCKED_TOOL_IDS.has(tool.name));
 }
 
 export function removeFormInputAfterSubmission(

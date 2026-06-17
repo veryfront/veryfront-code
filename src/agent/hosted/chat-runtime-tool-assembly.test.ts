@@ -83,6 +83,38 @@ Deno.test("prepareHostedChatRuntimeToolAssembly preserves runtime-essential skil
   assertEquals(taskContext.availableToolNames, ["invoke_agent", "load_skill", "sleep"]);
 });
 
+Deno.test("prepareHostedChatRuntimeToolAssembly hides intake tools after submitted form input", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+    availableSkillIds: ["create-agent"],
+    submittedFormInputResult: {
+      inputRequestId: "input-1",
+      values: { brief: "make me an outlook agent" },
+    },
+  };
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    taskContext,
+    instructions: "Base instructions",
+    localTools: {
+      form_input: localTool("Form input"),
+      invoke_agent: localTool("Invoke agent"),
+      load_skill: localTool("Load skill"),
+      sleep: localTool("Sleep"),
+    },
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: ["form_input", "invoke_agent", "load_skill", "sleep"],
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.localToolNames, ["sleep"]);
+  assertEquals(taskContext.availableToolNames, ["sleep"]);
+});
+
 Deno.test("prepareHostedChatRuntimeToolAssembly keeps empty allowed tools as explicit deny-all", async () => {
   const taskContext: HostedChatRuntimeToolAssemblyContext = {
     authToken: "token",
