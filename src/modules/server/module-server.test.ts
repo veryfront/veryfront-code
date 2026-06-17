@@ -21,6 +21,7 @@ import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts"
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
 import { isModuleRequest } from "./module-server.ts";
+import { clearReleaseModuleResponseCache } from "./module-response-cache.ts";
 import { clearSourceMissCache } from "./module-source-resolution-cache.ts";
 import { deleteEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import {
@@ -29,6 +30,7 @@ import {
   RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
 } from "#veryfront/release-assets/constants.ts";
 import {
+  clearCachedReleaseAssetManifests,
   clearReleaseAssetManifestCache,
   configureReleaseAssetManifestFetcher,
 } from "#veryfront/release-assets/manifest-cache.ts";
@@ -84,6 +86,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     deleteEnv("VERYFRONT_ENABLE_SERVER_TIMING");
     configureReleaseAssetManifestFetcher(undefined);
     clearReleaseAssetManifestCache();
+    clearReleaseModuleResponseCache();
     resetRequestProfiles();
   });
 
@@ -447,6 +450,67 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     }
   });
 
+  it("reuses transformed responses for release-versioned production modules", async () => {
+    setEnv("VERYFRONT_ENABLE_SERVER_TIMING", "1");
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-release-module-response-cache-" });
+    const releaseId = `rel-cache-${crypto.randomUUID()}`;
+    const request = new Request(
+      `http://localhost:3000/_vf_modules/components/App.js?vf_release=${releaseId}&vf_runtime=${VERSION}`,
+    );
+
+    async function serveWithProfile(): Promise<{
+      body: string;
+      record: NonNullable<ReturnType<typeof finalizeRequestProfiling>>;
+      status: number;
+    }> {
+      let record: ReturnType<typeof finalizeRequestProfiling> = null;
+      let profiledResponse: Response | undefined;
+      const response = await runWithRequestProfiling(
+        {
+          category: "module",
+          method: "GET",
+          pathname: "/_vf_modules/components/App.js",
+        },
+        async () => {
+          try {
+            profiledResponse = await serveProductionModule(request, projectDir, releaseId);
+            return profiledResponse;
+          } finally {
+            record = finalizeRequestProfiling(profiledResponse?.status);
+          }
+        },
+      );
+
+      return {
+        body: await response.text(),
+        record: record!,
+        status: response.status,
+      };
+    }
+
+    try {
+      await Deno.mkdir(`${projectDir}/components`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/components/App.ts`,
+        `export const value = 1;\n`,
+      );
+
+      const first = await serveWithProfile();
+      const second = await serveWithProfile();
+
+      assertEquals(first.status, 200);
+      assertEquals(second.status, 200);
+      assertEquals(second.body, first.body);
+      assertEquals(Boolean(first.record.phases["module.source_lookup"]), true);
+      assertEquals(Boolean(first.record.phases["module.transform"]), true);
+      assertEquals(second.record.phases["module.response_cache_hit"], 0);
+      assertEquals("module.source_lookup" in second.record.phases, false);
+      assertEquals("module.transform" in second.record.phases, false);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   it("keeps unversioned production modules on no-cache headers", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-unversioned-module-cache-" });
 
@@ -641,6 +705,102 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       assertEquals(firstVersion !== secondVersion, true);
     } finally {
       await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("does not cache release module responses before dependency manifest readiness", async () => {
+    setEnv("VERYFRONT_ENABLE_SERVER_TIMING", "1");
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-release-cache-gate-" });
+    const cacheDir = await Deno.makeTempDir({ prefix: "vf-module-cache-gate-" });
+    const dependencyDir = `${cacheDir}/veryfront-http-bundle`;
+    const dependencyPath = `${dependencyDir}/http-123abc.mjs`;
+    const sourceUrl = "https://esm.sh/react@19.2.4?deps=csstype%403.2.3&target=es2022";
+    const hash = "b".repeat(64);
+    const releaseId = `release-cache-gate-${crypto.randomUUID()}`;
+    let ready = false;
+
+    async function serveWithProfile(): Promise<{
+      body: string;
+      record: NonNullable<ReturnType<typeof finalizeRequestProfiling>>;
+      status: number;
+    }> {
+      const request = new Request(
+        `http://localhost:3000/_vf_modules/components/App.js?vf_release=${releaseId}&vf_runtime=${VERSION}`,
+      );
+      let record: ReturnType<typeof finalizeRequestProfiling> = null;
+      let profiledResponse: Response | undefined;
+      const response = await runWithRequestProfiling(
+        {
+          category: "module",
+          method: "GET",
+          pathname: "/_vf_modules/components/App.js",
+        },
+        async () => {
+          try {
+            profiledResponse = await serveProductionModule(request, projectDir, releaseId);
+            return profiledResponse;
+          } finally {
+            record = finalizeRequestProfiling(profiledResponse?.status);
+          }
+        },
+      );
+
+      return {
+        body: await response.text(),
+        record: record!,
+        status: response.status,
+      };
+    }
+
+    try {
+      await Deno.mkdir(dependencyDir, { recursive: true });
+      await Deno.writeTextFile(
+        dependencyPath,
+        `/*! @vf-source: ${sourceUrl} */\nexport default {};`,
+      );
+      await Deno.mkdir(`${projectDir}/components`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/components/App.tsx`,
+        `import React from ${JSON.stringify(`file://${dependencyPath}`)};\nexport default React;\n`,
+      );
+      configureReleaseAssetManifestFetcher(() =>
+        Promise.resolve(
+          ready
+            ? {
+              state: "ready",
+              manifest: manifest({
+                [sourceUrl]: {
+                  contentHash: hash,
+                  size: 100,
+                  contentType: "text/javascript",
+                },
+              }),
+            }
+            : { state: "building", manifest: null },
+        )
+      );
+
+      const first = await serveWithProfile();
+      ready = true;
+      clearCachedReleaseAssetManifests();
+      const second = await serveWithProfile();
+      const third = await serveWithProfile();
+
+      assertEquals(first.status, 200);
+      assertEquals(second.status, 200);
+      assertEquals(third.status, 200);
+      assertEquals(first.body.includes(`"/_vf/assets/${hash}.js"`), false);
+      assertEquals(second.body.includes(`"/_vf/assets/${hash}.js"`), true);
+      assertEquals(third.body, second.body);
+      assertEquals(Boolean(second.record.phases["module.source_lookup"]), true);
+      assertEquals("module.response_cache_hit" in second.record.phases, false);
+      assertEquals(third.record.phases["module.response_cache_hit"], 0);
+      assertEquals("module.source_lookup" in third.record.phases, false);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(cacheDir, { recursive: true });
     }
   });
 });

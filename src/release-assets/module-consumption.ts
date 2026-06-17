@@ -20,6 +20,29 @@ import type { ReleaseAssetManifest } from "./manifest-schema.ts";
 export interface RewriteReleaseDependencyImportsOptions {
   releaseId?: string | null;
   readDependencySource: (path: string) => Promise<string>;
+  manifest?: ReleaseAssetManifest | null;
+}
+
+export interface ReleaseDependencyRewriteManifestState {
+  enabled: boolean;
+  manifest: ReleaseAssetManifest | null;
+}
+
+export function isReleaseDependencyImportMapRewriteEnabled(): boolean {
+  return getHostEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG) === "1";
+}
+
+export async function getReleaseDependencyRewriteManifestState(
+  releaseId: string | null | undefined,
+): Promise<ReleaseDependencyRewriteManifestState> {
+  if (!releaseId || !isReleaseDependencyImportMapRewriteEnabled()) {
+    return { enabled: false, manifest: null };
+  }
+
+  return {
+    enabled: true,
+    manifest: await getReadyManifestForRenderAsync(releaseId),
+  };
 }
 
 function dependencyAssetUrl(
@@ -76,10 +99,12 @@ export async function rewriteReleaseDependencyImportsForModule(
   options: RewriteReleaseDependencyImportsOptions,
 ): Promise<string> {
   if (!options.releaseId) return code;
-  if (getHostEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG) !== "1") return code;
+  if (!isReleaseDependencyImportMapRewriteEnabled()) return code;
   if (!code.includes("http") && !code.includes("veryfront-http-bundle")) return code;
 
-  const manifest = await getReadyManifestForRenderAsync(options.releaseId);
+  const manifest = options.manifest !== undefined
+    ? options.manifest
+    : await getReadyManifestForRenderAsync(options.releaseId);
   if (!manifest || Object.keys(manifest.dependencies).length === 0) return code;
 
   const replacements = new Map<string, string>();

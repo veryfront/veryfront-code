@@ -42,6 +42,19 @@ proxy also appends proxy-prefixed phases:
 - `proxy.resolve_server`: dedicated renderer server lookup.
 - `proxy.retry_delay`: retry backoff time.
 - `proxy.upstream`: fetch time from proxy to renderer response headers.
+- `module.response_cache_hit`: release-scoped module response served from the
+  runtime module response cache.
+- `module.response_cache_distributed_hit`: release-scoped module response
+  recovered from a configured shared cache before source lookup or transform.
+- `module.response_cache_miss`: release-scoped module response was not cached
+  and source lookup plus transform ran for the request.
+- `module.response_cache_store`: release-scoped module response was stored for
+  later cache hits.
+
+The release module response cache uses a bounded in-process LRU for local pod
+hits. Shared reuse across horizontally scaled pods is limited to API or Redis
+cache backends. Disk and memory cache backends are not used as shared response
+stores, which avoids container disk growth for immutable module responses.
 
 Use client timing such as `curl -w '%{time_pretransfer} %{time_starttransfer}'`
 with `proxy.total` to estimate edge, ingress, and network time before the proxy

@@ -10,7 +10,10 @@ import { getContentTypeForPath } from "#veryfront/server/handlers/utils/content-
 import { createSecureFs } from "#veryfront/security";
 import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
 import { getApiBaseUrlEnv } from "#veryfront/config/env.ts";
-import { profilePhase } from "#veryfront/observability/request-profiler.ts";
+import {
+  markRequestProfilePhase,
+  profilePhase,
+} from "#veryfront/observability/request-profiler.ts";
 import { metrics, type ModuleServeStatus } from "#veryfront/observability/simple-metrics/index.ts";
 import { injectContext, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { injectNodePositions } from "#veryfront/transforms/plugins/babel-node-positions.ts";
@@ -30,7 +33,11 @@ import {
 import { getReactUrls, REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { readLimitedCrossProjectSource } from "./cross-project-source-limit.ts";
 import { sha256Short } from "#veryfront/cache/hash.ts";
-import { rewriteReleaseDependencyImportsForModule } from "#veryfront/release-assets/module-consumption.ts";
+import {
+  getReleaseDependencyRewriteManifestState,
+  rewriteReleaseDependencyImportsForModule,
+} from "#veryfront/release-assets/module-consumption.ts";
+import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import {
   RELEASE_ASSET_IMMUTABLE_MAX_AGE_SECONDS,
   RELEASE_MODULE_RUNTIME_VERSION_PARAM,
@@ -41,6 +48,11 @@ import {
   hasSourceMiss,
   rememberSourceMiss,
 } from "./module-source-resolution-cache.ts";
+import {
+  buildReleaseModuleResponseCacheKey,
+  getReleaseModuleResponse,
+  rememberReleaseModuleResponse,
+} from "./module-response-cache.ts";
 import { ensureFilenameDefaultExport } from "#veryfront/modules/loader-shared/filename-default-export.ts";
 
 const logger = serverLogger.component("module-server");
@@ -142,7 +154,8 @@ function shouldCacheReleaseVersionedModule(
   options: ModuleServerOptions,
   isSSR: boolean,
 ): boolean {
-  if (options.dev || isSSR || !options.releaseId) return false;
+  if (options.dev || options.mode === "preview" || isSSR || !options.releaseId) return false;
+  if (url.searchParams.get("studio_embed") === "true" || url.searchParams.has("t")) return false;
   return url.searchParams.get(RELEASE_MODULE_VERSION_PARAM) === options.releaseId &&
     url.searchParams.get(RELEASE_MODULE_RUNTIME_VERSION_PARAM) === VERSION;
 }
@@ -446,6 +459,53 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         branch ??= parsedHost.branch;
       }
 
+      const isSSR = isSSRModuleRequest(req, url);
+      const canUseReleaseModuleResponseCache = method === "GET" || method === "HEAD";
+      const canCacheReleaseVersionedModule = canUseReleaseModuleResponseCache &&
+        shouldCacheReleaseVersionedModule(url, options, isSSR);
+      let releaseDependencyManifest: ReleaseAssetManifest | null = null;
+      let releaseDependencyManifestVersion: number | null = null;
+      let releaseDependencyManifestReady = true;
+      if (canCacheReleaseVersionedModule) {
+        const manifestState = await getReleaseDependencyRewriteManifestState(options.releaseId);
+        if (manifestState.enabled) {
+          releaseDependencyManifest = manifestState.manifest;
+          releaseDependencyManifestVersion = manifestState.manifest?.manifestVersion ?? null;
+          releaseDependencyManifestReady = manifestState.manifest !== null;
+        }
+      }
+      const releaseModuleResponseCacheKey = canCacheReleaseVersionedModule &&
+          releaseDependencyManifestReady
+        ? buildReleaseModuleResponseCacheKey({
+          projectIdentity: effectiveProjectId,
+          projectDir,
+          projectSlug,
+          branch,
+          releaseId: options.releaseId!,
+          runtimeVersion: VERSION,
+          reactVersion,
+          releaseDependencyManifestVersion,
+          modulePath,
+        })
+        : null;
+
+      if (releaseModuleResponseCacheKey) {
+        const cachedResponse = await getReleaseModuleResponse(releaseModuleResponseCacheKey);
+        if (cachedResponse?.entry) {
+          markRequestProfilePhase("module.response_cache_hit");
+          if (cachedResponse.source === "distributed") {
+            markRequestProfilePhase("module.response_cache_distributed_hit");
+          }
+          return createModuleResponse(
+            method,
+            cachedResponse.entry.body,
+            cachedResponse.entry.status,
+            Object.fromEntries(cachedResponse.entry.headers),
+          );
+        }
+        markRequestProfilePhase("module.response_cache_miss");
+      }
+
       try {
         const findResult = await profilePhase(
           "module.source_lookup",
@@ -496,7 +556,6 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           }
 
           const userAgent = req.headers.get("user-agent") ?? "";
-          const isSSR = isSSRModuleRequest(req, url);
 
           const studioEmbed = url.searchParams.get("studio_embed") === "true";
           const shouldInjectPositions = dev || options.mode === "preview";
@@ -557,6 +616,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           if (!isSSR) {
             code = await rewriteReleaseDependencyImportsForModule(code, {
               releaseId: options.releaseId,
+              manifest: releaseDependencyManifest ?? undefined,
               readDependencySource: (path) => platformFs.readTextFile(path),
             });
             code = await addReleaseVersionToFallbackImports(code, options.releaseId);
@@ -564,12 +624,21 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         }
 
         const headers = getModuleHeaders(modulePath, {
-          cacheable: shouldCacheReleaseVersionedModule(url, options, isSSRModuleRequest(req, url)),
+          cacheable: releaseModuleResponseCacheKey !== null,
         });
         logger.debug("Request complete", {
           path: modulePath,
           durationMs: (performance.now() - startTime).toFixed(1),
         });
+
+        if (releaseModuleResponseCacheKey && method === "GET") {
+          void rememberReleaseModuleResponse(releaseModuleResponseCacheKey, {
+            body: code,
+            status: HTTP_OK,
+            headers: Object.entries(headers),
+          });
+          markRequestProfilePhase("module.response_cache_store");
+        }
 
         return createModuleResponse(method, code, HTTP_OK, headers);
       } catch (error) {
