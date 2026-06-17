@@ -311,9 +311,9 @@ export class Renderer {
    *
    * Query param handling is configurable via `config.cache.queryParams`:
    * - "ignore-all": Ignore all query params (pages share cache regardless of URL params)
-   * - "include-all": Include all query params (default, each unique query = separate cache)
+   * - "include-all": Include all query params (each unique query = separate cache)
    * - "include-list": Only include specified params
-   * - "exclude-list": Exclude common tracking params (utm_*, gclid, fbclid, etc.)
+   * - "exclude-list": Exclude common tracking/cache-busting params (default)
    */
   private buildCacheKey(
     slug: string,

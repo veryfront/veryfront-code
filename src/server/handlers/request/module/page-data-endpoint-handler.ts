@@ -9,6 +9,10 @@ import { HTTP_GATEWAY_TIMEOUT } from "#veryfront/utils/constants/http.ts";
 import { serverLogger } from "#veryfront/utils";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import { requestHasCacheSensitiveState } from "#veryfront/cache/request-cacheability.ts";
+import {
+  type QueryParamCacheOptions,
+  sanitizeQueryParamsForCacheKey,
+} from "#veryfront/cache/keys.ts";
 import type { PageDataResponse } from "#veryfront/rendering/orchestrator/types.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 
@@ -321,7 +325,8 @@ function buildPageDataCacheKey(ctx: HandlerContext, slug: string, url: URL): str
     (environment === "production"
       ? ctx.releaseId ?? "release"
       : ctx.requestContext?.branch ?? "main");
-  const query = buildSortedQueryKey(url);
+  const queryParamOptions = ctx.config?.cache?.queryParams as QueryParamCacheOptions | undefined;
+  const query = sanitizeQueryParamsForCacheKey(url, queryParamOptions);
 
   return [
     projectKey,
@@ -330,16 +335,4 @@ function buildPageDataCacheKey(ctx: HandlerContext, slug: string, url: URL): str
     slug || "index",
     query,
   ].join("|");
-}
-
-function buildSortedQueryKey(url: URL): string {
-  const entries = Array.from(url.searchParams.entries());
-  if (entries.length === 0) return "";
-
-  return entries
-    .sort(([leftKey, leftValue], [rightKey, rightValue]) =>
-      leftKey === rightKey ? leftValue.localeCompare(rightValue) : leftKey.localeCompare(rightKey)
-    )
-    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
-    .join("&");
 }

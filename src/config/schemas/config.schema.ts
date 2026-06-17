@@ -112,9 +112,9 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
            *
            * Policies:
            * - "ignore-all": Ignore all query params (pages with ?utm_campaign=x share cache with /)
-           * - "include-all": Include all query params (default, each unique query = separate cache)
+           * - "include-all": Include all query params (each unique query = separate cache)
            * - "include-list": Only include specified params in cache key
-           * - "exclude-list": Exclude specified params (+ common tracking params like utm_*)
+           * - "exclude-list": Exclude specified params (+ common tracking params like utm_*) (default)
            *
            * @example
            * // Ignore all marketing/tracking params (recommended for most sites)
