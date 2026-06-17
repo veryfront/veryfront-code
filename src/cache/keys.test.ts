@@ -340,10 +340,20 @@ describe("cache/keys", () => {
       assertEquals(result, "page-1");
     });
 
-    it("should sort duplicate query keys by value", () => {
+    it("should preserve repeated query param value order while sorting keys", () => {
       const url = new URL("https://example.com/page?tag=b&tag=a&page=2");
       const result = sanitizeQueryParamsForCacheKey(url);
-      assertEquals(result, "page-2_tag-a_tag-b");
+      assertEquals(result, "page-2_tag-b_tag-a");
+    });
+
+    it("should keep different repeated query param orders distinct", () => {
+      const left = sanitizeQueryParamsForCacheKey(
+        new URL("https://example.com/page?sort=price&sort=rating"),
+      );
+      const right = sanitizeQueryParamsForCacheKey(
+        new URL("https://example.com/page?sort=rating&sort=price"),
+      );
+      assertNotEquals(left, right);
     });
   });
 

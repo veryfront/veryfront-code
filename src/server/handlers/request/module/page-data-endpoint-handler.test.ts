@@ -259,6 +259,29 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
     assertEquals(JSON.parse(await second.text()).frontmatter.sequence, 2);
   });
 
+  it("keeps distinct page-data cache entries for repeated query params in different orders", async () => {
+    let calls = 0;
+    setRendererInitializer(
+      createInitializer((slug) => Promise.resolve(createPageData(slug, ++calls))),
+    );
+
+    const ctx = makeCtx();
+    const first = await callPageDataEndpoint(
+      new Request("http://localhost/_veryfront/page-data/index.json?sort=price&sort=rating"),
+      ctx,
+    );
+    const second = await callPageDataEndpoint(
+      new Request("http://localhost/_veryfront/page-data/index.json?sort=rating&sort=price"),
+      ctx,
+    );
+
+    assertEquals(first.status, 200);
+    assertEquals(second.status, 200);
+    assertEquals(calls, 2);
+    assertEquals(JSON.parse(await first.text()).frontmatter.sequence, 1);
+    assertEquals(JSON.parse(await second.text()).frontmatter.sequence, 2);
+  });
+
   it("uses cached etags to answer 304 without resolving page data again", async () => {
     let calls = 0;
     setRendererInitializer(

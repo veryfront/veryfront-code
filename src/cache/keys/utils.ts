@@ -153,10 +153,7 @@ export function sanitizeQueryParamsForCacheKey(
   const filtered = filterQueryParams(params, options);
   if (filtered.length === 0) return "";
 
-  // Sort for consistent ordering, including duplicate keys.
-  const sorted = filtered.sort(([leftKey, leftValue], [rightKey, rightValue]) =>
-    leftKey === rightKey ? leftValue.localeCompare(rightValue) : leftKey.localeCompare(rightKey)
-  );
+  const sorted = sortQueryParamsForCacheKey(filtered);
 
   // Build sanitized string using allowed characters:
   // - Use hyphen (-) instead of equals (=)
@@ -171,6 +168,24 @@ export function sanitizeQueryParamsForCacheKey(
     .join("_");
 
   return sanitized;
+}
+
+function sortQueryParamsForCacheKey(entries: Array<[string, string]>): Array<[string, string]> {
+  const grouped = new Map<string, Array<[string, string]>>();
+
+  for (const entry of entries) {
+    const [key] = entry;
+    const group = grouped.get(key);
+    if (group) {
+      group.push(entry);
+    } else {
+      grouped.set(key, [entry]);
+    }
+  }
+
+  return [...grouped.keys()]
+    .sort((leftKey, rightKey) => leftKey.localeCompare(rightKey))
+    .flatMap((key) => grouped.get(key)!);
 }
 
 function encodeCacheKeySegment(value: string): string {
