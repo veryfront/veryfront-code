@@ -90,9 +90,11 @@ Default routing cache controls:
 
 Release-backed production page-data requests use a fresh cache window plus a
 bounded stale-while-revalidate window. The cache key includes the project,
-environment, release content source, slug, and sorted query. Requests with
-cache-sensitive state are not cached. Preview branch page data keeps the fresh
-TTL cache but does not serve stale responses after expiry.
+environment, release content source, slug, and canonical query. The canonical
+query uses the same `config.cache.queryParams` policy as HTML rendering, so
+default tracking and cache-busting parameters do not fragment the cache.
+Requests with cache-sensitive state are not cached. Preview branch page data
+keeps the fresh TTL cache but does not serve stale responses after expiry.
 
 Default page-data cache controls:
 

@@ -15,6 +15,8 @@ import { cacheRegistry } from "../registry.ts";
 
 import { DEFAULT_EXCLUDED_QUERY_PARAMS, type QueryParamCacheOptions } from "./prefixes.ts";
 
+const querySegmentEncoder = new TextEncoder();
+
 export function parseRenderCacheKey(cacheKey: string): {
   projectId: string;
   environment: string;
@@ -115,15 +117,20 @@ export function filterQueryParams(
       return entries.filter(([key]) => paramList.includes(key));
 
     case "exclude-list": {
-      // Merge user-provided list with defaults
-      const excludeSet = new Set([...DEFAULT_EXCLUDED_QUERY_PARAMS, ...paramList]);
-      return entries.filter(([key]) => !excludeSet.has(key));
+      const excludeSet = new Set(
+        [...DEFAULT_EXCLUDED_QUERY_PARAMS, ...paramList].map(normalizeQueryParamName),
+      );
+      return entries.filter(([key]) => !excludeSet.has(normalizeQueryParamName(key)));
     }
 
     case "include-all":
     default:
       return entries;
   }
+}
+
+function normalizeQueryParamName(param: string): string {
+  return param.toLowerCase();
 }
 
 /**
@@ -146,23 +153,35 @@ export function sanitizeQueryParamsForCacheKey(
   const filtered = filterQueryParams(params, options);
   if (filtered.length === 0) return "";
 
-  // Sort for consistent ordering
-  const sorted = filtered.sort(([a], [b]) => a.localeCompare(b));
+  // Sort for consistent ordering, including duplicate keys.
+  const sorted = filtered.sort(([leftKey, leftValue], [rightKey, rightValue]) =>
+    leftKey === rightKey ? leftValue.localeCompare(rightValue) : leftKey.localeCompare(rightKey)
+  );
 
   // Build sanitized string using allowed characters:
   // - Use hyphen (-) instead of equals (=)
   // - Use underscore (_) instead of ampersand (&)
-  // - URL-encode values that contain special characters
+  // - Percent-encode special characters using * as the escape marker
   const sanitized = sorted
     .map(([key, value]) => {
-      // Sanitize key and value to only contain allowed chars
-      const safeKey = key.replace(/[^a-zA-Z0-9_.-]/g, "_");
-      const safeValue = value.replace(/[^a-zA-Z0-9_.-]/g, "_");
+      const safeKey = encodeCacheKeySegment(key);
+      const safeValue = encodeCacheKeySegment(value);
       return `${safeKey}-${safeValue}`;
     })
     .join("_");
 
   return sanitized;
+}
+
+function encodeCacheKeySegment(value: string): string {
+  return Array.from(value, (char) => {
+    if (/^[a-zA-Z0-9_.-]$/.test(char)) return char;
+
+    return Array.from(
+      querySegmentEncoder.encode(char),
+      (byte) => `*${byte.toString(16).toUpperCase().padStart(2, "0")}`,
+    ).join("");
+  }).join("");
 }
 
 export function createCacheKeyFilter(options: {

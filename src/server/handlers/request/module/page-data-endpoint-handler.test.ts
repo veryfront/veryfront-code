@@ -212,6 +212,53 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
     assertEquals(await first.text(), await second.text());
   });
 
+  it("shares page-data cache entries across tracking and cache-busting query params", async () => {
+    let calls = 0;
+    setRendererInitializer(
+      createInitializer((slug) => Promise.resolve(createPageData(slug, ++calls))),
+    );
+
+    const ctx = makeCtx();
+    const first = await callPageDataEndpoint(
+      new Request("http://localhost/_veryfront/page-data/index.json?page=1"),
+      ctx,
+    );
+    const second = await callPageDataEndpoint(
+      new Request(
+        "http://localhost/_veryfront/page-data/index.json?page=1&utm_source=google&cb=abc",
+      ),
+      ctx,
+    );
+
+    assertEquals(first.status, 200);
+    assertEquals(second.status, 200);
+    assertEquals(calls, 1);
+    assertEquals(await first.text(), await second.text());
+  });
+
+  it("keeps distinct page-data cache entries for meaningful query params", async () => {
+    let calls = 0;
+    setRendererInitializer(
+      createInitializer((slug) => Promise.resolve(createPageData(slug, ++calls))),
+    );
+
+    const ctx = makeCtx();
+    const first = await callPageDataEndpoint(
+      new Request("http://localhost/_veryfront/page-data/index.json?page=1"),
+      ctx,
+    );
+    const second = await callPageDataEndpoint(
+      new Request("http://localhost/_veryfront/page-data/index.json?page=2"),
+      ctx,
+    );
+
+    assertEquals(first.status, 200);
+    assertEquals(second.status, 200);
+    assertEquals(calls, 2);
+    assertEquals(JSON.parse(await first.text()).frontmatter.sequence, 1);
+    assertEquals(JSON.parse(await second.text()).frontmatter.sequence, 2);
+  });
+
   it("uses cached etags to answer 304 without resolving page data again", async () => {
     let calls = 0;
     setRendererInitializer(

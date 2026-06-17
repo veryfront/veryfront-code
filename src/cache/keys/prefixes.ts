@@ -56,14 +56,14 @@ export type FileSourceType = "branch" | "release" | "environment";
  * Query parameter handling policy for cache keys.
  *
  * - "ignore-all": Ignore all query params (best for marketing UTM params)
- * - "include-all": Include all query params in cache key (default behavior)
+ * - "include-all": Include all query params in cache key
  * - "include-list": Only include specified params
- * - "exclude-list": Include all except specified params
+ * - "exclude-list": Include all except specified params (default behavior)
  */
 export type QueryParamPolicy = "ignore-all" | "include-all" | "include-list" | "exclude-list";
 
 export interface QueryParamCacheOptions {
-  /** How to handle query params. Default: "include-all" */
+  /** How to handle query params. Default: "exclude-list" */
   policy?: QueryParamPolicy;
   /** List of param names for include-list or exclude-list policies */
   params?: string[];
@@ -108,20 +108,34 @@ export const DEFAULT_EXCLUDED_QUERY_PARAMS = [
   "dclid",
   "_ga",
   "_gl",
+  "gad_source",
+  "gbraid",
+  "wbraid",
   // Facebook
   "fbclid",
   "fb_action_ids",
   "fb_action_types",
+  // LinkedIn
+  "li_fat_id",
   // Microsoft / Bing
   "msclkid",
   // Mailchimp
   "mc_cid",
   "mc_eid",
+  // Cache-busting probes
+  "_",
+  "cb",
+  "cacheBust",
+  "cache_bust",
+  "cachebuster",
+  "cache_buster",
   // Other tracking
   "ref",
   "referrer",
   "source",
   "_openstat",
+  "igshid",
+  "twclid",
   "yclid",
   "zanpid",
 ];

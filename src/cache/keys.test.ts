@@ -293,6 +293,14 @@ describe("cache/keys", () => {
       const result = filterQueryParams(params, { policy: "exclude-list" });
       assertEquals(result, [["page", "1"]]);
     });
+
+    it("should exclude tracking and cache-busting params case-insensitively", () => {
+      const params = new URLSearchParams(
+        "page=1&UTM_SOURCE=google&GAD_SOURCE=ad&CACHEBUST=123&_=456",
+      );
+      const result = filterQueryParams(params);
+      assertEquals(result, [["page", "1"]]);
+    });
   });
 
   describe("sanitizeQueryParamsForCacheKey", () => {
@@ -308,12 +316,16 @@ describe("cache/keys", () => {
       assertEquals(result, "baz-qux_foo-bar");
     });
 
-    it("should sanitize values with special characters", () => {
+    it("should encode values with special characters without collisions", () => {
       const url = new URL("https://example.com/page?url=https://example.com");
       const result = sanitizeQueryParamsForCacheKey(url);
-      // Special chars in values should be replaced with underscores
-      // Note: dots (.) are allowed, so example.com stays as-is
-      assertEquals(result, "url-https___example.com");
+      assertEquals(result, "url-https*3A*2F*2Fexample.com");
+    });
+
+    it("should keep distinct query values with different special characters", () => {
+      const left = sanitizeQueryParamsForCacheKey(new URL("https://example.com/page?q=a/b"));
+      const right = sanitizeQueryParamsForCacheKey(new URL("https://example.com/page?q=a:b"));
+      assertNotEquals(left, right);
     });
 
     it("should respect ignore-all policy", () => {
@@ -326,6 +338,12 @@ describe("cache/keys", () => {
       const url = new URL("https://example.com/page?page=1&utm_source=google");
       const result = sanitizeQueryParamsForCacheKey(url, { policy: "exclude-list" });
       assertEquals(result, "page-1");
+    });
+
+    it("should sort duplicate query keys by value", () => {
+      const url = new URL("https://example.com/page?tag=b&tag=a&page=2");
+      const result = sanitizeQueryParamsForCacheKey(url);
+      assertEquals(result, "page-2_tag-a_tag-b");
     });
   });
 
@@ -358,6 +376,12 @@ describe("cache/keys", () => {
 
     it("should return just slug when all params are tracking params", () => {
       const url = new URL("https://example.com/blog?utm_source=google&utm_campaign=test");
+      const result = buildQueryAwareCacheKey("/blog", url);
+      assertEquals(result, "/blog");
+    });
+
+    it("should return just slug when all params are cache-busting params", () => {
+      const url = new URL("https://example.com/blog?cb=123&cacheBust=456&cache_buster=789");
       const result = buildQueryAwareCacheKey("/blog", url);
       assertEquals(result, "/blog");
     });
