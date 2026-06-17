@@ -33861,7 +33861,7 @@ export const connectors: IntegrationConfig[] = [
           "model": {
             "type": "string",
             "in": "path",
-            "description": "Model ID, e.g. mistral-large-latest or mistral-small-latest",
+            "description": "Model ID, e.g. mistral-large-2512 or mistral-small-2603",
             "required": true,
           },
         },
@@ -33877,7 +33877,7 @@ export const connectors: IntegrationConfig[] = [
         "body": {
           "model": {
             "type": "string",
-            "description": "Model ID to use, e.g. mistral-large-latest",
+            "description": "Model ID to use, e.g. mistral-large-2512",
             "required": true,
           },
           "messages": {

@@ -113,6 +113,16 @@ export function getGoogleGenAIEnvConfig(): {
   return { apiKey: getEnv("GOOGLE_API_KEY") || getEnv("GOOGLE_GENERATIVE_AI_API_KEY") };
 }
 
+export function getMistralEnvConfig(): {
+  apiKey?: string;
+  baseURL?: string;
+} {
+  return {
+    apiKey: getEnv("MISTRAL_API_KEY"),
+    baseURL: getEnv("MISTRAL_BASE_URL") || "https://api.mistral.ai/v1",
+  };
+}
+
 export function isDebugEnvEnabled(env: EnvironmentConfig = getEnvironmentConfig()): boolean {
   return env.debug;
 }

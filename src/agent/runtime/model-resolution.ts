@@ -1,6 +1,7 @@
 import {
   getAnthropicEnvConfig,
   getGoogleGenAIEnvConfig,
+  getMistralEnvConfig,
   getOpenAIEnvConfig,
 } from "#veryfront/config/env.ts";
 import { findAvailableCloudModel } from "#veryfront/provider";
@@ -13,6 +14,7 @@ const HOSTED_PROVIDER_NAMES = new Set([
   "anthropic",
   "google",
   "google-ai-studio",
+  "mistral",
   "moonshotai",
   "openai",
 ]);
@@ -46,6 +48,12 @@ const LEGACY_MODEL_ALIASES: Record<string, string> = {
   "gemini-2.5-flash": "google-ai-studio/gemini-2.5-flash",
   "kimi-k2.6": "moonshotai/kimi-k2.6",
   "kimi-k2.5": "moonshotai/kimi-k2.5",
+  "mistral-large": "mistral/mistral-large-2512",
+  "mistral-large-2512": "mistral/mistral-large-2512",
+  "mistral-medium": "mistral/mistral-medium-3-5",
+  "mistral-medium-3-5": "mistral/mistral-medium-3-5",
+  "mistral-small": "mistral/mistral-small-2603",
+  "mistral-small-2603": "mistral/mistral-small-2603",
 };
 
 export function normalizeAgentModelConfig(model?: string): string {
@@ -72,6 +80,8 @@ function hasDirectProviderCredentials(provider: string): boolean {
       return Boolean(getAnthropicEnvConfig().apiKey);
     case "google":
       return Boolean(getGoogleGenAIEnvConfig().apiKey);
+    case "mistral":
+      return Boolean(getMistralEnvConfig().apiKey);
     case "openai":
       return Boolean(getOpenAIEnvConfig().apiKey);
     default:

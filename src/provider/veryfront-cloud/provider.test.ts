@@ -12,6 +12,7 @@ const CLOUD_ENV_KEYS = [
   "VERYFRONT_SERVICE_LAYER",
   "ANTHROPIC_API_KEY",
   "GOOGLE_API_KEY",
+  "MISTRAL_API_KEY",
 ] as const;
 
 function clearCloudEnv(): void {
@@ -54,6 +55,18 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(typeof model.doStream, "function");
   });
 
+  it("resolves veryfront-cloud mistral models without a project-specific Mistral extension", () => {
+    setCloudBootstrap();
+
+    const model = resolveModel("veryfront-cloud/mistral/mistral-large-2512") as Record<
+      string,
+      unknown
+    >;
+
+    assertEquals(typeof model.doGenerate, "function");
+    assertEquals(typeof model.doStream, "function");
+  });
+
   it("resolves veryfront-cloud anthropic models without project ext-llm-anthropic installed", () => {
     setCloudBootstrap();
 
@@ -91,6 +104,15 @@ describe("provider/veryfront-cloud", () => {
     setEnv("GOOGLE_API_KEY", "google_test_provider");
 
     const model = resolveModel("google/gemini-2.5-flash") as Record<string, unknown>;
+
+    assertEquals(typeof model.doGenerate, "function");
+    assertEquals(typeof model.doStream, "function");
+  });
+
+  it("resolves direct Mistral models through the OpenAI-compatible built-in provider", () => {
+    setEnv("MISTRAL_API_KEY", "mistral_test_provider");
+
+    const model = resolveModel("mistral/mistral-large-2512") as Record<string, unknown>;
 
     assertEquals(typeof model.doGenerate, "function");
     assertEquals(typeof model.doStream, "function");

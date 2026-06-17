@@ -19,6 +19,9 @@ const MODEL_MAX_OUTPUT_TOKENS: Record<string, number> = {
   "google-ai-studio/gemini-3.1-flash-lite": 65_536,
   "google-ai-studio/gemini-2.5-pro": 65_536,
   "google-ai-studio/gemini-2.5-flash": 65_536,
+  "mistral/mistral-large-2512": 131_072,
+  "mistral/mistral-medium-3-5": 131_072,
+  "mistral/mistral-small-2603": 131_072,
 };
 
 const MODEL_MAX_OUTPUT_TOKEN_ALIASES: Record<string, string> = {

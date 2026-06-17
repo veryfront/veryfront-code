@@ -17,6 +17,7 @@ import { createError, fromError, toError } from "#veryfront/errors/veryfront-err
 import {
   getAnthropicEnvConfig,
   getGoogleGenAIEnvConfig,
+  getMistralEnvConfig,
   getOpenAIEnvConfig,
 } from "#veryfront/config/env.ts";
 import { ensureBuiltinLLMProviders } from "#veryfront/extensions/builtin-extensions.ts";
@@ -162,6 +163,34 @@ function autoInitializeFromEnv(): void {
             "Google provider not installed. Add @veryfront/ext-llm-google to use google/* models.",
         }),
       );
+    });
+  }
+
+  if (!manager.has("mistral")) {
+    manager.registerShared("mistral", (id) => {
+      const config = getMistralEnvConfig();
+      if (!config.apiKey) {
+        throw toError(
+          createError({
+            type: "config",
+            message:
+              "MISTRAL_API_KEY not set. Set the environment variable or register a custom provider with registerModelProvider().",
+          }),
+        );
+      }
+      const registry = ensureBuiltinLLMProviders();
+      const provider = registry.get("openai");
+      if (provider) {
+        return provider.createModel(id, {
+          credential: config.apiKey,
+          baseURL: config.baseURL,
+        });
+      }
+      throw toError(createError({
+        type: "config",
+        message:
+          "OpenAI-compatible provider not installed. Add @veryfront/ext-llm-openai to use mistral/* models.",
+      }));
     });
   }
 

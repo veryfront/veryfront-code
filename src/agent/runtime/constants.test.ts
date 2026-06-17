@@ -22,6 +22,11 @@ describe("getModelMaxOutputTokens", () => {
     assertEquals(getModelMaxOutputTokens("google/gemini-3.5-flash"), 65_536);
   });
 
+  it("returns known limits for Mistral models", () => {
+    assertEquals(getModelMaxOutputTokens("mistral/mistral-large-2512"), 131_072);
+    assertEquals(getModelMaxOutputTokens("veryfront-cloud/mistral/mistral-medium-3-5"), 131_072);
+  });
+
   it("returns undefined for unknown models", () => {
     assertEquals(getModelMaxOutputTokens("unknown/model"), undefined);
   });
