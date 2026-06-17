@@ -14,13 +14,14 @@ import { normalizeHttpUrl } from "#veryfront/transforms/esm/http-cache.ts";
 import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
 import { extractSourceUrl } from "#veryfront/transforms/esm/source-url-embed.ts";
 import { RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, releaseAssetUrl } from "./constants.ts";
-import { getReadyManifestForRenderAsync } from "./manifest-cache.ts";
+import { getReadyManifestForRenderAsync, type ReadyManifestReadOptions } from "./manifest-cache.ts";
 import type { ReleaseAssetManifest } from "./manifest-schema.ts";
 
 export interface RewriteReleaseDependencyImportsOptions {
   releaseId?: string | null;
   readDependencySource: (path: string) => Promise<string>;
   manifest?: ReleaseAssetManifest | null;
+  manifestReadOptions?: ReadyManifestReadOptions;
 }
 
 export interface ReleaseDependencyRewriteManifestState {
@@ -54,6 +55,7 @@ export async function hasReleaseDependencyImportSpecifiers(code: string): Promis
 
 export async function getReleaseDependencyRewriteManifestState(
   releaseId: string | null | undefined,
+  options: ReadyManifestReadOptions = {},
 ): Promise<ReleaseDependencyRewriteManifestState> {
   if (!releaseId || !isReleaseDependencyImportMapRewriteEnabled()) {
     return { enabled: false, manifest: null };
@@ -61,7 +63,7 @@ export async function getReleaseDependencyRewriteManifestState(
 
   return {
     enabled: true,
-    manifest: await getReadyManifestForRenderAsync(releaseId),
+    manifest: await getReadyManifestForRenderAsync(releaseId, options),
   };
 }
 
@@ -124,7 +126,7 @@ export async function rewriteReleaseDependencyImportsForModule(
 
   const manifest = options.manifest !== undefined
     ? options.manifest
-    : await getReadyManifestForRenderAsync(options.releaseId);
+    : await getReadyManifestForRenderAsync(options.releaseId, options.manifestReadOptions);
   if (!manifest || Object.keys(manifest.dependencies).length === 0) return code;
 
   const replacements = new Map<string, string>();

@@ -138,6 +138,42 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     };
   }
 
+  async function serveProductionModuleWithProfile(
+    request: Request,
+    projectDir: string,
+    releaseId: string,
+  ): Promise<{
+    body: string;
+    cacheControl: string | null;
+    record: NonNullable<ReturnType<typeof finalizeRequestProfiling>>;
+    status: number;
+  }> {
+    let record: ReturnType<typeof finalizeRequestProfiling> = null;
+    let profiledResponse: Response | undefined;
+    const response = await runWithRequestProfiling(
+      {
+        category: "module",
+        method: "GET",
+        pathname: "/_vf_modules/components/App.js",
+      },
+      async () => {
+        try {
+          profiledResponse = await serveProductionModule(request, projectDir, releaseId);
+          return profiledResponse;
+        } finally {
+          record = finalizeRequestProfiling(profiledResponse?.status);
+        }
+      },
+    );
+
+    return {
+      body: await response.text(),
+      cacheControl: response.headers.get("cache-control"),
+      record: record!,
+      status: response.status,
+    };
+  }
+
   it("should return 404 for non-module path prefix", async () => {
     const response = await serve(new Request("http://localhost:3000/not-a-module"));
 
@@ -786,6 +822,111 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       const text = await response.text();
       assertEquals(text.includes(`"/_vf/assets/${hash}.js"`), true);
       assertEquals(text.includes("file://"), false);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(cacheDir, { recursive: true });
+    }
+  });
+
+  it("caches dependency-bearing release modules with partial manifest bodies", async () => {
+    setEnv("VERYFRONT_ENABLE_SERVER_TIMING", "1");
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-partial-manifest-" });
+    const cacheDir = await Deno.makeTempDir({ prefix: "vf-module-partial-cache-" });
+    const dependencyDir = `${cacheDir}/veryfront-http-bundle`;
+    const dependencyPath = `${dependencyDir}/http-123abc.mjs`;
+    const sourceUrl = "https://esm.sh/react@19.2.4?deps=csstype%403.2.3&target=es2022";
+    const hash = "c".repeat(64);
+    const releaseId = `release-partial-${crypto.randomUUID()}`;
+    const request = new Request(
+      `http://localhost:3000/_vf_modules/components/App.js?vf_release=${releaseId}&vf_runtime=${VERSION}`,
+    );
+
+    try {
+      await Deno.mkdir(dependencyDir, { recursive: true });
+      await Deno.writeTextFile(
+        dependencyPath,
+        `/*! @vf-source: ${sourceUrl} */\nexport default {};`,
+      );
+      await Deno.mkdir(`${projectDir}/components`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/components/App.tsx`,
+        `import React from ${JSON.stringify(`file://${dependencyPath}`)};\nexport default React;\n`,
+      );
+      configureReleaseAssetManifestFetcher(() =>
+        Promise.resolve({
+          state: "partial",
+          manifest: manifest({
+            [sourceUrl]: {
+              contentHash: hash,
+              size: 100,
+              contentType: "text/javascript",
+            },
+          }),
+        })
+      );
+
+      const first = await serveProductionModuleWithProfile(request, projectDir, releaseId);
+      const second = await serveProductionModuleWithProfile(request, projectDir, releaseId);
+
+      assertEquals(first.status, 200);
+      assertEquals(second.status, 200);
+      assertEquals(first.cacheControl, "public, max-age=31536000, immutable");
+      assertEquals(second.cacheControl, "public, max-age=31536000, immutable");
+      assertStringIncludes(first.body, `"/_vf/assets/${hash}.js"`);
+      assertEquals(first.body.includes("file://"), false);
+      assertEquals(second.body, first.body);
+      assertEquals(first.record.phases["release_manifest.fetch_partial"], 0);
+      assertEquals(second.record.phases["module.response_cache_hit"], 0);
+      assertEquals("module.source_lookup" in second.record.phases, false);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(cacheDir, { recursive: true });
+    }
+  });
+
+  it("keeps dependency-bearing release modules uncached when manifest rewrites miss", async () => {
+    setEnv("VERYFRONT_ENABLE_SERVER_TIMING", "1");
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-manifest-miss-" });
+    const cacheDir = await Deno.makeTempDir({ prefix: "vf-module-manifest-miss-cache-" });
+    const dependencyDir = `${cacheDir}/veryfront-http-bundle`;
+    const dependencyPath = `${dependencyDir}/http-123abc.mjs`;
+    const sourceUrl = "https://esm.sh/react@19.2.4?deps=csstype%403.2.3&target=es2022";
+    const releaseId = `release-manifest-miss-${crypto.randomUUID()}`;
+    const request = new Request(
+      `http://localhost:3000/_vf_modules/components/App.js?vf_release=${releaseId}&vf_runtime=${VERSION}`,
+    );
+
+    try {
+      await Deno.mkdir(dependencyDir, { recursive: true });
+      await Deno.writeTextFile(
+        dependencyPath,
+        `/*! @vf-source: ${sourceUrl} */\nexport default {};`,
+      );
+      await Deno.mkdir(`${projectDir}/components`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/components/App.tsx`,
+        `import React from ${JSON.stringify(`file://${dependencyPath}`)};\nexport default React;\n`,
+      );
+      configureReleaseAssetManifestFetcher(() =>
+        Promise.resolve({ state: "ready", manifest: manifest({}) })
+      );
+
+      const first = await serveProductionModuleWithProfile(request, projectDir, releaseId);
+      const second = await serveProductionModuleWithProfile(request, projectDir, releaseId);
+
+      assertEquals(first.status, 200);
+      assertEquals(second.status, 200);
+      assertEquals(first.cacheControl, "no-cache");
+      assertEquals(second.cacheControl, "no-cache");
+      assertEquals(first.body.includes(`"/_vf/assets/`), false);
+      assertEquals("module.response_cache_store" in first.record.phases, false);
+      assertEquals(first.record.phases["module.response_cache_dependency_blocked"], 0);
+      assertEquals("module.response_cache_hit" in second.record.phases, false);
+      assertEquals(Boolean(second.record.phases["module.source_lookup"]), true);
     } finally {
       await Deno.remove(projectDir, { recursive: true });
       await Deno.remove(cacheDir, { recursive: true });

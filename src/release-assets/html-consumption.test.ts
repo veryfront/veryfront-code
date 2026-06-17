@@ -152,6 +152,25 @@ describe("manifest cache gating", () => {
     assertEquals(record?.phases["release_manifest.fetch_ready"], 0);
   });
 
+  it("uses partial manifests that include a manifest body", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    Deno.env.set("VERYFRONT_ENABLE_SERVER_TIMING", "1");
+    configureReleaseAssetManifestFetcher(() =>
+      Promise.resolve({ state: "partial", manifest: manifest() })
+    );
+
+    const record = await runWithRequestProfiling(
+      { category: "html", method: "GET", pathname: "/" },
+      async () => {
+        assertEquals((await getReadyManifestForRenderAsync("r"))?.manifestVersion, 3);
+        return finalizeRequestProfiling(200);
+      },
+    );
+
+    assertEquals(record?.phases["release_manifest.fetch_partial"], 0);
+    assertEquals(getReadyManifestForRender("r")?.manifestVersion, 3);
+  });
+
   it("marks manifest fetch failures during profiled async reads", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     Deno.env.set("VERYFRONT_ENABLE_SERVER_TIMING", "1");
@@ -221,6 +240,40 @@ describe("manifest cache gating", () => {
     assertEquals(firstReady?.manifestVersion, 3);
     assertEquals(secondReady?.manifestVersion, 3);
     assertEquals(fetchCount, 1);
+  });
+
+  it("revalidates cached non-ready entries on awaited refresh reads", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    let now = 1_000;
+    const originalDateNow = Date.now;
+    Date.now = () => now;
+
+    try {
+      let fetchCount = 0;
+      configureReleaseAssetManifestFetcher(async () => {
+        fetchCount++;
+        return fetchCount === 1
+          ? { state: "building", manifest: null }
+          : { state: "ready", manifest: manifest() };
+      });
+
+      assertEquals(await getReadyManifestForRenderAsync("r"), null);
+      assertEquals(fetchCount, 1);
+
+      now += 1_000;
+      assertEquals(await getReadyManifestForRenderAsync("r", { refreshCachedNull: true }), null);
+      assertEquals(fetchCount, 1);
+
+      now += 5_000;
+      assertEquals(
+        (await getReadyManifestForRenderAsync("r", { refreshCachedNull: true }))
+          ?.manifestVersion,
+        3,
+      );
+      assertEquals(fetchCount, 2);
+    } finally {
+      Date.now = originalDateNow;
+    }
   });
 
   it("ignores stale in-flight manifest fetches after the cache is cleared", async () => {
