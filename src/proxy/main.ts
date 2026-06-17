@@ -58,6 +58,7 @@ import {
   profileProxyServerTimingPhase,
   withProxyServerTimingHeader,
 } from "./server-timing.ts";
+import { removeStickyCookieFromPublicCacheableResponse } from "./response-headers.ts";
 
 function getLocalProjects(): Record<string, string> {
   const raw = getEnv("LOCAL_PROJECTS");
@@ -432,11 +433,13 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
               }
 
               return withProxyTiming(
-                new Response(response.body, {
-                  status: response.status,
-                  statusText: response.statusText,
-                  headers: response.headers,
-                }),
+                removeStickyCookieFromPublicCacheableResponse(
+                  new Response(response.body, {
+                    status: response.status,
+                    statusText: response.statusText,
+                    headers: response.headers,
+                  }),
+                ),
               );
             } catch (error) {
               clearTimeout(timeoutId);

@@ -18,6 +18,7 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import { getExtensionName } from "#veryfront/utils/path-utils.ts";
 import { createBuildVersion } from "#veryfront/utils/version.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { profilePhase } from "#veryfront/observability/request-profiler.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { VeryfrontError } from "#veryfront/errors/index.ts";
 import { FILE_NOT_FOUND, RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
@@ -303,15 +304,19 @@ export class RenderPipeline {
       return { params, pageProps, layoutProps };
     }
 
-    const loadedModules = await withSpan(
-      SpanNames.RENDER_LOAD_MODULES,
+    const loadedModules = await profilePhase(
+      "render.load_modules",
       () =>
-        withTimeoutThrow(
-          this.loadModulesInParallel(modulesToLoad),
-          MODULE_LOAD_TIMEOUT_MS,
-          `Module loading for ${slug}`,
+        withSpan(
+          SpanNames.RENDER_LOAD_MODULES,
+          () =>
+            withTimeoutThrow(
+              this.loadModulesInParallel(modulesToLoad),
+              MODULE_LOAD_TIMEOUT_MS,
+              `Module loading for ${slug}`,
+            ),
+          { "render.module_count": modulesToLoad.length },
         ),
-      { "render.module_count": modulesToLoad.length },
     );
 
     const dataJobs = loadedModules.filter((m) => hasDataFetchingFunction(m.mod));
@@ -319,30 +324,39 @@ export class RenderPipeline {
       return { params, pageProps, layoutProps };
     }
 
-    const dataResults = await withSpan(
-      SpanNames.RENDER_FETCH_DATA,
+    const dataResults = await profilePhase(
+      "render.fetch_data",
       () =>
-        withTimeoutThrow(
-          Promise.all(
-            dataJobs.map(async (job) => {
-              try {
-                const jobPath = (job as LoadedModule & { path?: string }).path;
-                const fetchOptions: FetchDataOptions = {
-                  modulePath: jobPath,
-                  projectDir: this.config.projectDir,
-                };
-                const result = await this.dataFetcher
-                  .fetchData(job.mod as PageWithData, dataContext, this.config.mode, fetchOptions);
-                return { ...job, result, error: null as Error | null };
-              } catch (error) {
-                return { ...job, result: null, error: error as Error };
-              }
-            }),
-          ),
-          DATA_FETCH_TIMEOUT_MS,
-          `Data fetch for ${slug}`,
+        withSpan(
+          SpanNames.RENDER_FETCH_DATA,
+          () =>
+            withTimeoutThrow(
+              Promise.all(
+                dataJobs.map(async (job) => {
+                  try {
+                    const jobPath = (job as LoadedModule & { path?: string }).path;
+                    const fetchOptions: FetchDataOptions = {
+                      modulePath: jobPath,
+                      projectDir: this.config.projectDir,
+                    };
+                    const result = await this.dataFetcher
+                      .fetchData(
+                        job.mod as PageWithData,
+                        dataContext,
+                        this.config.mode,
+                        fetchOptions,
+                      );
+                    return { ...job, result, error: null as Error | null };
+                  } catch (error) {
+                    return { ...job, result: null, error: error as Error };
+                  }
+                }),
+              ),
+              DATA_FETCH_TIMEOUT_MS,
+              `Data fetch for ${slug}`,
+            ),
+          { "render.data_job_count": dataJobs.length },
         ),
-      { "render.data_job_count": dataJobs.length },
     );
 
     this.applyFetchedDataResults(slug, dataResults, pageProps, layoutProps);
@@ -422,10 +436,14 @@ export class RenderPipeline {
         async () => {
           const { result } = await runWithCSSCollector(async () => {
             const pageResolveStart = performance.now();
-            const pageInfo = await withSpan(
+            const pageInfo = await profilePhase(
               "render.resolve_page",
-              () => this.config.pageResolver.resolvePage(slug),
-              { "render.slug": slug },
+              () =>
+                withSpan(
+                  "render.resolve_page",
+                  () => this.config.pageResolver.resolvePage(slug),
+                  { "render.slug": slug },
+                ),
             );
             timing.pageResolve = Math.round(performance.now() - pageResolveStart);
 
@@ -438,10 +456,14 @@ export class RenderPipeline {
               const skipLayouts = isDotPath(slug, pageInfo.entity.path);
 
               const layoutCollectStart = performance.now();
-              const layoutResult = skipLayouts ? EMPTY_LAYOUT_RESULT : await withSpan(
+              const layoutResult = skipLayouts ? EMPTY_LAYOUT_RESULT : await profilePhase(
                 "render.collect_layouts",
-                () => this.config.layoutOrchestrator.collectLayouts(pageInfo),
-                { "render.slug": slug },
+                () =>
+                  withSpan(
+                    "render.collect_layouts",
+                    () => this.config.layoutOrchestrator.collectLayouts(pageInfo),
+                    { "render.slug": slug },
+                  ),
               );
               timing.layoutCollect = Math.round(performance.now() - layoutCollectStart);
 
@@ -457,32 +479,36 @@ export class RenderPipeline {
 
               const dataFetchStart = performance.now();
               if (options?.request && options?.url) {
-                await withSpan(
+                await profilePhase(
                   "render.data_fetching",
-                  async () => {
-                    try {
-                      const dataResolution = await this.resolveDataFetching(
-                        slug,
-                        pageInfo.entity.path,
-                        layoutResult.nestedLayouts,
-                        options,
-                      );
-                      resolvedParams = dataResolution.params;
-                      dataFetchingProps = Object.keys(dataResolution.pageProps).length > 0
-                        ? dataResolution.pageProps
-                        : undefined;
-                      layoutDataMap = dataResolution.layoutProps;
-                    } catch (error) {
-                      if (error instanceof VeryfrontError) throw error;
+                  () =>
+                    withSpan(
+                      "render.data_fetching",
+                      async () => {
+                        try {
+                          const dataResolution = await this.resolveDataFetching(
+                            slug,
+                            pageInfo.entity.path,
+                            layoutResult.nestedLayouts,
+                            options,
+                          );
+                          resolvedParams = dataResolution.params;
+                          dataFetchingProps = Object.keys(dataResolution.pageProps).length > 0
+                            ? dataResolution.pageProps
+                            : undefined;
+                          layoutDataMap = dataResolution.layoutProps;
+                        } catch (error) {
+                          if (error instanceof VeryfrontError) throw error;
 
-                      renderPageLog.error("Data fetching error", {
-                        slug,
-                        error: error instanceof Error ? error.message : String(error),
-                      });
-                      throw error;
-                    }
-                  },
-                  { "render.slug": slug },
+                          renderPageLog.error("Data fetching error", {
+                            slug,
+                            error: error instanceof Error ? error.message : String(error),
+                          });
+                          throw error;
+                        }
+                      },
+                      { "render.slug": slug },
+                    ),
                 );
               }
               timing.dataFetch = Math.round(performance.now() - dataFetchStart);
@@ -499,16 +525,20 @@ export class RenderPipeline {
                 : options;
 
               const bundlePrepStart = performance.now();
-              const pageBundleResult = await withSpan(
+              const pageBundleResult = await profilePhase(
                 "render.prepare_bundles",
                 () =>
-                  this.config.pageRenderer.preparePageBundles(
-                    pageInfo,
-                    slug,
-                    cacheResult?.cachedModule,
-                    mergedOptions,
+                  withSpan(
+                    "render.prepare_bundles",
+                    () =>
+                      this.config.pageRenderer.preparePageBundles(
+                        pageInfo,
+                        slug,
+                        cacheResult?.cachedModule,
+                        mergedOptions,
+                      ),
+                    { "render.slug": slug },
                   ),
-                { "render.slug": slug },
               );
               timing.bundlePrep = Math.round(performance.now() - bundlePrepStart);
 
@@ -533,22 +563,29 @@ export class RenderPipeline {
               await layoutPreloadPromise;
 
               const layoutApplyStart = performance.now();
-              const wrappedElement = await withSpan(
+              const wrappedElement = await profilePhase(
                 "render.apply_layouts",
                 () =>
-                  this.config.layoutOrchestrator.applyLayoutsAndWrappers(
-                    pageElement,
-                    pageInfo,
-                    layoutResult.layoutBundle,
-                    layoutResult.nestedLayouts,
-                    layoutDataMap,
-                    options?.url,
-                    resolvedParams,
-                    mergedFrontmatter,
-                    headings,
-                    options?.projectSlug,
+                  withSpan(
+                    "render.apply_layouts",
+                    () =>
+                      this.config.layoutOrchestrator.applyLayoutsAndWrappers(
+                        pageElement,
+                        pageInfo,
+                        layoutResult.layoutBundle,
+                        layoutResult.nestedLayouts,
+                        layoutDataMap,
+                        options?.url,
+                        resolvedParams,
+                        mergedFrontmatter,
+                        headings,
+                        options?.projectSlug,
+                      ),
+                    {
+                      "render.slug": slug,
+                      "render.layout_count": layoutResult.nestedLayouts.length,
+                    },
                   ),
-                { "render.slug": slug, "render.layout_count": layoutResult.nestedLayouts.length },
               );
               timing.layoutApply = Math.round(performance.now() - layoutApplyStart);
 
@@ -557,27 +594,31 @@ export class RenderPipeline {
               const collectedCSSImports = getCSSImports();
 
               const ssrStart = performance.now();
-              const ssrResult = await withSpan(
+              const ssrResult = await profilePhase(
                 "render.ssr",
                 () =>
-                  withTimeoutThrow(
-                    this.config.ssrOrchestrator.performSSRRendering(
-                      wrappedElement,
-                      {
-                        pageInfo,
-                        pageBundle,
-                        layoutBundle: layoutResult.layoutBundle,
-                        nestedLayouts: layoutResult.nestedLayouts,
-                        collectedMetadata: pageBundleResult.collectedMetadata,
-                        slug,
-                        cssImports: collectedCSSImports,
-                      },
-                      mergedOptions,
-                    ),
-                    SSR_RENDER_TIMEOUT_MS,
-                    `SSR rendering for ${slug}`,
+                  withSpan(
+                    "render.ssr",
+                    () =>
+                      withTimeoutThrow(
+                        this.config.ssrOrchestrator.performSSRRendering(
+                          wrappedElement,
+                          {
+                            pageInfo,
+                            pageBundle,
+                            layoutBundle: layoutResult.layoutBundle,
+                            nestedLayouts: layoutResult.nestedLayouts,
+                            collectedMetadata: pageBundleResult.collectedMetadata,
+                            slug,
+                            cssImports: collectedCSSImports,
+                          },
+                          mergedOptions,
+                        ),
+                        SSR_RENDER_TIMEOUT_MS,
+                        `SSR rendering for ${slug}`,
+                      ),
+                    { "render.slug": slug, "render.delivery": mergedOptions?.delivery || "full" },
                   ),
-                { "render.slug": slug, "render.delivery": mergedOptions?.delivery || "full" },
               );
               timing.ssr = Math.round(performance.now() - ssrStart);
 
@@ -663,33 +704,45 @@ export class RenderPipeline {
       clearSSRModuleCacheForProject(projectId);
     }
 
-    const pageInfo = await this.config.pageResolver.resolvePage(slug);
+    const pageInfo = await profilePhase(
+      "page_data.resolve_page",
+      () => this.config.pageResolver.resolvePage(slug),
+    );
 
     const skipLayouts = isDotPath(slug, pageInfo.entity.path);
-    const layoutResult = skipLayouts
-      ? EMPTY_LAYOUT_RESULT
-      : await this.config.layoutOrchestrator.collectLayouts(pageInfo);
+    const layoutResult = skipLayouts ? EMPTY_LAYOUT_RESULT : await profilePhase(
+      "page_data.collect_layouts",
+      () => this.config.layoutOrchestrator.collectLayouts(pageInfo),
+    );
 
     const pagePath = extractRelativePathShared(pageInfo.entity.path, this.config.projectDir);
     const fileExtension = getExtensionName(pageInfo.entity.path);
     const pageType = fileExtension as PageDataResponse["pageType"];
-    const dataResolution = await this.resolveDataFetching(
-      slug,
-      pageInfo.entity.path,
-      layoutResult.nestedLayouts,
-      options,
+    const dataResolution = await profilePhase(
+      "page_data.resolve_data",
+      () =>
+        this.resolveDataFetching(
+          slug,
+          pageInfo.entity.path,
+          layoutResult.nestedLayouts,
+          options,
+        ),
     );
 
     const pageProps: Record<string, unknown> = dataResolution.pageProps;
     const params = dataResolution.params;
     const layoutProps = serializeLayoutProps(dataResolution.layoutProps);
 
-    const { frontmatter, headings } = await this.extractMdxMetadata(
-      pageType,
-      pageInfo,
-      slug,
-      options,
-      params,
+    const { frontmatter, headings } = await profilePhase(
+      "page_data.extract_mdx_metadata",
+      () =>
+        this.extractMdxMetadata(
+          pageType,
+          pageInfo,
+          slug,
+          options,
+          params,
+        ),
     );
 
     const layouts = serializeLayouts(layoutResult.nestedLayouts, this.config.projectDir);
@@ -698,12 +751,11 @@ export class RenderPipeline {
 
     const projectUpdatedAt = this.resolveProjectUpdatedAt();
 
-    const appPath = await this.resolveAppPath();
+    const appPath = await profilePhase("page_data.resolve_app_path", () => this.resolveAppPath());
 
-    const { css, cssAction, cssError } = await this.resolvePageDataCss(
-      slug,
-      options,
-      projectUpdatedAt,
+    const { css, cssAction, cssError } = await profilePhase(
+      "page_data.resolve_css",
+      () => this.resolvePageDataCss(slug, options, projectUpdatedAt),
     );
 
     resolvePageDataLog.debug("Resolved page data", {
@@ -827,15 +879,19 @@ export class RenderPipeline {
     }
 
     try {
-      const renderResult = await withTimeout(
-        this.renderPage(slug, {
-          ...options,
-          delivery: "string",
-          skipCacheCheck: true,
-          skipCachePersist: true,
-        }),
-        CSS_SSR_TIMEOUT_MS,
-        `CSS SSR for ${slug}`,
+      const renderResult = await profilePhase(
+        "page_data.css.render_html",
+        () =>
+          withTimeout(
+            this.renderPage(slug, {
+              ...options,
+              delivery: "string",
+              skipCacheCheck: true,
+              skipCachePersist: true,
+            }),
+            CSS_SSR_TIMEOUT_MS,
+            `CSS SSR for ${slug}`,
+          ),
       );
 
       if (!renderResult?.html) {
@@ -843,9 +899,13 @@ export class RenderPipeline {
       }
 
       let cssAction: PageDataResponse["cssAction"] | undefined;
-      let css = await this.resolveCssFromRenderedHtml(
-        renderResult.html,
-        options?.projectSlug ?? options?.projectId,
+      let css = await profilePhase(
+        "page_data.css.extract_from_html",
+        () =>
+          this.resolveCssFromRenderedHtml(
+            renderResult.html,
+            options?.projectSlug ?? options?.projectId,
+          ),
       );
 
       if (css) {
@@ -860,7 +920,10 @@ export class RenderPipeline {
           slug,
         });
       } else {
-        css = await this.generatePageCssFromHtml(slug, renderResult.html, options);
+        css = await profilePhase(
+          "page_data.css.generate_from_html",
+          () => this.generatePageCssFromHtml(slug, renderResult.html, options),
+        );
       }
 
       if (css) cachePageCss(cssCacheKey, css);
