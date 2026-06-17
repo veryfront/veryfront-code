@@ -915,6 +915,7 @@ export class AgentRuntime {
         model: effectiveModel,
         providerTools,
       });
+      const runtimeToolNames = Object.keys(runtimeTools ?? {});
 
       const temperature = this.resolveTemperature(temperatureModelString ?? effectiveModel);
       const result = streamText({
@@ -935,6 +936,7 @@ export class AgentRuntime {
         onChunk: callbacks?.onChunk,
         onUsage: (usage) => accumulateUsage(totalUsage, usage),
         providerExecutedToolNames: getProviderExecutedToolNames(runtimeTools),
+        availableToolNames: runtimeToolNames,
       }, abortSignal);
       throwIfAborted(abortSignal);
       finalFinishReason = state.finishReason ?? finalFinishReason;
@@ -988,6 +990,23 @@ export class AgentRuntime {
       latestAssistantText = getTextFromParts(assistantMessage.parts);
       currentMessages.push(assistantMessage);
       await this.memory.add(assistantMessage);
+
+      if (state.suppressedToolCalls.length > 0) {
+        const unavailableNames = [
+          ...new Set(state.suppressedToolCalls.map((toolCall) => toolCall.name)),
+        ];
+        currentMessages.push({
+          id: `runtime_note_${Date.now()}_${step}`,
+          role: "system",
+          parts: [{
+            type: "text",
+            text: `Runtime recovery: ignored unavailable tool call(s): ${
+              unavailableNames.join(", ")
+            }. Continue using only currently available tools: ${runtimeToolNames.join(", ")}.`,
+          }],
+          timestamp: Date.now(),
+        });
+      }
 
       const finalToolResults = collectFinalStreamToolResults(state);
 

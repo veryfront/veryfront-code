@@ -129,10 +129,12 @@ export function collectGeneratedToolResults(
 }
 
 export function shouldContinueAfterStreamStep(
-  state: Pick<ChatStreamState, "accumulatedText" | "finishReason" | "toolCalls" | "toolResults">,
+  state:
+    & Pick<ChatStreamState, "accumulatedText" | "finishReason" | "toolCalls" | "toolResults">
+    & Partial<Pick<ChatStreamState, "suppressedToolCalls">>,
 ): boolean {
   if (!state.toolCalls.size) {
-    return false;
+    return state.finishReason === "tool-calls" && Boolean(state.suppressedToolCalls?.length);
   }
 
   const streamedToolCalls = Array.from(state.toolCalls.values());

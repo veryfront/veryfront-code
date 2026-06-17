@@ -68,6 +68,7 @@ describe("chat-stream-handler", () => {
       assertEquals(state.finishReason, null);
       assertEquals(state.toolCalls.size, 0);
       assertEquals(state.toolResults.length, 0);
+      assertEquals(state.suppressedToolCalls, []);
       assertEquals(state.usage, { promptTokens: 0, completionTokens: 0, totalTokens: 0 });
     });
   });
@@ -185,6 +186,38 @@ describe("chat-stream-handler", () => {
         },
         { type: "text-start", id: "text-1" },
         { type: "text-delta", id: "text-1", delta: " After tool." },
+        { type: "text-end", id: "text-1" },
+      ]);
+    });
+
+    it("suppresses streamed tool calls that are not available in the current step", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const result = createMockResult([
+        { type: "text-delta", text: "I will reload the skill." },
+        { type: "tool-input-start", id: "tc-stale", toolName: "load_skill" },
+        { type: "tool-input-delta", id: "tc-stale", delta: '{"id":"create-agent"}' },
+        { type: "tool-input-end", id: "tc-stale" },
+        {
+          type: "tool-call",
+          toolCallId: "tc-stale",
+          toolName: "load_skill",
+          input: { id: "create-agent" },
+        },
+        { type: "finish", finishReason: "tool-calls", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "text-1", {
+        availableToolNames: ["create_agent", "list_integrations", "get_integration"],
+      });
+
+      assertEquals(state.toolCalls.size, 0);
+      assertEquals(state.toolResults, []);
+      assertEquals(state.suppressedToolCalls, [{ id: "tc-stale", name: "load_skill" }]);
+      assertEquals(events, [
+        { type: "text-start", id: "text-1" },
+        { type: "text-delta", id: "text-1", delta: "I will reload the skill." },
         { type: "text-end", id: "text-1" },
       ]);
     });
