@@ -174,6 +174,12 @@ describe("hydration-script-builder/templates/router", () => {
       assertIncludes(result, "__veryfrontSetReleaseAssetModules");
     });
 
+    it("should install release id from SPA page data before loading components", () => {
+      const result = getRouterScript();
+      assertIncludes(result, "pageData.releaseId");
+      assertIncludes(result, "__veryfrontSetReleaseId");
+    });
+
     it("should clear release asset modules when SPA page data has no map", () => {
       assertIncludes(
         getRouterScript(),

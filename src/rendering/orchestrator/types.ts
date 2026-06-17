@@ -83,6 +83,8 @@ export interface PageDataResponse {
   layoutProps: Record<string, Record<string, unknown>>;
   buildVersion: BuildVersion;
   appPath?: string;
+  /** Production release id used to version fallback module URLs. */
+  releaseId?: string;
   /** Production release asset URLs keyed by logical source path. */
   releaseAssetModules?: Record<string, string>;
   /** Headings extracted from MDX for sidebar/TOC navigation */

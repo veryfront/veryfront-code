@@ -33,6 +33,9 @@ export const getRendererScript = () => `
       if (data.studioEmbed && window.__veryfrontSetStudioEmbed) {
         window.__veryfrontSetStudioEmbed(true);
       }
+      if (window.__veryfrontSetReleaseId) {
+        window.__veryfrontSetReleaseId(data.releaseId || null);
+      }
       if (data.releaseAssetModules && window.__veryfrontSetReleaseAssetModules) {
         window.__veryfrontSetReleaseAssetModules(data.releaseAssetModules);
       }

@@ -782,6 +782,7 @@ export class RenderPipeline {
       layoutProps,
       buildVersion: createBuildVersion(projectUpdatedAt),
       appPath,
+      releaseId: options?.releaseId,
       releaseAssetModules: buildReleaseAssetModules(options?.releaseAssetManifest),
       headings,
       css,

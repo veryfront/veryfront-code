@@ -1,6 +1,9 @@
+import { VERSION } from "#veryfront/utils/version.ts";
+
 export const getLoaderScript = (): string => `
     // Note: DEBUG, log, logError are defined in router.ts which loads first
 
+    const VERYFRONT_RUNTIME_VERSION = '${VERSION}';
     const componentCache = new Map();
     const loadingPromises = new Map();
 
@@ -20,6 +23,20 @@ export const getLoaderScript = (): string => `
 
     function appendQueryParam(url, key, value) {
       return url + (url.includes('?') ? '&' : '?') + key + '=' + value;
+    }
+
+    let __releaseId = null;
+    function setReleaseId(value) {
+      __releaseId = typeof value === 'string' && value ? value : null;
+      window.__veryfrontReleaseId = __releaseId;
+    }
+    window.__veryfrontSetReleaseId = setReleaseId;
+
+    function appendReleaseModuleVersion(url) {
+      if (!__releaseId || url.includes('vf_release=')) return url;
+      let versionedUrl = appendQueryParam(url, 'vf_release', encodeURIComponent(__releaseId));
+      versionedUrl = appendQueryParam(versionedUrl, 'vf_runtime', encodeURIComponent(VERYFRONT_RUNTIME_VERSION));
+      return versionedUrl;
     }
 
     let __releaseAssetModules = null;
@@ -76,6 +93,7 @@ export const getLoaderScript = (): string => `
 
       if (studioEmbed) url = appendQueryParam(url, 'studio_embed', 'true');
       if (__hmrRefreshTimestamp) url = appendQueryParam(url, 't', __hmrRefreshTimestamp);
+      if (!studioEmbed && !__hmrRefreshTimestamp) url = appendReleaseModuleVersion(url);
 
       return url;
     }
