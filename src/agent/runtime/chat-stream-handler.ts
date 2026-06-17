@@ -68,6 +68,7 @@ export interface ChatStreamState {
   finishReason: string | null;
   toolCalls: Map<string, StreamingToolCall>;
   toolResults: StreamingToolResult[];
+  suppressedToolCalls: { id: string; name: string }[];
   usage: {
     promptTokens: number;
     completionTokens: number;
@@ -91,6 +92,7 @@ export interface ChatStreamCallbacks {
     reasoningTokens?: number;
   }) => void;
   providerExecutedToolNames?: readonly string[];
+  availableToolNames?: readonly string[];
   localToolInputIdleTimeoutMs?: number;
   streamIdleTimeoutMs?: number;
 }
@@ -301,6 +303,7 @@ export function createStreamState(): ChatStreamState {
     finishReason: null,
     toolCalls: new Map(),
     toolResults: [],
+    suppressedToolCalls: [],
     usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
   };
 }
@@ -332,6 +335,21 @@ export function processStream(
     let shouldStopForCommittedLocalToolCall = false;
     let hasActiveLocalToolInput = false;
     const providerExecutedToolNames = new Set(callbacks?.providerExecutedToolNames ?? []);
+    const availableToolNames = callbacks?.availableToolNames
+      ? new Set(callbacks.availableToolNames)
+      : null;
+    const suppressedToolCallIds = new Set<string>();
+
+    const isUnavailableTool = (toolName: string) =>
+      availableToolNames !== null && !availableToolNames.has(toolName);
+
+    const suppressToolCall = (toolCallId: string | undefined, toolName: string) => {
+      if (!toolCallId || suppressedToolCallIds.has(toolCallId)) {
+        return;
+      }
+      suppressedToolCallIds.add(toolCallId);
+      state.suppressedToolCalls.push({ id: toolCallId, name: toolName });
+    };
 
     const resolveProviderExecuted = (toolName: string, providerExecuted?: boolean) =>
       providerExecuted ?? (providerExecutedToolNames.has(toolName) ? true : undefined);
@@ -653,6 +671,11 @@ export function processStream(
           closeReasoningSegment();
           shouldStopForCommittedLocalToolCall = false;
           const toolId = typedPart.id;
+          if (isUnavailableTool(typedPart.toolName)) {
+            suppressToolCall(toolId, typedPart.toolName);
+            hasActiveLocalToolInput = false;
+            break;
+          }
           const providerExecuted = resolveProviderExecuted(
             typedPart.toolName,
             typedPart.providerExecuted,
@@ -674,6 +697,7 @@ export function processStream(
         case "tool-input-delta": {
           closeReasoningSegment();
           const toolId = typedPart.id;
+          if (suppressedToolCallIds.has(toolId)) break;
           const tc = state.toolCalls.get(toolId);
           if (!tc) break;
 
@@ -687,6 +711,10 @@ export function processStream(
           closeTextSegment();
           closeReasoningSegment();
           const toolId = typedPart.id;
+          if (suppressedToolCallIds.has(toolId)) {
+            hasActiveLocalToolInput = false;
+            break;
+          }
           const tc = state.toolCalls.get(toolId);
           if (!tc) break;
 
@@ -716,6 +744,11 @@ export function processStream(
           closeReasoningSegment();
           const toolId = typedPart.toolCallId ?? typedPart.id;
           if (!toolId) {
+            break;
+          }
+          if (isUnavailableTool(typedPart.toolName)) {
+            suppressToolCall(toolId, typedPart.toolName);
+            hasActiveLocalToolInput = false;
             break;
           }
           const providerExecuted = resolveProviderExecuted(
@@ -759,6 +792,11 @@ export function processStream(
           closeReasoningSegment();
           // tool-call fires when the full tool call is available
           const toolId = typedPart.toolCallId;
+          if (isUnavailableTool(typedPart.toolName)) {
+            suppressToolCall(toolId, typedPart.toolName);
+            hasActiveLocalToolInput = false;
+            break;
+          }
           const providerExecuted = resolveProviderExecuted(
             typedPart.toolName,
             typedPart.providerExecuted,
@@ -803,6 +841,13 @@ export function processStream(
         case "tool-result": {
           closeTextSegment();
           closeReasoningSegment();
+          if (
+            suppressedToolCallIds.has(typedPart.toolCallId) ||
+            isUnavailableTool(typedPart.toolName)
+          ) {
+            suppressToolCall(typedPart.toolCallId, typedPart.toolName);
+            break;
+          }
           const providerExecuted = resolveProviderExecuted(
             typedPart.toolName,
             typedPart.providerExecuted,
