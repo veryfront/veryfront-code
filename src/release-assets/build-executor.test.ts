@@ -235,6 +235,88 @@ describe("release asset build executor", () => {
     assert(!pageUpload.text.includes("/_vf/assets/"));
   });
 
+  it("keeps the manifest ready when one module transform fails", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      { path: "pages/index.tsx", content: "export default () => null;" },
+      { path: "pages/broken.tsx", content: "export default () => null;" },
+    ];
+    const client = makeClient(files, rec);
+    const transform = (_source: string, sourceFile: string) => {
+      if (sourceFile.endsWith("pages/broken.tsx")) {
+        return Promise.reject(new Error("Invalid left-hand side in prefix operation. (1:2)"));
+      }
+      return Promise.resolve("export default () => null;");
+    };
+
+    const result = await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    assertEquals(result.success, true);
+    assertEquals(result.state, "ready");
+    assertEquals(rec.states, []);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertExists(manifest.modules["pages/index.tsx"]);
+    assertEquals(manifest.modules["pages/broken.tsx"], undefined);
+    assert(manifest.fallback.gaps.includes("module-transform-failed:pages/broken.tsx"));
+  });
+
+  it("falls back to unvendored module code when HTTP dependency vendoring fails", async () => {
+    enableDependencyImportMap();
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [{ path: "pages/index.tsx", content: "export default () => null;" }];
+    const client = makeClient(files, rec);
+    const reactUrl = "https://esm.sh/react@19.2.4?target=es2022&deps=csstype@3.2.3";
+    const transform = () =>
+      Promise.resolve(`import React from "${reactUrl}"; export default React;`);
+    const input = {
+      ...baseInput(client, transform),
+      vendorHttpImports: () =>
+        Promise.reject(new Error("Invalid left-hand side in prefix operation. (1:2)")),
+    };
+
+    const result = await runReleaseAssetBuild(input, await tmp());
+
+    assertEquals(result.success, true);
+    assertEquals(result.state, "ready");
+    assertEquals(rec.states, []);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertExists(manifest.modules["pages/index.tsx"]);
+    assert(manifest.fallback.gaps.includes("module-dependency-vendor-failed:pages/index.tsx"));
+    assert(manifest.fallback.gaps.includes("dependency-vendor-failed:react-import-map"));
+
+    const pageHash = manifest.modules["pages/index.tsx"]?.contentHash;
+    assertExists(pageHash);
+    const pageUpload = rec.uploads.find((u) => u.hash === pageHash);
+    assertExists(pageUpload);
+    assert(pageUpload.text.includes(reactUrl));
+    assert(!pageUpload.text.includes("file://"));
+  });
+
+  it("keeps project modules ready when React import-map dependency vendoring fails", async () => {
+    enableDependencyImportMap();
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [{ path: "pages/index.tsx", content: "export default () => null;" }];
+    const client = makeClient(files, rec);
+    const transform = (source: string) => Promise.resolve(source);
+    const input = {
+      ...baseInput(client, transform),
+      vendorHttpImports: () =>
+        Promise.reject(new Error("Invalid left-hand side in prefix operation. (1:2)")),
+    };
+
+    const result = await runReleaseAssetBuild(input, await tmp());
+
+    assertEquals(result.success, true);
+    assertEquals(result.state, "ready");
+    assertEquals(rec.states, []);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertExists(manifest.modules["pages/index.tsx"]);
+    assert(manifest.fallback.gaps.includes("dependency-vendor-failed:react-import-map"));
+  });
+
   it("records framework import-map modules as manifest dependencies when dependency vendoring is enabled", async () => {
     enableDependencyImportMap();
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
@@ -381,7 +463,7 @@ describe("release asset build executor", () => {
     assertExists(manifest.dependencies["react/jsx-runtime"]);
   });
 
-  it("fails when React import-map dependencies cannot be vendored", async () => {
+  it("records a gap when React import-map dependencies cannot be vendored", async () => {
     enableDependencyImportMap();
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [{ path: "pages/index.tsx", content: "export default () => null;" }];
@@ -394,11 +476,13 @@ describe("release asset build executor", () => {
 
     const result = await runReleaseAssetBuild(input, await tmp());
 
-    assertEquals(result.success, false);
-    assertEquals(result.state, "failed");
-    assertEquals(rec.manifest, null);
-    assertEquals(rec.states.at(-1)?.state, "failed");
-    assert(rec.states.at(-1)?.error?.includes("React import-map dependency missing"));
+    assertEquals(result.success, true);
+    assertEquals(result.state, "ready");
+    assertEquals(rec.states, []);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertExists(manifest.modules["pages/index.tsx"]);
+    assert(manifest.fallback.gaps.includes("dependency-vendor-failed:react-import-map"));
   });
 
   it("rewrites covered project module imports to immutable asset URLs", async () => {
@@ -678,7 +762,7 @@ describe("release asset build executor", () => {
     assertEquals(rec.states.find((state) => state.state === "failed"), undefined);
   });
 
-  it("fails the manifest when a vendored dependency keeps an unresolved file import", async () => {
+  it("falls back to source URLs when a vendored dependency keeps an unresolved file import", async () => {
     enableDependencyImportMap();
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
@@ -712,14 +796,22 @@ describe("release asset build executor", () => {
 
     const result = await runReleaseAssetBuild(input, await tmp());
 
-    assertEquals(result.success, false);
-    assertEquals(result.state, "failed");
-    assert(result.error?.includes("Unresolved vendored file dependency"));
-    assertEquals(rec.states.at(-1)?.state, "failed");
-    assertEquals(rec.manifest, null);
+    assertEquals(result.success, true);
+    assertEquals(result.state, "ready");
+    assertEquals(rec.states, []);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertExists(manifest.modules["pages/index.tsx"]);
+    assert(manifest.fallback.gaps.includes("dependency-finalize-failed"));
+    const pageHash = manifest.modules["pages/index.tsx"]?.contentHash;
+    assertExists(pageHash);
+    const pageUpload = rec.uploads.find((u) => u.hash === pageHash);
+    assertExists(pageUpload);
+    assert(pageUpload.text.includes("https://esm.sh/parent@1"));
+    assert(!pageUpload.text.includes("file://"));
   });
 
-  it("fails the manifest when a vendored dependency asset exceeds the size limit", async () => {
+  it("falls back to source URLs when a vendored dependency asset exceeds the size limit", async () => {
     enableDependencyImportMap();
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
@@ -753,12 +845,19 @@ describe("release asset build executor", () => {
 
     const result = await runReleaseAssetBuild(input, await tmp());
 
-    assertEquals(result.success, false);
-    assertEquals(result.state, "failed");
-    assert(result.error?.includes("exceeds release asset size limit"));
-    assertEquals(rec.states.at(-1)?.state, "failed");
-    assertEquals(rec.manifest, null);
-    assertEquals(rec.uploads.length, 0);
+    assertEquals(result.success, true);
+    assertEquals(result.state, "ready");
+    assertEquals(rec.states, []);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertExists(manifest.modules["pages/index.tsx"]);
+    assert(manifest.fallback.gaps.includes("dependency-finalize-failed"));
+    const pageHash = manifest.modules["pages/index.tsx"]?.contentHash;
+    assertExists(pageHash);
+    const pageUpload = rec.uploads.find((u) => u.hash === pageHash);
+    assertExists(pageUpload);
+    assert(pageUpload.text.includes("https://esm.sh/parent@1"));
+    assert(!pageUpload.text.includes("file://"));
   });
 
   it("rewrites transformed relative project imports to immutable asset URLs", async () => {
@@ -1117,7 +1216,7 @@ describe("release asset build executor", () => {
     assertEquals(manifest.routes["/a"], undefined);
   });
 
-  it("reports failed and does not PUT on a transform error", async () => {
+  it("records a gap and still PUTs when a project module transform fails", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [{ path: "pages/index.tsx", content: "boom" }];
     const client = makeClient(files, rec);
@@ -1125,13 +1224,13 @@ describe("release asset build executor", () => {
 
     const result = await runReleaseAssetBuild(baseInput(client, transform), await tmp());
 
-    assertEquals(result.success, false);
-    assertEquals(result.state, "failed");
-    assertEquals(rec.manifest, null);
-    assertEquals(rec.states.length, 1);
-    assertEquals(rec.states[0]?.state, "failed");
-    // Error is sanitized — no raw filesystem path leaks.
-    assert(!(rec.states[0]?.error ?? "").includes("/secret/path.tsx"));
+    assertEquals(result.success, true);
+    assertEquals(result.state, "ready");
+    assertEquals(rec.states, []);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.modules["pages/index.tsx"], undefined);
+    assert(manifest.fallback.gaps.includes("module-transform-failed:pages/index.tsx"));
   });
 
   it("dedupes identical transformed bytes into a single upload", async () => {

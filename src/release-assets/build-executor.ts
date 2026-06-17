@@ -203,6 +203,7 @@ export interface PreparedReleaseAsset extends PreparedAsset {
 interface TransformedProjectModule {
   logicalPath: string;
   code: string;
+  unvendoredCode: string;
 }
 
 interface DependencyModule {
@@ -581,6 +582,10 @@ function addDependencyModule(
 
 function normalizeDependencySpecifier(specifier: string): string {
   return specifier.replace(/[?#].*$/, "");
+}
+
+function pushGap(gaps: string[], gap: string): void {
+  if (!gaps.includes(gap)) gaps.push(gap);
 }
 
 function dependencyLookupKeys(specifier: string): Set<string> {
@@ -1066,7 +1071,17 @@ async function finalizeProjectModules(
     if (!transformed) return null;
 
     const nextStack = [...stack, logicalPath];
-    const imports = await collectProjectModuleImports(transformed.code, logicalPath, knownPaths);
+    let imports: Map<string, string>;
+    try {
+      imports = await collectProjectModuleImports(transformed.code, logicalPath, knownPaths);
+    } catch (error) {
+      pushGap(gaps, `module-import-parse-failed:${logicalPath}`);
+      logger.warn("Module import parse failed during release asset finalization", {
+        path: logicalPath,
+        error: sanitizeError(error),
+      });
+      return null;
+    }
     for (const importedPath of imports.values()) {
       await finalize(importedPath, nextStack);
     }
@@ -1139,7 +1154,21 @@ async function collectCyclicProjectModules(
     visiting.add(logicalPath);
     stack.push(logicalPath);
 
-    const imports = await collectProjectModuleImports(transformed.code, logicalPath, knownPaths);
+    let imports: Map<string, string>;
+    try {
+      imports = await collectProjectModuleImports(transformed.code, logicalPath, knownPaths);
+    } catch (error) {
+      cyclic.add(logicalPath);
+      pushGap(gaps, `module-import-parse-failed:${logicalPath}`);
+      logger.warn("Module import parse failed during release asset cycle collection", {
+        path: logicalPath,
+        error: sanitizeError(error),
+      });
+      stack.pop();
+      visiting.delete(logicalPath);
+      visited.add(logicalPath);
+      return;
+    }
     for (const importedPath of imports.values()) {
       if (transformedModules.has(importedPath)) await visit(importedPath);
     }
@@ -1518,28 +1547,16 @@ async function runBuildInner(
           reactVersion: input.reactVersion,
         });
       } catch (error) {
-        // Hard requirement: any module transform failure -> report failed, stop.
         const sanitized = sanitizeError(error);
+        pushGap(gaps, `module-transform-failed:${logicalPath}`);
         logger.warn("Module transform failed during release asset build", {
           path: logicalPath,
           error: sanitized,
         });
-        await client.reportReleaseAssetManifestState(
-          input.releaseVersionRef,
-          "failed",
-          sanitized,
-        );
-        return {
-          success: false,
-          state: "failed",
-          moduleCount: 0,
-          cssCount: 0,
-          routeCount: 0,
-          gaps,
-          error: sanitized,
-        };
+        return null;
       }
 
+      const unvendoredCode = code;
       if (vendorDependencies) {
         try {
           const vendored = await vendorHttpImports(code, {
@@ -1552,30 +1569,29 @@ async function runBuildInner(
           }
         } catch (error) {
           const sanitized = sanitizeError(error);
+          pushGap(gaps, `module-dependency-vendor-failed:${logicalPath}`);
           logger.warn("HTTP dependency vendoring failed during release asset build", {
             path: logicalPath,
             error: sanitized,
           });
-          await client.reportReleaseAssetManifestState(
-            input.releaseVersionRef,
-            "failed",
-            sanitized,
-          );
-          return {
-            success: false,
-            state: "failed",
-            moduleCount: 0,
-            cssCount: 0,
-            routeCount: 0,
-            gaps,
-            error: sanitized,
-          };
+          code = unvendoredCode;
         }
       }
 
-      transformedModules.set(logicalPath, { logicalPath, code });
+      let imports: Map<string, string>;
+      try {
+        imports = await collectProjectModuleImports(code, logicalPath, knownPaths);
+      } catch (error) {
+        const sanitized = sanitizeError(error);
+        pushGap(gaps, `module-import-parse-failed:${logicalPath}`);
+        logger.warn("Module import parse failed during release asset build", {
+          path: logicalPath,
+          error: sanitized,
+        });
+        return null;
+      }
 
-      const imports = await collectProjectModuleImports(code, logicalPath, knownPaths);
+      transformedModules.set(logicalPath, { logicalPath, code, unvendoredCode });
       for (const importedPath of imports.values()) {
         const failure = await transformProjectModule(importedPath);
         if (failure) return failure;
@@ -1604,23 +1620,10 @@ async function runBuildInner(
       );
     } catch (error) {
       const sanitized = sanitizeError(error);
+      pushGap(gaps, "dependency-vendor-failed:react-import-map");
       logger.warn("React import-map dependency vendoring failed during release asset build", {
         error: sanitized,
       });
-      await client.reportReleaseAssetManifestState(
-        input.releaseVersionRef,
-        "failed",
-        sanitized,
-      );
-      return {
-        success: false,
-        state: "failed",
-        moduleCount: 0,
-        cssCount: 0,
-        routeCount: 0,
-        gaps,
-        error: sanitized,
-      };
     }
   }
 
@@ -1637,23 +1640,16 @@ async function runBuildInner(
     httpDependencyFallbackUrls = finalizedHttpDependencies.fallbackUrls;
   } catch (error) {
     const sanitized = sanitizeError(error);
+    pushGap(gaps, "dependency-finalize-failed");
     logger.warn("HTTP dependency finalization failed during release asset build", {
       error: sanitized,
     });
-    await client.reportReleaseAssetManifestState(
-      input.releaseVersionRef,
-      "failed",
-      sanitized,
-    );
-    return {
-      success: false,
-      state: "failed",
-      moduleCount: 0,
-      cssCount: 0,
-      routeCount: 0,
-      gaps,
-      error: sanitized,
-    };
+    for (const transformed of transformedModules.values()) {
+      transformed.code = transformed.unvendoredCode;
+    }
+    dependencyModules.clear();
+    httpDependencies = {};
+    httpDependencyFallbackUrls = new Map();
   }
   httpDependencies = exposeDependencySpecifierAliases(httpDependencies, dependencyModules);
   const dependencyUrls = buildDependencyUrlMap(httpDependencies, dependencyModules);
