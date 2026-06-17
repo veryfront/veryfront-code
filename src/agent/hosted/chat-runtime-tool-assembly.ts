@@ -34,6 +34,7 @@ import {
   normalizeHostedRuntimeAllowedToolNames,
   resolveHostedRuntimeAllowedToolNames,
 } from "./runtime-essential-tools.ts";
+import type { HostedSubmittedFormInputResult } from "./chat-runtime-contract.ts";
 
 /** Context for hosted chat runtime tool assembly. */
 export type HostedChatRuntimeToolAssemblyContext = DefaultResearchArtifactContext & {
@@ -45,6 +46,7 @@ export type HostedChatRuntimeToolAssemblyContext = DefaultResearchArtifactContex
   availableToolNames?: string[];
   availableSkillIds?: readonly string[];
   userId?: string | null;
+  submittedFormInputResult?: HostedSubmittedFormInputResult;
 };
 
 /** Public API contract for hosted chat runtime allowed tool names. */
@@ -96,6 +98,26 @@ function activeBranchId(taskContext: HostedChatRuntimeToolAssemblyContext): stri
   return taskContext.branchId ?? null;
 }
 
+function hasSubmittedFormInputResult(
+  taskContext: HostedChatRuntimeToolAssemblyContext,
+): boolean {
+  return taskContext.submittedFormInputResult !== undefined;
+}
+
+function filterPostFormInputLocalTools(
+  tools: HostToolSet,
+  taskContext: HostedChatRuntimeToolAssemblyContext,
+): HostToolSet {
+  if (!hasSubmittedFormInputResult(taskContext)) {
+    return tools;
+  }
+
+  const blockedToolNames = new Set(["form_input", "load_skill", "invoke_agent"]);
+  return Object.fromEntries(
+    Object.entries(tools).filter(([toolName]) => !blockedToolNames.has(toolName)),
+  );
+}
+
 /** Filter hosted chat runtime local tools. */
 export function filterHostedChatRuntimeLocalTools(input: {
   tools: HostToolSet;
@@ -121,7 +143,7 @@ export async function prepareHostedChatRuntimeToolAssembly<
     availableSkillIds: input.taskContext.availableSkillIds,
   });
   const sortedLocalTools = filterHostedChatRuntimeLocalTools({
-    tools: input.localTools,
+    tools: filterPostFormInputLocalTools(input.localTools, input.taskContext),
     allowedToolNames,
   });
   const localHostTools = input.traceLocalTools

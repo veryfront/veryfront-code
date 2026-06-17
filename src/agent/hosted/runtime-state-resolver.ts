@@ -11,6 +11,7 @@ import {
 } from "../conversation/delegation-policy.ts";
 import { evaluateSlashCommandArtifactPolicy } from "../artifacts/slash-command-artifact-policy.ts";
 import { flattenSystemInstructions } from "../runtime/tool-inventory.ts";
+import { SUBMITTED_FORM_INPUT_CONTEXT_KEY } from "../runtime/skill-policy-enforcement.ts";
 
 /** Context for hosted runtime state resolver. */
 export type HostedRuntimeStateResolverContext = DefaultResearchArtifactContext & {
@@ -19,6 +20,7 @@ export type HostedRuntimeStateResolverContext = DefaultResearchArtifactContext &
   steeringRevision?: number;
   slashCommandArtifactPathSeen?: boolean;
   userId?: string | null;
+  submittedFormInputResult?: unknown;
 };
 
 /** Input payload for hosted runtime state resolver. */
@@ -86,6 +88,9 @@ export function createHostedRuntimeStateResolver<
 
     let nextSystem = system;
     const nextContextRecord = { ...(context ?? {}) };
+    if (options.taskContext.submittedFormInputResult) {
+      nextContextRecord[SUBMITTED_FORM_INPUT_CONTEXT_KEY] = true;
+    }
 
     if (steeringChanged && options.refreshSystem) {
       nextSystem = await options.refreshSystem({

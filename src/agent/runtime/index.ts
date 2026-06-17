@@ -65,10 +65,12 @@ import {
   enforceSkillPolicy,
   extractSkillId,
   extractSkillPolicy,
+  FORM_INPUT_TOOL_ID,
   hasSubmittedFormInputResult,
   hydrateActiveSkillStateFromMessages,
   LOAD_SKILL_TOOL_ID,
   removeFormInputAfterSubmission,
+  SUBMITTED_FORM_INPUT_CONTEXT_KEY,
 } from "./skill-policy-enforcement.ts";
 import {
   getRuntimeAllowedRemoteTools,
@@ -154,6 +156,40 @@ import {
 import { resolveAgentModelTransport, type ResolvedModelTransport } from "./model-transport.ts";
 
 const logger = serverLogger.component("agent");
+
+function parseToolResultJson(result: string): unknown {
+  try {
+    return JSON.parse(result);
+  } catch {
+    return null;
+  }
+}
+
+function containsSubmittedFormInputExecutionResult(result: unknown, depth = 0): boolean {
+  const normalized = typeof result === "string" ? parseToolResultJson(result) : result;
+  if (!normalized || typeof normalized !== "object" || depth > 3) {
+    return false;
+  }
+  if ((normalized as { submitted?: unknown }).submitted === true) {
+    return true;
+  }
+  return Object.values(normalized).some((value) =>
+    containsSubmittedFormInputExecutionResult(value, depth + 1)
+  );
+}
+
+function isSubmittedFormInputExecutionResult(toolName: string, result: unknown): boolean {
+  return toolName === FORM_INPUT_TOOL_ID && containsSubmittedFormInputExecutionResult(result);
+}
+
+function markSubmittedFormInputRuntimeContext(
+  runtimeContext?: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    ...(runtimeContext ?? {}),
+    [SUBMITTED_FORM_INPUT_CONTEXT_KEY]: true,
+  };
+}
 
 function isAbortError(error: unknown, abortSignal?: AbortSignal): boolean {
   if (abortSignal?.aborted && error === abortSignal.reason) {
@@ -841,6 +877,7 @@ export class AgentRuntime {
     const remoteToolSources = getRuntimeRemoteToolSources(this.config);
     let currentSystemPrompt = systemPrompt;
     let currentRuntimeContext = runtimeContext;
+    let toolsDisabledForFinalResponse = false;
 
     for (let step = 0; step < maxSteps; step++) {
       throwIfAborted(abortSignal);
@@ -867,7 +904,7 @@ export class AgentRuntime {
       currentSystemPrompt = preparedStep.systemPrompt;
       currentRuntimeContext = preparedStep.runtimeContext;
       const toolContext = preparedStep.toolContext;
-      const tools = preparedStep.tools;
+      const tools = toolsDisabledForFinalResponse ? [] : preparedStep.tools;
 
       const runtimeTools = convertToolsToRuntimeTools(tools, {
         model: effectiveModel,
@@ -1037,6 +1074,29 @@ export class AgentRuntime {
             ? undefined
             : stringifyToolError(matchingResult.error);
           toolCalls.push(toolCall);
+
+          if (matchingResult.error === undefined) {
+            if (tc.name === LOAD_SKILL_TOOL_ID) {
+              activeSkillId = extractSkillId(matchingResult.output);
+              activeSkillPolicy = extractSkillPolicy(matchingResult.output);
+              activeSkillDelegationOverrides = extractSkillDelegationOverrides(
+                matchingResult.output,
+              );
+              mustLoadSkillFirst = false;
+            }
+            activeSkillPolicy = removeFormInputAfterSubmission(
+              tc.name,
+              matchingResult.output,
+              activeSkillId,
+              activeSkillPolicy,
+            );
+            if (isSubmittedFormInputExecutionResult(tc.name, matchingResult.output)) {
+              currentRuntimeContext = markSubmittedFormInputRuntimeContext(currentRuntimeContext);
+            }
+            if (tc.name === "create_agent") {
+              toolsDisabledForFinalResponse = true;
+            }
+          }
           continue;
         }
 
@@ -1046,6 +1106,28 @@ export class AgentRuntime {
           toolCall.result = persistedResult.result;
           toolCall.error = persistedError;
           toolCalls.push(toolCall);
+          if (persistedError === undefined) {
+            if (tc.name === LOAD_SKILL_TOOL_ID) {
+              activeSkillId = extractSkillId(persistedResult.result);
+              activeSkillPolicy = extractSkillPolicy(persistedResult.result);
+              activeSkillDelegationOverrides = extractSkillDelegationOverrides(
+                persistedResult.result,
+              );
+              mustLoadSkillFirst = false;
+            }
+            activeSkillPolicy = removeFormInputAfterSubmission(
+              tc.name,
+              persistedResult.result,
+              activeSkillId,
+              activeSkillPolicy,
+            );
+            if (isSubmittedFormInputExecutionResult(tc.name, persistedResult.result)) {
+              currentRuntimeContext = markSubmittedFormInputRuntimeContext(currentRuntimeContext);
+            }
+            if (tc.name === "create_agent") {
+              toolsDisabledForFinalResponse = true;
+            }
+          }
           continue;
         }
 
@@ -1154,6 +1236,12 @@ export class AgentRuntime {
             activeSkillId,
             activeSkillPolicy,
           );
+          if (isSubmittedFormInputExecutionResult(tc.name, result)) {
+            currentRuntimeContext = markSubmittedFormInputRuntimeContext(currentRuntimeContext);
+          }
+          if (tc.name === "create_agent") {
+            toolsDisabledForFinalResponse = true;
+          }
 
           const dynamic = isDynamicTool(tc.name);
           sendSSE(controller, encoder, {
