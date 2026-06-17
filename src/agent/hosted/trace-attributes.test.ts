@@ -134,6 +134,9 @@ describe("agent/agent-trace-attributes", () => {
           inputTokens: 11,
           outputTokens: 7,
           cachedInputTokens: 3,
+          cacheCreationInputTokens: 1,
+          cacheReadInputTokens: 2,
+          reasoningTokens: 4,
         },
       }),
       {
@@ -143,7 +146,9 @@ describe("agent/agent-trace-attributes", () => {
         "gen_ai.response.finish_reasons": ["stop"],
         "gen_ai.usage.input_tokens": 11,
         "gen_ai.usage.output_tokens": 7,
-        "gen_ai.usage.cache_read.input_tokens": 3,
+        "gen_ai.usage.cache_creation.input_tokens": 1,
+        "gen_ai.usage.cache_read.input_tokens": 2,
+        "gen_ai.usage.reasoning.output_tokens": 4,
       },
     );
   });

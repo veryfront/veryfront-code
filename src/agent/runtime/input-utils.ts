@@ -29,12 +29,41 @@ export function normalizeInput(input: string | Message[]): Message[] {
 }
 
 export function accumulateUsage(
-  total: { promptTokens: number; completionTokens: number; totalTokens: number },
-  usage: { promptTokens?: number; completionTokens?: number; totalTokens?: number },
+  total: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    cachedInputTokens?: number;
+    cacheCreationInputTokens?: number;
+    cacheReadInputTokens?: number;
+    reasoningTokens?: number;
+  },
+  usage: {
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
+    cachedInputTokens?: number;
+    cacheCreationInputTokens?: number;
+    cacheReadInputTokens?: number;
+    reasoningTokens?: number;
+  },
 ): void {
   total.promptTokens += usage.promptTokens ?? 0;
   total.completionTokens += usage.completionTokens ?? 0;
   total.totalTokens += usage.totalTokens ?? 0;
+  if (typeof usage.cachedInputTokens === "number") {
+    total.cachedInputTokens = (total.cachedInputTokens ?? 0) + usage.cachedInputTokens;
+  }
+  if (typeof usage.cacheCreationInputTokens === "number") {
+    total.cacheCreationInputTokens = (total.cacheCreationInputTokens ?? 0) +
+      usage.cacheCreationInputTokens;
+  }
+  if (typeof usage.cacheReadInputTokens === "number") {
+    total.cacheReadInputTokens = (total.cacheReadInputTokens ?? 0) + usage.cacheReadInputTokens;
+  }
+  if (typeof usage.reasoningTokens === "number") {
+    total.reasoningTokens = (total.reasoningTokens ?? 0) + usage.reasoningTokens;
+  }
 }
 
 export function getMaxSteps(

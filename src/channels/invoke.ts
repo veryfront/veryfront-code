@@ -166,6 +166,10 @@ export const getChannelInvokeResponseSchema = defineSchema((v) =>
       inputTokens: v.number().int().nonnegative().optional(),
       outputTokens: v.number().int().nonnegative().optional(),
       totalTokens: v.number().int().nonnegative().optional(),
+      cachedInputTokens: v.number().int().nonnegative().optional(),
+      cacheCreationInputTokens: v.number().int().nonnegative().optional(),
+      cacheReadInputTokens: v.number().int().nonnegative().optional(),
+      reasoningTokens: v.number().int().nonnegative().optional(),
     }).optional(),
     error: v.object({
       code: v.enum(["provider_error", "internal_error"]),
@@ -471,6 +475,18 @@ export async function executeChannelInvoke(
           inputTokens: result.usage.promptTokens,
           outputTokens: result.usage.completionTokens,
           totalTokens: result.usage.totalTokens,
+          ...(typeof result.usage.cachedInputTokens === "number"
+            ? { cachedInputTokens: result.usage.cachedInputTokens }
+            : {}),
+          ...(typeof result.usage.cacheCreationInputTokens === "number"
+            ? { cacheCreationInputTokens: result.usage.cacheCreationInputTokens }
+            : {}),
+          ...(typeof result.usage.cacheReadInputTokens === "number"
+            ? { cacheReadInputTokens: result.usage.cacheReadInputTokens }
+            : {}),
+          ...(typeof result.usage.reasoningTokens === "number"
+            ? { reasoningTokens: result.usage.reasoningTokens }
+            : {}),
         }
         : undefined,
     });

@@ -10,7 +10,12 @@ export interface AgUiBrowserRunFinishedMetadata {
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
+  cachedInputTokens?: number;
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
+  reasoningTokens?: number;
   finishReason?: string;
+  usageCaptureStatus?: "complete" | "partial" | "missing";
 }
 
 /** State for AG-UI browser encoder. */
@@ -188,6 +193,20 @@ function applyResponseMetadata(
     state.metadata.inputTokens = response.usage.promptTokens;
     state.metadata.outputTokens = response.usage.completionTokens;
     state.metadata.totalTokens = response.usage.totalTokens;
+    if (typeof response.usage.cachedInputTokens === "number") {
+      state.metadata.cachedInputTokens = response.usage.cachedInputTokens;
+    } else if (typeof response.usage.cacheReadInputTokens === "number") {
+      state.metadata.cachedInputTokens = response.usage.cacheReadInputTokens;
+    }
+    if (typeof response.usage.cacheCreationInputTokens === "number") {
+      state.metadata.cacheCreationInputTokens = response.usage.cacheCreationInputTokens;
+    }
+    if (typeof response.usage.cacheReadInputTokens === "number") {
+      state.metadata.cacheReadInputTokens = response.usage.cacheReadInputTokens;
+    }
+    if (typeof response.usage.reasoningTokens === "number") {
+      state.metadata.reasoningTokens = response.usage.reasoningTokens;
+    }
   }
 
   const finishReason = response.metadata && typeof response.metadata === "object"
@@ -206,6 +225,21 @@ export function buildAgUiBrowserFinalizeResponse(
   if (typeof metadata.finishReason === "string" && metadata.finishReason.length > 0) {
     responseMetadata.finishReason = metadata.finishReason;
   }
+  if (typeof metadata.cachedInputTokens === "number") {
+    responseMetadata.cachedInputTokens = metadata.cachedInputTokens;
+  }
+  if (typeof metadata.cacheCreationInputTokens === "number") {
+    responseMetadata.cacheCreationInputTokens = metadata.cacheCreationInputTokens;
+  }
+  if (typeof metadata.cacheReadInputTokens === "number") {
+    responseMetadata.cacheReadInputTokens = metadata.cacheReadInputTokens;
+  }
+  if (typeof metadata.reasoningTokens === "number") {
+    responseMetadata.reasoningTokens = metadata.reasoningTokens;
+  }
+  if (metadata.usageCaptureStatus) {
+    responseMetadata.usageCaptureStatus = metadata.usageCaptureStatus;
+  }
 
   const usage = typeof metadata.inputTokens === "number" ||
       typeof metadata.outputTokens === "number" ||
@@ -215,6 +249,18 @@ export function buildAgUiBrowserFinalizeResponse(
       completionTokens: metadata.outputTokens ?? 0,
       totalTokens: metadata.totalTokens ??
         ((metadata.inputTokens ?? 0) + (metadata.outputTokens ?? 0)),
+      ...(typeof metadata.cachedInputTokens === "number"
+        ? { cachedInputTokens: metadata.cachedInputTokens }
+        : {}),
+      ...(typeof metadata.cacheCreationInputTokens === "number"
+        ? { cacheCreationInputTokens: metadata.cacheCreationInputTokens }
+        : {}),
+      ...(typeof metadata.cacheReadInputTokens === "number"
+        ? { cacheReadInputTokens: metadata.cacheReadInputTokens }
+        : {}),
+      ...(typeof metadata.reasoningTokens === "number"
+        ? { reasoningTokens: metadata.reasoningTokens }
+        : {}),
     }
     : undefined;
 

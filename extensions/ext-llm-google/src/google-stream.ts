@@ -36,6 +36,7 @@ export function extractGoogleUsage(payload: unknown): RuntimeUsage | undefined {
   const outputTokens = usage.candidatesTokenCount;
   const totalTokens = usage.totalTokenCount;
   const cachedContentTokenCount = usage.cachedContentTokenCount;
+  const thoughtsTokenCount = usage.thoughtsTokenCount;
 
   return {
     inputTokens: typeof inputTokens === "number" ? inputTokens : undefined,
@@ -44,6 +45,7 @@ export function extractGoogleUsage(payload: unknown): RuntimeUsage | undefined {
     ...(typeof cachedContentTokenCount === "number"
       ? { cacheReadInputTokens: cachedContentTokenCount }
       : {}),
+    ...(typeof thoughtsTokenCount === "number" ? { reasoningTokens: thoughtsTokenCount } : {}),
   };
 }
 

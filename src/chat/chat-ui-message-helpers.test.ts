@@ -37,6 +37,8 @@ describe("chat/chat-ui-message-helpers", () => {
           outputTokens: 20,
           reasoningTokens: 5,
           cachedInputTokens: 3,
+          cacheCreationInputTokens: 7,
+          cacheReadInputTokens: 3,
           ignored: true,
         },
         unknown: true,
@@ -51,6 +53,8 @@ describe("chat/chat-ui-message-helpers", () => {
           outputTokens: 20,
           reasoningTokens: 5,
           cachedInputTokens: 3,
+          cacheCreationInputTokens: 7,
+          cacheReadInputTokens: 3,
         },
       },
     );
@@ -73,6 +77,13 @@ describe("chat/chat-ui-message-helpers", () => {
           totalUsage: {
             inputTokens: 4,
             outputTokens: 6,
+            inputTokenDetails: {
+              cacheWriteTokens: 2,
+              cacheReadTokens: 3,
+            },
+            outputTokenDetails: {
+              reasoningTokens: 1,
+            },
           },
         },
       }),
@@ -84,6 +95,10 @@ describe("chat/chat-ui-message-helpers", () => {
         usage: {
           inputTokens: 4,
           outputTokens: 6,
+          reasoningTokens: 1,
+          cachedInputTokens: 3,
+          cacheCreationInputTokens: 2,
+          cacheReadInputTokens: 3,
         },
       },
     );

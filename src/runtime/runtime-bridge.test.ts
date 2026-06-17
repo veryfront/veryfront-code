@@ -59,7 +59,7 @@ describe("runtime-bridge", () => {
             finishReason: { unified: "stop", raw: "stop" },
             usage: {
               inputTokens: { total: 2 },
-              outputTokens: { total: 5 },
+              outputTokens: { total: 5, reasoning: 3 },
             },
           },
         ]),
@@ -87,6 +87,7 @@ describe("runtime-bridge", () => {
         totalUsage: {
           inputTokens: 2,
           outputTokens: 5,
+          reasoningTokens: 3,
         },
       },
     ]);

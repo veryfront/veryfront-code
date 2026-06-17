@@ -52,9 +52,22 @@ export function getAgUiChatUiMessageMetadataFromChunk(
 /** Return AG-UI chat UI message usage metadata. */
 export function getAgUiChatUiMessageUsageMetadata(
   messageMetadata: ChatMessageMetadata | undefined,
-): Pick<AgUiBrowserRunFinishedMetadata, "inputTokens" | "outputTokens" | "totalTokens"> {
+): Pick<
+  AgUiBrowserRunFinishedMetadata,
+  | "inputTokens"
+  | "outputTokens"
+  | "totalTokens"
+  | "cachedInputTokens"
+  | "cacheCreationInputTokens"
+  | "cacheReadInputTokens"
+  | "reasoningTokens"
+> {
   const inputTokens = messageMetadata?.usage?.inputTokens;
   const outputTokens = messageMetadata?.usage?.outputTokens;
+  const cachedInputTokens = messageMetadata?.usage?.cachedInputTokens;
+  const cacheCreationInputTokens = messageMetadata?.usage?.cacheCreationInputTokens;
+  const cacheReadInputTokens = messageMetadata?.usage?.cacheReadInputTokens;
+  const reasoningTokens = messageMetadata?.usage?.reasoningTokens;
 
   return {
     inputTokens,
@@ -62,6 +75,10 @@ export function getAgUiChatUiMessageUsageMetadata(
     totalTokens: typeof inputTokens === "number" || typeof outputTokens === "number"
       ? (inputTokens ?? 0) + (outputTokens ?? 0)
       : undefined,
+    cachedInputTokens,
+    cacheCreationInputTokens,
+    cacheReadInputTokens,
+    reasoningTokens,
   };
 }
 
@@ -98,6 +115,18 @@ export function getAgUiChatUiMessageChunkMetadata(
       : {}),
     ...(typeof usageMetadata.totalTokens === "number"
       ? { totalTokens: usageMetadata.totalTokens }
+      : {}),
+    ...(typeof usageMetadata.cachedInputTokens === "number"
+      ? { cachedInputTokens: usageMetadata.cachedInputTokens }
+      : {}),
+    ...(typeof usageMetadata.cacheCreationInputTokens === "number"
+      ? { cacheCreationInputTokens: usageMetadata.cacheCreationInputTokens }
+      : {}),
+    ...(typeof usageMetadata.cacheReadInputTokens === "number"
+      ? { cacheReadInputTokens: usageMetadata.cacheReadInputTokens }
+      : {}),
+    ...(typeof usageMetadata.reasoningTokens === "number"
+      ? { reasoningTokens: usageMetadata.reasoningTokens }
       : {}),
     ...(chunk.type === "finish" && chunk.finishReason ? { finishReason: chunk.finishReason } : {}),
   };

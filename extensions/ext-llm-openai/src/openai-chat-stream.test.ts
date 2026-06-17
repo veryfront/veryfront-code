@@ -63,6 +63,7 @@ describe("ext-llm-openai/openai-chat-stream", () => {
           completion_tokens: 4,
           total_tokens: 7,
           prompt_tokens_details: { cached_tokens: 2 },
+          completion_tokens_details: { reasoning_tokens: 1 },
         },
       }),
       "data: [DONE]\r\n\r\n",
@@ -90,6 +91,7 @@ describe("ext-llm-openai/openai-chat-stream", () => {
           outputTokens: 4,
           totalTokens: 7,
           cacheReadInputTokens: 2,
+          reasoningTokens: 1,
         },
       },
     ]);

@@ -64,6 +64,7 @@ describe("ext-llm-openai/openai-responses-stream", () => {
             output_tokens: 7,
             total_tokens: 12,
             input_tokens_details: { cached_tokens: 3 },
+            output_tokens_details: { reasoning_tokens: 2 },
           },
         },
       }),
@@ -92,6 +93,7 @@ describe("ext-llm-openai/openai-responses-stream", () => {
           outputTokens: 7,
           totalTokens: 12,
           cacheReadInputTokens: 3,
+          reasoningTokens: 2,
         },
       },
     ]);

@@ -67,6 +67,7 @@ describe("ext-llm-google/google-stream", () => {
           candidatesTokenCount: 7,
           totalTokenCount: 12,
           cachedContentTokenCount: 3,
+          thoughtsTokenCount: 2,
         },
       }),
       "data: [DONE]\r\n\r\n",
@@ -93,6 +94,7 @@ describe("ext-llm-google/google-stream", () => {
           outputTokens: 7,
           totalTokens: 12,
           cacheReadInputTokens: 3,
+          reasoningTokens: 2,
         },
       },
     ]);

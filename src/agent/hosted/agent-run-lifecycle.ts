@@ -32,6 +32,9 @@ export interface HostedAgentRunSpanFinalState {
     inputTokens?: number;
     outputTokens?: number;
     cachedInputTokens?: number;
+    cacheCreationInputTokens?: number;
+    cacheReadInputTokens?: number;
+    reasoningTokens?: number;
   };
   terminalErrorCode?: string | null;
   terminalErrorMessage?: string | null;
