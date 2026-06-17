@@ -50,6 +50,12 @@ describe("hydration-script-builder/templates/spa-renderer", () => {
       assertIncludes(result, "__veryfrontSetReleaseAssetModules");
     });
 
+    it("should install release id from initial data", () => {
+      const result = getSpaRendererScript();
+      assertIncludes(result, "initialData.releaseId");
+      assertIncludes(result, "__veryfrontSetReleaseId");
+    });
+
     it("should load page component", () => {
       assertIncludes(getSpaRendererScript(), "loadComponent(initialData.pagePath)");
     });

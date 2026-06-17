@@ -502,6 +502,9 @@ export const getRouterScript = () => `
     // Render page from page data
     // ============================================
     async function renderPageFromData(pageData, targetPath) {
+      if (window.__veryfrontSetReleaseId) {
+        window.__veryfrontSetReleaseId(pageData.releaseId || null);
+      }
       if (window.__veryfrontSetReleaseAssetModules) {
         window.__veryfrontSetReleaseAssetModules(pageData.releaseAssetModules || null);
       }
@@ -633,6 +636,9 @@ export const getRouterScript = () => `
 
     async function preloadModulesForPageData(pageData, path) {
       if (!pageData) return;
+      if (pageData.releaseId && window.__veryfrontSetReleaseId) {
+        window.__veryfrontSetReleaseId(pageData.releaseId);
+      }
       if (pageData.releaseAssetModules && window.__veryfrontSetReleaseAssetModules) {
         window.__veryfrontSetReleaseAssetModules(pageData.releaseAssetModules);
       }

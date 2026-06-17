@@ -162,6 +162,24 @@ describe("hydration-data-generator", () => {
       );
     });
 
+    it("includes release id for production fallback module versioning", () => {
+      const parsed = parseHydrationData(
+        "page",
+        {},
+        {},
+        {
+          ...baseOptions,
+          mode: "production",
+          environment: "production",
+          releaseId: "rel-1",
+        },
+      ) as {
+        releaseId?: string;
+      };
+
+      assertEquals(parsed.releaseId, "rel-1");
+    });
+
     it("should include pageType from options", () => {
       const options: HTMLGenerationOptions = {
         ...baseOptions,

@@ -82,6 +82,7 @@ export function generateHydrationData(
       isLocalProject: options.isLocalProject,
       environment: options.environment as HydrationEnvironment | undefined,
     }),
+    releaseId: options.releaseId,
     releaseAssetModules: buildReleaseAssetModules(options.releaseAssetManifest),
     frontmatter: options.frontmatter,
     layoutProps: options.layoutProps,

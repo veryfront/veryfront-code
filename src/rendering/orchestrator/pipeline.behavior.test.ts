@@ -414,6 +414,22 @@ describe("RenderPipeline behavior", () => {
     );
   });
 
+  it("resolvePageData includes release id for fallback module versioning", async () => {
+    const slug = "/behavior-release-id";
+    const projectId = "proj-release-id";
+    const pipeline = createPipeline("/project/pages/behavior-release-id.mdx");
+    primeCssCache(slug, projectId);
+
+    const pageData = await pipeline.resolvePageData(slug, {
+      projectId,
+      request: new Request(`http://localhost${slug}`),
+      url: new URL(`http://localhost${slug}`),
+      releaseId: "rel-1",
+    });
+
+    assertEquals(pageData.releaseId, "rel-1");
+  });
+
   it("resolvePageData includes projectUpdated in buildVersion when available", async () => {
     const slug = "/behavior-build-version";
     const projectId = "proj-build-version";

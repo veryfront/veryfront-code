@@ -39,6 +39,12 @@ describe("hydration-script-builder/templates/renderer", () => {
       assertIncludes(result, "__veryfrontSetReleaseAssetModules");
     });
 
+    it("should install release id from hydration data", () => {
+      const result = getRendererScript();
+      assertIncludes(result, "data.releaseId");
+      assertIncludes(result, "__veryfrontSetReleaseId");
+    });
+
     it("should use the RSC module endpoint only for app router RSC client pages", () => {
       const result = getRendererScript();
       assertIncludes(result, "data.clientModuleStrategy === 'rsc-module'");
