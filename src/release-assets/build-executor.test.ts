@@ -3,8 +3,6 @@ import "../transforms/plugins/__tests__/code-parser-setup.ts";
 
 import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import type { CodeParser } from "#veryfront/extensions/parser/index.ts";
-import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { normalizeHttpUrl } from "#veryfront/transforms/esm/http-cache.ts";
 import { parseImports } from "#veryfront/transforms/esm/lexer.ts";
@@ -1084,37 +1082,45 @@ describe("release asset build executor", () => {
     );
   });
 
-  it("fails the release asset build when the AST parser contract is unavailable", async () => {
-    const parser = tryResolve<CodeParser>("CodeParser");
-    assertExists(parser);
-    unregister("CodeParser");
+  it("builds route closure from transformed modules when raw page source is not JavaScript", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "pages/blog.mdx",
+        content: '+++\ntitle = "Blog"\n+++\n\n<Hero />',
+      },
+      {
+        path: "components/Hero.tsx",
+        content: "export default function Hero() { return null; }",
+      },
+    ];
+    const client = makeClient(files, rec);
+    const transform = (_source: string, sourceFile: string) => {
+      if (sourceFile.endsWith("pages/blog.mdx")) {
+        return Promise.resolve(
+          'import Hero from "/_vf_modules/components/Hero.js"; export default Hero;',
+        );
+      }
+      return Promise.resolve("export default function Hero() { return null; }");
+    };
 
-    try {
-      const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
-      const files = [
-        {
-          path: "pages/index.tsx",
-          content: 'import Header from "../components/Header.tsx"; export default Header;',
-        },
-        {
-          path: "components/Header.tsx",
-          content: "export default function Header() { return null; }",
-        },
-      ];
-      const client = makeClient(files, rec);
-      const transform = (s: string) => Promise.resolve(s);
+    const result = await runReleaseAssetBuild(baseInput(client, transform), await tmp());
 
-      const result = await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+    assertEquals(result.success, true);
+    assertEquals(result.state, "ready");
+    assertEquals(rec.states, []);
 
-      assertEquals(result.success, false);
-      assertEquals(result.state, "failed");
-      assertEquals(rec.manifest, null);
-      assertEquals(rec.states.length, 1);
-      assertEquals(rec.states[0]?.state, "failed");
-      assert((rec.states[0]?.error ?? "").includes('contract "CodeParser"'));
-    } finally {
-      register("CodeParser", parser);
-    }
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertExists(manifest.modules["pages/blog.mdx"]);
+    assertExists(manifest.modules["components/Hero.tsx"]);
+    const routeModules = manifest.routes["/blog"]?.modules ?? [];
+    assert(routeModules.includes("pages/blog.mdx"));
+    assert(routeModules.includes("components/Hero.tsx"));
+    assertEquals(
+      manifest.fallback.gaps.some((gap) => gap.startsWith("closure-import-parse-failed:")),
+      false,
+    );
   });
 
   it("does not rewrite import-like strings or comments in transformed modules", async () => {
