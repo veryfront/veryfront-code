@@ -10,6 +10,7 @@ import {
 import { getDefaultImportMap } from "#veryfront/modules/import-map/default-import-map.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
+import { VERYFRONT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 
 describe("html-generation/utils", () => {
@@ -216,11 +217,11 @@ describe("html-generation/utils", () => {
       });
       const imports = JSON.parse(result).imports as Record<string, string>;
 
-      assertStringIncludes(imports.react, "https://esm.sh/react@");
-      assertStringIncludes(imports["react-dom"], "https://esm.sh/react-dom@");
-      assertStringIncludes(imports["react-dom/client"], "https://esm.sh/react-dom@");
-      assertStringIncludes(imports["react/jsx-runtime"], "https://esm.sh/react@");
-      assertStringIncludes(imports["react/jsx-dev-runtime"], "https://esm.sh/react@");
+      assertStringIncludes(imports.react!, "https://esm.sh/react@");
+      assertStringIncludes(imports["react-dom"]!, "https://esm.sh/react-dom@");
+      assertStringIncludes(imports["react-dom/client"]!, "https://esm.sh/react-dom@");
+      assertStringIncludes(imports["react/jsx-runtime"]!, "https://esm.sh/react@");
+      assertStringIncludes(imports["react/jsx-dev-runtime"]!, "https://esm.sh/react@");
     });
 
     it("rewrites React import-map aliases from manifest dependency keys when explicitly enabled", async () => {
@@ -317,6 +318,37 @@ describe("html-generation/utils", () => {
       assertEquals(imports["veryfront/head"], `/_vf/assets/${headHash}.js`);
       assertEquals(imports["veryfront/react/head"], `/_vf/assets/${headHash}.js`);
       assertEquals(imports["veryfront/workflow"], `/_vf/assets/${workflowHash}.js`);
+    });
+
+    it("versions local module-server import-map aliases in release manifest context", async () => {
+      const manifest: ReleaseAssetManifest = {
+        schemaVersion: 1,
+        projectId: "project-id",
+        releaseId: "release-id",
+        releaseVersion: 1,
+        manifestVersion: 1,
+        builderVersion: "0.1.810",
+        sourceContentHash: "source",
+        createdAt: "2026-06-15T00:00:00.000Z",
+        assetBasePath: "/_vf/assets",
+        modules: {},
+        css: [],
+        routes: {},
+        dependencies: {},
+        fallback: { mode: "jit", gaps: [] },
+      };
+
+      const result = await buildImportMapJson({
+        pretty: false,
+        releaseAssetManifest: manifest,
+      });
+      const imports = JSON.parse(result).imports as Record<string, string>;
+
+      assertEquals(
+        imports["veryfront/router"],
+        `/_vf_modules/_veryfront/react/runtime/core.js?vf_release=release-id&vf_runtime=${VERYFRONT_VERSION}`,
+      );
+      assertEquals(imports["@/"], "/_vf_modules/");
     });
 
     it("refreshes cached import maps when project package versions change", async () => {
