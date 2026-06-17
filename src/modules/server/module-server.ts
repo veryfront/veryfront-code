@@ -478,13 +478,15 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         shouldCacheReleaseVersionedModule(url, options, isSSR);
       let releaseDependencyManifest: ReleaseAssetManifest | null = null;
       let releaseDependencyManifestVersion: number | null = null;
-      let releaseDependencyManifestRequired = false;
+      let releaseDependencyRewriteEnabled = false;
       if (canCacheReleaseVersionedModule) {
-        const manifestState = await getReleaseDependencyRewriteManifestState(options.releaseId);
+        const manifestState = await getReleaseDependencyRewriteManifestState(options.releaseId, {
+          refreshCachedNull: true,
+        });
         if (manifestState.enabled) {
+          releaseDependencyRewriteEnabled = true;
           releaseDependencyManifest = manifestState.manifest;
           releaseDependencyManifestVersion = manifestState.manifest?.manifestVersion ?? null;
-          releaseDependencyManifestRequired = manifestState.manifest === null;
         }
       }
       const releaseModuleResponseCacheKey = canCacheReleaseVersionedModule
@@ -504,7 +506,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
       if (releaseModuleResponseCacheKey) {
         const cachedResponse = await getReleaseModuleResponse(releaseModuleResponseCacheKey);
         if (cachedResponse?.entry) {
-          const canUseCachedResponse = !releaseDependencyManifestRequired ||
+          const canUseCachedResponse = !releaseDependencyRewriteEnabled ||
             !(await hasReleaseDependencyImportSpecifiers(cachedResponse.entry.body));
           if (canUseCachedResponse) {
             markRequestProfilePhase("module.response_cache_hit");
@@ -518,7 +520,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
               Object.fromEntries(cachedResponse.entry.headers),
             );
           }
-          markRequestProfilePhase("module.response_cache_manifest_blocked");
+          markRequestProfilePhase("module.response_cache_dependency_blocked");
         }
         markRequestProfilePhase("module.response_cache_miss");
       }
@@ -633,16 +635,21 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           if (!isSSR) {
             code = await rewriteReleaseDependencyImportsForModule(code, {
               releaseId: options.releaseId,
-              manifest: releaseDependencyManifest ?? undefined,
+              manifest: releaseDependencyRewriteEnabled ? releaseDependencyManifest : undefined,
+              manifestReadOptions: { refreshCachedNull: true },
               readDependencySource: (path) => platformFs.readTextFile(path),
             });
             code = await addReleaseVersionToFallbackImports(code, modulePath, options.releaseId);
           }
         }
 
+        const hasUnrewrittenReleaseDependencyImports = releaseDependencyRewriteEnabled &&
+          await hasReleaseDependencyImportSpecifiers(code);
         const canCacheModuleResponse = releaseModuleResponseCacheKey !== null &&
-          (!releaseDependencyManifestRequired ||
-            !(await hasReleaseDependencyImportSpecifiers(code)));
+          !hasUnrewrittenReleaseDependencyImports;
+        if (hasUnrewrittenReleaseDependencyImports) {
+          markRequestProfilePhase("module.response_cache_dependency_blocked");
+        }
         const headers = getModuleHeaders(modulePath, {
           cacheable: canCacheModuleResponse,
         });

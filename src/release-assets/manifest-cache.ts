@@ -40,6 +40,8 @@ const logger = serverLogger.component("release-asset-manifest");
 const MAX_CACHED_MANIFESTS = 500;
 /** Short TTL for non-ready / missing results (ms). */
 const NON_READY_TTL_MS = 30_000;
+/** Minimum delay before an awaited consumer can retry a cached non-ready result. */
+const NON_READY_REVALIDATE_MS = 5_000;
 /** TTL for ready manifests — long but finite so superseded entries are picked up (15 min). */
 const READY_TTL_MS = 15 * 60 * 1000;
 /** Background revalidation interval for ready manifests (1 min). */
@@ -60,6 +62,15 @@ interface InFlightFetch {
   generation: number;
   token: symbol;
   promise: Promise<ReleaseAssetManifest | null>;
+}
+
+export interface ReadyManifestReadOptions {
+  /**
+   * Retry a cached non-ready result after a short throttle instead of waiting
+   * for the full null TTL. Used by module responses that cannot be cached
+   * safely until dependency imports can be rewritten through the manifest.
+   */
+  refreshCachedNull?: boolean;
 }
 
 /** In-flight fetches, deduped per releaseId. */
@@ -219,6 +230,7 @@ export function getReadyManifestForRender(
  */
 export async function getReadyManifestForRenderAsync(
   releaseId: string | null | undefined,
+  options: ReadyManifestReadOptions = {},
 ): Promise<ReleaseAssetManifest | null> {
   if (!releaseId) {
     markManifestDecision("no_release_id");
@@ -240,8 +252,14 @@ export async function getReadyManifestForRenderAsync(
     return best.manifest;
   }
 
+  const now = Date.now();
   const plain = manifestCache.get(releaseId);
-  if (plain && plain.expiresAt > Date.now()) {
+  if (plain && plain.expiresAt > now) {
+    if (options.refreshCachedNull && (plain.refreshAfter ?? plain.expiresAt) <= now) {
+      markManifestDecision("cached_null_refresh");
+      return await fetchManifest(releaseId);
+    }
+
     markManifestDecision("cached_null");
     return null;
   }
@@ -274,16 +292,17 @@ function fetchManifest(releaseId: string): Promise<ReleaseAssetManifest | null> 
 
       if (!result) {
         markManifestDecision("fetch_missing");
-        manifestCache.set(releaseId, { manifest: null, expiresAt: Date.now() + NON_READY_TTL_MS });
+        cacheNonReadyManifest(releaseId);
         return null;
       }
 
-      const manifest = result.state === "ready" && result.manifest
+      const manifestState = normalizeManifestState(result.state);
+      const manifest = isUsableManifestState(result.state) && result.manifest
         ? parseReleaseAssetManifest(result.manifest)
         : null;
 
       if (manifest) {
-        markManifestDecision("fetch_ready");
+        markManifestDecision(manifestState === "partial" ? "fetch_partial" : "fetch_ready");
         const key = cacheKey(releaseId, manifest.manifestVersion);
         manifestCache.set(key, {
           manifest,
@@ -293,16 +312,15 @@ function fetchManifest(releaseId: string): Promise<ReleaseAssetManifest | null> 
         logger.debug("Cached ready manifest", {
           releaseId,
           manifestVersion: manifest.manifestVersion,
+          state: result.state,
           ttlMs: READY_TTL_MS,
           refreshMs: READY_REVALIDATE_MS,
         });
         return manifest;
       } else {
+        markManifestDecision(`fetch_${manifestState}`);
         markManifestDecision("fetch_not_ready");
-        manifestCache.set(releaseId, {
-          manifest: null,
-          expiresAt: Date.now() + NON_READY_TTL_MS,
-        });
+        cacheNonReadyManifest(releaseId);
         return null;
       }
     } catch (error) {
@@ -312,7 +330,7 @@ function fetchManifest(releaseId: string): Promise<ReleaseAssetManifest | null> 
       });
       if (fetchGeneration !== cacheGeneration) return null;
       markManifestDecision("fetch_failed");
-      manifestCache.set(releaseId, { manifest: null, expiresAt: Date.now() + NON_READY_TTL_MS });
+      cacheNonReadyManifest(releaseId);
       return null;
     } finally {
       const current = inFlight.get(releaseId);
@@ -324,6 +342,23 @@ function fetchManifest(releaseId: string): Promise<ReleaseAssetManifest | null> 
 
   inFlight.set(releaseId, { generation: fetchGeneration, token, promise });
   return promise;
+}
+
+function isUsableManifestState(state: string): boolean {
+  return state === "ready" || state === "partial";
+}
+
+function normalizeManifestState(state: string): string {
+  return state.toLowerCase().replace(/[^a-z0-9_]/g, "_").slice(0, 32) || "unknown";
+}
+
+function cacheNonReadyManifest(releaseId: string): void {
+  const now = Date.now();
+  manifestCache.set(releaseId, {
+    manifest: null,
+    expiresAt: now + NON_READY_TTL_MS,
+    refreshAfter: now + NON_READY_REVALIDATE_MS,
+  });
 }
 
 /** Clear cached manifest bodies while keeping registered fetchers intact. */
