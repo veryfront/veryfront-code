@@ -13,6 +13,7 @@ const MODEL_ENV_KEYS = [
   "ANTHROPIC_API_KEY",
   "GOOGLE_API_KEY",
   "GOOGLE_GENERATIVE_AI_API_KEY",
+  "MISTRAL_API_KEY",
   "OPENAI_API_KEY",
   "VERYFRONT_API_TOKEN",
   "VERYFRONT_DEFAULT_MODEL",
@@ -90,7 +91,7 @@ describe("agent/runtime/model-resolution", () => {
     );
     assertEquals(
       resolveConfiguredAgentModel("mistral-large"),
-      "mistral/mistral-large-latest",
+      "mistral/mistral-large-2512",
     );
   });
 
@@ -132,7 +133,18 @@ describe("agent/runtime/model-resolution", () => {
     );
     assertEquals(
       resolveRuntimeModel("mistral-large"),
-      "veryfront-cloud/mistral/mistral-large-latest",
+      "veryfront-cloud/mistral/mistral-large-2512",
+    );
+  });
+
+  it("routes explicit Mistral models through the direct provider when native credentials are configured", () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_runtime");
+    setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
+    setEnv("MISTRAL_API_KEY", "mistral-test");
+
+    assertEquals(
+      resolveRuntimeModel("mistral-large"),
+      "mistral/mistral-large-2512",
     );
   });
 

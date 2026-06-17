@@ -37,7 +37,7 @@ describe("provider/veryfront-cloud/model-catalog", () => {
       "google",
     );
     assertEquals(getVeryfrontCloudProviderFromModelId("moonshotai/kimi-k2.6"), "moonshotai");
-    assertEquals(getVeryfrontCloudProviderFromModelId("mistral/mistral-large-latest"), "mistral");
+    assertEquals(getVeryfrontCloudProviderFromModelId("mistral/mistral-large-2512"), "mistral");
     assertThrows(
       () => getVeryfrontCloudProviderFromModelId("unknown/model"),
       Error,
@@ -81,7 +81,7 @@ describe("provider/veryfront-cloud/model-catalog", () => {
   it("resolves aliases and preserves direct model ids", () => {
     assertEquals(resolveVeryfrontCloudModelId("opus"), "anthropic/claude-opus-4-8");
     assertEquals(resolveVeryfrontCloudModelId("gpt-5.5"), "openai/gpt-5.5");
-    assertEquals(resolveVeryfrontCloudModelId("mistral-large"), "mistral/mistral-large-latest");
+    assertEquals(resolveVeryfrontCloudModelId("mistral-large"), "mistral/mistral-large-2512");
     assertEquals(resolveVeryfrontCloudModelId("openai/gpt-5.5"), "openai/gpt-5.5");
     assertThrows(
       () => resolveVeryfrontCloudModelId("not-a-real-model"),
@@ -124,8 +124,8 @@ describe("provider/veryfront-cloud/model-catalog", () => {
       "veryfront-cloud/openai/gpt-5.5",
     );
     assertEquals(
-      resolveHostedVeryfrontCloudModelId("mistral/mistral-large-latest"),
-      "veryfront-cloud/mistral/mistral-large-latest",
+      resolveHostedVeryfrontCloudModelId("mistral/mistral-large-2512"),
+      "veryfront-cloud/mistral/mistral-large-2512",
     );
   });
 

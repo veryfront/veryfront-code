@@ -85,31 +85,24 @@ export const VERYFRONT_CLOUD_CHAT_MODELS: VeryfrontCloudChatModel[] = [
   },
   {
     id: "mistral-large",
-    modelId: "mistral/mistral-large-latest",
+    modelId: "mistral/mistral-large-2512",
     provider: "mistral",
-    name: "Mistral Large",
-    description: "Most capable Mistral model",
+    name: "Mistral Large 3",
+    description: "Flagship multimodal Mistral model",
   },
   {
     id: "mistral-medium",
-    modelId: "mistral/mistral-medium-latest",
+    modelId: "mistral/mistral-medium-3-5",
     provider: "mistral",
-    name: "Mistral Medium",
+    name: "Mistral Medium 3.5",
     description: "Balanced Mistral model for agentic and coding tasks",
   },
   {
     id: "mistral-small",
-    modelId: "mistral/mistral-small-latest",
+    modelId: "mistral/mistral-small-2603",
     provider: "mistral",
-    name: "Mistral Small",
+    name: "Mistral Small 4",
     description: "Fast Mistral model for lightweight tasks",
-  },
-  {
-    id: "codestral",
-    modelId: "mistral/codestral-latest",
-    provider: "mistral",
-    name: "Codestral",
-    description: "Mistral code generation model",
   },
 ];
 
