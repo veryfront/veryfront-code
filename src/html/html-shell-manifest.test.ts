@@ -16,6 +16,7 @@ import {
   RELEASE_ASSET_MANIFEST_ENV_FLAG,
 } from "#veryfront/release-assets/constants.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
+import { VERYFRONT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 
 const PAGE_HASH = "a".repeat(64);
 const CHAT_HASH = "b".repeat(64);
@@ -271,7 +272,10 @@ describe("html shell release asset manifest consumption", () => {
     );
     const result = await generateHTMLShellParts(meta(), prodOptions({ releaseId: "rel-1" }));
     assert(!result.start.includes(`/_vf/assets/${CHAT_HASH}.js`));
-    assertStringIncludes(result.start, `"veryfront/chat":"/_vf_modules/_veryfront/chat/index.js"`);
+    assertStringIncludes(
+      result.start,
+      `"veryfront/chat":"/_vf_modules/_veryfront/chat/index.js?vf_release=rel-1&vf_runtime=${VERYFRONT_VERSION}"`,
+    );
     assertStringIncludes(result.start, `"@/":"/_vf_modules/"`);
   });
 

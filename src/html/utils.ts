@@ -3,6 +3,8 @@ import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import {
   RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG,
+  RELEASE_MODULE_RUNTIME_VERSION_PARAM,
+  RELEASE_MODULE_VERSION_PARAM,
   releaseAssetUrl,
 } from "#veryfront/release-assets/constants.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
@@ -291,6 +293,8 @@ function stableManifestDependencyKey(manifest?: ReleaseAssetManifest | null): st
   return manifest
     ? JSON.stringify({
       assetBasePath: manifest.assetBasePath,
+      releaseId: manifest.releaseId,
+      manifestVersion: manifest.manifestVersion,
       dependencies: Object.entries(manifest.dependencies)
         .map(([specifier, entry]) => [specifier, entry.contentHash])
         .sort(([a], [b]) => String(a).localeCompare(String(b))),
@@ -345,6 +349,35 @@ function applyManifestDependencies(
   );
 }
 
+function shouldVersionReleaseModuleImportMapUrl(value: string): boolean {
+  if (!value.startsWith("/_vf_modules/")) return false;
+  const pathname = value.split(/[?#]/, 1)[0] ?? "";
+  return pathname.endsWith(".js") || pathname.endsWith(".mjs");
+}
+
+function appendReleaseModuleVersion(value: string, releaseId: string): string {
+  if (!shouldVersionReleaseModuleImportMapUrl(value)) return value;
+
+  const url = new URL(value, "https://veryfront.local");
+  url.searchParams.set(RELEASE_MODULE_VERSION_PARAM, releaseId);
+  url.searchParams.set(RELEASE_MODULE_RUNTIME_VERSION_PARAM, VERYFRONT_VERSION);
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
+function applyReleaseModuleVersions(
+  imports: Record<string, string>,
+  manifest?: ReleaseAssetManifest | null,
+): Record<string, string> {
+  if (!manifest?.releaseId) return imports;
+
+  return Object.fromEntries(
+    Object.entries(imports).map(([specifier, url]) => [
+      specifier,
+      appendReleaseModuleVersion(url, manifest.releaseId),
+    ]),
+  );
+}
+
 function isImportMapOnlyOptions(
   options: BuildImportMapOptions | Record<string, string>,
 ): options is Record<string, string> {
@@ -380,6 +413,7 @@ export async function buildImportMap(
       "react/jsx-dev-runtime": reactTemplates.jsxDevRuntime(versions.react),
     };
     imports = applyManifestDependencies(imports, releaseAssetManifest);
+    imports = applyReleaseModuleVersions(imports, releaseAssetManifest);
     imports = { ...imports, ...customImports };
 
     return { imports, json: stringifyImportMap(imports, pretty) };
@@ -397,6 +431,7 @@ export async function buildImportMap(
 
   imports["@/"] = "/_vf_modules/";
   imports = applyManifestDependencies(imports, releaseAssetManifest);
+  imports = applyReleaseModuleVersions(imports, releaseAssetManifest);
 
   if (customImports) {
     imports = { ...imports, ...customImports };
