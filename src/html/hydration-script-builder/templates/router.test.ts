@@ -105,8 +105,9 @@ describe("hydration-script-builder/templates/router", () => {
       const result = getRouterScript();
       assertIncludes(result, "BACKGROUND_REFRESH_INTERVAL_MS = 30 * 1000");
       assertIncludes(result, "const pendingPageDataFetches = new Map()");
+      assertIncludes(result, "function startPageDataFetch(path, signal, options = {})");
       assertIncludes(result, "function refreshPageDataInBackground(path)");
-      assertIncludes(result, "pendingPageDataFetches.set(path, refreshPromise)");
+      assertIncludes(result, "pendingPageDataFetches.set(path, request)");
       assertIncludes(result, "refreshPageDataInBackground(path)");
     });
 
@@ -124,8 +125,14 @@ describe("hydration-script-builder/templates/router", () => {
       const result = getRouterScript();
       assertIncludes(result, "recordRouteTiming = false");
       assertIncludes(result, "if (recordRouteTiming) {");
-      assertIncludes(result, "fetchPageDataFresh(path, null).finally");
+      assertIncludes(result, "startPageDataFetch(path, null)");
       assertIncludes(result, "recordRouteTiming: true");
+    });
+
+    it("should register first-hit navigation page-data fetches for prefetch dedupe", () => {
+      const result = getRouterScript();
+      assertIncludes(result, "return startPageDataFetch(path, signal, {");
+      assertIncludes(result, "timingSource: 'network'");
     });
 
     it("should emit route transition timing events", () => {
