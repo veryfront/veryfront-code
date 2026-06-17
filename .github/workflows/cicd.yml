@@ -124,7 +124,7 @@ jobs:
           timeout_minutes: 10
           max_attempts: 2
           retry_wait_seconds: 10
-          command: deno task test:e2e:rsc-browser --no-lock
+          command: deno task test:e2e:rsc-browser
 
   # ============================================
   # CI: Compiled Binary E2E Tests
@@ -171,7 +171,7 @@ jobs:
           max_attempts: 2
           retry_wait_seconds: 30
           command: |
-            VERYFRONT_BINARY_FRESH=1 deno task test:e2e:binary --no-lock
+            VERYFRONT_BINARY_FRESH=1 deno task test:e2e:binary
 
   # ============================================
   # CI: Split Mode Test

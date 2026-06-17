@@ -167,13 +167,25 @@ function isSSRModuleRequest(req: Request, url: URL): boolean {
 
 async function addReleaseVersionToFallbackImports(
   code: string,
+  modulePath: string,
   releaseId: string | null | undefined,
 ): Promise<string> {
-  if (!releaseId || !code.includes("/_vf_modules/")) return code;
+  if (!releaseId) return code;
+  const moduleBaseUrl = `https://veryfront.local/_vf_modules/${modulePath}`;
 
   return await replaceSpecifiers(code, (specifier) => {
-    if (!specifier.startsWith("/_vf_modules/")) return null;
-    return appendReleaseModuleVersion(specifier, releaseId);
+    if (specifier.startsWith("/_vf_modules/")) {
+      return appendReleaseModuleVersion(specifier, releaseId);
+    }
+    if (!specifier.startsWith("./") && !specifier.startsWith("../")) return null;
+
+    const resolved = new URL(specifier, moduleBaseUrl);
+    if (resolved.origin !== "https://veryfront.local") return null;
+    if (!resolved.pathname.startsWith("/_vf_modules/")) return null;
+    return appendReleaseModuleVersion(
+      `${resolved.pathname}${resolved.search}${resolved.hash}`,
+      releaseId,
+    );
   });
 }
 
@@ -619,7 +631,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
               manifest: releaseDependencyManifest ?? undefined,
               readDependencySource: (path) => platformFs.readTextFile(path),
             });
-            code = await addReleaseVersionToFallbackImports(code, options.releaseId);
+            code = await addReleaseVersionToFallbackImports(code, modulePath, options.releaseId);
           }
         }
 

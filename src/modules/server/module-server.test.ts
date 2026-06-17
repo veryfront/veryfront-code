@@ -450,6 +450,52 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     }
   });
 
+  it("adds release query params to relative imports in release-versioned modules", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-release-relative-imports-" });
+    const releaseId = `rel-relative-${crypto.randomUUID()}`;
+
+    try {
+      await Deno.mkdir(`${projectDir}/components/blog`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/components/blog/BlogList.ts`,
+        [
+          `import { BlogTeaser } from "../../components/blog/BlogTeaser.js";`,
+          `import { useArticles } from "./useArticles.js";`,
+          `export const value = [BlogTeaser, useArticles];`,
+        ].join("\n"),
+      );
+      await Deno.writeTextFile(
+        `${projectDir}/components/blog/BlogTeaser.ts`,
+        `export const BlogTeaser = "teaser";\n`,
+      );
+      await Deno.writeTextFile(
+        `${projectDir}/components/blog/useArticles.ts`,
+        `export const useArticles = "articles";\n`,
+      );
+
+      const response = await serveProductionModule(
+        new Request(
+          `http://localhost:3000/_vf_modules/components/blog/BlogList.js?vf_release=${releaseId}&vf_runtime=${VERSION}`,
+        ),
+        projectDir,
+        releaseId,
+      );
+
+      assertEquals(response.status, 200);
+      const text = await response.text();
+      assertStringIncludes(
+        text,
+        `"/_vf_modules/components/blog/BlogTeaser.js?vf_release=${releaseId}&vf_runtime=${VERSION}"`,
+      );
+      assertStringIncludes(
+        text,
+        `"/_vf_modules/components/blog/useArticles.js?vf_release=${releaseId}&vf_runtime=${VERSION}"`,
+      );
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   it("reuses transformed responses for release-versioned production modules", async () => {
     setEnv("VERYFRONT_ENABLE_SERVER_TIMING", "1");
     const projectDir = await Deno.makeTempDir({ prefix: "vf-release-module-response-cache-" });
