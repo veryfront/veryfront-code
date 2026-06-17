@@ -107,6 +107,24 @@ Default page-data cache controls:
 Set `VERYFRONT_PAGE_DATA_CACHE_MAX_ENTRIES` to `0` to disable the page-data
 endpoint cache.
 
+Production HTML rendering also starts a bounded background prewarm after the
+first cacheable request for a project release context. The prewarm discovers
+concrete static routes, skips dynamic route patterns, uses canonical route cache
+keys without request cookies, query strings, or nonces, and checks the shared
+render cache before rendering each route. This populates the API-backed
+distributed render cache for sibling routes without adding latency to the
+foreground response.
+
+Default render prewarm controls:
+
+| Environment variable                   | Default |
+| -------------------------------------- | ------- |
+| `VERYFRONT_RENDER_PREWARM_MAX_ROUTES`  | `12`    |
+| `VERYFRONT_RENDER_PREWARM_CONCURRENCY` | `1`     |
+
+Set `VERYFRONT_RENDER_PREWARM_MAX_ROUTES` to `0` to disable production render
+prewarm.
+
 ## Boundaries
 
 - Rendering details belong in [rendering runtime](./03-rendering-runtime.md).
