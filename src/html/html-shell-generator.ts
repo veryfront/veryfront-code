@@ -9,13 +9,21 @@ import {
   generateModulePreloadHintsFromManifest,
   getRouteManifest,
 } from "#veryfront/modules/manifest/route-module-manifest.ts";
-import { getReadyManifestForRenderAsync } from "#veryfront/release-assets/manifest-cache.ts";
+import {
+  getReadyManifestForRenderAsync,
+  isReleaseAssetManifestEnabled,
+} from "#veryfront/release-assets/manifest-cache.ts";
+import {
+  RELEASE_MODULE_RUNTIME_VERSION_PARAM,
+  RELEASE_MODULE_VERSION_PARAM,
+} from "#veryfront/release-assets/constants.ts";
 import {
   resolveManifestModuleUrl,
   resolveManifestRoutePreloadUrls,
 } from "#veryfront/release-assets/html-consumption.ts";
 import { routeForPage } from "#veryfront/release-assets/route-path.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
+import { VERSION } from "#veryfront/utils/version.ts";
 import { buildNonceAttribute, escapeHTML } from "./html-escape.ts";
 import {
   generateHydrationData,
@@ -37,6 +45,7 @@ function pathToModuleUrl(
   path: string,
   studioEmbed?: boolean,
   manifest?: ReleaseAssetManifest | null,
+  fallbackReleaseId?: string,
 ): string {
   if (!path) return "";
 
@@ -52,7 +61,17 @@ function pathToModuleUrl(
     ? `/_vf_modules/${path}.js`
     : `/_vf_modules/${withExtReplaced}`;
 
-  return studioEmbed ? `${urlBase}?studio_embed=true` : urlBase;
+  if (studioEmbed) return `${urlBase}?studio_embed=true`;
+  return fallbackReleaseId ? appendReleaseModuleVersion(urlBase, fallbackReleaseId) : urlBase;
+}
+
+function appendReleaseModuleVersion(url: string, releaseId: string): string {
+  const separator = url.includes("?") ? "&" : "?";
+  const params = new URLSearchParams({
+    [RELEASE_MODULE_VERSION_PARAM]: releaseId,
+    [RELEASE_MODULE_RUNTIME_VERSION_PARAM]: VERSION,
+  });
+  return `${url}${separator}${params.toString()}`;
 }
 
 function getRelativePagePath(
@@ -84,6 +103,10 @@ function generateModulePreloadHints(
   const addedUrls = new Set<string>();
   const projectDir = options.projectDir ?? "";
   const studioEmbed = options.studioEmbed;
+  const fallbackReleaseId = !studioEmbed && !releaseManifest && options.releaseId &&
+      isReleaseAssetManifestEnabled()
+    ? options.releaseId
+    : undefined;
 
   function addHint(moduleUrl: string): void {
     if (!moduleUrl || addedUrls.has(moduleUrl)) return;
@@ -93,7 +116,7 @@ function generateModulePreloadHints(
 
   if (options.pagePath) {
     const relativePath = getRelativePagePath(options.pagePath, projectDir);
-    addHint(pathToModuleUrl(relativePath, studioEmbed, releaseManifest));
+    addHint(pathToModuleUrl(relativePath, studioEmbed, releaseManifest, fallbackReleaseId));
   }
 
   for (const layout of options.nestedLayouts ?? []) {
@@ -101,7 +124,7 @@ function generateModulePreloadHints(
     if (!layoutPath) continue;
 
     const relativePath = getRelativePagePath(layoutPath, projectDir);
-    addHint(pathToModuleUrl(relativePath, studioEmbed, releaseManifest));
+    addHint(pathToModuleUrl(relativePath, studioEmbed, releaseManifest, fallbackReleaseId));
   }
 
   // Skip manifest-based preloads in preview/studio-embed mode:
@@ -140,10 +163,13 @@ function generateModulePreloadHints(
       50,
     )
   ) {
-    const href = hint.match(/href="([^"]+)"/)?.[1];
+    const rawHref = hint.match(/href="([^"]+)"/)?.[1];
+    const href = rawHref && fallbackReleaseId && rawHref.startsWith("/_vf_modules/")
+      ? appendReleaseModuleVersion(rawHref, fallbackReleaseId)
+      : rawHref;
     if (!href || addedUrls.has(href)) continue;
 
-    hints.push(hint);
+    hints.push(href === rawHref ? hint : hint.replace(/href="([^"]+)"/, `href="${href}"`));
     addedUrls.add(href);
   }
 

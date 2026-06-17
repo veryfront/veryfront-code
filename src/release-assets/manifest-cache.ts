@@ -27,6 +27,10 @@ import { serverLogger } from "#veryfront/utils";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import {
+  markRequestProfilePhase,
+  profilePhase,
+} from "#veryfront/observability/request-profiler.ts";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "./constants.ts";
 import { parseReleaseAssetManifest, type ReleaseAssetManifest } from "./manifest-schema.ts";
 
@@ -136,6 +140,10 @@ function cacheKey(releaseId: string, manifestVersion?: number): string {
   return manifestVersion !== undefined ? `${releaseId}:${manifestVersion}` : releaseId;
 }
 
+function markManifestDecision(decision: string): void {
+  markRequestProfilePhase(`release_manifest.${decision}`);
+}
+
 function findCachedReadyEntry(releaseId: string): CacheEntry | null {
   let best: CacheEntry | null = null;
   for (const [k, v] of manifestCache.entries()) {
@@ -168,12 +176,22 @@ function maybeScheduleReadyRefresh(releaseId: string, entry: CacheEntry): void {
 export function getReadyManifestForRender(
   releaseId: string | null | undefined,
 ): ReleaseAssetManifest | null {
-  if (!releaseId) return null;
-  if (!isReleaseAssetManifestEnabled()) return null;
-  if (!resolveFetcher(releaseId)) return null;
+  if (!releaseId) {
+    markManifestDecision("no_release_id");
+    return null;
+  }
+  if (!isReleaseAssetManifestEnabled()) {
+    markManifestDecision("disabled");
+    return null;
+  }
+  if (!resolveFetcher(releaseId)) {
+    markManifestDecision("no_fetcher");
+    return null;
+  }
 
   const best = findCachedReadyEntry(releaseId);
   if (best) {
+    markManifestDecision("cached_ready");
     maybeScheduleReadyRefresh(releaseId, best);
     return best.manifest;
   }
@@ -182,9 +200,11 @@ export function getReadyManifestForRender(
   const plain = manifestCache.get(releaseId);
   if (plain && plain.expiresAt > Date.now()) {
     // Non-ready entry still warm — return null without scheduling another fetch.
+    markManifestDecision("cached_null");
     return null;
   }
 
+  markManifestDecision("cache_miss");
   scheduleFetch(releaseId);
   return null;
 }
@@ -200,18 +220,31 @@ export function getReadyManifestForRender(
 export async function getReadyManifestForRenderAsync(
   releaseId: string | null | undefined,
 ): Promise<ReleaseAssetManifest | null> {
-  if (!releaseId) return null;
-  if (!isReleaseAssetManifestEnabled()) return null;
-  if (!resolveFetcher(releaseId)) return null;
+  if (!releaseId) {
+    markManifestDecision("no_release_id");
+    return null;
+  }
+  if (!isReleaseAssetManifestEnabled()) {
+    markManifestDecision("disabled");
+    return null;
+  }
+  if (!resolveFetcher(releaseId)) {
+    markManifestDecision("no_fetcher");
+    return null;
+  }
 
   const best = findCachedReadyEntry(releaseId);
   if (best) {
+    markManifestDecision("cached_ready");
     maybeScheduleReadyRefresh(releaseId, best);
     return best.manifest;
   }
 
   const plain = manifestCache.get(releaseId);
-  if (plain && plain.expiresAt > Date.now()) return null;
+  if (plain && plain.expiresAt > Date.now()) {
+    markManifestDecision("cached_null");
+    return null;
+  }
 
   return await fetchManifest(releaseId);
 }
@@ -222,18 +255,25 @@ function scheduleFetch(releaseId: string): void {
 
 function fetchManifest(releaseId: string): Promise<ReleaseAssetManifest | null> {
   const existing = inFlight.get(releaseId);
-  if (existing) return existing.promise;
+  if (existing) {
+    markManifestDecision("await_inflight");
+    return existing.promise;
+  }
   const active = resolveFetcher(releaseId);
-  if (!active) return Promise.resolve(null);
+  if (!active) {
+    markManifestDecision("no_fetcher");
+    return Promise.resolve(null);
+  }
   const fetchGeneration = cacheGeneration;
   const token = Symbol(releaseId);
 
-  const promise = Promise.resolve().then(async () => {
+  const promise = profilePhase("release_manifest.fetch", async () => {
     try {
       const result = await active(releaseId);
       if (fetchGeneration !== cacheGeneration) return null;
 
       if (!result) {
+        markManifestDecision("fetch_missing");
         manifestCache.set(releaseId, { manifest: null, expiresAt: Date.now() + NON_READY_TTL_MS });
         return null;
       }
@@ -243,6 +283,7 @@ function fetchManifest(releaseId: string): Promise<ReleaseAssetManifest | null> 
         : null;
 
       if (manifest) {
+        markManifestDecision("fetch_ready");
         const key = cacheKey(releaseId, manifest.manifestVersion);
         manifestCache.set(key, {
           manifest,
@@ -257,6 +298,7 @@ function fetchManifest(releaseId: string): Promise<ReleaseAssetManifest | null> 
         });
         return manifest;
       } else {
+        markManifestDecision("fetch_not_ready");
         manifestCache.set(releaseId, {
           manifest: null,
           expiresAt: Date.now() + NON_READY_TTL_MS,
@@ -269,6 +311,7 @@ function fetchManifest(releaseId: string): Promise<ReleaseAssetManifest | null> 
         error: error instanceof Error ? error.message : String(error),
       });
       if (fetchGeneration !== cacheGeneration) return null;
+      markManifestDecision("fetch_failed");
       manifestCache.set(releaseId, { manifest: null, expiresAt: Date.now() + NON_READY_TTL_MS });
       return null;
     } finally {

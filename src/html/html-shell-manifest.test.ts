@@ -96,6 +96,16 @@ describe("html shell release asset manifest consumption", () => {
     assertStringIncludes(result.start, `/_vf/assets/${PAGE_HASH}.js`);
   });
 
+  it("version-stamps fallback module URLs when manifest lookup is enabled but unavailable", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    configureReleaseAssetManifestFetcher(undefined);
+
+    const result = await generateHTMLShellParts(meta(), prodOptions({ releaseId: "rel-1" }));
+
+    assertStringIncludes(result.start, "/_vf_modules/pages/index.js?vf_release=rel-1");
+    assert(!result.start.includes("/_vf/assets/"));
+  });
+
   it("uses manifest route closure preloads for index routes", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     configureReleaseAssetManifestFetcher(() =>
