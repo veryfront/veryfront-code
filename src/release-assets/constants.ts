@@ -31,6 +31,12 @@ export const RELEASE_ASSET_MAX_SIZE_BYTES = 10 * 1024 * 1024;
 /** Immutable cache max-age in seconds (1 year). */
 export const RELEASE_ASSET_IMMUTABLE_MAX_AGE_SECONDS = 31_536_000;
 
+/** Query param that scopes fallback module URLs to an immutable release. */
+export const RELEASE_MODULE_VERSION_PARAM = "vf_release" as const;
+
+/** Query param that scopes fallback module URLs to the Veryfront runtime build. */
+export const RELEASE_MODULE_RUNTIME_VERSION_PARAM = "vf_runtime" as const;
+
 /** Bounded upload concurrency when posting assets during a build. */
 export const RELEASE_ASSET_UPLOAD_CONCURRENCY = 8;
 

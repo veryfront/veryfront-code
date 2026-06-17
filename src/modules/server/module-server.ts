@@ -22,6 +22,7 @@ import {
   stripSSRModuleJsExtension,
 } from "./ssr-import-rewriter.ts";
 import { addHMRTimestamps } from "#veryfront/transforms/esm/import-rewriter.ts";
+import { replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
 import {
   FRAMEWORK_ROOT,
   resolveFrameworkSourcePath,
@@ -30,6 +31,11 @@ import { getReactUrls, REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/
 import { readLimitedCrossProjectSource } from "./cross-project-source-limit.ts";
 import { sha256Short } from "#veryfront/cache/hash.ts";
 import { rewriteReleaseDependencyImportsForModule } from "#veryfront/release-assets/module-consumption.ts";
+import {
+  RELEASE_ASSET_IMMUTABLE_MAX_AGE_SECONDS,
+  RELEASE_MODULE_RUNTIME_VERSION_PARAM,
+  RELEASE_MODULE_VERSION_PARAM,
+} from "#veryfront/release-assets/constants.ts";
 import {
   buildSourceMissCacheKey,
   hasSourceMiss,
@@ -114,6 +120,49 @@ const SNIPPET_MODULE_PREFIX = /^\/_vf_modules\/_snippets\/([a-f0-9]+)\.js/;
 const CROSS_PROJECT_VERSIONED_PREFIX =
   /^\/_vf_modules\/_cross\/([a-z0-9-]+)@([\d^~x][\d.x^~-]*)\/\@\/(.+)$/;
 const CROSS_PROJECT_LATEST_PREFIX = /^\/_vf_modules\/_cross\/([a-z0-9-]+)\/\@\/(.+)$/;
+
+function appendReleaseModuleVersion(url: string, releaseId: string): string {
+  if (
+    url.includes(`${RELEASE_MODULE_VERSION_PARAM}=`) ||
+    url.includes(`${RELEASE_MODULE_RUNTIME_VERSION_PARAM}=`)
+  ) {
+    return url;
+  }
+
+  const separator = url.includes("?") ? "&" : "?";
+  const params = new URLSearchParams({
+    [RELEASE_MODULE_VERSION_PARAM]: releaseId,
+    [RELEASE_MODULE_RUNTIME_VERSION_PARAM]: VERSION,
+  });
+  return `${url}${separator}${params.toString()}`;
+}
+
+function shouldCacheReleaseVersionedModule(
+  url: URL,
+  options: ModuleServerOptions,
+  isSSR: boolean,
+): boolean {
+  if (options.dev || isSSR || !options.releaseId) return false;
+  return url.searchParams.get(RELEASE_MODULE_VERSION_PARAM) === options.releaseId &&
+    url.searchParams.get(RELEASE_MODULE_RUNTIME_VERSION_PARAM) === VERSION;
+}
+
+function isSSRModuleRequest(req: Request, url: URL): boolean {
+  const userAgent = req.headers.get("user-agent") ?? "";
+  return url.searchParams.get("ssr") === "true" || userAgent.startsWith("Deno/");
+}
+
+async function addReleaseVersionToFallbackImports(
+  code: string,
+  releaseId: string | null | undefined,
+): Promise<string> {
+  if (!releaseId || !code.includes("/_vf_modules/")) return code;
+
+  return await replaceSpecifiers(code, (specifier) => {
+    if (!specifier.startsWith("/_vf_modules/")) return null;
+    return appendReleaseModuleVersion(specifier, releaseId);
+  });
+}
 
 interface SourceLookupContext {
   projectId?: string;
@@ -229,8 +278,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
 
         const { slug: snippetProjectSlug, branch: snippetBranch } = parseProjectDomain(url.host);
 
-        const userAgent = req.headers.get("user-agent") ?? "";
-        const isSSR = url.searchParams.get("ssr") === "true" || userAgent.startsWith("Deno/");
+        const isSSR = isSSRModuleRequest(req, url);
 
         logger.debug("Transforming snippet", {
           hash,
@@ -336,8 +384,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             );
           }
 
-          const userAgent = req.headers.get("user-agent") ?? "";
-          const isSSR = url.searchParams.get("ssr") === "true" || userAgent.startsWith("Deno/");
+          const isSSR = isSSRModuleRequest(req, url);
 
           let code = await profileModuleTransform(() =>
             transformToESM(source, crossPath, projectDir, adapter, {
@@ -449,7 +496,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           }
 
           const userAgent = req.headers.get("user-agent") ?? "";
-          const isSSR = url.searchParams.get("ssr") === "true" || userAgent.startsWith("Deno/");
+          const isSSR = isSSRModuleRequest(req, url);
 
           const studioEmbed = url.searchParams.get("studio_embed") === "true";
           const shouldInjectPositions = dev || options.mode === "preview";
@@ -512,10 +559,13 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
               releaseId: options.releaseId,
               readDependencySource: (path) => platformFs.readTextFile(path),
             });
+            code = await addReleaseVersionToFallbackImports(code, options.releaseId);
           }
         }
 
-        const headers = getDevModuleHeaders(modulePath);
+        const headers = getModuleHeaders(modulePath, {
+          cacheable: shouldCacheReleaseVersionedModule(url, options, isSSRModuleRequest(req, url)),
+        });
         logger.debug("Request complete", {
           path: modulePath,
           durationMs: (performance.now() - startTime).toFixed(1),
@@ -526,7 +576,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         const errorMsg = getErrorMessage(error);
         logger.error("Module transform error", { modulePath, error: errorMsg });
 
-        const headers = getDevModuleHeaders(modulePath);
+        const headers = getModuleHeaders(modulePath);
         const errorBody = createDevModuleErrorBody(modulePath, errorMsg);
 
         return createModuleResponse(method, errorBody, HTTP_SERVER_ERROR, headers);
@@ -905,10 +955,15 @@ export function isModuleRequest(req: Request): boolean {
   return DEV_MODULE_PREFIX.test(url.pathname);
 }
 
-function getDevModuleHeaders(modulePath: string): Record<string, string> {
+function getModuleHeaders(
+  modulePath: string,
+  options: { cacheable?: boolean } = {},
+): Record<string, string> {
   return {
     "Content-Type": getDevModuleContentType(modulePath),
-    "Cache-Control": "no-cache",
+    "Cache-Control": options.cacheable
+      ? `public, max-age=${RELEASE_ASSET_IMMUTABLE_MAX_AGE_SECONDS}, immutable`
+      : "no-cache",
   };
 }
 

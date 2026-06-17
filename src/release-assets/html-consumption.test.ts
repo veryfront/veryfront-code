@@ -4,6 +4,11 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import {
+  finalizeRequestProfiling,
+  resetRequestProfiles,
+  runWithRequestProfiling,
+} from "#veryfront/observability/request-profiler.ts";
+import {
   normalizeManifestModuleKey,
   resolveManifestModuleUrl,
   resolveManifestRoutePreloadUrls,
@@ -93,8 +98,10 @@ describe("manifest cache gating", () => {
 
   afterEach(() => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, originalFlag ?? "");
+    Deno.env.delete("VERYFRONT_ENABLE_SERVER_TIMING");
     configureReleaseAssetManifestFetcher(undefined);
     clearReleaseAssetManifestCache();
+    resetRequestProfiles();
   });
 
   it("returns null when the flag is off (byte-identical fallback)", () => {
@@ -109,6 +116,56 @@ describe("manifest cache gating", () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     configureReleaseAssetManifestFetcher(undefined);
     assertEquals(getReadyManifestForRender("r"), null);
+  });
+
+  it("marks the no-fetcher fallback reason during profiled async reads", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    Deno.env.set("VERYFRONT_ENABLE_SERVER_TIMING", "1");
+    configureReleaseAssetManifestFetcher(undefined);
+
+    const record = await runWithRequestProfiling(
+      { category: "html", method: "GET", pathname: "/" },
+      async () => {
+        assertEquals(await getReadyManifestForRenderAsync("r"), null);
+        return finalizeRequestProfiling(200);
+      },
+    );
+
+    assertEquals(record?.phases["release_manifest.no_fetcher"], 0);
+  });
+
+  it("marks ready manifest fetches during profiled async reads", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    Deno.env.set("VERYFRONT_ENABLE_SERVER_TIMING", "1");
+    configureReleaseAssetManifestFetcher(() =>
+      Promise.resolve({ state: "ready", manifest: manifest() })
+    );
+
+    const record = await runWithRequestProfiling(
+      { category: "html", method: "GET", pathname: "/" },
+      async () => {
+        assertEquals((await getReadyManifestForRenderAsync("r"))?.manifestVersion, 3);
+        return finalizeRequestProfiling(200);
+      },
+    );
+
+    assertEquals(record?.phases["release_manifest.fetch_ready"], 0);
+  });
+
+  it("marks manifest fetch failures during profiled async reads", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    Deno.env.set("VERYFRONT_ENABLE_SERVER_TIMING", "1");
+    configureReleaseAssetManifestFetcher(() => Promise.reject(new Error("boom")));
+
+    const record = await runWithRequestProfiling(
+      { category: "html", method: "GET", pathname: "/" },
+      async () => {
+        assertEquals(await getReadyManifestForRenderAsync("r"), null);
+        return finalizeRequestProfiling(200);
+      },
+    );
+
+    assertEquals(record?.phases["release_manifest.fetch_failed"], 0);
   });
 
   it("caches a ready manifest after a background fetch", async () => {

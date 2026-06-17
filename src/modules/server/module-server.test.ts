@@ -96,6 +96,21 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     });
   }
 
+  async function serveProductionModule(
+    req: Request,
+    projectDir: string,
+    releaseId = "rel-1",
+  ): Promise<Response> {
+    const { serveModule } = await import("./module-server.ts");
+    return await serveModule(req, {
+      projectId: "test",
+      projectDir,
+      adapter: denoAdapter,
+      dev: false,
+      releaseId,
+    });
+  }
+
   function extractChildVersion(code: string): string {
     const match = code.match(/\.\/child\.js\?ssr=true&v=([^"']+)/);
     return match?.[1] ?? "";
@@ -403,6 +418,52 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       const header = buildServerTimingHeader(record!);
       assertEquals(header.includes("module.source_lookup"), true);
       assertEquals(header.includes("module.transform"), true);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("sets immutable cache headers for release-versioned production modules", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-release-module-cache-" });
+
+    try {
+      await Deno.mkdir(`${projectDir}/components`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/components/App.ts`,
+        `export const value = 1;\n`,
+      );
+
+      const response = await serveProductionModule(
+        new Request(
+          `http://localhost:3000/_vf_modules/components/App.js?vf_release=rel-1&vf_runtime=${VERSION}`,
+        ),
+        projectDir,
+      );
+
+      assertEquals(response.status, 200);
+      assertEquals(response.headers.get("cache-control"), "public, max-age=31536000, immutable");
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("keeps unversioned production modules on no-cache headers", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-unversioned-module-cache-" });
+
+    try {
+      await Deno.mkdir(`${projectDir}/components`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/components/App.ts`,
+        `export const value = 1;\n`,
+      );
+
+      const response = await serveProductionModule(
+        new Request("http://localhost:3000/_vf_modules/components/App.js"),
+        projectDir,
+      );
+
+      assertEquals(response.status, 200);
+      assertEquals(response.headers.get("cache-control"), "no-cache");
     } finally {
       await Deno.remove(projectDir, { recursive: true });
     }
