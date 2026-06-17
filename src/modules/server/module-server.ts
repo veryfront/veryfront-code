@@ -35,6 +35,7 @@ import { readLimitedCrossProjectSource } from "./cross-project-source-limit.ts";
 import { sha256Short } from "#veryfront/cache/hash.ts";
 import {
   getReleaseDependencyRewriteManifestState,
+  hasReleaseDependencyImportSpecifiers,
   rewriteReleaseDependencyImportsForModule,
 } from "#veryfront/release-assets/module-consumption.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
@@ -477,17 +478,16 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         shouldCacheReleaseVersionedModule(url, options, isSSR);
       let releaseDependencyManifest: ReleaseAssetManifest | null = null;
       let releaseDependencyManifestVersion: number | null = null;
-      let releaseDependencyManifestReady = true;
+      let releaseDependencyManifestRequired = false;
       if (canCacheReleaseVersionedModule) {
         const manifestState = await getReleaseDependencyRewriteManifestState(options.releaseId);
         if (manifestState.enabled) {
           releaseDependencyManifest = manifestState.manifest;
           releaseDependencyManifestVersion = manifestState.manifest?.manifestVersion ?? null;
-          releaseDependencyManifestReady = manifestState.manifest !== null;
+          releaseDependencyManifestRequired = manifestState.manifest === null;
         }
       }
-      const releaseModuleResponseCacheKey = canCacheReleaseVersionedModule &&
-          releaseDependencyManifestReady
+      const releaseModuleResponseCacheKey = canCacheReleaseVersionedModule
         ? buildReleaseModuleResponseCacheKey({
           projectIdentity: effectiveProjectId,
           projectDir,
@@ -504,16 +504,21 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
       if (releaseModuleResponseCacheKey) {
         const cachedResponse = await getReleaseModuleResponse(releaseModuleResponseCacheKey);
         if (cachedResponse?.entry) {
-          markRequestProfilePhase("module.response_cache_hit");
-          if (cachedResponse.source === "distributed") {
-            markRequestProfilePhase("module.response_cache_distributed_hit");
+          const canUseCachedResponse = !releaseDependencyManifestRequired ||
+            !(await hasReleaseDependencyImportSpecifiers(cachedResponse.entry.body));
+          if (canUseCachedResponse) {
+            markRequestProfilePhase("module.response_cache_hit");
+            if (cachedResponse.source === "distributed") {
+              markRequestProfilePhase("module.response_cache_distributed_hit");
+            }
+            return createModuleResponse(
+              method,
+              cachedResponse.entry.body,
+              cachedResponse.entry.status,
+              Object.fromEntries(cachedResponse.entry.headers),
+            );
           }
-          return createModuleResponse(
-            method,
-            cachedResponse.entry.body,
-            cachedResponse.entry.status,
-            Object.fromEntries(cachedResponse.entry.headers),
-          );
+          markRequestProfilePhase("module.response_cache_manifest_blocked");
         }
         markRequestProfilePhase("module.response_cache_miss");
       }
@@ -635,15 +640,18 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           }
         }
 
+        const canCacheModuleResponse = releaseModuleResponseCacheKey !== null &&
+          (!releaseDependencyManifestRequired ||
+            !(await hasReleaseDependencyImportSpecifiers(code)));
         const headers = getModuleHeaders(modulePath, {
-          cacheable: releaseModuleResponseCacheKey !== null,
+          cacheable: canCacheModuleResponse,
         });
         logger.debug("Request complete", {
           path: modulePath,
           durationMs: (performance.now() - startTime).toFixed(1),
         });
 
-        if (releaseModuleResponseCacheKey && method === "GET") {
+        if (canCacheModuleResponse && method === "GET") {
           void rememberReleaseModuleResponse(releaseModuleResponseCacheKey, {
             body: code,
             status: HTTP_OK,
