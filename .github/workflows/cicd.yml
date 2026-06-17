@@ -441,8 +441,12 @@ jobs:
         run: |
           TAG="v${VERSION}"
           if npm view veryfront@"${VERSION}" version 2>/dev/null; then
-            echo "::error::v${VERSION} already exists on npm. Bump deno.json before releasing."
-            exit 1
+            PUBLISHED_GIT_HEAD="$(npm view veryfront@"${VERSION}" gitHead 2>/dev/null || true)"
+            if [ "${PUBLISHED_GIT_HEAD}" != "${GITHUB_SHA}" ]; then
+              echo "::error::v${VERSION} already exists on npm for ${PUBLISHED_GIT_HEAD}. Bump deno.json before releasing."
+              exit 1
+            fi
+            echo "v${VERSION} already exists on npm for this commit; continuing release metadata."
           fi
           if git ls-remote --tags origin | grep -q "refs/tags/${TAG}$"; then
             echo "::error::Tag ${TAG} already exists on source repo. Bump deno.json before releasing."
@@ -470,7 +474,34 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           deno task build:npm
-          cd npm && npm publish --access public
+          cd npm
+
+          PUBLISHED_GIT_HEAD="$(npm view veryfront@"${VERSION}" gitHead 2>/dev/null || true)"
+          if [ "${PUBLISHED_GIT_HEAD}" = "${GITHUB_SHA}" ]; then
+            echo "veryfront@${VERSION} is already published for this commit; skipping npm publish."
+          else
+            set +e
+            PUBLISH_OUTPUT="$(npm publish --access public 2>&1)"
+            PUBLISH_STATUS=$?
+            set -e
+            printf '%s\n' "${PUBLISH_OUTPUT}"
+
+            if [ "${PUBLISH_STATUS}" -ne 0 ]; then
+              PUBLISHED_GIT_HEAD="$(npm view veryfront@"${VERSION}" gitHead 2>/dev/null || true)"
+              if printf '%s\n' "${PUBLISH_OUTPUT}" | grep -Fq "previously published versions: ${VERSION}" \
+                && [ "${PUBLISHED_GIT_HEAD}" = "${GITHUB_SHA}" ]; then
+                echo "npm reports veryfront@${VERSION} already exists, and gitHead matches this commit; continuing."
+              else
+                exit "${PUBLISH_STATUS}"
+              fi
+            fi
+          fi
+
+          PUBLISHED_GIT_HEAD="$(npm view veryfront@"${VERSION}" gitHead 2>/dev/null || true)"
+          if [ "${PUBLISHED_GIT_HEAD}" != "${GITHUB_SHA}" ]; then
+            echo "::error::Published veryfront@${VERSION} gitHead is ${PUBLISHED_GIT_HEAD}, expected ${GITHUB_SHA}."
+            exit 1
+          fi
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
         with:
