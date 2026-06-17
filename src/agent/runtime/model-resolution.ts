@@ -13,6 +13,7 @@ const HOSTED_PROVIDER_NAMES = new Set([
   "anthropic",
   "google",
   "google-ai-studio",
+  "mistral",
   "moonshotai",
   "openai",
 ]);
@@ -46,6 +47,14 @@ const LEGACY_MODEL_ALIASES: Record<string, string> = {
   "gemini-2.5-flash": "google-ai-studio/gemini-2.5-flash",
   "kimi-k2.6": "moonshotai/kimi-k2.6",
   "kimi-k2.5": "moonshotai/kimi-k2.5",
+  "mistral-large": "mistral/mistral-large-latest",
+  "mistral-large-latest": "mistral/mistral-large-latest",
+  "mistral-medium": "mistral/mistral-medium-latest",
+  "mistral-medium-latest": "mistral/mistral-medium-latest",
+  "mistral-small": "mistral/mistral-small-latest",
+  "mistral-small-latest": "mistral/mistral-small-latest",
+  codestral: "mistral/codestral-latest",
+  "codestral-latest": "mistral/codestral-latest",
 };
 
 export function normalizeAgentModelConfig(model?: string): string {

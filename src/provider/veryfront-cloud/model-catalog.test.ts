@@ -25,6 +25,7 @@ describe("provider/veryfront-cloud/model-catalog", () => {
     assertEquals(findVeryfrontCloudModel("gemini-3.1-pro-preview")?.provider, "google");
     assertEquals(findVeryfrontCloudModel("gemini-3.5-flash")?.provider, "google");
     assertEquals(findVeryfrontCloudModel("kimi-k2.6")?.provider, "moonshotai");
+    assertEquals(findVeryfrontCloudModel("mistral-large")?.provider, "mistral");
     assertEquals(findVeryfrontCloudModel("nonexistent"), undefined);
   });
 
@@ -36,6 +37,7 @@ describe("provider/veryfront-cloud/model-catalog", () => {
       "google",
     );
     assertEquals(getVeryfrontCloudProviderFromModelId("moonshotai/kimi-k2.6"), "moonshotai");
+    assertEquals(getVeryfrontCloudProviderFromModelId("mistral/mistral-large-latest"), "mistral");
     assertThrows(
       () => getVeryfrontCloudProviderFromModelId("unknown/model"),
       Error,
@@ -67,6 +69,7 @@ describe("provider/veryfront-cloud/model-catalog", () => {
       "openai",
       "google",
       "moonshotai",
+      "mistral",
     ]);
     assertEquals(groups[0]?.label, "Anthropic");
     assertEquals(groups[1]?.label, "OpenAI");
@@ -78,6 +81,7 @@ describe("provider/veryfront-cloud/model-catalog", () => {
   it("resolves aliases and preserves direct model ids", () => {
     assertEquals(resolveVeryfrontCloudModelId("opus"), "anthropic/claude-opus-4-8");
     assertEquals(resolveVeryfrontCloudModelId("gpt-5.5"), "openai/gpt-5.5");
+    assertEquals(resolveVeryfrontCloudModelId("mistral-large"), "mistral/mistral-large-latest");
     assertEquals(resolveVeryfrontCloudModelId("openai/gpt-5.5"), "openai/gpt-5.5");
     assertThrows(
       () => resolveVeryfrontCloudModelId("not-a-real-model"),
@@ -118,6 +122,10 @@ describe("provider/veryfront-cloud/model-catalog", () => {
     assertEquals(
       resolveHostedVeryfrontCloudModelId("openai/gpt-5.5"),
       "veryfront-cloud/openai/gpt-5.5",
+    );
+    assertEquals(
+      resolveHostedVeryfrontCloudModelId("mistral/mistral-large-latest"),
+      "veryfront-cloud/mistral/mistral-large-latest",
     );
   });
 

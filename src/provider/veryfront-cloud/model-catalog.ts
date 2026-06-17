@@ -27,6 +27,7 @@ const VERYFRONT_CLOUD_GATEWAY_MODEL_PROVIDER_PREFIXES = [
   "google/",
   "google-ai-studio/",
   "moonshotai/",
+  "mistral/",
 ];
 
 /** Shared Veryfront Cloud chat models value. */
@@ -82,6 +83,34 @@ export const VERYFRONT_CLOUD_CHAT_MODELS: VeryfrontCloudChatModel[] = [
     name: "Kimi K2.6",
     description: "Deep thinking and multimodal",
   },
+  {
+    id: "mistral-large",
+    modelId: "mistral/mistral-large-latest",
+    provider: "mistral",
+    name: "Mistral Large",
+    description: "Most capable Mistral model",
+  },
+  {
+    id: "mistral-medium",
+    modelId: "mistral/mistral-medium-latest",
+    provider: "mistral",
+    name: "Mistral Medium",
+    description: "Balanced Mistral model for agentic and coding tasks",
+  },
+  {
+    id: "mistral-small",
+    modelId: "mistral/mistral-small-latest",
+    provider: "mistral",
+    name: "Mistral Small",
+    description: "Fast Mistral model for lightweight tasks",
+  },
+  {
+    id: "codestral",
+    modelId: "mistral/codestral-latest",
+    provider: "mistral",
+    name: "Codestral",
+    description: "Mistral code generation model",
+  },
 ];
 
 /** Find Veryfront Cloud model. */
@@ -111,7 +140,12 @@ export function getVeryfrontCloudProviderFromModelId(
   const normalizedModelId = normalizeVeryfrontCloudModelId(modelId);
   const prefix = normalizedModelId.split("/")[0];
   if (prefix === "google-ai-studio") return "google";
-  if (prefix === "openai" || prefix === "anthropic" || prefix === "moonshotai") return prefix;
+  if (
+    prefix === "openai" ||
+    prefix === "anthropic" ||
+    prefix === "moonshotai" ||
+    prefix === "mistral"
+  ) return prefix;
 
   throw new Error(`Unknown model provider prefix "${prefix}" in model ID "${modelId}"`);
 }
@@ -218,9 +252,16 @@ const PROVIDER_LABELS: Record<VeryfrontCloudProviderId, string> = {
   openai: "OpenAI",
   google: "Google",
   moonshotai: "Kimi",
+  mistral: "Mistral",
 };
 
-const PROVIDER_ORDER: VeryfrontCloudProviderId[] = ["anthropic", "openai", "google", "moonshotai"];
+const PROVIDER_ORDER: VeryfrontCloudProviderId[] = [
+  "anthropic",
+  "openai",
+  "google",
+  "moonshotai",
+  "mistral",
+];
 
 /** Group Veryfront Cloud models by provider. */
 export function groupVeryfrontCloudModelsByProvider(): Array<{

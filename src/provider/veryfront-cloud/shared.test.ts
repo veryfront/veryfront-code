@@ -37,6 +37,10 @@ describe("provider/veryfront-cloud/shared", () => {
       getVeryfrontCloudGatewayBaseUrl("https://api.veryfront.com/", "google"),
       "https://api.veryfront.com/ai/gateway/google/v1beta",
     );
+    assertEquals(
+      getVeryfrontCloudGatewayBaseUrl("https://api.veryfront.com/", "mistral"),
+      "https://api.veryfront.com/ai/gateway/mistral/v1",
+    );
   });
 
   it("rewrites auth headers for the gateway fetch wrapper", async () => {

@@ -54,6 +54,18 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(typeof model.doStream, "function");
   });
 
+  it("resolves veryfront-cloud mistral models without a project-specific Mistral extension", () => {
+    setCloudBootstrap();
+
+    const model = resolveModel("veryfront-cloud/mistral/mistral-large-latest") as Record<
+      string,
+      unknown
+    >;
+
+    assertEquals(typeof model.doGenerate, "function");
+    assertEquals(typeof model.doStream, "function");
+  });
+
   it("resolves veryfront-cloud anthropic models without project ext-llm-anthropic installed", () => {
     setCloudBootstrap();
 

@@ -88,6 +88,10 @@ describe("agent/runtime/model-resolution", () => {
       resolveConfiguredAgentModel("kimi-k2.6"),
       "moonshotai/kimi-k2.6",
     );
+    assertEquals(
+      resolveConfiguredAgentModel("mistral-large"),
+      "mistral/mistral-large-latest",
+    );
   });
 
   it("upgrades auto/local models to the default Veryfront cloud model when bootstrap is present", () => {
@@ -125,6 +129,10 @@ describe("agent/runtime/model-resolution", () => {
     assertEquals(
       resolveRuntimeModel("kimi-k2.6"),
       "veryfront-cloud/moonshotai/kimi-k2.6",
+    );
+    assertEquals(
+      resolveRuntimeModel("mistral-large"),
+      "veryfront-cloud/mistral/mistral-large-latest",
     );
   });
 

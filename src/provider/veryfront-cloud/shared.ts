@@ -6,7 +6,8 @@ export type VeryfrontCloudProviderId =
   | "anthropic"
   | "openai"
   | "google"
-  | "moonshotai";
+  | "moonshotai"
+  | "mistral";
 
 interface ParsedVeryfrontCloudModelId {
   provider: VeryfrontCloudProviderId;
@@ -19,6 +20,7 @@ const PROVIDER_ALIASES: Record<string, VeryfrontCloudProviderId> = {
   google: "google",
   "google-ai-studio": "google",
   moonshotai: "moonshotai",
+  mistral: "mistral",
 };
 
 const GATEWAY_PATHS: Record<VeryfrontCloudProviderId, string> = {
@@ -26,6 +28,7 @@ const GATEWAY_PATHS: Record<VeryfrontCloudProviderId, string> = {
   openai: "ai/gateway/openai/v1",
   google: "ai/gateway/google/v1beta",
   moonshotai: "ai/gateway/moonshotai/v1",
+  mistral: "ai/gateway/mistral/v1",
 };
 
 function joinUrl(base: string, path: string): string {

@@ -65,6 +65,7 @@ Set only the variables for the provider you use:
 - `OPENAI_API_KEY` for OpenAI.
 - `ANTHROPIC_API_KEY` for Anthropic.
 - `GOOGLE_API_KEY` for Google.
+- `MISTRAL_API_KEY` for Mistral when requests route through Veryfront Cloud AI Gateway.
 - `OPENAI_BASE_URL` for OpenAI-compatible services.
 
 Explicit provider env vars still work when you want to pin a provider directly:
@@ -76,6 +77,7 @@ export default agent({
   model: "openai/gpt-5.5", // OpenAI
   // model: "anthropic/claude-sonnet-4-6", // Anthropic
   // model: "google/gemini-3.5-flash",     // Google
+  // model: "veryfront-cloud/mistral/mistral-large-latest", // Mistral through AI Gateway
   system: "You are a helpful assistant.",
 });
 ```
@@ -117,6 +119,7 @@ Agents reference models as `"provider/model"`. The framework splits on the first
 ```ts
 // Veryfront Cloud explicit override
 agent({ model: "veryfront-cloud/openai/gpt-5.5" });
+agent({ model: "veryfront-cloud/mistral/mistral-large-latest" });
 
 // Direct provider override
 agent({ model: "openai/gpt-5.5" });
