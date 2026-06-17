@@ -99,6 +99,26 @@ const DEFAULT_RENDER_PIPELINE_TIMEOUT_MS = 60_000;
 const RENDER_PIPELINE_TIMEOUT_MS = getEnvNumber("RENDER_TIMEOUT_MS") ??
   DEFAULT_RENDER_PIPELINE_TIMEOUT_MS;
 
+/** Default number of sibling production routes to warm after the first cacheable request. */
+const DEFAULT_RENDER_PREWARM_MAX_ROUTES = 12;
+/** Default low-impact background concurrency for production route prewarm. */
+const DEFAULT_RENDER_PREWARM_CONCURRENCY = 1;
+/** Bound remembered release contexts so multi-tenant processes cannot grow without limit. */
+const RENDER_PREWARM_CONTEXT_MAX_ENTRIES = 500;
+
+const RENDER_PREWARM_MAX_ROUTES = getBoundedEnvNumber(
+  "VERYFRONT_RENDER_PREWARM_MAX_ROUTES",
+  DEFAULT_RENDER_PREWARM_MAX_ROUTES,
+  0,
+  100,
+);
+const RENDER_PREWARM_CONCURRENCY = getBoundedEnvNumber(
+  "VERYFRONT_RENDER_PREWARM_CONCURRENCY",
+  DEFAULT_RENDER_PREWARM_CONCURRENCY,
+  1,
+  8,
+);
+
 /**
  * Options for initializing the Renderer
  */
@@ -120,6 +140,67 @@ interface CachedRenderData {
   headings?: RenderResult["headings"];
   ssrHash?: string;
   pageModule?: RenderResult["pageModule"];
+}
+
+function getBoundedEnvNumber(
+  name: string,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  const value = getEnvNumber(name);
+  if (value === undefined || Number.isNaN(value)) return fallback;
+  return Math.min(max, Math.max(min, value));
+}
+
+function normalizeComparableSlug(slug: string): string {
+  const trimmed = slug.trim();
+  if (!trimmed || trimmed === "index" || trimmed === "/index") return "/";
+  const withoutTrailingSlash = trimmed.replace(/\/+$/, "");
+  const normalized = withoutTrailingSlash.startsWith("/")
+    ? withoutTrailingSlash
+    : `/${withoutTrailingSlash}`;
+  return normalized || "/";
+}
+
+function isConcretePrewarmSlug(slug: string): boolean {
+  const comparable = normalizeComparableSlug(slug);
+  return !comparable.includes("[") && !comparable.includes("]") && !comparable.includes("*");
+}
+
+function prewarmSlugDepth(slug: string): number {
+  const comparable = normalizeComparableSlug(slug);
+  if (comparable === "/") return 0;
+  return comparable.split("/").filter(Boolean).length;
+}
+
+function selectPrewarmSlugs(
+  currentSlug: string,
+  pages: string[],
+  maxRoutes: number,
+): string[] {
+  if (maxRoutes <= 0) return [];
+
+  const currentComparable = normalizeComparableSlug(currentSlug);
+  const seen = new Set<string>();
+  const candidates: Array<{ slug: string; comparable: string }> = [];
+
+  for (const page of pages) {
+    if (!isConcretePrewarmSlug(page)) continue;
+
+    const comparable = normalizeComparableSlug(page);
+    if (comparable === currentComparable || seen.has(comparable)) continue;
+
+    seen.add(comparable);
+    candidates.push({ slug: page, comparable });
+  }
+
+  candidates.sort((a, b) =>
+    prewarmSlugDepth(a.comparable) - prewarmSlugDepth(b.comparable) ||
+    a.comparable.localeCompare(b.comparable)
+  );
+
+  return candidates.slice(0, maxRoutes).map(({ slug }) => slug);
 }
 
 /**
@@ -152,6 +233,7 @@ export class Renderer {
    * Key format: {cachePrefix}:{slug}:{colorScheme}
    */
   private renderFlight = new Singleflight<CachedRenderData>();
+  private productionPrewarmContexts = new Map<string, Promise<void>>();
 
   constructor(options: RendererOptions = {}) {
     this.cache = new ContextAwareCacheCoordinator(options.cache);
@@ -211,6 +293,7 @@ export class Renderer {
             colorScheme: effectiveOptions?.colorScheme,
             duration: `${(performance.now() - startTime).toFixed(2)}ms`,
           });
+          this.scheduleProductionRenderPrewarm(slug, effectiveCtx, effectiveOptions, cacheKey);
           return cacheResult.cachedResult;
         }
 
@@ -250,11 +333,23 @@ export class Renderer {
           });
         }
 
+        let renderedSuccessfully = false;
         try {
-          return await this.doRenderPage(slug, effectiveCtx, effectiveOptions, startTime, cacheKey);
+          const result = await this.doRenderPage(
+            slug,
+            effectiveCtx,
+            effectiveOptions,
+            startTime,
+            cacheKey,
+          );
+          renderedSuccessfully = true;
+          return result;
         } finally {
           renderSemaphore.release();
           await releaseProjectSlot(effectiveCtx.projectId);
+          if (renderedSuccessfully) {
+            this.scheduleProductionRenderPrewarm(slug, effectiveCtx, effectiveOptions, cacheKey);
+          }
         }
       },
       {
@@ -331,6 +426,133 @@ export class Renderer {
     const queryParamOptions = ctx.config?.cache?.queryParams as QueryParamCacheOptions | undefined;
 
     return buildQueryAwareCacheKey(slug, options?.url, queryParamOptions);
+  }
+
+  private scheduleProductionRenderPrewarm(
+    currentSlug: string,
+    ctx: RenderContext,
+    options: RenderOptions | undefined,
+    cacheKey: string | null,
+  ): void {
+    if (!this.shouldScheduleProductionPrewarm(ctx, options, cacheKey)) return;
+
+    const prewarmKey = this.getProductionPrewarmKey(ctx);
+    if (this.productionPrewarmContexts.has(prewarmKey)) return;
+
+    const prewarmOptions = this.buildCanonicalPrewarmOptions(ctx, options);
+    let resolvePromise!: () => void;
+    let rejectPromise!: (error: unknown) => void;
+    const promise = new Promise<void>((resolve, reject) => {
+      resolvePromise = resolve;
+      rejectPromise = reject;
+    });
+
+    this.rememberProductionPrewarm(prewarmKey, promise);
+
+    queueMicrotask(() => {
+      void this.runProductionRenderPrewarm(currentSlug, ctx, prewarmOptions)
+        .then(resolvePromise, rejectPromise);
+    });
+
+    promise.catch((error) => {
+      this.productionPrewarmContexts.delete(prewarmKey);
+      logger.warn("Production render prewarm failed", {
+        projectId: ctx.projectId,
+        releaseId: ctx.releaseId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
+
+  private shouldScheduleProductionPrewarm(
+    ctx: RenderContext,
+    options: RenderOptions | undefined,
+    cacheKey: string | null,
+  ): boolean {
+    if (RENDER_PREWARM_MAX_ROUTES <= 0) return false;
+    if (cacheKey === null) return false;
+    if (ctx.environment !== "production" || ctx.mode !== "production") return false;
+    if (!ctx.adapter?.fs) return false;
+    if (options?.studioEmbed) return false;
+    if (options?.params || options?.props) return false;
+    return true;
+  }
+
+  private getProductionPrewarmKey(ctx: RenderContext): string {
+    return `${ctx.cachePrefix}:canonical`;
+  }
+
+  private rememberProductionPrewarm(key: string, promise: Promise<void>): void {
+    while (this.productionPrewarmContexts.size >= RENDER_PREWARM_CONTEXT_MAX_ENTRIES) {
+      const oldest = this.productionPrewarmContexts.keys().next().value;
+      if (oldest === undefined) break;
+      this.productionPrewarmContexts.delete(oldest);
+    }
+    this.productionPrewarmContexts.set(key, promise);
+  }
+
+  private buildCanonicalPrewarmOptions(
+    ctx: RenderContext,
+    options?: RenderOptions,
+  ): RenderOptions {
+    return {
+      environment: ctx.environment,
+      projectId: ctx.projectId,
+      projectSlug: ctx.projectSlug,
+      contentSourceId: ctx.contentSourceId,
+      releaseId: ctx.releaseId,
+      releaseAssetManifest: options?.releaseAssetManifest ?? null,
+      noHmr: options?.noHmr,
+      forceProductionScripts: options?.forceProductionScripts,
+    };
+  }
+
+  private async runProductionRenderPrewarm(
+    currentSlug: string,
+    ctx: RenderContext,
+    options: RenderOptions,
+  ): Promise<void> {
+    const pages = await this.getAllPages(ctx);
+    const slugs = selectPrewarmSlugs(currentSlug, pages, RENDER_PREWARM_MAX_ROUTES);
+    if (slugs.length === 0) return;
+
+    logger.debug("Production render prewarm started", {
+      projectId: ctx.projectId,
+      releaseId: ctx.releaseId,
+      currentSlug,
+      routeCount: slugs.length,
+      concurrency: RENDER_PREWARM_CONCURRENCY,
+    });
+
+    let nextIndex = 0;
+    const workerCount = Math.min(RENDER_PREWARM_CONCURRENCY, slugs.length);
+
+    const runWorker = async () => {
+      while (true) {
+        const index = nextIndex++;
+        if (index >= slugs.length) return;
+
+        const slug = slugs[index]!;
+        try {
+          await this.renderPage(slug, ctx, options);
+        } catch (error) {
+          logger.warn("Production render prewarm route failed", {
+            slug,
+            projectId: ctx.projectId,
+            releaseId: ctx.releaseId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    };
+
+    await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+
+    logger.debug("Production render prewarm finished", {
+      projectId: ctx.projectId,
+      releaseId: ctx.releaseId,
+      routeCount: slugs.length,
+    });
   }
 
   private async doRenderPage(
@@ -474,6 +696,7 @@ export class Renderer {
 
   async destroy(): Promise<void> {
     await this.cache.destroy();
+    this.productionPrewarmContexts.clear();
     this.initialized = false;
     this.initializationPromise = null;
     logger.debug("Destroyed");

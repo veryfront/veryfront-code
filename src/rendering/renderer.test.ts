@@ -94,6 +94,13 @@ function createInMemoryStore(): CacheStore & { data: Map<string, CachePayload> }
   };
 }
 
+async function waitForProductionPrewarm(renderer: Renderer): Promise<void> {
+  const contexts = (renderer as unknown as {
+    productionPrewarmContexts: Map<string, Promise<void>>;
+  }).productionPrewarmContexts;
+  await Promise.all([...contexts.values()]);
+}
+
 function makeReadyManifest(): ReleaseAssetManifest {
   return {
     schemaVersion: 1,
@@ -306,7 +313,7 @@ describe("Renderer release asset cache isolation", () => {
         pipeline: {
           renderPage: (
             slug: string,
-            options?: { releaseAssetManifest?: ReleaseAssetManifest | null },
+            options?: { nonce?: string; releaseAssetManifest?: ReleaseAssetManifest | null },
           ) => Promise<{
             html: string;
             frontmatter: Record<string, unknown>;
@@ -339,6 +346,144 @@ describe("Renderer release asset cache isolation", () => {
     assertEquals(result.html, "<html>fresh manifest render</html>");
     assertEquals(store.data.has(`${manifestPrefix}:page:/fresh`), true);
     assertEquals(store.data.has(`${jitPrefix}:page:/fresh`), false);
+  });
+
+  it("prewarms sibling production routes after a cacheable render", async () => {
+    const store = createInMemoryStore();
+    const renderedSlugs: string[] = [];
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    (renderer as unknown as {
+      getAllPages: () => Promise<string[]>;
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: { nonce?: string; releaseAssetManifest?: ReleaseAssetManifest | null },
+          ) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).getAllPages = () => Promise.resolve(["/", "/blog", "/docs/[slug]", "about", "/blog"]);
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: { nonce?: string; releaseAssetManifest?: ReleaseAssetManifest | null },
+          ) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (slug, options) => {
+          assertEquals(options?.releaseAssetManifest, null);
+          assertEquals(options?.nonce, slug === "/" ? "nonce-123" : undefined);
+          renderedSlugs.push(slug);
+          return Promise.resolve({
+            html: `<html>${slug}</html>`,
+            frontmatter: {},
+            headings: [],
+            stream: null,
+          });
+        },
+      },
+    });
+
+    const ctx = {
+      ...makeRenderContext(),
+      adapter: { fs: {} } as RenderContext["adapter"],
+    };
+    const result = await renderer.renderPage("/", ctx, {
+      environment: "production",
+      releaseId: "rel-1",
+      releaseAssetManifest: null,
+      nonce: "nonce-123",
+    });
+    await waitForProductionPrewarm(renderer);
+
+    const prefix = buildRenderCachePrefix("proj-1", "production", "rel-1");
+    assertEquals(result.html, "<html>/</html>");
+    assertEquals(renderedSlugs.includes("/blog"), true);
+    assertEquals(renderedSlugs.includes("about"), true);
+    assertEquals(renderedSlugs.includes("/docs/[slug]"), false);
+    assertEquals(store.data.has(`${prefix}:page:/blog`), true);
+    assertEquals(store.data.has(`${prefix}:page:about`), true);
+  });
+
+  it("does not prewarm when the request has cache-sensitive state", async () => {
+    const store = createInMemoryStore();
+    const renderedSlugs: string[] = [];
+    let getAllPagesCalls = 0;
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    (renderer as unknown as {
+      getAllPages: () => Promise<string[]>;
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (slug: string) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).getAllPages = () => {
+      getAllPagesCalls++;
+      return Promise.resolve(["/blog"]);
+    };
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (slug: string) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (slug) => {
+          renderedSlugs.push(slug);
+          return Promise.resolve({
+            html: `<html>${slug}</html>`,
+            frontmatter: {},
+            headings: [],
+            stream: null,
+          });
+        },
+      },
+    });
+
+    const ctx = {
+      ...makeRenderContext(),
+      adapter: { fs: {} } as RenderContext["adapter"],
+    };
+    const url = new URL("https://example.com/");
+    await renderer.renderPage("/", ctx, {
+      environment: "production",
+      releaseId: "rel-1",
+      releaseAssetManifest: null,
+      request: new Request(url, { headers: { cookie: "session=abc" } }),
+      url,
+    });
+    await waitForProductionPrewarm(renderer);
+
+    assertEquals(renderedSlugs, ["/"]);
+    assertEquals(getAllPagesCalls, 0);
+    assertEquals(store.data.size, 0);
   });
 });
 
