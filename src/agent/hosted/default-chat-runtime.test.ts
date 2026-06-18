@@ -5,6 +5,7 @@ import type {
   RemoteToolSource,
   ToolExecutionContext,
 } from "#veryfront/tool";
+import { toolRegistry } from "#veryfront/tool";
 import { defineSchema } from "../../schemas/define.ts";
 import {
   createDefaultHostedChatRuntime,
@@ -73,4 +74,37 @@ Deno.test("createDefaultHostedChatRuntime builds a cloud-backed hosted runtime",
     inputRequestId: "input-request-1",
   });
   assertEquals(capturedContext.availableToolNames, ["sleep"]);
+});
+
+Deno.test("createDefaultHostedChatRuntime keeps per-run host tools out of the global registry", async () => {
+  try {
+    const createRuntime = (description: string) =>
+      createDefaultHostedChatRuntime({
+        options: {
+          projectId: "project-1",
+          branchId: "branch-1",
+          authToken: "token-1",
+          instructions: "Base instructions",
+          model: "sonnet",
+          allowedTools: ["load_skill"],
+          conversationId: "conversation-1",
+          userId: "user-1",
+        },
+        config: {
+          apiUrl: "https://api.example.com",
+          apiMcpUrl: "https://api.example.com/mcp",
+          studioMcpUrl: "https://studio.example.com/mcp",
+        },
+        buildLocalTools: () => ({ load_skill: localTool(description) }),
+        createRemoteToolSource: emptyRemoteSource,
+        preloadLatestConversationUserText: false,
+      });
+
+    await createRuntime("Load first skill catalog");
+    await createRuntime("Load updated skill catalog");
+
+    assertEquals(toolRegistry.getOwn("load_skill"), undefined);
+  } finally {
+    toolRegistry.clearAll();
+  }
 });

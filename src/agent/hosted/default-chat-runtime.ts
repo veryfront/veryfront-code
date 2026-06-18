@@ -14,6 +14,7 @@ import {
   type VeryfrontCloudContext,
 } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { agent } from "../factory.ts";
+import { markRuntimeLocalTool } from "../runtime/local-tool.ts";
 import {
   applyDefaultResearchArtifactPath,
   createDefaultResearchRunArtifactMirrorHandler,
@@ -227,11 +228,18 @@ function createRuntimeAgentConfig(input: {
       })
     : undefined;
 
+  const runtimeTools = Object.fromEntries(
+    Object.entries(input.toolAssembly.runtimeTools).map(([toolName, runtimeTool]) => [
+      toolName,
+      markRuntimeLocalTool(runtimeTool),
+    ]),
+  );
+
   const runtimeConfig: AgentConfig & RuntimeRemoteToolConfig = {
     id: "veryfront-hosted-runtime",
     model: input.modelId,
     system: input.toolAssembly.systemInstructions,
-    tools: input.toolAssembly.runtimeTools,
+    tools: runtimeTools,
     providerTools: input.toolAssembly.providerToolNames,
     __vfRemoteToolSources: input.toolAssembly.remoteToolSources,
     __vfAllowedRemoteTools: input.toolAssembly.compatibleRemoteToolNames,
