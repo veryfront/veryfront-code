@@ -553,7 +553,7 @@ export class AgentRuntime {
       let activeSkillId = hydratedSkillState.activeSkillId;
       let activeSkillPolicy = hydratedSkillState.activeSkillPolicy;
       let activeSkillDelegationOverrides = hydratedSkillState.activeSkillDelegationOverrides;
-      const hasSubmittedFormInputInLoop = hasSubmittedFormInputResult(currentMessages) ||
+      let hasSubmittedFormInputInLoop = hasSubmittedFormInputResult(currentMessages) ||
         runtimeContext?.[SUBMITTED_FORM_INPUT_CONTEXT_KEY] === true;
       const allowedRemoteToolNames = getRuntimeAllowedRemoteTools(this.config);
       const providerTools = getRuntimeProviderTools(this.config);
@@ -791,6 +791,10 @@ export class AgentRuntime {
                 activeSkillId,
                 activeSkillPolicy,
               );
+              if (isSubmittedFormInputExecutionResult(tc.toolName, result)) {
+                hasSubmittedFormInputInLoop = true;
+                currentRuntimeContext = markSubmittedFormInputRuntimeContext(currentRuntimeContext);
+              }
 
               const toolResultMessage = createToolResultMessage(
                 tc.toolCallId,

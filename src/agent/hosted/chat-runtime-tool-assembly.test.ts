@@ -83,7 +83,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly preserves runtime-essential skil
   assertEquals(taskContext.availableToolNames, ["invoke_agent", "load_skill", "sleep"]);
 });
 
-Deno.test("prepareHostedChatRuntimeToolAssembly hides intake tools after submitted form input", async () => {
+Deno.test("prepareHostedChatRuntimeToolAssembly hides intake tools but keeps delegation after submitted form input", async () => {
   const taskContext: HostedChatRuntimeToolAssemblyContext = {
     authToken: "token",
     projectId: "project-1",
@@ -111,8 +111,8 @@ Deno.test("prepareHostedChatRuntimeToolAssembly hides intake tools after submitt
     preloadLatestConversationUserText: false,
   });
 
-  assertEquals(toolAssembly.localToolNames, ["sleep"]);
-  assertEquals(taskContext.availableToolNames, ["sleep"]);
+  assertEquals(toolAssembly.localToolNames, ["invoke_agent", "sleep"]);
+  assertEquals(taskContext.availableToolNames, ["invoke_agent", "sleep"]);
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly keeps empty allowed tools as explicit deny-all", async () => {

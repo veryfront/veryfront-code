@@ -21,7 +21,6 @@ export const SUBMITTED_FORM_INPUT_CONTEXT_KEY = "hasSubmittedFormInputResult";
 const POST_SUBMITTED_FORM_INPUT_BLOCKED_TOOL_IDS = new Set([
   FORM_INPUT_TOOL_ID,
   LOAD_SKILL_TOOL_ID,
-  INVOKE_AGENT_TOOL_ID,
 ]);
 
 function getSkillActivationRequiredError(toolName: string): string {
@@ -110,8 +109,20 @@ function isSubmittedFormInputResult(result: unknown): boolean {
   return containsSubmittedFormInputResult(result);
 }
 
+function latestUserMessageIndex(messages: readonly Message[]): number {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    if (messages[index]?.role === "user") {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
 export function hasSubmittedFormInputResult(messages: readonly Message[]): boolean {
-  return messages.some((message) =>
+  const startIndex = latestUserMessageIndex(messages) + 1;
+
+  return messages.slice(startIndex).some((message) =>
     message.parts.some((part) =>
       isToolResultPart(part) &&
       part.toolName === FORM_INPUT_TOOL_ID &&
