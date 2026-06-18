@@ -22,7 +22,7 @@ async function collectTemplateTsFiles(dir: URL): Promise<URL[]> {
 
     if (entry.isDirectory) {
       files.push(...await collectTemplateTsFiles(child));
-    } else if (entry.isFile && entry.name.endsWith(".ts")) {
+    } else if (entry.isFile && (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx"))) {
       files.push(child);
     }
   }
@@ -179,6 +179,37 @@ describe("cli/templates", () => {
       userIdTemplate.includes("context?.endUserId"),
       false,
       "base integration tools must use app-authenticated userId rather than legacy endUserId",
+    );
+  });
+
+  it("does not depend on the global JSX namespace in template files", async () => {
+    const checkedRoots = [
+      new URL("./files/", import.meta.url),
+      new URL("./features/", import.meta.url),
+      new URL("./integrations/", import.meta.url),
+    ];
+    const offenders: string[] = [];
+
+    for (const root of checkedRoots) {
+      for (const file of await collectTemplateTsFiles(root)) {
+        const source = await Deno.readTextFile(file);
+        if (/(^|[^.\w])JSX\./.test(source)) {
+          offenders.push(file.pathname.replace(root.pathname, ""));
+        }
+      }
+    }
+
+    const manifest = await Deno.readTextFile(new URL("./manifest.json", import.meta.url));
+    if (/(^|[^.\w])JSX\./.test(manifest)) {
+      offenders.push("manifest.json");
+    }
+
+    assertEquals(
+      offenders,
+      [],
+      `Template files must use React.JSX or inferred JSX return types for Deno checks. Offenders: ${
+        offenders.join(", ")
+      }`,
     );
   });
 });

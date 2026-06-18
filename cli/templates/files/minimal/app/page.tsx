@@ -1,4 +1,4 @@
-export default function HomePage(): JSX.Element {
+export default function HomePage(): React.JSX.Element {
   return (
     <div>
       <h1 className="mb-4 text-4xl font-bold text-neutral-900 dark:text-white">

@@ -546,8 +546,8 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
    * Handle form submit
    */
   const handleSubmit = useCallback(
-    async (e: React.FormEvent) => {
-      e.preventDefault();
+    async (e?: React.FormEvent) => {
+      e?.preventDefault();
       if (isLoading) return;
 
       const text = input.trim();

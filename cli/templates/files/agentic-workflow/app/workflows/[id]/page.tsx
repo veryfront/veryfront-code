@@ -12,7 +12,7 @@ const STEP_ICONS: Record<string, string> = {
   failed: '\u2717',
 }
 
-export default function WorkflowDetail(): JSX.Element {
+export default function WorkflowDetail(): React.JSX.Element {
   const { params } = usePageContext()
   const { run, pendingApprovals, isLoading, refresh } = useWorkflow({ runId: params.id })
   const [isSubmitting, setIsSubmitting] = useState(false)

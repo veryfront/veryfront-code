@@ -13,7 +13,7 @@ const INITIAL_CONVERSATIONS: Conversation[] = [
   { id: "1", title: "Getting started", updatedAt: "Just now" },
 ];
 
-export default function Dashboard(): JSX.Element {
+export default function Dashboard(): React.JSX.Element {
   const [conversations] = useState<Conversation[]>(INITIAL_CONVERSATIONS);
   const [activeId, setActiveId] = useState("1");
   const chat = useChat({ api: "/api/ag-ui" });

@@ -721,8 +721,8 @@ export function getTokenStorageStyles(
   };
 }
 
-export function ServiceIcon({ name }: { name: string }): JSX.Element {
-  const iconMap: Record<string, JSX.Element> = {
+export function ServiceIcon({ name }: { name: string }): React.JSX.Element {
+  const iconMap: Record<string, React.JSX.Element> = {
     mail: (
       <svg className="w-6 h-6 text-red-500" fill="currentColor" viewBox="0 0 24 24">
         <path
