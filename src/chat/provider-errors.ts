@@ -22,6 +22,13 @@ const MODEL_UNSUPPORTED_ASSISTANT_PREFILL_ERROR = {
     "The selected model does not support assistant-message prefill. Start a new user message or choose a compatible model.",
 } as const;
 
+const AI_PROVIDER_SPEND_LIMIT_ERROR = {
+  code: "AI_PROVIDER_SPEND_LIMIT_EXCEEDED",
+  message:
+    "The AI provider spend limit has been reached. Try again later or ask an administrator to raise the AI provider spend limit.",
+  status: 402,
+} as const;
+
 function isErrorRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -61,6 +68,11 @@ export function parseKnownProblemBody(body: unknown): ParsedProviderError | null
   const slug = typeof body.slug === "string" ? body.slug : null;
   const error = typeof body.error === "string" ? body.error : null;
   const suggestion = typeof body.suggestion === "string" ? body.suggestion : null;
+  const normalizedProblemText = `${error ?? ""} ${suggestion ?? ""}`.toLowerCase();
+
+  if (normalizedProblemText.includes("ai provider spend limit")) {
+    return AI_PROVIDER_SPEND_LIMIT_ERROR;
+  }
 
   if (slug === "insufficient-credits" || error === "AI credit limit exceeded") {
     return {
