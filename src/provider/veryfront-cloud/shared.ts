@@ -1,5 +1,6 @@
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { getVeryfrontCloudBootstrap } from "#veryfront/platform/cloud/resolver.ts";
+import { isSupportedMistralModelId } from "./model-catalog.ts";
 
 /** Public API contract for Veryfront Cloud provider ID. */
 export type VeryfrontCloudProviderId =
@@ -71,6 +72,18 @@ export function parseVeryfrontCloudModelId(
         type: "config",
         message: `Embedding provider "${rawProvider}" is not supported for veryfront-cloud. ` +
           `Supported providers: openai, google.`,
+      }),
+    );
+  }
+
+  if (
+    kind === "language" && normalizedProvider === "mistral" &&
+    !isSupportedMistralModelId(`mistral/${upstreamModelId}`)
+  ) {
+    throw toError(
+      createError({
+        type: "config",
+        message: `Unsupported Mistral model "mistral/${upstreamModelId}"`,
       }),
     );
   }

@@ -22,9 +22,9 @@ describe("provider/veryfront-cloud/shared", () => {
         modelId: "gemini-2.0-flash",
       },
     );
-    assertEquals(parseVeryfrontCloudModelId("mistral/mistral-small-2603", "language"), {
+    assertEquals(parseVeryfrontCloudModelId("mistral/mistral-large-2512", "language"), {
       provider: "mistral",
-      modelId: "mistral-small-2603",
+      modelId: "mistral-large-2512",
     });
   });
 
@@ -33,6 +33,19 @@ describe("provider/veryfront-cloud/shared", () => {
       () => parseVeryfrontCloudModelId("openai", "language"),
       Error,
       'Invalid veryfront-cloud model string: "openai"',
+    );
+  });
+
+  it("rejects unsupported Mistral model IDs at the provider boundary", () => {
+    assertThrows(
+      () => parseVeryfrontCloudModelId("mistral/mistral-small-2603", "language"),
+      Error,
+      'Unsupported Mistral model "mistral/mistral-small-2603"',
+    );
+    assertThrows(
+      () => parseVeryfrontCloudModelId("mistral/mistral-medium-3-5", "language"),
+      Error,
+      'Unsupported Mistral model "mistral/mistral-medium-3-5"',
     );
   });
 

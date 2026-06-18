@@ -24,7 +24,7 @@ describe("provider/veryfront-cloud/model-catalog", () => {
     assertEquals(findVeryfrontCloudModel("gpt-5.5")?.provider, "openai");
     assertEquals(findVeryfrontCloudModel("gemini-3.1-pro-preview")?.provider, "google");
     assertEquals(findVeryfrontCloudModel("gemini-3.5-flash")?.provider, "google");
-    assertEquals(findVeryfrontCloudModel("mistral-small-2603")?.provider, "mistral");
+    assertEquals(findVeryfrontCloudModel("mistral-large-2512")?.provider, "mistral");
     assertEquals(findVeryfrontCloudModel("kimi-k2.6")?.provider, "moonshotai");
     assertEquals(findVeryfrontCloudModel("nonexistent"), undefined);
   });
@@ -36,7 +36,7 @@ describe("provider/veryfront-cloud/model-catalog", () => {
       getVeryfrontCloudProviderFromModelId("google-ai-studio/gemini-3.1-pro-preview"),
       "google",
     );
-    assertEquals(getVeryfrontCloudProviderFromModelId("mistral/mistral-small-2603"), "mistral");
+    assertEquals(getVeryfrontCloudProviderFromModelId("mistral/mistral-large-2512"), "mistral");
     assertEquals(getVeryfrontCloudProviderFromModelId("moonshotai/kimi-k2.6"), "moonshotai");
     assertThrows(
       () => getVeryfrontCloudProviderFromModelId("unknown/model"),
@@ -81,8 +81,18 @@ describe("provider/veryfront-cloud/model-catalog", () => {
   it("resolves aliases and preserves direct model ids", () => {
     assertEquals(resolveVeryfrontCloudModelId("opus"), "anthropic/claude-opus-4-8");
     assertEquals(resolveVeryfrontCloudModelId("gpt-5.5"), "openai/gpt-5.5");
-    assertEquals(resolveVeryfrontCloudModelId("mistral-small-2603"), "mistral/mistral-small-2603");
+    assertEquals(resolveVeryfrontCloudModelId("mistral-large-2512"), "mistral/mistral-large-2512");
     assertEquals(resolveVeryfrontCloudModelId("openai/gpt-5.5"), "openai/gpt-5.5");
+    assertThrows(
+      () => resolveVeryfrontCloudModelId("mistral/mistral-small-2603"),
+      Error,
+      'Unsupported Mistral model "mistral/mistral-small-2603"',
+    );
+    assertThrows(
+      () => resolveVeryfrontCloudModelId("mistral/mistral-medium-3-5"),
+      Error,
+      'Unsupported Mistral model "mistral/mistral-medium-3-5"',
+    );
     assertThrows(
       () => resolveVeryfrontCloudModelId("not-a-real-model"),
       Error,
@@ -114,8 +124,16 @@ describe("provider/veryfront-cloud/model-catalog", () => {
       "veryfront-cloud/google-ai-studio/gemini-3.5-flash",
     );
     assertEquals(
+      resolveVeryfrontCloudGatewayModelId("mistral/mistral-large-2512"),
+      "veryfront-cloud/mistral/mistral-large-2512",
+    );
+    assertEquals(
       resolveVeryfrontCloudGatewayModelId("mistral/mistral-small-2603"),
-      "veryfront-cloud/mistral/mistral-small-2603",
+      "mistral/mistral-small-2603",
+    );
+    assertEquals(
+      resolveVeryfrontCloudGatewayModelId("mistral/mistral-medium-3-5"),
+      "mistral/mistral-medium-3-5",
     );
     assertEquals(
       resolveVeryfrontCloudGatewayModelId("veryfront-cloud/openai/gpt-5.5"),

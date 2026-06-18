@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -86,10 +86,6 @@ describe("agent/runtime/model-resolution", () => {
       "google-ai-studio/gemini-3.5-flash",
     );
     assertEquals(
-      resolveConfiguredAgentModel("mistral-small"),
-      "mistral/mistral-small-2603",
-    );
-    assertEquals(
       resolveConfiguredAgentModel("kimi-k2.6"),
       "moonshotai/kimi-k2.6",
     );
@@ -132,12 +128,20 @@ describe("agent/runtime/model-resolution", () => {
       "veryfront-cloud/moonshotai/kimi-k2.6",
     );
     assertEquals(
-      resolveRuntimeModel("mistral/mistral-small-2603"),
-      "veryfront-cloud/mistral/mistral-small-2603",
+      resolveRuntimeModel("mistral/mistral-large-2512"),
+      "veryfront-cloud/mistral/mistral-large-2512",
     );
     assertEquals(
-      resolveRuntimeModel("mistral-small"),
-      "veryfront-cloud/mistral/mistral-small-2603",
+      resolveRuntimeModel("mistral-large"),
+      "veryfront-cloud/mistral/mistral-large-2512",
+    );
+    assertEquals(
+      resolveRuntimeModel("mistral/mistral-small-2603"),
+      "mistral/mistral-small-2603",
+    );
+    assertEquals(
+      resolveRuntimeModel("mistral/mistral-medium-3-5"),
+      "mistral/mistral-medium-3-5",
     );
     assertEquals(
       resolveRuntimeModel("kimi-k2.6"),
@@ -189,6 +193,22 @@ describe("agent/runtime/model-resolution", () => {
     assertEquals(
       resolveRuntimeModel("veryfront-cloud/openai/gpt-5.4"),
       "veryfront-cloud/openai/gpt-5.4",
+    );
+  });
+
+  it("rejects unsupported explicit veryfront-cloud Mistral models", () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_runtime");
+    setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
+
+    assertThrows(
+      () => resolveRuntimeModel("veryfront-cloud/mistral/mistral-small-2603"),
+      Error,
+      'Unsupported Mistral model "veryfront-cloud/mistral/mistral-small-2603"',
+    );
+    assertThrows(
+      () => resolveRuntimeModel("veryfront-cloud/mistral/mistral-medium-3-5"),
+      Error,
+      'Unsupported Mistral model "veryfront-cloud/mistral/mistral-medium-3-5"',
     );
   });
 });

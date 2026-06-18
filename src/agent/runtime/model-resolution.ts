@@ -5,6 +5,7 @@ import {
   getOpenAIEnvConfig,
 } from "#veryfront/config/env.ts";
 import { findAvailableCloudModel } from "#veryfront/provider";
+import { findVeryfrontCloudModelByModelId } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { DEFAULT_LOCAL_MODEL } from "#veryfront/provider/local/model-catalog.ts";
 import { isVeryfrontCloudEnabled } from "#veryfront/platform/cloud/resolver.ts";
 
@@ -46,10 +47,6 @@ const LEGACY_MODEL_ALIASES: Record<string, string> = {
   "gemini-3.1-flash-lite": "google-ai-studio/gemini-3.1-flash-lite",
   "gemini-2.5-pro": "google-ai-studio/gemini-2.5-pro",
   "gemini-2.5-flash": "google-ai-studio/gemini-2.5-flash",
-  "mistral-small": "mistral/mistral-small-2603",
-  "mistral-small-2603": "mistral/mistral-small-2603",
-  "mistral-medium": "mistral/mistral-medium-3-5",
-  "mistral-medium-3-5": "mistral/mistral-medium-3-5",
   "mistral-large": "mistral/mistral-large-2512",
   "mistral-large-2512": "mistral/mistral-large-2512",
   "kimi-k2.6": "moonshotai/kimi-k2.6",
@@ -89,6 +86,15 @@ function hasDirectProviderCredentials(provider: string): boolean {
   }
 }
 
+function isSupportedHostedMistralModel(modelId: string): boolean {
+  return Boolean(findVeryfrontCloudModelByModelId(`mistral/${modelId}`));
+}
+
+function isUnsupportedVeryfrontCloudMistralModel(modelId: string): boolean {
+  return modelId.startsWith("veryfront-cloud/mistral/") &&
+    !findVeryfrontCloudModelByModelId(modelId);
+}
+
 /**
  * Resolve the effective runtime model string for agent execution.
  *
@@ -103,6 +109,9 @@ export function resolveRuntimeModel(model?: string): string {
   const configuredModel = resolveConfiguredAgentModel(model);
 
   if (configuredModel.startsWith("veryfront-cloud/")) {
+    if (isUnsupportedVeryfrontCloudMistralModel(configuredModel)) {
+      throw new Error(`Unsupported Mistral model "${configuredModel}"`);
+    }
     return configuredModel;
   }
 
@@ -119,6 +128,10 @@ export function resolveRuntimeModel(model?: string): string {
   const modelId = configuredModel.slice(slashIndex + 1);
 
   if (!HOSTED_PROVIDER_NAMES.has(provider) || !modelId) {
+    return configuredModel;
+  }
+
+  if (provider === "mistral" && !isSupportedHostedMistralModel(modelId)) {
     return configuredModel;
   }
 
