@@ -16,6 +16,12 @@ const PROJECT_SCHEMA_ERROR = {
     "Project code has an invalid Veryfront schema. Update the schema to use defineSchema(), then run the agent again.",
 } as const;
 
+const MODEL_UNSUPPORTED_ASSISTANT_PREFILL_ERROR = {
+  code: "MODEL_UNSUPPORTED_ASSISTANT_PREFILL",
+  message:
+    "The selected model does not support assistant-message prefill. Start a new user message or choose a compatible model.",
+} as const;
+
 function isErrorRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -95,6 +101,10 @@ function parseKnownProviderBody(body: unknown): ParsedProviderError | null {
     return null;
   }
 
+  if (body.type === "error" && isErrorRecord(body.error)) {
+    return parseKnownProviderBody(body.error);
+  }
+
   if (body.type === "overloaded_error") {
     return {
       code: "OVERLOADED_ERROR",
@@ -128,6 +138,13 @@ function parseKnownProviderBody(body: unknown): ParsedProviderError | null {
     body.message.includes("too long")
   ) {
     return { code: "CONTEXT_LENGTH_EXCEEDED", message: "Conversation is too long" };
+  }
+
+  if (
+    body.type === "invalid_request_error" && typeof body.message === "string" &&
+    body.message.toLowerCase().includes("does not support assistant message prefill")
+  ) {
+    return MODEL_UNSUPPORTED_ASSISTANT_PREFILL_ERROR;
   }
 
   return null;

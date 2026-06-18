@@ -59,6 +59,21 @@ Deno.test("getEmptyHostedFinalizedMessageTerminalError returns stream timeout wh
   );
 });
 
+Deno.test("getEmptyHostedFinalizedMessageTerminalError preserves unsupported assistant prefill provider errors", () => {
+  assertEquals(
+    getEmptyHostedFinalizedMessageTerminalError({
+      finalStep: null,
+      streamError:
+        'veryfront-cloud request failed: {"type":"error","error":{"type":"invalid_request_error","message":"This model does not support assistant message prefill. The conversation must end with a user message."}}',
+    }),
+    {
+      code: "MODEL_UNSUPPORTED_ASSISTANT_PREFILL",
+      message:
+        "The selected model does not support assistant-message prefill. Start a new user message or choose a compatible model.",
+    },
+  );
+});
+
 Deno.test("getEmptyHostedFinalizedMessageTerminalError returns credit error from stream error", () => {
   const result = getEmptyHostedFinalizedMessageTerminalError({
     finalStep: null,
