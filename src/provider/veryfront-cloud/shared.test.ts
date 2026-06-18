@@ -36,6 +36,19 @@ describe("provider/veryfront-cloud/shared", () => {
     );
   });
 
+  it("rejects unsupported Mistral model IDs at the provider boundary", () => {
+    assertThrows(
+      () => parseVeryfrontCloudModelId("mistral/mistral-small-2603", "language"),
+      Error,
+      'Unsupported Mistral model "mistral/mistral-small-2603"',
+    );
+    assertThrows(
+      () => parseVeryfrontCloudModelId("mistral/mistral-medium-3-5", "language"),
+      Error,
+      'Unsupported Mistral model "mistral/mistral-medium-3-5"',
+    );
+  });
+
   it("builds gateway base URLs without duplicate slashes", () => {
     assertEquals(
       getVeryfrontCloudGatewayBaseUrl("https://api.veryfront.com/", "google"),

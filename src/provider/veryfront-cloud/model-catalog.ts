@@ -30,7 +30,7 @@ const VERYFRONT_CLOUD_GATEWAY_MODEL_PROVIDER_PREFIXES = [
   "moonshotai/",
 ];
 
-function isSupportedMistralModelId(modelId: string): boolean {
+export function isSupportedMistralModelId(modelId: string): boolean {
   return VERYFRONT_CLOUD_CHAT_MODELS.some((model) => model.modelId === modelId);
 }
 

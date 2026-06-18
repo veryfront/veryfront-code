@@ -67,6 +67,21 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(typeof model.doStream, "function");
   });
 
+  it("rejects unsupported pre-prefixed veryfront-cloud Mistral models", () => {
+    setCloudBootstrap();
+
+    assertThrows(
+      () => resolveModel("veryfront-cloud/mistral/mistral-small-2603"),
+      Error,
+      'Unsupported Mistral model "mistral/mistral-small-2603"',
+    );
+    assertThrows(
+      () => resolveModel("veryfront-cloud/mistral/mistral-medium-3-5"),
+      Error,
+      'Unsupported Mistral model "mistral/mistral-medium-3-5"',
+    );
+  });
+
   it("resolves veryfront-cloud anthropic models without project ext-llm-anthropic installed", () => {
     setCloudBootstrap();
 

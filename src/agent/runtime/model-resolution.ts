@@ -90,6 +90,11 @@ function isSupportedHostedMistralModel(modelId: string): boolean {
   return Boolean(findVeryfrontCloudModelByModelId(`mistral/${modelId}`));
 }
 
+function isUnsupportedVeryfrontCloudMistralModel(modelId: string): boolean {
+  return modelId.startsWith("veryfront-cloud/mistral/") &&
+    !findVeryfrontCloudModelByModelId(modelId);
+}
+
 /**
  * Resolve the effective runtime model string for agent execution.
  *
@@ -104,6 +109,9 @@ export function resolveRuntimeModel(model?: string): string {
   const configuredModel = resolveConfiguredAgentModel(model);
 
   if (configuredModel.startsWith("veryfront-cloud/")) {
+    if (isUnsupportedVeryfrontCloudMistralModel(configuredModel)) {
+      throw new Error(`Unsupported Mistral model "${configuredModel}"`);
+    }
     return configuredModel;
   }
 
