@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   convertToTextGenerationRuntimeMessage,
   convertToTextGenerationRuntimeMessages,
+  convertToTextGenerationRuntimeRequestMessages,
 } from "./text-generation-runtime-message-converter.ts";
 import type {
   TextGenerationRuntimeAssistantMessage,
@@ -787,6 +788,98 @@ describe("text-generation-runtime-message-converter", () => {
           output: { type: "json", value: { files: ["new.ts"] } },
         }],
       });
+    });
+  });
+
+  describe("convertToTextGenerationRuntimeRequestMessages", () => {
+    it("drops trailing assistant-only continuation text before provider requests", () => {
+      const messages: Message[] = [
+        {
+          id: "user_1",
+          role: "user",
+          parts: [{ type: "text", text: "Help me build an agent." }],
+        },
+        {
+          id: "assistant_form",
+          role: "assistant",
+          parts: [
+            {
+              type: "text",
+              text: "I'll ask one setup question.",
+            },
+            {
+              type: "tool-form_input",
+              toolCallId: "tool_form",
+              toolName: "form_input",
+              args: { title: "Agent brief" },
+            },
+          ],
+        },
+        {
+          id: "tool_form",
+          role: "tool",
+          parts: [{
+            type: "tool-result",
+            toolCallId: "tool_form",
+            toolName: "form_input",
+            result: { submitted: true, values: { brief: "gmail agent doing morning brief" } },
+          }],
+        },
+        {
+          id: "assistant_tools",
+          role: "assistant",
+          parts: [
+            { type: "text", text: "Let me check the Gmail integration." },
+            {
+              type: "tool-get_integration",
+              toolCallId: "tool_integration",
+              toolName: "get_integration",
+              args: { name: "gmail" },
+            },
+            {
+              type: "tool-list_agents",
+              toolCallId: "tool_agents",
+              toolName: "list_agents",
+              args: { project_reference: "test-661633ea" },
+            },
+          ],
+        },
+        {
+          id: "tool_integration",
+          role: "tool",
+          parts: [{
+            type: "tool-result",
+            toolCallId: "tool_integration",
+            toolName: "get_integration",
+            result: { name: "gmail", auth: "oauth" },
+          }],
+        },
+        {
+          id: "tool_agents",
+          role: "tool",
+          parts: [{
+            type: "tool-result",
+            toolCallId: "tool_agents",
+            toolName: "list_agents",
+            result: { agents: [] },
+          }],
+        },
+        {
+          id: "assistant_prefill",
+          role: "assistant",
+          parts: [{
+            type: "text",
+            text: "Let me get the one detail I need to build the right agent for you.",
+          }],
+        },
+      ];
+
+      const historyMessages = convertToTextGenerationRuntimeMessages(messages);
+      assertEquals(historyMessages.at(-1)?.role, "assistant");
+
+      const requestMessages = convertToTextGenerationRuntimeRequestMessages(messages);
+      assertEquals(requestMessages.at(-1)?.role, "tool");
+      assertEquals(requestMessages.length, historyMessages.length - 1);
     });
   });
 });

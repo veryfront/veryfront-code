@@ -34,7 +34,7 @@ import {
   setSpanAttributes,
   withSpan,
 } from "#veryfront/observability/tracing/index.ts";
-import { convertToTextGenerationRuntimeMessages } from "./text-generation-runtime-message-converter.ts";
+import { convertToTextGenerationRuntimeRequestMessages } from "./text-generation-runtime-message-converter.ts";
 import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
 import { getRuntimeRemoteToolSources } from "./mcp-server-tool-sources.ts";
 import {
@@ -600,7 +600,7 @@ export class AgentRuntime {
           return generateText({
             model: languageModel,
             system: currentSystemPrompt,
-            messages: convertToTextGenerationRuntimeMessages(currentMessages),
+            messages: convertToTextGenerationRuntimeRequestMessages(currentMessages),
             tools: convertToolsToRuntimeTools(tools, {
               model: effectiveModel,
               providerTools,
@@ -935,7 +935,7 @@ export class AgentRuntime {
       const result = streamText({
         model: languageModel,
         system: currentSystemPrompt,
-        messages: convertToTextGenerationRuntimeMessages(currentMessages),
+        messages: convertToTextGenerationRuntimeRequestMessages(currentMessages),
         tools: runtimeTools,
         experimental_repairToolCall: repairToolCall,
         maxOutputTokens: this.resolveMaxOutputTokens(effectiveModel, maxOutputTokensOverride),
