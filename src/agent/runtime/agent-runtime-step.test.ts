@@ -122,7 +122,7 @@ describe("agent/runtime-step", () => {
     assertEquals(prepared.toolContext, {});
   });
 
-  it("hides intake and delegation tools after submitted form input", async () => {
+  it("hides intake tools but keeps delegation tools after submitted form input", async () => {
     const messages: Message[] = [{
       id: "tool_result_1",
       role: "tool",
@@ -160,12 +160,13 @@ describe("agent/runtime-step", () => {
     });
 
     assertEquals(prepared.tools.map((tool) => tool.name), [
+      "invoke_agent",
       "list_integrations",
       "create_agent",
     ]);
   });
 
-  it("hides intake and delegation tools when hosted context records submitted form input", async () => {
+  it("hides intake tools but keeps delegation tools when hosted context records submitted form input", async () => {
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
       activeSkillPolicy: undefined,
@@ -194,8 +195,60 @@ describe("agent/runtime-step", () => {
     });
 
     assertEquals(prepared.tools.map((tool) => tool.name), [
+      "invoke_agent",
       "list_integrations",
       "create_agent",
+    ]);
+  });
+
+  it("does not treat submitted form input before the latest user message as active intake state", async () => {
+    const messages: Message[] = [
+      {
+        id: "tool_result_old_form",
+        role: "tool",
+        parts: [{
+          type: "tool-result",
+          toolCallId: "old_form_call",
+          toolName: "form_input",
+          result: { submitted: true, values: { brief: "old brief" } },
+        }],
+        timestamp: 1,
+      },
+      {
+        id: "user_new_turn",
+        role: "user",
+        parts: [{ type: "text", text: "Start a new request" }],
+        timestamp: 2,
+      },
+    ];
+
+    const prepared = await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillPolicy: undefined,
+      allowedRemoteToolNames: undefined,
+      config: { model: "auto", system: "Base", tools: true, skills: true } as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      isLocalModel: false,
+      messages,
+      mode: "stream",
+      remoteToolSources: [],
+      runtimeContext: undefined,
+      step: 1,
+      systemPrompt: "Base",
+      toolContextBase: undefined,
+      getAvailableTools: async () => [
+        toolDefinition("form_input"),
+        toolDefinition("load_skill"),
+        toolDefinition("invoke_agent"),
+      ],
+      resolveRuntimeState: async () => ({ systemPrompt: "Base", context: undefined }),
+    });
+
+    assertEquals(prepared.runtimeContext, undefined);
+    assertEquals(prepared.tools.map((tool) => tool.name), [
+      "form_input",
+      "load_skill",
+      "invoke_agent",
     ]);
   });
 });

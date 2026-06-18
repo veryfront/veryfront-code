@@ -112,7 +112,7 @@ function filterPostFormInputLocalTools(
     return tools;
   }
 
-  const blockedToolNames = new Set(["form_input", "load_skill", "invoke_agent"]);
+  const blockedToolNames = new Set(["form_input", "load_skill"]);
   return Object.fromEntries(
     Object.entries(tools).filter(([toolName]) => !blockedToolNames.has(toolName)),
   );

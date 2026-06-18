@@ -100,17 +100,23 @@ describe("src/agent/runtime skill policy helpers", () => {
       assertEquals(result.allowed, false);
     });
 
-    it("blocks intake and skill reload tools after a submitted form", () => {
+    it("blocks intake and skill reload tools after a submitted form without blocking delegation", () => {
       assertEquals(
         enforceSkillPolicy("form_input", ["studio_suggestions"], false).allowed,
         false,
       );
-      for (const toolName of ["form_input", "load_skill", "invoke_agent"]) {
+      for (const toolName of ["form_input", "load_skill"]) {
         const result = enforceSkillPolicy(toolName, [toolName], false, {
           hasSubmittedFormInput: true,
         });
         assertEquals(result.allowed, false);
       }
+      assertEquals(
+        enforceSkillPolicy("invoke_agent", ["invoke_agent"], false, {
+          hasSubmittedFormInput: true,
+        }),
+        { allowed: true },
+      );
       assertEquals(
         enforceSkillPolicy("create_agent", ["create_agent"], false, {
           hasSubmittedFormInput: true,
@@ -365,6 +371,26 @@ describe("src/agent/runtime skill policy helpers", () => {
             result: { submitted: false, values: {} },
           }],
         }]),
+        false,
+      );
+      assertEquals(
+        hasSubmittedFormInputResult([
+          {
+            id: "tool_form_input_old",
+            role: "tool",
+            parts: [{
+              type: "tool-result",
+              toolCallId: "form_input_old",
+              toolName: "form_input",
+              result: { submitted: true, values: { topic: "old topic" } },
+            }],
+          },
+          {
+            id: "user_new_turn",
+            role: "user",
+            parts: [{ type: "text", text: "Start something new" }],
+          },
+        ]),
         false,
       );
     });

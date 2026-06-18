@@ -189,13 +189,24 @@ function extractSubmittedFormInputResult(
   };
 }
 
-/** Find the latest submitted form_input result persisted in UI messages. */
+function latestUserMessageIndex(messages: readonly ChatUiMessage[]): number {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    if (messages[index]?.role === "user") {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
+/** Find the latest submitted form_input result persisted after the latest user message. */
 export function findSubmittedFormInputResult(
   messages: readonly ChatUiMessage[],
 ): HostedSubmittedFormInputResult | undefined {
   let result: HostedSubmittedFormInputResult | undefined;
+  const startIndex = latestUserMessageIndex(messages) + 1;
 
-  for (const message of messages) {
+  for (const message of messages.slice(startIndex)) {
     for (const part of message.parts) {
       result = extractSubmittedFormInputResult(part) ?? result;
     }
