@@ -107,16 +107,28 @@ jobs:
           } | sudo tee /etc/apt/apt.conf.d/99veryfront-ci-retries
       - name: Install Chromium
         run: |
+          wait_for_apt_locks() {
+            for _ in $(seq 1 60); do
+              if ! sudo fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock >/dev/null 2>&1; then
+                return 0
+              fi
+              sleep 5
+            done
+            return 1
+          }
+
           for attempt in 1 2 3; do
-            timeout 300s deno run -A npm:playwright install --with-deps chromium && exit 0
+            wait_for_apt_locks
+            deno run -A npm:playwright install --with-deps chromium && exit 0
             status=$?
 
             if [ "$attempt" -eq 3 ]; then
               exit "$status"
             fi
 
-            sudo apt-get clean
-            sudo rm -rf /var/lib/apt/lists/*
+            wait_for_apt_locks || true
+            sudo apt-get clean || true
+            sudo rm -rf /var/lib/apt/lists/* || true
             sleep $((attempt * 20))
           done
       - uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60  # v4.0.0
@@ -153,16 +165,28 @@ jobs:
           } | sudo tee /etc/apt/apt.conf.d/99veryfront-ci-retries
       - name: Install Chromium
         run: |
+          wait_for_apt_locks() {
+            for _ in $(seq 1 60); do
+              if ! sudo fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock >/dev/null 2>&1; then
+                return 0
+              fi
+              sleep 5
+            done
+            return 1
+          }
+
           for attempt in 1 2 3; do
-            timeout 300s deno run -A npm:playwright install --with-deps chromium && exit 0
+            wait_for_apt_locks
+            deno run -A npm:playwright install --with-deps chromium && exit 0
             status=$?
 
             if [ "$attempt" -eq 3 ]; then
               exit "$status"
             fi
 
-            sudo apt-get clean
-            sudo rm -rf /var/lib/apt/lists/*
+            wait_for_apt_locks || true
+            sudo apt-get clean || true
+            sudo rm -rf /var/lib/apt/lists/* || true
             sleep $((attempt * 20))
           done
       - uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60  # v4.0.0
