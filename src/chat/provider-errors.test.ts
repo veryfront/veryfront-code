@@ -51,6 +51,33 @@ describe("chat/provider-errors", () => {
     });
   });
 
+  it("classifies unsupported assistant prefill provider rejections as model capability errors", () => {
+    const expected = {
+      code: "MODEL_UNSUPPORTED_ASSISTANT_PREFILL",
+      message:
+        "The selected model does not support assistant-message prefill. Start a new user message or choose a compatible model.",
+    };
+
+    assertEquals(
+      parseProviderError({
+        type: "error",
+        error: {
+          type: "invalid_request_error",
+          message:
+            "This model does not support assistant message prefill. The conversation must end with a user message.",
+        },
+      }),
+      expected,
+    );
+
+    assertEquals(
+      parseProviderError(
+        'veryfront-cloud request failed: {"type":"error","error":{"type":"invalid_request_error","message":"This model does not support assistant message prefill. The conversation must end with a user message."}}',
+      ),
+      expected,
+    );
+  });
+
   it("classifies invalid Veryfront schema errors as project code validation failures", () => {
     const expected = {
       code: "PROJECT_SCHEMA_ERROR",
