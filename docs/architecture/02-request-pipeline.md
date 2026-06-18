@@ -109,11 +109,11 @@ endpoint cache.
 
 Production HTML rendering also starts a bounded background prewarm after the
 first cacheable request for a project release context. The prewarm discovers
-concrete static routes, skips dynamic route patterns, uses canonical route cache
-keys without request cookies, query strings, or nonces, and checks the shared
-render cache before rendering each route. This populates the API-backed
-distributed render cache for sibling routes without adding latency to the
-foreground response.
+concrete static routes, skips dynamic route patterns, validates each candidate
+route resolves, uses canonical route cache keys without request cookies, query
+strings, or nonces, and checks the shared render cache before rendering each
+route. This populates the API-backed distributed render cache for sibling routes
+without adding latency to the foreground response.
 
 Default render prewarm controls:
 

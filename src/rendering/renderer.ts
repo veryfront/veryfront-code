@@ -177,13 +177,10 @@ function prewarmSlugDepth(slug: string): number {
 function selectPrewarmSlugs(
   currentSlug: string,
   pages: string[],
-  maxRoutes: number,
 ): string[] {
-  if (maxRoutes <= 0) return [];
-
   const currentComparable = normalizeComparableSlug(currentSlug);
   const seen = new Set<string>();
-  const candidates: Array<{ slug: string; comparable: string }> = [];
+  const candidates: Array<{ comparable: string }> = [];
 
   for (const page of pages) {
     if (!isConcretePrewarmSlug(page)) continue;
@@ -192,7 +189,7 @@ function selectPrewarmSlugs(
     if (comparable === currentComparable || seen.has(comparable)) continue;
 
     seen.add(comparable);
-    candidates.push({ slug: page, comparable });
+    candidates.push({ comparable });
   }
 
   candidates.sort((a, b) =>
@@ -200,7 +197,7 @@ function selectPrewarmSlugs(
     a.comparable.localeCompare(b.comparable)
   );
 
-  return candidates.slice(0, maxRoutes).map(({ slug }) => slug);
+  return candidates.map(({ comparable }) => comparable);
 }
 
 /**
@@ -512,8 +509,15 @@ export class Renderer {
     ctx: RenderContext,
     options: RenderOptions,
   ): Promise<void> {
+    if (RENDER_PREWARM_MAX_ROUTES <= 0) return;
+
     const pages = await this.getAllPages(ctx);
-    const slugs = selectPrewarmSlugs(currentSlug, pages, RENDER_PREWARM_MAX_ROUTES);
+    const candidateSlugs = selectPrewarmSlugs(currentSlug, pages);
+    const slugs = await this.filterResolvablePrewarmSlugs(
+      ctx,
+      candidateSlugs,
+      RENDER_PREWARM_MAX_ROUTES,
+    );
     if (slugs.length === 0) return;
 
     logger.debug("Production render prewarm started", {
@@ -679,6 +683,44 @@ export class Renderer {
     }
 
     return createPageResolver(ctx).getAllPages();
+  }
+
+  async pageExists(slug: string, ctx: RenderContext): Promise<boolean> {
+    if (!this.initialized) {
+      throw INITIALIZATION_ERROR.create({
+        detail: "Renderer not initialized. Call initialize() first.",
+      });
+    }
+
+    return createPageResolver(ctx).pageExists(slug);
+  }
+
+  private async filterResolvablePrewarmSlugs(
+    ctx: RenderContext,
+    slugs: string[],
+    maxRoutes: number,
+  ): Promise<string[]> {
+    if (maxRoutes <= 0) return [];
+
+    const resolvable: string[] = [];
+
+    for (const slug of slugs) {
+      try {
+        if (await this.pageExists(slug, ctx)) {
+          resolvable.push(slug);
+          if (resolvable.length >= maxRoutes) break;
+        }
+      } catch (error) {
+        logger.warn("Production render prewarm route validation failed", {
+          slug,
+          projectId: ctx.projectId,
+          releaseId: ctx.releaseId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    return resolvable;
   }
 
   async clearCache(ctx: RenderContext, slug?: string): Promise<void> {

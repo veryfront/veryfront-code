@@ -351,10 +351,15 @@ describe("Renderer release asset cache isolation", () => {
   it("prewarms sibling production routes after a cacheable render", async () => {
     const store = createInMemoryStore();
     const renderedSlugs: string[] = [];
+    const stalePages = Array.from(
+      { length: 14 },
+      (_, index) => `aa-stale-${index.toString().padStart(2, "0")}`,
+    );
     const renderer = new Renderer({ cache: { store } });
     (renderer as unknown as { initialized: boolean }).initialized = true;
     (renderer as unknown as {
       getAllPages: () => Promise<string[]>;
+      pageExists: (slug: string) => Promise<boolean>;
       createServicesForContext: () => {
         pipeline: {
           renderPage: (
@@ -368,7 +373,11 @@ describe("Renderer release asset cache isolation", () => {
           }>;
         };
       };
-    }).getAllPages = () => Promise.resolve(["/", "/blog", "/docs/[slug]", "about", "/blog"]);
+    }).getAllPages = () =>
+      Promise.resolve(["/", ...stalePages, "/docs/[slug]", "about", "/blog", "/blog"]);
+    (renderer as unknown as {
+      pageExists: (slug: string) => Promise<boolean>;
+    }).pageExists = (slug) => Promise.resolve(slug === "/about" || slug === "/blog");
     (renderer as unknown as {
       createServicesForContext: () => {
         pipeline: {
@@ -414,10 +423,13 @@ describe("Renderer release asset cache isolation", () => {
     const prefix = buildRenderCachePrefix("proj-1", "production", "rel-1");
     assertEquals(result.html, "<html>/</html>");
     assertEquals(renderedSlugs.includes("/blog"), true);
-    assertEquals(renderedSlugs.includes("about"), true);
+    assertEquals(renderedSlugs.includes("/about"), true);
+    assertEquals(renderedSlugs.includes("about"), false);
     assertEquals(renderedSlugs.includes("/docs/[slug]"), false);
+    assertEquals(renderedSlugs.some((slug) => slug.startsWith("/aa-stale-")), false);
     assertEquals(store.data.has(`${prefix}:page:/blog`), true);
-    assertEquals(store.data.has(`${prefix}:page:about`), true);
+    assertEquals(store.data.has(`${prefix}:page:/about`), true);
+    assertEquals(store.data.has(`${prefix}:page:about`), false);
   });
 
   it("does not prewarm when the request has cache-sensitive state", async () => {
