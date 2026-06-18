@@ -9,22 +9,10 @@ import type { LoadedSkill } from "./types.ts";
 
 export const CORE_SKILLS: LoadedSkill[] = [
   {
-    manifest: {
+    metadata: {
       name: "scaffold-app",
-      version: "1.0.0",
       description: "Scaffold a new Veryfront app with the right structure, config, and conventions",
-      requires: {
-        cli: ["init", "dev", "doctor"],
-        mcp: ["vf_list_templates", "vf_create_project"],
-      },
-      inputs: {
-        name: { type: "string", description: "Project name" },
-        template: {
-          type: "string",
-          default: "minimal",
-          description: "Template to use",
-        },
-      },
+      metadata: { version: "1.0.0" },
     },
     skillMd: `# Scaffold App
 
@@ -62,22 +50,10 @@ Create a new Veryfront application with proper structure and conventions.
     directory: "core:scaffold-app",
   },
   {
-    manifest: {
+    metadata: {
       name: "scaffold-ai-app",
-      version: "1.0.0",
       description: "Scaffold a Veryfront app with AI tools, agent definitions, and knowledge base",
-      requires: {
-        cli: ["init", "dev", "doctor", "workflow"],
-        mcp: ["vf_list_templates", "vf_create_project", "vf_scaffold"],
-      },
-      inputs: {
-        name: { type: "string", description: "Project name" },
-        provider: {
-          type: "string",
-          default: "anthropic",
-          description: "LLM provider to configure",
-        },
-      },
+      metadata: { version: "1.0.0" },
     },
     skillMd: `# Scaffold AI App
 
@@ -85,48 +61,32 @@ Create a Veryfront app with AI capabilities.
 
 ## Steps
 
-1. \`veryfront init <name> --template ai --yes --json\`
-2. \`veryfront install --with ai --yes --json\`
-3. Use vf_scaffold to generate AI components
-4. Configure provider API key in .env
+1. \`veryfront init <name> --template ai-agent --yes --json\`
+2. Use vf_scaffold to generate agents, tools, prompts, and workflows
+3. Add an app route such as app/api/ag-ui/route.ts
+4. Configure the provider token in .env
 5. \`veryfront doctor --json\` then \`veryfront dev\`
 
 ## Error Recovery
 
-- **Missing API key**: Set provider key in .env
+- **Missing provider token**: Set the expected provider token in .env
 - **Tool generation fails**: Use vf_get_conventions, scaffold manually`,
     directory: "core:scaffold-ai-app",
   },
   {
-    manifest: {
+    metadata: {
       name: "deploy-safely",
-      version: "1.0.0",
-      description: "Build, test, deploy, and verify — with automatic rollback on failure",
-      requires: {
-        cli: ["build", "test", "deploy"],
-        mcp: ["vf_get_errors"],
-      },
-      inputs: {
-        environment: {
-          type: "string",
-          default: "production",
-          description: "Target environment",
-        },
-        branch: {
-          type: "string",
-          default: "main",
-          description: "Branch to deploy",
-        },
-      },
+      description: "Build, test, deploy, and verify with rollback on failure",
+      metadata: { version: "1.0.0" },
     },
     skillMd: `# Deploy Safely
 
-Build, test, deploy, and verify — with rollback on failure.
+Build, test, deploy, and verify with rollback on failure.
 
 ## Steps
 
-1. \`veryfront build --json\` — abort if success: false
-2. \`veryfront test --json\` — abort if any test fails
+1. \`veryfront build --json\`, abort if success: false
+2. \`veryfront test --json\`, abort if any test fails
 3. \`veryfront deploy --env <environment> --branch <branch> --yes --json\`
 4. Use vf_get_errors to verify no runtime errors after deploy
 5. If errors: redeploy previous version
@@ -140,14 +100,10 @@ Build, test, deploy, and verify — with rollback on failure.
     directory: "core:deploy-safely",
   },
   {
-    manifest: {
+    metadata: {
       name: "debug-build",
-      version: "1.0.0",
       description: "Diagnose and fix build failures using structured error output",
-      requires: {
-        cli: ["build", "doctor"],
-        mcp: ["vf_get_errors", "vf_get_debug_context"],
-      },
+      metadata: { version: "1.0.0" },
     },
     skillMd: `# Debug Build
 
@@ -155,7 +111,7 @@ Diagnose and fix build failures.
 
 ## Steps
 
-1. \`veryfront build --json\` — capture error envelope
+1. \`veryfront build --json\`, capture error envelope
 2. Use vf_get_errors and vf_get_debug_context for details
 3. Common issues: import resolution, type errors, config errors
 4. Apply fix, rebuild: \`veryfront build --json\`
@@ -169,14 +125,10 @@ Diagnose and fix build failures.
     directory: "core:debug-build",
   },
   {
-    manifest: {
+    metadata: {
       name: "debug-runtime",
-      version: "1.0.0",
       description: "Diagnose runtime errors by connecting to dev server via MCP",
-      requires: {
-        cli: ["dev"],
-        mcp: ["vf_get_errors", "vf_get_debug_context"],
-      },
+      metadata: { version: "1.0.0" },
     },
     skillMd: `# Debug Runtime
 
@@ -199,14 +151,10 @@ Diagnose runtime errors via MCP.
     directory: "core:debug-runtime",
   },
   {
-    manifest: {
+    metadata: {
       name: "contribute",
-      version: "1.0.0",
-      description: "Onboard to veryfront-code — architecture, testing, conventions, PR process",
-      requires: {
-        cli: ["test", "lint", "schema"],
-        mcp: ["vf_get_conventions"],
-      },
+      description: "Onboard to veryfront-code architecture, testing, conventions, and PR process",
+      metadata: { version: "1.0.0" },
     },
     skillMd: `# Contribute
 

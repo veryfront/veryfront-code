@@ -1,61 +1,41 @@
-# Veryfront Project
+# Veryfront project guide
 
-Zero-config React meta-framework for AI-native applications.
+Follow `AGENTS.md` when it exists. If it does not exist, use this guide.
 
-## Quick Reference
+This is a Veryfront project. Veryfront is a framework for building and running AI apps and agents in TypeScript and React.
 
-| Command                          | Purpose                                  |
-| -------------------------------- | ---------------------------------------- |
-| `veryfront dev`                  | Start dev server (http://localhost:3000) |
-| `veryfront build`                | Production build                         |
-| `veryfront deploy`               | Deploy to Veryfront cloud                |
-| `veryfront generate page <name>` | Generate new page                        |
-| `veryfront generate api <name>`  | Generate API route                       |
+## Project conventions
 
-## Project Structure
+Use these folders as runtime boundaries. Create folders only when the feature needs them.
 
-- `src/pages/*.tsx` → Routes (file-based routing)
-- `src/api/*.ts` → API endpoints (`/api/*`)
-- `src/components/` → Shared components
-- `agents/` → AI agents
-- `tools/` → MCP tools
+- `app/`: pages, layouts, route handlers, and user-facing API routes.
+- `agents/`: model reasoning and tool use.
+- `tools/`: deterministic callable capabilities.
+- `workflows/`: multi-step coordination.
+- `tasks/`: background work targets.
+- `prompts/`: reusable prompt templates.
+- `resources/`: project data exposed to MCP clients.
+- `skills/`: reusable agent instructions in `skills/<id>/SKILL.md`.
+- `integrations/`: service connectors and integration-local code.
 
-## When Asked to Add Features
+## Developer loop
 
-1. **Pages**: Create in `src/pages/` (e.g., `about.tsx` → `/about`)
-2. **APIs**: Create in `src/api/` (e.g., `users.ts` → `/api/users`)
-3. **Components**: Create in `src/components/`
-4. **AI Agents**: Create in `agents/`
+1. Start local development with `veryfront dev`.
+2. Generate new files with `veryfront generate <type> <name>`.
+3. Inspect current CLI commands with `veryfront schema --json`.
+4. Use https://veryfront.com/docs when local files and CLI schema do not answer a Veryfront API or convention question.
+5. Run focused tests and lint before shipping.
 
-## Code Patterns
+## Coding agent loop
 
-```tsx
-// Page (src/pages/about.tsx)
-export default function About() {
-  return <h1>About</h1>;
-}
+When the Veryfront MCP server is connected, call `vf_bootstrap` once at session start. Use `vf_get_conventions` before adding files, `vf_scaffold` for new routes and AI primitives, `vf_get_errors` after edits, and `vf_run_tests` or `vf_run_lint` for verification.
 
-// API (src/api/hello.ts)
-export function GET() {
-  return Response.json({ message: "Hello" });
-}
+`veryfront dev` starts the HTTP MCP endpoint on the app port plus 2. With the default app port, use `http://localhost:3002/mcp`.
 
-// Dynamic API (src/api/users/[id].ts)
-export function GET(_req: Request, { params }: { params: { id: string } }) {
-  return Response.json({ id: params.id });
-}
-```
+If MCP is not connected, use `veryfront schema --json` and the documented CLI commands from the shell.
 
-## Conventions
+Prefer Veryfront scaffold tools over hand-written boilerplate. Keep app routes, agents, tools, workflows, tasks, resources, prompts, and skills in their expected folders.
 
-- Use TypeScript
-- Use React 19 features
-- Use Tailwind for styling
-- Co-locate tests (`*.test.ts`)
-- Use `#veryfront/*` imports
+## Inference
 
-## Testing
-
-- Run `veryfront dev` and check browser
-- API endpoints at `/api/*`
-- Run `deno task test` for tests
+Agent routes need model access. Use `veryfront login` for the Veryfront Cloud gateway, set `VERYFRONT_API_TOKEN`, or set provider keys such as `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`.

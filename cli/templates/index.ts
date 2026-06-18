@@ -6,7 +6,11 @@
  * to inline string templates.
  */
 
-import { loadTemplateFromDirectory, templateDirectoryExists } from "./loader.ts";
+import {
+  loadAiRuleTemplate,
+  loadTemplateFromDirectory,
+  templateDirectoryExists,
+} from "./loader.ts";
 import { STARTER_TEMPLATE_NAMES } from "./types.ts";
 import type {
   EnvVarConfig,
@@ -74,4 +78,8 @@ export async function getTemplate(name: TemplateName): Promise<TemplateFile[] | 
 
 export function getTemplateConfig(name: TemplateName): TemplateConfig | null {
   return templateConfigs[name] ?? null;
+}
+
+export function getAiRuleTemplate(templateName: string): string | null {
+  return loadAiRuleTemplate(templateName);
 }

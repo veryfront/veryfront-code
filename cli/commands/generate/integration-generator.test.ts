@@ -151,7 +151,6 @@ describe("cli/commands/generate/integration-generator", () => {
         tokenAuthMethod: "basic",
         additionalAuthParams: "access_type=offline,prompt=consent",
         usePKCE: true,
-        skipPrompts: true,
       });
 
       assertEquals(config.name, "twilio");
@@ -249,7 +248,7 @@ describe("cli/commands/generate/integration-generator", () => {
         });
 
         const tokenStore = await Deno.readTextFile(
-          join(projectDir, "ai", "integrations", "figma", "lib", "token-store.ts"),
+          join(projectDir, "integrations", "figma", "lib", "token-store.ts"),
         );
         const authRoute = await Deno.readTextFile(
           join(projectDir, "app", "api", "auth", "figma", "route.ts"),
@@ -273,6 +272,10 @@ describe("cli/commands/generate/integration-generator", () => {
         );
         assertStringIncludes(authRoute, 'params.set("code_challenge", challenge);');
         assertStringIncludes(authRoute, 'const PKCE_COOKIE_NAME = "figma_pkce_verifier";');
+        assertStringIncludes(
+          callbackRoute,
+          'from "../../../../integrations/figma/lib/token-store.ts";',
+        );
         assertStringIncludes(
           callbackRoute,
           'codeVerifier = parseCookies(request.headers.get("cookie") ?? "")[PKCE_COOKIE_NAME];',

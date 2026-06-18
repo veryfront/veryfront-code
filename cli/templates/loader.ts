@@ -31,6 +31,13 @@ export function loadTemplateFromDirectory(
   return Promise.resolve(getSortedFiles(entry));
 }
 
+export function loadAiRuleTemplate(templateName: string): string | null {
+  const entry = typedManifest.templates[`ai-rules:${templateName}`];
+  if (!entry) return null;
+
+  return entry.files[templateName] ?? null;
+}
+
 export function getTemplateDirectory(templateName: string): string {
   // For compatibility - returns a virtual path since templates are in manifest
   return `manifest://${templateName}`;

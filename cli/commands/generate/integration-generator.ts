@@ -81,7 +81,7 @@ export async function generateIntegration(
   console.log(green("Integration created successfully!"));
   console.log("");
   console.log("Files created:");
-  console.log(`  ${cyan("ai/integrations/" + config.name + "/")} - Integration directory`);
+  console.log(`  ${cyan("integrations/" + config.name + "/")} - Integration directory`);
   console.log("");
   console.log("Next steps:");
   console.log(`  1. Add your ${config.envVarPrefix}_* environment variables to .env`);
@@ -89,7 +89,7 @@ export async function generateIntegration(
     console.log(`  2. Configure OAuth app in ${config.displayName} developer portal`);
     console.log(`  3. Set callback URL to: /api/auth/${config.name}/callback`);
   }
-  console.log(`  4. Customize the generated tools in ai/integrations/${config.name}/tools/`);
+  console.log(`  4. Customize the generated tools in integrations/${config.name}/tools/`);
   console.log("");
 }
 
@@ -193,7 +193,7 @@ async function createIntegrationFiles(
   projectDir: string,
   config: IntegrationConfig,
 ): Promise<void> {
-  const baseDir = join(projectDir, "ai", "integrations", config.name);
+  const baseDir = join(projectDir, "integrations", config.name);
 
   await ensureDir(baseDir);
   await ensureDir(join(baseDir, "lib"));
@@ -484,7 +484,7 @@ export async function GET(): Promise<Response> {
 import {
   exchangeCodeForTokens,
   setTokens,
-} from "../../../../ai/integrations/${config.name}/lib/token-store.ts";
+} from "../../../../integrations/${config.name}/lib/token-store.ts";
 
 const USE_PKCE = ${usePKCELiteral};
 const PKCE_COOKIE_NAME = ${JSON.stringify(pkceCookieName)};

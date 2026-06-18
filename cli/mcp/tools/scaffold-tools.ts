@@ -4,147 +4,16 @@
 
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
-import { join } from "veryfront/platform/path";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import type { MCPTool } from "../tools.ts";
 import {
-  ensureDir,
-  fileExists,
-  formatError,
-  getFs,
-  getProjectDir,
+  SCAFFOLD_TYPES,
+  type ScaffoldHttpMethod,
+  scaffoldProjectFile,
   type ScaffoldResult,
-  toComponentName,
-  toSlug,
-} from "./helpers.ts";
-
-// ============================================================================
-// Scaffold Templates
-// ============================================================================
-
-function generatePageTemplate(name: string, componentName: string): string {
-  return `export default function ${componentName}() {
-  return (
-    <div>
-      <h1>${name}</h1>
-      <p>This is the ${name} page.</p>
-    </div>
-  );
-}
-`;
-}
-
-function generateLayoutTemplate(name: string, componentName: string): string {
-  return `export default function ${componentName}Layout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="${name}-layout">
-      {children}
-    </section>
-  );
-}
-`;
-}
-
-function generateApiTemplate(methods: string[]): string {
-  const handlers = methods.map((method) => {
-    if (method === "GET") {
-      return `export function GET(req: Request) {
-  return Response.json({ ok: true });
-}`;
-    }
-
-    return `export async function ${method}(req: Request) {
-  const body = await req.json();
-  return Response.json({ ok: true, received: body });
-}`;
-  });
-
-  return `${handlers.join("\n\n")}\n`;
-}
-
-function generateComponentTemplate(componentName: string): string {
-  return `interface ${componentName}Props {
-  children?: React.ReactNode;
-}
-
-export function ${componentName}({ children }: ${componentName}Props) {
-  return (
-    <div className="${componentName.toLowerCase()}">
-      {children}
-    </div>
-  );
-}
-`;
-}
-
-function generateToolTemplate(name: string): string {
-  return `import { tool } from "veryfront/tool";
-import { defineSchema, lazySchema } from "veryfront/schemas";
-
-const getParameters = defineSchema((v) => v.object({
-  // Add your parameters here
-  input: v.string().describe("Input parameter"),
-}));
-
-export default tool({
-  id: "${name}",
-  description: "Description of what this tool does",
-  parameters: lazySchema(getParameters),
-  execute: async ({ input }) => {
-    // Implement your tool logic here
-    return { result: input };
-  },
-});
-`;
-}
-
-function generateAgentTemplate(name: string, className: string): string {
-  return `import { agent } from "veryfront/agent";
-
-export default agent({
-  id: "${className.toLowerCase()}",
-  name: "${name}",
-  description: "Description of this agent's capabilities",
-  instructions: \`
-    You are an AI assistant specialized in ${name}.
-
-    Your capabilities:
-    - List your agent's capabilities here
-
-    Guidelines:
-    - Be helpful and accurate
-    - Ask for clarification when needed
-  \`,
-  tools: [
-    // Add tools this agent can use
-  ],
-});
-`;
-}
-
-function generatePromptTemplate(name: string): string {
-  return `import { prompt } from "veryfront/prompt";
-import { defineSchema, lazySchema } from "veryfront/schemas";
-
-const getArgsSchema = defineSchema((v) => v.object({
-  input: v.string().describe("User input"),
-}));
-
-export default prompt({
-  id: "${name}",
-  description: "Description of this prompt template",
-  argsSchema: lazySchema(getArgsSchema),
-  getContent: ({ input }) => [
-    { role: "system", content: "Role: describe what this assistant should do and its limits." },
-    { role: "user", content: input },
-  ],
-});
-`;
-}
+  type ScaffoldType,
+} from "../../scaffold/engine.ts";
+import { formatError, getProjectDir } from "./helpers.ts";
 
 // ============================================================================
 // Scaffold Configuration
@@ -152,9 +21,7 @@ export default prompt({
 
 const getScaffoldInput = defineSchema((v) =>
   v.object({
-    type: v.enum(["page", "api", "layout", "component", "tool", "agent", "prompt"]).describe(
-      "Type of entity to scaffold",
-    ),
+    type: v.enum(SCAFFOLD_TYPES).describe("Type of project file to scaffold"),
     name: v.string().describe(
       "Name/path of the entity (e.g., 'users', 'api/users', 'dashboard/settings')",
     ),
@@ -169,91 +36,26 @@ const getScaffoldInput = defineSchema((v) =>
 const scaffoldInput = lazySchema(getScaffoldInput);
 
 type ScaffoldInput = InferSchema<ReturnType<typeof getScaffoldInput>>;
-type ScaffoldType = ScaffoldInput["type"];
-
-interface ScaffoldConfig {
-  getDirectory: (projectDir: string, slug: string) => string;
-  getFilename: (slug: string, componentName: string) => string;
-  getContent: (name: string, slug: string, componentName: string, methods?: string[]) => string;
-}
-
-const SCAFFOLD_CONFIGS: Record<ScaffoldType, ScaffoldConfig> = {
-  page: {
-    getDirectory: (projectDir, slug) => join(projectDir, "app", slug),
-    getFilename: () => "page.tsx",
-    getContent: (name, _slug, componentName) => generatePageTemplate(name, componentName),
-  },
-  api: {
-    getDirectory: (projectDir, slug) => join(projectDir, "app", slug),
-    getFilename: () => "route.ts",
-    getContent: (_name, _slug, _componentName, methods) => generateApiTemplate(methods ?? ["GET"]),
-  },
-  layout: {
-    getDirectory: (projectDir, slug) => join(projectDir, "app", slug),
-    getFilename: () => "layout.tsx",
-    getContent: (name, _slug, componentName) => generateLayoutTemplate(name, componentName),
-  },
-  component: {
-    getDirectory: (projectDir) => join(projectDir, "components"),
-    getFilename: (_slug, componentName) => `${componentName}.tsx`,
-    getContent: (_name, _slug, componentName) => generateComponentTemplate(componentName),
-  },
-  tool: {
-    getDirectory: (projectDir) => join(projectDir, "ai", "tools"),
-    getFilename: (slug) => `${slug}.ts`,
-    getContent: (name) => generateToolTemplate(name),
-  },
-  agent: {
-    getDirectory: (projectDir) => join(projectDir, "ai", "agents"),
-    getFilename: (slug) => `${slug}.ts`,
-    getContent: (name, _slug, componentName) => generateAgentTemplate(name, componentName),
-  },
-  prompt: {
-    getDirectory: (projectDir) => join(projectDir, "ai", "prompts"),
-    getFilename: (slug) => `${slug}.ts`,
-    getContent: (_name, slug) => generatePromptTemplate(slug.replace(/-/g, "_")),
-  },
-};
 
 export const vfScaffold: MCPTool<ScaffoldInput, ScaffoldResult> = {
   name: "vf_scaffold",
   title: "Scaffold Code",
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   description:
-    "Use this when you need to generate new pages, API routes, layouts, components, AI tools, agents, or prompts with proper Veryfront conventions. Returns the created file path and content. May overwrite existing files at the target path. Do not use for creating entire projects — use vf_create_project instead.",
+    "Use this when you need to generate new pages, API routes, layouts, components, tools, agents, prompts, workflows, tasks, resources, or skills with Veryfront conventions. Returns created file paths and refuses existing target files. Do not use for creating entire projects. Use vf_create_project instead.",
   inputSchema: scaffoldInput,
   execute: (input) =>
     withSpan(
       "cli.mcp.tool.vf_scaffold",
       async () => {
         const projectDir = getProjectDir(input.projectPath);
-        const fs = getFs();
-        const slug = toSlug(input.name);
-        const componentName = toComponentName(input.name);
-
-        const config = SCAFFOLD_CONFIGS[input.type]!;
-        const directory = config.getDirectory(projectDir, slug);
-        const filename = config.getFilename(slug, componentName);
-        const filePath = join(directory, filename);
-
         try {
-          if (await fileExists(filePath)) {
-            return {
-              success: false,
-              files: [],
-              message: `${input.type} already exists at ${filePath}`,
-            };
-          }
-
-          await ensureDir(directory);
-          const content = config.getContent(input.name, slug, componentName, input.methods);
-          await fs.writeTextFile(filePath, content);
-
-          return {
-            success: true,
-            files: [{ path: filePath, created: true }],
-            message: `Created ${input.type} "${input.name}" successfully`,
-          };
+          return await scaffoldProjectFile({
+            projectDir,
+            type: input.type as ScaffoldType,
+            name: input.name,
+            methods: input.methods as ScaffoldHttpMethod[] | undefined,
+          });
         } catch (error) {
           return {
             success: false,
@@ -370,29 +172,31 @@ const CONVENTIONS: Record<string, Convention> = {
   ai: {
     topic: "AI / Agents",
     rules: [
-      "AI tools go in ai/tools/ directory",
-      "Agents go in ai/agents/ directory",
-      "Prompts go in ai/prompts/ directory",
+      "AI primitives live at the project root",
+      "Tools go in tools/ directory",
+      "Agents go in agents/ directory",
+      "Prompts go in prompts/ directory",
+      "Workflows go in workflows/ directory",
+      "Tasks go in tasks/ directory",
+      "Resources go in resources/ directory",
+      "Skills go in skills/<id>/SKILL.md",
       "Use defineSchema for tool parameter validation",
       "Tools should be focused on a single capability",
       "Agents combine tools with instructions for complex tasks",
     ],
     examples: [
       {
-        good: "ai/tools/search-docs.ts",
+        good: "tools/search-docs.ts",
         explanation: "Tools in dedicated directory with descriptive names",
       },
       {
-        good: `const getParameters = defineSchema((v) => v.object({
+        good: `export default tool({
+  inputSchema: defineSchema((v) => v.object({
   query: v.string(),
-}));
-
-export const searchTool = {
-  name: "search_docs",
-  parameters: lazySchema(getParameters),
+}))(),
   execute: async ({ query }) => { /* ... */ }
-};`,
-        explanation: "Tool with lazy schema parameters and typed execute function",
+});`,
+        explanation: "Tool with schema-backed input and typed execute function",
       },
     ],
   },

@@ -1,3 +1,10 @@
+---
+name: scaffold-app
+description: Scaffold a new Veryfront app with the right structure, config, and conventions.
+metadata:
+  version: "1.0.0"
+---
+
 # Scaffold App
 
 Create a new Veryfront application with proper structure and conventions.

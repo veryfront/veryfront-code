@@ -110,6 +110,10 @@ describe("init command integration", () => {
       const result = await runInitCommand([projectName, "-t", "ai-agent", "--skip-install"]);
 
       assertEquals(result.code, 0);
+      assertEquals(result.stdout?.includes("Project structure"), true);
+      assertEquals(result.stdout?.includes("app/"), true);
+      assertEquals(result.stdout?.includes("agents/"), true);
+      assertEquals(result.stdout?.includes("tools/"), true);
 
       const statResult = await stat(join(projectDir, "agents"));
       assertEquals(statResult.isDirectory, true);
@@ -192,6 +196,33 @@ describe("init command integration", () => {
 
       const packageJson = await readTextFile(join(projectDir, "package.json"));
       assertExists(packageJson.includes("veryfront"));
+    });
+
+    it("creates coding-agent instructions for every starter template", async () => {
+      for (const template of STARTER_TEMPLATE_NAMES) {
+        const name = `agents-${template}-${randomSuffix()}`;
+        const dir = join(TEST_DIR, name);
+
+        try {
+          const result = await runQuietInitCommand({
+            name,
+            template,
+            skipInstall: true,
+            skipEnvPrompt: true,
+            quiet: true,
+          });
+
+          assertEquals(result.code, 0, `${template} init failed`);
+          assertEquals(await exists(join(dir, "AGENTS.md")), true);
+
+          const content = await readTextFile(join(dir, "AGENTS.md"));
+          assertEquals(content.includes("vf_bootstrap"), true);
+          assertEquals(content.includes("veryfront schema --json"), true);
+          assertEquals(content.includes("src/pages"), false);
+        } finally {
+          await remove(dir, { recursive: true }).catch(() => {});
+        }
+      }
     });
 
     it("merges npm dependencies from selected integrations into package.json", async () => {

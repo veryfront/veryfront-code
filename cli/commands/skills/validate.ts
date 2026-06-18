@@ -1,15 +1,15 @@
 /**
- * Skills validate command — validate a skill directory
+ * Skills validate command, validate a skill directory
  *
  * @module cli/commands/skills/validate
  */
 
 import type { ParsedArgs } from "#cli/shared/types";
 import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json-output.ts";
-import { parseSkillJson } from "../../skills/types.ts";
-import { COMMANDS } from "../../help/command-definitions.ts";
 import { logError, logSuccess } from "#cli/utils";
 import { createFileSystem } from "veryfront/platform";
+import { basename } from "#std/path.ts";
+import { parseSkillFrontmatter, validateSkillMetadata } from "#veryfront/skill";
 
 interface ValidationIssue {
   severity: "error" | "warning";
@@ -18,59 +18,34 @@ interface ValidationIssue {
 
 export async function validateSkill(args: ParsedArgs): Promise<void> {
   const dir = (args._[2] as string | undefined) ?? ".";
+  const issues = await validateSkillDirectory(dir);
+
+  return outputResults(dir, issues);
+}
+
+export async function validateSkillDirectory(dir: string): Promise<ValidationIssue[]> {
   const issues: ValidationIssue[] = [];
   const fs = createFileSystem();
 
-  // Check skill.json exists and parses
-  let manifestRaw: string;
+  let content: string;
   try {
-    manifestRaw = await fs.readTextFile(`${dir}/skill.json`);
+    content = await fs.readTextFile(`${dir}/SKILL.md`);
   } catch {
-    issues.push({ severity: "error", message: "skill.json not found" });
-    return outputResults(dir, issues);
+    return [{ severity: "error", message: "SKILL.md not found" }];
   }
 
-  let parsed: ReturnType<typeof parseSkillJson>;
   try {
-    parsed = parseSkillJson(JSON.parse(manifestRaw));
-  } catch {
-    issues.push({
-      severity: "error",
-      message: "skill.json is not valid JSON",
-    });
-    return outputResults(dir, issues);
-  }
-
-  if (!parsed.success) {
-    issues.push({
-      severity: "error",
-      message: `skill.json schema error: ${parsed.error}`,
-    });
-    return outputResults(dir, issues);
-  }
-
-  // Check SKILL.md exists
-  try {
-    const content = await fs.readTextFile(`${dir}/SKILL.md`);
-    if (!content.trim()) {
-      issues.push({ severity: "warning", message: "SKILL.md is empty" });
+    const parsed = await parseSkillFrontmatter(content);
+    validateSkillMetadata(parsed.frontmatter, basename(dir));
+    if (!parsed.body.trim()) {
+      issues.push({ severity: "warning", message: "SKILL.md body is empty" });
     }
-  } catch {
-    issues.push({ severity: "error", message: "SKILL.md not found" });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    issues.push({ severity: "error", message });
   }
 
-  // Check required CLI commands exist
-  const cliReqs = parsed.data.requires?.cli ?? [];
-  for (const cmd of cliReqs) {
-    if (!COMMANDS[cmd]) {
-      issues.push({
-        severity: "warning",
-        message: `Required CLI command "${cmd}" not found in registry`,
-      });
-    }
-  }
-
-  return outputResults(dir, issues);
+  return issues;
 }
 
 async function outputResults(

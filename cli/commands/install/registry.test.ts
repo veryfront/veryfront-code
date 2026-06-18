@@ -123,11 +123,29 @@ describe("getTemplateContent", () => {
     const content = await getTemplateContent("skill");
     assertEquals(content.startsWith("---"), true);
     assertEquals(content.includes("name: veryfront"), true);
+    assertEquals(content.includes("license: Apache-2.0"), true);
+    assertEquals(content.includes("license: MIT"), false);
   });
 
   it("should load agents template", async () => {
     const content = await getTemplateContent("agents");
     assertEquals(content.includes("Veryfront"), true);
+    assertEquals(content.includes("vf_bootstrap"), true);
+    assertEquals(content.includes("veryfront.com/docs"), true);
+    assertEquals(content.includes("src/pages"), false);
+  });
+
+  it("should load tool-specific templates with current app conventions", async () => {
+    const targetIds = ["cursor", "claude-code", "copilot", "windsurf", "skill"] as const;
+
+    for (const targetId of targetIds) {
+      const content = await getTemplateContent(targetId);
+      assertEquals(content.includes("Veryfront"), true);
+      assertEquals(content.includes("app/"), true);
+      assertEquals(content.includes("veryfront.com/docs"), true);
+      assertEquals(content.includes("src/pages"), false);
+      assertEquals(content.includes("src/api"), false);
+    }
   });
 
   it("should throw for invalid tool ID", async () => {

@@ -1,33 +1,98 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { parseSkillJson } from "../../skills/types.ts";
+import { join } from "#std/path.ts";
+import { setJsonMode } from "../../shared/json-output.ts";
+import { createSkill } from "./create.ts";
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await Deno.stat(path);
+    return true;
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return false;
+    throw error;
+  }
+}
+
+async function withTempCwd(fn: (dir: string) => Promise<void>): Promise<void> {
+  const original = Deno.cwd();
+  const dir = await Deno.makeTempDir({ prefix: "vf-skill-create-" });
+  try {
+    Deno.chdir(dir);
+    await fn(dir);
+  } finally {
+    Deno.chdir(original);
+    await Deno.remove(dir, { recursive: true });
+  }
+}
+
+async function captureConsoleLog(run: () => Promise<void>): Promise<string> {
+  const originalLog = console.log;
+  const lines: string[] = [];
+  try {
+    console.log = (message?: unknown, ...rest: unknown[]) => {
+      lines.push([message, ...rest].map(String).join(" "));
+    };
+    await run();
+  } finally {
+    console.log = originalLog;
+  }
+  return lines.join("\n");
+}
 
 describe("Skills Create", () => {
-  describe("skill template produces valid manifest", () => {
-    it("generates valid JSON with required fields", () => {
-      const template = JSON.stringify({
-        name: "test-skill",
-        version: "1.0.0",
-        description: "test-skill skill",
-        requires: { cli: [], mcp: [] },
-        inputs: {},
+  describe("project skill scaffold", () => {
+    it("creates a project skill under skills/<id>/SKILL.md", async () => {
+      await withTempCwd(async (dir) => {
+        await createSkill({ _: ["skills", "create", "code-review"] });
+
+        const skillPath = join(dir, "skills", "code-review", "SKILL.md");
+        assert(await exists(skillPath));
+        assertEquals(await exists(join(dir, "code-review", "skill.json")), false);
+        assertEquals(await exists(join(dir, "code-review", "SKILL.md")), false);
+
+        const content = await Deno.readTextFile(skillPath);
+        assertStringIncludes(content, "name: code-review");
+        assertStringIncludes(content, "# Code Review");
       });
-      const parsed = JSON.parse(template);
-      assertEquals(parsed.name, "test-skill");
-      assertEquals(parsed.version, "1.0.0");
     });
 
-    it("generated manifest passes schema validation", () => {
-      const template = {
-        name: "my-skill",
-        version: "1.0.0",
-        description: "my-skill skill",
-        requires: { cli: [], mcp: [] },
-        inputs: {},
-      };
-      const result = parseSkillJson(template);
-      assertEquals(result.success, true);
+    it("does not overwrite an existing project skill", async () => {
+      await withTempCwd(async (dir) => {
+        const skillPath = join(dir, "skills", "code-review", "SKILL.md");
+        await Deno.mkdir(join(dir, "skills", "code-review"), { recursive: true });
+        await Deno.writeTextFile(skillPath, "existing");
+
+        await assertRejects(
+          () => createSkill({ _: ["skills", "create", "code-review"] }),
+          Error,
+          "already exists",
+        );
+        assertEquals(await Deno.readTextFile(skillPath), "existing");
+      });
+    });
+
+    it("returns project-relative file paths in JSON output", async () => {
+      await withTempCwd(async () => {
+        setJsonMode(true);
+        try {
+          const output = await captureConsoleLog(() =>
+            createSkill({ _: ["skills", "create", "code-review"] })
+          );
+          const payload = JSON.parse(output);
+
+          assertEquals(payload.success, true);
+          assertEquals(payload.data.files, ["skills/code-review/SKILL.md"]);
+        } finally {
+          setJsonMode(false);
+        }
+      });
     });
   });
 

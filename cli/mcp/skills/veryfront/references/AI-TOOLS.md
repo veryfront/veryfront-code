@@ -1,275 +1,196 @@
-# Veryfront AI Tools Reference
+# Veryfront tools reference
 
-Build AI-powered features with Veryfront's native AI tool system.
+Tools expose typed callable capabilities to agents, workflows, and MCP surfaces.
 
-## Overview
+## File location
 
-Veryfront provides first-class support for AI tools - functions that AI agents can call to perform actions. Tools are:
+Project tools live in `tools/`.
 
-- **Typed** - Full TypeScript support with defineSchema validation
-- **Composable** - Build complex workflows from simple tools
-- **Observable** - Built-in tracing and logging
-- **Testable** - Easy to unit test in isolation
+```text
+tools/
+  search-products.ts
+```
 
-## Creating AI Tools
+Use one file per capability. Keep the file focused on input validation,
+execution, and structured output.
 
-### Basic Structure
+## Create a tool
 
 ```ts
-// ai/tools/search-products.ts
+// tools/search-products.ts
 import { defineSchema } from "veryfront/schemas";
-import type { InferSchema } from "veryfront/extensions/schema";
+import { tool } from "veryfront/tool";
 
-export const name = "search-products";
-
-export const description = "Search for products by name, category, or price range";
-
-export const getParameters = defineSchema((v) =>
-  v.object({
-    query: v.string().describe("Search query"),
-    category: v.string().optional().describe("Filter by category"),
-    minPrice: v.number().optional().describe("Minimum price"),
-    maxPrice: v.number().optional().describe("Maximum price"),
-    limit: v.number().default(10).describe("Maximum results to return"),
-  })
-);
-export const parameters = getParameters();
-
-export type Input = InferSchema<ReturnType<typeof getParameters>>;
-
-export interface Product {
+interface Product {
   id: string;
   name: string;
-  price: number;
   category: string;
+  price: number;
 }
 
-export async function execute(input: Input): Promise<Product[]> {
-  const { query, category, minPrice, maxPrice, limit } = input;
+const products: Product[] = [
+  { id: "prod_1", name: "Starter Kit", category: "kits", price: 49 },
+  { id: "prod_2", name: "Team Plan", category: "plans", price: 199 },
+];
 
-  // Your implementation here
-  const products = await db.products.search({
-    query,
-    category,
-    priceRange: { min: minPrice, max: maxPrice },
-    limit,
-  });
+const inputSchema = defineSchema((v) =>
+  v.object({
+    query: v.string().describe("Search query"),
+    category: v.string().optional().describe("Optional category filter"),
+    maxResults: v.number().default(10).describe("Maximum results to return"),
+  })
+)();
 
-  return products;
-}
+export default tool({
+  id: "search-products",
+  description: "Search products by name or category.",
+  inputSchema,
+  execute: async ({ query, category, maxResults }) => {
+    const normalizedQuery = query.toLowerCase();
+
+    return products
+      .filter((product) => {
+        const matchesQuery = product.name.toLowerCase().includes(normalizedQuery) ||
+          product.category.toLowerCase().includes(normalizedQuery);
+        const matchesCategory = category ? product.category === category : true;
+        return matchesQuery && matchesCategory;
+      })
+      .slice(0, maxResults);
+  },
+});
 ```
 
-### Using the Scaffold
+## Scaffold a tool
 
-```
+```ts
 vf_scaffold({
-  type: "ai-tool",
-  name: "Search Products",
-  slug: "search-products"
-})
+  type: "tool",
+  name: "search-products",
+});
 ```
 
-This creates the boilerplate structure in `ai/tools/search-products.ts`.
+This creates `tools/search-products.ts`.
 
-## Tool Anatomy
+## Tool shape
 
-### name
+### `id`
 
-Unique identifier for the tool. Use kebab-case.
+Use a stable identifier when agents or workflows refer to the tool directly.
+Keep it lowercase and descriptive, for example `search-products`.
 
-```ts
-export const name = "send-email";
-```
+### `description`
 
-**Guidelines:**
+Describe the operation in one sentence. The model uses this text to decide when
+to call the tool.
 
-- Verb-noun format: `search-products`, `create-user`, `send-email`
-- Descriptive but concise
-- No special characters except hyphens
+### `inputSchema`
 
-### description
-
-Human-readable description of what the tool does. This is shown to the AI.
+Define tool input with `defineSchema`. Add `.describe()` to fields the model
+must understand.
 
 ```ts
-export const description = "Send an email to a recipient with subject and body";
-```
-
-**Guidelines:**
-
-- Start with a verb
-- Explain the action and its purpose
-- Mention key parameters
-- Keep under 200 characters
-
-### parameters
-
-Schema defining the input via `defineSchema`. Each field should have a `.describe()`.
-
-```ts
-export const parameters = defineSchema((v) =>
+const inputSchema = defineSchema((v) =>
   v.object({
     to: v.string().email().describe("Recipient email address"),
     subject: v.string().max(200).describe("Email subject line"),
-    body: v.string().describe("Email body in plain text or HTML"),
-    priority: v.enum(["low", "normal", "high"]).default("normal")
-      .describe("Email priority level"),
+    body: v.string().describe("Email body"),
+    priority: v.enum(["low", "normal", "high"]).default("normal"),
   })
 )();
 ```
 
-**Guidelines:**
+### `execute`
 
-- Use `.describe()` on every field - AI reads these
-- Set sensible defaults with `.default()`
-- Use `.optional()` for non-required fields
-- Add validation: `.email()`, `.url()`, `.min()`, `.max()`
-
-### execute
-
-The function that performs the action. Must be async.
+Return structured data. Throw errors with actionable messages.
 
 ```ts
-export async function execute(input: Input): Promise<Output> {
-  // Implementation
-}
-```
-
-**Guidelines:**
-
-- Always return structured data, not formatted text
-- Throw descriptive errors for failures
-- Keep functions focused - one responsibility
-- Use dependency injection for testability
-
-## Return Types
-
-### Structured Data
-
-Return objects or arrays that can be processed further:
-
-```ts
-// Good - Structured
-return {
-  success: true,
-  orderId: "ord_123",
-  total: 99.99,
-  items: [{ id: "item_1", quantity: 2 }],
-};
-
-// Bad - Formatted text
-return "Order ord_123 created successfully with total $99.99";
-```
-
-### Error Handling
-
-Throw errors with clear messages:
-
-```ts
-export async function execute(input: Input) {
-  const product = await db.products.findById(input.productId);
-
-  if (!product) {
-    throw new Error(`Product not found: ${input.productId}`);
-  }
-
-  if (product.stock < input.quantity) {
-    throw new Error(
-      `Insufficient stock. Available: ${product.stock}, Requested: ${input.quantity}`,
-    );
-  }
-
-  return await createOrder(product, input.quantity);
-}
-```
-
-### Pagination
-
-For list operations, return pagination info:
-
-```ts
-interface SearchResult<T> {
-  items: T[];
-  total: number;
-  page: number;
-  pageSize: number;
-  hasMore: boolean;
-}
-
-export async function execute(input: Input): Promise<SearchResult<Product>> {
-  const { items, total } = await db.products.search({
-    query: input.query,
-    skip: (input.page - 1) * input.pageSize,
-    take: input.pageSize,
-  });
+execute: (async ({ orderId, status }) => {
+  if (!orderId) throw new Error("Order ID is required");
 
   return {
-    items,
-    total,
-    page: input.page,
-    pageSize: input.pageSize,
-    hasMore: input.page * input.pageSize < total,
+    orderId,
+    status,
+    updated: true,
   };
-}
+});
 ```
 
-## Tool Categories
+## Common tool types
 
-### Query Tools
+### Query tool
 
-Read-only operations that fetch data.
+Use a query tool for read-only lookups.
 
 ```ts
-// ai/tools/get-user.ts
-export const name = "get-user";
-export const description = "Retrieve user details by ID";
+// tools/get-user.ts
+import { defineSchema } from "veryfront/schemas";
+import { tool } from "veryfront/tool";
 
-export const parameters = defineSchema((v) =>
+const inputSchema = defineSchema((v) =>
   v.object({
     userId: v.string().describe("User ID to look up"),
   })
 )();
 
-export async function execute({ userId }) {
-  return await db.users.findById(userId);
-}
+export default tool({
+  id: "get-user",
+  description: "Retrieve user details by ID.",
+  inputSchema,
+  execute: async ({ userId }) => {
+    return {
+      id: userId,
+      name: "Example User",
+    };
+  },
+});
 ```
 
-### Mutation Tools
+### Mutation tool
 
-Operations that create, update, or delete data.
+Use a mutation tool for operations that write data. Check authorization before
+changing state.
 
 ```ts
-// ai/tools/update-order-status.ts
-export const name = "update-order-status";
-export const description = "Update the status of an order";
+// tools/update-order-status.ts
+import { defineSchema } from "veryfront/schemas";
+import { tool } from "veryfront/tool";
 
-export const parameters = defineSchema((v) =>
+const inputSchema = defineSchema((v) =>
   v.object({
     orderId: v.string().describe("Order ID"),
     status: v.enum(["pending", "processing", "shipped", "delivered", "cancelled"])
       .describe("New order status"),
-    note: v.string().optional().describe("Optional note about the status change"),
+    note: v.string().optional().describe("Optional status note"),
   })
 )();
 
-export async function execute({ orderId, status, note }) {
-  const order = await db.orders.update(orderId, { status, note });
-  await notifyCustomer(order);
-  return { success: true, order };
-}
+export default tool({
+  id: "update-order-status",
+  description: "Update the status of an order.",
+  inputSchema,
+  execute: async ({ orderId, status, note }, context) => {
+    if (!context?.authToken) throw new Error("Authentication is required");
+
+    return {
+      success: true,
+      orderId,
+      status,
+      note: note ?? null,
+    };
+  },
+});
 ```
 
-### Integration Tools
+### Integration tool
 
-Tools that interact with external services.
+Use an integration tool for external services. Keep secrets out of tool output.
 
 ```ts
-// ai/tools/send-slack-message.ts
-export const name = "send-slack-message";
-export const description = "Send a message to a Slack channel";
+// tools/send-slack-message.ts
+import { defineSchema } from "veryfront/schemas";
+import { tool } from "veryfront/tool";
 
-export const parameters = defineSchema((v) =>
+const inputSchema = defineSchema((v) =>
   v.object({
     channel: v.string().describe("Slack channel name or ID"),
     message: v.string().describe("Message content"),
@@ -277,212 +198,49 @@ export const parameters = defineSchema((v) =>
   })
 )();
 
-export async function execute({ channel, message, threadTs }) {
-  const result = await slack.chat.postMessage({
-    channel,
-    text: message,
-    thread_ts: threadTs,
-  });
-
-  return {
-    success: true,
-    messageTs: result.ts,
-    channel: result.channel,
-  };
-}
+export default tool({
+  id: "send-slack-message",
+  description: "Send a message to a Slack channel.",
+  inputSchema,
+  execute: async ({ channel, message, threadTs }) => {
+    return {
+      success: true,
+      channel,
+      threadTs: threadTs ?? null,
+      messageLength: message.length,
+    };
+  },
+});
 ```
 
-### Computation Tools
+## Testing
 
-Tools that perform calculations or transformations.
-
-```ts
-// ai/tools/calculate-shipping.ts
-export const name = "calculate-shipping";
-export const description = "Calculate shipping cost based on destination and weight";
-
-export const parameters = defineSchema((v) =>
-  v.object({
-    origin: v.string().describe("Origin zip code"),
-    destination: v.string().describe("Destination zip code"),
-    weightKg: v.number().positive().describe("Package weight in kilograms"),
-    service: v.enum(["standard", "express", "overnight"]).describe("Shipping service"),
-  })
-)();
-
-export async function execute(input) {
-  const rate = await shippingProvider.getRate(input);
-  return {
-    cost: rate.cost,
-    currency: "USD",
-    estimatedDays: rate.transitDays,
-    carrier: rate.carrier,
-  };
-}
-```
-
-## Composing Tools
-
-### Tool Dependencies
-
-Tools can use other tools internally:
+Import the default tool and call `execute`. The tool validates input before the
+implementation runs.
 
 ```ts
-// ai/tools/process-refund.ts
-import { execute as getOrder } from "./get-order";
-import { execute as updateOrderStatus } from "./update-order-status";
-import { execute as createRefund } from "./create-refund";
-
-export async function execute({ orderId, reason }) {
-  // Get order details
-  const order = await getOrder({ orderId });
-
-  if (order.status === "refunded") {
-    throw new Error("Order already refunded");
-  }
-
-  // Create refund
-  const refund = await createRefund({
-    amount: order.total,
-    orderId,
-    reason,
-  });
-
-  // Update order status
-  await updateOrderStatus({
-    orderId,
-    status: "refunded",
-    note: `Refund ${refund.id}: ${reason}`,
-  });
-
-  return { success: true, refundId: refund.id };
-}
-```
-
-### Tool Pipelines
-
-Create higher-level tools that orchestrate multiple operations:
-
-```ts
-// ai/tools/onboard-customer.ts
-export const name = "onboard-customer";
-export const description = "Complete customer onboarding process";
-
-export const parameters = defineSchema((v) =>
-  v.object({
-    email: v.string().email(),
-    name: v.string(),
-    plan: v.enum(["free", "pro", "enterprise"]),
-  })
-)();
-
-export async function execute(input) {
-  // 1. Create account
-  const user = await createUser({ email: input.email, name: input.name });
-
-  // 2. Set up subscription
-  const subscription = await createSubscription({
-    userId: user.id,
-    plan: input.plan,
-  });
-
-  // 3. Send welcome email
-  await sendEmail({
-    to: input.email,
-    template: "welcome",
-    data: { name: input.name, plan: input.plan },
-  });
-
-  // 4. Create initial resources
-  await createDefaultWorkspace({ userId: user.id });
-
-  return {
-    userId: user.id,
-    subscriptionId: subscription.id,
-    status: "onboarded",
-  };
-}
-```
-
-## Testing Tools
-
-### Unit Tests
-
-```ts
-// ai/tools/search-products.test.ts
-import { describe, expect, it, vi } from "vitest";
-import { execute, parameters } from "./search-products";
+// tools/search-products.test.ts
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import searchProducts from "./search-products.ts";
 
 describe("search-products", () => {
-  it("validates input", () => {
-    expect(() => parameters.parse({})).toThrow();
-    expect(() => parameters.parse({ query: "" })).not.toThrow();
+  it("validates input", async () => {
+    await assertRejects(() => searchProducts.execute({ query: 123 } as never));
   });
 
-  it("returns matching products", async () => {
-    vi.mock("../db", () => ({
-      products: {
-        search: vi.fn().mockResolvedValue([
-          { id: "1", name: "Widget", price: 10 },
-        ]),
-      },
-    }));
-
-    const result = await execute({ query: "widget" });
-    expect(result).toHaveLength(1);
-    expect(result[0].name).toBe("Widget");
-  });
-
-  it("handles empty results", async () => {
-    const result = await execute({ query: "nonexistent" });
-    expect(result).toEqual([]);
+  it("returns structured results", async () => {
+    const result = await searchProducts.execute({ query: "team" });
+    assertEquals(Array.isArray(result), true);
   });
 });
 ```
 
-### Integration Tests
+## Guidelines
 
-```ts
-// ai/tools/create-order.integration.test.ts
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { execute } from "./create-order";
-import { setupTestDb, teardownTestDb } from "../test-utils";
-
-describe("create-order integration", () => {
-  beforeAll(setupTestDb);
-  afterAll(teardownTestDb);
-
-  it("creates order and updates inventory", async () => {
-    const result = await execute({
-      customerId: "test-customer",
-      items: [{ productId: "prod-1", quantity: 2 }],
-    });
-
-    expect(result.success).toBe(true);
-    expect(result.orderId).toBeDefined();
-
-    // Verify inventory was updated
-    const product = await db.products.findById("prod-1");
-    expect(product.stock).toBe(8); // Was 10, ordered 2
-  });
-});
-```
-
-## Best Practices
-
-1. **Single Responsibility** - Each tool does one thing well
-2. **Clear Descriptions** - AI needs good descriptions to use tools correctly
-3. **Structured Returns** - Return data, not formatted text
-4. **Graceful Errors** - Throw descriptive errors, handle edge cases
-5. **Idempotency** - Mutation tools should be safe to retry
-6. **Validation** - Validate all inputs with defineSchema
-7. **Testing** - Unit test logic, integration test side effects
-8. **Documentation** - Document complex tools with examples
-
-## Security Considerations
-
-1. **Authorization** - Check user permissions in tools
-2. **Input Sanitization** - Don't trust AI-provided inputs blindly
-3. **Rate Limiting** - Protect expensive operations
-4. **Audit Logging** - Log sensitive tool executions
-5. **Secrets** - Never expose API keys in tool outputs
+1. Keep each tool focused on one capability.
+2. Validate all input with `defineSchema`.
+3. Return objects or arrays instead of formatted prose.
+4. Throw clear errors for invalid state, missing auth, and failed dependencies.
+5. Keep long-running coordination in workflows or tasks.
+6. Never return secrets, provider tokens, cookies, or private prompts.

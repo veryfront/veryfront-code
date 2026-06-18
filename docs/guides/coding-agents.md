@@ -17,6 +17,30 @@ The CLI MCP server is development-only. `veryfront start` does not expose
 - An MCP-aware coding agent such as Claude Code, Cursor, or any client that
   speaks Model Context Protocol over HTTP or stdio.
 
+## Project instructions
+
+Starter templates include `AGENTS.md` at the project root. Coding agents should
+read that file first. It explains Veryfront folders, the developer loop, the MCP
+bootstrap step, inference setup, and when to use https://veryfront.com/docs.
+
+For older projects, add the same guide with:
+
+```bash
+veryfront install agents
+```
+
+Tool-specific files are still available:
+
+```bash
+veryfront install claude-code
+veryfront install cursor
+veryfront install copilot
+veryfront install windsurf
+```
+
+Use `AGENTS.md` as the shared source of truth when multiple coding agents work
+in the same project.
+
 ## Choose a transport
 
 The CLI MCP server supports two transports. Most agents work with HTTP.
@@ -82,7 +106,7 @@ The CLI MCP exposes a focused toolset for the development loop. The names below 
 | `vf_get_status`          | Inspect dev-server uptime, ports, and active features.       |
 | `vf_list_routes`         | List every route the dev server has registered.              |
 | `vf_preview_route`       | Render a route's HTTP response without opening a browser.    |
-| `vf_scaffold`            | Generate a page, API route, component, tool, or agent.       |
+| `vf_scaffold`            | Generate routes, components, and AI primitives.              |
 | `vf_run_tests`           | Run the project's test suite.                                |
 | `vf_run_lint`            | Run the linter.                                              |
 | `vf_trigger_hmr`         | Force a browser refresh after an external file change.       |
@@ -91,7 +115,15 @@ The CLI MCP exposes a focused toolset for the development loop. The names below 
 | `vf_create_project`      | Bootstrap a new project from a template.                     |
 | `vf_list_local_projects` | Find Veryfront projects on the filesystem.                   |
 
-Use `tools/list` to inspect the tools exposed by the active MCP connection. Use `vf_get_schema` from the agent, or `veryfront schema --json` from your shell, when you need the CLI command schema.
+Use `tools/list` to inspect the tools exposed by the active MCP connection. Use
+`vf_get_schema` from the agent, or `veryfront schema --json` from your shell,
+when you need the CLI command schema.
+
+At the start of a coding-agent session, ask the agent to call `vf_bootstrap`.
+Then use `vf_get_conventions` before adding files, `vf_scaffold` for new files,
+`vf_get_errors` after edits, and `vf_run_tests` or `vf_run_lint` for
+verification. Use https://veryfront.com/docs when local files, MCP tools, and
+CLI schema do not answer a Veryfront API or convention question.
 
 ## Verify it worked
 

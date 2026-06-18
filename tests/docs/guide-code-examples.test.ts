@@ -79,6 +79,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "extension-authoring.md",
   "extensions.md",
   "head-and-seo.md",
+  "index.md",
   "installation.md",
   "create-frontend.md",
   "create-project.md",
@@ -169,6 +170,26 @@ describe("Guide: agent-service-runtime.md", () => {
 
     const handler = createAgUiHandler("assistant");
     assertEquals(typeof handler, "function");
+  });
+});
+
+describe("Guide: index.md", () => {
+  it("documents the CLI and coding-agent workflow from the overview", async () => {
+    const guide = await readGuide("index.md");
+
+    for (
+      const snippet of [
+        "npm create veryfront",
+        "cd <PROJECT_NAME>",
+        "veryfront dev",
+        "veryfront generate <type> <name>",
+        "veryfront schema --json",
+        "AGENTS.md",
+        "vf_bootstrap",
+      ]
+    ) {
+      assertStringIncludes(guide, snippet);
+    }
   });
 });
 
@@ -601,12 +622,22 @@ describe("Guide: installation.md", () => {
     const guide = await readGuide("installation.md");
 
     const expectedOneLiners = [
-      "curl -fsSL https://veryfront.com/install.sh | sh",
-      "irm https://veryfront.com/install.ps1 | iex",
-      "brew install veryfront/tap/veryfront",
       "npm install veryfront",
+      "pnpm add veryfront",
+      "yarn add veryfront",
+      "bun add veryfront",
       "deno add npm:veryfront",
+      "npm create veryfront",
+      "pnpm create veryfront",
+      "yarn create veryfront",
+      "bun create veryfront",
+      "npm install -g veryfront",
+      "pnpm add -g veryfront",
+      "yarn global add veryfront",
+      "bun add -g veryfront",
       "npx veryfront",
+      "veryfront install agents",
+      "veryfront --version",
     ];
 
     for (const command of expectedOneLiners) {
@@ -623,9 +654,12 @@ describe("Guide: installation.md", () => {
         "## Blank or existing project",
         "## New scaffolded project",
         "## Install the CLI",
-        "### macOS and Linux",
-        "### Windows",
-        "### npx (one-shot)",
+        "### npm",
+        "### pnpm",
+        "### yarn",
+        "### bun",
+        "## One-shot CLI usage",
+        "## Coding-agent setup",
         "## Verify the CLI",
       ]
     ) {

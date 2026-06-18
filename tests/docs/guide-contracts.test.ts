@@ -489,9 +489,10 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     snippets: [
       "npm install veryfront",
       "deno add npm:veryfront",
-      "brew install veryfront/tap/veryfront",
-      "veryfront.com/install.sh",
-      "veryfront.com/install.ps1",
+      "npm create veryfront",
+      "npm install -g veryfront",
+      "npx veryfront",
+      "veryfront install agents",
     ],
   },
   "getting-started/create-agent.md": {

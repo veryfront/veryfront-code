@@ -98,6 +98,7 @@ The `minimal` template creates:
 
 ```
 test-app/
+  AGENTS.md        # Project guide for coding agents
   app/
     layout.tsx      # Root layout wrapping all pages
     page.tsx        # Home page (/)
@@ -111,6 +112,7 @@ The `ai-agent` template also creates:
 
 ```
 test-app/
+  AGENTS.md         # Project guide for coding agents
   agents/
     assistant.ts    # AI agent definition
   tools/
@@ -126,6 +128,11 @@ test-app/
 Pages live in `app/`. The agent template also adds root-level `agents/` and
 `tools/`. For the convention behind these directories, see
 [Framework conventions](../concepts/framework-conventions.md).
+
+Every starter includes `AGENTS.md`. Coding agents should read that file first,
+then use `veryfront schema --json` or the Veryfront MCP tools for current CLI
+and project facts. Use [Coding agents](../guides/coding-agents.md) to connect
+Claude Code, Cursor, Codex, or another MCP-aware agent.
 
 ## Verify it worked
 

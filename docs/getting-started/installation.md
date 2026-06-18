@@ -67,37 +67,56 @@ bun create veryfront
 
 Install the CLI globally when you use Veryfront commands often.
 
-### macOS and Linux
-
-Use the standalone installer:
+### npm
 
 ```bash
-curl -fsSL https://veryfront.com/install.sh | sh
+npm install -g veryfront
 ```
 
-This installs the latest standalone binary and adds it to your shell path.
+This installs the latest published Veryfront CLI and adds `veryfront` to your
+shell path.
 
-### Windows
-
-```powershell
-irm https://veryfront.com/install.ps1 | iex
-```
-
-This installs the latest standalone binary and adds it to your user path.
-
-### Homebrew
+### pnpm
 
 ```bash
-brew install veryfront/tap/veryfront
+pnpm add -g veryfront
 ```
 
-### npx (one-shot)
+### yarn
+
+```bash
+yarn global add veryfront
+```
+
+### bun
+
+```bash
+bun add -g veryfront
+```
+
+## One-shot CLI usage
+
+Use `npx` when you do not want a global install:
 
 ```bash
 npx veryfront
 ```
 
-Runs the latest `veryfront` CLI without installing it globally.
+Runs the latest published `veryfront` CLI without installing it globally.
+
+Use `npm create veryfront` when you want to scaffold a new project.
+
+## Coding-agent setup
+
+Starter templates include `AGENTS.md`. For older projects, install the shared
+project guide:
+
+```bash
+veryfront install agents
+```
+
+Then run `veryfront dev` and connect your MCP-aware coding agent to the printed
+MCP endpoint. See [Coding agents](../guides/coding-agents.md).
 
 ## Verify the CLI
 

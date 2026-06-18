@@ -5,7 +5,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { handleGenerateCommand } from "./handler.ts";
+import { handleGenerateCommand, parseGenerateArgs } from "./handler.ts";
 import type { ParsedArgs } from "#cli/shared/types";
 
 describe("commands/generate/handler", () => {
@@ -67,12 +67,36 @@ describe("commands/generate/handler", () => {
       assertEquals(args._[2], undefined);
     });
 
-    it("supports provider type", () => {
-      const args: ParsedArgs = {
+    it("parses all shared scaffold types", () => {
+      const types = [
+        "page",
+        "layout",
+        "api",
+        "component",
+        "tool",
+        "agent",
+        "prompt",
+        "workflow",
+        "task",
+        "resource",
+        "skill",
+      ];
+
+      for (const type of types) {
+        const result = parseGenerateArgs({
+          _: ["generate", type, "example"],
+        });
+
+        assertEquals(result.success, true, `expected ${type} to parse`);
+      }
+    });
+
+    it("rejects provider type because the generator does not implement it", () => {
+      const result = parseGenerateArgs({
         _: ["generate", "provider", "theme"],
-      };
-      assertEquals(args._[1], "provider");
-      assertEquals(args._[2], "theme");
+      });
+
+      assertEquals(result.success, false);
     });
 
     it("handles nested path names", () => {

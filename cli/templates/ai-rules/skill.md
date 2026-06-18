@@ -1,7 +1,7 @@
 ---
 name: veryfront
-description: Build and deploy fullstack AI-native React apps with Veryfront CLI
-license: MIT
+description: Build and run AI apps and agents with Veryfront CLI
+license: Apache-2.0
 compatibility: Claude Code, Cursor, VS Code, Codex, Gemini CLI
 metadata:
   author: veryfront
@@ -10,77 +10,38 @@ metadata:
 
 # Veryfront
 
-Zero-config React meta-framework for AI-native applications.
+Veryfront is a framework for building and running AI apps and agents in TypeScript and React.
 
-## Commands
+## Project conventions
 
-| Command                          | Purpose                           |
-| -------------------------------- | --------------------------------- |
-| `veryfront dev`                  | Start development server with HMR |
-| `veryfront build`                | Build for production              |
-| `veryfront deploy`               | Deploy to Veryfront cloud         |
-| `veryfront generate page <name>` | Generate a new page               |
-| `veryfront generate api <name>`  | Generate an API route             |
+Use these folders as runtime boundaries. Create folders only when the feature needs them.
 
-## Project Structure
+- `app/`: pages, layouts, route handlers, and user-facing API routes.
+- `agents/`: model reasoning and tool use.
+- `tools/`: deterministic callable capabilities.
+- `workflows/`: multi-step coordination.
+- `tasks/`: background work targets.
+- `prompts/`: reusable prompt templates.
+- `resources/`: project data exposed to MCP clients.
+- `skills/`: reusable agent instructions in `skills/<id>/SKILL.md`.
+- `integrations/`: service connectors and integration-local code.
 
-```
-src/
-├── pages/           # File-based routing (*.tsx → routes)
-├── api/             # API routes (*.ts → /api/*)
-├── components/      # Shared React components
-├── ai/
-│   ├── agents/      # AI agents
-│   └── tools/       # MCP tools
-└── styles/          # Global styles
-```
+## Developer loop
 
-## Adding Features
+1. Start local development with `veryfront dev`.
+2. Generate new files with `veryfront generate <type> <name>`.
+3. Inspect current CLI commands with `veryfront schema --json`.
+4. Use https://veryfront.com/docs when local files and CLI schema do not answer a Veryfront API or convention question.
+5. Run focused tests and lint before shipping.
 
-- **New page**: Create `src/pages/about.tsx` → `/about`
-- **API endpoint**: Create `src/api/users.ts` → `/api/users`
-- **AI agent**: Create `agents/assistant.ts`
-- **MCP tool**: Create `tools/search.ts`
+## Coding agent loop
 
-## Code Examples
+When the Veryfront MCP server is connected, call `vf_bootstrap` once at session start. Use `vf_get_conventions` before adding files, `vf_scaffold` for new routes and AI primitives, `vf_get_errors` after edits, and `vf_run_tests` or `vf_run_lint` for verification.
 
-### Page Component
+`veryfront dev` starts the HTTP MCP endpoint on the app port plus 2. With the default app port, use `http://localhost:3002/mcp`.
 
-```tsx
-// src/pages/about.tsx
-export default function About() {
-  return <h1>About</h1>;
-}
-```
+If MCP is not connected, use `veryfront schema --json` and the documented CLI commands from the shell.
 
-### API Route
+## Inference
 
-```ts
-// src/api/hello.ts
-export function GET() {
-  return Response.json({ message: "Hello" });
-}
-```
-
-### Dynamic API Route
-
-```ts
-// src/api/users/[id].ts
-export function GET(_req: Request, { params }: { params: { id: string } }) {
-  return Response.json({ id: params.id });
-}
-```
-
-## Conventions
-
-- TypeScript required
-- React 19 features (use, Server Components)
-- Tailwind CSS for styling
-- Co-locate tests with implementation
-- Use `#veryfront/*` imports for framework modules
-
-## Testing
-
-- Development: `veryfront dev` (http://localhost:3000)
-- API endpoints: `/api/*`
-- Run tests: `deno task test`
+Agent routes need model access. Use `veryfront login` for the Veryfront Cloud gateway, set `VERYFRONT_API_TOKEN`, or set provider keys such as `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`.

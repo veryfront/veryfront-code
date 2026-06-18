@@ -1,6 +1,6 @@
 # SaaS Starter
 
-A production-ready app with authentication, conversation memory, and a full UI.
+A SaaS-shaped starter with authentication, conversation memory, and a full UI.
 
 ## What's included
 

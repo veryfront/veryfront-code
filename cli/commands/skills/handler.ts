@@ -27,10 +27,10 @@ async function handleSkillList(): Promise<void> {
       createSuccessEnvelope(
         "skills",
         skills.map((s) => ({
-          name: s.manifest.name,
-          version: s.manifest.version,
-          description: s.manifest.description,
-          requires: s.manifest.requires,
+          name: s.metadata.name,
+          description: s.metadata.description,
+          allowedTools: s.metadata.allowedTools,
+          directory: s.directory,
         })),
       ),
     );
@@ -47,10 +47,10 @@ async function handleSkillList(): Promise<void> {
 
   console.log(`\n  ${bold("Available Skills")}\n`);
   for (const skill of skills) {
-    console.log(
-      `  ${bold(skill.manifest.name)} ${dim(`v${skill.manifest.version}`)}`,
-    );
-    console.log(`    ${skill.manifest.description}`);
+    const version = skill.metadata.metadata?.version;
+    const suffix = version ? ` ${dim(`v${version}`)}` : "";
+    console.log(`  ${bold(skill.metadata.name)}${suffix}`);
+    console.log(`    ${skill.metadata.description}`);
   }
   console.log();
 }
@@ -71,7 +71,7 @@ async function handleSkillInfo(args: ParsedArgs): Promise<void> {
   if (isJsonMode()) {
     await outputJson(
       createSuccessEnvelope("skills", {
-        ...skill.manifest,
+        ...skill.metadata,
         content: skill.skillMd,
         directory: skill.directory,
       }),
@@ -79,15 +79,12 @@ async function handleSkillInfo(args: ParsedArgs): Promise<void> {
     return;
   }
 
-  console.log(`\n  ${bold(skill.manifest.name)} ${dim(`v${skill.manifest.version}`)}`);
-  console.log(`  ${skill.manifest.description}\n`);
-  if (skill.manifest.requires) {
-    if (skill.manifest.requires.cli?.length) {
-      console.log(`  ${dim("CLI:")} ${skill.manifest.requires.cli.join(", ")}`);
-    }
-    if (skill.manifest.requires.mcp?.length) {
-      console.log(`  ${dim("MCP:")} ${skill.manifest.requires.mcp.join(", ")}`);
-    }
+  const version = skill.metadata.metadata?.version;
+  const suffix = version ? ` ${dim(`v${version}`)}` : "";
+  console.log(`\n  ${bold(skill.metadata.name)}${suffix}`);
+  console.log(`  ${skill.metadata.description}\n`);
+  if (skill.metadata.allowedTools?.length) {
+    console.log(`  ${dim("Allowed tools:")} ${skill.metadata.allowedTools.join(", ")}`);
   }
   if (skill.skillMd) {
     console.log(`\n${skill.skillMd}`);

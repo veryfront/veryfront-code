@@ -28,7 +28,7 @@ export const mcpHelp: CommandHelp = {
     "  • vf_create_project       - Create new project from template",
     "  • vf_get_errors           - Real-time compile/runtime errors",
     "  • vf_preview_route        - HTTP response without browser",
-    "  • vf_scaffold             - Generate pages/APIs/components/tools",
+    "  • vf_scaffold             - Generate routes, components, and AI primitives",
     "  • vf_list_routes          - Structured route manifest",
     "  • vf_trigger_hmr          - Force browser refresh",
   ],

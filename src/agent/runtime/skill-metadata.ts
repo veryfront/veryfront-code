@@ -33,6 +33,7 @@ export const getRuntimeSkillFrontmatterSchema = defineSchema((v) =>
       name: v.string().optional(),
       description: v.string().optional(),
       "allowed-tools": v.union([v.string(), v.array(v.string())]).optional(),
+      allowed_tools: v.union([v.string(), v.array(v.string())]).optional(),
       model: v.string().optional(),
       thinking: v.union([v.literal(false), v.coerce.number().int().positive()]).optional(),
       "max-steps": v.coerce.number().int().positive().optional(),
@@ -44,7 +45,9 @@ export const getRuntimeSkillFrontmatterSchema = defineSchema((v) =>
         name: (typeof d.name === "string" ? d.name.trim() : undefined) || undefined,
         description: (typeof d.description === "string" ? d.description.trim() : undefined) ||
           undefined,
-        allowedTools: normalizeAllowedTools(d["allowed-tools"] as string | string[] | undefined),
+        allowedTools: normalizeAllowedTools(
+          (d["allowed-tools"] ?? d.allowed_tools) as string | string[] | undefined,
+        ),
         model: (typeof d.model === "string" ? d.model.trim() : undefined) || undefined,
         thinking: d.thinking as false | number | undefined,
         maxSteps: d["max-steps"] as number | undefined,

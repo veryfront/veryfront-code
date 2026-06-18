@@ -109,6 +109,14 @@ Body text.`;
       assertEquals(result.allowedTools, ["Read", "Write", "Bash"]);
     });
 
+    it("should parse allowed_tools as an alias for allowed-tools", () => {
+      const result = validateSkillMetadata(
+        { description: "desc", allowed_tools: "Read Write Bash" },
+        "test",
+      );
+      assertEquals(result.allowedTools, ["Read", "Write", "Bash"]);
+    });
+
     it("should parse allowed-tools from array", () => {
       const result = validateSkillMetadata(
         { description: "desc", "allowed-tools": ["Read", "Write"] },

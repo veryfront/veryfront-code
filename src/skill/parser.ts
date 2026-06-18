@@ -104,7 +104,8 @@ export function validateSkillMetadata(
   const description = rawDescription.trim().slice(0, SKILL_DESCRIPTION_MAX_LENGTH);
 
   // Allowed-tools: parse from space-delimited string or array
-  const allowedTools = parseAllowedTools(frontmatter["allowed-tools"], rawName);
+  const allowedToolPatterns = frontmatter["allowed-tools"] ?? frontmatter.allowed_tools;
+  const allowedTools = parseAllowedTools(allowedToolPatterns, rawName);
 
   // License: optional string passthrough
   const license = typeof frontmatter.license === "string" ? frontmatter.license.trim() : undefined;

@@ -8,8 +8,9 @@ import { showLogo } from "#cli/utils";
 import { createArgParser } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 import { cwd } from "veryfront/platform";
+import { SCAFFOLD_TYPES } from "../../scaffold/engine.ts";
 
-const VALID_TYPES = ["page", "layout", "provider", "api", "integration"] as const;
+const VALID_TYPES = [...SCAFFOLD_TYPES, "integration"] as const;
 
 const getGenerateArgsSchema = defineSchema((v) =>
   v.object({
