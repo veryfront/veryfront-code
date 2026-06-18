@@ -1,3 +1,10 @@
+---
+name: debug-runtime
+description: Diagnose runtime errors by connecting to dev server via MCP.
+metadata:
+  version: "1.0.0"
+---
+
 # Debug Runtime
 
 Diagnose runtime errors by connecting to the dev server via MCP.

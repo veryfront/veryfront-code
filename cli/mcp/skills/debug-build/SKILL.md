@@ -1,3 +1,10 @@
+---
+name: debug-build
+description: Diagnose and fix build failures using structured error output.
+metadata:
+  version: "1.0.0"
+---
+
 # Debug Build
 
 Diagnose and fix build failures using structured error output.

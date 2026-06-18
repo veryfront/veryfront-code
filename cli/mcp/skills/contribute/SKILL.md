@@ -1,12 +1,19 @@
+---
+name: contribute
+description: Onboard to veryfront-code architecture, testing, conventions, and PR process.
+metadata:
+  version: "1.0.0"
+---
+
 # Contribute
 
-Onboard to the veryfront-code repository — architecture, testing, conventions, PR process.
+Onboard to the veryfront-code repository: architecture, testing, conventions, and PR process.
 
 ## Steps
 
 1. **Read project documentation**
-   - `AGENTS.md` — project overview, architecture, conventions
-   - `cli/AGENTS.md` — CLI-specific conventions for adding commands
+   - `AGENTS.md`: project overview, architecture, conventions
+   - `cli/AGENTS.md`: CLI-specific conventions for adding commands
 
 2. **Understand conventions** (via MCP)
    Use `vf_get_conventions` for coding patterns and style guide.

@@ -14,7 +14,7 @@ export const skillsHelp: CommandHelp = {
     "veryfront skills info scaffold-app",
     "veryfront skills info deploy-safely --json",
     "veryfront skills create my-skill",
-    "veryfront skills validate ./my-skill",
+    "veryfront skills validate ./skills/my-skill",
   ],
   notes: [
     "Subcommands: list (default), info, create, validate",

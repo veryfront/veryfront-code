@@ -397,10 +397,10 @@ export class MCPDevServer {
           const { listCoreSkills } = await import("../skills/loader.ts");
           const skills = await listCoreSkills();
           const data = skills.map((s) => ({
-            name: s.manifest.name,
-            version: s.manifest.version,
-            description: s.manifest.description,
-            requires: s.manifest.requires,
+            name: s.metadata.name,
+            description: s.metadata.description,
+            allowedTools: s.metadata.allowedTools,
+            directory: s.directory,
           }));
           return {
             contents: [{

@@ -1,6 +1,13 @@
+---
+name: deploy-safely
+description: Build, test, deploy, and verify with rollback on failure.
+metadata:
+  version: "1.0.0"
+---
+
 # Deploy Safely
 
-Build, test, deploy, and verify — with rollback on failure.
+Build, test, deploy, and verify with rollback on failure.
 
 ## Steps
 

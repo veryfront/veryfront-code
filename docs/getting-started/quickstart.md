@@ -24,6 +24,7 @@ The `ai-agent` template creates a runnable chat app:
 
 ```text
 support-agent/
+  AGENTS.md
   agents/
     assistant.ts
   tools/
@@ -35,7 +36,8 @@ support-agent/
         route.ts
 ```
 
-The template includes the agent, calculator tool, chat page, and AG-UI route.
+The template includes the agent, calculator tool, chat page, AG-UI route, and
+`AGENTS.md` project guide for coding agents.
 
 ## Authenticate
 
@@ -55,6 +57,11 @@ also set `VERYFRONT_API_TOKEN` directly. Direct provider keys such as
 ```bash
 veryfront dev
 ```
+
+`veryfront dev` also starts the development MCP server on the app port plus 2.
+With the default app port, coding agents can connect to
+`http://localhost:3002/mcp` and call `vf_bootstrap` once at session start.
+Use [Coding agents](../guides/coding-agents.md) for setup details.
 
 ## Verify it worked
 

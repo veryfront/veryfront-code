@@ -1,5 +1,5 @@
 /**
- * Skills command — list and inspect agent skills
+ * Skills command, list and inspect agent skills
  *
  * @module cli/commands/skills
  */
@@ -15,7 +15,7 @@ export async function getSkillInfo(
   name: string,
 ): Promise<LoadedSkill | null> {
   const skills = await listAllSkills();
-  const found = skills.find((s) => s.manifest.name === name);
+  const found = skills.find((s) => s.metadata.name === name);
   if (found) return found;
 
   // Try loading directly by path

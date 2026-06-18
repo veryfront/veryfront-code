@@ -45,12 +45,6 @@ export interface ProjectContext {
   features: string[];
 }
 
-export interface ScaffoldResult {
-  success: boolean;
-  files: Array<{ path: string; created: boolean }>;
-  message: string;
-}
-
 // ============================================================================
 // Utilities
 // ============================================================================

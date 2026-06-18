@@ -1,89 +1,79 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { parseSkillJson } from "../../skills/types.ts";
+import { join } from "#std/path.ts";
+import { validateSkillDirectory } from "./validate.ts";
+
+async function withTempSkill(
+  files: Record<string, string>,
+  fn: (dir: string) => Promise<void>,
+): Promise<void> {
+  const dir = await Deno.makeTempDir({ prefix: "vf-skill-validate-" });
+  try {
+    for (const [path, content] of Object.entries(files)) {
+      const target = join(dir, path);
+      await Deno.mkdir(join(target, ".."), { recursive: true });
+      await Deno.writeTextFile(target, content);
+    }
+    await fn(dir);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+}
 
 describe("Skills Validate", () => {
-  describe("schema validation", () => {
-    it("validates a correct skill manifest", () => {
-      const result = parseSkillJson({
-        name: "test",
-        version: "1.0.0",
-        description: "A test skill",
-        requires: { cli: ["build"], mcp: [] },
-      });
-      assertEquals(result.success, true);
-    });
+  it("accepts a project skill with SKILL.md frontmatter", async () => {
+    await withTempSkill({
+      "SKILL.md": `---
+name: code-review
+description: Review code changes.
+allowed_tools: load_skill load_skill_reference
+---
 
-    it("rejects missing required fields", () => {
-      const result = parseSkillJson({ version: "1.0.0" });
-      assertEquals(result.success, false);
-    });
+# Code Review
 
-    it("rejects missing name", () => {
-      const result = parseSkillJson({
-        version: "1.0.0",
-        description: "No name",
-      });
-      assertEquals(result.success, false);
+Review the submitted changes.
+`,
+    }, async (dir) => {
+      const issues = await validateSkillDirectory(dir);
+      assertEquals(issues, []);
     });
+  });
 
-    it("rejects missing version", () => {
-      const result = parseSkillJson({
-        name: "test",
-        description: "No version",
-      });
-      assertEquals(result.success, false);
+  it("reports a missing SKILL.md", async () => {
+    await withTempSkill({}, async (dir) => {
+      const issues = await validateSkillDirectory(dir);
+      assertEquals(issues, [{ severity: "error", message: "SKILL.md not found" }]);
     });
+  });
 
-    it("rejects missing description", () => {
-      const result = parseSkillJson({ name: "test", version: "1.0.0" });
-      assertEquals(result.success, false);
+  it("reports invalid SKILL.md frontmatter", async () => {
+    await withTempSkill({
+      "SKILL.md": `---
+name: BadName
+description: Invalid name.
+---
+
+# Bad
+`,
+    }, async (dir) => {
+      const issues = await validateSkillDirectory(dir);
+      assertEquals(issues.length, 1);
+      assertEquals(issues[0]?.severity, "error");
+      assertEquals(issues[0]?.message.includes("Invalid skill name"), true);
     });
+  });
 
-    it("accepts skill without requires", () => {
-      const result = parseSkillJson({
-        name: "simple",
-        version: "1.0.0",
-        description: "No requirements",
-      });
-      assertEquals(result.success, true);
-    });
-
-    it("accepts skill without inputs", () => {
-      const result = parseSkillJson({
-        name: "simple",
-        version: "1.0.0",
-        description: "No inputs",
-        requires: { cli: ["build"] },
-      });
-      assertEquals(result.success, true);
-    });
-
-    it("accepts skill with typed inputs", () => {
-      const result = parseSkillJson({
-        name: "full",
-        version: "1.0.0",
-        description: "Full skill",
-        inputs: {
-          env: {
-            type: "string",
-            default: "production",
-            description: "Target env",
-          },
-        },
-      });
-      assertEquals(result.success, true);
-    });
-
-    it("rejects non-object input", () => {
-      const result = parseSkillJson("not an object");
-      assertEquals(result.success, false);
-    });
-
-    it("rejects null input", () => {
-      const result = parseSkillJson(null);
-      assertEquals(result.success, false);
+  it("warns when SKILL.md has no instruction body", async () => {
+    await withTempSkill({
+      "SKILL.md": `---
+name: empty-body
+description: Empty instruction body.
+---
+`,
+    }, async (dir) => {
+      const issues = await validateSkillDirectory(dir);
+      assertEquals(issues, [{ severity: "warning", message: "SKILL.md body is empty" }]);
     });
   });
 });

@@ -260,7 +260,9 @@ export async function initCommand(options: InitOptions): Promise<void> {
     );
   }
 
-  const { getTemplate, getTemplateConfig } = await import("../../templates/index.ts");
+  const { getAiRuleTemplate, getTemplate, getTemplateConfig } = await import(
+    "../../templates/index.ts"
+  );
 
   let templateFiles = await getTemplate(template);
   const templateConfig = getTemplateConfig(template);
@@ -272,6 +274,22 @@ export async function initCommand(options: InitOptions): Promise<void> {
         message: `Template ${template} not found`,
       }),
     );
+  }
+
+  const agentsGuide = getAiRuleTemplate("agents.md");
+  if (!agentsGuide) {
+    throw toError(
+      createError({
+        type: "config",
+        message: "Project agent guide template not found",
+      }),
+    );
+  }
+
+  if (!templateFiles.some((file) => file.path === "AGENTS.md")) {
+    templateFiles = mergeFiles(templateFiles, [
+      { path: "AGENTS.md", content: agentsGuide },
+    ]);
   }
 
   const allEnvVars: EnvVarConfig[] = templateConfig?.envVars ? [...templateConfig.envVars] : [];
