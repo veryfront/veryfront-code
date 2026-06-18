@@ -26,8 +26,8 @@ const VERYFRONT_CLOUD_GATEWAY_MODEL_PROVIDER_PREFIXES = [
   "openai/",
   "google/",
   "google-ai-studio/",
-  "moonshotai/",
   "mistral/",
+  "moonshotai/",
 ];
 
 /** Shared Veryfront Cloud chat models value. */
@@ -77,32 +77,32 @@ export const VERYFRONT_CLOUD_CHAT_MODELS: VeryfrontCloudChatModel[] = [
     description: "Fast and cost-efficient",
   },
   {
+    id: "mistral-small-2603",
+    modelId: "mistral/mistral-small-2603",
+    provider: "mistral",
+    name: "Mistral Small 2603",
+    description: "Fast Mistral model for everyday tasks",
+  },
+  {
+    id: "mistral-medium-3-5",
+    modelId: "mistral/mistral-medium-3-5",
+    provider: "mistral",
+    name: "Mistral Medium 3.5",
+    description: "Balanced Mistral model for multi-step work",
+  },
+  {
+    id: "mistral-large-2512",
+    modelId: "mistral/mistral-large-2512",
+    provider: "mistral",
+    name: "Mistral Large 3",
+    description: "Most capable Mistral model",
+  },
+  {
     id: "kimi-k2.6",
     modelId: "moonshotai/kimi-k2.6",
     provider: "moonshotai",
     name: "Kimi K2.6",
     description: "Deep thinking and multimodal",
-  },
-  {
-    id: "mistral-large",
-    modelId: "mistral/mistral-large-2512",
-    provider: "mistral",
-    name: "Mistral Large 3",
-    description: "Flagship multimodal Mistral model",
-  },
-  {
-    id: "mistral-medium",
-    modelId: "mistral/mistral-medium-3-5",
-    provider: "mistral",
-    name: "Mistral Medium 3.5",
-    description: "Balanced Mistral model for agentic and coding tasks",
-  },
-  {
-    id: "mistral-small",
-    modelId: "mistral/mistral-small-2603",
-    provider: "mistral",
-    name: "Mistral Small 4",
-    description: "Fast Mistral model for lightweight tasks",
   },
 ];
 
@@ -132,13 +132,16 @@ export function getVeryfrontCloudProviderFromModelId(
 ): VeryfrontCloudProviderId {
   const normalizedModelId = normalizeVeryfrontCloudModelId(modelId);
   const prefix = normalizedModelId.split("/")[0];
-  if (prefix === "google-ai-studio") return "google";
-  if (
-    prefix === "openai" ||
-    prefix === "anthropic" ||
-    prefix === "moonshotai" ||
-    prefix === "mistral"
-  ) return prefix;
+
+  switch (prefix) {
+    case "google-ai-studio":
+      return "google";
+    case "openai":
+    case "anthropic":
+    case "mistral":
+    case "moonshotai":
+      return prefix;
+  }
 
   throw new Error(`Unknown model provider prefix "${prefix}" in model ID "${modelId}"`);
 }
@@ -252,8 +255,8 @@ const PROVIDER_ORDER: VeryfrontCloudProviderId[] = [
   "anthropic",
   "openai",
   "google",
-  "moonshotai",
   "mistral",
+  "moonshotai",
 ];
 
 /** Group Veryfront Cloud models by provider. */

@@ -22,6 +22,10 @@ describe("provider/veryfront-cloud/shared", () => {
         modelId: "gemini-2.0-flash",
       },
     );
+    assertEquals(parseVeryfrontCloudModelId("mistral/mistral-small-2603", "language"), {
+      provider: "mistral",
+      modelId: "mistral-small-2603",
+    });
   });
 
   it("rejects malformed model IDs", () => {
