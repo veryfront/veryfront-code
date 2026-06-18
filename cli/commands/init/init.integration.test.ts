@@ -110,6 +110,10 @@ describe("init command integration", () => {
       const result = await runInitCommand([projectName, "-t", "ai-agent", "--skip-install"]);
 
       assertEquals(result.code, 0);
+      assertEquals(result.stdout?.includes("Project structure"), true);
+      assertEquals(result.stdout?.includes("app/"), true);
+      assertEquals(result.stdout?.includes("agents/"), true);
+      assertEquals(result.stdout?.includes("tools/"), true);
 
       const statResult = await stat(join(projectDir, "agents"));
       assertEquals(statResult.isDirectory, true);

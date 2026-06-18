@@ -173,6 +173,98 @@ function dedupeEnvVars(envVars: EnvVarConfig[]): EnvVarConfig[] {
   });
 }
 
+type StructureNode = {
+  file: boolean;
+  children: Map<string, StructureNode>;
+};
+
+const STRUCTURE_ORDER = [
+  "app",
+  "pages",
+  "agents",
+  "tools",
+  "workflows",
+  "tasks",
+  "prompts",
+  "resources",
+  "skills",
+  "components",
+  "lib",
+  "content",
+  "AGENTS.md",
+  "README.md",
+  "package.json",
+  "deno.json",
+  "tsconfig.json",
+  ".env",
+  ".env.example",
+  ".gitignore",
+];
+
+function structureRank(name: string): number {
+  const index = STRUCTURE_ORDER.indexOf(name);
+  return index === -1 ? STRUCTURE_ORDER.length : index;
+}
+
+function sortStructureEntries([nameA, nodeA]: [string, StructureNode], [nameB, nodeB]: [
+  string,
+  StructureNode,
+]): number {
+  const rankDiff = structureRank(nameA) - structureRank(nameB);
+  if (rankDiff !== 0) return rankDiff;
+
+  if (nodeA.file !== nodeB.file) return nodeA.file ? 1 : -1;
+  return nameA.localeCompare(nameB);
+}
+
+function renderProjectStructure(rootName: string, paths: string[], maxLines = 22): string[] {
+  const root: StructureNode = { file: false, children: new Map() };
+  const normalizedPaths = [...new Set(paths)]
+    .filter((path) => path && !path.endsWith("/"))
+    .sort();
+
+  for (const path of normalizedPaths) {
+    const parts = path.split("/").filter(Boolean);
+    let current = root;
+
+    for (const [index, part] of parts.entries()) {
+      const isFile = index === parts.length - 1;
+      let child = current.children.get(part);
+      if (!child) {
+        child = { file: isFile, children: new Map() };
+        current.children.set(part, child);
+      }
+      if (isFile) child.file = true;
+      current = child;
+    }
+  }
+
+  const lines = [`${rootName}/`];
+  let omitted = 0;
+
+  function walk(node: StructureNode, depth: number): void {
+    const entries = [...node.children.entries()].sort(sortStructureEntries);
+
+    for (const [name, child] of entries) {
+      if (lines.length >= maxLines) {
+        omitted++;
+        continue;
+      }
+
+      lines.push(`${"  ".repeat(depth)}${name}${child.file ? "" : "/"}`);
+      if (!child.file) walk(child, depth + 1);
+    }
+  }
+
+  walk(root, 1);
+
+  if (omitted > 0) {
+    lines.push(`${"  ".repeat(1)}... ${omitted} more ${omitted === 1 ? "entry" : "entries"}`);
+  }
+
+  return lines;
+}
+
 /**
  * Initializes a new Veryfront project with the specified template
  */
@@ -371,6 +463,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
 
   // Create project files with progress spinner
   const filesSpinner = quiet ? null : createSpinner("Creating project files...");
+  const createdPaths: string[] = [];
   try {
     for (const file of templateFiles as TemplateFile[]) {
       if (file.path === ".env" || file.path === ".env.example") continue;
@@ -381,6 +474,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
       if (fileDir !== projectDir) await ensureDir(fileDir);
 
       await fs.writeTextFile(filePath, file.content);
+      createdPaths.push(file.path);
       logger.debug(`Created file: ${file.path}`);
     }
 
@@ -393,8 +487,10 @@ export async function initCommand(options: InitOptions): Promise<void> {
           npmDependencies: integration.config.npmDependencies,
         })),
       });
+      createdPaths.push("package.json");
       if (runtime === "deno") {
         await createDenoConfig(projectDir);
+        createdPaths.push("deno.json");
       }
     }
 
@@ -405,9 +501,11 @@ export async function initCommand(options: InitOptions): Promise<void> {
       });
 
       await fs.writeTextFile(join(projectDir, ".env"), envResult.envContent);
+      createdPaths.push(".env");
       logger.debug("Created file: .env");
 
       await fs.writeTextFile(join(projectDir, ".env.example"), envResult.envExampleContent);
+      createdPaths.push(".env.example");
       logger.debug("Created file: .env.example");
     }
 
@@ -420,6 +518,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
     }
 
     await fs.writeTextFile(gitignorePath, generateGitignoreContent(existingGitignore));
+    createdPaths.push(".gitignore");
     logger.debug("Updated file: .gitignore");
 
     filesSpinner?.success("Project files created");
@@ -543,9 +642,15 @@ export async function initCommand(options: InitOptions): Promise<void> {
   localSteps.push(devCommand);
 
   const displayName = projectName ?? "Project";
+  const structureRoot = projectName ?? ".";
+  const structureLines = renderProjectStructure(structureRoot, createdPaths);
   const successContent = [
     `${green("✓")} ${displayName} ready!`,
     "",
+    `${brand("Project structure")}`,
+    ...structureLines,
+    "",
+    `${brand("Next steps")}`,
     ...localSteps,
   ];
 
