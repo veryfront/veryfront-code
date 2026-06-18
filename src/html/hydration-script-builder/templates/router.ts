@@ -37,6 +37,7 @@ export const getRouterScript = () => `
     const PREFETCH_DELAY_MS = 100;
     const MAX_PREFETCH_PATHS = 100;
     const MAX_ROUTE_TIMINGS = 100;
+    const MAX_SERVER_TIMING_LENGTH = 1024;
 
     // ============================================
     // Debug logging (production-safe)
@@ -157,6 +158,139 @@ export const getRouterScript = () => `
 
       log('Route timing:', entry);
       return entry;
+    }
+
+    function sanitizeServerTimingHeader(value) {
+      if (!value) return null;
+
+      const metrics = [];
+      const printable = String(value).replace(/[^\\x20-\\x7E]/g, ' ').trim();
+      if (!printable) return null;
+
+      for (const item of printable.split(',')) {
+        const segments = item.split(';').map((segment) => segment.trim()).filter(Boolean);
+        const name = sanitizeServerTimingMetricName(segments[0]);
+        if (!name) continue;
+
+        for (const segment of segments.slice(1)) {
+          const [key, rawValue = ''] = segment.split('=');
+          if (key.trim().toLowerCase() !== 'dur') continue;
+
+          const duration = Number(rawValue.trim().replace(/^"|"$/g, ''));
+          if (!Number.isFinite(duration) || duration < 0) continue;
+
+          metrics.push(name + ';dur=' + (Math.round(duration * 100) / 100).toFixed(2));
+          break;
+        }
+      }
+
+      const sanitized = metrics.join(', ');
+      return sanitized ? sanitized.slice(0, MAX_SERVER_TIMING_LENGTH) : null;
+    }
+
+    function sanitizeServerTimingMetricName(name) {
+      return String(name || '').trim().replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 128);
+    }
+
+    function parseServerTimingMetrics(value) {
+      const header = sanitizeServerTimingHeader(value);
+      if (!header) return null;
+
+      const metrics = {};
+      for (const item of header.split(',')) {
+        const segments = item.split(';').map((segment) => segment.trim()).filter(Boolean);
+        const name = sanitizeServerTimingMetricName(segments[0]);
+        if (!name) continue;
+
+        for (const segment of segments.slice(1)) {
+          const [key, rawValue = ''] = segment.split('=');
+          if (key.trim().toLowerCase() !== 'dur') continue;
+
+          const duration = Number(rawValue.trim().replace(/^"|"$/g, ''));
+          if (Number.isFinite(duration) && duration >= 0) {
+            metrics[name] = Math.round(duration * 100) / 100;
+          }
+        }
+      }
+
+      return Object.keys(metrics).length ? metrics : null;
+    }
+
+    function readResponseServerTiming(response) {
+      try {
+        return sanitizeServerTimingHeader(response.headers?.get('server-timing'));
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function roundRouteTimingValue(value) {
+      return Math.round(value * 100) / 100;
+    }
+
+    function extractResourceTiming(entry) {
+      const fields = [
+        'startTime',
+        'requestStart',
+        'responseStart',
+        'responseEnd',
+        'duration',
+        'transferSize',
+        'encodedBodySize',
+        'decodedBodySize'
+      ];
+      const timing = {};
+
+      for (const field of fields) {
+        const value = entry?.[field];
+        if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+          timing[field] = roundRouteTimingValue(value);
+        }
+      }
+
+      return Object.keys(timing).length ? timing : null;
+    }
+
+    function getPageDataResourceTiming(endpoint, fetchStartedAt) {
+      try {
+        if (typeof performance === 'undefined' || typeof performance.getEntriesByName !== 'function') {
+          return null;
+        }
+
+        const href = new URL(endpoint, window.location.href).href;
+        const entries = performance.getEntriesByName(href, 'resource');
+        if (!entries.length) return null;
+
+        for (let index = entries.length - 1; index >= 0; index--) {
+          const entry = entries[index];
+          if (
+            typeof entry?.responseEnd === 'number' &&
+            Number.isFinite(entry.responseEnd) &&
+            entry.responseEnd + 1 >= fetchStartedAt
+          ) {
+            return extractResourceTiming(entry);
+          }
+        }
+
+        return null;
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function buildPageDataTimingDetail(response, endpoint, fetchStartedAt, source) {
+      const detail = { source, status: response.status };
+      const serverTiming = readResponseServerTiming(response);
+      if (serverTiming) {
+        detail.serverTiming = serverTiming;
+        const serverTimingMetrics = parseServerTimingMetrics(serverTiming);
+        if (serverTimingMetrics) detail.serverTimingMetrics = serverTimingMetrics;
+      }
+
+      const resourceTiming = getPageDataResourceTiming(response.url || endpoint, fetchStartedAt);
+      if (resourceTiming) detail.resourceTiming = resourceTiming;
+
+      return detail;
     }
 
     // ============================================
@@ -320,7 +454,12 @@ export const getRouterScript = () => `
       if (!response.ok) {
         perfEnd('fetch:' + path);
         if (recordRouteTiming) {
-          emitRouteTiming('page-data', path, startedAt, { source: timingSource, status: response.status });
+          emitRouteTiming(
+            'page-data',
+            path,
+            startedAt,
+            buildPageDataTimingDetail(response, endpoint, startedAt, timingSource)
+          );
         }
         const error = new Error('Failed to fetch page data: ' + response.status);
         error.status = response.status;
@@ -332,7 +471,12 @@ export const getRouterScript = () => `
       perfEnd('parse:' + path);
       perfEnd('fetch:' + path);
       if (recordRouteTiming) {
-        emitRouteTiming('page-data', path, startedAt, { source: timingSource, status: response.status });
+        emitRouteTiming(
+          'page-data',
+          path,
+          startedAt,
+          buildPageDataTimingDetail(response, endpoint, startedAt, timingSource)
+        );
       }
 
       if (triggerReloadOnVersionMismatch) {
