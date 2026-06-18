@@ -7,6 +7,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#std/path.ts";
+import { setJsonMode } from "../../shared/json-output.ts";
 import { createSkill } from "./create.ts";
 
 async function exists(path: string): Promise<boolean> {
@@ -29,6 +30,20 @@ async function withTempCwd(fn: (dir: string) => Promise<void>): Promise<void> {
     Deno.chdir(original);
     await Deno.remove(dir, { recursive: true });
   }
+}
+
+async function captureConsoleLog(run: () => Promise<void>): Promise<string> {
+  const originalLog = console.log;
+  const lines: string[] = [];
+  try {
+    console.log = (message?: unknown, ...rest: unknown[]) => {
+      lines.push([message, ...rest].map(String).join(" "));
+    };
+    await run();
+  } finally {
+    console.log = originalLog;
+  }
+  return lines.join("\n");
 }
 
 describe("Skills Create", () => {
@@ -60,6 +75,23 @@ describe("Skills Create", () => {
           "already exists",
         );
         assertEquals(await Deno.readTextFile(skillPath), "existing");
+      });
+    });
+
+    it("returns project-relative file paths in JSON output", async () => {
+      await withTempCwd(async () => {
+        setJsonMode(true);
+        try {
+          const output = await captureConsoleLog(() =>
+            createSkill({ _: ["skills", "create", "code-review"] })
+          );
+          const payload = JSON.parse(output);
+
+          assertEquals(payload.success, true);
+          assertEquals(payload.data.files, ["skills/code-review/SKILL.md"]);
+        } finally {
+          setJsonMode(false);
+        }
       });
     });
   });

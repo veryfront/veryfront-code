@@ -5,6 +5,7 @@
  */
 
 import type { ParsedArgs } from "#cli/shared/types";
+import { relative } from "#std/path.ts";
 import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json-output.ts";
 import { logSuccess } from "#cli/utils";
 import { scaffoldProjectFile } from "../../scaffold/engine.ts";
@@ -25,8 +26,9 @@ export async function createSkill(args: ParsedArgs): Promise<void> {
     Deno.exit(1);
   }
 
+  const projectDir = Deno.cwd();
   const result = await scaffoldProjectFile({
-    projectDir: Deno.cwd(),
+    projectDir,
     type: "skill",
     name,
   });
@@ -37,7 +39,7 @@ export async function createSkill(args: ParsedArgs): Promise<void> {
     await outputJson(
       createSuccessEnvelope("skills", {
         created: name,
-        files: result.files.map((file) => file.path),
+        files: result.files.map((file) => relative(projectDir, file.path)),
       }),
     );
     return;

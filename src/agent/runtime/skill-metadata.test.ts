@@ -113,6 +113,18 @@ Body`,
   assertEquals(whitespaceSkill?.allowedTools, ["bash", "readFile"]);
 });
 
+Deno.test("buildRuntimeSkillDefinition parses allowed_tools alias", () => {
+  const skill = buildRuntimeSkillDefinition({
+    id: "alias",
+    content: `---
+allowed_tools: read_file write_file
+---
+Body`,
+  });
+
+  assertEquals(skill?.allowedTools, ["read_file", "write_file"]);
+});
+
 Deno.test("buildRuntimeSkillDefinition includes references when provided", () => {
   const content = `---
 name: Skill
