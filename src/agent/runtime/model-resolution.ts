@@ -46,14 +46,14 @@ const LEGACY_MODEL_ALIASES: Record<string, string> = {
   "gemini-3.1-flash-lite": "google-ai-studio/gemini-3.1-flash-lite",
   "gemini-2.5-pro": "google-ai-studio/gemini-2.5-pro",
   "gemini-2.5-flash": "google-ai-studio/gemini-2.5-flash",
-  "kimi-k2.6": "moonshotai/kimi-k2.6",
-  "kimi-k2.5": "moonshotai/kimi-k2.5",
-  "mistral-large": "mistral/mistral-large-2512",
-  "mistral-large-2512": "mistral/mistral-large-2512",
-  "mistral-medium": "mistral/mistral-medium-3-5",
-  "mistral-medium-3-5": "mistral/mistral-medium-3-5",
   "mistral-small": "mistral/mistral-small-2603",
   "mistral-small-2603": "mistral/mistral-small-2603",
+  "mistral-medium": "mistral/mistral-medium-3-5",
+  "mistral-medium-3-5": "mistral/mistral-medium-3-5",
+  "mistral-large": "mistral/mistral-large-2512",
+  "mistral-large-2512": "mistral/mistral-large-2512",
+  "kimi-k2.6": "moonshotai/kimi-k2.6",
+  "kimi-k2.5": "moonshotai/kimi-k2.5",
 };
 
 export function normalizeAgentModelConfig(model?: string): string {

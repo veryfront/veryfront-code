@@ -45,8 +45,8 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
     }
 
     case "openai":
-    case "moonshotai":
-    case "mistral": {
+    case "mistral":
+    case "moonshotai": {
       const openai = registry.get("openai");
       if (openai) {
         return openai.createModel(upstreamModelId, {

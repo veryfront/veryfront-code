@@ -24,8 +24,8 @@ describe("provider/veryfront-cloud/model-catalog", () => {
     assertEquals(findVeryfrontCloudModel("gpt-5.5")?.provider, "openai");
     assertEquals(findVeryfrontCloudModel("gemini-3.1-pro-preview")?.provider, "google");
     assertEquals(findVeryfrontCloudModel("gemini-3.5-flash")?.provider, "google");
+    assertEquals(findVeryfrontCloudModel("mistral-small-2603")?.provider, "mistral");
     assertEquals(findVeryfrontCloudModel("kimi-k2.6")?.provider, "moonshotai");
-    assertEquals(findVeryfrontCloudModel("mistral-large")?.provider, "mistral");
     assertEquals(findVeryfrontCloudModel("nonexistent"), undefined);
   });
 
@@ -36,8 +36,8 @@ describe("provider/veryfront-cloud/model-catalog", () => {
       getVeryfrontCloudProviderFromModelId("google-ai-studio/gemini-3.1-pro-preview"),
       "google",
     );
+    assertEquals(getVeryfrontCloudProviderFromModelId("mistral/mistral-small-2603"), "mistral");
     assertEquals(getVeryfrontCloudProviderFromModelId("moonshotai/kimi-k2.6"), "moonshotai");
-    assertEquals(getVeryfrontCloudProviderFromModelId("mistral/mistral-large-2512"), "mistral");
     assertThrows(
       () => getVeryfrontCloudProviderFromModelId("unknown/model"),
       Error,
@@ -68,8 +68,8 @@ describe("provider/veryfront-cloud/model-catalog", () => {
       "anthropic",
       "openai",
       "google",
-      "moonshotai",
       "mistral",
+      "moonshotai",
     ]);
     assertEquals(groups[0]?.label, "Anthropic");
     assertEquals(groups[1]?.label, "OpenAI");
@@ -81,7 +81,7 @@ describe("provider/veryfront-cloud/model-catalog", () => {
   it("resolves aliases and preserves direct model ids", () => {
     assertEquals(resolveVeryfrontCloudModelId("opus"), "anthropic/claude-opus-4-8");
     assertEquals(resolveVeryfrontCloudModelId("gpt-5.5"), "openai/gpt-5.5");
-    assertEquals(resolveVeryfrontCloudModelId("mistral-large"), "mistral/mistral-large-2512");
+    assertEquals(resolveVeryfrontCloudModelId("mistral-small-2603"), "mistral/mistral-small-2603");
     assertEquals(resolveVeryfrontCloudModelId("openai/gpt-5.5"), "openai/gpt-5.5");
     assertThrows(
       () => resolveVeryfrontCloudModelId("not-a-real-model"),
@@ -112,6 +112,10 @@ describe("provider/veryfront-cloud/model-catalog", () => {
     assertEquals(
       resolveVeryfrontCloudGatewayModelId("google-ai-studio/gemini-3.5-flash"),
       "veryfront-cloud/google-ai-studio/gemini-3.5-flash",
+    );
+    assertEquals(
+      resolveVeryfrontCloudGatewayModelId("mistral/mistral-small-2603"),
+      "veryfront-cloud/mistral/mistral-small-2603",
     );
     assertEquals(
       resolveVeryfrontCloudGatewayModelId("veryfront-cloud/openai/gpt-5.5"),

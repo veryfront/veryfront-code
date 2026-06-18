@@ -55,10 +55,10 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(typeof model.doStream, "function");
   });
 
-  it("resolves veryfront-cloud mistral models without a project-specific Mistral extension", () => {
+  it("resolves veryfront-cloud mistral models without project ext-llm-openai installed", () => {
     setCloudBootstrap();
 
-    const model = resolveModel("veryfront-cloud/mistral/mistral-large-2512") as Record<
+    const model = resolveModel("veryfront-cloud/mistral/mistral-small-2603") as Record<
       string,
       unknown
     >;
