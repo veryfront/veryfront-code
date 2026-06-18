@@ -36,6 +36,10 @@ export const getRouterScript = () => `
     const BACKGROUND_REFRESH_INTERVAL_MS = 30 * 1000;
     const PREFETCH_DELAY_MS = 100;
     const MAX_PREFETCH_PATHS = 100;
+    const IDLE_PREFETCH_DELAY_MS = 1200;
+    const IDLE_PREFETCH_MAX_LINKS = 4;
+    const VIEWPORT_PREFETCH_MAX_LINKS = 8;
+    const VIEWPORT_PREFETCH_ROOT_MARGIN = '200px';
     const MAX_ROUTE_TIMINGS = 100;
     const MAX_SERVER_TIMING_LENGTH = 1024;
 
@@ -758,6 +762,7 @@ export const getRouterScript = () => `
         container.__reactRoot.render(tree);
         perfEnd('render:reactRender');
         log('Page re-rendered via SPA');
+        scheduleRoutePrefetchRefresh();
         return;
       }
 
@@ -773,6 +778,9 @@ export const getRouterScript = () => `
     // ============================================
     let prefetchTimeout = null;
     let currentHoverLink = null;
+    let routePrefetchRefreshPending = false;
+    let viewportPrefetchObserver = null;
+    const observedPrefetchLinks = new WeakSet();
     const prefetchedPaths = new Set();
     const inFlightPrefetches = new Set();
 
@@ -792,6 +800,51 @@ export const getRouterScript = () => `
       if (pageData.appPath) allPaths.push(pageData.appPath);
 
       return allPaths;
+    }
+
+    function getCurrentRouteHref() {
+      return window.location.pathname + window.location.search;
+    }
+
+    function getInternalRouteHrefFromLink(link) {
+      if (
+        !link ||
+        link.target === '_blank' ||
+        link.hasAttribute('download') ||
+        link.getAttribute('data-prefetch') === 'false'
+      ) {
+        return null;
+      }
+
+      const href = link.getAttribute('href');
+      if (!href || href.startsWith('#') || href.startsWith('//') || !href.startsWith('/')) return null;
+
+      try {
+        const url = new URL(href, window.location.origin);
+        if (url.origin !== window.location.origin) return null;
+
+        const routeHref = url.pathname + url.search;
+        return routeHref === getCurrentRouteHref() ? null : routeHref;
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function getEligiblePrefetchLinks(limit) {
+      const links = [];
+      const seenHrefs = new Set();
+
+      for (const link of document.querySelectorAll('a[href]')) {
+        const href = getInternalRouteHrefFromLink(link);
+        if (!href || seenHrefs.has(href)) continue;
+
+        seenHrefs.add(href);
+        links.push({ link, href });
+
+        if (links.length >= limit) break;
+      }
+
+      return links;
     }
 
     async function preloadModulesForPageData(pageData, path) {
@@ -840,6 +893,62 @@ export const getRouterScript = () => `
         .finally(() => {
           inFlightPrefetches.delete(href);
         });
+    }
+
+    function prefetchEligibleRouteLinks(limit) {
+      for (const { href } of getEligiblePrefetchLinks(limit)) {
+        prefetchPage(href);
+      }
+    }
+
+    function ensureViewportPrefetchObserver() {
+      if (viewportPrefetchObserver || typeof IntersectionObserver !== 'function') {
+        return viewportPrefetchObserver;
+      }
+
+      viewportPrefetchObserver = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+
+          viewportPrefetchObserver?.unobserve(entry.target);
+          const href = getInternalRouteHrefFromLink(entry.target);
+          if (href) prefetchPage(href);
+        }
+      }, { rootMargin: VIEWPORT_PREFETCH_ROOT_MARGIN });
+
+      return viewportPrefetchObserver;
+    }
+
+    function observeViewportPrefetchLinks() {
+      const observer = ensureViewportPrefetchObserver();
+      if (!observer) return;
+
+      for (const { link } of getEligiblePrefetchLinks(VIEWPORT_PREFETCH_MAX_LINKS)) {
+        if (observedPrefetchLinks.has(link)) continue;
+
+        observedPrefetchLinks.add(link);
+        observer.observe(link);
+      }
+    }
+
+    function runRoutePrefetchRefresh() {
+      routePrefetchRefreshPending = false;
+      prefetchEligibleRouteLinks(IDLE_PREFETCH_MAX_LINKS);
+      observeViewportPrefetchLinks();
+    }
+
+    function scheduleRoutePrefetchRefresh() {
+      if (routePrefetchRefreshPending) return;
+
+      routePrefetchRefreshPending = true;
+      setTimeout(() => {
+        if (typeof requestIdleCallback === 'function') {
+          requestIdleCallback(runRoutePrefetchRefresh, { timeout: IDLE_PREFETCH_DELAY_MS });
+          return;
+        }
+
+        runRoutePrefetchRefresh();
+      }, IDLE_PREFETCH_DELAY_MS);
     }
 
     // ============================================
@@ -946,8 +1055,8 @@ export const getRouterScript = () => `
         const link = e.target.closest('a[href]');
         if (!link) return;
 
-        const href = link.getAttribute('href');
-        if (!href?.startsWith('/') || href.startsWith('//')) return;
+        const href = getInternalRouteHrefFromLink(link);
+        if (!href) return;
 
         if (currentHoverLink === link) return;
 
@@ -977,6 +1086,12 @@ export const getRouterScript = () => `
       },
       true
     );
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', scheduleRoutePrefetchRefresh, { once: true });
+    } else {
+      scheduleRoutePrefetchRefresh();
+    }
 
     // ============================================
     // Router hooks

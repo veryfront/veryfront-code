@@ -179,6 +179,9 @@ export default function Nav() {
 }
 ```
 
+Veryfront can prefetch eligible internal links before navigation. Use
+`prefetch={false}` when a link must not prefetch.
+
 Programmatic navigation:
 
 ```tsx

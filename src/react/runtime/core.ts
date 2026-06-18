@@ -176,7 +176,7 @@ export function Link({
 }: LinkProps): React.ReactElement {
   return React.createElement(
     "a",
-    { ...rest, "data-prefetch": prefetch ? "true" : undefined },
+    { ...rest, "data-prefetch": prefetch ? "true" : "false" },
     children,
   );
 }
