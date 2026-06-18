@@ -1,7 +1,7 @@
 ---
 name: flywheel
 description: Development flywheel - autonomous cycle of run, observe, fix, verify. Use for continuous development with browser automation.
-license: MIT
+license: Apache-2.0
 compatibility: Veryfront server + Chrome MCP
 metadata:
   author: veryfront

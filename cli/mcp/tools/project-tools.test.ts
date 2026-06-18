@@ -104,6 +104,29 @@ describe("mcp/tools/project-tools", () => {
         await Deno.remove(projectDir, { recursive: true });
       }
     });
+
+    it("reports root AI primitive directories for coding agent bootstrap", async () => {
+      const projectDir = await createProject({
+        "package.json": JSON.stringify({ name: "research-agent" }),
+        "agents/research-agent.ts": "export default {};\n",
+        "tools/search-docs.ts": "export default {};\n",
+        "workflows/research-pipeline.ts": "export default {};\n",
+        "skills/research/SKILL.md": "# Research\n",
+      });
+
+      try {
+        const result = await vfGetProjectContext.execute({ projectPath: projectDir });
+
+        assertEquals(result.directories.agents, "agents");
+        assertEquals(result.directories.tools, "tools");
+        assertEquals(result.directories.workflows, "workflows");
+        assertEquals(result.directories.skills, "skills");
+        assertEquals(result.hasAI, true);
+        assertEquals(result.features.includes("ai"), true);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
   });
 
   describe("vfListLocalProjects", () => {

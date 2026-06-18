@@ -1,4 +1,4 @@
-import { isDeno as IS_DENO } from "../runtime.ts";
+import { getDenoRuntime, isDeno as IS_DENO } from "../runtime.ts";
 import { runtimeProcess } from "./runtime-process.ts";
 
 type EnvOverlayValue = string | null;
@@ -30,8 +30,9 @@ function getOverlayEnvValue(
 
 /** Read and write process environment variables. */
 export function env(): Record<string, string> {
-  const base = IS_DENO
-    ? Deno.env.toObject()
+  const deno = IS_DENO ? getDenoRuntime() : undefined;
+  const base = deno
+    ? deno.env.toObject()
     : runtimeProcess
     ? { ...runtimeProcess.env } as Record<string, string>
     : {};
@@ -60,9 +61,10 @@ export function getHostEnv(key: string): string | undefined {
     return overlayResult.value;
   }
 
-  if (IS_DENO) {
+  const deno = IS_DENO ? getDenoRuntime() : undefined;
+  if (deno) {
     try {
-      return Deno.env.get(key);
+      return deno.env.get(key);
     } catch {
       // Under a tightened env permission allowlist (project isolation workers),
       // reading a non-allowlisted variable throws NotCapable. Treat it as absent
@@ -195,8 +197,9 @@ export function setEnv(key: string, value: string): void {
     return;
   }
 
-  if (IS_DENO) {
-    Deno.env.set(key, value);
+  const deno = IS_DENO ? getDenoRuntime() : undefined;
+  if (deno) {
+    deno.env.set(key, value);
     return;
   }
   if (runtimeProcess) {
@@ -214,8 +217,9 @@ export function deleteEnv(key: string): void {
     return;
   }
 
-  if (IS_DENO) {
-    Deno.env.delete(key);
+  const deno = IS_DENO ? getDenoRuntime() : undefined;
+  if (deno) {
+    deno.env.delete(key);
     return;
   }
   if (runtimeProcess) {

@@ -102,6 +102,8 @@ describe("scaffold engine", () => {
       const content = await Deno.readTextFile(filePath);
       assertStringIncludes(content, "inputSchema");
       assertStringIncludes(content, 'import { tool } from "veryfront/tool";');
+      assertStringIncludes(content, "execute: ({ input }) =>");
+      assertEquals(content.includes("execute: async"), false);
     });
   });
 

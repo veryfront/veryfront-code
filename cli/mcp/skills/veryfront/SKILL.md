@@ -1,7 +1,7 @@
 ---
 name: veryfront
 description: Build Veryfront apps. Use for real-time errors, route preview, HMR control, and scaffolding pages/APIs/components/AI tools.
-license: MIT
+license: Apache-2.0
 compatibility: Veryfront dev server (deno task dev)
 metadata:
   author: veryfront
@@ -21,16 +21,15 @@ You already have Read/Write/Edit/Bash. The MCP tools give you:
 | Tool                     | What it does                          |
 | ------------------------ | ------------------------------------- |
 | `vf_list_local_projects` | Find Veryfront projects on filesystem |
-| `vf_list_examples`       | Browse example projects with features |
+| `vf_list_templates`      | Browse project templates              |
+| `vf_list_integrations`   | Browse service integrations           |
 
 ### Project Creation
 
-| Tool                   | What it does                                                                        |
-| ---------------------- | ----------------------------------------------------------------------------------- |
-| `vf_list_templates`    | Available templates (chat, rag, multi-agent, workflow, coding-agent, saas, minimal) |
-| `vf_list_integrations` | Service integrations (Gmail, Slack, GitHub, 50+)                                    |
-| `vf_list_usecases`     | Pre-configured use-case bundles                                                     |
-| `vf_create_project`    | Create new project from template                                                    |
+| Tool                | What it does                          |
+| ------------------- | ------------------------------------- |
+| `vf_create_project` | Create a new project from a template  |
+| `vf_scaffold`       | Generate files in an existing project |
 
 ### Development
 
@@ -42,17 +41,32 @@ You already have Read/Write/Edit/Bash. The MCP tools give you:
 | `vf_list_routes`         | Structured route manifest                        |
 | `vf_scaffold`            | Generate correct boilerplate                     |
 | `vf_get_project_context` | Project structure at a glance                    |
+| `vf_run_tests`           | Run the project's test suite                     |
+| `vf_run_lint`            | Run the linter                                   |
 
 ## Workflow
 
 ### New Project
 
 ```
-1. vf_list_templates() → see what's available
-2. vf_list_integrations() → browse integrations
-3. vf_create_project({ name: "my-agent", template: "ai-agent", integrations: ["gmail", "slack"] })
-4. cd my-agent && deno task dev
+1. vf_list_templates()
+2. vf_create_project({ name: "research-agent", template: "ai-agent" })
+3. cd research-agent && deno task dev
 ```
+
+### Example: add an agent
+
+```
+1. vf_bootstrap()
+2. vf_get_conventions({ topic: "ai" })
+3. vf_scaffold({ type: "agent", name: "research-agent" })
+4. vf_scaffold({ type: "tool", name: "search-docs" })
+5. vf_scaffold({ type: "skill", name: "research" })
+6. vf_get_errors()
+7. vf_run_lint()
+```
+
+The research-agent names are examples. Use names that match the app domain.
 
 ### Development Loop
 
@@ -86,12 +100,13 @@ app/
 Generate files with correct conventions:
 
 ```
-vf_scaffold({ type: "page", name: "Dashboard", slug: "dashboard" })
-vf_scaffold({ type: "api", name: "Users", slug: "api/users", methods: ["GET", "POST"] })
-vf_scaffold({ type: "layout", name: "Admin", slug: "admin" })
+vf_scaffold({ type: "page", name: "dashboard" })
+vf_scaffold({ type: "api", name: "api/users", methods: ["GET", "POST"] })
+vf_scaffold({ type: "layout", name: "admin" })
 vf_scaffold({ type: "component", name: "UserCard" })
-vf_scaffold({ type: "tool", name: "Search Products" })
-vf_scaffold({ type: "agent", name: "Support Bot" })
+vf_scaffold({ type: "tool", name: "search-docs" })
+vf_scaffold({ type: "agent", name: "research-agent" })
+vf_scaffold({ type: "skill", name: "research" })
 ```
 
 ## Templates
@@ -151,7 +166,8 @@ vf_get_errors()                           → all errors
 vf_get_errors({ type: "compile" })        → compile only
 vf_get_errors({ file: "app/page.tsx" })   → specific file
 vf_get_logs({ level: "error" })           → error logs
-vf_clear_cache()                          → reset everything
+vf_run_lint()                             → lint the project
+vf_run_tests()                            → run the test suite
 ```
 
 ## See Also

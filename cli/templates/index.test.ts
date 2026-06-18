@@ -82,6 +82,14 @@ describe("cli/templates", () => {
     }
   });
 
+  it("keeps the ai-agent calculator template lint-clean", async () => {
+    const calculatorPath = new URL("./files/ai-agent/tools/calculator.ts", import.meta.url);
+    const calculator = await Deno.readTextFile(calculatorPath);
+
+    assertEquals(calculator.includes("execute: async"), false);
+    assertEquals(calculator.includes("execute: ({ operation, a, b }) =>"), true);
+  });
+
   it("integration token store fails closed instead of silently using memory in production", async () => {
     const tokenStorePath = new URL(
       "./integrations/_base/files/lib/token-store.ts",

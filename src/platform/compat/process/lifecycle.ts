@@ -1,30 +1,34 @@
-import { isBun as IS_BUN, isDeno as IS_DENO } from "../runtime.ts";
+import { getDenoRuntime, isBun as IS_BUN, isDeno as IS_DENO } from "../runtime.ts";
 import { runtimeProcess } from "./runtime-process.ts";
 
 /** Get command-line arguments (cross-runtime: Deno.args or process.argv). */
 export function getArgs(): string[] {
-  if (IS_DENO) return Deno.args;
+  const deno = IS_DENO ? getDenoRuntime() : undefined;
+  if (deno) return deno.args;
   if (runtimeProcess) return runtimeProcess.argv.slice(2);
   return [];
 }
 
 /** Exit the process with an optional code (cross-runtime: Deno.exit or process.exit). */
 export function exit(code?: number): never {
-  if (IS_DENO) Deno.exit(code);
+  const deno = IS_DENO ? getDenoRuntime() : undefined;
+  if (deno) deno.exit(code);
   if (runtimeProcess) runtimeProcess.exit(code);
   throw new Error("exit() is not supported in this runtime");
 }
 
 /** Return the current working directory. */
 export function cwd(): string {
-  if (IS_DENO) return Deno.cwd();
+  const deno = IS_DENO ? getDenoRuntime() : undefined;
+  if (deno) return deno.cwd();
   if (runtimeProcess) return runtimeProcess.cwd();
   throw new Error("cwd() is not supported in this runtime");
 }
 
 export function chdir(directory: string): void {
-  if (IS_DENO) {
-    Deno.chdir(directory);
+  const deno = IS_DENO ? getDenoRuntime() : undefined;
+  if (deno) {
+    deno.chdir(directory);
     return;
   }
   if (runtimeProcess) {
@@ -35,7 +39,8 @@ export function chdir(directory: string): void {
 }
 
 export function pid(): number {
-  if (IS_DENO) return Deno.pid;
+  const deno = IS_DENO ? getDenoRuntime() : undefined;
+  if (deno) return deno.pid;
   if (runtimeProcess) return runtimeProcess.pid;
   return 0;
 }
@@ -46,8 +51,9 @@ export function memoryUsage(): {
   heapUsed: number;
   external: number;
 } {
-  if (IS_DENO) {
-    const { rss, heapTotal, heapUsed, external } = Deno.memoryUsage();
+  const deno = IS_DENO ? getDenoRuntime() : undefined;
+  if (deno) {
+    const { rss, heapTotal, heapUsed, external } = deno.memoryUsage();
     return { rss, heapTotal, heapUsed, external };
   }
 
@@ -63,7 +69,8 @@ export function memoryUsage(): {
  * Check if stdin is a TTY (terminal)
  */
 export function isInteractive(): boolean {
-  if (IS_DENO) return Deno.stdin.isTerminal();
+  const deno = IS_DENO ? getDenoRuntime() : undefined;
+  if (deno) return deno.stdin.isTerminal();
   if (runtimeProcess) return runtimeProcess.stdin.isTTY ?? false;
   return false;
 }
@@ -72,7 +79,8 @@ export function isInteractive(): boolean {
  * Check if stdout is a TTY (terminal)
  */
 export function isStdoutTTY(): boolean {
-  if (IS_DENO) return Deno.stdout.isTerminal();
+  const deno = IS_DENO ? getDenoRuntime() : undefined;
+  if (deno) return deno.stdout.isTerminal();
   if (runtimeProcess) return runtimeProcess.stdout.isTTY ?? false;
   return false;
 }
@@ -84,9 +92,10 @@ export function isStdoutTTY(): boolean {
 export function getTerminalSize(): { columns: number; rows: number } {
   const defaultSize = { columns: 80, rows: 24 };
 
-  if (IS_DENO) {
+  const deno = IS_DENO ? getDenoRuntime() : undefined;
+  if (deno) {
     try {
-      const { columns, rows } = Deno.consoleSize();
+      const { columns, rows } = deno.consoleSize();
       return { columns, rows };
     } catch (_) {
       /* expected: Deno.consoleSize() fails when not attached to a terminal */
@@ -107,7 +116,8 @@ export function getTerminalSize(): { columns: number; rows: number } {
  * Get runtime version string
  */
 export function getRuntimeVersion(): string {
-  if (IS_DENO) return `Deno ${Deno.version.deno}`;
+  const deno = IS_DENO ? getDenoRuntime() : undefined;
+  if (deno) return `Deno ${deno.version.deno}`;
   if ("Bun" in globalThis) {
     return `Bun ${(globalThis as unknown as { Bun: { version: string } }).Bun.version}`;
   }
@@ -120,7 +130,8 @@ export function getRuntimeVersion(): string {
  * Returns: "darwin" (macOS), "linux", "windows", or the raw platform string
  */
 export function getOsType(): string {
-  if (IS_DENO) return Deno.build.os;
+  const deno = IS_DENO ? getDenoRuntime() : undefined;
+  if (deno) return deno.build.os;
   if (runtimeProcess) {
     // Node/Bun uses process.platform which returns "win32" for Windows
     const platform = runtimeProcess.platform;
@@ -136,8 +147,9 @@ export function onSignal(
   signal: "SIGINT" | "SIGTERM",
   handler: () => void,
 ): void {
-  if (IS_DENO) {
-    Deno.addSignalListener(signal, handler);
+  const deno = IS_DENO ? getDenoRuntime() : undefined;
+  if (deno) {
+    deno.addSignalListener(signal, handler);
     return;
   }
   if (runtimeProcess) runtimeProcess.on(signal, handler);
@@ -209,8 +221,9 @@ export function onGlobalError(
  * Unreference a timer to prevent it from keeping the process alive
  */
 export function unrefTimer(timerId: ReturnType<typeof setInterval>): void {
-  if (IS_DENO && typeof Deno.unrefTimer === "function" && typeof timerId === "number") {
-    Deno.unrefTimer(timerId as number);
+  const deno = IS_DENO ? getDenoRuntime() : undefined;
+  if (deno && typeof deno.unrefTimer === "function" && typeof timerId === "number") {
+    deno.unrefTimer(timerId as number);
     return;
   }
 
@@ -226,7 +239,8 @@ export function unrefTimer(timerId: ReturnType<typeof setInterval>): void {
  * Get the executable path of the current runtime
  */
 export function execPath(): string {
-  if (IS_DENO) return Deno.execPath();
+  const deno = IS_DENO ? getDenoRuntime() : undefined;
+  if (deno) return deno.execPath();
   if (runtimeProcess) return runtimeProcess.execPath;
   return "";
 }
@@ -236,9 +250,10 @@ export function execPath(): string {
  * Returns OS uptime on Deno, process uptime on Node.js
  */
 export function uptime(): number {
-  if (IS_DENO) {
+  const deno = IS_DENO ? getDenoRuntime() : undefined;
+  if (deno) {
     // Deno.osUptime() returns system uptime in seconds
-    return Deno.osUptime?.() ?? 0;
+    return deno.osUptime?.() ?? 0;
   }
   if (runtimeProcess) {
     // process.uptime() returns process uptime in seconds
@@ -252,9 +267,10 @@ export function uptime(): number {
  * Returns null if not available (e.g., in browser/workers)
  */
 export function getStdout(): { write: (data: string) => void } | null {
-  if (IS_DENO) {
+  const deno = IS_DENO ? getDenoRuntime() : undefined;
+  if (deno) {
     const encoder = new TextEncoder();
-    return { write: (data: string) => Deno.stdout.writeSync(encoder.encode(data)) };
+    return { write: (data: string) => deno.stdout.writeSync(encoder.encode(data)) };
   }
   const stdout = runtimeProcess?.stdout;
   if (stdout) {
@@ -276,7 +292,8 @@ export function writeStdout(text: string): void {
  * Returns a promise that resolves when the write is complete
  */
 export async function writeStdoutAsync(data: Uint8Array): Promise<number> {
-  if (IS_DENO) return await Deno.stdout.write(data);
+  const deno = IS_DENO ? getDenoRuntime() : undefined;
+  if (deno) return await deno.stdout.write(data);
 
   const stdout = runtimeProcess?.stdout;
   if (stdout) {
@@ -311,8 +328,9 @@ export function promptSync(message?: string): string | null {
 export function readStdinByteSync(): number | null {
   const buf = new Uint8Array(1);
 
-  if (IS_DENO) {
-    const n = Deno.stdin.readSync(buf);
+  const deno = IS_DENO ? getDenoRuntime() : undefined;
+  if (deno) {
+    const n = deno.stdin.readSync(buf);
     return n ? buf[0] ?? null : null;
   }
 

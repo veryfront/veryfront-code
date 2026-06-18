@@ -5,7 +5,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { buildSplitModeEnvForTests, runSplitMode } from "./split-mode.ts";
+import { buildSplitModeEnvForTests, runSplitMode, waitForPort } from "./split-mode.ts";
 
 describe("serve-split command", () => {
   describe("runSplitMode", () => {
@@ -36,6 +36,27 @@ describe("serve-split command", () => {
 
       assertEquals(env.VERYFRONT_TRUST_FORWARDED_HEADERS, "1");
       assertEquals(env.VERYFRONT_SERVER_URL, "http://localhost:3000");
+    });
+  });
+
+  describe("waitForPort", () => {
+    it("treats a TCP listener as ready without requesting the root route", async () => {
+      const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+      const port = (listener.addr as Deno.NetAddr).port;
+      const accepted = (async () => {
+        const conn = await listener.accept();
+        conn.close();
+        listener.close();
+      })();
+
+      try {
+        assertEquals(await waitForPort(port, 1000, 100), true);
+      } finally {
+        try {
+          listener.close();
+        } catch { /* listener may already be closed */ }
+      }
+      await accepted;
     });
   });
 });

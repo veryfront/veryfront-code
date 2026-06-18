@@ -82,7 +82,8 @@ describe("install command integration", () => {
       await assertInstallCreatesFile("cursor", ".cursorrules", [
         "Veryfront",
         "veryfront dev",
-        "src/pages/",
+        "veryfront generate agent research-agent",
+        "veryfront.com/docs",
       ]);
     });
   });
@@ -137,7 +138,8 @@ describe("install command integration", () => {
     it("should install AGENTS.md", async () => {
       await assertInstallCreatesFile("agents", "AGENTS.md", [
         "Veryfront",
-        "npx veryfront",
+        "veryfront generate agent research-agent",
+        "vf_bootstrap",
       ]);
     });
   });

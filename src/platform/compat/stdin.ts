@@ -4,7 +4,7 @@
  * @module platform/compat/stdin
  */
 
-import { isDeno } from "./runtime.ts";
+import { getDenoRuntime, isDeno } from "./runtime.ts";
 
 // Node.js process global type declaration
 declare const process:
@@ -24,8 +24,9 @@ declare const process:
  * Set raw mode on stdin (enables character-by-character input)
  */
 export function setRawMode(enabled: boolean): void {
-  if (isDeno) {
-    Deno.stdin.setRaw(enabled);
+  const deno = isDeno ? getDenoRuntime() : undefined;
+  if (deno) {
+    deno.stdin.setRaw(enabled);
     return;
   }
 
@@ -49,8 +50,9 @@ export interface StdinReader {
  * Returns an object with read() and releaseLock() methods
  */
 export function getStdinReader(): StdinReader {
-  if (isDeno) {
-    const reader = Deno.stdin.readable.getReader();
+  const deno = isDeno ? getDenoRuntime() : undefined;
+  if (deno) {
+    const reader = deno.stdin.readable.getReader();
     return {
       read: async () => {
         const result = await reader.read();
@@ -114,14 +116,15 @@ export function getStdinReader(): StdinReader {
  * Works in both Deno and Node.js.
  */
 export function waitForKeypress(): Promise<void> {
-  if (isDeno) {
+  const deno = isDeno ? getDenoRuntime() : undefined;
+  if (deno) {
     return (async () => {
-      Deno.stdin.setRaw(true);
-      const reader = Deno.stdin.readable.getReader();
+      deno.stdin.setRaw(true);
+      const reader = deno.stdin.readable.getReader();
       try {
         await reader.read();
       } finally {
-        Deno.stdin.setRaw(false);
+        deno.stdin.setRaw(false);
         reader.releaseLock();
       }
     })();
@@ -206,12 +209,13 @@ export function createEscapeBuffer(onTimeout: (key: string) => void): EscapeBuff
  */
 export function waitForEnterOrExit(): Promise<boolean> {
   return new Promise((resolve) => {
-    if (isDeno) {
-      Deno.stdin.setRaw(true);
-      const reader = Deno.stdin.readable.getReader();
+    const deno = isDeno ? getDenoRuntime() : undefined;
+    if (deno) {
+      deno.stdin.setRaw(true);
+      const reader = deno.stdin.readable.getReader();
 
       const cleanup = (result: boolean) => {
-        Deno.stdin.setRaw(false);
+        deno.stdin.setRaw(false);
         reader.releaseLock();
         resolve(result);
       };

@@ -195,6 +195,53 @@ describe("npm supply-chain policy", () => {
 			'replaceAll("dntShim.clearInterval", "globalThis.clearInterval")',
 		);
 	});
+
+	it("keeps npm CLI agent workflow paths off the DNT Deno shim in real Deno", async () => {
+		const generatedFiles = [
+			"npm/esm/cli/commands/mcp/handler.js",
+			"npm/esm/cli/commands/lint/handler.js",
+			"npm/esm/cli/commands/test/handler.js",
+			"npm/esm/cli/commands/serve/split-mode.js",
+			"npm/esm/cli/shared/animation.js",
+			"npm/esm/cli/utils/write-run-result.js",
+			"npm/esm/src/platform/compat/stdin.js",
+			"npm/esm/src/platform/compat/process/lifecycle.js",
+		];
+
+		for (const path of generatedFiles) {
+			const source = await Deno.readTextFile(path);
+			assertEquals(
+				source.includes("dntShim.Deno.addSignalListener"),
+				false,
+				`${path} must use real globalThis.Deno for signal handlers`,
+			);
+			assertEquals(
+				source.includes("dntShim.Deno.stdin"),
+				false,
+				`${path} must use real globalThis.Deno for stdin`,
+			);
+			assertEquals(
+				source.includes("dntShim.Deno.stdout"),
+				false,
+				`${path} must use real globalThis.Deno for stdout`,
+			);
+			assertEquals(
+				source.includes("dntShim.Deno.Command"),
+				false,
+				`${path} must use real globalThis.Deno or platform runCommand for subprocesses`,
+			);
+			assertEquals(
+				source.includes("dntShim.Deno.env"),
+				false,
+				`${path} must use platform env helpers`,
+			);
+			assertEquals(
+				source.includes("dntShim.Deno.connect"),
+				false,
+				`${path} must use real globalThis.Deno for TCP readiness checks`,
+			);
+		}
+	});
 });
 
 describe("npm generated integration artifacts", () => {

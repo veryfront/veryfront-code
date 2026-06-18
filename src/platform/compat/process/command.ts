@@ -1,5 +1,5 @@
 import { dynamicImport } from "../dynamic-import.ts";
-import { isBun as IS_BUN, isDeno as IS_DENO } from "../runtime.ts";
+import { getDenoRuntime, isBun as IS_BUN, isDeno as IS_DENO } from "../runtime.ts";
 import { isWindowsPlatform, runtimeProcess } from "./runtime-process.ts";
 
 export interface CommandResult {
@@ -126,8 +126,9 @@ export async function runCommand(
   // Determine stdio mode: inherit > capture > null
   const stdioMode = inherit ? "inherit" : capture ? "piped" : "null";
 
-  if (IS_DENO) {
-    const command = new Deno.Command(cmd, {
+  const deno = IS_DENO ? getDenoRuntime() : undefined;
+  if (deno) {
+    const command = new deno.Command(cmd, {
       args,
       cwd: cmdCwd,
       env: cmdEnv,

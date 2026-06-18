@@ -41,6 +41,55 @@ veryfront install windsurf
 Use `AGENTS.md` as the shared source of truth when multiple coding agents work
 in the same project.
 
+## Example: add an agent
+
+Use the `ai-agent` template for the shortest runnable path. It creates a chat
+page, an AG-UI route, an agent, a tool, and `AGENTS.md`.
+The research-agent names below are examples. Use names that match your app
+domain and workflow.
+
+```bash
+veryfront init research-agent --template ai-agent --runtime deno
+cd research-agent
+veryfront login
+```
+
+If you do not have the CLI installed globally, use the package-manager entry:
+
+```bash
+npm create veryfront -- research-agent --template ai-agent --runtime deno
+cd research-agent
+veryfront login
+```
+
+Add the project primitives for the research capability:
+
+```bash
+veryfront generate agent research-agent
+veryfront generate tool search-docs
+veryfront generate skill research
+```
+
+Edit the generated agent, tool, and skill for your research workflow. To expose
+the new agent through the starter chat route, update `app/api/ag-ui/route.ts` to
+use `createAgUiHandler("research-agent")`.
+
+With MCP connected, a coding agent can perform the same file generation with:
+
+```text
+vf_bootstrap()
+vf_get_conventions({ topic: "ai" })
+vf_scaffold({ type: "agent", name: "research-agent" })
+vf_scaffold({ type: "tool", name: "search-docs" })
+vf_scaffold({ type: "skill", name: "research" })
+vf_get_errors()
+vf_run_lint()
+```
+
+Run `veryfront dev` after credentials are configured. The app needs model access
+through `veryfront login`, `VERYFRONT_API_TOKEN`, or provider keys such as
+`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`.
+
 ## Choose a transport
 
 The CLI MCP server supports two transports. Most agents work with HTTP.
