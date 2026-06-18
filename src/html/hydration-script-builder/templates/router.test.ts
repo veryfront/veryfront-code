@@ -15,6 +15,10 @@ describe("hydration-script-builder/templates/router", () => {
       assertEquals(result.length > 0, true);
     });
 
+    it("should generate parseable browser JavaScript", () => {
+      new Function(getRouterScript());
+    });
+
     it("should define MODULE_SERVER_URL from window origin", () => {
       assertIncludes(getRouterScript(), "window.location.origin + '/_vf_modules'");
     });
@@ -153,6 +157,53 @@ describe("hydration-script-builder/templates/router", () => {
       assertIncludes(result, "window.__veryfrontRouteTimings");
       assertIncludes(result, "veryfront:route-timing");
       assertIncludes(result, "emitRouteTiming('total', targetPath, navigationStartedAt");
+    });
+
+    it("should capture bounded Server-Timing details for page-data network timing", () => {
+      const result = getRouterScript();
+      assertIncludes(result, "MAX_SERVER_TIMING_LENGTH = 1024");
+      assertIncludes(result, "function sanitizeServerTimingHeader(value)");
+      assertIncludes(result, "replace(/[^\\x20-\\x7E]/g, ' ')");
+      assertIncludes(result, "sanitized.slice(0, MAX_SERVER_TIMING_LENGTH)");
+      assertIncludes(result, "response.headers?.get('server-timing')");
+      assertIncludes(result, "function parseServerTimingMetrics(value)");
+      assertIncludes(result, "segment.split('=')");
+      assertIncludes(result, "if (!Number.isFinite(duration) || duration < 0) continue;");
+      assertIncludes(result, "metrics.push(name + ';dur='");
+      assertIncludes(result, "detail.serverTiming = serverTiming");
+      assertIncludes(result, "detail.serverTimingMetrics = serverTimingMetrics");
+    });
+
+    it("should capture best-effort browser resource timing for page-data network timing", () => {
+      const result = getRouterScript();
+      assertIncludes(result, "function getPageDataResourceTiming(endpoint, fetchStartedAt)");
+      assertIncludes(result, "performance.getEntriesByName(href, 'resource')");
+      assertIncludes(result, "function extractResourceTiming(entry)");
+      assertIncludes(result, "'responseStart'");
+      assertIncludes(result, "'responseEnd'");
+      assertIncludes(result, "'transferSize'");
+      assertIncludes(result, "value >= 0");
+      assertIncludes(result, "Number.isFinite(entry.responseEnd)");
+      assertIncludes(result, "entry.responseEnd + 1 >= fetchStartedAt");
+      assertIncludes(result, "return null;");
+      assertIncludes(result, "detail.resourceTiming = resourceTiming");
+    });
+
+    it("should enrich only page-data network timing records", () => {
+      const result = getRouterScript();
+      assertIncludes(
+        result,
+        "function buildPageDataTimingDetail(response, endpoint, fetchStartedAt, source)",
+      );
+      assertIncludes(
+        result,
+        "buildPageDataTimingDetail(response, endpoint, startedAt, timingSource)",
+      );
+      assertIncludes(result, "emitRouteTiming('page-data', path, startedAt, { source: 'cache' });");
+      assertIncludes(
+        result,
+        "emitRouteTiming('page-data', path, startedAt, { source: 'deduped' });",
+      );
     });
 
     it("should define scroll position memory", () => {
