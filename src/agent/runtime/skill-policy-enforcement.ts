@@ -196,7 +196,7 @@ export type SkillPolicyResult =
   | { allowed: false; error: string };
 
 export type SkillPolicyOptions = {
-  allowSubmittedFormInputReuse?: boolean;
+  hasSubmittedFormInput?: boolean;
 };
 
 export function enforceSkillPolicy(
@@ -210,10 +210,14 @@ export function enforceSkillPolicy(
   }
 
   if (
-    toolName === FORM_INPUT_TOOL_ID &&
-    options.allowSubmittedFormInputReuse === true
+    options.hasSubmittedFormInput === true &&
+    POST_SUBMITTED_FORM_INPUT_BLOCKED_TOOL_IDS.has(toolName)
   ) {
-    return { allowed: true };
+    return {
+      allowed: false,
+      error:
+        `Tool "${toolName}" cannot run after a submitted form_input result exists. Continue with the submitted values.`,
+    };
   }
 
   if (activeSkillPolicy && !isToolAllowedBySkill(toolName, activeSkillPolicy)) {

@@ -553,6 +553,8 @@ export class AgentRuntime {
       let activeSkillId = hydratedSkillState.activeSkillId;
       let activeSkillPolicy = hydratedSkillState.activeSkillPolicy;
       let activeSkillDelegationOverrides = hydratedSkillState.activeSkillDelegationOverrides;
+      const hasSubmittedFormInputInLoop = hasSubmittedFormInputResult(currentMessages) ||
+        runtimeContext?.[SUBMITTED_FORM_INPUT_CONTEXT_KEY] === true;
       const allowedRemoteToolNames = getRuntimeAllowedRemoteTools(this.config);
       const providerTools = getRuntimeProviderTools(this.config);
       const forwardedRemoteToolDefinitions = getRuntimeForwardedIntegrationToolDefs(this.config);
@@ -563,6 +565,9 @@ export class AgentRuntime {
       for (let step = 0; step < maxSteps; step++) {
         this.status = "thinking";
         addSpanEvent(loopSpan, "step_start", { step });
+        const stepRuntimeContext = hasSubmittedFormInputInLoop
+          ? markSubmittedFormInputRuntimeContext(currentRuntimeContext)
+          : currentRuntimeContext;
 
         const preparedStep = await prepareAgentRuntimeStep({
           agentId: this.id,
@@ -576,7 +581,7 @@ export class AgentRuntime {
           mode: "generate",
           remoteToolSources,
           resolveRuntimeState: this.resolveRuntimeState.bind(this),
-          runtimeContext: currentRuntimeContext,
+          runtimeContext: stepRuntimeContext,
           step,
           systemPrompt: currentSystemPrompt,
           toolContextBase,
@@ -710,7 +715,7 @@ export class AgentRuntime {
               activeSkillPolicy,
               mustLoadSkillFirst,
               {
-                allowSubmittedFormInputReuse: hasSubmittedFormInputResult(currentMessages),
+                hasSubmittedFormInput: hasSubmittedFormInputInLoop,
               },
             );
             if (!policyCheck.allowed) {
@@ -874,6 +879,8 @@ export class AgentRuntime {
     let activeSkillId = hydratedSkillState.activeSkillId;
     let activeSkillPolicy = hydratedSkillState.activeSkillPolicy;
     let activeSkillDelegationOverrides = hydratedSkillState.activeSkillDelegationOverrides;
+    let hasSubmittedFormInputInLoop = hasSubmittedFormInputResult(currentMessages) ||
+      runtimeContext?.[SUBMITTED_FORM_INPUT_CONTEXT_KEY] === true;
     let finalFinishReason: string | undefined;
     let latestAssistantText = "";
     const allowedRemoteToolNames = getRuntimeAllowedRemoteTools(this.config);
@@ -888,6 +895,9 @@ export class AgentRuntime {
       throwIfAborted(abortSignal);
       sendSSE(controller, encoder, { type: "step-start" });
       const currentStepToolResults = new Map<string, ToolResultPart>();
+      const stepRuntimeContext = hasSubmittedFormInputInLoop
+        ? markSubmittedFormInputRuntimeContext(currentRuntimeContext)
+        : currentRuntimeContext;
 
       const preparedStep = await prepareAgentRuntimeStep({
         agentId: this.id,
@@ -901,7 +911,7 @@ export class AgentRuntime {
         mode: "stream",
         remoteToolSources,
         resolveRuntimeState: this.resolveRuntimeState.bind(this),
-        runtimeContext: currentRuntimeContext,
+        runtimeContext: stepRuntimeContext,
         step,
         systemPrompt: currentSystemPrompt,
         toolContextBase,
@@ -1115,6 +1125,7 @@ export class AgentRuntime {
               activeSkillPolicy,
             );
             if (isSubmittedFormInputExecutionResult(tc.name, matchingResult.output)) {
+              hasSubmittedFormInputInLoop = true;
               currentRuntimeContext = markSubmittedFormInputRuntimeContext(currentRuntimeContext);
             }
             if (tc.name === "create_agent") {
@@ -1146,6 +1157,7 @@ export class AgentRuntime {
               activeSkillPolicy,
             );
             if (isSubmittedFormInputExecutionResult(tc.name, persistedResult.result)) {
+              hasSubmittedFormInputInLoop = true;
               currentRuntimeContext = markSubmittedFormInputRuntimeContext(currentRuntimeContext);
             }
             if (tc.name === "create_agent") {
@@ -1191,7 +1203,7 @@ export class AgentRuntime {
           activeSkillPolicy,
           mustLoadSkillFirst,
           {
-            allowSubmittedFormInputReuse: hasSubmittedFormInputResult(currentMessages),
+            hasSubmittedFormInput: hasSubmittedFormInputInLoop,
           },
         );
         if (!policyCheck.allowed) {
@@ -1261,6 +1273,7 @@ export class AgentRuntime {
             activeSkillPolicy,
           );
           if (isSubmittedFormInputExecutionResult(tc.name, result)) {
+            hasSubmittedFormInputInLoop = true;
             currentRuntimeContext = markSubmittedFormInputRuntimeContext(currentRuntimeContext);
           }
           if (tc.name === "create_agent") {
