@@ -191,6 +191,41 @@ describe("chat/conversation helpers", () => {
     ]);
   });
 
+  it("treats provider-native web tools as complete when the AI SDK omits providerExecuted", () => {
+    const message: ChatUiMessage = {
+      id: "assistant-provider-native-tool",
+      role: "assistant",
+      parts: [
+        { type: "text", text: "I can answer with the fetched context." },
+        {
+          type: "tool-web_fetch",
+          toolCallId: "srvtoolu-fetch",
+          input: { url: "https://veryfront.com/docs/agent/create-agent" },
+          state: "input-available",
+        },
+      ],
+    };
+
+    assertEquals(hasIncompleteToolParts(message), false);
+    assertEquals(markIncompleteToolPartsAsErrored(message, "Tool call did not complete"), message);
+    assertEquals(toConversationPartsFromUiMessage(message), [
+      { type: "text", text: "I can answer with the fetched context." },
+      {
+        type: "tool_call",
+        id: "srvtoolu-fetch",
+        name: "web_fetch",
+        input: { url: "https://veryfront.com/docs/agent/create-agent" },
+        state: "completed",
+      },
+      {
+        type: "tool_result",
+        tool_call_id: "srvtoolu-fetch",
+        output: null,
+        is_error: false,
+      },
+    ]);
+  });
+
   it("maps UI messages into persistable conversation parts", () => {
     const message: ChatUiMessage = {
       id: "assistant-2",

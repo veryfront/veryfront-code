@@ -747,6 +747,57 @@ describe("agent/hosted-chat-execution-runtime", () => {
     assertEquals(terminalStates, [{ status: "completed" }]);
   });
 
+  it("completes response finalization with provider-native web tool input still open", async () => {
+    let streamOptions: HostedChatRuntimeToUiMessageStreamOptions | undefined;
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+    const runtime = createHostedChatExecutionRuntime({
+      agentId: "agent-1",
+      modelId: "anthropic/claude-sonnet-4-5-20250929",
+      originalMessages: [],
+      runContext: { withContext: (fn) => fn() },
+      abortSignal: new AbortController().signal,
+      bootstrap: {
+        cleanup: async () => {},
+        lifecycleAdapter: createLifecycleAdapter({ terminalStates }),
+        rootStreamWatchdog: createRootStreamWatchdog(),
+        streamResult: createStreamResult({
+          finalStep: {},
+          captureOptions: (options) => {
+            streamOptions = options;
+          },
+        }),
+        streamingMessageId: "stream-message-1",
+        capturedMessageId: "stream-message-1",
+        capturedConversationId: "conversation-1",
+        mirroredToolChunkState: createMirroredToolChunkState(),
+      },
+    });
+    if (!streamOptions) {
+      throw new Error("stream options were not captured");
+    }
+
+    await streamOptions.onFinish?.({
+      messages: [],
+      isContinuation: false,
+      responseMessage: createResponseMessage({
+        parts: [
+          { type: "text", text: "done" },
+          {
+            type: "tool-web_fetch",
+            toolCallId: "srvtoolu-fetch",
+            input: { url: "https://veryfront.com/docs/agent/create-agent" },
+            state: "input-available",
+          },
+        ],
+      }),
+      isAborted: false,
+      finishReason: "stop",
+    });
+    await runtime.waitForFinish();
+
+    assertEquals(terminalStates, [{ status: "completed" }]);
+  });
+
   it("records stream errors before detached finalization fallback", async () => {
     let streamOptions: HostedChatRuntimeToUiMessageStreamOptions | undefined;
     const terminalStates: HostedLifecycleTerminalState[] = [];
