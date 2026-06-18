@@ -83,7 +83,32 @@ const getProjectContextInput = lazySchema(getGetProjectContextInput);
 
 type GetProjectContextInput = InferSchema<ReturnType<typeof getGetProjectContextInput>>;
 
-const STANDARD_DIRS = ["app", "pages", "components", "lib", "ai"] as const;
+const STANDARD_DIRS = [
+  "app",
+  "pages",
+  "components",
+  "lib",
+  "ai",
+  "agents",
+  "tools",
+  "workflows",
+  "tasks",
+  "prompts",
+  "resources",
+  "skills",
+  "integrations",
+] as const;
+
+const AI_PRIMITIVE_DIRS = [
+  "ai",
+  "agents",
+  "tools",
+  "workflows",
+  "tasks",
+  "prompts",
+  "resources",
+  "skills",
+] as const;
 
 const BUILTIN_AUTH_ROUTES = ["login", "logout", "me", "signup", "register"];
 
@@ -141,6 +166,14 @@ async function hasAgUiRoute(projectDir: string): Promise<boolean> {
   return await fileExists(join(projectDir, "app/api/ag-ui/route.ts"));
 }
 
+async function hasAiPrimitiveDirectory(projectDir: string): Promise<boolean> {
+  for (const dir of AI_PRIMITIVE_DIRS) {
+    if (await directoryExists(join(projectDir, dir))) return true;
+  }
+
+  return false;
+}
+
 async function getProjectName(projectDir: string, fs: FileSystem): Promise<string> {
   try {
     const content = await fs.readTextFile(join(projectDir, "package.json"));
@@ -177,8 +210,7 @@ export const vfGetProjectContext: MCPTool<GetProjectContextInput, ProjectContext
         }
 
         const directories = await detectDirectories(projectDir);
-        const hasAI = await directoryExists(join(projectDir, "ai")) ||
-          await hasAgUiRoute(projectDir);
+        const hasAI = await hasAiPrimitiveDirectory(projectDir) || await hasAgUiRoute(projectDir);
         const integrations = await detectIntegrations(projectDir, fs);
         const features = await detectFeatures(projectDir, hasAI);
         const name = await getProjectName(projectDir, fs);

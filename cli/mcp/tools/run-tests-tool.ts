@@ -8,6 +8,7 @@
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import type { MCPTool } from "veryfront/mcp";
+import { runCommand } from "veryfront/platform";
 import { parseTestOutput, type TestResult } from "../../commands/test/command.ts";
 
 const getRunTestsInput = defineSchema((v) =>
@@ -53,47 +54,19 @@ export const TEST_ENV: Record<string, string> = {
 export async function executeTests(
   input: { filter?: string; parallel?: boolean; timeout?: number },
 ): Promise<TestResult> {
-  const cmd = new Deno.Command("deno", {
-    args: buildTestArgs(input),
-    stdout: "piped",
-    stderr: "piped",
-    env: TEST_ENV,
-  });
-
-  const child = cmd.spawn();
   const timeoutMs = input.timeout ?? 300000;
-  const outputPromise = child.output();
-
-  let timerId: number | undefined;
-  const timeoutResult = "timeout";
-  const timeoutPromise = new Promise<typeof timeoutResult>((resolve) => {
-    timerId = setTimeout(() => {
-      resolve(timeoutResult);
-    }, timeoutMs);
-    // Don't prevent process exit while waiting
-    Deno.unrefTimer(timerId);
+  const result = await runCommand("deno", {
+    args: buildTestArgs(input),
+    capture: true,
+    env: TEST_ENV,
+    timeoutMs,
   });
 
-  const result = await Promise.race([outputPromise, timeoutPromise]);
-
-  if (timerId !== undefined) {
-    clearTimeout(timerId);
-  }
-
-  if (result === timeoutResult) {
-    try {
-      child.kill();
-    } catch {
-      // Process may have already exited
-    }
-
-    await outputPromise.catch(() => undefined);
+  if (result.code === 124) {
     throw new Error(`Test execution timed out after ${timeoutMs}ms`);
   }
 
-  const stdout = new TextDecoder().decode(result.stdout);
-  const stderr = new TextDecoder().decode(result.stderr);
-  return parseTestOutput(stdout + "\n" + stderr, result.code);
+  return parseTestOutput(`${result.stdout ?? ""}\n${result.stderr ?? ""}`, result.code);
 }
 
 export const vfRunTests: MCPTool<RunTestsInput, TestResult> = {
@@ -109,7 +82,7 @@ export const vfRunTests: MCPTool<RunTestsInput, TestResult> = {
     "Use this when you need to run the project's test suite and get structured pass/fail results. " +
     "Returns a summary with total, passed, failed, skipped counts and failure details including " +
     "file path, test name, error message, and line number. " +
-    "Do not use for lint checks — use vf_run_lint instead.",
+    "Do not use for lint checks. Use vf_run_lint instead.",
   inputSchema: runTestsInput,
   execute: (input) => executeTests(input),
 };

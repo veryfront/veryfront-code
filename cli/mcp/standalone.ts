@@ -6,7 +6,7 @@
  * Falls back gracefully when the dev server is not running.
  */
 
-import { readTextFile } from "veryfront/platform";
+import { getEnv, readTextFile } from "veryfront/platform";
 import type { StdinReader } from "veryfront/platform";
 import { DevServerClient } from "./dev-server-client.ts";
 import { startStdioJsonRpc } from "./stdio.ts";
@@ -414,7 +414,7 @@ export class StandaloneMCPServer {
         description: "Run the project's test suite and get structured pass/fail results. " +
           "Returns a summary with total, passed, failed, skipped counts and failure details " +
           "including file path, test name, error message, and line number. " +
-          "Do not use for lint checks — use vf_run_lint instead.",
+          "Do not use for lint checks. Use vf_run_lint instead.",
         inputSchema: {
           type: "object",
           properties: {
@@ -446,8 +446,8 @@ export class StandaloneMCPServer {
         name: "vf_run_lint",
         description:
           "Run the linter. Returns structured diagnostics with file, line, column, rule code, and message. " +
-          "Do not use for test results — use vf_run_tests instead. " +
-          "Do not use for compile/runtime errors — use vf_get_errors instead.",
+          "Do not use for test results. Use vf_run_tests instead. " +
+          "Do not use for compile/runtime errors. Use vf_get_errors instead.",
         inputSchema: {
           type: "object",
           properties: {
@@ -496,7 +496,7 @@ export class StandaloneMCPServer {
             errors = Array.isArray(result) ? result : [];
             running = true;
           } catch {
-            // Dev server not running — no errors available
+            // Dev server is not running, so no errors are available.
           }
 
           return {
@@ -512,8 +512,8 @@ export class StandaloneMCPServer {
         description: "Deploy a project to an environment via the Veryfront API. " +
           "Creates a release from the specified branch and deploys it to the target environment. " +
           "Requires a valid API token (set VERYFRONT_API_TOKEN or run 'veryfront login'). " +
-          "Do not use for local builds — use vf_build instead. " +
-          "Do not use for running tests before deploy — use vf_run_tests instead.",
+          "Do not use for local builds. Use vf_build instead. " +
+          "Do not use for running tests before deploy. Use vf_run_tests instead.",
         inputSchema: {
           type: "object",
           properties: {
@@ -546,7 +546,7 @@ export class StandaloneMCPServer {
   }
 
   private createContext7Tools(): StandaloneTool[] {
-    const isAvailable = () => Boolean(Deno.env.get("CONTEXT7_API_KEY"));
+    const isAvailable = () => Boolean(getEnv("CONTEXT7_API_KEY"));
 
     let source: {
       executeTool: (name: string, args: Record<string, unknown>) => Promise<unknown>;
@@ -577,7 +577,7 @@ export class StandaloneMCPServer {
             libraryName: {
               type: "string",
               description:
-                "Library name to search for. Use the official name with proper punctuation — e.g., 'Next.js' not 'nextjs'.",
+                "Library name to search for. Use the official name with proper punctuation, for example 'Next.js' not 'nextjs'.",
             },
             query: {
               type: "string",

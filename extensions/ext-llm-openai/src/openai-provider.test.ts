@@ -1361,7 +1361,12 @@ describe("openai-provider", () => {
         },
         { type: "text", text: "It is sunny." },
       ]);
-      assertEquals(result.usage, { inputTokens: 12, outputTokens: 34, totalTokens: 46 });
+      assertEquals(result.usage, {
+        inputTokens: 12,
+        outputTokens: 34,
+        reasoningTokens: 8,
+        totalTokens: 46,
+      });
       assertEquals(result.finishReason, { unified: "stop", raw: "completed" });
     });
 

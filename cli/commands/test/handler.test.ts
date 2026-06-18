@@ -44,6 +44,15 @@ describe("Test Command", () => {
       assertEquals(result.failures.length, 0);
     });
 
+    it("treats a project with no test modules as a successful empty run", () => {
+      const result = parseTestOutput("error: No test modules found", 1);
+      assertEquals(result.success, true);
+      assertEquals(result.summary.total, 0);
+      assertEquals(result.summary.passed, 0);
+      assertEquals(result.summary.failed, 0);
+      assertEquals(result.failures.length, 0);
+    });
+
     it("extracts failure details", () => {
       const output = [
         "my test ... FAILED",

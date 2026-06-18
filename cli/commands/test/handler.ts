@@ -1,6 +1,8 @@
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
+import { exitProcess } from "#cli/utils";
+import { runCommand } from "veryfront/platform";
 import {
   createErrorEnvelope,
   createSuccessEnvelope,
@@ -26,7 +28,7 @@ const parseTestArgs = createArgParser(TestArgsSchema, {
 export async function handleTestCommand(args: ParsedArgs): Promise<void> {
   const opts = parseArgsOrThrow(parseTestArgs, "test", args);
 
-  const cmd = new Deno.Command("deno", {
+  const result = await runCommand("deno", {
     args: [
       "test",
       "--no-check",
@@ -36,8 +38,7 @@ export async function handleTestCommand(args: ParsedArgs): Promise<void> {
       ...(opts.parallel ? ["--parallel"] : []),
       ...(opts.filter ? [`--filter=${opts.filter}`] : []),
     ],
-    stdout: "piped",
-    stderr: "piped",
+    capture: true,
     env: {
       VF_DISABLE_LRU_INTERVAL: "1",
       SSR_TRANSFORM_PER_PROJECT_LIMIT: "0",
@@ -46,14 +47,14 @@ export async function handleTestCommand(args: ParsedArgs): Promise<void> {
       LOG_FORMAT: "text",
     },
   });
-
-  const result = await cmd.output();
-  const stdout = new TextDecoder().decode(result.stdout);
-  const stderr = new TextDecoder().decode(result.stderr);
+  const stdout = result.stdout ?? "";
+  const stderr = result.stderr ?? "";
   const fullOutput = stdout + "\n" + stderr;
+  const parsed = parseTestOutput(fullOutput, result.code);
+  const noTestModules = result.code !== 0 && parsed.success &&
+    fullOutput.includes("No test modules found");
 
   if (isJsonMode()) {
-    const parsed = parseTestOutput(fullOutput, result.code);
     if (parsed.success) {
       await outputJson(createSuccessEnvelope("test", parsed));
     } else {
@@ -65,9 +66,13 @@ export async function handleTestCommand(args: ParsedArgs): Promise<void> {
       }));
     }
   } else {
-    if (stdout) console.log(stdout);
-    if (stderr) console.error(stderr);
+    if (noTestModules) {
+      console.log("No test modules found.");
+    } else {
+      if (stdout) console.log(stdout);
+      if (stderr) console.error(stderr);
+    }
   }
 
-  Deno.exit(result.code);
+  exitProcess(parsed.success ? 0 : result.code);
 }

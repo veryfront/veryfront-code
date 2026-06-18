@@ -1,16 +1,15 @@
 import type { ParsedArgs } from "#cli/shared/types";
+import { exitProcess } from "#cli/utils";
+import { runCommand } from "veryfront/platform";
 import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json-output.ts";
 import { parseLintJsonOutput } from "./command.ts";
 
 export async function handleLintCommand(_args: ParsedArgs): Promise<void> {
-  const cmd = new Deno.Command("deno", {
+  const result = await runCommand("deno", {
     args: ["lint", "--json"],
-    stdout: "piped",
-    stderr: "piped",
+    capture: true,
   });
-
-  const result = await cmd.output();
-  const stdout = new TextDecoder().decode(result.stdout);
+  const stdout = result.stdout ?? "";
 
   if (isJsonMode()) {
     const parsed = parseLintJsonOutput(stdout, result.code);
@@ -20,16 +19,14 @@ export async function handleLintCommand(_args: ParsedArgs): Promise<void> {
       console.log("No lint issues found.");
     } else {
       // Re-run without --json for human-readable output
-      const humanCmd = new Deno.Command("deno", {
+      const humanResult = await runCommand("deno", {
         args: ["lint"],
-        stdout: "inherit",
-        stderr: "inherit",
+        inherit: true,
       });
-      const humanResult = await humanCmd.output();
-      Deno.exit(humanResult.code);
+      exitProcess(humanResult.code);
       return;
     }
   }
 
-  Deno.exit(result.code);
+  exitProcess(result.code);
 }

@@ -39,6 +39,14 @@ export interface ProjectContext {
     components?: string;
     lib?: string;
     ai?: string;
+    agents?: string;
+    tools?: string;
+    workflows?: string;
+    tasks?: string;
+    prompts?: string;
+    resources?: string;
+    skills?: string;
+    integrations?: string;
   };
   hasAI: boolean;
   integrations: string[];

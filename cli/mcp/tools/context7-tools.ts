@@ -1,5 +1,6 @@
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { MCPTool } from "veryfront/mcp";
+import { getEnv } from "veryfront/platform";
 import { createContext7ToolSource } from "veryfront/tool";
 
 let _source: ReturnType<typeof createContext7ToolSource> | undefined;
@@ -12,7 +13,7 @@ function getSource() {
 }
 
 function isContext7Available(): boolean {
-  return Boolean(Deno.env.get("CONTEXT7_API_KEY"));
+  return Boolean(getEnv("CONTEXT7_API_KEY"));
 }
 
 const c7ResolveLibrary: MCPTool<
@@ -35,7 +36,7 @@ const c7ResolveLibrary: MCPTool<
       libraryName: v
         .string()
         .describe(
-          "Library name to search for. Use the official name with proper punctuation — e.g., 'Next.js' not 'nextjs'.",
+          "Library name to search for. Use the official name with proper punctuation, for example 'Next.js' not 'nextjs'.",
         ),
       query: v
         .string()

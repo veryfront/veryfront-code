@@ -282,7 +282,7 @@ export default tool({
   id: "${name}",
   description: "Description of what this tool does",
   inputSchema,
-  execute: async ({ input }) => {
+  execute: ({ input }) => {
     return { result: input };
   },
 });

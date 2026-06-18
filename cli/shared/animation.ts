@@ -7,6 +7,8 @@
  * @module cli/shared/animation
  */
 
+import { getEnv } from "veryfront/platform";
+
 let _animationDisabled = false;
 
 export function setAnimationDisabled(disabled: boolean): void {
@@ -15,9 +17,5 @@ export function setAnimationDisabled(disabled: boolean): void {
 
 export function isAnimationDisabled(): boolean {
   if (_animationDisabled) return true;
-  try {
-    return Deno.env.get("TERM") === "dumb";
-  } catch {
-    return false;
-  }
+  return getEnv("TERM") === "dumb";
 }

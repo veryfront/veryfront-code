@@ -30,9 +30,10 @@ Use these folders as runtime boundaries. Create folders only when the feature ne
 
 1. Start local development with `veryfront dev`.
 2. Generate new files with `veryfront generate <type> <name>`.
-3. Inspect current CLI commands with `veryfront schema --json`.
-4. Use https://veryfront.com/docs when local files and CLI schema do not answer a Veryfront API or convention question.
-5. Run focused tests and lint before shipping.
+3. For example, add an agent with a tool and skill by running `veryfront generate agent research-agent`, `veryfront generate tool search-docs`, and `veryfront generate skill research`. Use names that match the app domain.
+4. Inspect current CLI commands with `veryfront schema --json`.
+5. Use https://veryfront.com/docs when local files and CLI schema do not answer a Veryfront API or convention question.
+6. Run focused tests and lint before shipping.
 
 ## Coding agent loop
 

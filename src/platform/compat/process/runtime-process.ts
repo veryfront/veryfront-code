@@ -1,4 +1,4 @@
-import { isDeno as IS_DENO } from "../runtime.ts";
+import { getDenoRuntime, isDeno as IS_DENO } from "../runtime.ts";
 
 const nodeProcess = (globalThis as { process?: typeof import("node:process") }).process;
 export type RuntimeProcess = typeof import("node:process");
@@ -19,7 +19,8 @@ export const runtimeProcess: RuntimeProcess | null = testHasRuntimeProcess(nodeP
   : null;
 
 export function isWindowsPlatform(): boolean {
-  if (IS_DENO) return Deno.build.os === "windows";
+  const deno = IS_DENO ? getDenoRuntime() : undefined;
+  if (deno) return deno.build.os === "windows";
   const platform = runtimeProcess?.platform ??
     (globalThis as { process?: { platform?: string } }).process?.platform;
   return platform === "win32";

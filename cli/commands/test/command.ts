@@ -25,6 +25,7 @@ export interface TestResult {
 
 export function parseTestOutput(output: string, exitCode: number): TestResult {
   const lines = output.split("\n");
+  const noTestModules = output.includes("No test modules found");
 
   let passed = 0;
   let failed = 0;
@@ -77,7 +78,7 @@ export function parseTestOutput(output: string, exitCode: number): TestResult {
   }
 
   return {
-    success: exitCode === 0,
+    success: exitCode === 0 || noTestModules,
     summary: {
       total: passed + failed + skipped,
       passed,

@@ -7,6 +7,8 @@
 
 import { cliLogger } from "#cli/utils";
 import { exitProcess } from "#cli/utils";
+import { env as getProcessEnv, getEnv, onSignal } from "veryfront/platform";
+import { getDenoRuntime } from "#veryfront/platform/compat/runtime.ts";
 import { SERVER_PERMISSIONS } from "veryfront/security";
 
 interface SplitModeOptions {
@@ -14,6 +16,11 @@ interface SplitModeOptions {
   proxyPort: number;
   useBinary: boolean;
   binaryPath: string;
+}
+
+interface ChildProcessHandle {
+  status: Promise<{ success: boolean; code: number }>;
+  kill(signal: "SIGTERM" | "SIGKILL"): void;
 }
 
 const REQUIRED_ENV_VARS = [
@@ -53,7 +60,7 @@ function validateEnvVars(): Record<string, string> {
   const env: Record<string, string> = {};
 
   for (const name of REQUIRED_ENV_VARS) {
-    const value = Deno.env.get(name);
+    const value = getEnv(name);
     if (!value) {
       missing.push(name);
     } else {
@@ -77,8 +84,7 @@ async function waitForPort(port: number, timeoutMs = 10000): Promise<boolean> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
-      const conn = await Deno.connect({ hostname: "127.0.0.1", port });
-      conn.close();
+      await fetch(`http://127.0.0.1:${port}/`);
       return true;
     } catch {
       await new Promise((r) => setTimeout(r, 100));
@@ -89,14 +95,21 @@ async function waitForPort(port: number, timeoutMs = 10000): Promise<boolean> {
 
 function startProcess(
   cmd: string[],
-  env: Record<string, string>,
+  childEnv: Record<string, string>,
   name: string,
-): Deno.ChildProcess {
+): ChildProcessHandle {
   cliLogger.info(`Starting ${name}...`);
   const [executable, ...args] = cmd;
-  return new Deno.Command(executable!, {
+  const deno = getDenoRuntime();
+  if (!deno) {
+    cliLogger.error("Split mode requires the Deno runtime.");
+    exitProcess(1);
+    throw new Error("Split mode requires the Deno runtime.");
+  }
+
+  return new deno.Command(executable!, {
     args,
-    env: { ...Deno.env.toObject(), ...env },
+    env: { ...getProcessEnv(), ...childEnv },
     stdout: "inherit",
     stderr: "inherit",
   }).spawn();
@@ -164,8 +177,8 @@ export async function runSplitMode(options: SplitModeOptions): Promise<void> {
     shutdown();
   };
 
-  Deno.addSignalListener("SIGINT", handleSignal);
-  Deno.addSignalListener("SIGTERM", handleSignal);
+  onSignal("SIGINT", handleSignal);
+  onSignal("SIGTERM", handleSignal);
 
   // Wait for either process to exit
   const firstExit = await Promise.race([

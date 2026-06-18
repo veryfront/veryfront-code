@@ -182,6 +182,13 @@ describe("mcp/tools/run-tests-tool", () => {
       assertEquals(result.failures.length, 0);
     });
 
+    it("reports a project with no test modules as a successful empty run", () => {
+      const result = parseTestOutput("error: No test modules found", 1);
+      assertEquals(result.success, true);
+      assertEquals(result.summary.total, 0);
+      assertEquals(result.failures.length, 0);
+    });
+
     it("returns success false for non-zero exit code even without failures in output", () => {
       const result = parseTestOutput("some unexpected output", 1);
       assertEquals(result.success, false);

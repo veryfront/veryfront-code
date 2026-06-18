@@ -12,13 +12,21 @@ function hasBunGlobal(): boolean {
   return (globalThis as GlobalWithRuntime).Bun != null;
 }
 
+export function getDenoRuntime(): typeof Deno | undefined {
+  const deno = Reflect.get(globalThis, "Deno") as typeof Deno | undefined;
+  if (
+    deno &&
+    typeof deno.version === "object" &&
+    typeof deno.build === "object" &&
+    typeof deno.build.os === "string"
+  ) {
+    return deno;
+  }
+  return undefined;
+}
+
 function hasRealDeno(): boolean {
-  return (
-    typeof Deno !== "undefined" &&
-    typeof Deno.version === "object" &&
-    typeof Deno.build === "object" &&
-    typeof Deno.build.os === "string"
-  );
+  return getDenoRuntime() != null;
 }
 
 /**
@@ -37,10 +45,11 @@ export function testDenoCompiledDetection(execPath: string): boolean {
 
 /** Compiled Deno binaries cannot dynamically import HTTP URLs at runtime. */
 function isDenoCompiledBinary(): boolean {
-  if (!hasRealDeno()) return false;
+  const deno = getDenoRuntime();
+  if (!deno) return false;
 
   try {
-    return testDenoCompiledDetection(Deno.execPath());
+    return testDenoCompiledDetection(deno.execPath());
   } catch (_) {
     /* expected: Deno.execPath() may not be available in all environments */
     return false;

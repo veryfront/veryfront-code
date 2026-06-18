@@ -129,6 +129,18 @@ Pages live in `app/`. The agent template also adds root-level `agents/` and
 `tools/`. For the convention behind these directories, see
 [Framework conventions](../concepts/framework-conventions.md).
 
+Generate additional app and AI primitives from the project root:
+
+```bash
+veryfront generate agent research-agent
+veryfront generate tool search-docs
+veryfront generate skill research
+```
+
+These names are examples. Use the generated files as starting points, then edit
+the agent instructions, tool implementation, and skill content for the workflow
+you are building.
+
 Every starter includes `AGENTS.md`. Coding agents should read that file first,
 then use `veryfront schema --json` or the Veryfront MCP tools for current CLI
 and project facts. Use [Coding agents](../guides/coding-agents.md) to connect

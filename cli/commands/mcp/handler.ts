@@ -3,6 +3,7 @@
  */
 
 import { defineSchema, lazySchema } from "veryfront/schemas";
+import { onSignal as registerSignalHandler } from "veryfront/platform";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 
@@ -25,11 +26,11 @@ export async function handleMCPCommand(args: ParsedArgs): Promise<void> {
 
   // Keep process alive until interrupted, then shut down gracefully
   const { promise, resolve } = Promise.withResolvers<void>();
-  const onSignal = () => {
+  const shutdown = () => {
     mcpServer.stop();
     resolve();
   };
-  Deno.addSignalListener("SIGINT", onSignal);
-  Deno.addSignalListener("SIGTERM", onSignal);
+  registerSignalHandler("SIGINT", shutdown);
+  registerSignalHandler("SIGTERM", shutdown);
   await promise;
 }

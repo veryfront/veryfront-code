@@ -9,7 +9,7 @@ export default tool({
     a: v.number(),
     b: v.number(),
   }))(),
-  execute: async ({ operation, a, b }) => {
+  execute: ({ operation, a, b }) => {
     if (operation === "divide" && b === 0) {
       throw new Error("Cannot divide by zero");
     }
