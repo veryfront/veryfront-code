@@ -266,6 +266,35 @@ describe("hydration-script-builder/templates/router", () => {
       assertIncludes(result, "MAX_PREFETCH_PATHS = 100");
     });
 
+    it("should schedule capped idle and viewport prefetch for eligible internal links", () => {
+      const result = getRouterScript();
+      assertIncludes(result, "IDLE_PREFETCH_DELAY_MS = 1200");
+      assertIncludes(result, "IDLE_PREFETCH_MAX_LINKS = 4");
+      assertIncludes(result, "VIEWPORT_PREFETCH_MAX_LINKS = 8");
+      assertIncludes(result, "VIEWPORT_PREFETCH_ROOT_MARGIN = '200px'");
+      assertIncludes(result, "link.getAttribute('data-prefetch') === 'false'");
+      assertIncludes(result, "document.querySelectorAll('a[href]')");
+      assertIncludes(result, "function getInternalRouteHrefFromLink(link)");
+      assertIncludes(result, "function getEligiblePrefetchLinks(limit)");
+      assertIncludes(result, "function prefetchEligibleRouteLinks(limit)");
+      assertIncludes(result, "function observeViewportPrefetchLinks()");
+      assertIncludes(result, "IntersectionObserver");
+      assertIncludes(result, "requestIdleCallback(runRoutePrefetchRefresh");
+    });
+
+    it("should refresh eligible prefetch links after load and SPA renders", () => {
+      const result = getRouterScript();
+      assertIncludes(result, "scheduleRoutePrefetchRefresh();\n        return;");
+      assertIncludes(
+        result,
+        "document.addEventListener('DOMContentLoaded', scheduleRoutePrefetchRefresh",
+      );
+      assertIncludes(
+        result,
+        "scheduleRoutePrefetchRefresh();\n    }\n\n    // ============================================",
+      );
+    });
+
     it("should define router object with standard methods", () => {
       const result = getRouterScript();
       for (

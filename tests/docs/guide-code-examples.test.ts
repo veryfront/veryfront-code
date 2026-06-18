@@ -543,6 +543,12 @@ describe("Guide: pages-and-routing.md", () => {
 
     assertEquals(link.type, Link);
     assertEquals(router.type, RouterProvider);
+
+    const prefetchLink = Link({ href: "/about", children: "About" });
+    const noPrefetchLink = Link({ href: "/about", prefetch: false, children: "About" });
+
+    assertEquals(prefetchLink.props["data-prefetch"], "true");
+    assertEquals(noPrefetchLink.props["data-prefetch"], "false");
   });
 });
 
