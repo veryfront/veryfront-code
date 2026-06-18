@@ -264,6 +264,90 @@ describe("rendering/cache/stores/api-store", () => {
       assertEquals(result, undefined);
     });
 
+    it("waits for distributed writes when local cache is disabled", async () => {
+      const previousApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
+      const previousApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+      const globals = globalThis as Record<string, unknown>;
+      const originalAdapter = globals.__vf_multi_project_adapter;
+
+      let releaseSet: () => void = () => {};
+      let setStarted = false;
+      let setCompleted = false;
+      const server = Deno.serve(
+        { hostname: "127.0.0.1", port: 0, onListen: () => {} },
+        async (request) => {
+          const url = new URL(request.url);
+          if (
+            request.method !== "POST" ||
+            url.pathname !== "/projects/api-store-test-project/cache/set"
+          ) {
+            return Response.json({ error: "not found" }, { status: 404 });
+          }
+
+          setStarted = true;
+          await new Promise<void>((resolve) => {
+            releaseSet = resolve;
+          });
+          setCompleted = true;
+          return Response.json({ success: true });
+        },
+      );
+      const addr = server.addr as Deno.NetAddr;
+      Deno.env.set("VERYFRONT_API_BASE_URL", `http://${addr.hostname}:${addr.port}`);
+      Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+      globals.__vf_multi_project_adapter = {
+        getCurrentRequestContext: () => ({
+          token: "request-token",
+          projectSlug: "api-store-test-project",
+          productionMode: true,
+        }),
+      };
+      const store = new APICacheStore({ enableLocalCache: false });
+      const payload = {
+        result: { html: "<p>x</p>", frontmatter: {}, headings: [], stream: null },
+        storedAt: Date.now(),
+      } as any;
+
+      try {
+        let setResolved = false;
+        const setPromise = store.set("distributed-key", payload).then(() => {
+          setResolved = true;
+        });
+
+        for (let attempts = 0; attempts < 50 && !setStarted; attempts++) {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+        assertEquals(setStarted, true);
+        assertEquals(setResolved, false);
+        assertEquals(setCompleted, false);
+
+        releaseSet();
+        await setPromise;
+
+        assertEquals(setCompleted, true);
+        assertEquals(setResolved, true);
+      } finally {
+        releaseSet();
+        await store.destroy();
+        await server.shutdown();
+        if (previousApiBaseUrl === undefined) {
+          Deno.env.delete("VERYFRONT_API_BASE_URL");
+        } else {
+          Deno.env.set("VERYFRONT_API_BASE_URL", previousApiBaseUrl);
+        }
+        if (previousApiToken === undefined) {
+          Deno.env.delete("VERYFRONT_API_TOKEN");
+        } else {
+          Deno.env.set("VERYFRONT_API_TOKEN", previousApiToken);
+        }
+        if (originalAdapter === undefined) {
+          delete globals.__vf_multi_project_adapter;
+        } else {
+          globals.__vf_multi_project_adapter = originalAdapter;
+        }
+      }
+    });
+
     it("expires local entries without payload expiresAt using store TTL", async () => {
       await withStoreTtlEnabled(async () => {
         const store = new APICacheStore({ enableLocalCache: true, ttlSeconds: 1 });

@@ -159,17 +159,15 @@ export class APICacheStore implements CacheStore {
 
     await this.localCache?.set(key, value);
 
-    void (async () => {
-      try {
-        const backend = await this.getBackend();
-        await backend.set(key, this.serialize(value), this.ttlSeconds);
-      } catch (error) {
-        logger.debug(
-          "[APICacheStore] Failed to store in distributed cache (no fallback)",
-          { key, error },
-        );
-      }
-    })();
+    try {
+      const backend = await this.getBackend();
+      await backend.set(key, this.serialize(value), this.ttlSeconds);
+    } catch (error) {
+      logger.debug(
+        "[APICacheStore] Failed to store in distributed cache (no fallback)",
+        { key, error },
+      );
+    }
   }
 
   async delete(key: string): Promise<void> {

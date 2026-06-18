@@ -113,7 +113,9 @@ concrete static routes, skips dynamic route patterns, validates each candidate
 route resolves, uses canonical route cache keys without request cookies, query
 strings, or nonces, and checks the shared render cache before rendering each
 route. This populates the API-backed distributed render cache for sibling routes
-without adding latency to the foreground response.
+without adding latency to the foreground response. API-backed render cache
+writes complete before `CacheStore.set()` resolves so a render or prewarm fill
+is visible to other pods before the cache fill is treated as done.
 
 Default render prewarm controls:
 
