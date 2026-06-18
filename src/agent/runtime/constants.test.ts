@@ -23,8 +23,8 @@ describe("getModelMaxOutputTokens", () => {
   });
 
   it("returns known limits for Mistral models", () => {
-    assertEquals(getModelMaxOutputTokens("mistral/mistral-large-2512"), 131_072);
-    assertEquals(getModelMaxOutputTokens("veryfront-cloud/mistral/mistral-large-2512"), 131_072);
+    assertEquals(getModelMaxOutputTokens("mistral/mistral-large-2512"), 4_096);
+    assertEquals(getModelMaxOutputTokens("veryfront-cloud/mistral/mistral-large-2512"), 4_096);
   });
 
   it("returns undefined for unknown models", () => {
