@@ -235,6 +235,11 @@ describe("npm supply-chain policy", () => {
 				false,
 				`${path} must use platform env helpers`,
 			);
+			assertEquals(
+				source.includes("dntShim.Deno.connect"),
+				false,
+				`${path} must use real globalThis.Deno for TCP readiness checks`,
+			);
 		}
 	});
 });

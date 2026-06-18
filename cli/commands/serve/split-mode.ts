@@ -80,15 +80,46 @@ function validateEnvVars(): Record<string, string> {
   return env;
 }
 
-async function waitForPort(port: number, timeoutMs = 10000): Promise<boolean> {
+async function tryConnectToPort(port: number, attemptTimeoutMs: number): Promise<boolean> {
+  const deno = getDenoRuntime();
+  if (!deno?.connect) {
+    return false;
+  }
+
+  const connectionPromise = deno.connect({ hostname: "127.0.0.1", port });
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<"timeout">((resolve) => {
+    timeoutId = setTimeout(() => resolve("timeout"), attemptTimeoutMs);
+  });
+
+  try {
+    const result = await Promise.race([connectionPromise, timeoutPromise]);
+    if (result === "timeout") {
+      connectionPromise.then((conn) => conn.close()).catch(() => {});
+      return false;
+    }
+    result.close();
+    return true;
+  } catch {
+    return false;
+  } finally {
+    if (timeoutId !== undefined) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
+export async function waitForPort(
+  port: number,
+  timeoutMs = 10000,
+  attemptTimeoutMs = 500,
+): Promise<boolean> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    try {
-      await fetch(`http://127.0.0.1:${port}/`);
+    if (await tryConnectToPort(port, attemptTimeoutMs)) {
       return true;
-    } catch {
-      await new Promise((r) => setTimeout(r, 100));
     }
+    await new Promise((r) => setTimeout(r, 100));
   }
   return false;
 }
