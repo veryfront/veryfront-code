@@ -197,6 +197,8 @@ export interface ReasoningPartLike {
 type ToolUiPart = Extract<ChatUiMessagePart, { toolCallId: string; state: string }>;
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
+const PROVIDER_NATIVE_WEB_TOOL_NAMES = new Set(["web_fetch", "web_search"]);
+
 /** Shared UUID pattern value. */
 export const UUID_PATTERN =
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i;
@@ -301,6 +303,19 @@ export function getUiToolName(part: ToolUiPart): string | undefined {
   return part.type.startsWith("tool-") ? part.type.replace(/^tool-/, "") : undefined;
 }
 
+function isProviderOwnedInputAvailableTool(input: {
+  toolName?: string;
+  state: string;
+  providerExecuted?: unknown;
+}): boolean {
+  if (input.state !== "input-available") {
+    return false;
+  }
+
+  return input.providerExecuted === true ||
+    (typeof input.toolName === "string" && PROVIDER_NATIVE_WEB_TOOL_NAMES.has(input.toolName));
+}
+
 /** Push tool parts. */
 export function pushToolParts(
   parts: MessagePart[],
@@ -316,7 +331,11 @@ export function pushToolParts(
 ): void {
   const input = toRecord(part.input);
   const isErroredState = state === "output-error" || state === "error" || state === "output-denied";
-  const isProviderOwnedAvailable = part.providerExecuted === true && state === "input-available";
+  const isProviderOwnedAvailable = isProviderOwnedInputAvailableTool({
+    toolName,
+    state,
+    providerExecuted: part.providerExecuted,
+  });
   const hasResultState = state === "output-available" || state === "completed" ||
     isErroredState || isProviderOwnedAvailable;
 
@@ -451,7 +470,13 @@ export function toConversationPartsFromUiMessage(message: ChatUiMessage): Messag
 }
 
 function isToolComplete(part: ToolUiPart): boolean {
-  if (part.providerExecuted === true && part.state === "input-available") {
+  if (
+    isProviderOwnedInputAvailableTool({
+      toolName: getUiToolName(part),
+      state: part.state,
+      providerExecuted: part.providerExecuted,
+    })
+  ) {
     return true;
   }
 

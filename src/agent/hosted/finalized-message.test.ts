@@ -59,6 +59,38 @@ Deno.test("buildFinalizedMessageState does not fail provider-owned input-availab
   ]);
 });
 
+Deno.test("buildFinalizedMessageState does not fail provider-native web tools when providerExecuted is omitted", () => {
+  const result = buildFinalizedMessageState({
+    responseMessage: {
+      id: "assistant-1",
+      role: "assistant",
+      parts: [
+        { type: "text", text: "Done" },
+        {
+          type: "tool-web_fetch",
+          toolCallId: "srvtoolu-fetch",
+          input: { url: "https://veryfront.com/docs/agent/create-agent" },
+          state: "input-available",
+        },
+      ],
+    },
+    isAborted: false,
+    finalStep: { text: "Done" },
+    incompleteToolCallsPartErrorText: "tool error",
+  });
+
+  assertEquals(result.hasIncompleteFinalizedToolParts, false);
+  assertEquals(result.sanitizedFinalizedMessage.parts, [
+    { type: "text", text: "Done" },
+    {
+      type: "tool-web_fetch",
+      toolCallId: "srvtoolu-fetch",
+      input: { url: "https://veryfront.com/docs/agent/create-agent" },
+      state: "input-available",
+    },
+  ]);
+});
+
 Deno.test("buildDetachedFallbackMessageState uses the captured message id for detached fallback messages", () => {
   const result = buildDetachedFallbackMessageState({
     capturedMessageId: "captured-1",
