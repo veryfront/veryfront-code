@@ -51,6 +51,33 @@ describe("chat/provider-errors", () => {
     });
   });
 
+  it("classifies provider spend limits separately from user credit balance", () => {
+    const expected = {
+      code: "AI_PROVIDER_SPEND_LIMIT_EXCEEDED",
+      message:
+        "The AI provider spend limit has been reached. Try again later or ask an administrator to raise the AI provider spend limit.",
+      status: 402,
+    };
+
+    assertEquals(
+      parseProviderError({
+        slug: "insufficient-credits",
+        error: "AI provider spend limit exceeded for the daily window.",
+        suggestion: "Try again later or ask an administrator to raise the AI provider spend limit.",
+        balance: 1,
+        required: 2,
+      }),
+      expected,
+    );
+
+    assertEquals(
+      parseProviderError(
+        'veryfront-cloud request failed: {"slug":"insufficient-credits","error":"AI provider spend limit exceeded for the daily window.","suggestion":"Try again later or ask an administrator to raise the AI provider spend limit.","balance":1,"required":2}',
+      ),
+      expected,
+    );
+  });
+
   it("classifies unsupported assistant prefill provider rejections as model capability errors", () => {
     const expected = {
       code: "MODEL_UNSUPPORTED_ASSISTANT_PREFILL",
