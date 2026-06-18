@@ -4,7 +4,7 @@
 // starter is usable out of the box. To wire up real OAuth, scaffold provider
 // routes at app/api/auth/google/route.ts and app/api/auth/github/route.ts and
 // point the hrefs there. See https://veryfront.com/docs/code/guides/oauth.
-export default function LoginPage(): JSX.Element {
+export default function LoginPage(): React.JSX.Element {
   return (
     <div className="min-h-screen flex items-center justify-center bg-neutral-50 dark:bg-neutral-950 px-4">
       <div className="w-full max-w-sm">

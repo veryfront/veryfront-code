@@ -11,7 +11,7 @@ const STATUS_STYLES: Record<string, string> = {
   pending: 'bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400',
 }
 
-export default function WorkflowDashboard(): JSX.Element {
+export default function WorkflowDashboard(): React.JSX.Element {
   const [topic, setTopic] = useState('')
   const { start, isStarting } = useWorkflowStart({ workflowId: 'content-pipeline' })
   const { runs, isLoading, refresh } = useWorkflowList()

@@ -2,13 +2,18 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { handleAgUiStreamingResponse } from "#veryfront/agent/react/use-chat/streaming/index.ts";
+import type { ChatProps } from "#veryfront/react/components/chat/chat.tsx";
 import type { ChatMessage } from "./types.ts";
+import type { UseChatResult } from "./types.ts";
 import {
   findBranchUserMessageIndex,
   isLatestRequest,
   resolveBranchKey,
   resolveUseChatStreamHandler,
 } from "./use-chat.ts";
+
+const _useChatResultMatchesChatProps: ChatProps = {} as UseChatResult;
+void _useChatResultMatchesChatProps;
 
 describe("use-chat internal state helpers", () => {
   it("isLatestRequest only accepts matching request ids", () => {

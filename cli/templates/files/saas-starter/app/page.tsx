@@ -1,4 +1,4 @@
-export default function LandingPage(): JSX.Element {
+export default function LandingPage(): React.JSX.Element {
   return (
     <div className="min-h-screen bg-white dark:bg-neutral-950">
       {/* Nav */}
