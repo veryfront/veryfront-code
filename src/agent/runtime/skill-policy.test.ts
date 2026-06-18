@@ -100,14 +100,20 @@ describe("src/agent/runtime skill policy helpers", () => {
       assertEquals(result.allowed, false);
     });
 
-    it("allows form_input through a narrowed policy only to reuse a submitted form", () => {
+    it("blocks intake and skill reload tools after a submitted form", () => {
       assertEquals(
         enforceSkillPolicy("form_input", ["studio_suggestions"], false).allowed,
         false,
       );
+      for (const toolName of ["form_input", "load_skill", "invoke_agent"]) {
+        const result = enforceSkillPolicy(toolName, [toolName], false, {
+          hasSubmittedFormInput: true,
+        });
+        assertEquals(result.allowed, false);
+      }
       assertEquals(
-        enforceSkillPolicy("form_input", ["studio_suggestions"], false, {
-          allowSubmittedFormInputReuse: true,
+        enforceSkillPolicy("create_agent", ["create_agent"], false, {
+          hasSubmittedFormInput: true,
         }),
         { allowed: true },
       );
