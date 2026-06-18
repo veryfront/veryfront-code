@@ -30,6 +30,10 @@ const VERYFRONT_CLOUD_GATEWAY_MODEL_PROVIDER_PREFIXES = [
   "moonshotai/",
 ];
 
+function isSupportedMistralModelId(modelId: string): boolean {
+  return VERYFRONT_CLOUD_CHAT_MODELS.some((model) => model.modelId === modelId);
+}
+
 /** Shared Veryfront Cloud chat models value. */
 export const VERYFRONT_CLOUD_CHAT_MODELS: VeryfrontCloudChatModel[] = [
   {
@@ -75,20 +79,6 @@ export const VERYFRONT_CLOUD_CHAT_MODELS: VeryfrontCloudChatModel[] = [
     provider: "google",
     name: "Gemini 3.5 Flash",
     description: "Fast and cost-efficient",
-  },
-  {
-    id: "mistral-small-2603",
-    modelId: "mistral/mistral-small-2603",
-    provider: "mistral",
-    name: "Mistral Small 2603",
-    description: "Fast Mistral model for everyday tasks",
-  },
-  {
-    id: "mistral-medium-3-5",
-    modelId: "mistral/mistral-medium-3-5",
-    provider: "mistral",
-    name: "Mistral Medium 3.5",
-    description: "Balanced Mistral model for multi-step work",
   },
   {
     id: "mistral-large-2512",
@@ -168,6 +158,9 @@ export function resolveVeryfrontCloudModelId(alias?: string): string {
   }
 
   if (requestedModel.includes("/")) {
+    if (requestedModel.startsWith("mistral/") && !isSupportedMistralModelId(requestedModel)) {
+      throw new Error(`Unsupported Mistral model "${requestedModel}"`);
+    }
     return requestedModel;
   }
 
@@ -187,6 +180,14 @@ export function resolveVeryfrontCloudGatewayModelId(
   }
 
   if (modelId.startsWith(VERYFRONT_CLOUD_MODEL_PREFIX)) {
+    const unprefixedModelId = modelId.slice(VERYFRONT_CLOUD_MODEL_PREFIX.length);
+    if (unprefixedModelId.startsWith("mistral/") && !isSupportedMistralModelId(unprefixedModelId)) {
+      return modelId;
+    }
+    return modelId;
+  }
+
+  if (modelId.startsWith("mistral/") && !isSupportedMistralModelId(modelId)) {
     return modelId;
   }
 

@@ -86,10 +86,6 @@ describe("agent/runtime/model-resolution", () => {
       "google-ai-studio/gemini-3.5-flash",
     );
     assertEquals(
-      resolveConfiguredAgentModel("mistral-small"),
-      "mistral/mistral-small-2603",
-    );
-    assertEquals(
       resolveConfiguredAgentModel("kimi-k2.6"),
       "moonshotai/kimi-k2.6",
     );
@@ -132,12 +128,20 @@ describe("agent/runtime/model-resolution", () => {
       "veryfront-cloud/moonshotai/kimi-k2.6",
     );
     assertEquals(
-      resolveRuntimeModel("mistral/mistral-small-2603"),
-      "veryfront-cloud/mistral/mistral-small-2603",
+      resolveRuntimeModel("mistral/mistral-large-2512"),
+      "veryfront-cloud/mistral/mistral-large-2512",
     );
     assertEquals(
-      resolveRuntimeModel("mistral-small"),
-      "veryfront-cloud/mistral/mistral-small-2603",
+      resolveRuntimeModel("mistral-large"),
+      "veryfront-cloud/mistral/mistral-large-2512",
+    );
+    assertEquals(
+      resolveRuntimeModel("mistral/mistral-small-2603"),
+      "mistral/mistral-small-2603",
+    );
+    assertEquals(
+      resolveRuntimeModel("mistral/mistral-medium-3-5"),
+      "mistral/mistral-medium-3-5",
     );
     assertEquals(
       resolveRuntimeModel("kimi-k2.6"),
