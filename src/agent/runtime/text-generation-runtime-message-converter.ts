@@ -482,3 +482,23 @@ export function convertToTextGenerationRuntimeMessages(
 
   return textGenerationRuntimeMessages;
 }
+
+/**
+ * Convert messages for a provider request.
+ *
+ * Some providers reject assistant-prefill transcripts and require the prompt to
+ * end at user/tool input. Persisted runtime history may temporarily end with an
+ * assistant-only continuation message between streamed tool steps, so trim that
+ * replay-only tail at the provider boundary without changing stored history.
+ */
+export function convertToTextGenerationRuntimeRequestMessages(
+  messages: Message[],
+): TextGenerationRuntimeMessage[] {
+  const requestMessages = convertToTextGenerationRuntimeMessages(messages);
+
+  while (requestMessages.at(-1)?.role === "assistant") {
+    requestMessages.pop();
+  }
+
+  return requestMessages;
+}
