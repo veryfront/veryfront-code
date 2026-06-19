@@ -66,7 +66,7 @@ async function executeHostedWebFetch(
     redirect: "follow",
     signal: context?.abortSignal,
     headers: {
-      accept: "text/html,application/xhtml+xml,application/xml,text/markdown,text/plain,*/*;q=0.8",
+      accept: "text/markdown,text/plain,text/html,application/xhtml+xml,application/xml,*/*;q=0.8",
       "user-agent": "Veryfront web_fetch",
     },
   });

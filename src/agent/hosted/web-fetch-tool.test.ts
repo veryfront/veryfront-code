@@ -4,10 +4,13 @@ import { createHostedWebFetchTool } from "./web-fetch-tool.ts";
 
 Deno.test("createHostedWebFetchTool fetches an explicit HTTPS URL without prior search", async () => {
   const requestedUrls: string[] = [];
+  const acceptHeaders: string[] = [];
   const tool = createHostedWebFetchTool({
     fetch: (input, init) => {
+      const requestInit = init as globalThis.RequestInit | undefined;
       requestedUrls.push(String(input));
-      assertEquals(init?.redirect, "follow");
+      assertEquals(requestInit?.redirect, "follow");
+      acceptHeaders.push(new Headers(requestInit?.headers).get("accept") ?? "");
       return Promise.resolve(
         new Response("Create agent docs", {
           status: 200,
@@ -22,6 +25,10 @@ Deno.test("createHostedWebFetchTool fetches an explicit HTTPS URL without prior 
   });
 
   assertEquals(requestedUrls, ["https://api.veryfront.com/docs/mcp?tool=create_agent"]);
+  assertEquals(
+    acceptHeaders,
+    ["text/markdown,text/plain,text/html,application/xhtml+xml,application/xml,*/*;q=0.8"],
+  );
   assertEquals((result as { type?: unknown }).type, "web_fetch_result");
   assertEquals(
     (result as { url?: unknown }).url,
