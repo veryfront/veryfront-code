@@ -122,6 +122,82 @@ describe("chat/provider-errors", () => {
     );
   });
 
+  it("classifies provider assistant-prefill rejections", () => {
+    const expected = {
+      code: "MODEL_UNSUPPORTED_ASSISTANT_PREFILL",
+      message:
+        "The selected model does not support assistant-message prefill. Start a new user message or choose a compatible model.",
+    };
+
+    assertEquals(
+      parseProviderError({
+        responseBody: JSON.stringify({
+          type: "error",
+          error: {
+            type: "invalid_request_error",
+            message:
+              "This model does not support assistant message prefill. The conversation must end with a user message.",
+          },
+          request_id: "req_test",
+        }),
+      }),
+      expected,
+    );
+
+    assertEquals(
+      parseProviderError(
+        "veryfront-cloud request failed: " + JSON.stringify({
+          type: "error",
+          error: {
+            type: "invalid_request_error",
+            message:
+              "This model does not support assistant message prefill. The conversation must end with a user message.",
+          },
+        }),
+      ),
+      expected,
+    );
+
+    assertEquals(
+      parseProviderError({
+        lastError: {
+          responseBody: JSON.stringify({
+            type: "error",
+            error: {
+              type: "invalid_request_error",
+              message:
+                "This model does not support assistant message prefill. The conversation must end with a user message.",
+            },
+          }),
+        },
+      }),
+      expected,
+    );
+  });
+
+  it("guards cyclic nested provider error envelopes", () => {
+    const cyclicError: Record<string, unknown> = {};
+    cyclicError.error = cyclicError;
+
+    assertEquals(parseProviderError(cyclicError), {
+      code: "EXTERNAL_SERVICE_ERROR",
+      message: "LLM provider service error",
+    });
+  });
+
+  it("does not overmatch unrelated invalid request messages", () => {
+    assertEquals(
+      parseProviderError({
+        type: "invalid_request_error",
+        message: "The conversation must end with a user message before tool output.",
+      }),
+      {
+        code: "EXTERNAL_SERVICE_ERROR",
+        message: "LLM provider service error",
+      },
+    );
+  });
+
   it("walks nested lastError chains without stack overflows or cycles", () => {
     const errorA: Record<string, unknown> = { message: "outer", lastError: null };
     const errorB: Record<string, unknown> = { message: "inner", lastError: errorA };

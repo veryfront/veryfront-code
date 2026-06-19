@@ -226,6 +226,71 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(toolResults[0]?.context?.projectId, "project-stream");
   });
 
+  it("does not re-call the model after final assistant text with a provisional placeholder", async () => {
+    const toolResults: ToolExecutionResultRequest[] = [];
+    let callCount = 0;
+    const studioSuggestions = tool({
+      id: "studio_suggestions",
+      description: "Capture Studio suggestions",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => ({ suggestions: [] }),
+    });
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/text-placeholder-stream",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        if (callCount > 1) {
+          throw new Error("unexpected second stream call");
+        }
+
+        return {
+          stream: createRuntimeStream([
+            { type: "text-delta", text: "Created the Outlook assistant." },
+            {
+              type: "tool-input-start",
+              id: "toolu_placeholder_after_text",
+              toolName: "studio_suggestions",
+            },
+            { type: "tool-input-delta", id: "toolu_placeholder_after_text", delta: "{}" },
+            {
+              type: "finish",
+              finishReason: "tool-calls",
+              usage: { inputTokens: 1, outputTokens: 1 },
+            },
+          ]),
+        };
+      },
+    };
+
+    const assistant = agent({
+      model: "hosted/text-placeholder-stream",
+      system: "Placeholder recovery regression test",
+      maxSteps: 2,
+      resolveModelTransport: async () => ({ model }),
+      tools: { studio_suggestions: studioSuggestions },
+      onToolResult: (request) => {
+        toolResults.push(request);
+      },
+    });
+
+    const response = (await assistant.stream({
+      input: "Create an Outlook assistant",
+    })).toDataStreamResponse();
+    const body = await response.text();
+
+    assertEquals(callCount, 1);
+    assertEquals(toolResults, []);
+    assertEquals(body.includes("Created the Outlook assistant."), true);
+  });
+
   it("applies loaded skill maxSteps overrides to generate() invoke_agent calls", async () => {
     const toolResults: ToolExecutionResultRequest[] = [];
     let callCount = 0;

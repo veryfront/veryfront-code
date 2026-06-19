@@ -35,6 +35,7 @@ describe("agent/streamed-assistant-message", () => {
           },
         ],
       ]),
+      suppressedToolCalls: [],
       toolResults: [],
       usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
     };
@@ -67,6 +68,42 @@ describe("agent/streamed-assistant-message", () => {
           inputText: '{"q":"Veryfront"}',
           providerExecuted: true,
         },
+      ],
+    });
+  });
+
+  it("omits recoverable placeholder tool parts when assistant text exists", () => {
+    const state: ChatStreamState = {
+      accumulatedText: "Created the Outlook assistant.",
+      reasoningParts: [],
+      finishReason: "tool-calls",
+      toolCalls: new Map([
+        [
+          "call_placeholder",
+          {
+            id: "call_placeholder",
+            name: "studio_suggestions",
+            arguments: "{}",
+            inputAvailable: false,
+          },
+        ],
+      ]),
+      suppressedToolCalls: [],
+      toolResults: [],
+      usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+    };
+
+    const message = buildStreamedAssistantMessage(state, {
+      id: "msg_text_only",
+      timestamp: 456,
+    });
+
+    assertEquals(message, {
+      id: "msg_text_only",
+      role: "assistant",
+      timestamp: 456,
+      parts: [
+        { type: "text", text: "Created the Outlook assistant." },
       ],
     });
   });

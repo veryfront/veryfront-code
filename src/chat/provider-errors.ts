@@ -103,7 +103,24 @@ export function isCreditLimitMessage(normalizedMessage: string): boolean {
   );
 }
 
-function parseKnownProviderBody(body: unknown): ParsedProviderError | null {
+function isAssistantPrefillUnsupportedMessage(message: string): boolean {
+  const normalizedMessage = message.toLowerCase();
+  const mentionsAssistantPrefill = normalizedMessage.includes("assistant message prefill") ||
+    normalizedMessage.includes("assistant-message prefill") ||
+    (
+      normalizedMessage.includes("assistant") &&
+      normalizedMessage.includes("prefill")
+    );
+  const rejectsAssistantPrefill = normalizedMessage.includes("does not support") ||
+    normalizedMessage.includes("unsupported") ||
+    normalizedMessage.includes("conversation must end with a user message");
+  return mentionsAssistantPrefill && rejectsAssistantPrefill;
+}
+
+function parseKnownProviderBody(
+  body: unknown,
+  seen: WeakSet<object> = new WeakSet(),
+): ParsedProviderError | null {
   const problemMatch = parseKnownProblemBody(body);
   if (problemMatch) {
     return problemMatch;
@@ -113,8 +130,16 @@ function parseKnownProviderBody(body: unknown): ParsedProviderError | null {
     return null;
   }
 
-  if (body.type === "error" && isErrorRecord(body.error)) {
-    return parseKnownProviderBody(body.error);
+  if (seen.has(body)) {
+    return null;
+  }
+  seen.add(body);
+
+  if (isErrorRecord(body.error)) {
+    const nestedError = parseKnownProviderBody(body.error, seen);
+    if (nestedError) {
+      return nestedError;
+    }
   }
 
   if (body.type === "overloaded_error") {
@@ -145,18 +170,13 @@ function parseKnownProviderBody(body: unknown): ParsedProviderError | null {
     };
   }
 
-  if (
-    body.type === "invalid_request_error" && typeof body.message === "string" &&
-    body.message.includes("too long")
-  ) {
-    return { code: "CONTEXT_LENGTH_EXCEEDED", message: "Conversation is too long" };
-  }
-
-  if (
-    body.type === "invalid_request_error" && typeof body.message === "string" &&
-    body.message.toLowerCase().includes("does not support assistant message prefill")
-  ) {
-    return MODEL_UNSUPPORTED_ASSISTANT_PREFILL_ERROR;
+  if (body.type === "invalid_request_error" && typeof body.message === "string") {
+    if (isAssistantPrefillUnsupportedMessage(body.message)) {
+      return MODEL_UNSUPPORTED_ASSISTANT_PREFILL_ERROR;
+    }
+    if (body.message.includes("too long")) {
+      return { code: "CONTEXT_LENGTH_EXCEEDED", message: "Conversation is too long" };
+    }
   }
 
   return null;
@@ -249,6 +269,9 @@ function parseProviderErrorInner(error: unknown, seen: WeakSet<object>): ParsedP
     }
 
     const normalizedMessage = message.toLowerCase();
+    if (isAssistantPrefillUnsupportedMessage(message)) {
+      return MODEL_UNSUPPORTED_ASSISTANT_PREFILL_ERROR;
+    }
     if (isCreditLimitMessage(normalizedMessage)) {
       return { code: "INSUFFICIENT_CREDITS", message: "Insufficient AI credits", status: 402 };
     }
