@@ -337,10 +337,11 @@ it("should respond within 100ms for cached requests", async () => {
 
 ## Coverage
 
-Line coverage of `src/` is gated in CI. The `coverage gate` job runs the unit
-suite with coverage instrumentation (`deno task coverage:ci`) and fails if
-coverage drops below the floor enforced by `deno task coverage:gate`
-(`scripts/lint/check-coverage.ts <floor>`).
+Line coverage of `src/` is gated in CI. The workflow runs unit coverage shards
+with `deno task coverage:ci:shard`, converts each shard to `lcov.info` before
+upload, then the required `coverage gate` job merges those LCOV reports with
+`deno task coverage:ci:merge` and fails if coverage drops below the floor
+enforced by `scripts/lint/check-coverage.ts <floor>`.
 
 - The floor is a **ratchet**, not the target: it sits a little under current
   coverage so it blocks regressions without breaking the build. When you raise
@@ -350,7 +351,7 @@ coverage drops below the floor enforced by `deno task coverage:gate`
 - See per-file gaps locally with `deno task coverage:html` and open
   `coverage/html/index.html`.
 
-Run the gate locally exactly as CI does:
+Run the unsharded local gate:
 
 ```bash
 deno task coverage:ci
