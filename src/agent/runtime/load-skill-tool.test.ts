@@ -6,6 +6,7 @@ import {
   type RuntimeLoadSkillBuiltinStore,
   type RuntimeLoadSkillToolContext,
 } from "./load-skill-tool.ts";
+import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
 import type {
   RuntimeLoadedProjectSkill,
   RuntimeProjectSkillContext,
@@ -229,6 +230,66 @@ Deno.test("createRuntimeLoadSkillTool schema disallows body reloads for already-
       },
     ],
   });
+});
+
+Deno.test("createRuntimeLoadSkillTool refreshes its provider schema after a skill body load", async () => {
+  const context = createProjectContext({
+    availableSkillIds: ["veryfront"],
+  });
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({
+      skills: new Map([
+        ["veryfront", {
+          skillId: "veryfront",
+          instructions: "# Veryfront",
+          references: ["references/create-agent.md"],
+        }],
+      ]),
+    }),
+    builtinStore: createBuiltinStore({}),
+  });
+
+  const beforeLoad = toolToProviderDefinition(tool).parameters;
+  assertEquals(beforeLoad, {
+    type: "object",
+    properties: {
+      skillId: {
+        type: "string",
+        enum: ["veryfront"],
+        description: "The skill ID to load. Available skill IDs: veryfront",
+      },
+      file: {
+        type: "string",
+        description:
+          "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
+      },
+    },
+    required: ["skillId"],
+  });
+
+  await tool.execute({ skillId: "veryfront" });
+
+  const afterLoad = toolToProviderDefinition(tool).parameters;
+  assertEquals(afterLoad, {
+    type: "object",
+    properties: {
+      skillId: {
+        type: "string",
+        enum: ["veryfront"],
+        description:
+          "Already-loaded skill ID. Body reloads are not allowed; use this only with file for listed references. Loaded skill IDs: veryfront",
+      },
+      file: {
+        type: "string",
+        description:
+          "Required reference file to load from an already-loaded skill. Do not call load_skill again for the skill body.",
+      },
+    },
+    required: ["skillId", "file"],
+  });
+  await assertRejects(() => tool.execute({ skillId: "veryfront" }));
 });
 
 Deno.test("createRuntimeLoadSkillTool schema only permits reference loads when all known skills are loaded", async () => {

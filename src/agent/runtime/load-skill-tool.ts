@@ -1,7 +1,7 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
-import { tool } from "#veryfront/tool";
 import type { Tool } from "#veryfront/tool/types.ts";
+import { zodToJsonSchema } from "#veryfront/tool/schema/zod-json-schema.ts";
 import {
   LOAD_SKILL_CONTINUE_SAME_TURN,
   LOAD_SKILL_DELEGATION_THRESHOLD,
@@ -427,47 +427,66 @@ export function createRuntimeLoadSkillTool(
 ): Tool<RuntimeLoadSkillToolInput, RuntimeLoadSkillToolOutput> {
   const builtinStore = getBuiltinStore(options);
 
-  return tool({
+  async function execute({ skillId, file }: RuntimeLoadSkillToolInput) {
+    let parsed: RuntimeLoadSkillToolInput;
+    try {
+      parsed = buildRuntimeLoadSkillInputSchema(options).parse({ skillId, file });
+    } catch (error) {
+      throw new Error(
+        `Tool "load_skill" input validation failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+    skillId = parsed.skillId;
+    file = parsed.file;
+
+    if (file) {
+      return await loadRuntimeSkillReferenceFile(options, skillId, file);
+    }
+
+    const loadedSkillResponses = options.context.loadedSkillResponses ??= {};
+    const loadedSkillKey = buildRuntimeSkillCacheKey(options.context, skillId);
+    const loadedResponse = loadedSkillResponses[loadedSkillKey];
+    if (loadedResponse) {
+      return buildAlreadyLoadedSkillResponse(skillId, loadedResponse);
+    }
+
+    const projectSkill = await loadRuntimeSkillBody(options, skillId);
+    if (projectSkill) {
+      const response = buildLoadedSkillResponse({
+        options,
+        skillId,
+        instructions: projectSkill.instructions,
+        references: projectSkill.references,
+      });
+      loadedSkillResponses[loadedSkillKey] = response;
+      return response;
+    }
+
+    const localContent = builtinStore.readSkill(options.skillsDir, skillId);
+    if (localContent) {
+      const response = buildLoadedSkillResponse({
+        options,
+        skillId,
+        instructions: localContent,
+        references: builtinStore.listReferences(options.skillsDir, skillId),
+      });
+      loadedSkillResponses[loadedSkillKey] = response;
+      return response;
+    }
+
+    return buildMissingSkillError(options, skillId);
+  }
+
+  return {
     id: "load_skill",
+    type: "function",
     description: buildRuntimeLoadSkillDescription(options),
-    inputSchema: buildRuntimeLoadSkillInputSchema(options),
-    execute: async ({ skillId, file }) => {
-      if (file) {
-        return await loadRuntimeSkillReferenceFile(options, skillId, file);
-      }
-
-      const loadedSkillResponses = options.context.loadedSkillResponses ??= {};
-      const loadedSkillKey = buildRuntimeSkillCacheKey(options.context, skillId);
-      const loadedResponse = loadedSkillResponses[loadedSkillKey];
-      if (loadedResponse) {
-        return buildAlreadyLoadedSkillResponse(skillId, loadedResponse);
-      }
-
-      const projectSkill = await loadRuntimeSkillBody(options, skillId);
-      if (projectSkill) {
-        const response = buildLoadedSkillResponse({
-          options,
-          skillId,
-          instructions: projectSkill.instructions,
-          references: projectSkill.references,
-        });
-        loadedSkillResponses[loadedSkillKey] = response;
-        return response;
-      }
-
-      const localContent = builtinStore.readSkill(options.skillsDir, skillId);
-      if (localContent) {
-        const response = buildLoadedSkillResponse({
-          options,
-          skillId,
-          instructions: localContent,
-          references: builtinStore.listReferences(options.skillsDir, skillId),
-        });
-        loadedSkillResponses[loadedSkillKey] = response;
-        return response;
-      }
-
-      return buildMissingSkillError(options, skillId);
+    inputSchema: runtimeLoadSkillToolInputSchema,
+    get inputSchemaJson() {
+      return zodToJsonSchema(buildRuntimeLoadSkillInputSchema(options));
     },
-  });
+    execute,
+  };
 }
