@@ -25,6 +25,22 @@ function projectFileTool(name: string): ToolDefinition {
   };
 }
 
+function optionalProjectReferenceTool(name: string): ToolDefinition {
+  return {
+    name,
+    description: `${name} description`,
+    parameters: {
+      type: "object",
+      properties: {
+        project_reference: { type: "string" },
+        agent_id: { type: "string" },
+        config: { type: "object" },
+      },
+      required: ["agent_id"],
+    },
+  };
+}
+
 function navigationTool(name: string): ToolDefinition {
   return {
     name,
@@ -122,6 +138,38 @@ Deno.test("createHostedProjectRemoteToolSource scopes tool listings and hydrates
     {
       toolName: "update_file",
       args: { path: "AGENTS.md", project_reference: "project-1" },
+      context: { projectId: "project-1" },
+    },
+  ]);
+});
+
+Deno.test("createHostedProjectRemoteToolSource hydrates optional declared project references", async () => {
+  const executeCalls: Array<{ toolName: string; args: unknown; context?: ToolExecutionContext }> =
+    [];
+  const source = createHostedProjectRemoteToolSource({
+    source: createRemoteSource({
+      tools: [optionalProjectReferenceTool("generate_agent_avatar")],
+      execute: (toolName, args, context) => {
+        executeCalls.push({ toolName, args, context });
+        return { avatar_url: "https://api.example/avatar.svg" };
+      },
+    }),
+    defaultProjectId: () => "project-1",
+  });
+
+  await source.executeTool("generate_agent_avatar", {
+    agent_id: "harvest-assistant",
+    config: { seed: "harvest-assistant" },
+  });
+
+  assertEquals(executeCalls, [
+    {
+      toolName: "generate_agent_avatar",
+      args: {
+        agent_id: "harvest-assistant",
+        config: { seed: "harvest-assistant" },
+        project_reference: "project-1",
+      },
       context: { projectId: "project-1" },
     },
   ]);
