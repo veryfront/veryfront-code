@@ -35,7 +35,7 @@ export const RUNTIME_LOAD_SKILL_CONTINUATION_NOTE =
 
 /** Shared runtime load skill description value. */
 export const RUNTIME_LOAD_SKILL_DESCRIPTION =
-  `Load the full instructions for a skill. Use this when you need detailed guidance for a specific task type. If the skill specifies allowed-tools, you MUST only use those tools while following this skill. load_skill does not perform the task by itself. ${LOAD_SKILL_CONTINUE_SAME_TURN} ${LOAD_SKILL_ROOT_OWNERSHIP} ${LOAD_SKILL_USE_ALLOWED_TOOLS} ${LOAD_SKILL_DELEGATION_THRESHOLD} Use the optional \`file\` parameter to load a specific reference file from the skill.`;
+  `Load the full instructions for a skill. Use this when you need detailed guidance for a specific task type. If the skill specifies allowed-tools, you MUST only use those tools while following this skill. load_skill does not perform the task by itself. ${LOAD_SKILL_CONTINUE_SAME_TURN} ${LOAD_SKILL_ROOT_OWNERSHIP} ${LOAD_SKILL_USE_ALLOWED_TOOLS} ${LOAD_SKILL_DELEGATION_THRESHOLD} First call load_skill with only skillId. Use the optional \`file\` parameter only after the skill is loaded and only for a reference file listed by that loaded skill.`;
 
 const DEFAULT_RUNTIME_LOAD_SKILL_RESPONSE_MESSAGES: RuntimeLoadedSkillResponseMessages = {
   allowedToolsNote:
@@ -45,7 +45,8 @@ const DEFAULT_RUNTIME_LOAD_SKILL_RESPONSE_MESSAGES: RuntimeLoadedSkillResponseMe
   unavailableCurrentRunToolsDelegationNote:
     "IMPORTANT: Some tools required by this skill are not available in the current run. Use invoke_agent for the isolated work and pass delegationTools as the child tools allowlist.",
   overrideNote: LOAD_SKILL_OVERRIDE_FORWARDING,
-  referenceNote: "Use load_skill with the `file` parameter to load any of these reference files.",
+  referenceNote:
+    "After this skill is loaded, use load_skill with the `file` parameter only for one of these listed reference files.",
 };
 
 /** Context for runtime load skill tool. */
@@ -85,7 +86,7 @@ export const getRuntimeLoadSkillToolInputSchema = defineSchema((v) =>
       .regex(/^[a-zA-Z0-9_-]+$/, 'skillId must contain only letters, numbers, "_" or "-"')
       .describe('The skill ID to load (e.g., "react-components", "api-design")'),
     file: v.string().optional().describe(
-      'Optional reference file to load (e.g. "references/quickstart.md")',
+      "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
     ),
   })
 );
@@ -281,7 +282,7 @@ function buildRuntimeLoadSkillInputSchema(options: RuntimeLoadSkillToolOptions) 
         `The skill ID to load. Available skill IDs: ${knownIds.join(", ")}`,
       ),
       file: v.string().optional().describe(
-        'Optional reference file to load (e.g. "references/quickstart.md")',
+        "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
       ),
     })
   )();
@@ -295,6 +296,26 @@ async function loadRuntimeSkillReferenceFile(
   const normalizedFile = normalizeRuntimeSkillReferencePath(file);
   if (!normalizedFile) {
     return { error: `Invalid reference file path: ${file}` };
+  }
+
+  const loadedSkillKey = buildRuntimeSkillCacheKey(options.context, skillId);
+  const loadedSkillResponse = options.context.loadedSkillResponses?.[loadedSkillKey];
+  if (!loadedSkillResponse) {
+    return {
+      error: `Skill "${skillId}" must be loaded before reference file "${normalizedFile}". ` +
+        `Call load_skill with only {"skillId":"${skillId}"} first, then request one of the listed reference files.`,
+    };
+  }
+
+  const advertisedReferences = loadedSkillResponse.references ?? [];
+  if (!advertisedReferences.includes(normalizedFile)) {
+    const availableReferences = advertisedReferences.length > 0
+      ? advertisedReferences.join(", ")
+      : "none";
+    return {
+      error: `Reference file not advertised by loaded skill "${skillId}": ${normalizedFile}. ` +
+        `Available references: ${availableReferences}`,
+    };
   }
 
   const loadedSkillReferenceResponses = options.context.loadedSkillReferenceResponses ??= {};
