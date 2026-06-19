@@ -128,13 +128,43 @@ export function collectGeneratedToolResults(
   return generatedToolResults;
 }
 
+export function hasSubstantiveAssistantText(text: string | undefined): boolean {
+  return typeof text === "string" && text.trim().length > 0;
+}
+
+export function isClientRecoverablePlaceholderToolCall(
+  toolCall: Pick<StreamingToolCall, "arguments" | "inputAvailable" | "providerExecuted">,
+): boolean {
+  return toolCall.providerExecuted !== true && isRecoverablePlaceholderToolCall(toolCall);
+}
+
+export function shouldRecoverPlaceholderToolCall(
+  state: Pick<ChatStreamState, "accumulatedText">,
+  toolCall: Pick<StreamingToolCall, "arguments" | "inputAvailable" | "providerExecuted">,
+): boolean {
+  return !hasSubstantiveAssistantText(state.accumulatedText) &&
+    isClientRecoverablePlaceholderToolCall(toolCall);
+}
+
+export function shouldOmitRecoverablePlaceholderToolCall(
+  state: Pick<ChatStreamState, "accumulatedText">,
+  toolCall: Pick<StreamingToolCall, "arguments" | "inputAvailable" | "providerExecuted">,
+): boolean {
+  return hasSubstantiveAssistantText(state.accumulatedText) &&
+    isClientRecoverablePlaceholderToolCall(toolCall);
+}
+
 export function shouldContinueAfterStreamStep(
   state:
     & Pick<ChatStreamState, "accumulatedText" | "finishReason" | "toolCalls" | "toolResults">
     & Partial<Pick<ChatStreamState, "suppressedToolCalls">>,
 ): boolean {
+  const hasAssistantText = hasSubstantiveAssistantText(state.accumulatedText);
+
   if (!state.toolCalls.size) {
-    return state.finishReason === "tool-calls" && Boolean(state.suppressedToolCalls?.length);
+    return state.finishReason === "tool-calls" &&
+      !hasAssistantText &&
+      Boolean(state.suppressedToolCalls?.length);
   }
 
   const streamedToolCalls = Array.from(state.toolCalls.values());
@@ -147,15 +177,16 @@ export function shouldContinueAfterStreamStep(
   );
   // A non-finalized call whose only accumulated arguments are a bare
   // empty-object placeholder is provisional streamed input the model never
-  // committed. The runtime can recover by re-calling the model, so it must not
-  // block continuation like a truncated partial-JSON call does.
+  // committed. The runtime can recover by re-calling the model only before the
+  // assistant has produced final text, so it must not block earlier
+  // continuation like a truncated partial-JSON call does.
   const hasIncompleteDeadToolCall = streamedToolCalls.some(
     (toolCall) =>
       isStreamedToolCallIncomplete(toolCall) &&
       !isRecoverablePlaceholderToolCall(toolCall),
   );
   const hasRecoverablePlaceholderToolCall = streamedToolCalls.some(
-    isRecoverablePlaceholderToolCall,
+    (toolCall) => shouldRecoverPlaceholderToolCall(state, toolCall),
   );
 
   if (state.finishReason === "tool-calls") {
@@ -166,7 +197,7 @@ export function shouldContinueAfterStreamStep(
       return false;
     }
     if (hasRecoverablePlaceholderToolCall && !hasFinalizedClientToolCall) {
-      return true;
+      return !hasAssistantText;
     }
     return !hasIncompleteToolCall && hasFinalizedClientToolCall;
   }
@@ -175,7 +206,7 @@ export function shouldContinueAfterStreamStep(
     return false;
   }
 
-  if (state.accumulatedText.trim().length > 0) {
+  if (hasAssistantText) {
     return false;
   }
 

@@ -965,9 +965,10 @@ export class AgentRuntime {
 
         if (materialized.kind === "incomplete" && isRecoverablePlaceholderToolCall(tc)) {
           // Provisional empty-object placeholder that never finalized. The
-          // model never committed arguments; the loop will recover by
-          // re-calling the model. Persist the (empty) part for transparent
-          // history but surface no termination warning or error.
+          // model never committed arguments. The assistant message builder
+          // omits it when final text exists; otherwise it remains transparent
+          // history while the loop recovers by re-calling the model. Surface no
+          // termination warning or error.
           continue;
         }
 
@@ -1063,9 +1064,10 @@ export class AgentRuntime {
         throwIfAborted(abortSignal);
         if (isRecoverablePlaceholderToolCall(tc)) {
           // Provisional empty-object placeholder that never finalized. The
-          // model never committed arguments, so we neither execute it nor
-          // surface a stream-termination error, so the loop continues and the
-          // next model call recovers the real tool call.
+          // model never committed arguments. At this point the continuation
+          // gate has confirmed there is no final assistant text, so the loop
+          // can continue and let the next model call recover the real tool
+          // call without executing or surfacing a stream-termination error.
           continue;
         }
         if (isStreamedToolCallIncomplete(tc)) {

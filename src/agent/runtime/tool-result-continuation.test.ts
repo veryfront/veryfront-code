@@ -23,7 +23,7 @@ function createState(
 describe("agent runtime streamed tool result collection", () => {
   it("continues after suppressing unavailable streamed tool calls", () => {
     const shouldContinue = shouldContinueAfterStreamStep({
-      accumulatedText: "I will reload the skill.",
+      accumulatedText: "",
       finishReason: "tool-calls",
       toolCalls: new Map(),
       toolResults: [],
@@ -31,6 +31,18 @@ describe("agent runtime streamed tool result collection", () => {
     });
 
     assertEquals(shouldContinue, true);
+  });
+
+  it("stops after suppressing unavailable streamed tool calls when the assistant already answered", () => {
+    const shouldContinue = shouldContinueAfterStreamStep({
+      accumulatedText: "Created the Outlook assistant.",
+      finishReason: "tool-calls",
+      toolCalls: new Map(),
+      toolResults: [],
+      suppressedToolCalls: [{ id: "tc-stale", name: "studio_suggestions" }],
+    });
+
+    assertEquals(shouldContinue, false);
   });
 
   it("continues after provider-executed tool results arrive without assistant text", () => {
@@ -413,6 +425,27 @@ describe("agent runtime streamed tool result collection", () => {
     });
 
     assertEquals(shouldContinue, true);
+  });
+
+  it("stops instead of recovering a placeholder after final assistant text", () => {
+    const shouldContinue = shouldContinueAfterStreamStep({
+      accumulatedText: "Created the Outlook assistant.",
+      finishReason: "tool-calls",
+      toolCalls: new Map([
+        [
+          "toolu_placeholder_after_text",
+          {
+            id: "toolu_placeholder_after_text",
+            name: "studio_suggestions",
+            arguments: "{}",
+            inputAvailable: false,
+          },
+        ],
+      ]),
+      toolResults: [],
+    });
+
+    assertEquals(shouldContinue, false);
   });
 
   it("does not recover provider-executed placeholders by re-calling the model", () => {

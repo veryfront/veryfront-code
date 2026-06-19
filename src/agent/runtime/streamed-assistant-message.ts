@@ -1,6 +1,9 @@
 import type { Message, MessagePart } from "../types.ts";
 import type { ChatStreamState } from "./chat-stream-handler.ts";
-import { materializeStreamedToolCall } from "./tool-result-continuation.ts";
+import {
+  materializeStreamedToolCall,
+  shouldOmitRecoverablePlaceholderToolCall,
+} from "./tool-result-continuation.ts";
 
 export interface StreamedAssistantMessageIdentity {
   id: string;
@@ -34,6 +37,9 @@ export function buildStreamedAssistantMessage(
   }
 
   for (const toolCall of state.toolCalls.values()) {
+    if (shouldOmitRecoverablePlaceholderToolCall(state, toolCall)) {
+      continue;
+    }
     parts.push(materializeStreamedToolCall(toolCall).part);
   }
 
