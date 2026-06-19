@@ -2,7 +2,6 @@ import { isResponseLike } from "../service/response-like.ts";
 import { getAgent } from "../composition/index.ts";
 import type { Agent } from "../types.ts";
 import { fromError } from "#veryfront/errors/veryfront-error.ts";
-import { DEFAULT_LOCAL_MODEL } from "#veryfront/provider/local/model-catalog.ts";
 import {
   AgentRuntime,
   RunAlreadyExistsError,
@@ -47,6 +46,23 @@ const AG_UI_HEADERS: Record<string, string> = {
   "Cache-Control": "no-cache",
   Connection: "keep-alive",
 };
+
+function isModelCredentialError(error: ReturnType<typeof fromError>): boolean {
+  if (!error) return false;
+  if (error.type === "no_ai_available") return true;
+  if (error.type !== "config") return false;
+
+  const message = error.message.toLowerCase();
+  return (
+    (message.includes("not set") || message.includes("missing credentials")) &&
+    (
+      message.includes("api_key") ||
+      message.includes("api token") ||
+      message.includes("veryfront_api_token") ||
+      message.includes("credentials")
+    )
+  );
+}
 
 type AgUiRuntimePart = Record<string, unknown> & { type: string };
 
@@ -475,12 +491,12 @@ export function createAgUiHandler(
       }
 
       const vfError = fromError(error);
-      if (vfError?.type === "no_ai_available") {
+      if (isModelCredentialError(vfError)) {
         return Response.json(
           {
-            code: "NO_AI_AVAILABLE",
-            fallback: "browser",
-            model: DEFAULT_LOCAL_MODEL,
+            code: vfError?.type === "no_ai_available" ? "NO_AI_AVAILABLE" : "NO_MODEL_CREDENTIALS",
+            error:
+              "No model credentials configured. Run veryfront login or set VERYFRONT_API_TOKEN, OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY.",
           },
           { status: 503 },
         );

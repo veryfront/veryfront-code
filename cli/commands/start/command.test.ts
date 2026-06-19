@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { readTextFile } from "veryfront/platform";
-import { startCommand } from "./command.ts";
+import { selectStartProject, shouldSkipProjectDirectory, startCommand } from "./command.ts";
 import { startHelp } from "./command-help.ts";
 import type { StartOptions } from "./command.ts";
 
@@ -59,6 +59,76 @@ describe("commands/start/command", () => {
         headless: false,
       };
       assertEquals(options.port, 4000);
+    });
+  });
+
+  describe("selectStartProject", () => {
+    it("uses the explicit default project when present", () => {
+      const selected = selectStartProject({
+        projects: new Map([
+          ["alpha", "/repo/projects/alpha"],
+          ["beta", "/repo/projects/beta"],
+        ]),
+        examples: new Map(),
+        defaultProject: "beta",
+      }, "/repo");
+
+      assertEquals(selected, {
+        projectDir: "/repo/projects/beta",
+        projectSlug: "beta",
+      });
+    });
+
+    it("uses a discovered project instead of the collection root", () => {
+      const selected = selectStartProject({
+        projects: new Map([
+          ["zeta", "/repo/projects/zeta"],
+          ["alpha", "/repo/projects/alpha"],
+        ]),
+        examples: new Map(),
+        defaultProject: null,
+      }, "/repo");
+
+      assertEquals(selected, {
+        projectDir: "/repo/projects/alpha",
+        projectSlug: "alpha",
+      });
+    });
+
+    it("falls back to examples when no projects are discovered", () => {
+      const selected = selectStartProject({
+        projects: new Map(),
+        examples: new Map([
+          ["demo", "/repo/examples/demo"],
+        ]),
+        defaultProject: null,
+      }, "/repo");
+
+      assertEquals(selected, {
+        projectDir: "/repo/examples/demo",
+        projectSlug: "demo",
+      });
+    });
+
+    it("uses the current directory only when no project was discovered", () => {
+      const selected = selectStartProject({
+        projects: new Map(),
+        examples: new Map(),
+        defaultProject: null,
+      }, "/repo");
+
+      assertEquals(selected, {
+        projectDir: "/repo",
+        projectSlug: undefined,
+      });
+    });
+  });
+
+  describe("shouldSkipProjectDirectory", () => {
+    it("skips private and hidden project folders", () => {
+      assertEquals(shouldSkipProjectDirectory(".cache"), true);
+      assertEquals(shouldSkipProjectDirectory("_legacy-templates"), true);
+      assertEquals(shouldSkipProjectDirectory("analytics-dashboard"), false);
     });
   });
 

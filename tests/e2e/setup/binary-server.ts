@@ -55,6 +55,14 @@ export interface ServerOptions {
   env?: Record<string, string>;
 }
 
+async function removeDir(path: string): Promise<void> {
+  try {
+    await Deno.remove(path, { recursive: true });
+  } catch {
+    // Ignore cleanup errors
+  }
+}
+
 /**
  * Collect log output from a readable stream into an array.
  */
@@ -109,6 +117,8 @@ export async function startServer(
     const cacheDir = await Deno.makeTempDir({
       prefix: nodeEnv === "production" ? "vf-cache-prod-" : "vf-cache-",
     });
+    const homeDir = await Deno.makeTempDir({ prefix: "vf-home-" });
+    const configDir = await Deno.makeTempDir({ prefix: "vf-config-" });
 
     const process = new Deno.Command(BINARY_PATH, {
       args: ["dev", "-p", String(port), "--project", projectDir],
@@ -118,6 +128,15 @@ export async function startServer(
         NODE_ENV: nodeEnv,
         LOG_FORMAT: "text",
         VERYFRONT_CACHE_DIR: cacheDir,
+        HOME: homeDir,
+        USERPROFILE: homeDir,
+        XDG_CONFIG_HOME: configDir,
+        VERYFRONT_API_TOKEN: "",
+        VERYFRONT_PROJECT_SLUG: "",
+        OPENAI_API_KEY: "",
+        ANTHROPIC_API_KEY: "",
+        GOOGLE_API_KEY: "",
+        GOOGLE_GENERATIVE_AI_API_KEY: "",
         ...env,
       },
       stdout: "piped",
@@ -141,12 +160,15 @@ export async function startServer(
       const logOutput = logs.join("\n");
       if (attempt < maxRetries - 1 && logOutput.includes("already in use")) {
         usedPorts.delete(port);
-        try {
-          await Deno.remove(cacheDir, { recursive: true });
-        } catch { /* ignore */ }
+        await removeDir(cacheDir);
+        await removeDir(homeDir);
+        await removeDir(configDir);
         continue;
       }
 
+      await removeDir(cacheDir);
+      await removeDir(homeDir);
+      await removeDir(configDir);
       throw new Error(`Server failed to start on port ${port}. Logs:\n${logOutput.slice(-2000)}`);
     }
 
@@ -178,11 +200,9 @@ export async function startServer(
         }
         usedPorts.delete(port);
         await new Promise((r) => setTimeout(r, 200));
-        try {
-          await Deno.remove(cacheDir, { recursive: true });
-        } catch {
-          // Ignore cleanup errors
-        }
+        await removeDir(cacheDir);
+        await removeDir(homeDir);
+        await removeDir(configDir);
       },
     };
 
@@ -211,11 +231,7 @@ export async function withServer(
     await fn(server);
   } finally {
     await server.kill();
-    try {
-      await Deno.remove(projectDir, { recursive: true });
-    } catch {
-      // Ignore cleanup errors
-    }
+    await removeDir(projectDir);
   }
 }
 

@@ -37,7 +37,7 @@ function convertPrompt(prompt: ReadonlyArray<PromptMessage>): ChatMessage[] {
   const messages: ChatMessage[] = [];
 
   for (const msg of prompt) {
-    // Skip tool messages — local models don't support tool calling
+    // Skip tool messages. Local models do not support tool calling.
     if (msg.role === "tool") continue;
 
     const mappedRole = msg.role === "system"
@@ -109,7 +109,7 @@ export function createLocalModel(modelId?: string): ModelRuntime {
       const messages = convertPrompt(options.prompt);
       const genOptions = toGenerateOptions(options);
 
-      logger.debug(`[local] doGenerate: ${messages.length} messages → ${resolvedId}`);
+      logger.debug(`[local] doGenerate: ${messages.length} messages -> ${resolvedId}`);
 
       const text = await generate(resolvedId, messages, genOptions);
 
@@ -126,7 +126,7 @@ export function createLocalModel(modelId?: string): ModelRuntime {
     },
 
     async doStream(options: LocalModelOptions) {
-      // Eagerly check if local AI is disabled — must throw before creating the
+      // Eagerly check if local AI is disabled. This must throw before creating the
       // ReadableStream, otherwise the 200 response headers are already committed.
       // Note: getTransformers() in local-engine.ts also checks this, but we need
       // the check here too because doStream creates a ReadableStream wrapper and
@@ -136,7 +136,7 @@ export function createLocalModel(modelId?: string): ModelRuntime {
       const messages = convertPrompt(options.prompt);
       const genOptions = toGenerateOptions(options);
 
-      logger.debug(`[local] doStream: ${messages.length} messages → ${resolvedId}`);
+      logger.debug(`[local] doStream: ${messages.length} messages -> ${resolvedId}`);
 
       const textId = `text-${Date.now()}`;
 
@@ -182,7 +182,7 @@ export function createLocalModel(modelId?: string): ModelRuntime {
 
             controller.close();
           } catch (error) {
-            // Let no_ai_available propagate — the chat handler needs it
+            // Let no_ai_available propagate. The chat handler needs it
             // for a proper 503 response instead of a 200 with in-band error.
             const vfError = fromError(error);
             if (vfError?.type === "no_ai_available") throw error;

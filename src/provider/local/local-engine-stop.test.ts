@@ -1,7 +1,22 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
-import { buildPipeOptions } from "./local-engine.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  buildConditionalChatTemplateOptions,
+  buildConditionalGenerateOptions,
+  buildPipeOptions,
+} from "./local-engine.ts";
+
+const LOCAL_AI_THINKING_ENV = "VERYFRONT_LOCAL_AI_THINKING";
+const originalThinkingEnv = Deno.env.get(LOCAL_AI_THINKING_ENV);
+
+function restoreThinkingEnv(): void {
+  if (originalThinkingEnv === undefined) {
+    Deno.env.delete(LOCAL_AI_THINKING_ENV);
+  } else {
+    Deno.env.set(LOCAL_AI_THINKING_ENV, originalThinkingEnv);
+  }
+}
 
 /**
  * Minimal stand-ins for Transformers.js StoppingCriteria primitives. These
@@ -53,6 +68,10 @@ const fakeTransformers: any = {
 };
 
 describe("provider/local/local-engine buildPipeOptions", () => {
+  afterEach(() => {
+    restoreThinkingEnv();
+  });
+
   it("forwards core sampling options to the pipe options", () => {
     const opts = buildPipeOptions(
       { maxNewTokens: 64, temperature: 0.3, topP: 0.9, topK: 40 },
@@ -163,5 +182,66 @@ describe("provider/local/local-engine buildPipeOptions", () => {
     );
 
     assertEquals("stopping_criteria" in opts, false);
+  });
+
+  it("forwards stopSequences for conditional-generation models", () => {
+    const opts = buildConditionalGenerateOptions(
+      { maxNewTokens: 64, temperature: 0.7, stopSequences: ["STOP"] },
+      fakeTransformers,
+      fakeTokenizer,
+      "streamer-sentinel",
+    );
+
+    assertExists(
+      opts.stopping_criteria,
+      "conditional-generation stopSequences must be forwarded via stopping_criteria",
+    );
+    assertEquals(opts.stopping_criteria instanceof FakeStoppingCriteriaList, true);
+  });
+
+  it("omits conditional stopping_criteria when no stopSequences are given", () => {
+    const opts = buildConditionalGenerateOptions(
+      { maxNewTokens: 64, temperature: 0.7 },
+      fakeTransformers,
+      fakeTokenizer,
+      "streamer-sentinel",
+    );
+
+    assertEquals("stopping_criteria" in opts, false);
+  });
+
+  it("keeps Gemma4 thinking disabled by default", () => {
+    Deno.env.delete(LOCAL_AI_THINKING_ENV);
+
+    assertEquals(
+      buildConditionalChatTemplateOptions({ modelClass: "gemma4" }),
+      {
+        add_generation_prompt: true,
+        enable_thinking: false,
+      },
+    );
+  });
+
+  it("enables Gemma4 thinking when explicitly requested", () => {
+    Deno.env.set(LOCAL_AI_THINKING_ENV, "1");
+
+    assertEquals(
+      buildConditionalChatTemplateOptions({ modelClass: "gemma4" }),
+      {
+        add_generation_prompt: true,
+        enable_thinking: true,
+      },
+    );
+  });
+
+  it("does not pass thinking options to non-Gemma conditional models", () => {
+    Deno.env.set(LOCAL_AI_THINKING_ENV, "1");
+
+    assertEquals(
+      buildConditionalChatTemplateOptions({ modelClass: "qwen3_5" }),
+      {
+        add_generation_prompt: true,
+      },
+    );
   });
 });

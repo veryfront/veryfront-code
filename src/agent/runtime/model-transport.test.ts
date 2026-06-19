@@ -25,7 +25,7 @@ function createModel(modelId: string): ModelRuntime {
 describe("resolveAgentModelTransport", () => {
   it("resolves the configured runtime model when no host transport hook is present", async () => {
     const config = {
-      model: "local/smollm2-135m",
+      model: "local/qwen3.5-0.8b",
       system: "You are a helpful assistant.",
     } as AgentConfig;
 
@@ -37,9 +37,9 @@ describe("resolveAgentModelTransport", () => {
       modelOverride: undefined,
     });
 
-    assertEquals(transport.requestedModel, "local/smollm2-135m");
-    assertEquals(transport.resolvedModelString, "local/smollm2-135m");
-    assertEquals(transport.languageModel.modelId, "local/smollm2-135m");
+    assertEquals(transport.requestedModel, "local/qwen3.5-0.8b");
+    assertEquals(transport.resolvedModelString, "local/qwen3.5-0.8b");
+    assertEquals(transport.languageModel.modelId, "local/qwen3.5-0.8b");
   });
 
   it("lets the host override model runtime, headers, and provider options", async () => {

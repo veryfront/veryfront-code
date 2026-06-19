@@ -524,7 +524,7 @@ describe("agent/ag-ui-handler", () => {
     );
   });
 
-  it("returns browser fallback metadata when no agent runtime is available", async () => {
+  it("returns setup guidance when no agent runtime is available", async () => {
     const testAgent = createTestAgent();
     const noAiAvailable = toError(createError({
       type: "no_ai_available",
@@ -553,8 +553,42 @@ describe("agent/ag-ui-handler", () => {
     assertEquals(response.status, 503);
     assertEquals(await response.json(), {
       code: "NO_AI_AVAILABLE",
-      fallback: "browser",
-      model: "smollm2-135m",
+      error:
+        "No model credentials configured. Run veryfront login or set VERYFRONT_API_TOKEN, OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY.",
+    });
+  });
+
+  it("returns setup guidance when model credentials are missing", async () => {
+    const testAgent = createTestAgent();
+    const missingCredentials = toError(createError({
+      type: "config",
+      message: "OPENAI_API_KEY not set",
+    }));
+    testAgent.agent.stream = async () => {
+      throw missingCredentials;
+    };
+
+    const handler = createAgUiHandler({ agent: testAgent.agent });
+
+    const response = await handler(
+      new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [{
+            id: "msg-1",
+            role: "user",
+            parts: [{ type: "text", text: "credentials" }],
+          }],
+        }),
+      }),
+    );
+
+    assertEquals(response.status, 503);
+    assertEquals(await response.json(), {
+      code: "NO_MODEL_CREDENTIALS",
+      error:
+        "No model credentials configured. Run veryfront login or set VERYFRONT_API_TOKEN, OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY.",
     });
   });
 

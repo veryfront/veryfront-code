@@ -136,8 +136,8 @@ export interface AgentConfig {
    * Optional model string in "provider/model" format.
    *
    * When omitted or set to `"auto"`, Veryfront chooses the runtime default:
-   * local inference by default, automatically upgrading to an available cloud
-   * provider when bootstrap credentials are present.
+   * Veryfront Cloud when bootstrap credentials are present, otherwise a
+   * configured direct provider key when one exists.
    */
   model?: ModelString;
   system: string | (() => string) | (() => Promise<string>);

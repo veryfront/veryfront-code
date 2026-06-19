@@ -1,3 +1,5 @@
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+
 export const EXPERIMENTAL_INTEGRATIONS_ENV = "VERYFRONT_EXPERIMENTAL_INTEGRATIONS";
 
 export const SUPPORTED_INTEGRATION_NAMES = [
@@ -241,15 +243,7 @@ function normalizeIntegrationName(name: string): string {
 }
 
 function readEnv(name: string): string | undefined {
-  try {
-    return globalThis.Deno?.env?.get(name);
-  } catch {
-    // Deno throws without --allow-env. Treat missing permission like an unset flag.
-  }
-
-  const processEnv = (globalThis as { process?: { env?: Record<string, string | undefined> } })
-    .process?.env;
-  return processEnv?.[name];
+  return getHostEnv(name);
 }
 
 export function isDeclaredIntegration(name: string | null | undefined): boolean {

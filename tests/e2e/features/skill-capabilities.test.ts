@@ -377,8 +377,7 @@ export const POST = createAgUiHandler("researcher");
 
       const { response: researchChatResponse, json: researchChatJson } = await postJson<{
         code: string;
-        fallback: string;
-        model: string;
+        error: string;
       }>(server, "/api/research-chat", {
         body: {
           messages: [
@@ -391,9 +390,11 @@ export const POST = createAgUiHandler("researcher");
         },
       });
       assertEquals(researchChatResponse.status, 503);
-      assertEquals(researchChatJson.code, "NO_AI_AVAILABLE");
-      assertEquals(researchChatJson.fallback, "browser");
-      assertEquals(researchChatJson.model, "smollm2-135m");
+      assertEquals(researchChatJson.code, "NO_MODEL_CREDENTIALS");
+      assertEquals(
+        researchChatJson.error,
+        "No model credentials configured. Run veryfront login or set VERYFRONT_API_TOKEN, OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY.",
+      );
 
       expectServer(server).withoutErrors();
     }, {
@@ -474,8 +475,7 @@ export const POST = createAgUiHandler("assistant");
 
       const { response: chatResponse, json: chatJson } = await postJson<{
         code: string;
-        fallback: string;
-        model: string;
+        error: string;
       }>(server, "/api/ag-ui", {
         body: {
           messages: [
@@ -489,9 +489,11 @@ export const POST = createAgUiHandler("assistant");
       });
 
       assertEquals(chatResponse.status, 503);
-      assertEquals(chatJson.code, "NO_AI_AVAILABLE");
-      assertEquals(chatJson.fallback, "browser");
-      assertEquals(chatJson.model, "smollm2-135m");
+      assertEquals(chatJson.code, "NO_MODEL_CREDENTIALS");
+      assertEquals(
+        chatJson.error,
+        "No model credentials configured. Run veryfront login or set VERYFRONT_API_TOKEN, OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY.",
+      );
 
       expectServer(server).withoutErrors();
     }, {
@@ -600,8 +602,7 @@ Use this skill when writing polished copy.
 
       const { response: chatResponse, json: chatJson } = await postJson<{
         code: string;
-        fallback: string;
-        model: string;
+        error: string;
       }>(server, "/api/ag-ui", {
         body: {
           messages: [
@@ -614,9 +615,11 @@ Use this skill when writing polished copy.
         },
       });
       assertEquals(chatResponse.status, 503);
-      assertEquals(chatJson.code, "NO_AI_AVAILABLE");
-      assertEquals(chatJson.fallback, "browser");
-      assertEquals(chatJson.model, "smollm2-135m");
+      assertEquals(chatJson.code, "NO_MODEL_CREDENTIALS");
+      assertEquals(
+        chatJson.error,
+        "No model credentials configured. Run veryfront login or set VERYFRONT_API_TOKEN, OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY.",
+      );
 
       expectServer(server).withoutErrors();
     }, {

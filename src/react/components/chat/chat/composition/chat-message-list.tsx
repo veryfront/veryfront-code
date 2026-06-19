@@ -11,7 +11,6 @@ import * as React from "react";
 import { MessageItem, MessageList } from "#veryfront/react/primitives/index.ts";
 import type {
   BranchInfo,
-  BrowserInferenceStatus,
   ChatDynamicToolPart,
   ChatMessage,
   ChatToolPart,
@@ -59,7 +58,6 @@ export interface ChatMessageListProps {
   showScrollButton?: boolean;
   onSourceClick?: (source: Source, index: number) => void;
   inferenceMode?: InferenceMode;
-  browserStatus?: BrowserInferenceStatus | null;
 
   // Editing / Branching
   editMessage?: (messageId: string, newText: string) => Promise<void>;
@@ -89,7 +87,6 @@ export const ChatMessageList = React.forwardRef<HTMLDivElement, ChatMessageListP
       showScrollButton = false,
       onSourceClick,
       inferenceMode: _inferenceMode,
-      browserStatus,
       editMessage,
       getBranches,
       switchBranch,
@@ -160,24 +157,11 @@ export const ChatMessageList = React.forwardRef<HTMLDivElement, ChatMessageListP
           {isLoading && messages[messages.length - 1]?.role !== "assistant" && (
             <div className="flex items-start gap-3">
               <ModelAvatar model={model} />
-              {browserStatus === "downloading-model" || browserStatus === "loading-runtime"
-                ? (
-                  <div className="flex items-center gap-2 text-xs text-[var(--muted-foreground)] py-2.5">
-                    <span className="size-1.5 rounded-full bg-amber-500 animate-pulse" />
-                    <span>
-                      {browserStatus === "downloading-model"
-                        ? "Downloading model..."
-                        : "Loading runtime..."}
-                    </span>
-                  </div>
-                )
-                : (
-                  <div className="flex gap-1.5 items-center py-3">
-                    <span className={cn(theme?.loading)} />
-                    <span className={cn(theme?.loading)} style={{ animationDelay: "0.15s" }} />
-                    <span className={cn(theme?.loading)} style={{ animationDelay: "0.3s" }} />
-                  </div>
-                )}
+              <div className="flex gap-1.5 items-center py-3">
+                <span className={cn(theme?.loading)} />
+                <span className={cn(theme?.loading)} style={{ animationDelay: "0.15s" }} />
+                <span className={cn(theme?.loading)} style={{ animationDelay: "0.3s" }} />
+              </div>
             </div>
           )}
 

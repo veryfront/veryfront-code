@@ -61,7 +61,6 @@ const expectedRuntimeExports = [
   "ThreadListContextProvider",
   "ToolCallCard",
   "ToolStatusBadge",
-  "UpgradeCTA",
   "UploadsPanel",
   "buildChatStreamChunkMessageMetadata",
   "isLongRunningToolRunning",

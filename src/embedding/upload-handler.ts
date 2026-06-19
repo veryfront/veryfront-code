@@ -212,12 +212,13 @@ function getSourceBlobStorage(): VeryfrontCloudBlobStorage | null {
  * ```ts
  * // app/api/uploads/route.ts
  * import { createUploadHandler } from "veryfront/embedding";
+ * import { getEnv } from "veryfront";
  * import { store } from "lib/store.ts";
  *
  * export const { POST, GET } = createUploadHandler(store, {
  *   auth: {
  *     authorize: (request) => {
- *       const token = Deno.env.get("UPLOAD_TOKEN");
+ *       const token = getEnv("UPLOAD_TOKEN");
  *       return token !== undefined &&
  *         request.headers.get("authorization") === `Bearer ${token}`;
  *     },

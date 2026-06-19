@@ -124,7 +124,6 @@ export {
   TabSwitcher,
   ToolCallCard,
   ToolStatusBadge,
-  UpgradeCTA,
   UploadsPanel,
   useThreads,
 } from "./chat.tsx";
@@ -167,7 +166,6 @@ export type {
   SuggestionsProps,
   TabSwitcherProps,
   Thread,
-  UpgradeCTAProps,
   UploadedFile,
   UploadsPanelProps,
   UseThreadsOptions,

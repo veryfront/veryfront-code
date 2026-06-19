@@ -1,9 +1,8 @@
 /**
  * Local LLM Provider
  *
- * Zero-configuration local model inference using `@huggingface/transformers`.
- * Enables instant chat functionality without API keys by running small
- * language models (SmolLM2) directly on the server via ONNX Runtime.
+ * Explicit local model inference using `@huggingface/transformers`.
+ * Runs curated Qwen and Gemma models directly on the server via ONNX Runtime.
  *
  * @module provider/local
  *
@@ -11,7 +10,7 @@
  * ```ts
  * import { createLocalModel } from "./local/index.ts";
  *
- * const model = createLocalModel("smollm2-135m");
+ * const model = createLocalModel("qwen3.5-0.8b");
  * // Use with the framework runtime, streamText(), generateText(), etc.
  * ```
  */

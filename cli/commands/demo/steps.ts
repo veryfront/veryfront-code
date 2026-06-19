@@ -12,7 +12,7 @@ export const DEMO_STEPS: DemoStep[] = [
     id: "intro",
     title: "Welcome to Veryfront",
     description: [
-      "Veryfront is a zero-config React meta-framework with AI-native capabilities.",
+      "Veryfront is a React framework with AI-native capabilities.",
       "This demo will walk you through creating, running, and deploying your first app.",
     ],
   },

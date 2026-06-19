@@ -406,15 +406,14 @@ export class AgentRuntime {
     // return a proper error response (503) instead of a 200 with an error event.
     const languageModel = transport.languageModel;
 
-    // Determine inference mode from the resolved model object (not the string),
-    // because resolveModel may internally fall back from cloud to local.
+    // Determine inference mode from the resolved model object, not the string.
     const isLocal = isLocalModelRuntime(languageModel);
 
     // Eagerly verify the model runtime is available. For local models this
     // checks that @huggingface/transformers can be imported. Must happen
     // BEFORE creating the ReadableStream so no_ai_available errors propagate
-    // to the route handler, which returns a 503 with browser fallback info
-    // instead of swallowing it as an in-band SSE error in a 200 response.
+    // to the route handler, which returns a 503 instead of swallowing it as an
+    // in-band SSE error in a 200 response.
     await ensureModelReady(languageModel);
 
     const agentContext: AgentContext = {
@@ -442,17 +441,13 @@ export class AgentRuntime {
 
           const messageId = generateMessageId();
           sendSSE(controller, encoder, { type: "message-start", messageId });
-          // Report the effective model. When resolveModel falls back from
-          // cloud to local (e.g. missing API key), use the resolved object's
-          // modelId so the client avatar matches the actual provider.
-          const effectiveModel = isLocal && !resolvedModelString.startsWith("local/")
-            ? `local/${(languageModel as Record<string, unknown>).modelId ?? "unknown"}`
-            : resolvedModelString;
+          // Report the effective model after resolution so the client can show
+          // whether inference is cloud or explicit server-local.
           sendSSE(controller, encoder, {
             type: "data",
             data: {
               inferenceMode: isLocal ? "server-local" : "cloud",
-              model: effectiveModel,
+              model: resolvedModelString,
             },
           });
           inFlight = chain.execute(

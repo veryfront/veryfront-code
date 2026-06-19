@@ -218,13 +218,14 @@ export async function runDynamicWorkflowRun(
  * ```typescript
  * // workflow-runner.ts
  * import { createDynamicWorkflowRunEntrypoint } from "veryfront/workflow/worker";
+ * import { getEnv } from "veryfront";
  *
  * const run = await createDynamicWorkflowRunEntrypoint({
- *   redisUrl: Deno.env.get("REDIS_URL")!,
+ *   redisUrl: getEnv("REDIS_URL")!,
  * });
  *
  * const exitCode = await run();
- * Deno.exit(exitCode);
+ * if (exitCode !== 0) throw new Error(`Workflow run failed: ${exitCode}`);
  * ```
  */
 export interface CreateDynamicWorkflowRunEntrypointOptions {

@@ -7,6 +7,9 @@
  * @module security/sandbox/worker-egress-guard
  */
 
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { resolveHostAddresses } from "#veryfront/platform/compat/dns.ts";
+
 export const WORKER_INTERNAL_EGRESS_OVERRIDE_ENV = "VERYFRONT_WORKER_ALLOW_INTERNAL_EGRESS";
 
 export class WorkerEgressBlockedError extends Error {
@@ -113,18 +116,7 @@ function isLocalhostName(hostname: string): boolean {
 }
 
 async function defaultResolveHost(hostname: string): Promise<string[]> {
-  const results: string[] = [];
-  const resolver = Deno.resolveDns;
-
-  for (const recordType of ["A", "AAAA"] as const) {
-    try {
-      results.push(...await resolver(hostname, recordType));
-    } catch {
-      // A host may legitimately have only one address family.
-    }
-  }
-
-  return results;
+  return await resolveHostAddresses(hostname);
 }
 
 function getUrlHostname(input: string | URL | Request): string | null {
@@ -194,11 +186,7 @@ function getConnectHostname(options: unknown): string | null {
 }
 
 function getAllowInternalEgress(): boolean {
-  try {
-    return isInternalEgressOverrideEnabled(Deno.env.get(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV));
-  } catch {
-    return false;
-  }
+  return isInternalEgressOverrideEnabled(getHostEnv(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV));
 }
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
@@ -232,8 +220,8 @@ function isReplayableBody(body: BodyInit | null | undefined): boolean {
  * cross-origin hop, matching the platform fetch the guard wraps.
  */
 export async function guardedEgressFetch(
-  input: Parameters<typeof fetch>[0],
-  init?: Parameters<typeof fetch>[1],
+  input: RequestInfo | URL,
+  init?: RequestInit,
   deps: GuardedEgressFetchDeps = {},
 ): Promise<Response> {
   const doFetch = deps.fetchImpl ?? fetch;

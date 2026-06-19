@@ -116,8 +116,6 @@ export {
   type Thread,
   ToolCallCard,
   ToolStatusBadge,
-  UpgradeCTA,
-  type UpgradeCTAProps,
   type UploadedFile,
   UploadsPanel,
   type UploadsPanelProps,

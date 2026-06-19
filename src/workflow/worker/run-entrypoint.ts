@@ -71,9 +71,10 @@ export const EXIT_CODES = {
  * import { RedisBackend } from "veryfront/workflow";
  * import { WorkflowExecutor } from "veryfront/workflow";
  * import { runWorkflowRun } from "veryfront/workflow/worker";
+ * import { getEnv } from "veryfront";
  * import { workflows } from "./workflows.ts";
  *
- * const backend = new RedisBackend({ url: Deno.env.get("REDIS_URL")! });
+ * const backend = new RedisBackend({ url: getEnv("REDIS_URL")! });
  * const executor = new WorkflowExecutor({ backend });
  *
  * // Register all workflows
@@ -83,7 +84,7 @@ export const EXIT_CODES = {
  *
  * // Run the workflow run
  * const exitCode = await runWorkflowRun({ backend, executor });
- * Deno.exit(exitCode);
+ * if (exitCode !== 0) throw new Error(`Workflow run failed: ${exitCode}`);
  * ```
  */
 export async function runWorkflowRun(config: WorkflowRunEntrypointConfig): Promise<number> {
@@ -162,15 +163,16 @@ export async function runWorkflowRun(config: WorkflowRunEntrypointConfig): Promi
  * ```typescript
  * // workflow-runner.ts
  * import { createWorkflowRunEntrypoint } from "veryfront/workflow/worker";
+ * import { getEnv } from "veryfront";
  * import { workflows } from "./workflows.ts";
  *
  * const run = createWorkflowRunEntrypoint({
- *   redisUrl: Deno.env.get("REDIS_URL")!,
+ *   redisUrl: getEnv("REDIS_URL")!,
  *   workflows,
  * });
  *
  * const exitCode = await run();
- * Deno.exit(exitCode);
+ * if (exitCode !== 0) throw new Error(`Workflow run failed: ${exitCode}`);
  * ```
  */
 export interface CreateWorkflowRunEntrypointOptions {
