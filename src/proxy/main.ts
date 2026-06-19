@@ -23,6 +23,7 @@
 import { createProxyHandler, INTERNAL_PROXY_HEADERS, type ProxyConfig } from "./handler.ts";
 import { createCacheFromEnv } from "./cache/index.ts";
 import { isRetryableConnectionError } from "./retry.ts";
+import { closeBridgePeer, getServerWebSocketErrorLogLevel } from "./websocket-bridge.ts";
 import { register } from "../extensions/contracts.ts";
 import { createAuthProvider } from "../../extensions/ext-auth-jwt/src/index.ts";
 import {
@@ -242,12 +243,16 @@ function handleWebSocketUpgrade(req: Request, url: URL): Response {
 
     serverSocket.onerror = (event) => {
       clearConnectTimeout();
-      proxyLogger.error("[WebSocket] Server connection error", {
+      const error = event instanceof ErrorEvent ? event.message : "Unknown error";
+      const logLevel = getServerWebSocketErrorLogLevel(error);
+      proxyLogger[logLevel]("[WebSocket] Server connection error", {
         projectSlug,
         environment: scope,
         targetUrl: targetUrl.toString(),
-        error: event instanceof ErrorEvent ? event.message : "Unknown error",
+        error,
       });
+      closeBridgePeer(clientSocket, 1011, "Server connection error");
+      closeBridgePeer(serverSocket, 1011, "Server connection error");
     };
 
     serverSocket.onclose = (event) => {

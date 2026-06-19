@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
+import { closeBridgePeer, getServerWebSocketErrorLogLevel } from "./websocket-bridge.ts";
 
 function isWebSocketUpgrade(req: Request): boolean {
   return req.headers.get("upgrade")?.toLowerCase() === "websocket";
@@ -143,6 +144,26 @@ describe("Proxy WebSocket Handler Tests", () => {
       assertEquals(WebSocket.OPEN, 1);
       assertEquals(WebSocket.CLOSING, 2);
       assertEquals(WebSocket.CLOSED, 3);
+    });
+  });
+
+  describe("Server WebSocket error handling", () => {
+    it("treats upstream EOF as a transient warning", () => {
+      assertEquals(getServerWebSocketErrorLogLevel("Unexpected EOF"), "warn");
+    });
+
+    it("closes the accepted client socket when the upstream bridge fails", () => {
+      const calls: Array<{ code?: number; reason?: string }> = [];
+      const socket = {
+        readyState: WebSocket.OPEN,
+        close(code?: number, reason?: string) {
+          calls.push({ code, reason });
+        },
+      };
+
+      closeBridgePeer(socket, 1011, "Server connection error");
+
+      assertEquals(calls, [{ code: 1011, reason: "Server connection error" }]);
     });
   });
 });
