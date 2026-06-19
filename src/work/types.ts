@@ -1,12 +1,19 @@
-/** One measurable outcome condition for a Work definition. */
-export interface WorkAcceptanceCriterion {
+/** One measurable expectation for a Work definition. */
+export interface WorkExpectation {
   /** Stable identifier used by execution state and cloud persistence. */
   id: string;
   /** Human-readable condition that must be satisfied unless optional. */
   description: string;
-  /** Optional criteria do not block Work execution completion. */
+  /** Optional expectations do not block Work execution completion. */
   optional?: true;
 }
+
+/**
+ * Deprecated alias for WorkExpectation.
+ *
+ * @deprecated Use WorkExpectation.
+ */
+export type WorkAcceptanceCriterion = WorkExpectation;
 
 /** Configuration used by work(). */
 export interface WorkConfig {
@@ -16,8 +23,10 @@ export interface WorkConfig {
   name?: string;
   /** Business outcome the execution layer should make true. */
   outcome: string;
-  /** Outcome criteria tracked as business process state. */
-  acceptanceCriteria: WorkAcceptanceCriterion[];
+  /** Expectations tracked as business process state. */
+  expectations?: WorkExpectation[];
+  /** @deprecated Use expectations. */
+  acceptanceCriteria?: WorkExpectation[];
 }
 
 /** Public API contract for Work definitions. */
@@ -25,7 +34,9 @@ export interface WorkDefinition {
   id: string;
   name: string;
   outcome: string;
-  acceptanceCriteria: WorkAcceptanceCriterion[];
+  expectations: WorkExpectation[];
+  /** @deprecated Use expectations. */
+  acceptanceCriteria: WorkExpectation[];
 }
 
 /** Agent-level reference to source-declared Work. */

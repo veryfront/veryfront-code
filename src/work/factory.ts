@@ -5,27 +5,28 @@ import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 export function work(config: WorkConfig): WorkDefinition {
   const id = assertWorkId(config.id);
   const outcome = assertNonEmptyString(config.outcome, `Work "${id}" outcome`);
+  const rawExpectations = config.expectations ?? config.acceptanceCriteria;
 
-  if (!Array.isArray(config.acceptanceCriteria) || config.acceptanceCriteria.length === 0) {
-    throwWorkConfigError(`Work "${id}" must define at least one acceptance criterion.`);
+  if (!Array.isArray(rawExpectations) || rawExpectations.length === 0) {
+    throwWorkConfigError(`Work "${id}" must define at least one expectation.`);
   }
 
   const seenCriterionIds = new Set<string>();
-  const acceptanceCriteria = config.acceptanceCriteria.map((criterion, index) => {
+  const expectations = rawExpectations.map((criterion, index) => {
     const criterionId = assertNonEmptyString(
       criterion.id,
-      `Work "${id}" acceptance criterion at index ${index} id`,
+      `Work "${id}" expectation at index ${index} id`,
     );
     if (seenCriterionIds.has(criterionId)) {
       throwWorkConfigError(
-        `Work "${id}" has duplicate acceptance criterion id "${criterionId}".`,
+        `Work "${id}" has duplicate expectation id "${criterionId}".`,
       );
     }
     seenCriterionIds.add(criterionId);
 
     const description = assertNonEmptyString(
       criterion.description,
-      `Work "${id}" acceptance criterion "${criterionId}" description`,
+      `Work "${id}" expectation "${criterionId}" description`,
     );
 
     const normalizedCriterion: WorkAcceptanceCriterion = {
@@ -42,7 +43,8 @@ export function work(config: WorkConfig): WorkDefinition {
     id,
     name: config.name?.trim() || id,
     outcome,
-    acceptanceCriteria,
+    expectations,
+    acceptanceCriteria: expectations,
   };
 }
 

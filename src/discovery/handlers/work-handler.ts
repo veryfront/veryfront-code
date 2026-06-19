@@ -13,10 +13,17 @@ export const workHandler: DiscoveryHandler<WorkDefinition> = {
     typeof item === "object" &&
     typeof (item as WorkDefinition).id === "string" &&
     typeof (item as WorkDefinition).outcome === "string" &&
-    Array.isArray((item as WorkDefinition).acceptanceCriteria),
+    (Array.isArray((item as WorkDefinition).expectations) ||
+      Array.isArray((item as WorkDefinition).acceptanceCriteria)),
   getId: (definition) => definition.id,
   register: (id, definition) => {
-    const definitionWithId = definition.id === id ? definition : { ...definition, id };
+    const expectations = definition.expectations ?? definition.acceptanceCriteria;
+    const definitionWithId = {
+      ...definition,
+      id,
+      expectations,
+      acceptanceCriteria: expectations,
+    };
     workRegistry.register(id, definitionWithId);
     return definitionWithId;
   },
