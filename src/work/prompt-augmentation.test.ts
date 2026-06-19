@@ -11,7 +11,7 @@ describe("work prompt augmentation", () => {
       id: "supplier-invoice-processing",
       name: "Supplier invoice processing",
       outcome: "Resolve all open supplier invoices.",
-      acceptanceCriteria: [
+      expectations: [
         {
           id: "invoices_discovered",
           description: "Open supplier invoices have been discovered.",
@@ -28,6 +28,7 @@ describe("work prompt augmentation", () => {
 
     assertStringIncludes(prompt, "Work is business/process state");
     assertStringIncludes(prompt, "Outcome: Resolve all open supplier invoices.");
+    assertStringIncludes(prompt, "Expectations:");
     assertStringIncludes(
       prompt,
       "- notify_finance_team (optional): Finance team has been notified.",
@@ -39,7 +40,7 @@ describe("work prompt augmentation", () => {
     const definition = work({
       id: "clean-email",
       outcome: "Keep the inbox clean.",
-      acceptanceCriteria: [
+      expectations: [
         {
           id: "spam_archived",
           description: "Spam messages are archived.",

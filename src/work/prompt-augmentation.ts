@@ -15,7 +15,7 @@ export function buildWorkManifestPrompt(works: Iterable<WorkDefinition>): string
   if (workDefinitions.length === 0) return "";
 
   const sections = workDefinitions.map((definition) => {
-    const criteria = definition.acceptanceCriteria.map((criterion) => {
+    const expectations = definition.expectations.map((criterion) => {
       const optionalLabel = criterion.optional ? " (optional)" : "";
       return `- ${criterion.id}${optionalLabel}: ${criterion.description}`;
     }).join("\n");
@@ -23,8 +23,8 @@ export function buildWorkManifestPrompt(works: Iterable<WorkDefinition>): string
     return [
       `### ${definition.name} (${definition.id})`,
       `Outcome: ${definition.outcome}`,
-      "Acceptance criteria:",
-      criteria,
+      "Expectations:",
+      expectations,
     ].join("\n");
   }).join("\n\n");
 

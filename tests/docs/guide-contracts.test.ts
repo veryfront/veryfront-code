@@ -386,7 +386,10 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     references: ["../api-reference/veryfront/work.md"],
     snippets: [
       "business process state",
-      "acceptanceCriteria",
+      "Work definition",
+      "Work execution",
+      "Work events",
+      "expectations",
       "Work is not a workflow",
       "agent({ work:",
     ],

@@ -11,7 +11,7 @@
  *   id: "supplier-invoice-processing",
  *   name: "Supplier invoice processing",
  *   outcome: "Resolve all open supplier invoices.",
- *   acceptanceCriteria: [
+ *   expectations: [
  *     {
  *       id: "invoices_discovered",
  *       description: "Open supplier invoices have been discovered.",
@@ -25,6 +25,7 @@ export type {
   WorkAcceptanceCriterion,
   WorkConfig,
   WorkDefinition,
+  WorkExpectation,
   WorkReference,
 } from "./types.ts";
 export { work } from "./factory.ts";

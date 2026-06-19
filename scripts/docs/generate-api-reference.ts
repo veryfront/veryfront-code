@@ -593,7 +593,8 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     workRegistry: "Project-scoped Work registry",
     WorkDefinition: "`work()` return type",
     WorkConfig: "`work()` config",
-    WorkAcceptanceCriterion: "Outcome acceptance criterion",
+    WorkExpectation: "Outcome expectation",
+    WorkAcceptanceCriterion: "Deprecated alias for WorkExpectation",
     WorkReference: "Agent Work reference",
   },
 
@@ -1666,7 +1667,7 @@ const API_DOCS: Record<string, APIDocs> = {
   },
   "veryfront/work": {
     functions: { work: { configType: "WorkConfig" } },
-    expandTypes: ["WorkConfig", "WorkAcceptanceCriterion"],
+    expandTypes: ["WorkConfig", "WorkExpectation", "WorkAcceptanceCriterion"],
   },
   "veryfront/middleware": {
     methods: { MiddlewarePipeline: "Composable middleware chain" },
@@ -2032,12 +2033,18 @@ const PROPERTY_DESCRIPTIONS: Record<string, Record<string, string>> = {
     id: "Unique Work identifier",
     name: "Human-readable Work name",
     outcome: "Business outcome to make true",
-    acceptanceCriteria: "Outcome criteria tracked by executions",
+    expectations: "Expectations tracked by executions",
+    acceptanceCriteria: "Deprecated alias for expectations",
+  },
+  WorkExpectation: {
+    id: "Stable expectation identifier",
+    description: "Measurable condition to satisfy",
+    optional: "Whether completion can ignore this expectation",
   },
   WorkAcceptanceCriterion: {
-    id: "Stable criterion identifier",
+    id: "Stable expectation identifier",
     description: "Measurable condition to satisfy",
-    optional: "Whether completion can ignore this criterion",
+    optional: "Whether completion can ignore this expectation",
   },
   ResourceConfig: {
     uri: "Resource URI pattern",

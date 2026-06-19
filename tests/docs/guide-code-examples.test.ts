@@ -92,6 +92,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "sandbox.md",
   "skills.md",
   "tasks.md",
+  "work.md",
   "workflows-advanced.md",
 ] as const;
 
@@ -107,7 +108,7 @@ const noopLogger = {
   error: () => {},
 };
 
-const GUIDE_DIRS = ["docs/getting-started", "docs/guides"] as const;
+const GUIDE_DIRS = ["docs/getting-started", "docs/guides", "docs/concepts"] as const;
 
 async function readGuide(filename: string): Promise<string> {
   for (const dir of GUIDE_DIRS) {
@@ -198,28 +199,37 @@ describe("Guide: chat-ui.md", () => {
     assertEquals(typeof useChat, "function");
     assertEquals(typeof createAgUiHandler, "function");
     assertExists(Chat);
-    assertEquals(typeof (Chat as Record<string, unknown>).render, "function");
-    assertExists((Chat as Record<string, unknown>).Root);
-    assertExists((Chat as Record<string, unknown>).MessageList);
-    assertExists((Chat as Record<string, unknown>).Composer);
-    assertExists((Message as Record<string, unknown>).Root);
+    const chatRecord = Chat as unknown as Record<string, unknown>;
+    const messageRecord = Message as unknown as Record<string, unknown>;
+    assertEquals(typeof chatRecord.render, "function");
+    assertExists(chatRecord.Root);
+    assertExists(chatRecord.MessageList);
+    assertExists(chatRecord.Composer);
+    assertExists(messageRecord.Root);
     assertExists(ChatWithSidebar);
     assertExists(ChatContextProvider);
     assertExists(ComposerContextProvider);
     assertExists(MessageContextProvider);
     assertEquals(typeof useChatContextOptional, "function");
 
+    const chatComponents = Chat as unknown as Record<
+      string,
+      React.ComponentType<Record<string, unknown>>
+    >;
+    const ChatRoot = chatComponents.Root;
+    const ChatEmpty = chatComponents.Empty;
+    assertExists(ChatRoot);
+    assertExists(ChatEmpty);
+
     const element = React.createElement(
-      (Chat as Record<string, React.ComponentType<Record<string, unknown>>>)
-        .Root,
+      ChatRoot,
       { messages: [], input: "" },
       React.createElement(
-        (Chat as Record<string, React.ComponentType<Record<string, unknown>>>)
-          .Empty,
+        ChatEmpty,
         { title: "Ask me anything" },
       ),
     );
-    assertEquals(element.type, (Chat as Record<string, unknown>).Root);
+    assertEquals(element.type, ChatRoot);
   });
 });
 
@@ -407,7 +417,9 @@ describe("Guide: extension-authoring.md", () => {
       version: "1.0.0",
       capabilities: [],
       provides: { CacheStore: cache },
-      teardown: () => events.push("provider:teardown"),
+      teardown: () => {
+        events.push("provider:teardown");
+      },
     };
     const consumer = {
       name: "cache-consumer",
@@ -419,7 +431,9 @@ describe("Guide: extension-authoring.md", () => {
           ctx.get("CacheStore") === cache ? "consumer:setup" : "missing",
         );
       },
-      teardown: () => events.push("consumer:teardown"),
+      teardown: () => {
+        events.push("consumer:teardown");
+      },
     };
 
     await loader.setupAll(
@@ -441,7 +455,7 @@ describe("Guide: extension-authoring.md", () => {
   it("verifies a factory and resolves a CacheStore through the loader", async () => {
     const values = new Map<string, unknown>();
     const cache: CacheStore = {
-      get: (key) => Promise.resolve(values.get(key)),
+      get: <T = unknown>(key: string) => Promise.resolve(values.get(key) as T | undefined),
       set: (key, value) => {
         values.set(key, value);
         return Promise.resolve();
@@ -568,8 +582,10 @@ describe("Guide: pages-and-routing.md", () => {
     const prefetchLink = Link({ href: "/about", children: "About" });
     const noPrefetchLink = Link({ href: "/about", prefetch: false, children: "About" });
 
-    assertEquals(prefetchLink.props["data-prefetch"], "true");
-    assertEquals(noPrefetchLink.props["data-prefetch"], "false");
+    const prefetchProps = prefetchLink.props as Record<string, unknown>;
+    const noPrefetchProps = noPrefetchLink.props as Record<string, unknown>;
+    assertEquals(prefetchProps["data-prefetch"], "true");
+    assertEquals(noPrefetchProps["data-prefetch"], "false");
   });
 });
 

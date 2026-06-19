@@ -10,7 +10,7 @@ describe("work factory", () => {
         id: "supplier-invoice-processing",
         name: "Supplier invoice processing",
         outcome: "Resolve all open supplier invoices.",
-        acceptanceCriteria: [
+        expectations: [
           {
             id: "invoices_discovered",
             description: "Open supplier invoices have been discovered.",
@@ -27,6 +27,17 @@ describe("work factory", () => {
         id: "supplier-invoice-processing",
         name: "Supplier invoice processing",
         outcome: "Resolve all open supplier invoices.",
+        expectations: [
+          {
+            id: "invoices_discovered",
+            description: "Open supplier invoices have been discovered.",
+          },
+          {
+            id: "notify_finance_team",
+            description: "Finance team has been notified.",
+            optional: true,
+          },
+        ],
         acceptanceCriteria: [
           {
             id: "invoices_discovered",
@@ -41,11 +52,33 @@ describe("work factory", () => {
       });
     });
 
+    it("accepts legacy acceptanceCriteria as an alias", () => {
+      const definition = work({
+        id: "supplier-invoice-processing",
+        name: "Supplier invoice processing",
+        outcome: "Resolve all open supplier invoices.",
+        acceptanceCriteria: [
+          {
+            id: "invoices_discovered",
+            description: "Open supplier invoices have been discovered.",
+          },
+        ],
+      });
+
+      assertEquals(definition.expectations, [
+        {
+          id: "invoices_discovered",
+          description: "Open supplier invoices have been discovered.",
+        },
+      ]);
+      assertEquals(definition.acceptanceCriteria, definition.expectations);
+    });
+
     it("defaults the display name to the id", () => {
       const definition = work({
         id: "clean-email",
         outcome: "Keep the inbox clean.",
-        acceptanceCriteria: [
+        expectations: [
           {
             id: "spam_archived",
             description: "Spam messages are archived.",
@@ -56,16 +89,16 @@ describe("work factory", () => {
       assertEquals(definition.name, "clean-email");
     });
 
-    it("rejects missing acceptance criteria", () => {
+    it("rejects missing expectations", () => {
       assertThrows(
         () =>
           work({
             id: "empty-work",
             outcome: "Do something measurable.",
-            acceptanceCriteria: [],
+            expectations: [],
           }),
         Error,
-        'Work "empty-work" must define at least one acceptance criterion.',
+        'Work "empty-work" must define at least one expectation.',
       );
     });
 
@@ -75,7 +108,7 @@ describe("work factory", () => {
           work({
             id: "finance/invoices",
             outcome: "Process invoices.",
-            acceptanceCriteria: [
+            expectations: [
               {
                 id: "done",
                 description: "Done.",
@@ -87,13 +120,13 @@ describe("work factory", () => {
       );
     });
 
-    it("rejects duplicate acceptance criterion ids", () => {
+    it("rejects duplicate expectation ids", () => {
       assertThrows(
         () =>
           work({
             id: "duplicate-criteria",
             outcome: "Resolve duplicate criteria.",
-            acceptanceCriteria: [
+            expectations: [
               {
                 id: "done",
                 description: "Done once.",
@@ -105,7 +138,7 @@ describe("work factory", () => {
             ],
           }),
         Error,
-        'Work "duplicate-criteria" has duplicate acceptance criterion id "done".',
+        'Work "duplicate-criteria" has duplicate expectation id "done".',
       );
     });
   });
