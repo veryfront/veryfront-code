@@ -162,9 +162,7 @@ export function shouldContinueAfterStreamStep(
   const hasAssistantText = hasSubstantiveAssistantText(state.accumulatedText);
 
   if (!state.toolCalls.size) {
-    return state.finishReason === "tool-calls" &&
-      !hasAssistantText &&
-      Boolean(state.suppressedToolCalls?.length);
+    return state.finishReason === "tool-calls" && Boolean(state.suppressedToolCalls?.length);
   }
 
   const streamedToolCalls = Array.from(state.toolCalls.values());
@@ -197,7 +195,7 @@ export function shouldContinueAfterStreamStep(
       return false;
     }
     if (hasRecoverablePlaceholderToolCall && !hasFinalizedClientToolCall) {
-      return !hasAssistantText;
+      return true;
     }
     return !hasIncompleteToolCall && hasFinalizedClientToolCall;
   }

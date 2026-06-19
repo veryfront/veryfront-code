@@ -229,6 +229,12 @@ describe("agent runtime refresh hooks", () => {
   it("does not re-call the model after final assistant text with a provisional placeholder", async () => {
     const toolResults: ToolExecutionResultRequest[] = [];
     let callCount = 0;
+    const studioSuggestions = tool({
+      id: "studio_suggestions",
+      description: "Capture Studio suggestions",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => ({ suggestions: [] }),
+    });
     const model: ModelRuntime = {
       provider: "hosted",
       modelId: "hosted/text-placeholder-stream",
@@ -269,6 +275,7 @@ describe("agent runtime refresh hooks", () => {
       system: "Placeholder recovery regression test",
       maxSteps: 2,
       resolveModelTransport: async () => ({ model }),
+      tools: { studio_suggestions: studioSuggestions },
       onToolResult: (request) => {
         toolResults.push(request);
       },

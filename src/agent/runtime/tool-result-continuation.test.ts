@@ -33,16 +33,16 @@ describe("agent runtime streamed tool result collection", () => {
     assertEquals(shouldContinue, true);
   });
 
-  it("stops after suppressing unavailable streamed tool calls when the assistant already answered", () => {
+  it("continues after suppressing unavailable streamed tool calls with preamble text", () => {
     const shouldContinue = shouldContinueAfterStreamStep({
-      accumulatedText: "Created the Outlook assistant.",
+      accumulatedText: "I will reload the skill.",
       finishReason: "tool-calls",
       toolCalls: new Map(),
       toolResults: [],
-      suppressedToolCalls: [{ id: "tc-stale", name: "studio_suggestions" }],
+      suppressedToolCalls: [{ id: "tc-stale", name: "load_skill" }],
     });
 
-    assertEquals(shouldContinue, false);
+    assertEquals(shouldContinue, true);
   });
 
   it("continues after provider-executed tool results arrive without assistant text", () => {
