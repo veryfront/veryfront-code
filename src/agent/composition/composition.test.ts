@@ -14,11 +14,30 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { Agent, AgentResponse, AgentStreamResult } from "../types.ts";
 
 // Side-effect import: registers the globalThis bridges
-import { agentAsTool } from "./composition.ts";
+import { agentAsTool, agentRegistry, registerAgent } from "./composition.ts";
 
 const BRIDGE_KEYS = ["__vfGetAgent", "__vfRegisterAgent", "__vfGetAllAgentIds"] as const;
 
 describe("globalThis agent registry bridges", () => {
+  it("should tolerate repeated module evaluation", async () => {
+    await import("./composition.ts?duplicate-agent-bridge-test");
+  });
+
+  it("should delegate duplicate module registry reads to the existing bridge", async () => {
+    const id = "duplicate-bridge-agent";
+    const agent = createMinimalAgent(id);
+
+    registerAgent(id, agent);
+    try {
+      const duplicate = await import("./composition.ts?duplicate-agent-bridge-delegation-test");
+
+      assertEquals(duplicate.getAgent(id), agent);
+      assertEquals(duplicate.getAllAgentIds().includes(id), true);
+    } finally {
+      agentRegistry.delete(id);
+    }
+  });
+
   for (const key of BRIDGE_KEYS) {
     describe(key, () => {
       it("should be defined on globalThis", () => {
@@ -78,6 +97,45 @@ describe("globalThis agent registry bridges", () => {
     });
   }
 });
+
+function createMinimalAgent(id: string): Agent {
+  const response: AgentResponse = {
+    text: "ok",
+    messages: [],
+    toolCalls: [],
+    status: "completed",
+  };
+
+  return {
+    id,
+    config: {
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Test agent",
+    },
+    generate: () => Promise.resolve(response),
+    async stream(input): Promise<AgentStreamResult> {
+      input.onFinish?.(response);
+      return {
+        toDataStreamResponse() {
+          return new Response("data: {}\n\n", {
+            headers: { "Content-Type": "text/event-stream" },
+          });
+        },
+      };
+    },
+    respond: () => Promise.resolve(new Response(null)),
+    getMemory() {
+      throw new Error("not used");
+    },
+    getMemoryStats: () =>
+      Promise.resolve({
+        totalMessages: 0,
+        estimatedTokens: 0,
+        type: "test",
+      }),
+    clearMemory: () => Promise.resolve(),
+  };
+}
 
 describe("agentAsTool", () => {
   it("executes child agents through the streaming path", async () => {

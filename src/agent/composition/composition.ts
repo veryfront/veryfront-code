@@ -155,18 +155,49 @@ export const agentRegistry = new AgentRegistryClass(agentManager);
 
 export { AgentRegistryClass };
 
+const GET_AGENT_BRIDGE_KEY = "__vfGetAgent";
+const REGISTER_AGENT_BRIDGE_KEY = "__vfRegisterAgent";
+const GET_ALL_AGENT_IDS_BRIDGE_KEY = "__vfGetAllAgentIds";
+
+function getExistingGlobalAgentBridge(key: string, localValue: unknown): unknown | undefined {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, key);
+  if (!descriptor) return undefined;
+  if (typeof descriptor.value !== "function") {
+    throw new TypeError(`Global agent bridge ${key} already exists and is not callable.`);
+  }
+  return descriptor.value === localValue ? undefined : descriptor.value;
+}
+
 /** Registers agent. */
 export function registerAgent(id: string, agent: Agent): void {
+  const register = getExistingGlobalAgentBridge(REGISTER_AGENT_BRIDGE_KEY, registerAgent) as
+    | ((id: string, agent: Agent) => void)
+    | undefined;
+  if (register) {
+    register(id, agent);
+    return;
+  }
+
   agentRegistry.register(id, agent);
 }
 
 /** Return agent. */
 export function getAgent(id: string): Agent | undefined {
+  const get = getExistingGlobalAgentBridge(GET_AGENT_BRIDGE_KEY, getAgent) as
+    | ((id: string) => Agent | undefined)
+    | undefined;
+  if (get) return get(id);
+
   return agentRegistry.get(id);
 }
 
 /** Return all agent IDs. */
 export function getAllAgentIds(): string[] {
+  const getAllIds = getExistingGlobalAgentBridge(GET_ALL_AGENT_IDS_BRIDGE_KEY, getAllAgentIds) as
+    | (() => string[])
+    | undefined;
+  if (getAllIds) return getAllIds();
+
   return agentRegistry.getAllIds();
 }
 
@@ -174,13 +205,13 @@ export function getAllAgentIds(): string[] {
 // real registry. External temp-file modules can't import from the embedded
 // binary FS, so they use globalThis bridges instead.
 // Use Object.defineProperty to prevent accidental overwriting or enumeration.
-for (
-  const [key, value] of Object.entries({
-    __vfGetAgent: getAgent,
-    __vfRegisterAgent: registerAgent,
-    __vfGetAllAgentIds: getAllAgentIds,
-  })
-) {
+function defineGlobalAgentBridge(key: string, value: unknown): void {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, key);
+  if (descriptor) {
+    if (typeof descriptor.value === "function") return;
+    throw new TypeError(`Global agent bridge ${key} already exists and is not callable.`);
+  }
+
   Object.defineProperty(globalThis, key, {
     value,
     writable: false,
@@ -189,11 +220,23 @@ for (
   });
 }
 
+for (
+  const [key, value] of Object.entries({
+    [GET_AGENT_BRIDGE_KEY]: getAgent,
+    [REGISTER_AGENT_BRIDGE_KEY]: registerAgent,
+    [GET_ALL_AGENT_IDS_BRIDGE_KEY]: getAllAgentIds,
+  })
+) {
+  defineGlobalAgentBridge(key, value);
+}
+
 /** Return agents as tools. */
 export function getAgentsAsTools(descriptions?: Record<string, string>): Record<string, Tool> {
   const tools: Record<string, Tool> = {};
 
-  for (const [id, agent] of agentRegistry.getAll()) {
+  for (const id of getAllAgentIds()) {
+    const agent = getAgent(id);
+    if (!agent) continue;
     tools[id] = agentAsTool(agent, descriptions?.[id] ?? `Call ${id} agent`);
   }
 
