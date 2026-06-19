@@ -30300,7 +30300,8 @@ export const connectors: IntegrationConfig[] = [
           "nextPageToken": {
             "type": "string",
             "in": "query",
-            "description": "Pagination token from the previous Jira JQL search response",
+            "description":
+              "Pagination token returned by the previous Jira JQL search response; do not invent this value or use an offset",
           },
           "fields": { "type": "array", "in": "query", "description": "Issue fields to include" },
         },
@@ -30318,7 +30319,12 @@ export const connectors: IntegrationConfig[] = [
               { "name": "created" },
               { "name": "updated" },
             ],
-            "outputFields": [{ "name": "total" }, { "name": "startAt" }, { "name": "maxResults" }],
+            "outputFields": [
+              { "name": "nextPageToken" },
+              { "name": "isLast" },
+              { "name": "maxResults" },
+              { "name": "total" },
+            ],
             "omitted":
               "issue descriptions, comments, changelog, and provider-specific payload fields",
           },
@@ -30570,8 +30576,8 @@ export const connectors: IntegrationConfig[] = [
           "query": {
             "type": "string",
             "in": "query",
-            "description": "Matches against display name and email address",
-            "required": true,
+            "description":
+              "Matches against display name and email address; omit or pass an empty string to list active users",
           },
           "maxResults": {
             "type": "number",

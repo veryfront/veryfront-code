@@ -722,6 +722,37 @@ describe("integration endpoint specs", () => {
     );
     assertEquals(jiraListSites.requiresWrite, false);
 
+    const jira = getConnector("jira");
+    assertEquals(
+      jira.tools.map((tool) => tool.id),
+      [
+        "list_sites",
+        "list_projects",
+        "get_project",
+        "search_issues",
+        "get_issue",
+        "create_issue",
+        "update_issue",
+        "list_comments",
+        "add_comment",
+        "get_transitions",
+        "transition_issue",
+        "search_users",
+      ],
+    );
+    assertEquals(
+      jira.tools.filter((tool) => tool.endpoint).map((tool) => tool.id),
+      jira.tools.map((tool) => tool.id),
+    );
+
+    const jiraListProjects = getTool("jira", "list_projects");
+    assertEquals(jiraListProjects.endpoint?.method, "GET");
+    assertEquals(
+      jiraListProjects.endpoint?.url,
+      "https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/project/search",
+    );
+    assertEquals(jiraListProjects.endpoint?.params?.cloudId?.required, true);
+
     const jiraSearchIssues = getTool("jira", "search_issues");
     assertEquals(jiraSearchIssues.endpoint?.method, "GET");
     assertEquals(
@@ -731,7 +762,25 @@ describe("integration endpoint specs", () => {
     assertEquals(jiraSearchIssues.endpoint?.params?.jql?.required, true);
     assertEquals(jiraSearchIssues.endpoint?.params?.startAt, undefined);
     assertEquals(jiraSearchIssues.endpoint?.params?.nextPageToken?.in, "query");
+    assertEquals(
+      jiraSearchIssues.endpoint?.response?.historicalSummary?.outputFields
+        ?.some((field) => field.name === "nextPageToken"),
+      true,
+    );
+    assertEquals(
+      historicalToolSummaries["jira__search_issues"]?.outputFields
+        ?.some((field) => field.name === "nextPageToken"),
+      true,
+    );
     assertEquals(jiraSearchIssues.endpoint?.body, undefined);
+
+    const jiraSearchUsers = getTool("jira", "search_users");
+    assertEquals(jiraSearchUsers.endpoint?.params?.query?.required, undefined);
+    assertStringIncludes(
+      jiraSearchUsers.endpoint?.params?.query?.description ?? "",
+      "empty",
+    );
+    assertEquals(jiraSearchUsers.requiresWrite, false);
 
     const jiraGetProject = getTool("jira", "get_project");
     assertEquals(
@@ -743,21 +792,64 @@ describe("integration endpoint specs", () => {
       true,
     );
 
+    const jiraGetIssue = getTool("jira", "get_issue");
+    assertEquals(jiraGetIssue.endpoint?.method, "GET");
+    assertEquals(
+      jiraGetIssue.endpoint?.url,
+      "https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/issue/{issueIdOrKey}",
+    );
+    assertEquals(jiraGetIssue.endpoint?.params?.issueIdOrKey?.required, true);
+
+    const jiraCreateIssue = getTool("jira", "create_issue");
+    assertEquals(jiraCreateIssue.endpoint?.method, "POST");
+    assertEquals(
+      jiraCreateIssue.endpoint?.url,
+      "https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/issue",
+    );
+    assertEquals(jiraCreateIssue.requiresWrite, true);
+    assertEquals(jiraCreateIssue.endpoint?.body?.fields?.required, true);
+
+    const jiraUpdateIssue = getTool("jira", "update_issue");
+    assertEquals(jiraUpdateIssue.endpoint?.method, "PUT");
+    assertEquals(
+      jiraUpdateIssue.endpoint?.url,
+      "https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/issue/{issueIdOrKey}",
+    );
+    assertEquals(jiraUpdateIssue.requiresWrite, true);
+    assertEquals(jiraUpdateIssue.endpoint?.params?.issueIdOrKey?.required, true);
+    assertEquals(jiraUpdateIssue.endpoint?.body?.fields?.type, "object");
+    assertEquals(jiraUpdateIssue.endpoint?.body?.update?.type, "object");
+
     const jiraListComments = getTool("jira", "list_comments");
+    assertEquals(jiraListComments.endpoint?.method, "GET");
     assertEquals(
       jiraListComments.endpoint?.url,
       "https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/issue/{issueIdOrKey}/comment",
     );
+    assertEquals(jiraListComments.endpoint?.params?.issueIdOrKey?.required, true);
 
     const jiraAddComment = getTool("jira", "add_comment");
     assertEquals(jiraAddComment.endpoint?.method, "POST");
+    assertEquals(jiraAddComment.requiresWrite, true);
     assertEquals(jiraAddComment.endpoint?.body?.body?.required, true);
 
     const jiraGetTransitions = getTool("jira", "get_transitions");
+    assertEquals(jiraGetTransitions.endpoint?.method, "GET");
     assertEquals(
       jiraGetTransitions.endpoint?.url,
       "https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/issue/{issueIdOrKey}/transitions",
     );
+    assertEquals(jiraGetTransitions.endpoint?.params?.issueIdOrKey?.required, true);
+
+    const jiraTransitionIssue = getTool("jira", "transition_issue");
+    assertEquals(jiraTransitionIssue.endpoint?.method, "POST");
+    assertEquals(
+      jiraTransitionIssue.endpoint?.url,
+      "https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/issue/{issueIdOrKey}/transitions",
+    );
+    assertEquals(jiraTransitionIssue.requiresWrite, true);
+    assertEquals(jiraTransitionIssue.endpoint?.params?.issueIdOrKey?.required, true);
+    assertEquals(jiraTransitionIssue.endpoint?.body?.transition?.required, true);
 
     const notionGetPage = getTool("notion", "get_page");
     assertEquals(notionGetPage.endpoint?.method, "GET");
