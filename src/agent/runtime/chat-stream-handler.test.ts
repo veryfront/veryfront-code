@@ -114,6 +114,69 @@ describe("chat-stream-handler", () => {
       });
     });
 
+    it("renders MCP tool_error outputs as visible tool output errors", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const result = createMockResult([
+        {
+          type: "tool-call",
+          toolCallId: "tc-create-agent",
+          toolName: "create_agent",
+          input: {
+            project_reference: "outlook-agent-zxywv0",
+            id: "harvest-timesheet-agent",
+          },
+          providerExecuted: true,
+        },
+        {
+          type: "tool-result",
+          toolCallId: "tc-create-agent",
+          toolName: "create_agent",
+          output: {
+            error: "tool_error",
+            message: "Unknown tool references: harvest__list_accounts",
+          },
+          providerExecuted: true,
+        },
+        { type: "finish", finishReason: "stop", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "text-1", undefined);
+
+      assertEquals(state.toolResults, [
+        {
+          toolCallId: "tc-create-agent",
+          toolName: "create_agent",
+          error: "Unknown tool references: harvest__list_accounts",
+          providerExecuted: true,
+        },
+      ]);
+      assertEquals(events, [
+        {
+          type: "tool-input-start",
+          toolCallId: "tc-create-agent",
+          toolName: "create_agent",
+        },
+        {
+          type: "tool-input-available",
+          toolCallId: "tc-create-agent",
+          toolName: "create_agent",
+          input: {
+            project_reference: "outlook-agent-zxywv0",
+            id: "harvest-timesheet-agent",
+          },
+          providerExecuted: true,
+        },
+        {
+          type: "tool-output-error",
+          toolCallId: "tc-create-agent",
+          errorText: "Unknown tool references: harvest__list_accounts",
+          providerExecuted: true,
+        },
+      ]);
+    });
+
     it("accumulates streamed reasoning text with Anthropic signatures", async () => {
       const { events, controller, encoder } = createSSECollector();
       const state = createStreamState();

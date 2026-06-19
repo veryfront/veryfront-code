@@ -1103,6 +1103,9 @@ export class AgentRuntime {
 
         if (matchingResult) {
           await persistToolResult(matchingResult);
+          if (tc.name === "create_agent") {
+            toolsDisabledForFinalResponse = true;
+          }
           toolCall.status = matchingResult.error === undefined ? "completed" : "error";
           toolCall.result = matchingResult.output;
           toolCall.error = matchingResult.error === undefined
@@ -1129,15 +1132,15 @@ export class AgentRuntime {
               hasSubmittedFormInputInLoop = true;
               currentRuntimeContext = markSubmittedFormInputRuntimeContext(currentRuntimeContext);
             }
-            if (tc.name === "create_agent") {
-              toolsDisabledForFinalResponse = true;
-            }
           }
           continue;
         }
 
         if (persistedResult) {
           const persistedError = getToolResultError(persistedResult.result);
+          if (tc.name === "create_agent") {
+            toolsDisabledForFinalResponse = true;
+          }
           toolCall.status = persistedError === undefined ? "completed" : "error";
           toolCall.result = persistedResult.result;
           toolCall.error = persistedError;
@@ -1160,9 +1163,6 @@ export class AgentRuntime {
             if (isSubmittedFormInputExecutionResult(tc.name, persistedResult.result)) {
               hasSubmittedFormInputInLoop = true;
               currentRuntimeContext = markSubmittedFormInputRuntimeContext(currentRuntimeContext);
-            }
-            if (tc.name === "create_agent") {
-              toolsDisabledForFinalResponse = true;
             }
           }
           continue;
@@ -1305,6 +1305,9 @@ export class AgentRuntime {
             currentMessages,
             toolCalls,
           );
+          if (tc.name === "create_agent") {
+            toolsDisabledForFinalResponse = true;
+          }
         }
       }
 

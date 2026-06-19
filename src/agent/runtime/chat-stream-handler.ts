@@ -151,6 +151,22 @@ function resolveToolResultOutput(part: RuntimeStreamPart): unknown {
   return undefined;
 }
 
+function getMcpToolErrorMessage(value: unknown): string | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  if (typeof value.error !== "string" || value.error.length === 0) {
+    return undefined;
+  }
+
+  if (typeof value.message === "string" && value.message.trim().length > 0) {
+    return value.message;
+  }
+
+  return value.error;
+}
+
 function logProviderToolPart(
   partType: "tool-result" | "tool-error",
   part: {
@@ -860,7 +876,12 @@ export function processStream(
             dynamic: typedPart.dynamic,
           });
           const toolResultOutput = resolveToolResultOutput(typedPart);
-          const isError = typedPart.isError === true;
+          const mcpToolErrorMessage = getMcpToolErrorMessage(toolResultOutput);
+          const isExplicitError = typedPart.isError === true;
+          const isError = isExplicitError || mcpToolErrorMessage !== undefined;
+          const toolResultError = isExplicitError
+            ? toolResultOutput
+            : mcpToolErrorMessage ?? toolResultOutput;
           logProviderToolPart("tool-result", {
             toolCallId: typedPart.toolCallId,
             toolName: typedPart.toolName,
@@ -875,14 +896,14 @@ export function processStream(
             state.toolResults.push({
               toolCallId: typedPart.toolCallId,
               toolName: typedPart.toolName,
-              error: toolResultOutput,
+              error: toolResultError,
               ...(providerExecuted !== undefined ? { providerExecuted } : {}),
               ...(typedPart.dynamic ? { dynamic: true } : {}),
             });
             sendSSE(controller, encoder, {
               type: "tool-output-error",
               toolCallId: typedPart.toolCallId,
-              errorText: stringifyToolError(toolResultOutput),
+              errorText: stringifyToolError(toolResultError),
               ...(providerExecuted !== undefined ? { providerExecuted } : {}),
               ...(typedPart.dynamic ? { dynamic: true } : {}),
             });
