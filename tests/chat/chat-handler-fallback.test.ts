@@ -1,5 +1,5 @@
 /**
- * Tests for the AG-UI handler's 503 fallback response and
+ * Tests for the AG-UI handler's 503 setup response and
  * the structured no_ai_available error flow.
  */
 import "../_helpers/contract-init.ts";
@@ -64,7 +64,7 @@ describe("no_ai_available error type", () => {
   });
 });
 
-describe("ag-ui handler 503 fallback", () => {
+describe("ag-ui handler 503 setup response", () => {
   it("returns 503 with NO_AI_AVAILABLE when agent stream throws no_ai_available", async () => {
     const originalLogLevel = getEnv("LOG_LEVEL");
     const originalNodeEnv = getEnv("NODE_ENV");
@@ -91,7 +91,7 @@ describe("ag-ui handler 503 fallback", () => {
       const fakeAgent = {
         id: "test-fallback",
         config: {
-          model: "local/smollm2-135m",
+          model: "local/qwen3.5-0.8b",
           system: "You are a test bot.",
         },
         generate: async () => {
@@ -129,8 +129,10 @@ describe("ag-ui handler 503 fallback", () => {
 
       const body = await response.json();
       assertEquals(body.code, "NO_AI_AVAILABLE");
-      assertEquals(body.fallback, "browser");
-      assertEquals(body.model, "smollm2-135m");
+      assertEquals(
+        body.error,
+        "No model credentials configured. Run veryfront login or set VERYFRONT_API_TOKEN, OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY.",
+      );
       // System prompt must NOT be sent to the client (security: C2)
       assertEquals(body.systemPrompt, undefined);
     } finally {
@@ -283,7 +285,7 @@ describe("runtime inference mode metadata", () => {
     }
   });
 
-  it("emits server-local inferenceMode when cloud provider falls back to local", async () => {
+  it("throws when direct provider credentials are missing", async () => {
     const originalLogLevel = getEnv("LOG_LEVEL");
     const originalNodeEnv = getEnv("NODE_ENV");
 
@@ -307,7 +309,48 @@ describe("runtime inference mode metadata", () => {
         );
       });
 
-      const mockLocal = createMockStreamingModel("local", "smollm2-135m", [
+      const runtime = new AgentRuntime("test-missing-provider-credentials", {
+        model: "openai/gpt-4o",
+        system: "Test",
+      });
+
+      try {
+        await runtime.stream(
+          [{ id: "msg-1", role: "user", parts: [{ type: "text", text: "hi" }] }],
+          undefined,
+          undefined,
+          "openai/gpt-4o",
+        );
+        throw new Error("Expected missing credentials to throw");
+      } catch (error) {
+        const vfError = fromError(error);
+        assertEquals(vfError?.type, "config");
+        assertEquals(
+          vfError?.message,
+          "OPENAI_API_KEY not set. Set the environment variable or register a custom provider with registerModelProvider().",
+        );
+      }
+    } finally {
+      if (originalLogLevel) setEnv("LOG_LEVEL", originalLogLevel);
+      if (originalNodeEnv) setEnv("NODE_ENV", originalNodeEnv);
+    }
+  });
+
+  it("emits server-local inferenceMode for explicit local models", async () => {
+    const originalLogLevel = getEnv("LOG_LEVEL");
+    const originalNodeEnv = getEnv("NODE_ENV");
+
+    setEnv("LOG_LEVEL", "silent");
+    setEnv("NODE_ENV", "test");
+
+    try {
+      const { AgentRuntime } = await import("../../src/agent/runtime/index.ts");
+      const { registerModelProvider, clearModelProviders } = await import(
+        "../../src/provider/model-registry.ts"
+      );
+      clearModelProviders();
+
+      const mockLocal = createMockStreamingModel("local", "qwen3.5-0.8b", [
         { type: "text-delta", delta: "Hi" },
         {
           type: "finish",
@@ -321,8 +364,8 @@ describe("runtime inference mode metadata", () => {
 
       registerModelProvider("local", () => mockLocal);
 
-      const runtime = new AgentRuntime("test-cloud-fallback-mode", {
-        model: "openai/gpt-4o",
+      const runtime = new AgentRuntime("test-explicit-local-mode", {
+        model: "local/qwen3.5-0.8b",
         system: "Test",
       });
 
@@ -330,7 +373,7 @@ describe("runtime inference mode metadata", () => {
         [{ id: "msg-1", role: "user", parts: [{ type: "text", text: "hi" }] }],
         undefined,
         undefined,
-        "openai/gpt-4o",
+        "local/qwen3.5-0.8b",
       );
 
       const decoder = new TextDecoder();
@@ -359,11 +402,10 @@ describe("runtime inference mode metadata", () => {
       assertEquals(dataEvent !== undefined, true, "Should have a data event");
       const dataPayload = dataEvent?.data as { inferenceMode: string; model: string };
       assertEquals(dataPayload.inferenceMode, "server-local");
-      // effectiveModel: requested "openai/gpt-4o" fell back to local — model should reflect the local modelId
       assertEquals(
         dataPayload.model,
-        "local/smollm2-135m",
-        "model field should reflect the resolved local model, not the originally requested cloud model",
+        "local/qwen3.5-0.8b",
+        "model field should reflect the explicit local model",
       );
     } finally {
       if (originalLogLevel) setEnv("LOG_LEVEL", originalLogLevel);
@@ -371,7 +413,7 @@ describe("runtime inference mode metadata", () => {
     }
   });
 
-  it("auto-upgrades local model to cloud when API key is available", async () => {
+  it("does not auto-upgrade explicit local models when API keys are available", async () => {
     const originalLogLevel = getEnv("LOG_LEVEL");
     const originalNodeEnv = getEnv("NODE_ENV");
     const origAnthropicKey = getEnv("ANTHROPIC_API_KEY");
@@ -387,8 +429,8 @@ describe("runtime inference mode metadata", () => {
       );
       clearModelProviders();
 
-      const mockCloud = createMockStreamingModel("anthropic", "claude-sonnet-4-20250514", [
-        { type: "text-delta", delta: "Hi from cloud" },
+      const mockLocal = createMockStreamingModel("local", "qwen3.5-0.8b", [
+        { type: "text-delta", delta: "Hi from local" },
         {
           type: "finish",
           finishReason: { unified: "stop", raw: "stop" },
@@ -399,11 +441,10 @@ describe("runtime inference mode metadata", () => {
         },
       ]);
 
-      registerModelProvider("anthropic", () => mockCloud);
+      registerModelProvider("local", () => mockLocal);
 
-      // Agent configured with local model, but cloud key is available
       const runtime = new AgentRuntime("test-auto-upgrade", {
-        model: "local/smollm2-135m",
+        model: "local/qwen3.5-0.8b",
         system: "Test",
       });
 
@@ -411,7 +452,7 @@ describe("runtime inference mode metadata", () => {
         [{ id: "msg-1", role: "user", parts: [{ type: "text", text: "hi" }] }],
         undefined,
         undefined,
-        "local/smollm2-135m",
+        "local/qwen3.5-0.8b",
       );
 
       const decoder = new TextDecoder();
@@ -436,12 +477,11 @@ describe("runtime inference mode metadata", () => {
       );
       assertEquals(dataEvent !== undefined, true, "Should have a data event");
       const dataPayload = dataEvent?.data as { inferenceMode: string; model: string };
-      assertEquals(dataPayload.inferenceMode, "cloud");
-      // Auto-upgraded from local to anthropic — model should be the cloud model string
+      assertEquals(dataPayload.inferenceMode, "server-local");
       assertEquals(
         dataPayload.model,
-        "anthropic/claude-sonnet-4-20250514",
-        "model field should reflect the upgraded cloud model",
+        "local/qwen3.5-0.8b",
+        "model field should reflect the explicit local model",
       );
     } finally {
       if (originalLogLevel) setEnv("LOG_LEVEL", originalLogLevel);

@@ -5,7 +5,7 @@
  * local LLM inference. Provides lazy model loading and streaming text
  * generation via async generators.
  *
- * Uses ONNX Runtime for inference with q4 quantization — NOT q4f16
+ * Uses ONNX Runtime for inference with q4 quantization, not q4f16,
  * due to a known ONNX bug with f16 LayerNorm on CPU.
  *
  * @module provider/local
@@ -15,7 +15,12 @@ import { serverLogger } from "#veryfront/utils";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { importTransformers } from "#veryfront/compat/opaque-deps.ts";
 import { DEFAULT_LOCAL_MODEL, type ModelInfo, resolveLocalModel } from "./model-catalog.ts";
-import { throwIfLocalAIDisabled } from "./env.ts";
+import {
+  getLocalAIDevice,
+  getLocalAIThinkingEnabled,
+  type LocalAIDevice,
+  throwIfLocalAIDisabled,
+} from "./env.ts";
 import { createPipelineCache } from "./pipeline-cache.ts";
 
 const logger = serverLogger.component("local-llm");
@@ -43,6 +48,16 @@ interface TransformersEnv {
   useBrowserCache: boolean;
 }
 
+interface TransformersOnnxBackend {
+  webgpu?: {
+    powerPreference?: string;
+  };
+}
+
+interface TransformersBackendConfig {
+  onnx?: TransformersOnnxBackend;
+}
+
 /** Minimal Transformers.js stopping-criteria contract (see generation/stopping_criteria.js). */
 interface StoppingCriteriaInstance {
   _call(inputIds: number[][], scores: unknown): boolean[];
@@ -55,11 +70,17 @@ interface StoppingCriteriaListInstance extends StoppingCriteriaInstance {
 
 interface TransformersModule {
   env: TransformersEnv;
+  backends?: TransformersBackendConfig;
   pipeline: (
     task: string,
     model: string,
-    options: { dtype: string; device: string },
+    options: { dtype: ModelInfo["dtype"]; device: LocalAIDevice },
   ) => Promise<unknown>;
+  AutoProcessor: {
+    from_pretrained(model: string): Promise<ConditionalProcessor>;
+  };
+  Gemma4ForConditionalGeneration: ConditionalModelConstructor;
+  Qwen3_5ForConditionalGeneration: ConditionalModelConstructor;
   TextStreamer: new (
     tokenizer: unknown,
     options: {
@@ -74,6 +95,33 @@ interface TransformersModule {
   StoppingCriteria: new () => StoppingCriteriaInstance;
   StoppingCriteriaList: new () => StoppingCriteriaListInstance;
 }
+
+interface ConditionalProcessor {
+  tokenizer: unknown;
+  apply_chat_template(messages: unknown[], options: Record<string, unknown>): string;
+  batch_decode(outputs: unknown, options: Record<string, unknown>): string[];
+  (...args: unknown[]): Promise<Record<string, unknown>>;
+}
+
+interface ConditionalModel {
+  generate(options: Record<string, unknown>): Promise<unknown>;
+}
+
+interface ConditionalModelConstructor {
+  from_pretrained(
+    model: string,
+    options: { dtype: ModelInfo["dtype"]; device: LocalAIDevice },
+  ): Promise<ConditionalModel>;
+}
+
+interface ConditionalGenerationRuntime {
+  processor: ConditionalProcessor;
+  model: ConditionalModel;
+}
+
+type LocalModelLoadInfo = ModelInfo & {
+  device: LocalAIDevice;
+};
 
 /** Tokenizer surface used to decode generated token ids back to text. */
 interface DecodingTokenizer {
@@ -97,7 +145,7 @@ export interface PipeOptions {
  *
  * Transformers.js (>=3.x) does not expose a `stop_strings` generate option,
  * so we decode the running sequence with the tokenizer and match the stop
- * strings against the suffix — the documented `stopping_criteria` mechanism.
+ * strings against the suffix through the documented `stopping_criteria` mechanism.
  *
  * Transformers.js passes the full sequence (prompt + generated tokens) to
  * `_call` on every step. We must scan only the generated suffix: if a system
@@ -179,7 +227,7 @@ export function buildPipeOptions(
   return pipeOptions;
 }
 
-interface Pipeline {
+interface TextGenerationPipeline {
   tokenizer: unknown;
   (
     messages: ChatMessage[],
@@ -209,9 +257,9 @@ export async function getTransformers(): Promise<TransformersModule> {
       createError({
         type: "no_ai_available",
         message:
-          "Local AI model unavailable — native ONNX Runtime is not supported in this environment " +
-          "(e.g. compiled binaries). Set VERYFRONT_API_TOKEN and VERYFRONT_PROJECT_SLUG, or " +
-          "configure OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY to use a cloud provider instead.",
+          "Local AI model unavailable. Native ONNX Runtime is not supported in this environment " +
+          "(e.g. compiled binaries). Run veryfront login, set VERYFRONT_API_TOKEN, or " +
+          "configure OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY to use a cloud provider.",
       }),
     );
   }
@@ -225,61 +273,312 @@ export async function getTransformers(): Promise<TransformersModule> {
   return mod;
 }
 
+async function ensureWebGpuAvailable(): Promise<void> {
+  if (typeof navigator === "undefined" || !("gpu" in navigator)) {
+    throw toError(
+      createError({
+        type: "no_ai_available",
+        message: "Local AI WebGPU unavailable. This runtime does not expose navigator.gpu. " +
+          "Use VERYFRONT_LOCAL_AI_DEVICE=cpu or run in a runtime with WebGPU support.",
+      }),
+    );
+  }
+
+  const gpu = (navigator as { gpu?: { requestAdapter?: () => Promise<unknown> } }).gpu;
+  const adapter = await gpu?.requestAdapter?.();
+  if (!adapter) {
+    throw toError(
+      createError({
+        type: "no_ai_available",
+        message: "Local AI WebGPU unavailable. No WebGPU adapter was found. " +
+          "Use VERYFRONT_LOCAL_AI_DEVICE=cpu or run on a machine with a supported GPU.",
+      }),
+    );
+  }
+}
+
+async function getLocalInferenceDevice(): Promise<LocalAIDevice> {
+  const device = getLocalAIDevice();
+  if (device === "webgpu") {
+    await ensureWebGpuAvailable();
+  }
+  return device;
+}
+
+function formatDType(dtype: ModelInfo["dtype"]): string {
+  return typeof dtype === "string" ? dtype : JSON.stringify(dtype);
+}
+
+function getConditionalModelConstructor(
+  transformers: TransformersModule,
+  modelInfo: ModelInfo,
+): ConditionalModelConstructor {
+  switch (modelInfo.modelClass) {
+    case "gemma4":
+      return transformers.Gemma4ForConditionalGeneration;
+    case "qwen3_5":
+      return transformers.Qwen3_5ForConditionalGeneration;
+    default:
+      throw toError(
+        createError({
+          type: "config",
+          message:
+            `Local model "${modelInfo.hfId}" requires a supported conditional-generation model class.`,
+        }),
+      );
+  }
+}
+
 /**
  * Bounded, dedup-aware cache of text-generation pipelines keyed by HuggingFace
  * model id. Only loads a model on a cold cache miss; concurrent loads of the
  * same model share a single promise.
  */
-const textGenerationPipelines = createPipelineCache<Pipeline, ModelInfo>(async (modelInfo) => {
-  try {
-    const transformers = await getTransformers();
+const textGenerationPipelines = createPipelineCache<TextGenerationPipeline, LocalModelLoadInfo>(
+  async (modelInfo) => {
+    try {
+      const transformers = await getTransformers();
 
-    logger.info(
-      `Loading local model: ${modelInfo.hfId} (${modelInfo.dtype}, ~${modelInfo.sizeMB}MB)...`,
-    );
-
-    const pipe = (await transformers.pipeline(
-      "text-generation",
-      modelInfo.hfId,
-      {
-        dtype: modelInfo.dtype,
-        device: "cpu",
-      },
-    )) as Pipeline;
-
-    logger.info(`Model loaded: ${modelInfo.hfId}`);
-    return pipe;
-  } catch (error) {
-    // Convert ONNX / native-addon errors to no_ai_available so they propagate
-    // correctly through the chat handler (503) instead of being swallowed as
-    // in-band SSE errors inside a 200 response stream.
-    const msg = error instanceof Error ? error.message : String(error);
-    if (
-      msg.includes("onnx") || msg.includes("ONNX") ||
-      msg.includes("dlopen") || msg.includes("dynamic linking") ||
-      msg.includes("native module") || msg.includes("SharedArrayBuffer")
-    ) {
-      transformersModule = null;
-      throw toError(
-        createError({
-          type: "no_ai_available",
-          message:
-            "Local AI model unavailable — native ONNX Runtime is not supported in this environment " +
-            "(e.g. compiled binaries). Set VERYFRONT_API_TOKEN and VERYFRONT_PROJECT_SLUG, or " +
-            "configure OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY to use a cloud provider instead.",
-        }),
+      logger.info(
+        `Loading local model: ${modelInfo.hfId} (${
+          formatDType(modelInfo.dtype)
+        }, ${modelInfo.device}, ~${modelInfo.sizeMB}MB)...`,
       );
+
+      const pipe = (await transformers.pipeline(
+        "text-generation",
+        modelInfo.hfId,
+        {
+          dtype: modelInfo.dtype,
+          device: modelInfo.device,
+        },
+      )) as TextGenerationPipeline;
+
+      logger.info(`Model loaded: ${modelInfo.hfId}`);
+      return pipe;
+    } catch (error) {
+      // Convert ONNX / native-addon errors to no_ai_available so they propagate
+      // correctly through the chat handler (503) instead of being swallowed as
+      // in-band SSE errors inside a 200 response stream.
+      const msg = error instanceof Error ? error.message : String(error);
+      if (
+        msg.includes("onnx") || msg.includes("ONNX") ||
+        msg.includes("dlopen") || msg.includes("dynamic linking") ||
+        msg.includes("native module") || msg.includes("SharedArrayBuffer")
+      ) {
+        transformersModule = null;
+        throw toError(
+          createError({
+            type: "no_ai_available",
+            message:
+              "Local AI model unavailable. Native ONNX Runtime is not supported in this environment " +
+              "(e.g. compiled binaries). Run veryfront login, set VERYFRONT_API_TOKEN, or " +
+              "configure OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY to use a cloud provider.",
+          }),
+        );
+      }
+      throw error;
     }
-    throw error;
+  },
+);
+
+const conditionalGenerationRuntimes = createPipelineCache<
+  ConditionalGenerationRuntime,
+  LocalModelLoadInfo
+>(
+  async (modelInfo) => {
+    try {
+      const transformers = await getTransformers();
+      const ModelClass = getConditionalModelConstructor(transformers, modelInfo);
+
+      logger.info(
+        `Loading local model: ${modelInfo.hfId} (${
+          formatDType(modelInfo.dtype)
+        }, ${modelInfo.device}, ~${modelInfo.sizeMB}MB)...`,
+      );
+
+      const [processor, model] = await Promise.all([
+        transformers.AutoProcessor.from_pretrained(modelInfo.hfId),
+        ModelClass.from_pretrained(modelInfo.hfId, {
+          dtype: modelInfo.dtype,
+          device: modelInfo.device,
+        }),
+      ]);
+
+      logger.info(`Model loaded: ${modelInfo.hfId}`);
+      return { processor, model };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      if (
+        msg.includes("onnx") || msg.includes("ONNX") ||
+        msg.includes("dlopen") || msg.includes("dynamic linking") ||
+        msg.includes("native module") || msg.includes("SharedArrayBuffer")
+      ) {
+        transformersModule = null;
+        throw toError(
+          createError({
+            type: "no_ai_available",
+            message:
+              "Local AI model unavailable. Native ONNX Runtime is not supported in this environment " +
+              "(e.g. compiled binaries). Run veryfront login, set VERYFRONT_API_TOKEN, or " +
+              "configure OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY to use a cloud provider.",
+          }),
+        );
+      }
+      throw error;
+    }
+  },
+);
+
+function getModelCacheKey(modelInfo: ModelInfo, device: LocalAIDevice): string {
+  return `${modelInfo.hfId}:${device}`;
+}
+
+async function loadLocalRuntime(modelInfo: ModelInfo): Promise<unknown> {
+  const device = await getLocalInferenceDevice();
+  const loadInfo: LocalModelLoadInfo = { ...modelInfo, device };
+  const cacheKey = getModelCacheKey(modelInfo, device);
+  return modelInfo.engine === "conditional-generation"
+    ? conditionalGenerationRuntimes.load(cacheKey, loadInfo)
+    : textGenerationPipelines.load(cacheKey, loadInfo);
+}
+
+function toConditionalMessages(messages: ChatMessage[]): Array<Record<string, unknown>> {
+  return messages.map((message) => ({
+    role: message.role,
+    content: [{ type: "text", text: message.content }],
+  }));
+}
+
+export function buildConditionalGenerateOptions(
+  options: GenerateOptions,
+  transformers: Pick<TransformersModule, "StoppingCriteria" | "StoppingCriteriaList">,
+  tokenizer: DecodingTokenizer,
+  streamer: unknown,
+): PipeOptions {
+  const {
+    maxNewTokens = DEFAULT_MAX_NEW_TOKENS,
+    temperature = 0.7,
+    topP,
+    topK,
+    stopSequences,
+  } = options;
+
+  const generateOptions: PipeOptions = {
+    max_new_tokens: maxNewTokens,
+    temperature,
+    top_p: topP,
+    top_k: topK,
+    do_sample: temperature > 0,
+    streamer,
+  };
+
+  if (stopSequences && stopSequences.length > 0) {
+    generateOptions.stopping_criteria = buildStopStringCriteria(
+      transformers,
+      tokenizer,
+      stopSequences,
+    );
   }
-});
+
+  return generateOptions;
+}
+
+export function buildConditionalChatTemplateOptions(
+  modelInfo: Pick<ModelInfo, "modelClass">,
+): Record<string, unknown> {
+  return {
+    add_generation_prompt: true,
+    ...(modelInfo.modelClass === "gemma4" ? { enable_thinking: getLocalAIThinkingEnabled() } : {}),
+  };
+}
+
+async function prepareConditionalInputs(
+  runtime: ConditionalGenerationRuntime,
+  modelInfo: ModelInfo,
+  messages: ChatMessage[],
+): Promise<Record<string, unknown>> {
+  const prompt = runtime.processor.apply_chat_template(
+    toConditionalMessages(messages),
+    buildConditionalChatTemplateOptions(modelInfo),
+  );
+
+  if (modelInfo.modelClass === "gemma4") {
+    return await runtime.processor(prompt, undefined, undefined, {
+      add_special_tokens: false,
+    });
+  }
+
+  return await runtime.processor(prompt);
+}
+
+async function* generateConditionalStream(
+  modelInfo: ModelInfo,
+  messages: ChatMessage[],
+  options: GenerateOptions,
+): AsyncGenerator<string, void, undefined> {
+  const runtime = await loadLocalRuntime(modelInfo) as ConditionalGenerationRuntime;
+  const transformers = await getTransformers();
+  const inputs = await prepareConditionalInputs(runtime, modelInfo, messages);
+
+  const tokenQueue: string[] = [];
+  let resolveWaiting: (() => void) | null = null;
+  let done = false;
+
+  function flushWaiting(): void {
+    if (resolveWaiting) {
+      resolveWaiting();
+      resolveWaiting = null;
+    }
+  }
+
+  const streamer = new transformers.TextStreamer(runtime.processor.tokenizer, {
+    skip_prompt: true,
+    skip_special_tokens: true,
+    callback_function: (text: string) => {
+      tokenQueue.push(text);
+      flushWaiting();
+    },
+  });
+
+  const generatePromise = (async () => {
+    try {
+      await runtime.model.generate({
+        ...inputs,
+        ...buildConditionalGenerateOptions(
+          options,
+          transformers,
+          runtime.processor.tokenizer as DecodingTokenizer,
+          streamer,
+        ),
+      });
+    } finally {
+      done = true;
+      flushWaiting();
+    }
+  })();
+
+  while (true) {
+    while (tokenQueue.length > 0) {
+      yield tokenQueue.shift()!;
+    }
+
+    if (done) break;
+
+    await new Promise<void>((resolve) => {
+      resolveWaiting = resolve;
+    });
+  }
+
+  await generatePromise;
+}
 
 /**
  * Load a text-generation pipeline for the given model.
  * Returns a cached pipeline if already loaded.
  */
-function loadPipeline(modelInfo: ModelInfo): Promise<Pipeline> {
-  return textGenerationPipelines.load(modelInfo.hfId, modelInfo);
+async function loadPipeline(modelInfo: ModelInfo): Promise<TextGenerationPipeline> {
+  return await loadLocalRuntime(modelInfo) as TextGenerationPipeline;
 }
 
 /**
@@ -287,8 +586,8 @@ function loadPipeline(modelInfo: ModelInfo): Promise<Pipeline> {
  * is available by loading the default model pipeline.
  *
  * Call this *before* creating the HTTP response stream so that failures surface
- * as a thrown error (→ 503) rather than being swallowed inside a ReadableStream
- * (→ 200 with in-band SSE error).
+ * as a thrown error (503) rather than being swallowed inside a ReadableStream
+ * (200 with in-band SSE error).
  *
  * In compiled binaries, `import("@huggingface/transformers")` itself fails
  * because `onnxruntime-node` eagerly `require()`s a native `.node` addon at
@@ -300,7 +599,7 @@ function loadPipeline(modelInfo: ModelInfo): Promise<Pipeline> {
  */
 export async function verifyLocalRuntime(modelId?: string): Promise<void> {
   const modelInfo = resolveLocalModel(modelId || DEFAULT_LOCAL_MODEL);
-  await loadPipeline(modelInfo);
+  await loadLocalRuntime(modelInfo);
 }
 
 /**
@@ -314,10 +613,15 @@ export async function* generateStream(
   options: GenerateOptions = {},
 ): AsyncGenerator<string, void, undefined> {
   const modelInfo = resolveLocalModel(modelId);
+  if (modelInfo.engine === "conditional-generation") {
+    yield* generateConditionalStream(modelInfo, messages, options);
+    return;
+  }
+
   const pipe = await loadPipeline(modelInfo);
   const transformers = await getTransformers();
 
-  // Use a queue to bridge TextStreamer callbacks → async generator
+  // Use a queue to bridge TextStreamer callbacks to an async generator.
   const tokenQueue: string[] = [];
   let resolveWaiting: (() => void) | null = null;
   let done = false;
@@ -393,7 +697,7 @@ export async function generate(
  */
 export async function preloadModel(modelId: string): Promise<void> {
   const modelInfo = resolveLocalModel(modelId);
-  await loadPipeline(modelInfo);
+  await loadLocalRuntime(modelInfo);
 }
 
 /**
@@ -401,5 +705,9 @@ export async function preloadModel(modelId: string): Promise<void> {
  */
 export function isModelLoaded(modelId: string): boolean {
   const modelInfo = resolveLocalModel(modelId);
-  return textGenerationPipelines.has(modelInfo.hfId);
+  const device = getLocalAIDevice();
+  const cacheKey = getModelCacheKey(modelInfo, device);
+  return modelInfo.engine === "conditional-generation"
+    ? conditionalGenerationRuntimes.has(cacheKey)
+    : textGenerationPipelines.has(cacheKey);
 }

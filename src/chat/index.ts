@@ -163,8 +163,6 @@ export {
   type Thread,
   ToolCallCard,
   ToolStatusBadge,
-  UpgradeCTA,
-  type UpgradeCTAProps,
   type UploadedFile,
   UploadsPanel,
   type UploadsPanelProps,
@@ -190,7 +188,6 @@ export type { AgentTheme, ChatTheme } from "#veryfront/react/components/chat/the
 
 export {
   type BranchInfo,
-  type BrowserInferenceStatus,
   type ChatDynamicToolPart,
   type ChatFinishReason,
   type ChatMessage,

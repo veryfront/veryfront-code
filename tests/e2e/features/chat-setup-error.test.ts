@@ -1,15 +1,14 @@
 #!/usr/bin/env -S deno test --allow-all
 /**
- * Feature Tests: Chat Fallback (compiled binary)
+ * Feature tests: chat setup errors (compiled binary)
  *
- * Tests the 503 NO_AI_AVAILABLE response when:
+ * Tests the 503 NO_MODEL_CREDENTIALS response when:
  * - No API keys are set
- * - Local AI is disabled via VERYFRONT_DISABLE_LOCAL_AI=1
  *
  * These tests are SLOW (~60s for binary compilation + server startup).
  * They are isolated from the fast test suite:
  *   - `deno task test` ignores tests/e2e/ entirely
- *   - Run explicitly: `deno test --allow-all tests/e2e/features/chat-fallback.test.ts`
+ *   - Run explicitly: `deno test --allow-all tests/e2e/features/chat-setup-error.test.ts`
  *
  * Binary is cached after first compilation (~60s → ~2s on subsequent runs).
  */
@@ -19,7 +18,7 @@ import { beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { createProject, ensureBinaryCompiled, pages, withServer } from "../setup/index.ts";
 
-describe("Feature: Chat Fallback", {
+describe("Feature: chat setup errors", {
   sanitizeOps: false,
   sanitizeResources: false,
 }, () => {
@@ -27,10 +26,10 @@ describe("Feature: Chat Fallback", {
     await ensureBinaryCompiled();
   });
 
-  it("should return 503 with NO_AI_AVAILABLE when no API key is set", async () => {
+  it("should return 503 with NO_MODEL_CREDENTIALS when no API key is set", async () => {
     // Use pages/ directory (simpler, known to work with e2e infra).
     // The AG-UI API route registers an agent inline.
-    const projectDir = await createProject("ai-fallback", pages.basic, {
+    const projectDir = await createProject("ai-setup-error", pages.basic, {
       files: {
         "pages/api/ag-ui.ts": `
 import { agent, createAgUiHandler } from "veryfront/agent";
@@ -65,12 +64,14 @@ export const POST = createAgUiHandler("test-assistant");
         },
       );
 
-      assertEquals(response.status, 503, "Should return 503 when no AI available");
+      assertEquals(response.status, 503, "Should return 503 when model credentials are missing");
 
       const body = await response.json();
-      assertEquals(body.code, "NO_AI_AVAILABLE");
-      assertEquals(body.fallback, "browser");
-      assertEquals(body.model, "smollm2-135m");
+      assertEquals(body.code, "NO_MODEL_CREDENTIALS");
+      assertEquals(
+        body.error,
+        "No model credentials configured. Run veryfront login or set VERYFRONT_API_TOKEN, OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY.",
+      );
       assertEquals(body.systemPrompt, undefined);
     }, {
       timeout: 60_000,
@@ -78,13 +79,12 @@ export const POST = createAgUiHandler("test-assistant");
         OPENAI_API_KEY: "",
         ANTHROPIC_API_KEY: "",
         GOOGLE_API_KEY: "",
-        VERYFRONT_DISABLE_LOCAL_AI: "1",
       },
     });
   });
 
-  it("should not expose the agent system prompt in the 503 fallback response", async () => {
-    const projectDir = await createProject("ai-fallback-prompt", pages.basic, {
+  it("should not expose the agent system prompt in the 503 setup response", async () => {
+    const projectDir = await createProject("ai-setup-error-prompt", pages.basic, {
       files: {
         "pages/api/ag-ui.ts": `
 import { agent, createAgUiHandler } from "veryfront/agent";
@@ -120,7 +120,7 @@ export const POST = createAgUiHandler("custom-bot");
 
       assertEquals(response.status, 503);
       const body = await response.json();
-      assertEquals(body.code, "NO_AI_AVAILABLE");
+      assertEquals(body.code, "NO_MODEL_CREDENTIALS");
       assertEquals(body.systemPrompt, undefined);
     }, {
       timeout: 60_000,
@@ -128,7 +128,6 @@ export const POST = createAgUiHandler("custom-bot");
         OPENAI_API_KEY: "",
         ANTHROPIC_API_KEY: "",
         GOOGLE_API_KEY: "",
-        VERYFRONT_DISABLE_LOCAL_AI: "1",
       },
     });
   });

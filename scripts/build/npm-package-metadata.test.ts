@@ -25,13 +25,13 @@ describe("normalizeNpmPackageMetadata", () => {
 				"zod": "4.3.6",
 			},
 			optionalDependencies: {
-				"@huggingface/transformers": "^3.4.2",
+				"@huggingface/transformers": "^4.2.0",
 			},
 		});
 
 		assertEquals(pkg.dependencies, { zod: "4.3.6" });
 		assertEquals(pkg.optionalDependencies, {
-			"@huggingface/transformers": "3.4.2",
+			"@huggingface/transformers": "4.2.0",
 		});
 		assertEquals(pkg.peerDependencies, {
 			"@kreuzberg/node": "^4.4.2",

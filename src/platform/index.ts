@@ -59,6 +59,9 @@ export {
 // Compat: media types
 export { lookup as lookupMimeType } from "./compat/media-types.ts";
 
+// Compat: DNS
+export { resolveHostAddresses, type ResolveHostAddressesOptions } from "./compat/dns.ts";
+
 // Compat: KV store
 export { createKVStore, MemoryKv } from "./compat/kv/index.ts";
 

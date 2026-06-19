@@ -137,7 +137,6 @@ export {
   TabSwitcher,
   ToolCallCard,
   ToolStatusBadge,
-  UpgradeCTA,
   UploadsPanel,
   useThreads,
 } from "./components/chat/chat.tsx";
@@ -179,7 +178,6 @@ export type {
   SuggestionsProps,
   TabSwitcherProps,
   Thread,
-  UpgradeCTAProps,
   UploadedFile,
   UploadsPanelProps,
   UseThreadsOptions,
@@ -228,7 +226,6 @@ export {
 export { useChat } from "#veryfront/agent/react/use-chat/index.ts";
 export type {
   BranchInfo,
-  BrowserInferenceStatus,
   ChatDynamicToolPart,
   ChatMessage,
   ChatMessagePart,

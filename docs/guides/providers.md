@@ -47,12 +47,12 @@ curl -N http://localhost:3000/api/ag-ui \
 ```
 
 In a client UI, `useChat()` also exposes `inferenceMode` so you can confirm
-whether the response used cloud, server-local, or browser inference.
+whether the response used cloud or server-local inference.
 
 By convention:
 
-- local development without cloud bootstrap uses local inference or explicit
-  provider env vars
+- local development without cloud bootstrap uses explicit provider env vars or
+  an explicit `local/*` model
 - Veryfront Cloud is selected automatically when `VERYFRONT_API_TOKEN` and
   project context such as `VERYFRONT_PROJECT_SLUG` are available
 - `VERYFRONT_DEFAULT_MODEL`, `VERYFRONT_DEFAULT_EMBEDDING_MODEL`, and
@@ -82,31 +82,55 @@ export default agent({
 });
 ```
 
-## Zero-config local AI
+## Explicit local AI
 
-Chat works **out of the box with no API keys**. When no cloud provider key is set, the framework automatically falls back through a three-tier inference chain:
-
-```
-Cloud provider (API key set)
-    ↓ fallback (no key)
-Server-local (SmolLM2-135M via ONNX Runtime)
-    ↓ fallback (ONNX unavailable, e.g. compiled binary)
-Browser Worker (transformers.js from CDN)
-```
-
-- **Server-local**: runs SmolLM2-135M with `@huggingface/transformers` and ONNX Runtime. The model is downloaded and cached on first use (~100MB).
-- **Browser fallback**: when the server can't load ONNX (e.g. compiled binaries), the chat handler returns a `503` with `NO_AI_AVAILABLE`. The `useChat` hook detects this and loads the same model in a Web Worker via CDN.
-
-The fallback is transparent: `useChat` exposes `inferenceMode` (`"cloud"`, `"server-local"`, or `"browser"`) so your UI can adapt.
-
-To explicitly use a local model:
+Local inference is explicit. Use a `local/*` model when you want the server to
+run a curated ONNX model through `@huggingface/transformers`.
 
 ```ts
-agent({ model: "local/smollm2-135m" });
-// Also available: "local/smollm2-360m", "local/smollm2-1.7b"
+agent({ model: "local/qwen3.5-0.8b" });
+// Also available: "local/gemma4-e2b-it", "local/gemma4-e4b-it"
 ```
 
-To disable server-side local AI (e.g. in tests):
+The model is downloaded and cached on first use. If the local runtime cannot
+load ONNX, the chat handler returns a `503` setup error. The browser never
+starts a local model automatically.
+
+Local AI uses CPU by default. To request WebGPU for local inference, use:
+
+```bash
+VERYFRONT_LOCAL_AI_DEVICE=webgpu
+```
+
+If WebGPU is requested but unavailable, Veryfront returns a setup error instead
+of retrying on CPU.
+
+To smoke-test WebGPU local inference in this package, use:
+
+```bash
+VERYFRONT_LOCAL_AI_DEVICE=webgpu deno run -A src/provider/local/_smoke-test.ts
+```
+
+To smoke-test Gemma4 local inference, use:
+
+```bash
+VERYFRONT_LOCAL_AI_MODEL=gemma4-e2b-it deno run -A src/provider/local/_smoke-test.ts
+```
+
+To enable Gemma4 thinking in the local prompt template, use:
+
+```bash
+VERYFRONT_LOCAL_AI_THINKING=1
+```
+
+Thinking is disabled by default. To smoke-test Gemma4 E4B with thinking enabled,
+use:
+
+```bash
+VERYFRONT_LOCAL_AI_MODEL=gemma4-e4b-it VERYFRONT_LOCAL_AI_THINKING=1 deno run -A src/provider/local/_smoke-test.ts
+```
+
+To disable server-side local AI, use:
 
 ```bash
 VERYFRONT_DISABLE_LOCAL_AI=1

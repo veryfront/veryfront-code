@@ -7,7 +7,6 @@
 export { useChat } from "./use-chat/index.ts";
 export type {
   BranchInfo,
-  BrowserInferenceStatus,
   ChatDynamicToolPart,
   ChatFinishReason,
   ChatMessage,

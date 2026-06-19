@@ -13,6 +13,7 @@
     "#cli/shared/project-source-context": "./shared/project-source-context.ts",
     "#cli/shared/slug": "./shared/slug.ts",
     "#cli/shared/reserve-slug": "./shared/reserve-slug.ts",
+    "#cli/shared/runtime-auth": "./shared/runtime-auth.ts",
     "#cli/shared/server-startup": "./shared/server-startup.ts",
     "#cli/ui": "./ui/index.ts",
     "#cli/ui/box": "./ui/box.ts",

@@ -43,6 +43,7 @@ const VIOLATION_PATTERNS = [
   { pattern: /Deno\.args(?![a-zA-Z])/g, name: "Deno.args" },
   { pattern: /Deno\.env\./g, name: "Deno.env" },
   { pattern: /Deno\.Command\s*\(/g, name: "Deno.Command()" },
+  { pattern: /Deno\.resolveDns\s*\(/g, name: "Deno.resolveDns()" },
   { pattern: /Deno\.build\./g, name: "Deno.build" },
   { pattern: /globalThis\.Deno/g, name: "globalThis.Deno" },
   { pattern: /global\.Deno/g, name: "global.Deno" },
@@ -138,6 +139,7 @@ const EXCEPTIONS: Record<string, string[]> = {
   "src/cache/cache-key-builder.ts": ["node: import"],
   "src/provider/veryfront-cloud/context.ts": ["node: import"],
   "src/observability/request-profiler.ts": ["node: import"],
+  "src/transforms/mdx/esm-module-loader/module-fetcher/render-sessions.ts": ["node: import"],
 
   // --- node:buffer (File / Buffer) ---
   // File is global only on Node 20+; import from node:buffer for Node 18 compat
@@ -179,7 +181,7 @@ const EXCEPTIONS: Record<string, string[]> = {
   "src/server/index.ts": ["node: import"],
 };
 
-interface Violation {
+export interface Violation {
   file: string;
   line: number;
   column: number;
@@ -187,7 +189,10 @@ interface Violation {
   match: string;
 }
 
-async function scanFile(filePath: string, relativePath: string): Promise<Violation[]> {
+export function findPlatformViolationsInContent(
+  relativePath: string,
+  content: string,
+): Violation[] {
   const violations: Violation[] = [];
 
   // Check if file is in allowed path
@@ -209,7 +214,6 @@ async function scanFile(filePath: string, relativePath: string): Promise<Violati
     }
   }
 
-  const content = await Deno.readTextFile(filePath);
   const lines = content.split("\n");
 
   for (const { pattern, name } of VIOLATION_PATTERNS) {
@@ -238,7 +242,7 @@ async function scanFile(filePath: string, relativePath: string): Promise<Violati
       }
 
       // Skip string literals that are just documenting patterns (like in this file)
-      if (line.includes('pattern:') || line.includes('name:')) {
+      if (line.includes("pattern:") || line.includes("name:")) {
         continue;
       }
 
@@ -253,6 +257,11 @@ async function scanFile(filePath: string, relativePath: string): Promise<Violati
   }
 
   return violations;
+}
+
+async function scanFile(filePath: string, relativePath: string): Promise<Violation[]> {
+  const content = await Deno.readTextFile(filePath);
+  return findPlatformViolationsInContent(relativePath, content);
 }
 
 async function main() {
@@ -306,4 +315,6 @@ async function main() {
   Deno.exit(1);
 }
 
-main();
+if (import.meta.main) {
+  main();
+}

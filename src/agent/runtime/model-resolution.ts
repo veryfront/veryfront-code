@@ -4,10 +4,11 @@ import {
   getMistralEnvConfig,
   getOpenAIEnvConfig,
 } from "#veryfront/config/env.ts";
-import { findAvailableCloudModel } from "#veryfront/provider";
 import { findVeryfrontCloudModelByModelId } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
-import { DEFAULT_LOCAL_MODEL } from "#veryfront/provider/local/model-catalog.ts";
-import { isVeryfrontCloudEnabled } from "#veryfront/platform/cloud/resolver.ts";
+import {
+  getDefaultVeryfrontCloudModel,
+  isVeryfrontCloudEnabled,
+} from "#veryfront/platform/cloud/resolver.ts";
 
 export const AUTO_AGENT_MODEL = "auto";
 
@@ -25,6 +26,12 @@ const DIRECT_CREDENTIAL_PROVIDER_ALIASES: Record<string, string> = {
 const DIRECT_RUNTIME_PROVIDER_ALIASES: Record<string, string> = {
   "google-ai-studio": "google",
 };
+const DIRECT_AUTO_MODEL_DEFAULTS: Array<{ provider: string; modelId: string }> = [
+  { provider: "openai", modelId: "gpt-5.5" },
+  { provider: "anthropic", modelId: "claude-sonnet-4-6" },
+  { provider: "google-ai-studio", modelId: "gemini-3.5-flash" },
+  { provider: "mistral", modelId: "mistral-large-2512" },
+];
 const LEGACY_MODEL_ALIASES: Record<string, string> = {
   opus: "anthropic/claude-opus-4-8",
   sonnet: "anthropic/claude-sonnet-4-6",
@@ -61,7 +68,7 @@ export function normalizeAgentModelConfig(model?: string): string {
 export function resolveConfiguredAgentModel(model?: string): string {
   const normalized = normalizeAgentModelConfig(model);
   if (normalized === AUTO_AGENT_MODEL) {
-    return `local/${DEFAULT_LOCAL_MODEL}`;
+    return getDefaultVeryfrontCloudModel();
   }
 
   if (normalized.includes("/")) {
@@ -95,28 +102,82 @@ function isUnsupportedVeryfrontCloudMistralModel(modelId: string): boolean {
     !findVeryfrontCloudModelByModelId(modelId);
 }
 
+function normalizeVeryfrontCloudRuntimeModel(modelId: string): string {
+  if (isUnsupportedVeryfrontCloudMistralModel(modelId)) {
+    throw new Error(`Unsupported Mistral model "${modelId}"`);
+  }
+  return modelId;
+}
+
+function toDirectRuntimeModel(provider: string, modelId: string): string {
+  const runtimeProvider = DIRECT_RUNTIME_PROVIDER_ALIASES[provider] ?? provider;
+  return `${runtimeProvider}/${modelId}`;
+}
+
+function resolveDirectRuntimeModelForDefault(modelId: string): string | undefined {
+  const normalized = modelId.startsWith("veryfront-cloud/")
+    ? modelId.slice("veryfront-cloud/".length)
+    : modelId;
+  const slashIndex = normalized.indexOf("/");
+  if (slashIndex === -1) return undefined;
+
+  const provider = normalized.slice(0, slashIndex);
+  const providerModelId = normalized.slice(slashIndex + 1);
+  if (!provider || !providerModelId || !hasDirectProviderCredentials(provider)) {
+    return undefined;
+  }
+
+  return toDirectRuntimeModel(provider, providerModelId);
+}
+
+function resolveDirectAutoRuntimeModel(): string | undefined {
+  const configuredDefault = resolveDirectRuntimeModelForDefault(getDefaultVeryfrontCloudModel());
+  if (configuredDefault) {
+    return configuredDefault;
+  }
+
+  for (const { provider, modelId } of DIRECT_AUTO_MODEL_DEFAULTS) {
+    if (hasDirectProviderCredentials(provider)) {
+      return toDirectRuntimeModel(provider, modelId);
+    }
+  }
+
+  return undefined;
+}
+
+function resolveAutoRuntimeModel(): string {
+  const cloudModel = getDefaultVeryfrontCloudModel();
+
+  if (isVeryfrontCloudEnabled()) {
+    return normalizeVeryfrontCloudRuntimeModel(cloudModel);
+  }
+
+  return resolveDirectAutoRuntimeModel() ?? normalizeVeryfrontCloudRuntimeModel(cloudModel);
+}
+
 /**
  * Resolve the effective runtime model string for agent execution.
  *
  * Runtime-only rewrites happen here:
- * - `auto` still defaults to `local/*`
- * - `local/*` upgrades to the first available cloud model when bootstrap exists
+ * - `auto` uses Veryfront Cloud when bootstrap is available, otherwise a
+ *   configured direct provider key when one exists
  * - explicit hosted-provider models (`openai/*`, `anthropic/*`, `google/*`)
  *   transparently route through `veryfront-cloud/*` when the runtime has
  *   request-scoped Veryfront bootstrap but no direct provider API key
  */
 export function resolveRuntimeModel(model?: string): string {
+  if (normalizeAgentModelConfig(model) === AUTO_AGENT_MODEL) {
+    return resolveAutoRuntimeModel();
+  }
+
   const configuredModel = resolveConfiguredAgentModel(model);
 
   if (configuredModel.startsWith("veryfront-cloud/")) {
-    if (isUnsupportedVeryfrontCloudMistralModel(configuredModel)) {
-      throw new Error(`Unsupported Mistral model "${configuredModel}"`);
-    }
-    return configuredModel;
+    return normalizeVeryfrontCloudRuntimeModel(configuredModel);
   }
 
   if (configuredModel.startsWith("local/")) {
-    return findAvailableCloudModel() ?? configuredModel;
+    return configuredModel;
   }
 
   const slashIndex = configuredModel.indexOf("/");
@@ -136,8 +197,7 @@ export function resolveRuntimeModel(model?: string): string {
   }
 
   if (!isVeryfrontCloudEnabled() || hasDirectProviderCredentials(provider)) {
-    const runtimeProvider = DIRECT_RUNTIME_PROVIDER_ALIASES[provider] ?? provider;
-    return `${runtimeProvider}/${modelId}`;
+    return toDirectRuntimeModel(provider, modelId);
   }
 
   return `veryfront-cloud/${provider}/${modelId}`;

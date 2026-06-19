@@ -4,10 +4,9 @@
  * Complete chat state management with zero UI.
  * Consumes AG-UI SSE by default.
  *
- * Supports three inference modes:
- * - cloud: API key present, normal server-side inference
- * - server-local: No API key, server runs local model via ONNX
- * - browser: Server can't run ONNX (compiled binary), falls back to browser Worker
+ * Supports two inference modes:
+ * - cloud: server-side provider inference
+ * - server-local: explicit local model on the server
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -16,9 +15,7 @@ import { createError, ensureError, toError } from "#veryfront/errors/veryfront-e
 import { handleAgUiStreamingResponse } from "#veryfront/agent/react/use-chat/streaming/index.ts";
 import type {
   BranchInfo,
-  BrowserInferenceStatus,
   ChatMessage,
-  ChatMessagePart,
   InferenceMode,
   ToolOutput,
   UseChatOptions,
@@ -87,20 +84,12 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
   const [model, setModel] = useState<string | undefined>(options.model);
   const [inferenceMode, setInferenceMode] = useState<InferenceMode>("cloud");
   const [activeModel, setActiveModel] = useState<string | undefined>(undefined);
-  const [browserStatus, setBrowserStatus] = useState<BrowserInferenceStatus | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const requestIdRef = useRef(0);
-  const browserInferenceActiveRef = useRef(false);
-  const browserInferenceRejectRef = useRef<((reason: Error) => void) | null>(null);
 
   // Branch tracking: keyed by the message ID at the edit point
   const branchMapRef = useRef<Map<string, BranchState>>(new Map());
   const branchKeyByMessageIdRef = useRef<Map<string, string>>(new Map());
-
-  // System prompt for browser fallback (from 503 response or options)
-  const systemPromptRef = useRef<string>(
-    options.systemPrompt ?? "You are a helpful assistant.",
-  );
 
   // Track pending tool outputs for addToolOutput
   const pendingToolOutputsRef = useRef<Map<string, ToolOutput>>(new Map());
@@ -140,77 +129,6 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
   }, []);
 
   /**
-   * Run inference in the browser via Web Worker.
-   * Lazily imports the browser-inference module to avoid bundling it
-   * when server-side inference works fine.
-   */
-  const doBrowserInference = useCallback(
-    async (allMessages: ChatMessage[]) => {
-      browserInferenceActiveRef.current = true;
-
-      try {
-        const { runBrowserInference } = await import(
-          "#veryfront/agent/react/use-chat/browser-inference/browser-engine.ts"
-        );
-
-        await new Promise<void>((resolve, reject) => {
-          browserInferenceRejectRef.current = reject;
-          let hasAddedMessage = false;
-
-          runBrowserInference(allMessages, systemPromptRef.current, {
-            onUpdate: (parts: ChatMessagePart[], messageId: string) => {
-              if (!hasAddedMessage) {
-                hasAddedMessage = true;
-                setMessages((prev) => [
-                  ...prev,
-                  {
-                    id: messageId,
-                    role: "assistant",
-                    parts,
-                    metadata: { model: model ?? "browser" },
-                  },
-                ]);
-                return;
-              }
-              setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, parts } : m)));
-            },
-            onMessage: (assistantMessage: ChatMessage) => {
-              const withMeta = {
-                ...assistantMessage,
-                metadata: { ...assistantMessage.metadata, model: model ?? "browser" },
-              };
-              setMessages((prev) => {
-                if (!hasAddedMessage) return [...prev, withMeta];
-                return prev.map((m) =>
-                  m.id === assistantMessage.id
-                    ? { ...withMeta, metadata: { ...m.metadata, ...withMeta.metadata } }
-                    : m
-                );
-              });
-              options.onFinish?.(withMeta);
-              browserInferenceRejectRef.current = null;
-              resolve();
-            },
-            onStatusChange: (status: BrowserInferenceStatus) => {
-              setBrowserStatus(status);
-            },
-            onDownloadProgress: () => {
-              // Progress is tracked via onStatusChange("downloading-model")
-            },
-            onError: (err: Error) => {
-              browserInferenceRejectRef.current = null;
-              reject(err);
-            },
-          });
-        });
-      } finally {
-        browserInferenceActiveRef.current = false;
-      }
-    },
-    [options],
-  );
-
-  /**
    * Send a message and stream assistant updates.
    */
   const sendMessage = useCallback(
@@ -234,12 +152,6 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       try {
         const allMessages = [...base, userMessage];
 
-        // If already in browser mode, skip fetch entirely
-        if (inferenceMode === "browser") {
-          await doBrowserInference(allMessages);
-          return;
-        }
-
         const abortController = new AbortController();
         abortControllerRef.current = abortController;
 
@@ -258,26 +170,23 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
           signal: abortController.signal,
         });
 
-        // Handle 503 — server can't provide a runtime, fall back to browser
-        if (response.status === 503 && (options.browserFallback ?? true)) {
-          try {
-            const body = await response.json();
-            if (body.code === "NO_AI_AVAILABLE") {
-              setInferenceMode("browser");
-              setBrowserStatus("idle");
-              await doBrowserInference(allMessages);
-              return;
-            }
-          } catch (_) {
-            /* expected: non-JSON 503 response body, fall through to normal error handling */
-          }
-        }
-
         if (!response.ok) {
+          let message = `API error: ${response.status}`;
+          try {
+            const body = await response.clone().json();
+            if (body && typeof body === "object" && "error" in body) {
+              const errorMessage = (body as { error?: unknown }).error;
+              if (typeof errorMessage === "string" && errorMessage.trim()) {
+                message = errorMessage;
+              }
+            }
+          } catch {
+            // Ignore non-JSON error responses.
+          }
           throw toError(
             createError({
               type: "agent",
-              message: `API error: ${response.status}`,
+              message,
             }),
           );
         }
@@ -371,7 +280,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
         }
       }
     },
-    [model, options, inferenceMode, doBrowserInference],
+    [model, options],
   );
 
   /**
@@ -395,28 +304,9 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
   /**
    * Stop generation
    */
-  const stop = useCallback(async () => {
+  const stop = useCallback(() => {
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
-
-    // Also stop browser inference Worker if active
-    if (browserInferenceActiveRef.current) {
-      // Settle the pending doBrowserInference promise before terminating the Worker
-      browserInferenceRejectRef.current?.(new Error("Generation stopped by user"));
-      browserInferenceRejectRef.current = null;
-
-      try {
-        const { stopBrowserInference } = await import(
-          "#veryfront/agent/react/use-chat/browser-inference/browser-engine.ts"
-        );
-        stopBrowserInference();
-      } catch (_) {
-        /* expected: Worker module may already be terminated or unavailable */
-      }
-      browserInferenceActiveRef.current = false;
-      setBrowserStatus("ready");
-    }
-
     setIsLoading(false);
   }, []);
 
@@ -567,7 +457,6 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     model,
     activeModel,
     inferenceMode,
-    browserStatus,
     setInput,
     setModel,
     sendMessage,

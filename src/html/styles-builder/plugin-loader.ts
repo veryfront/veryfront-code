@@ -16,6 +16,7 @@ import {
   VeryfrontError,
 } from "#veryfront/errors";
 import { getTailwindPluginBundleUrl } from "#veryfront/build/binary-plugin-includes.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import {
   bareName,
   PACKAGE_SPEC_RE,
@@ -70,21 +71,6 @@ try {
 // by the `@veryfront/ext-css-tailwind` extension's `setup()` hook — they depend on
 // tailwindcss imports that live in the extension package, not in core.
 
-function isRealDenoRuntime(): boolean {
-  const global = globalThis as {
-    Bun?: unknown;
-    process?: { versions?: { node?: string; deno?: string } };
-  };
-  const isNodeLike = global.process?.versions?.node != null && !global.process?.versions?.deno;
-
-  return !global.Bun &&
-    !isNodeLike &&
-    typeof Deno !== "undefined" &&
-    typeof Deno.version === "object" &&
-    typeof Deno.build === "object" &&
-    typeof Deno.build.os === "string";
-}
-
 function encodeToBase64(source: string): string {
   const bufferCtor = (globalThis as {
     Buffer?: {
@@ -127,7 +113,7 @@ export function rewriteEsmShRootRelativeImports(code: string): string {
 }
 
 async function importBundledModule(code: string): Promise<unknown> {
-  if (!isRealDenoRuntime()) {
+  if (!isDeno) {
     const dataUrl = `data:text/javascript;base64,${encodeToBase64(code)}`;
     return await import(dataUrl);
   }
@@ -233,8 +219,6 @@ export async function loadPlugin(
   if (pluginCache.has(id)) {
     return pluginCache.get(id);
   }
-
-  const { isDeno } = await import("#veryfront/platform/compat/runtime.ts");
 
   try {
     let mod: unknown;

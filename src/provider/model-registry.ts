@@ -13,7 +13,7 @@
  * @module
  */
 
-import { createError, fromError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import {
   getAnthropicEnvConfig,
   getGoogleGenAIEnvConfig,
@@ -21,24 +21,12 @@ import {
   getOpenAIEnvConfig,
 } from "#veryfront/config/env.ts";
 import { ensureBuiltinLLMProviders } from "#veryfront/extensions/builtin-extensions.ts";
-import { tryResolve } from "#veryfront/extensions/contracts.ts";
-import type { LLMProviderRegistry } from "#veryfront/extensions/llm/index.ts";
-import { LLMProviderRegistryName } from "#veryfront/extensions/llm/index.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
-import { serverLogger } from "#veryfront/utils";
-import { DEFAULT_LOCAL_MODEL } from "./local/model-catalog.ts";
 import { createLocalModel } from "./local/model-runtime-adapter.ts";
-import { throwIfLocalAIDisabled } from "./local/env.ts";
 import { verifyLocalRuntime } from "./local/local-engine.ts";
-import {
-  getDefaultVeryfrontCloudModel,
-  isVeryfrontCloudEnabled,
-} from "#veryfront/platform/cloud/resolver.ts";
 import { createVeryfrontCloudModel } from "./veryfront-cloud/provider.ts";
 import { getModelRuntimeId, hasLocalModelRuntimeMarker } from "./runtime-inspection.ts";
 import type { ModelRuntime } from "./types.ts";
-
-const localLogger = serverLogger.component("local-llm");
 
 /** Public API contract for model provider factory. */
 export type ModelProviderFactory = (modelId: string) => ModelRuntime;
@@ -212,74 +200,6 @@ function autoInitializeFromEnv(): void {
 }
 
 /**
- * Default cloud models to try when auto-upgrading from a local model.
- * Ordered by preference: Veryfront Cloud → Anthropic → OpenAI → Google.
- *
- * NOTE: model IDs are hardcoded — update when default models change.
- */
-const CLOUD_UPGRADE_CANDIDATES: Array<{
-  provider: string;
-  model: string | (() => string);
-  hasKey: () => boolean;
-}> = [
-  {
-    provider: "veryfront-cloud",
-    model: () => getDefaultVeryfrontCloudModel().replace(/^veryfront-cloud\//, ""),
-    hasKey: () => isVeryfrontCloudEnabled(),
-  },
-  {
-    provider: "anthropic",
-    model: "claude-sonnet-4-20250514",
-    hasKey: () => !!getAnthropicEnvConfig().apiKey,
-  },
-  {
-    provider: "openai",
-    model: "gpt-4o-mini",
-    hasKey: () => !!getOpenAIEnvConfig().apiKey,
-  },
-  {
-    provider: "google",
-    model: "gemini-2.0-flash",
-    hasKey: () => !!getGoogleGenAIEnvConfig().apiKey,
-  },
-];
-
-function isMissingProviderConfiguration(errorData: ReturnType<typeof fromError>): boolean {
-  if (errorData?.type !== "config") return false;
-
-  const message = errorData.message.toLowerCase();
-  return message.includes("not set") ||
-    message.includes("missing credentials") ||
-    message.includes("missing configuration");
-}
-
-/**
- * Find the first cloud provider with a valid API key.
- *
- * Returns a "provider/model" string that can be passed to `resolveModel`,
- * or `null` if no cloud provider is available.
- *
- * This is intentionally a **query** — it does NOT resolve the model.
- * The caller (agent runtime) decides whether to use it.
- */
-export function findAvailableCloudModel(): string | null {
-  autoInitializeFromEnv();
-  const registry = tryResolve<LLMProviderRegistry>(LLMProviderRegistryName);
-  for (const { provider, model, hasKey } of CLOUD_UPGRADE_CANDIDATES) {
-    if (!hasKey()) continue;
-    if (!manager.has(provider)) continue;
-    if (registry && !registry.has(provider) && !isBuiltinProvider(provider)) continue;
-    const resolvedModel = typeof model === "function" ? model() : model;
-    return `${provider}/${resolvedModel}`;
-  }
-  return null;
-}
-
-function isBuiltinProvider(provider: string): boolean {
-  return provider === "google" || provider === "veryfront-cloud";
-}
-
-/**
  * Resolve a "provider/model" string to a framework-compatible model runtime.
  *
  * Auto-initializes providers from environment on first call.
@@ -327,29 +247,7 @@ export function resolveModel(modelString: string): ModelRuntime {
     );
   }
 
-  try {
-    return factory(modelId);
-  } catch (error) {
-    // Auto-fallback: when a cloud provider fails due to missing API key,
-    // transparently switch to the local model so chat works out of the box.
-    const errorData = fromError(error);
-    if (
-      isMissingProviderConfiguration(errorData) &&
-      providerName !== "local" &&
-      manager.has("local")
-    ) {
-      // Check if local AI is explicitly disabled (e.g., for testing)
-      throwIfLocalAIDisabled();
-
-      localLogger.info(
-        `⚡ "${providerName}" unavailable (missing credentials or configuration). ` +
-          "Falling back to local model.",
-      );
-      const localFactory = manager.get("local")!;
-      return localFactory(DEFAULT_LOCAL_MODEL);
-    }
-    throw error;
-  }
+  return factory(modelId);
 }
 
 /**
@@ -374,8 +272,8 @@ export function getRegisteredModelProviders(): string[] {
  * For real local-engine models (created by `createLocalModel()`) this
  * eagerly loads the ONNX pipeline to surface `no_ai_available` errors
  * **before** the HTTP response stream is created. Must happen before the
- * ReadableStream so the chat handler can return a proper 503 (with
- * browser-fallback info) rather than a 200 with an in-band SSE error.
+ * ReadableStream so the chat handler can return a proper 503 rather than a
+ * 200 with an in-band SSE error.
  *
  * Uses the `_isVfLocalModel` marker set by `createLocalModel()` to
  * distinguish real local-engine models from mock/custom providers that

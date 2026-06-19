@@ -48,7 +48,6 @@ import * as React from "react";
 import { useVoiceInput } from "#veryfront/agent/react";
 import type {
   BranchInfo,
-  BrowserInferenceStatus,
   ChatDynamicToolPart,
   ChatMessage,
   ChatToolPart,
@@ -75,7 +74,6 @@ import { DropZoneOverlay } from "./components/drop-zone.tsx";
 import { TabSwitcher } from "./components/tab-switcher.tsx";
 import { UploadsPanel } from "./components/uploads-panel.tsx";
 import { InferenceBadge } from "./components/inference-badge.tsx";
-import { UpgradeCTA } from "./components/upgrade-cta.tsx";
 import { QuickActions as QuickActionsComponent } from "./components/quick-actions.tsx";
 
 // ---------------------------------------------------------------------------
@@ -101,7 +99,6 @@ export { DropZoneOverlay, type DropZoneOverlayProps } from "./components/drop-zo
 export { SkillBadge, type SkillBadgeProps } from "./components/skill-badge.tsx";
 export { ToolCallCard, ToolStatusBadge } from "./components/tool-ui.tsx";
 export { InferenceBadge, type InferenceBadgeProps } from "./components/inference-badge.tsx";
-export { UpgradeCTA, type UpgradeCTAProps } from "./components/upgrade-cta.tsx";
 export { type Source, Sources, type SourcesProps } from "./components/sources.tsx";
 export { InlineCitation, type InlineCitationProps } from "./components/inline-citation.tsx";
 export {
@@ -221,11 +218,10 @@ export interface ChatProps {
   showMessageActions?: boolean;
   models?: ModelOption[];
   model?: string;
-  /** The actual resolved model after auto-upgrade (used for avatar display) */
+  /** The actual resolved model used for avatar display. */
   activeModel?: string;
   onModelChange?: (model: string) => void;
   inferenceMode?: InferenceMode;
-  browserStatus?: BrowserInferenceStatus | null;
   showSources?: boolean;
   onSourceClick?: (source: Source, index: number) => void;
   onAttach?: (files: FileList) => void;
@@ -292,7 +288,6 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
     activeModel,
     onModelChange,
     inferenceMode,
-    browserStatus,
     showSources = false,
     onSourceClick,
     onAttach,
@@ -441,11 +436,7 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
             description={emptyState?.description}
             suggestions={suggestions}
             onSuggestionClick={onSuggestionClick}
-          >
-            {inferenceMode && inferenceMode !== "cloud" && (
-              <UpgradeCTA inferenceMode={inferenceMode} />
-            )}
-          </ChatEmpty>
+          />
         )
         : (
           <ChatMessageList
@@ -461,7 +452,6 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
             showScrollButton={showScrollButton}
             onSourceClick={onSourceClick}
             inferenceMode={inferenceMode}
-            browserStatus={browserStatus}
             editMessage={editMessage}
             getBranches={getBranches}
             switchBranch={switchBranch}
@@ -495,7 +485,7 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
           messages={messages}
         >
           {inferenceMode && inferenceMode !== "cloud" && (
-            <InferenceBadge inferenceMode={inferenceMode} browserStatus={browserStatus} />
+            <InferenceBadge inferenceMode={inferenceMode} />
           )}
           {isEmpty && quickActions && quickActions.length > 0 && (
             <QuickActionsComponent actions={quickActions} onActionClick={onQuickAction} />

@@ -3,7 +3,7 @@ import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import { clearEmbeddingProviders, resolveEmbeddingModel } from "#veryfront/embedding/index.ts";
-import { clearModelProviders, findAvailableCloudModel, resolveModel } from "#veryfront/provider";
+import { clearModelProviders, resolveModel } from "#veryfront/provider";
 
 const CLOUD_ENV_KEYS = [
   "VERYFRONT_API_TOKEN",
@@ -142,22 +142,6 @@ describe("provider/veryfront-cloud", () => {
     >;
 
     assertEquals(typeof model.doEmbed, "function");
-  });
-
-  it("prefers the default veryfront-cloud model when cloud bootstrap is active", () => {
-    setCloudBootstrap();
-
-    assertEquals(
-      findAvailableCloudModel(),
-      "veryfront-cloud/anthropic/claude-sonnet-4-6",
-    );
-  });
-
-  it("uses VERYFRONT_DEFAULT_MODEL as an override for cloud auto-upgrade", () => {
-    setCloudBootstrap();
-    setEnv("VERYFRONT_DEFAULT_MODEL", "openai/gpt-5.2");
-
-    assertEquals(findAvailableCloudModel(), "veryfront-cloud/openai/gpt-5.2");
   });
 
   it("fails fast on malformed veryfront-cloud model IDs", () => {

@@ -48,9 +48,15 @@ describe("agent/runtime/model-resolution", () => {
     );
   });
 
-  it("resolves auto to the local default model string", () => {
-    assertEquals(resolveConfiguredAgentModel(), "local/smollm2-135m");
-    assertEquals(resolveConfiguredAgentModel("auto"), "local/smollm2-135m");
+  it("resolves auto to the default Veryfront Cloud model string", () => {
+    assertEquals(
+      resolveConfiguredAgentModel(),
+      "veryfront-cloud/anthropic/claude-sonnet-4-6",
+    );
+    assertEquals(
+      resolveConfiguredAgentModel("auto"),
+      "veryfront-cloud/anthropic/claude-sonnet-4-6",
+    );
   });
 
   it("passes explicit models through unchanged", () => {
@@ -95,13 +101,53 @@ describe("agent/runtime/model-resolution", () => {
     );
   });
 
-  it("upgrades auto/local models to the default Veryfront cloud model when bootstrap is present", () => {
+  it("uses the default Veryfront Cloud model for auto runtime resolution", () => {
     setEnv("VERYFRONT_API_TOKEN", "vf_test_runtime");
     setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
 
     assertEquals(
       resolveRuntimeModel(),
       "veryfront-cloud/anthropic/claude-sonnet-4-6",
+    );
+  });
+
+  it("uses direct OpenAI credentials for auto runtime resolution without cloud bootstrap", () => {
+    setEnv("OPENAI_API_KEY", "sk-test");
+
+    assertEquals(
+      resolveRuntimeModel(),
+      "openai/gpt-5.5",
+    );
+  });
+
+  it("uses the configured default model when matching direct credentials are available", () => {
+    setEnv("ANTHROPIC_API_KEY", "anthropic-test");
+    setEnv("VERYFRONT_DEFAULT_MODEL", "anthropic/claude-opus-4-8");
+
+    assertEquals(
+      resolveRuntimeModel("auto"),
+      "anthropic/claude-opus-4-8",
+    );
+  });
+
+  it("prefers cloud bootstrap over direct provider defaults for auto runtime resolution", () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_runtime");
+    setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
+    setEnv("OPENAI_API_KEY", "sk-test");
+
+    assertEquals(
+      resolveRuntimeModel(),
+      "veryfront-cloud/anthropic/claude-sonnet-4-6",
+    );
+  });
+
+  it("keeps explicit local runtime models explicit", () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_runtime");
+    setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
+
+    assertEquals(
+      resolveRuntimeModel("local/qwen3.5-0.8b"),
+      "local/qwen3.5-0.8b",
     );
   });
 

@@ -6,6 +6,7 @@ import { exitProcess, registerTerminationSignals } from "#cli/utils";
 import { generateDefaultProjectId } from "../../utils/project.ts";
 import { clearAllLocalCaches } from "veryfront/transforms/mdx-cache";
 import { startCliDevServer, startCliProxyModeServer } from "#cli/shared/server-startup";
+import { applyRuntimeAuthContext } from "#cli/shared/runtime-auth";
 
 const logger = cliLogger.component("global");
 
@@ -26,8 +27,17 @@ interface ProxySetup {
   close: () => Promise<void>;
 }
 
+export interface StartProjectSelection {
+  projectDir: string;
+  projectSlug: string | undefined;
+}
+
 function getProjectSlug(path: string): string {
   return path.replace(/\/+$/, "").split("/").pop() ?? "";
+}
+
+export function shouldSkipProjectDirectory(name: string): boolean {
+  return name.startsWith(".") || name.startsWith("_");
 }
 
 async function isVeryFrontProject(projectPath: string): Promise<boolean> {
@@ -47,7 +57,7 @@ async function findProjectsInDirs(baseDirs: string[]): Promise<Map<string, strin
 
     try {
       for await (const entry of fs.readDir(absoluteBase)) {
-        if (!entry.isDirectory || entry.name.startsWith(".")) continue;
+        if (!entry.isDirectory || shouldSkipProjectDirectory(entry.name)) continue;
 
         const projectPath = join(absoluteBase, entry.name);
         if (!(await isVeryFrontProject(projectPath))) continue;
@@ -90,6 +100,31 @@ async function discoverProjects(explicitPath: string | null): Promise<Discovered
   }
 
   return { projects, examples, defaultProject };
+}
+
+function firstBySlug(map: Map<string, string>): [string, string] | undefined {
+  return [...map.entries()].sort(([a], [b]) => a.localeCompare(b))[0];
+}
+
+export function selectStartProject(
+  discovered: DiscoveredProjects,
+  fallbackDir: string,
+): StartProjectSelection {
+  if (discovered.defaultProject) {
+    const projectDir = discovered.projects.get(discovered.defaultProject) ??
+      discovered.examples.get(discovered.defaultProject);
+    if (projectDir) {
+      return { projectDir, projectSlug: discovered.defaultProject };
+    }
+  }
+
+  const fallbackProject = firstBySlug(discovered.projects) ?? firstBySlug(discovered.examples);
+  if (fallbackProject) {
+    const [projectSlug, projectDir] = fallbackProject;
+    return { projectDir, projectSlug };
+  }
+
+  return { projectDir: fallbackDir, projectSlug: undefined };
 }
 
 async function trySetupProxy(localProjects: Map<string, string>): Promise<ProxySetup> {
@@ -185,16 +220,20 @@ export async function startCommand(options: StartOptions): Promise<void> {
     await showStartup(["Loading configuration", "Discovering projects", "Starting server"]);
   }
 
+  let server: { ready: Promise<void>; stop: () => Promise<void> };
+
+  const selectedProject = selectStartProject(discovered, cwd());
+  const projectDir = selectedProject.projectDir;
+  const runtimeAuth = await applyRuntimeAuthContext({
+    projectDir,
+    projectSlug: selectedProject.projectSlug,
+  });
+  const fallbackProjectSlug = runtimeAuth.projectSlug;
+
   const allProjects = new Map([...discovered.projects, ...discovered.examples]);
   const proxy = await trySetupProxy(allProjects);
   const shutdownController = new AbortController();
   const useProxy = typeof proxy.interceptor === "function";
-
-  let server: { ready: Promise<void>; stop: () => Promise<void> };
-
-  const projectDir = discovered.defaultProject
-    ? discovered.projects.get(discovered.defaultProject) ?? cwd()
-    : cwd();
 
   if (useProxy) {
     const defaultProjectId = generateDefaultProjectId(cwd());
@@ -209,7 +248,7 @@ export async function startCommand(options: StartOptions): Promise<void> {
       requestInterceptor,
       defaultProjectSlug: defaultProjectId,
       defaultProjectId,
-      fallbackProjectSlug: discovered.defaultProject ?? undefined,
+      fallbackProjectSlug,
     });
   } else {
     server = await startCliDevServer({
