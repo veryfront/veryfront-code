@@ -173,6 +173,18 @@ function normalizeSystemPrompt(system: GenerateTextOptions["system"]): string | 
   return undefined;
 }
 
+function getProviderRequestMessages(
+  messages: TextGenerationRuntimeMessage[],
+): TextGenerationRuntimeMessage[] {
+  const requestMessages = [...messages];
+
+  while (requestMessages.at(-1)?.role === "assistant") {
+    requestMessages.pop();
+  }
+
+  return requestMessages;
+}
+
 function toRuntimePrompt(
   system: string | undefined,
   messages: TextGenerationRuntimeMessage[],
@@ -559,7 +571,10 @@ async function* textDeltasFromStream(stream: ReadableStream<unknown>): AsyncIter
 export function generateText(options: GenerateTextOptions): PromiseLike<RuntimeGenerateTextResult> {
   return resolveDirectTools(options.tools).then((tools) =>
     options.model.doGenerate({
-      prompt: toRuntimePrompt(normalizeSystemPrompt(options.system), options.messages),
+      prompt: toRuntimePrompt(
+        normalizeSystemPrompt(options.system),
+        getProviderRequestMessages(options.messages),
+      ),
       maxOutputTokens: options.maxOutputTokens,
       ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
       topP: options.topP,
@@ -584,7 +599,10 @@ export function generateText(options: GenerateTextOptions): PromiseLike<RuntimeG
 export function streamText(options: StreamTextOptions): RuntimeStreamResult {
   const directResultPromise = resolveDirectTools(options.tools).then((tools) =>
     options.model.doStream({
-      prompt: toRuntimePrompt(normalizeSystemPrompt(options.system), options.messages),
+      prompt: toRuntimePrompt(
+        normalizeSystemPrompt(options.system),
+        getProviderRequestMessages(options.messages),
+      ),
       maxOutputTokens: options.maxOutputTokens,
       ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
       topP: options.topP,

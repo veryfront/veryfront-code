@@ -708,4 +708,60 @@ describe("runtime-bridge", () => {
       },
     }]);
   });
+
+  it("drops trailing assistant prefill messages before direct stream requests", async () => {
+    const model = createStreamModel(
+      "anthropic",
+      "anthropic/test-drop-prefill-stream",
+      async (options) => {
+        assertEquals(options.prompt, [{
+          role: "user",
+          content: [{ type: "text", text: "Continue after the tool result." }],
+        }]);
+        return {
+          stream: ReadableStream.from([
+            { type: "text-delta", delta: "Continuing" },
+            { type: "finish", finishReason: { unified: "stop", raw: "stop" } },
+          ]),
+        };
+      },
+    );
+
+    const result = streamText({
+      model,
+      messages: [
+        { role: "user", content: "Continue after the tool result." },
+        { role: "assistant", content: [{ type: "text", text: "Draft prefill" }] },
+      ],
+    });
+
+    assertEquals(await collectAsync(result.textStream), ["Continuing"]);
+  });
+
+  it("drops trailing assistant prefill messages before direct generate requests", async () => {
+    const model = createGenerateModel(
+      "anthropic",
+      "anthropic/test-drop-prefill-generate",
+      async (options) => {
+        assertEquals(options.prompt, [{
+          role: "user",
+          content: [{ type: "text", text: "Continue after the tool result." }],
+        }]);
+        return {
+          content: [{ type: "text", text: "Continuing" }],
+          finishReason: { unified: "stop", raw: "stop" },
+        };
+      },
+    );
+
+    const result = await generateText({
+      model,
+      messages: [
+        { role: "user", content: "Continue after the tool result." },
+        { role: "assistant", content: [{ type: "text", text: "Draft prefill" }] },
+      ],
+    });
+
+    assertEquals(result.text, "Continuing");
+  });
 });
