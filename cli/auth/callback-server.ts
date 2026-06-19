@@ -184,11 +184,16 @@ function headerOrigin(value: string): string | null {
   }
 }
 
-function hasCrossOriginHeader(headers: Headers, url: URL): boolean {
+function hasCrossOriginOriginHeader(headers: Headers, url: URL): boolean {
   const expectedOrigin = url.origin;
   const origin = headers.get("origin");
   if (origin && headerOrigin(origin) !== expectedOrigin) return true;
 
+  return false;
+}
+
+function hasCrossOriginRefererHeader(headers: Headers, url: URL): boolean {
+  const expectedOrigin = url.origin;
   const referer = headers.get("referer");
   if (referer && headerOrigin(referer) !== expectedOrigin) return true;
 
@@ -200,7 +205,11 @@ function handleCallback(
   headers: Headers,
   options: CallbackServerOptions = {},
 ): { result: CallbackResult; html: string } {
-  if (hasCrossOriginHeader(headers, url)) return callbackError("Invalid callback origin");
+  if (hasCrossOriginOriginHeader(headers, url)) return callbackError("Invalid callback origin");
+
+  if (!options.expectedState && hasCrossOriginRefererHeader(headers, url)) {
+    return callbackError("Invalid callback origin");
+  }
 
   if (options.expectedState && url.searchParams.get("state") !== options.expectedState) {
     return callbackError("Invalid OAuth state");
