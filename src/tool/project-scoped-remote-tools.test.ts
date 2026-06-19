@@ -63,6 +63,26 @@ Deno.test("filterProjectScopedRemoteToolDefinitions does not infer project scope
   );
 });
 
+Deno.test("filterProjectScopedRemoteToolDefinitions hides optional project_reference tools without an active project", () => {
+  const projectTool = toolDefinition({ name: "generate_agent_avatar" });
+  projectTool.parameters = {
+    type: "object",
+    properties: {
+      project_reference: { type: "string" },
+      agent_id: { type: "string" },
+    },
+    required: ["agent_id"],
+  };
+
+  assertEquals(
+    filterProjectScopedRemoteToolDefinitions([
+      toolDefinition({ name: "list_agents" }),
+      projectTool,
+    ], null).map((tool) => tool.name),
+    ["list_agents"],
+  );
+});
+
 Deno.test("filterProjectScopedRemoteToolDefinitions allows configured navigation tools without an active project", () => {
   const tools = [
     toolDefinition({ name: "open_project", required: ["project_id"] }),

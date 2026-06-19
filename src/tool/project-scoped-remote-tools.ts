@@ -90,9 +90,11 @@ function requiresActiveProject(
     return false;
   }
 
-  return getRequiredToolProperties(toolDefinition).some(
-    (property) => property === "project_reference" || property === "project_id",
-  );
+  if (acceptsProjectReference(toolDefinition)) {
+    return true;
+  }
+
+  return getRequiredToolProperties(toolDefinition).includes("project_id");
 }
 
 function requiresProjectReference(toolDefinition: ToolDefinition): boolean {
