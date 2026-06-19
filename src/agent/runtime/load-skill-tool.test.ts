@@ -94,7 +94,8 @@ Deno.test("createRuntimeLoadSkillTool loads project skills before builtin skills
     instructions: "# Project plan",
     nextStep: RUNTIME_LOAD_SKILL_CONTINUATION_NOTE,
     references: ["references/project.md"],
-    referenceNote: "Use load_skill with the `file` parameter to load any of these reference files.",
+    referenceNote:
+      "After this skill is loaded, use load_skill with the `file` parameter only for one of these listed reference files.",
   });
 });
 
@@ -250,27 +251,107 @@ Use one form, then write the plan.`,
   ]);
 });
 
-Deno.test("createRuntimeLoadSkillTool loads project and builtin reference files", async () => {
+Deno.test("createRuntimeLoadSkillTool rejects reference files before the skill body is loaded", async () => {
   const tool = createRuntimeLoadSkillTool({
     context: createProjectContext(),
     skillsDir: "/skills",
     projectSkillLoader: createProjectSkillLoader({
+      skills: new Map([
+        ["veryfront", { instructions: "# Veryfront", references: ["references/ROUTES.md"] }],
+      ]),
+      references: new Map([
+        ["veryfront/references/ROUTES.md", "routes reference"],
+      ]),
+    }),
+    builtinStore: createBuiltinStore({}),
+  });
+
+  assertEquals(await tool.execute({ skillId: "veryfront", file: "references/ROUTES.md" }), {
+    error:
+      'Skill "veryfront" must be loaded before reference file "references/ROUTES.md". Call load_skill with only {"skillId":"veryfront"} first, then request one of the listed reference files.',
+  });
+  assertEquals(await tool.execute({ skillId: "veryfront", file: "references/does-not-exist.md" }), {
+    error:
+      'Skill "veryfront" must be loaded before reference file "references/does-not-exist.md". Call load_skill with only {"skillId":"veryfront"} first, then request one of the listed reference files.',
+  });
+});
+
+Deno.test("createRuntimeLoadSkillTool loads project and builtin reference files after body load", async () => {
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext(),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({
+      skills: new Map([
+        ["plan", { instructions: "# Plan", references: ["references/project.md"] }],
+      ]),
       references: new Map([["plan/references/project.md", "project reference"]]),
     }),
     builtinStore: createBuiltinStore({
-      references: new Map([["plan/references/builtin.md", "builtin reference"]]),
+      skills: new Map([["build", "# Build"]]),
+      references: new Map([["build/references/builtin.md", "builtin reference"]]),
+      referenceLists: new Map([["build", ["references/builtin.md"]]]),
     }),
   });
 
+  await tool.execute({ skillId: "plan" });
   assertEquals(await tool.execute({ skillId: "plan", file: "references/project.md" }), {
     skillId: "plan",
     file: "references/project.md",
     content: "project reference",
   });
-  assertEquals(await tool.execute({ skillId: "plan", file: "references/builtin.md" }), {
-    skillId: "plan",
+  await tool.execute({ skillId: "build" });
+  assertEquals(await tool.execute({ skillId: "build", file: "references/builtin.md" }), {
+    skillId: "build",
     file: "references/builtin.md",
     content: "builtin reference",
+  });
+});
+
+Deno.test("createRuntimeLoadSkillTool rejects unadvertised references after body load", async () => {
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext(),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({
+      skills: new Map([
+        ["veryfront", { instructions: "# Veryfront", references: ["references/ROUTES.md"] }],
+      ]),
+      references: new Map([
+        ["veryfront/references/ROUTES.md", "routes reference"],
+        ["veryfront/references/does-not-exist.md", "hidden reference"],
+      ]),
+    }),
+    builtinStore: createBuiltinStore({}),
+  });
+
+  await tool.execute({ skillId: "veryfront" });
+
+  assertEquals(await tool.execute({ skillId: "veryfront", file: "references/does-not-exist.md" }), {
+    error:
+      'Reference file not advertised by loaded skill "veryfront": references/does-not-exist.md. Available references: references/ROUTES.md',
+  });
+});
+
+Deno.test("createRuntimeLoadSkillTool preserves advertised quickstart references", async () => {
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext(),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({
+      skills: new Map([
+        ["veryfront", { instructions: "# Veryfront", references: ["references/quickstart.md"] }],
+      ]),
+      references: new Map([
+        ["veryfront/references/quickstart.md", "quickstart reference"],
+      ]),
+    }),
+    builtinStore: createBuiltinStore({}),
+  });
+
+  await tool.execute({ skillId: "veryfront" });
+
+  assertEquals(await tool.execute({ skillId: "veryfront", file: "references/quickstart.md" }), {
+    skillId: "veryfront",
+    file: "references/quickstart.md",
+    content: "quickstart reference",
   });
 });
 
@@ -281,7 +362,11 @@ Deno.test("createRuntimeLoadSkillTool makes same-reference reloads concise and i
     skillsDir: "/skills",
     projectSkillLoader: {
       listProjectSkillReferences: () => Promise.resolve([]),
-      loadProjectSkill: () => Promise.resolve(null),
+      loadProjectSkill: () =>
+        Promise.resolve({
+          instructions: "# Plan",
+          references: ["references/project.md"],
+        }),
       loadProjectSkillReference: (_context, skillId, normalizedFile) => {
         projectReferenceReads++;
         return Promise.resolve(`${skillId}/${normalizedFile} content`);
@@ -290,6 +375,7 @@ Deno.test("createRuntimeLoadSkillTool makes same-reference reloads concise and i
     builtinStore: createBuiltinStore({}),
   });
 
+  await tool.execute({ skillId: "plan" });
   const firstResult = await tool.execute({ skillId: "plan", file: "references/project.md" });
   const secondResult = await tool.execute({ skillId: "plan", file: "references/project.md" });
 
@@ -315,7 +401,11 @@ Deno.test("createRuntimeLoadSkillTool reloads same reference after project conte
     skillsDir: "/skills",
     projectSkillLoader: {
       listProjectSkillReferences: () => Promise.resolve([]),
-      loadProjectSkill: () => Promise.resolve(null),
+      loadProjectSkill: (activeContext, skillId) =>
+        Promise.resolve({
+          instructions: `# ${activeContext.projectId} ${skillId}`,
+          references: ["references/project.md"],
+        }),
       loadProjectSkillReference: (activeContext, skillId, normalizedFile) => {
         projectReferenceReads++;
         return Promise.resolve(`${activeContext.projectId}/${skillId}/${normalizedFile}`);
@@ -324,10 +414,12 @@ Deno.test("createRuntimeLoadSkillTool reloads same reference after project conte
     builtinStore: createBuiltinStore({}),
   });
 
+  await tool.execute({ skillId: "plan" });
   const firstResult = await tool.execute({ skillId: "plan", file: "references/project.md" });
   context.projectId = "project-2";
   context.branchId = null;
   context.skillSourcePaths = { plan: "agents/planner/skills/plan/SKILL.md" };
+  await tool.execute({ skillId: "plan" });
   const secondResult = await tool.execute({ skillId: "plan", file: "references/project.md" });
 
   assertEquals(projectReferenceReads, 2);
