@@ -77,6 +77,72 @@ function supplierInvoiceEvidenceMessages(): Message[] {
 }
 
 describe("agent runtime refresh hooks", () => {
+  it("continues suppressed unavailable tool calls with a user recovery turn after assistant text", async () => {
+    const observedPrompts: Array<Array<{ role?: string; content?: unknown }>> = [];
+    let callCount = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/suppressed-tool-recovery",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream(options: unknown) {
+        callCount++;
+        observedPrompts.push(
+          (options as { prompt?: Array<{ role?: string; content?: unknown }> }).prompt ?? [],
+        );
+
+        if (callCount === 1) {
+          return {
+            stream: createRuntimeStream([
+              { type: "text-delta", text: "I will reload the skill." },
+              { type: "tool-input-start", id: "tc-stale", toolName: "load_skill" },
+              { type: "tool-input-delta", id: "tc-stale", delta: '{"skillId":"create-agent"}' },
+              { type: "tool-input-end", id: "tc-stale" },
+              {
+                type: "tool-call",
+                toolCallId: "tc-stale",
+                toolName: "load_skill",
+                input: { skillId: "create-agent" },
+              },
+              { type: "finish", finishReason: "tool-calls" },
+            ]),
+          };
+        }
+
+        return {
+          stream: createRuntimeStream([
+            { type: "text-delta", text: "Recovered." },
+            { type: "finish", finishReason: "stop" },
+          ]),
+        };
+      },
+    };
+
+    const assistant = agent({
+      model: "hosted/suppressed-tool-recovery",
+      system: "Recover from stale tools.",
+      maxSteps: 2,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    await (await assistant.stream({ input: "Build an agent" })).toDataStreamResponse().text();
+
+    assertEquals(callCount, 2);
+    const retryPrompt = observedPrompts[1] ?? [];
+    assertEquals(retryPrompt.at(-1)?.role, "user");
+    assertEquals(
+      JSON.stringify(retryPrompt.at(-1)?.content).includes(
+        "ignored unavailable tool call(s): load_skill",
+      ),
+      true,
+    );
+  });
+
   it("notifies configured hooks after generate() executes a tool", async () => {
     const toolResults: ToolExecutionResultRequest[] = [];
     const model: ModelRuntime = {

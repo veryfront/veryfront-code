@@ -1012,7 +1012,7 @@ export class AgentRuntime {
         ];
         currentMessages.push({
           id: `runtime_note_${Date.now()}_${step}`,
-          role: "system",
+          role: "user",
           parts: [{
             type: "text",
             text: `Runtime recovery: ignored unavailable tool call(s): ${
