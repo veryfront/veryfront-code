@@ -268,10 +268,71 @@ function getKnownRuntimeSkillIds(options: RuntimeLoadSkillToolOptions): string[]
   ].sort();
 }
 
+function getLoadedRuntimeSkillIds(options: RuntimeLoadSkillToolOptions): string[] {
+  return [
+    ...new Set(
+      Object.values(options.context.loadedSkillResponses ?? {})
+        .map((response) => response.skillId)
+        .filter((skillId): skillId is string => typeof skillId === "string" && skillId.length > 0),
+    ),
+  ].sort();
+}
+
 function buildRuntimeLoadSkillInputSchema(options: RuntimeLoadSkillToolOptions) {
   const knownIds = getKnownRuntimeSkillIds(options);
   if (!knownIds || knownIds.length === 0) {
     return runtimeLoadSkillToolInputSchema;
+  }
+
+  const knownIdSet = new Set(knownIds);
+  const loadedIds = getLoadedRuntimeSkillIds(options).filter((skillId) => knownIdSet.has(skillId));
+  const loadedIdSet = new Set(loadedIds);
+  const unloadedIds = knownIds.filter((skillId) => !loadedIdSet.has(skillId));
+
+  if (loadedIds.length > 0 && unloadedIds.length === 0) {
+    const [firstLoaded, ...restLoaded] = loadedIds as [string, ...string[]];
+    const loadedEnumValues = [firstLoaded, ...restLoaded] as [string, ...string[]];
+    return defineSchema((v) =>
+      v.object({
+        skillId: v.enum(loadedEnumValues).describe(
+          `Already-loaded skill ID. Body reloads are not allowed; use this only with file for listed references. Loaded skill IDs: ${
+            loadedIds.join(", ")
+          }`,
+        ),
+        file: v.string().describe(
+          "Required reference file to load from an already-loaded skill. Do not call load_skill again for the skill body.",
+        ),
+      })
+    )();
+  }
+
+  if (loadedIds.length > 0) {
+    const [firstUnloaded, ...restUnloaded] = unloadedIds as [string, ...string[]];
+    const unloadedEnumValues = [firstUnloaded, ...restUnloaded] as [string, ...string[]];
+    const [firstLoaded, ...restLoaded] = loadedIds as [string, ...string[]];
+    const loadedEnumValues = [firstLoaded, ...restLoaded] as [string, ...string[]];
+    return defineSchema((v) =>
+      v.union([
+        v.object({
+          skillId: v.enum(unloadedEnumValues).describe(
+            `Unloaded skill ID to load. Available unloaded skill IDs: ${unloadedIds.join(", ")}`,
+          ),
+          file: v.string().optional().describe(
+            "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
+          ),
+        }),
+        v.object({
+          skillId: v.enum(loadedEnumValues).describe(
+            `Already-loaded skill ID. Body reloads are not allowed; use this only with file for listed references. Loaded skill IDs: ${
+              loadedIds.join(", ")
+            }`,
+          ),
+          file: v.string().describe(
+            "Required reference file to load from an already-loaded skill. Do not call load_skill again for the skill body.",
+          ),
+        }),
+      ])
+    )();
   }
 
   const [first, ...rest] = knownIds as [string, ...string[]];
