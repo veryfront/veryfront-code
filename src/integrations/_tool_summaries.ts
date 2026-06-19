@@ -1851,7 +1851,12 @@ export const historicalToolSummaries: Record<string, IntegrationEndpointHistoric
       { "name": "created" },
       { "name": "updated" },
     ],
-    "outputFields": [{ "name": "total" }, { "name": "startAt" }, { "name": "maxResults" }],
+    "outputFields": [
+      { "name": "nextPageToken" },
+      { "name": "isLast" },
+      { "name": "maxResults" },
+      { "name": "total" },
+    ],
     "omitted": "issue descriptions, comments, changelog, and provider-specific payload fields",
   },
   "jira__search_users": {
