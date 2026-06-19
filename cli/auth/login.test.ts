@@ -120,10 +120,12 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         "expected-state",
       );
       const parsed = new URL(authUrl);
+      const redirectUri = parsed.searchParams.get("redirect_uri");
 
       assertEquals(parsed.pathname, "/auth/github");
-      assertEquals(parsed.searchParams.get("redirect_uri"), "http://localhost:3456/callback");
+      assertEquals(redirectUri, "http://localhost:3456/callback?state=expected-state");
       assertEquals(parsed.searchParams.get("state"), "expected-state");
+      assertEquals(new URL(redirectUri!).searchParams.get("state"), "expected-state");
     });
   });
 

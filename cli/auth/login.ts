@@ -35,9 +35,11 @@ export function createOAuthAuthorizationUrl(
   callbackUrl: string,
   state: string,
 ): string {
-  // The hosted auth endpoint must echo `state` back to the loopback callback.
+  const stateBoundCallbackUrl = new URL(callbackUrl);
+  stateBoundCallbackUrl.searchParams.set("state", state);
+
   const authUrl = new URL(`${getApiUrl().replace(/\/$/, "")}/auth/${provider}`);
-  authUrl.searchParams.set("redirect_uri", callbackUrl);
+  authUrl.searchParams.set("redirect_uri", stateBoundCallbackUrl.toString());
   authUrl.searchParams.set("state", state);
   return authUrl.toString();
 }
