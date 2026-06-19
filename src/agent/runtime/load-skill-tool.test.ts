@@ -174,6 +174,136 @@ Use form_input once, then produce the plan.`,
   assertEquals(secondResult.references, ["references/write.md"]);
 });
 
+Deno.test("createRuntimeLoadSkillTool schema disallows body reloads for already-loaded skills", async () => {
+  const context = createProjectContext({
+    availableSkillIds: ["plan", "veryfront"],
+    loadedSkillResponses: {
+      "veryfront-key": {
+        skillId: "veryfront",
+        instructions: "# Veryfront",
+        nextStep: "Continue.",
+      },
+    },
+  });
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: createBuiltinStore({}),
+  });
+
+  assertEquals(tool.inputSchemaJson, {
+    anyOf: [
+      {
+        type: "object",
+        properties: {
+          skillId: {
+            type: "string",
+            enum: ["plan"],
+            description: "Unloaded skill ID to load. Available unloaded skill IDs: plan",
+          },
+          file: {
+            type: "string",
+            description:
+              "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
+          },
+        },
+        required: ["skillId"],
+      },
+      {
+        type: "object",
+        properties: {
+          skillId: {
+            type: "string",
+            enum: ["veryfront"],
+            description:
+              "Already-loaded skill ID. Body reloads are not allowed; use this only with file for listed references. Loaded skill IDs: veryfront",
+          },
+          file: {
+            type: "string",
+            description:
+              "Required reference file to load from an already-loaded skill. Do not call load_skill again for the skill body.",
+          },
+        },
+        required: ["skillId", "file"],
+      },
+    ],
+  });
+});
+
+Deno.test("createRuntimeLoadSkillTool schema only permits reference loads when all known skills are loaded", async () => {
+  const context = createProjectContext({
+    availableSkillIds: ["veryfront"],
+    loadedSkillResponses: {
+      "veryfront-key": {
+        skillId: "veryfront",
+        instructions: "# Veryfront",
+        nextStep: "Continue.",
+      },
+    },
+  });
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: createBuiltinStore({}),
+  });
+
+  assertEquals(tool.inputSchemaJson, {
+    type: "object",
+    properties: {
+      skillId: {
+        type: "string",
+        enum: ["veryfront"],
+        description:
+          "Already-loaded skill ID. Body reloads are not allowed; use this only with file for listed references. Loaded skill IDs: veryfront",
+      },
+      file: {
+        type: "string",
+        description:
+          "Required reference file to load from an already-loaded skill. Do not call load_skill again for the skill body.",
+      },
+    },
+    required: ["skillId", "file"],
+  });
+});
+
+Deno.test("createRuntimeLoadSkillTool schema ignores stale loaded skills outside the current manifest", async () => {
+  const context = createProjectContext({
+    availableSkillIds: ["veryfront"],
+    loadedSkillResponses: {
+      "old-plan-key": {
+        skillId: "plan",
+        instructions: "# Old plan",
+        nextStep: "Continue.",
+      },
+    },
+  });
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: createBuiltinStore({}),
+  });
+
+  assertEquals(tool.inputSchemaJson, {
+    type: "object",
+    properties: {
+      skillId: {
+        type: "string",
+        enum: ["veryfront"],
+        description: "The skill ID to load. Available skill IDs: veryfront",
+      },
+      file: {
+        type: "string",
+        description:
+          "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
+      },
+    },
+    required: ["skillId"],
+  });
+});
+
 Deno.test("createRuntimeLoadSkillTool reloads same skill after project context changes", async () => {
   const context = createProjectContext();
   let projectSkillReads = 0;
