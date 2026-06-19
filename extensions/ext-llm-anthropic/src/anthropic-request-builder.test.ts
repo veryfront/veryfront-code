@@ -344,6 +344,183 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
     ]);
   });
 
+  it("keeps same-turn tool results when later assistant steps continue without a user turn", () => {
+    const prompt: RuntimePromptMessage[] = [
+      { role: "user", content: [{ type: "text", text: "Create an integration agent." }] },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "I will load the platform skill." },
+          {
+            type: "tool-call",
+            toolCallId: "toolu_load_skill",
+            toolName: "load_skill",
+            input: { skillId: "veryfront" },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: "toolu_load_skill",
+          toolName: "load_skill",
+          output: {
+            type: "json",
+            value: {
+              skillId: "veryfront",
+              instructions: "Create agents with create_agent after gathering context.",
+            },
+          },
+        }],
+      },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Now I will inspect the integration." },
+          {
+            type: "tool-call",
+            toolCallId: "toolu_get_integration",
+            toolName: "get_integration",
+            input: { integration: "harvest" },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: "toolu_get_integration",
+          toolName: "get_integration",
+          output: {
+            type: "json",
+            value: { slug: "harvest", name: "Harvest" },
+          },
+        }],
+      },
+    ];
+    const warnings = createWarningCollector();
+
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      { prompt },
+      false,
+      warnings,
+    );
+
+    assertEquals(body.messages, [
+      { role: "user", content: [{ type: "text", text: "Create an integration agent." }] },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "I will load the platform skill." },
+          {
+            type: "tool_use",
+            id: "toolu_load_skill",
+            name: "load_skill",
+            input: { skillId: "veryfront" },
+          },
+        ],
+      },
+      {
+        role: "user",
+        content: [{
+          type: "tool_result",
+          tool_use_id: "toolu_load_skill",
+          content:
+            '{"skillId":"veryfront","instructions":"Create agents with create_agent after gathering context."}',
+        }],
+      },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Now I will inspect the integration." },
+          {
+            type: "tool_use",
+            id: "toolu_get_integration",
+            name: "get_integration",
+            input: { integration: "harvest" },
+          },
+        ],
+      },
+      {
+        role: "user",
+        content: [{
+          type: "tool_result",
+          tool_use_id: "toolu_get_integration",
+          content: '{"slug":"harvest","name":"Harvest"}',
+        }],
+      },
+    ]);
+  });
+
+  it("keeps historical tool-only rounds when active same-turn assistant text follows the latest user", () => {
+    const prompt: RuntimePromptMessage[] = [
+      { role: "user", content: [{ type: "text", text: "Start with account context." }] },
+      {
+        role: "assistant",
+        content: [{
+          type: "tool-call",
+          toolCallId: "toolu_account",
+          toolName: "account__lookup",
+          input: { id: "acct-1" },
+        }],
+      },
+      {
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: "toolu_account",
+          toolName: "account__lookup",
+          output: { type: "json", value: { plan: "pro" } },
+        }],
+      },
+      { role: "user", content: [{ type: "text", text: "retry with more detail" }] },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "I will continue from the account context." }],
+      },
+    ];
+    const warnings = createWarningCollector();
+
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      { prompt },
+      false,
+      warnings,
+    );
+
+    assertEquals(body.messages, [
+      { role: "user", content: [{ type: "text", text: "Start with account context." }] },
+      {
+        role: "assistant",
+        content: [{
+          type: "tool_use",
+          id: "toolu_account",
+          name: "account__lookup",
+          input: { id: "acct-1" },
+        }],
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "toolu_account",
+            content: '{"plan":"pro"}',
+          },
+          { type: "text", text: "retry with more detail" },
+        ],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "I will continue from the account context." }],
+      },
+    ]);
+  });
+
   it("drops orphaned tool results when their tool use was not emitted", () => {
     const prompt: RuntimePromptMessage[] = [
       {

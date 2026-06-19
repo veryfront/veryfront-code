@@ -209,7 +209,9 @@ function toAnthropicMessages(
 } {
   const systemParts: string[] = [];
   const messages: AnthropicCompatibleMessage[] = [];
-  const lastAssistantTextIndex = prompt.findLastIndex((message) =>
+  const lastUserIndex = prompt.findLastIndex((message) => message.role === "user");
+  const lastHistoricalAssistantTextIndex = prompt.findLastIndex((message, index) =>
+    index < lastUserIndex &&
     message.role === "assistant" &&
     message.content.some((part) => part.type === "text" && part.text.length > 0)
   );
@@ -232,7 +234,7 @@ function toAnthropicMessages(
         break;
       case "assistant": {
         skippingHistoricalToolResults = false;
-        const shouldCompactCompletedToolRound = index < lastAssistantTextIndex &&
+        const shouldCompactCompletedToolRound = index < lastHistoricalAssistantTextIndex &&
           message.content.some((part) => part.type === "tool-call");
         const assistantContent = shouldCompactCompletedToolRound
           ? message.content.filter((part) => part.type === "text" && part.text.length > 0)
