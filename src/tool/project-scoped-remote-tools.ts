@@ -99,6 +99,21 @@ function requiresProjectReference(toolDefinition: ToolDefinition): boolean {
   return getRequiredToolProperties(toolDefinition).includes("project_reference");
 }
 
+function hasToolProperty(toolDefinition: ToolDefinition, property: string): boolean {
+  if (typeof toolDefinition.parameters !== "object" || toolDefinition.parameters === null) {
+    return false;
+  }
+
+  const properties = Reflect.get(toolDefinition.parameters, "properties");
+  return typeof properties === "object" && properties !== null &&
+    Object.prototype.hasOwnProperty.call(properties, property);
+}
+
+function acceptsProjectReference(toolDefinition: ToolDefinition): boolean {
+  return requiresProjectReference(toolDefinition) ||
+    hasToolProperty(toolDefinition, "project_reference");
+}
+
 function isMissingRequiredToolInput(value: unknown): boolean {
   return value === undefined || value === null ||
     (typeof value === "string" && value.trim().length === 0);
@@ -167,7 +182,7 @@ export function hydrateProjectScopedRemoteToolInput(input: {
 }): Record<string, unknown> {
   if (
     !input.toolDefinition || !input.activeProjectId ||
-    !requiresProjectReference(input.toolDefinition)
+    !acceptsProjectReference(input.toolDefinition)
   ) {
     return input.toolInput;
   }

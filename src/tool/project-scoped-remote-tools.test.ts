@@ -102,6 +102,32 @@ Deno.test("hydrateProjectScopedRemoteToolInput injects project_reference when re
   );
 });
 
+Deno.test("hydrateProjectScopedRemoteToolInput injects project_reference when optional but declared", () => {
+  const definition = toolDefinition({ name: "generate_agent_avatar" });
+  definition.parameters = {
+    type: "object",
+    properties: {
+      project_reference: { type: "string" },
+      agent_id: { type: "string" },
+      config: { type: "object" },
+    },
+    required: ["agent_id"],
+  };
+
+  assertEquals(
+    hydrateProjectScopedRemoteToolInput({
+      toolDefinition: definition,
+      activeProjectId: "project-1",
+      toolInput: { agent_id: "harvest-assistant", config: { seed: "harvest-assistant" } },
+    }),
+    {
+      agent_id: "harvest-assistant",
+      config: { seed: "harvest-assistant" },
+      project_reference: "project-1",
+    },
+  );
+});
+
 Deno.test("hydrateProjectScopedRemoteToolInput preserves explicit project_reference", () => {
   const toolInput = { project_reference: "explicit-project", pattern: "src" };
 
