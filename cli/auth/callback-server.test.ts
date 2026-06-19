@@ -149,7 +149,7 @@ describe(
         assertEquals(result.error, "Invalid callback origin");
       });
 
-      it("should reject callback token with cross-origin referer", async () => {
+      it("should accept state-protected callback token with hosted auth referer", async () => {
         server = await startCallbackServer(9876, { expectedState: "expected-state" });
         const callbackUrl = getCallbackUrl(server.port);
 
@@ -157,6 +157,23 @@ describe(
 
         setTimeout(() => {
           void fetch(callbackUrl + "?token=test-oauth-token&state=expected-state", {
+            headers: { Referer: "https://api.veryfront.com/auth/google" },
+          }).then((resp) => resp.body?.cancel());
+        }, scaleMs(100));
+
+        const result = await callbackPromise;
+        assertEquals(result.token, "test-oauth-token");
+        assertEquals(result.error, undefined);
+      });
+
+      it("should reject callback token with cross-origin referer when state is not required", async () => {
+        server = await startCallbackServer(9876);
+        const callbackUrl = getCallbackUrl(server.port);
+
+        const callbackPromise = server.waitForCallback(scaleMs(5000));
+
+        setTimeout(() => {
+          void fetch(callbackUrl + "?token=test-oauth-token", {
             headers: { Referer: "https://evil.example/login" },
           }).then((resp) => resp.body?.cancel());
         }, scaleMs(100));
