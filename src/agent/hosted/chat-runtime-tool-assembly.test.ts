@@ -260,6 +260,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly includes source provider tools o
     instructions: "Base instructions",
     localTools: {
       sleep: localTool("Sleep"),
+      web_fetch: localTool("Fetch a URL"),
     },
     apiUrl: "https://api.example.com",
     apiMcpUrl: "https://api.example.com/mcp",
@@ -269,9 +270,10 @@ Deno.test("prepareHostedChatRuntimeToolAssembly includes source provider tools o
     preloadLatestConversationUserText: false,
   });
 
-  assertEquals(toolAssembly.localToolNames, ["sleep"]);
-  assertEquals(toolAssembly.providerToolNames, ["web_fetch", "web_search"]);
+  assertEquals(toolAssembly.localToolNames, ["sleep", "web_fetch"]);
+  assertEquals(toolAssembly.providerToolNames, ["web_search"]);
   assertEquals(taskContext.availableToolNames, ["sleep", "web_fetch", "web_search"]);
+  assertExists(toolAssembly.runtimeTools.web_fetch);
   assertStringIncludes(toolAssembly.systemInstructions, "- web_fetch");
   assertStringIncludes(toolAssembly.systemInstructions, "- web_search");
 });

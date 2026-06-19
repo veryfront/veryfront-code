@@ -48,6 +48,7 @@ import {
 } from "../service/bootstrap.ts";
 import { loadAgentServiceEnvFiles } from "../service/env-files.ts";
 import { createHostedFormInputTool } from "./form-input-tool.ts";
+import { createHostedWebFetchTool } from "./web-fetch-tool.ts";
 import {
   createHostedAgentProjectSteering,
   type HostedAgentProjectSteering,
@@ -709,6 +710,7 @@ function buildLocalTools(
     form_input: createHostedFormInputTool(taskContext, config.VERYFRONT_API_URL),
     load_skill: createLoadSkillTool(context, taskContext),
     sleep: sleepTool,
+    web_fetch: createHostedWebFetchTool(),
   };
 
   if (options.allowDelegation !== false) {
