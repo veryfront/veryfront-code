@@ -99,6 +99,7 @@ jobs:
     timeout-minutes: 5
     name: coverage gate
     needs: [coverage-shards]
+    if: ${{ always() }}
     steps:
       - name: Require coverage shards
         env:
