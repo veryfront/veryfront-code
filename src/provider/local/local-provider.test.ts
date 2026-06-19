@@ -246,8 +246,6 @@ describe("local-engine (requires model download)", {
 
   it("smoke script verifies explicit WebGPU local inference in a child process", {
     ignore: !RUN_LOCAL_AI_GPU_TESTS,
-    sanitizeResources: false,
-    sanitizeOps: false,
   }, async () => {
     const output = await runLocalSmokeTest({
       VERYFRONT_LOCAL_AI_DEVICE: "webgpu",
@@ -260,8 +258,6 @@ describe("local-engine (requires model download)", {
 
   it("smoke script verifies Gemma4 local inference in a child process", {
     ignore: !RUN_LOCAL_AI_GEMMA_TESTS,
-    sanitizeResources: false,
-    sanitizeOps: false,
   }, async () => {
     const output = await runLocalSmokeTest({
       VERYFRONT_LOCAL_AI_MODEL: "gemma4-e2b-it",
@@ -274,8 +270,6 @@ describe("local-engine (requires model download)", {
 
   it("smoke script verifies Gemma4 E4B thinking inference in a child process", {
     ignore: !RUN_LOCAL_AI_GEMMA_E4B_TESTS,
-    sanitizeResources: false,
-    sanitizeOps: false,
   }, async () => {
     const output = await runLocalSmokeTest({
       VERYFRONT_LOCAL_AI_MODEL: "gemma4-e4b-it",
