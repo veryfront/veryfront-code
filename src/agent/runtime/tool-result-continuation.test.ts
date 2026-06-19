@@ -6,6 +6,7 @@ import {
   collectFinalStreamToolResults,
   collectGeneratedToolResults,
   collectPersistedToolResults,
+  getToolResultError,
   isRecoverablePlaceholderToolCall,
   isStreamedToolCallIncomplete,
   materializeStreamedToolCall,
@@ -308,6 +309,16 @@ describe("agent runtime streamed tool result collection", () => {
 
     assertEquals(persistedToolResults.size, 1);
     assertEquals(persistedToolResults.get("tool-3")?.result, { submitted: true });
+  });
+
+  it("extracts MCP tool_error messages from persisted tool results", () => {
+    assertEquals(
+      getToolResultError({
+        error: "tool_error",
+        message: "Unknown tool references: harvest__list_accounts",
+      }),
+      "Unknown tool references: harvest__list_accounts",
+    );
   });
 
   it("collects the latest generated tool result from direct model output", () => {

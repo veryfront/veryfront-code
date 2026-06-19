@@ -9,9 +9,31 @@ import { parseToolArgs } from "./tool-helpers.ts";
 import { stringifyToolError } from "./error-utils.ts";
 import type { RuntimeGenerateToolResult, RuntimeToolSet } from "./runtime-tool-types.ts";
 
+function getMcpToolErrorMessage(result: unknown): string | undefined {
+  if (!result || typeof result !== "object" || Array.isArray(result)) {
+    return undefined;
+  }
+
+  const record = result as Record<string, unknown>;
+  if (typeof record.error !== "string" || record.error.length === 0) {
+    return undefined;
+  }
+
+  if (typeof record.message === "string" && record.message.trim().length > 0) {
+    return record.message;
+  }
+
+  return record.error;
+}
+
 export function getToolResultError(result: unknown): string | undefined {
   if (!result || typeof result !== "object" || !("error" in result)) {
     return undefined;
+  }
+
+  const mcpToolErrorMessage = getMcpToolErrorMessage(result);
+  if (mcpToolErrorMessage !== undefined) {
+    return mcpToolErrorMessage;
   }
 
   return stringifyToolError(result.error);
