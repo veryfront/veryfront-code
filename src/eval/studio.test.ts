@@ -54,7 +54,11 @@ describe("eval/studio", () => {
       exportName: "default",
       content: "export default evalAgent({})",
     });
-    assertEquals(document.capabilities, ["project.evals.read", "project.evals.write"]);
+    assertEquals(document.capabilities, [
+      "project.evals.read",
+      "project.evals.write",
+      "project.evals.run",
+    ]);
     assertEquals(document.editableFields.includes("dataset"), true);
     assertEquals(document.dataset.kind, "inline");
     assertEquals(document.dataset.examples?.[0]?.reference, "Paris");
