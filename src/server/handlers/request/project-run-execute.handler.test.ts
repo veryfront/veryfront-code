@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { datasets, evalAgent, type EvalReport } from "veryfront/eval";
 import {
   ProjectRunExecuteHandler,
   type ProjectRunExecuteHandlerDeps,
@@ -35,6 +36,20 @@ function createDeps(
           definition: { id: "publish", steps: [] },
         }
         : null,
+    findEvalById: async (target) =>
+      target === "eval:deep-research"
+        ? {
+          id: "eval:deep-research",
+          name: "Deep research quality",
+          filePath: "evals/deep-research.eval.ts",
+          exportName: "default",
+          definition: evalAgent({
+            id: "eval:deep-research",
+            target: "agent:researcher",
+            dataset: datasets.inline([{ id: "q1", input: "France capital?" }]),
+          }),
+        }
+        : null,
     createWorkflowClient: () => ({
       register: () => {},
       start: async (_workflowId: string, _input: unknown, options?: { runId?: string }) => ({
@@ -46,6 +61,18 @@ function createDeps(
       }),
       destroy: async () => {},
     }),
+    runEval: async (definition, options) => ({
+      kind: "eval-report",
+      runId: options.runId ?? "eval-run",
+      definitionId: definition.id,
+      targetKind: definition.targetKind,
+      target: definition.target,
+      startedAt: "2026-06-20T10:00:00.000Z",
+      endedAt: "2026-06-20T10:00:01.000Z",
+      summary: { records: 1, passed: 1, failed: 0, passRate: 1, metrics: [] },
+      records: [],
+    }),
+    createEvalAgentAdapter: () => async () => ({ text: "Paris" }),
     executeKnowledgeIngest: async () => ({
       success: true,
       result: { kind: "knowledge_ingest", summary: { ingested_count: 1 } },
@@ -68,6 +95,7 @@ function createDeps(
 async function signedRequest(
   path: string,
   body: Record<string, unknown>,
+  headers: Record<string, string> = {},
 ): Promise<{ request: Request; publicKeyPem: string }> {
   const rawBody = JSON.stringify(body);
   const { jws, publicKeyPem } = await createControlPlaneSignature(rawBody, {
@@ -82,6 +110,7 @@ async function signedRequest(
       headers: {
         "content-type": "application/json",
         "x-veryfront-control-plane-jws": jws,
+        ...headers,
       },
       body: rawBody,
     }),
@@ -209,6 +238,64 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       input: { release: "v1" },
       options: { runId: "run_workflow_1" },
     });
+  });
+
+  it("runs a discovered eval with the canonical run id and AG-UI adapter", async () => {
+    const report: EvalReport = {
+      kind: "eval-report",
+      runId: "run_eval_1",
+      definitionId: "eval:deep-research",
+      targetKind: "agent",
+      target: "agent:researcher",
+      startedAt: "2026-06-20T10:00:00.000Z",
+      endedAt: "2026-06-20T10:00:01.000Z",
+      summary: { records: 1, passed: 1, failed: 0, passRate: 1, metrics: [] },
+      records: [],
+    };
+    let receivedRunId: string | undefined;
+    let receivedBaseDir: string | undefined;
+    let receivedEndpoint: string | undefined;
+    let receivedAuthToken: string | undefined;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runEval: async (_definition, options) => {
+        receivedRunId = options.runId;
+        receivedBaseDir = options.baseDir;
+        return report;
+      },
+      createEvalAgentAdapter: (config) => {
+        receivedEndpoint = config.endpoint;
+        receivedAuthToken = config.authToken;
+        return async () => ({ text: "Paris" });
+      },
+    }));
+    const body = {
+      runId: "run_eval_1",
+      kind: "eval",
+      target: "eval:deep-research",
+      projectId: "proj-1",
+      input: { dataset: "smoke" },
+      config: { repetitions: 2 },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_1/execute",
+      body,
+      { "x-token": "runtime-token" },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(await result.response.json(), {
+      success: true,
+      result: report,
+      duration_ms: 0,
+      logs: null,
+    });
+    assertEquals(receivedRunId, "run_eval_1");
+    assertEquals(receivedBaseDir, "/project");
+    assertEquals(receivedEndpoint, "https://example.com/api/ag-ui");
+    assertEquals(receivedAuthToken, "runtime-token");
   });
 
   it("discovers project agents and tools before starting workflow agent steps", async () => {

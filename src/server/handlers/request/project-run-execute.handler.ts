@@ -14,6 +14,18 @@ import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { type DiscoveredTask, findTaskById } from "#veryfront/task/discovery.ts";
 import { runTask, type RunTaskOptions, type TaskRunResult } from "#veryfront/task/runner.ts";
+import { type DiscoveredEval, findEvalById } from "#veryfront/eval/discovery.ts";
+import { runEval } from "#veryfront/eval/runner.ts";
+import {
+  createAgentServiceEvalAdapter,
+  type AgentServiceEvalAdapterConfig,
+} from "#veryfront/eval/agent-service.ts";
+import type {
+  EvalAgentAdapter,
+  EvalDefinition,
+  EvalReport,
+  RunEvalOptions,
+} from "#veryfront/eval/types.ts";
 import type { Logger } from "#veryfront/utils";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
 import { type DiscoveredWorkflow, findWorkflowById } from "#veryfront/workflow/discovery";
@@ -33,7 +45,7 @@ const WORKFLOW_PERSISTENCE_REQUIRED_ERROR =
 
 export interface ProjectRunExecuteRequest {
   runId: string;
-  kind: "task" | "workflow";
+  kind: "task" | "workflow" | "eval";
   target: string;
   projectId: string;
   config?: Record<string, unknown>;
@@ -92,9 +104,20 @@ export interface ProjectRunExecuteHandlerDeps {
       debug?: boolean;
     },
   ): Promise<DiscoveredWorkflow | null>;
+  findEvalById(
+    evalId: string,
+    options: {
+      projectDir: string;
+      adapter: RuntimeAdapter;
+      config?: VeryfrontConfig;
+      debug?: boolean;
+    },
+  ): Promise<DiscoveredEval | null>;
   createWorkflowClient(
     config?: WorkflowClientConfig,
   ): WorkflowClientView | Promise<WorkflowClientView>;
+  runEval(definition: EvalDefinition, options: RunEvalOptions): Promise<EvalReport>;
+  createEvalAgentAdapter(config: AgentServiceEvalAdapterConfig): EvalAgentAdapter;
   ensureProjectDiscovery(ctx: HandlerContext): Promise<void>;
   executeKnowledgeIngest(input: {
     request: ProjectRunExecuteRequest;
@@ -130,13 +153,16 @@ function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecu
 
   if (typeof runId !== "string" || !runId) throw new Error("Invalid runId");
   if (runId !== pathRunId) throw new Error("Run id does not match request path");
-  if (kind !== "task" && kind !== "workflow") throw new Error("Invalid run kind");
+  if (kind !== "task" && kind !== "workflow" && kind !== "eval") {
+    throw new Error("Invalid run kind");
+  }
   if (typeof target !== "string" || !target) throw new Error("Invalid target");
   if (typeof projectId !== "string" || !projectId) throw new Error("Invalid projectId");
   if (kind === "task" && !target.startsWith("task:")) throw new Error("Invalid task target");
   if (kind === "workflow" && !target.startsWith("workflow:")) {
     throw new Error("Invalid workflow target");
   }
+  if (kind === "eval" && !target.startsWith("eval:")) throw new Error("Invalid eval target");
 
   return {
     runId,
@@ -353,9 +379,21 @@ interface RuntimeApiClient {
   delete<T>(path: string): Promise<T>;
 }
 
+function getRuntimeApiToken(req: Request, ctx: HandlerContext): string {
+  return req.headers.get("x-token") ?? ctx.proxyToken ?? ctx.requestContext?.token ?? "";
+}
+
+function getSameOriginAgUiEndpoint(req: Request): string {
+  const url = new URL(req.url);
+  url.pathname = "/api/ag-ui";
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
+
 function createRuntimeApiClient(req: Request, ctx: HandlerContext): RuntimeApiClient {
   const apiUrl = getEnvironmentConfig().apiBaseUrl;
-  const token = req.headers.get("x-token") ?? ctx.proxyToken ?? ctx.requestContext?.token ?? "";
+  const token = getRuntimeApiToken(req, ctx);
   if (!token) {
     throw new Error("Missing project runtime API token");
   }
@@ -610,6 +648,98 @@ function getNumberConfig(
   return undefined;
 }
 
+function getPositiveIntConfig(
+  config: Record<string, unknown>,
+  keys: readonly string[],
+): number | undefined {
+  const value = getNumberConfig(config, keys);
+  if (value === undefined) return undefined;
+  const normalized = Math.trunc(value);
+  return normalized > 0 ? normalized : undefined;
+}
+
+function withEvalRunConfig(
+  definition: EvalDefinition,
+  config: Record<string, unknown>,
+): EvalDefinition {
+  const repetitions = getPositiveIntConfig(config, ["repetitions", "repeat", "repetitionCount"]);
+  if (repetitions === undefined || repetitions === definition.repetitions) {
+    return definition;
+  }
+
+  return {
+    ...definition,
+    repetitions,
+  };
+}
+
+function createEvalAdapterConfig(input: {
+  request: ProjectRunExecuteRequest;
+  req: Request;
+  ctx: HandlerContext;
+}): AgentServiceEvalAdapterConfig {
+  const config = input.request.config ?? {};
+  const runInput = input.request.input ?? {};
+  const authToken = getRuntimeApiToken(input.req, input.ctx);
+  if (!authToken) {
+    throw new Error("Missing project runtime API token");
+  }
+
+  return {
+    endpoint: getSameOriginAgUiEndpoint(input.req),
+    authToken,
+    projectId: input.request.projectId,
+    branchId: getStringConfig(config, ["branch_id", "branchId"]) ??
+      getStringConfig(runInput, ["branch_id", "branchId"]),
+    model: getStringConfig(config, ["model"]),
+    allowedTools: getStringArrayConfig(config, ["allowed_tools", "allowedTools"]),
+    maxSteps: getPositiveIntConfig(config, ["max_steps", "maxSteps"]),
+  };
+}
+
+async function executeEvalRun(
+  request: ProjectRunExecuteRequest,
+  ctx: HandlerContext,
+  req: Request,
+  deps: ProjectRunExecuteHandlerDeps,
+): Promise<ProjectRunExecuteResponse> {
+  const startedAt = deps.now();
+  await deps.ensureProjectDiscovery(ctx);
+  const evalItem = await deps.findEvalById(request.target, {
+    projectDir: ctx.projectDir,
+    adapter: ctx.adapter,
+    config: ctx.config,
+    debug: ctx.debug,
+  });
+
+  if (!evalItem) {
+    return {
+      success: false,
+      error: `Eval not found: ${request.target}`,
+      logs: null,
+      duration_ms: 0,
+    };
+  }
+
+  const config = request.config ?? {};
+  const report = await deps.runEval(withEvalRunConfig(evalItem.definition, config), {
+    adapters: {
+      agent: deps.createEvalAgentAdapter(createEvalAdapterConfig({ request, req, ctx })),
+    },
+    baseDir: ctx.projectDir,
+    runId: request.runId,
+  });
+  const failed = report.summary.failed;
+
+  return {
+    success: failed === 0,
+    result: report,
+    ...(failed > 0 ? { error: `${failed} eval record${failed === 1 ? "" : "s"} failed` } : {}),
+    logs: null,
+    duration_ms: Math.max(0, deps.now() - startedAt),
+  };
+}
+
 async function executeReleaseAssetBuildRun(input: {
   request: ProjectRunExecuteRequest;
   ctx: HandlerContext;
@@ -713,7 +843,10 @@ const defaultDeps: ProjectRunExecuteHandlerDeps = {
   findTaskById,
   runTask,
   findWorkflowById,
+  findEvalById,
   createWorkflowClient: createRuntimeWorkflowClient,
+  runEval,
+  createEvalAgentAdapter: createAgentServiceEvalAdapter,
   ensureProjectDiscovery,
   executeKnowledgeIngest: executeKnowledgeIngestRun,
   executeReleaseAssetBuild: executeReleaseAssetBuildRun,
@@ -775,6 +908,8 @@ export class ProjectRunExecuteHandler extends BaseHandler {
             ? await this.deps.executeReleaseAssetBuild({ request, ctx, req })
             : request.kind === "task"
             ? await executeTaskRun(request, ctx, this.deps)
+            : request.kind === "eval"
+            ? await executeEvalRun(request, ctx, req, this.deps)
             : await executeWorkflowRun(request, ctx, this.deps);
           return this.respond(builder.json(response, 200));
         } catch (error) {
