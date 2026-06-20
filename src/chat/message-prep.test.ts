@@ -188,6 +188,294 @@ Deno.test("maskOldToolOutputs keeps compact email metadata for historical email 
   assertEquals(compacted.debug, undefined);
 });
 
+Deno.test("maskOldToolOutputs keeps compact GitHub issue metadata and cursor state", () => {
+  const messages = [
+    { role: "user", content: "check issues" },
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: "call-github-issues",
+          toolName: "github__list_issues",
+          input: { owner: "veryfront", repo: "veryfront-code", first: 30 },
+        },
+      ],
+    },
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "call-github-issues",
+          toolName: "github__list_issues",
+          output: {
+            type: "json",
+            value: {
+              issues: [
+                {
+                  id: "I_kwD",
+                  number: 42,
+                  title: "Audit integration tools",
+                  body: "body ".repeat(200),
+                  state: "OPEN",
+                  url: "https://github.com/veryfront/veryfront-code/issues/42",
+                  author: { login: "octocat" },
+                  labels: { totalCount: 2, nodes: [{ name: "bug" }] },
+                  assignees: { totalCount: 1, nodes: [{ login: "dev" }] },
+                  comments: { nodes: [{ body: "large comment" }] },
+                },
+              ],
+              pageInfo: { hasNextPage: true, endCursor: "cursor-2" },
+              debug: "internal detail ".repeat(100),
+            },
+          },
+        },
+      ],
+    },
+    { role: "user", content: "summarize the open ones" },
+  ] satisfies ProviderModelMessage[];
+
+  const masked = maskOldToolOutputs(messages);
+  const toolMessage = masked[2];
+  if (toolMessage?.role !== "tool") {
+    throw new Error("expected tool message");
+  }
+  const output = toolMessage.content[0]?.output;
+  if (output?.type !== "text") {
+    throw new Error("expected compacted text output");
+  }
+  const compacted = JSON.parse(output.value);
+
+  assertEquals(compacted.issuesCount, 1);
+  assertEquals(compacted.issues[0].number, 42);
+  assertEquals(compacted.issues[0].title, "Audit integration tools");
+  assertEquals(compacted.issues[0].body.length <= 501, true);
+  assertEquals(compacted.issues[0].labels, { totalCount: 2 });
+  assertEquals(compacted.issues[0].assignees, { totalCount: 1 });
+  assertEquals(compacted.pageInfo, { hasNextPage: true, endCursor: "cursor-2" });
+  assertEquals(compacted.issues[0].comments, undefined);
+  assertEquals(compacted.debug, undefined);
+});
+
+Deno.test("maskOldToolOutputs keeps compact GitHub PR labels from REST list results", () => {
+  const messages = [
+    { role: "user", content: "check prs" },
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: "call-github-prs",
+          toolName: "github__list_prs",
+          input: { owner: "veryfront", repo: "veryfront-code", state: "open" },
+        },
+      ],
+    },
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "call-github-prs",
+          toolName: "github__list_prs",
+          output: {
+            type: "json",
+            value: {
+              pullRequests: [
+                {
+                  id: 123,
+                  node_id: "PR_kwD",
+                  number: 2567,
+                  title: "Improve tool summaries",
+                  body: "body ".repeat(200),
+                  state: "open",
+                  html_url: "https://github.com/veryfront/veryfront-code/pull/2567",
+                  labels: [
+                    { id: 1, name: "bug", color: "d73a4a", description: "ignored" },
+                    { id: 2, name: "integrations", color: "0e8a16" },
+                  ],
+                  requested_reviewers: [{ login: "reviewer" }],
+                  comments: [{ body: "large comment" }],
+                },
+              ],
+              debug: "internal detail ".repeat(100),
+            },
+          },
+        },
+      ],
+    },
+    { role: "user", content: "summarize the open ones" },
+  ] satisfies ProviderModelMessage[];
+
+  const masked = maskOldToolOutputs(messages);
+  const toolMessage = masked[2];
+  if (toolMessage?.role !== "tool") {
+    throw new Error("expected tool message");
+  }
+  const output = toolMessage.content[0]?.output;
+  if (output?.type !== "text") {
+    throw new Error("expected compacted text output");
+  }
+  const compacted = JSON.parse(output.value);
+
+  assertEquals(compacted.pullRequestsCount, 1);
+  assertEquals(compacted.pullRequests[0].number, 2567);
+  assertEquals(compacted.pullRequests[0].labels, ["bug", "integrations"]);
+  assertEquals(compacted.pullRequests[0].requested_reviewers, [{ login: "reviewer" }]);
+  assertEquals(compacted.pullRequests[0].comments, undefined);
+  assertEquals(compacted.debug, undefined);
+});
+
+Deno.test("maskOldToolOutputs keeps compact Confluence search metadata", () => {
+  const messages = [
+    { role: "user", content: "search docs" },
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: "call-confluence-search",
+          toolName: "confluence__search_content",
+          input: { cloudId: "cloud-1", cql: "text ~ release" },
+        },
+      ],
+    },
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "call-confluence-search",
+          toolName: "confluence__search_content",
+          output: {
+            type: "json",
+            value: {
+              results: [
+                {
+                  id: "123",
+                  type: "page",
+                  status: "current",
+                  title: "Release process",
+                  excerpt: "release ".repeat(100),
+                  space: { id: 10, key: "ENG", name: "Engineering", nested: { ignored: true } },
+                  version: { number: 7, minorEdit: false, by: { ignored: true } },
+                  _links: { webui: "/spaces/ENG/pages/123", base: "https://example.atlassian.net" },
+                  body: { storage: { value: "<p>large body</p>" } },
+                },
+              ],
+              size: 1,
+              limit: 25,
+              start: 0,
+              _links: { next: "/wiki/rest/api/content/search?start=25" },
+            },
+          },
+        },
+      ],
+    },
+    { role: "user", content: "which page matters?" },
+  ] satisfies ProviderModelMessage[];
+
+  const masked = maskOldToolOutputs(messages);
+  const toolMessage = masked[2];
+  if (toolMessage?.role !== "tool") {
+    throw new Error("expected tool message");
+  }
+  const output = toolMessage.content[0]?.output;
+  if (output?.type !== "text") {
+    throw new Error("expected compacted text output");
+  }
+  const compacted = JSON.parse(output.value);
+
+  assertEquals(compacted.contentCount, 1);
+  assertEquals(compacted.content[0].title, "Release process");
+  assertEquals(compacted.content[0].excerpt.length <= 301, true);
+  assertEquals(compacted.content[0].space, { id: 10, key: "ENG", name: "Engineering" });
+  assertEquals(compacted.content[0].version, { number: 7, minorEdit: false });
+  assertEquals(compacted.content[0].body, undefined);
+  assertEquals(compacted.size, 1);
+  assertEquals(compacted.limit, 25);
+  assertEquals(compacted.start, 0);
+  assertEquals(compacted._links, { next: "/wiki/rest/api/content/search?start=25" });
+});
+
+Deno.test("maskOldToolOutputs keeps compact Jira issue fields for search results", () => {
+  const messages = [
+    { role: "user", content: "search jira" },
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: "call-jira-search",
+          toolName: "jira__search_issues",
+          input: { cloudId: "cloud-1", jql: "updated >= -30d ORDER BY updated DESC" },
+        },
+      ],
+    },
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "call-jira-search",
+          toolName: "jira__search_issues",
+          output: {
+            type: "json",
+            value: {
+              issues: [
+                {
+                  id: "10001",
+                  key: "VF-123",
+                  fields: {
+                    summary: "Fix integration summaries",
+                    created: "2026-06-19T10:00:00.000+0000",
+                    updated: "2026-06-19T11:00:00.000+0000",
+                    status: { name: "In Progress" },
+                    assignee: { displayName: "Dev" },
+                  },
+                  changelog: { histories: [{ id: "large", detail: "ignored ".repeat(400) }] },
+                },
+              ],
+              nextPageToken: "next-token",
+              isLast: false,
+              maxResults: 1,
+            },
+          },
+        },
+      ],
+    },
+    { role: "user", content: "what is the newest issue?" },
+  ] satisfies ProviderModelMessage[];
+
+  const masked = maskOldToolOutputs(messages);
+  const toolMessage = masked[2];
+  if (toolMessage?.role !== "tool") {
+    throw new Error("expected tool message");
+  }
+  const output = toolMessage.content[0]?.output;
+  if (output?.type !== "text") {
+    throw new Error("expected compacted text output");
+  }
+  const compacted = JSON.parse(output.value);
+
+  assertEquals(compacted.issuesCount, 1);
+  assertEquals(compacted.issues[0].id, "10001");
+  assertEquals(compacted.issues[0].key, "VF-123");
+  assertEquals(compacted.issues[0].fields, {
+    summary: "Fix integration summaries",
+    created: "2026-06-19T10:00:00.000+0000",
+    updated: "2026-06-19T11:00:00.000+0000",
+  });
+  assertEquals(compacted.issues[0].summary, "Fix integration summaries");
+  assertEquals(compacted.issues[0].status, { name: "In Progress" });
+  assertEquals(compacted.issues[0].assignee, { displayName: "Dev" });
+  assertEquals(compacted.issues[0].created, "2026-06-19T10:00:00.000+0000");
+  assertEquals(compacted.issues[0].updated, "2026-06-19T11:00:00.000+0000");
+  assertEquals(compacted.issues[0].changelog, undefined);
+  assertEquals(compacted.nextPageToken, "next-token");
+});
+
 Deno.test("maskOldToolOutputs keeps provider-scoped Outlook email action fields", () => {
   const messages = [
     { role: "user", content: "check outlook" },
@@ -338,6 +626,7 @@ Deno.test("maskOldToolOutputs keeps GitHub issue identifiers for follow-up calls
       node_id: "I_kwDOExample",
       number: 1932,
       title: "Improve GitHub integration",
+      body: compacted.issues[0].body,
       state: "open",
       html_url: "https://github.com/veryfront/veryfront-code/issues/1932",
       user: { login: "octocat", id: 1 },
@@ -345,7 +634,7 @@ Deno.test("maskOldToolOutputs keeps GitHub issue identifiers for follow-up calls
       updated_at: "2026-05-29T10:00:00Z",
     },
   ]);
-  assertEquals(compacted.issues[0].body, undefined);
+  assertEquals(compacted.issues[0].body.length <= 2001, true);
 });
 
 Deno.test("maskOldToolOutputs does not summarize unresearched email-like providers", () => {

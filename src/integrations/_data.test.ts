@@ -768,6 +768,27 @@ describe("integration endpoint specs", () => {
       true,
     );
     assertEquals(
+      jiraSearchIssues.endpoint?.response?.historicalSummary?.itemFields
+        ?.some((field) => field.name === "fields" && field.kind === "object"),
+      true,
+    );
+    assertEquals(
+      jiraSearchIssues.endpoint?.response?.historicalSummary?.itemFields
+        ?.filter((field) =>
+          ["summary", "status", "assignee", "created", "updated"].includes(
+            field.name,
+          )
+        )
+        .map((field) => [field.name, field.path]),
+      [
+        ["summary", ["fields", "summary"]],
+        ["status", ["fields", "status"]],
+        ["assignee", ["fields", "assignee"]],
+        ["created", ["fields", "created"]],
+        ["updated", ["fields", "updated"]],
+      ],
+    );
+    assertEquals(
       historicalToolSummaries["jira__search_issues"]?.outputFields
         ?.some((field) => field.name === "nextPageToken"),
       true,
@@ -972,6 +993,65 @@ describe("integration endpoint specs", () => {
       "https://graph.microsoft.com/v1.0/sites/{siteId}/drive/root/children",
     );
     assertEquals(sharepointListFiles.endpoint?.params?.siteId?.required, true);
+  });
+
+  it("publishes provider-declared historical summary contracts for Confluence collection tools", () => {
+    const listSites = getTool("confluence", "list_sites");
+    const searchContent = getTool("confluence", "search_content");
+    const listSpaces = getTool("confluence", "list_spaces");
+
+    assertEquals(listSites.endpoint?.response?.historicalSummary, {
+      collectionKeys: ["sites", "data"],
+      collectionName: "sites",
+      itemFields: [
+        { name: "id" },
+        { name: "name" },
+        { name: "url" },
+        { name: "scopes", kind: "string-array" },
+        { name: "avatarUrl" },
+      ],
+      omitted: "provider-specific accessible resource payload fields",
+    });
+    assertEquals(searchContent.endpoint?.response?.historicalSummary, {
+      collectionKeys: ["results", "content", "data"],
+      collectionName: "content",
+      itemFields: [
+        { name: "id" },
+        { name: "type" },
+        { name: "status" },
+        { name: "title" },
+        { name: "excerpt", maxLength: 300 },
+        { name: "space", kind: "object" },
+        { name: "version", kind: "object" },
+        { name: "_links", kind: "object" },
+      ],
+      outputFields: [{ name: "size" }, { name: "limit" }, { name: "start" }, {
+        name: "_links",
+        kind: "object",
+      }],
+      omitted: "page bodies, comments, and provider-specific payload fields",
+    });
+    assertEquals(listSpaces.endpoint?.response?.historicalSummary, {
+      collectionKeys: ["results", "spaces", "data"],
+      collectionName: "spaces",
+      itemFields: [
+        { name: "id" },
+        { name: "key" },
+        { name: "name" },
+        { name: "type" },
+        { name: "status" },
+        { name: "_links", kind: "object" },
+      ],
+      outputFields: [{ name: "size" }, { name: "limit" }, { name: "start" }, {
+        name: "_links",
+        kind: "object",
+      }],
+      omitted: "space descriptions and provider-specific payload fields",
+    });
+    assertEquals(
+      historicalToolSummaries["confluence__search_content"],
+      searchContent.endpoint?.response?.historicalSummary,
+    );
   });
 
   it("keeps endpoint path params aligned with URL placeholders", () => {
@@ -1240,7 +1320,7 @@ describe("integration endpoint specs", () => {
     );
     assertStringIncludes(
       tool.endpoint?.query ?? "",
-      "issues(first: $first, states: $states",
+      "issues(first: $first, after: $after, states: $states",
     );
   });
 
@@ -1361,17 +1441,31 @@ describe("integration endpoint specs", () => {
   it("publishes provider-declared historical summary contracts for GitHub read tools", () => {
     const listRepos = getTool("github", "list_repos");
     const listIssues = getTool("github", "list_issues");
+    const listPrs = getTool("github", "list_prs");
+    const listCommits = getTool("github", "list_commits");
     const getIssue = getTool("github", "get_issue");
     const getPr = getTool("github", "get_pr");
 
+    assertStringIncludes(listIssues.endpoint?.query ?? "", "$after: String");
+    assertStringIncludes(listIssues.endpoint?.query ?? "", "after: $after");
+    assertEquals(listIssues.endpoint?.params?.after, {
+      type: "string",
+      in: "body",
+      description: "Pagination cursor from pageInfo.endCursor",
+    });
     assertEquals(listRepos.endpoint?.response?.historicalSummary?.itemFields, [
       { name: "id" },
       { name: "node_id" },
       { name: "name" },
       { name: "full_name" },
+      { name: "description", maxLength: 300 },
       { name: "owner", kind: "contact" },
       { name: "html_url" },
       { name: "private" },
+      { name: "visibility" },
+      { name: "language" },
+      { name: "stargazers_count" },
+      { name: "fork" },
       { name: "archived" },
       { name: "open_issues_count" },
       { name: "default_branch" },
@@ -1381,8 +1475,50 @@ describe("integration endpoint specs", () => {
     assertEquals(listIssues.endpoint?.response?.historicalSummary?.outputFields, [
       { name: "pageInfo", kind: "object" },
     ]);
+    assertEquals(
+      listIssues.endpoint?.response?.historicalSummary?.itemFields.some((field) =>
+        field.name === "body" && field.maxLength === 500
+      ),
+      true,
+    );
+    assertEquals(
+      listIssues.endpoint?.response?.historicalSummary?.itemFields.some((field) =>
+        field.name === "labels" && field.kind === "object"
+      ),
+      true,
+    );
+    assertEquals(
+      listPrs.endpoint?.response?.historicalSummary?.itemFields.some((field) =>
+        field.name === "body" && field.maxLength === 500
+      ),
+      true,
+    );
+    assertEquals(
+      listPrs.endpoint?.response?.historicalSummary?.itemFields.some((field) =>
+        field.name === "labels" && field.kind === "named-array"
+      ),
+      true,
+    );
+    assertEquals(
+      listCommits.endpoint?.response?.historicalSummary?.itemFields.some((field) =>
+        field.name === "commit" && field.kind === "object"
+      ),
+      true,
+    );
     assertEquals(getIssue.endpoint?.response?.historicalSummary?.singleItem, true);
     assertEquals(getPr.endpoint?.response?.historicalSummary?.singleItem, true);
+    assertEquals(
+      getIssue.endpoint?.response?.historicalSummary?.itemFields.some((field) =>
+        field.name === "body" && field.maxLength === 2000
+      ),
+      true,
+    );
+    assertEquals(
+      getPr.endpoint?.response?.historicalSummary?.itemFields.some((field) =>
+        field.name === "body" && field.maxLength === 2000
+      ),
+      true,
+    );
     assertEquals(
       historicalToolSummaries["github__list_repos"],
       listRepos.endpoint?.response?.historicalSummary,

@@ -664,13 +664,28 @@ function compactContactValue(value: unknown): Record<string, unknown> | string |
     if (typeof emailAddress.address === "string") compact.address = emailAddress.address;
   }
 
-  for (const field of ["login", "name", "address", "email", "id"] as const) {
+  for (
+    const field of ["login", "name", "displayName", "address", "email", "id", "accountId"] as const
+  ) {
     if (typeof value[field] === "string" || typeof value[field] === "number") {
       compact[field] = value[field];
     }
   }
 
   return Object.keys(compact).length > 0 ? compact : null;
+}
+
+function compactNamedArrayValue(value: unknown): string | null {
+  if (typeof value === "string") return value;
+  if (!isRecord(value)) return null;
+
+  for (const field of ["name", "displayName", "login", "key", "id"] as const) {
+    const candidate = value[field];
+    if (typeof candidate === "string" && candidate.length > 0) return candidate;
+    if (typeof candidate === "number") return String(candidate);
+  }
+
+  return null;
 }
 
 function compactHistoricalField(
@@ -693,6 +708,14 @@ function compactHistoricalField(
     if (!Array.isArray(fieldValue)) return null;
     const strings = fieldValue.filter((item) => typeof item === "string");
     return strings.length > 0 ? strings : null;
+  }
+
+  if (field.kind === "named-array") {
+    if (!Array.isArray(fieldValue)) return null;
+    const names = fieldValue
+      .map((item) => compactNamedArrayValue(item))
+      .filter((item): item is string => item !== null);
+    return names.length > 0 ? names : null;
   }
 
   if (field.kind === "object") {
@@ -722,6 +745,23 @@ function compactHistoricalField(
   return null;
 }
 
+function getHistoricalFieldValue(
+  source: Record<string, unknown>,
+  field: HistoricalToolSummaryField,
+): unknown {
+  if (!field.path || field.path.length === 0) {
+    return source[field.name];
+  }
+
+  let value: unknown = source;
+  for (const segment of field.path) {
+    if (!isRecord(value)) return undefined;
+    value = value[segment];
+  }
+
+  return value;
+}
+
 function compactHistoricalItemValue(
   value: unknown,
   fields: readonly HistoricalToolSummaryField[],
@@ -730,7 +770,7 @@ function compactHistoricalItemValue(
 
   const compact: Record<string, unknown> = {};
   for (const field of fields) {
-    const fieldValue = compactHistoricalField(field, value[field.name]);
+    const fieldValue = compactHistoricalField(field, getHistoricalFieldValue(value, field));
     if (fieldValue !== null) compact[field.name] = fieldValue;
   }
 
@@ -784,7 +824,7 @@ function compactHistoricalToolSummaryOutput(
 
   if (output && contract.outputFields) {
     for (const field of contract.outputFields) {
-      const fieldValue = compactHistoricalField(field, output[field.name]);
+      const fieldValue = compactHistoricalField(field, getHistoricalFieldValue(output, field));
       if (fieldValue !== null) compacted[field.name] = fieldValue;
     }
   }
