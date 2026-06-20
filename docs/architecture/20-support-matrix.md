@@ -55,22 +55,23 @@ These contracts are backed by first-party extension packages. A contract is
 required only when a feature resolves it. Built-in packages are auto-enabled by
 core bootstrap; optional packages must be configured by the project.
 
-| Contract                 | Package                                      | Availability | Required by                             | Runtime requirement          |
-| ------------------------ | -------------------------------------------- | ------------ | --------------------------------------- | ---------------------------- |
-| `SchemaValidator`        | `@veryfront/ext-schema-zod`                  | Built-in     | Schema-backed runtime validation        | None (pure JS)               |
-| `Bundler`, `ModuleLexer` | `@veryfront/ext-bundler-esbuild`             | Built-in     | Build, import analysis, module bundling | esbuild binary               |
-| `CSSProcessor`           | `@veryfront/ext-css-tailwind`                | Built-in     | Tailwind CSS processing                 | Network (esm.sh for plugins) |
-| `ContentProcessor`       | `@veryfront/ext-content-mdx`                 | Built-in     | MDX or Markdown content compilation     | None (unified ecosystem)     |
-| `CodeParser`             | `@veryfront/ext-parser-babel`                | Built-in     | AST parsing or build-time code analysis | None (Babel)                 |
-| `DocumentExtractor`      | `@veryfront/ext-document-kreuzberg`          | Built-in     | Document text extraction                | FS (WASM/native extraction)  |
-| `SqliteStore`            | `@veryfront/ext-db-sqlite`                   | Built-in     | SQLite-backed persistence               | FS (SQLite)                  |
-| `LLMProvider`            | `@veryfront/ext-llm-openai`                  | Built-in     | OpenAI provider selection               | Network (OpenAI API)         |
-| `LLMProvider`            | `@veryfront/ext-llm-anthropic`               | Built-in     | Anthropic provider selection            | Network (Anthropic API)      |
-| `LLMProvider`            | `@veryfront/ext-llm-google`                  | Built-in     | Google provider selection               | Network (Google AI API)      |
-| `AuthProvider`           | `@veryfront/ext-auth-jwt`                    | Optional     | Auth signing or verification            | None (jose library)          |
-| `TracingExporter`        | `@veryfront/ext-observability-opentelemetry` | Optional     | OTLP tracing export                     | Network (OTLP endpoint)      |
-| `NodeTelemetryProvider`  | `@veryfront/ext-observability-opentelemetry` | Built-in     | Node OpenTelemetry SDK bootstrap        | Network (OTLP endpoint)      |
-| `TokenCacheStore`        | `@veryfront/ext-cache-redis`                 | Optional     | Redis-backed token cache                | Network (Redis)              |
+| Contract                     | Package                                      | Availability | Required by                             | Runtime requirement          |
+| ---------------------------- | -------------------------------------------- | ------------ | --------------------------------------- | ---------------------------- |
+| `SchemaValidator`            | `@veryfront/ext-schema-zod`                  | Built-in     | Schema-backed runtime validation        | None (pure JS)               |
+| `Bundler`, `ModuleLexer`     | `@veryfront/ext-bundler-esbuild`             | Built-in     | Build, import analysis, module bundling | esbuild binary               |
+| `CSSProcessor`               | `@veryfront/ext-css-tailwind`                | Built-in     | Tailwind CSS processing                 | Network (esm.sh for plugins) |
+| `ContentProcessor`           | `@veryfront/ext-content-mdx`                 | Built-in     | MDX or Markdown content compilation     | None (unified ecosystem)     |
+| `CodeParser`                 | `@veryfront/ext-parser-babel`                | Built-in     | AST parsing or build-time code analysis | None (Babel)                 |
+| `DocumentExtractor`          | `@veryfront/ext-document-kreuzberg`          | Built-in     | Document text extraction                | FS (WASM/native extraction)  |
+| `SqliteStore`                | `@veryfront/ext-db-sqlite`                   | Built-in     | SQLite-backed persistence               | FS (SQLite)                  |
+| `LLMProvider`                | `@veryfront/ext-llm-openai`                  | Built-in     | OpenAI provider selection               | Network (OpenAI API)         |
+| `LLMProvider`                | `@veryfront/ext-llm-anthropic`               | Built-in     | Anthropic provider selection            | Network (Anthropic API)      |
+| `LLMProvider`                | `@veryfront/ext-llm-google`                  | Built-in     | Google provider selection               | Network (Google AI API)      |
+| `AuthProvider`               | `@veryfront/ext-auth-jwt`                    | Optional     | Auth signing or verification            | None (jose library)          |
+| `TracingExporter`            | `@veryfront/ext-observability-opentelemetry` | Optional     | OTLP tracing export                     | Network (OTLP endpoint)      |
+| `NodeTelemetryProvider`      | `@veryfront/ext-observability-opentelemetry` | Built-in     | Node OpenTelemetry SDK bootstrap        | Network (OTLP endpoint)      |
+| `EvalReportExporterRegistry` | Core registry and future `@veryfront/ext-eval-*` packages | Built-in registry, optional exporters | Eval report export                      | Vendor-specific              |
+| `TokenCacheStore`            | `@veryfront/ext-cache-redis`                 | Optional     | Redis-backed token cache                | Network (Redis)              |
 
 ## Dependency boundaries
 
