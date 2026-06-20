@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  applyDefaultResearchArtifactPath,
   createDefaultResearchRunArtifactMirrorHandler,
   type DefaultResearchArtifactContext,
   extractLatestUserText,
@@ -45,6 +46,25 @@ describe("default research artifact support", () => {
     assertEquals(
       taskContext.defaultResearchArtifacts?.currentReportPath,
       "/research/ai-coding-agents/report.md",
+    );
+  });
+
+  it("canonicalizes default research topic-root markdown files to the current report path", () => {
+    assertEquals(
+      applyDefaultResearchArtifactPath(
+        "create_file",
+        {
+          path: "research/ai-coding-agents.md",
+          content: "# report",
+        },
+        {
+          defaultResearchArtifacts: defaultArtifacts(),
+        },
+      ),
+      {
+        path: "research/ai-coding-agents/report.md",
+        content: "# report",
+      },
     );
   });
 

@@ -234,12 +234,20 @@ export function applyDefaultResearchArtifactPath(
   const canonicalRunPath = defaultArtifacts.runReportPath.replace(/^\/+/, "");
   const canonicalFindingsPath = defaultArtifacts.findingsPath.replace(/^\/+/, "");
   const canonicalSourcesPath = defaultArtifacts.sourcesPath.replace(/^\/+/, "");
+  const canonicalTopicRootPath = canonicalCurrentPath.replace(/\/report\.md$/, "");
 
   if (
     path === canonicalCurrentPath || path === canonicalRunPath || path === canonicalFindingsPath ||
     path === canonicalSourcesPath
   ) {
     return toolInput;
+  }
+
+  if (path === `${canonicalTopicRootPath}.md`) {
+    return {
+      ...toolInput,
+      path: canonicalCurrentPath,
+    };
   }
 
   if (!path.endsWith("/report.md") && path !== "report.md") {
