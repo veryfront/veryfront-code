@@ -23,6 +23,7 @@
  */
 
 export {
+  type CreateEvalRunInput,
   createRunsClient,
   type CreateTaskRunInput,
   type CreateWorkflowRunInput,
