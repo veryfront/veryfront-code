@@ -298,6 +298,61 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(receivedAuthToken, "runtime-token");
   });
 
+  it("marks eval execution unsuccessful when records contain adapter failures", async () => {
+    const report: EvalReport = {
+      kind: "eval-report",
+      runId: "run_eval_failed_adapter",
+      definitionId: "eval:deep-research",
+      targetKind: "agent",
+      target: "agent:researcher",
+      startedAt: "2026-06-20T10:00:00.000Z",
+      endedAt: "2026-06-20T10:00:01.000Z",
+      summary: { records: 1, passed: 1, failed: 0, passRate: 1, metrics: [] },
+      records: [{
+        id: "q1:1",
+        evalId: "eval:deep-research",
+        exampleId: "q1",
+        repetition: 1,
+        input: "France capital?",
+        output: { text: "" },
+        metadata: {},
+        trace: { events: [], toolCalls: [] },
+        usage: {},
+        durationMs: 10,
+        completed: false,
+        error: "AG-UI request failed",
+        metrics: [],
+        checks: [],
+      }],
+    };
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runEval: async () => report,
+    }));
+    const body = {
+      runId: "run_eval_failed_adapter",
+      kind: "eval",
+      target: "eval:deep-research",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_failed_adapter/execute",
+      body,
+      { "x-token": "runtime-token" },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(await result.response.json(), {
+      success: false,
+      result: report,
+      error: "1 eval record failed",
+      logs: null,
+      duration_ms: 0,
+    });
+  });
+
   it("discovers project agents and tools before starting workflow agent steps", async () => {
     const order: string[] = [];
     let hasAgentRegistry = false;

@@ -13,6 +13,7 @@ function isBlockingFailure(result: EvalMetricResult): boolean {
 }
 
 function recordPassed(record: EvalRecord): boolean {
+  if (!record.completed || record.error) return false;
   const results = [...(record.metrics ?? []), ...(record.checks ?? [])];
   return results.every((result) => !isBlockingFailure(result));
 }

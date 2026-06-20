@@ -23,6 +23,8 @@ import {
 import type {
   EvalAgentAdapter,
   EvalDefinition,
+  EvalMetricResult,
+  EvalRecord,
   EvalReport,
   RunEvalOptions,
 } from "#veryfront/eval/types.ts";
@@ -658,6 +660,20 @@ function getPositiveIntConfig(
   return normalized > 0 ? normalized : undefined;
 }
 
+function isBlockingEvalResult(result: EvalMetricResult): boolean {
+  return !result.skipped && result.pass === false &&
+    (result.severity === "gate" || result.severity === "budget");
+}
+
+function evalRecordFailed(record: EvalRecord): boolean {
+  if (!record.completed || record.error) return true;
+  return [...(record.metrics ?? []), ...(record.checks ?? [])].some(isBlockingEvalResult);
+}
+
+function countFailedEvalRecords(report: EvalReport): number {
+  return report.records.filter(evalRecordFailed).length;
+}
+
 function withEvalRunConfig(
   definition: EvalDefinition,
   config: Record<string, unknown>,
@@ -729,7 +745,7 @@ async function executeEvalRun(
     baseDir: ctx.projectDir,
     runId: request.runId,
   });
-  const failed = report.summary.failed;
+  const failed = Math.max(report.summary.failed, countFailedEvalRecords(report));
 
   return {
     success: failed === 0,
