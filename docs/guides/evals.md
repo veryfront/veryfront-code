@@ -142,6 +142,46 @@ export default evalAgent({
 });
 ```
 
+## Live agent-service evals
+
+Use the `veryfront/eval/agent-service` subpath, documented under
+[veryfront/eval](../api-reference/veryfront/eval.md), when an eval should run
+against a live AG-UI agent service. The adapter plugs into `runEval`, so reports
+still use the standard `EvalReport` shape and the same metrics.
+
+```ts
+import { datasets, evalAgent, metrics, runEval } from "veryfront/eval";
+import {
+  createAgentServiceEvalAdapter,
+  resolveAgentServiceEvalEnvironment,
+} from "veryfront/eval/agent-service";
+
+const environment = resolveAgentServiceEvalEnvironment({
+  AG_UI_EVAL_ENDPOINT: "http://127.0.0.1:3001/api/ag-ui",
+  VERYFRONT_TOKEN: "<TOKEN>",
+  AG_UI_EVAL_PROJECT_ID: "<PROJECT_ID>",
+});
+
+const definition = evalAgent({
+  target: "agent:veryfront",
+  dataset: datasets.inline([
+    { id: "smoke", input: { prompt: "List the available project files." } },
+  ]),
+  metrics: [metrics.agent.noFailedTools().gate()],
+});
+
+const report = await runEval(definition, {
+  adapters: {
+    agent: createAgentServiceEvalAdapter(environment),
+  },
+});
+```
+
+Set `AG_UI_EVAL_PROJECT_ID` when cases need project files, releases, or other
+project-scoped API state. The adapter reads AG-UI events into
+`record.trace.events`, records tool starts as `record.trace.toolCalls`, and puts
+the parsed text at `record.output.text`.
+
 ## Discovery
 
 Eval files are discovered from `evals/`:

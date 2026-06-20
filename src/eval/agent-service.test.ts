@@ -1,0 +1,236 @@
+import "#veryfront/schemas/_test-setup.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { datasets, evalAgent, metrics, runEval } from "veryfront/eval";
+import {
+  buildAgentServiceEvalRequestBody,
+  createAgentServiceEvalAdapter,
+  evaluateAgentServiceEvalEnvironment,
+  resolveAgentServiceEvalEnvironment,
+} from "veryfront/eval/agent-service";
+
+function createSseResponse(
+  events: Array<{ event: string; data: Record<string, unknown> }>,
+): Response {
+  return new Response(
+    events.map((entry) => `event: ${entry.event}\ndata: ${JSON.stringify(entry.data)}\n\n`).join(
+      "",
+    ),
+    {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    },
+  );
+}
+
+describe("eval/agent-service", () => {
+  it("resolves environment values for agent-service evals", () => {
+    const environment = resolveAgentServiceEvalEnvironment({
+      AG_UI_EVAL_ENDPOINT: "http://127.0.0.1:4311/api/ag-ui",
+      VERYFRONT_TOKEN: "token",
+      VERYFRONT_API_URL: "https://api.example.test",
+      AG_UI_EVAL_PROJECT_ID: "project_123",
+      AG_UI_EVAL_BRANCH_ID: "branch_123",
+      AG_UI_EVAL_MODEL: "provider/model",
+    });
+
+    assertEquals(environment, {
+      endpoint: "http://127.0.0.1:4311/api/ag-ui",
+      authToken: "token",
+      apiUrl: "https://api.example.test",
+      projectId: "project_123",
+      branchId: "branch_123",
+      model: "provider/model",
+    });
+  });
+
+  it("reports missing live eval environment blockers", () => {
+    const result = evaluateAgentServiceEvalEnvironment({}, "https://api.example.test");
+
+    assertEquals(result.ok, false);
+    assertEquals(result.resolvedApiUrl, "https://api.example.test");
+    assertEquals(result.messages, [
+      "Resolved VERYFRONT_API_URL: https://api.example.test",
+      "BLOCKER: VERYFRONT_TOKEN is missing",
+      "BLOCKER: AG_UI_EVAL_PROJECT_ID is missing",
+      "Agent-service eval preflight: FAIL",
+    ]);
+  });
+
+  it("builds an AG-UI request body from an eval example", () => {
+    const body = buildAgentServiceEvalRequestBody({
+      exampleId: "smoke",
+      input: { prompt: "List files", metadata: { area: "files" } },
+      projectId: "project_123",
+      branchId: "branch_123",
+      model: "provider/model",
+      conversationId: "conversation_123",
+      allowedTools: ["list_files"],
+      maxSteps: 4,
+    });
+
+    assertEquals(body.state, {
+      evalCase: "smoke",
+      area: "files",
+    });
+    assertEquals(body.messages, [
+      {
+        id: body.messages[0]?.id,
+        role: "user",
+        content: "List files",
+      },
+    ]);
+    assertEquals(body.forwardedProps, {
+      veryfront: {
+        projectId: "project_123",
+        branchId: "branch_123",
+        conversationId: "conversation_123",
+        model: "provider/model",
+        runtimeOverrides: {
+          allowedTools: ["list_files"],
+          maxSteps: 4,
+        },
+      },
+    });
+  });
+
+  it("does not clear allowed tools for maxSteps-only runtime overrides", () => {
+    const body = buildAgentServiceEvalRequestBody({
+      exampleId: "smoke",
+      input: "List files",
+      projectId: "project_123",
+      maxSteps: 2,
+    });
+
+    assertEquals(body.forwardedProps, {
+      veryfront: {
+        projectId: "project_123",
+        runtimeOverrides: {
+          maxSteps: 2,
+        },
+      },
+    });
+  });
+
+  it("creates an EvalAgentAdapter for live AG-UI agent-service execution", async () => {
+    const requests: Array<{ url: string; init: RequestInit; body: Record<string, unknown> }> = [];
+    const adapter = createAgentServiceEvalAdapter({
+      endpoint: "http://127.0.0.1:4311/api/ag-ui",
+      authToken: "token",
+      projectId: "project_123",
+      branchId: "branch_123",
+      fetch: async (input, init) => {
+        requests.push({
+          url: String(input),
+          init: init ?? {},
+          body: JSON.parse(String(init?.body)),
+        });
+        return createSseResponse([
+          { event: "RunStarted", data: { runId: "run_123" } },
+          { event: "ToolCallStart", data: { toolCallName: "list_files" } },
+          { event: "TextMessageContent", data: { delta: "Done" } },
+          { event: "RunFinished", data: {} },
+        ]);
+      },
+      now: () => 1_000,
+    });
+
+    const definition = evalAgent({
+      id: "eval:service",
+      target: "agent:veryfront",
+      dataset: datasets.inline([{ id: "smoke", input: "List files" }]),
+    });
+
+    const report = await runEval(definition, {
+      adapters: { agent: adapter },
+      now: () => new Date("2026-06-20T10:00:00.000Z"),
+    });
+
+    assertEquals(requests.length, 1);
+    assertEquals(requests[0]?.url, "http://127.0.0.1:4311/api/ag-ui");
+    assertEquals(requests[0]?.init.method, "POST");
+    assertEquals(
+      (requests[0]?.init.headers as Record<string, string>).Authorization,
+      "Bearer token",
+    );
+    assertEquals(requests[0]?.body.forwardedProps, {
+      veryfront: {
+        projectId: "project_123",
+        branchId: "branch_123",
+      },
+    });
+
+    const record = report.records[0]!;
+    assertEquals(record.output, {
+      text: "Done",
+      agUi: {
+        responseStatus: 200,
+        eventTypes: ["RUN_STARTED", "TOOL_CALL_START", "TEXT_MESSAGE_CONTENT", "RUN_FINISHED"],
+        runError: null,
+      },
+    });
+    assertEquals(record.completed, true);
+    assertEquals(record.trace.toolCalls, [{ name: "list_files", status: "ok" }]);
+    assertEquals(record.durationMs, 0);
+    assertStringIncludes(JSON.stringify(record.trace.events), "RUN_FINISHED");
+  });
+
+  it("marks AG-UI tool result failures in eval traces", async () => {
+    const adapter = createAgentServiceEvalAdapter({
+      endpoint: "http://127.0.0.1:4311/api/ag-ui",
+      authToken: "token",
+      fetch: async () =>
+        createSseResponse([
+          { event: "RunStarted", data: { runId: "run_123" } },
+          {
+            event: "ToolCallStart",
+            data: { toolCallId: "tool_1", toolCallName: "search" },
+          },
+          {
+            event: "ToolCallResult",
+            data: {
+              toolCallId: "tool_1",
+              result: { message: "No results" },
+              isError: true,
+            },
+          },
+          { event: "TextMessageContent", data: { delta: "Done" } },
+          { event: "RunFinished", data: {} },
+        ]),
+    });
+
+    const definition = evalAgent({
+      id: "eval:service",
+      target: "agent:veryfront",
+      dataset: datasets.inline([{ id: "smoke", input: "Search docs" }]),
+      metrics: [metrics.agent.noFailedTools()],
+    });
+
+    const report = await runEval(definition, {
+      adapters: { agent: adapter },
+    });
+
+    const record = report.records[0]!;
+    assertEquals(record.trace.toolCalls, [{
+      name: "search",
+      status: "error",
+      error: "No results",
+    }]);
+    assertEquals(record.metrics?.[0]?.pass, false);
+    assertEquals(record.metrics?.[0]?.evidence, { failedTools: ["search"] });
+  });
+
+  it("exports the agent-service module from the public import map", async () => {
+    const mod = await import("veryfront/eval/agent-service");
+
+    assertEquals(typeof mod.createAgentServiceEvalAdapter, "function");
+  });
+
+  it("does not revive the legacy agent testing import path", async () => {
+    await assertRejects(
+      () => import("veryfront/agent/testing"),
+      TypeError,
+      "Unknown export",
+    );
+  });
+});
