@@ -10,6 +10,13 @@ import {
 } from "./ag-ui.ts";
 
 describe("chat/ag-ui", () => {
+  it("keeps the public browser entrypoint off server-side data stream imports", async () => {
+    const source = await Deno.readTextFile(new URL("./ag-ui.ts", import.meta.url));
+
+    assertEquals(source.includes("#veryfront/agent/streaming/data-stream.ts"), false);
+    assertEquals(source.includes("serverLogger"), false);
+  });
+
   it("parses SSE frames with ids, events, and multi-line data", () => {
     const parsed = parseSseEvent(
       'id: 12\nevent: Custom\ndata: {"name":"alpha",\ndata: "value":1}\n',
