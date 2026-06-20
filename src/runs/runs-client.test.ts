@@ -208,6 +208,49 @@ describe("VeryfrontRunsClient", () => {
     });
   });
 
+  it("creates eval runs through canonical /runs", async () => {
+    mockFetch([
+      jsonResponse({
+        accepted: true,
+        run: makeRun({
+          kind: "eval",
+          target: "eval:capital-basic-eval",
+          input: { dataset: "smoke" },
+          config: { repetitions: 2 },
+        }),
+      }, 202),
+    ]);
+
+    const client = new VeryfrontRunsClient({
+      apiUrl: "https://api.test.com",
+      authToken: "test-token",
+      projectReference: "dreamy-haven",
+    });
+
+    await client.createEvalRun({
+      projectId,
+      target: "eval:capital-basic-eval",
+      input: { dataset: "smoke" },
+      config: { repetitions: 2 },
+      startMode: "manual",
+      runtimeTargetKind: "environment",
+      runtimeTargetEnvironmentId: "44444444-4444-4444-8444-444444444444",
+    });
+
+    assertEquals(jsonBody(0), {
+      kind: "eval",
+      owner: { kind: "project", id: projectId },
+      request: {
+        target: "eval:capital-basic-eval",
+        runtime_target_kind: "environment",
+        runtime_target_environment_id: "44444444-4444-4444-8444-444444444444",
+        input: { dataset: "smoke" },
+        config: { repetitions: 2 },
+        start_mode: "manual",
+      },
+    });
+  });
+
   it("creates knowledge ingest task runs", async () => {
     mockFetch([jsonResponse({ accepted: true, run: makeRun() }, 202)]);
 

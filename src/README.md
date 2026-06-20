@@ -595,7 +595,7 @@ See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README
 
 **Exports**: `veryfront/runs`
 
-- `VeryfrontRunsClient` for task and workflow run management
+- `VeryfrontRunsClient` for task, workflow, and eval run management
 - Canonical run creation and event reading
 - Runtime environment helpers
 

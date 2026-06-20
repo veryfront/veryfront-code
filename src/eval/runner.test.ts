@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { datasets, evalAgent, metrics, runEval } from "veryfront/eval";
 
@@ -58,10 +58,35 @@ describe("eval/runner", () => {
       },
     });
 
-    assertEquals(report.records[0]?.checks.map((check) => check.name), [
+    const record = report.records[0];
+    assertExists(record);
+    assertEquals(record.checks?.map((check) => check.name), [
       "expect.completed",
       "expect.outputContains",
     ]);
     assertEquals(report.summary.passed, 1);
+  });
+
+  it("counts adapter errors as failed records even without metrics", async () => {
+    const definition = evalAgent({
+      id: "eval:adapter-error",
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "France capital?" }]),
+    });
+
+    const report = await runEval(definition, {
+      adapters: {
+        agent: async () => {
+          throw new Error("AG-UI request failed");
+        },
+      },
+    });
+
+    assertEquals(report.summary.records, 1);
+    assertEquals(report.summary.passed, 0);
+    assertEquals(report.summary.failed, 1);
+    assertEquals(report.summary.passRate, 0);
+    assertEquals(report.records[0]?.completed, false);
+    assertEquals(report.records[0]?.error, "AG-UI request failed");
   });
 });

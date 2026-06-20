@@ -36,7 +36,7 @@ export interface ProjectScopedOptions {
   projectReference?: string;
 }
 
-/** Runtime target for a task or workflow run. */
+/** Runtime target for a task, workflow, or eval run. */
 export type RunRuntimeTargetKind = "main_branch" | "environment" | "preview_branch";
 
 /** Runtime target fields accepted by run creation APIs. */
@@ -65,6 +65,14 @@ export interface CreateWorkflowRunInput extends RunCreateBaseInput, RunRuntimeTa
   workflowId: string;
   target: `workflow:${string}`;
   input?: Record<string, unknown>;
+  startMode?: string;
+}
+
+/** Input payload for creating an eval run. */
+export interface CreateEvalRunInput extends RunCreateBaseInput, RunRuntimeTargetOptions {
+  target: `eval:${string}`;
+  input?: Record<string, unknown>;
+  config?: Record<string, unknown>;
   startMode?: string;
 }
 
@@ -221,6 +229,36 @@ export class VeryfrontRunsClient {
           target,
           ...runtimeTargetBody(runtimeTarget),
           input: workflowInput,
+          start_mode: startMode,
+        },
+      },
+    });
+  }
+
+  createEvalRun(input: CreateEvalRunInput): Promise<CreateRunResponse> {
+    const {
+      projectId,
+      publicId,
+      parentRunId,
+      target,
+      input: evalInput,
+      config,
+      startMode,
+      ...runtimeTarget
+    } = input;
+
+    return this.requestJson("/runs", CreateRunResponseSchema, {
+      method: "POST",
+      body: {
+        kind: "eval",
+        owner: { kind: "project", id: projectId },
+        public_id: publicId,
+        parent_run_id: parentRunId,
+        request: {
+          target,
+          ...runtimeTargetBody(runtimeTarget),
+          input: evalInput,
+          config,
           start_mode: startMode,
         },
       },

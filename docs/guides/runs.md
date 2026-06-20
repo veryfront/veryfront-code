@@ -28,8 +28,7 @@ evals are definitions. A run is what executes one of those definitions.
 
 ## Setup
 
-Use the runs SDK for one-off task and workflow execution. Eval runs share the
-same durable run record shape when the eval execution API is used:
+Use the runs SDK for one-off task, workflow, and eval execution:
 
 ```ts
 import { createRunsClient } from "veryfront/runs";
@@ -65,6 +64,18 @@ await runs.createWorkflowRun({
   workflowId: "content-pipeline",
   target: "workflow:content-pipeline",
   input: { topic: "AI agents" },
+});
+```
+
+## Create an eval run
+
+```ts
+await runs.createEvalRun({
+  projectId: "22222222-2222-4222-8222-222222222222",
+  target: "eval:deep-research",
+  input: { dataset: "smoke" },
+  config: { repetitions: 2 },
+  startMode: "manual",
 });
 ```
 
