@@ -146,11 +146,12 @@ describe("npm supply-chain policy", () => {
 		assertEquals(exports["./chat/protocol"], "./src/chat/protocol.ts");
 	});
 
-	it("keeps agent testing compatibility entrypoint exported", async () => {
+	it("exports agent-service evals without legacy agent testing", async () => {
 		const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
 		const exports = denoConfig.exports as Record<string, string>;
 
-		assertEquals(exports["./agent/testing"], "./src/agent/testing/index.ts");
+		assertEquals(exports["./eval/agent-service"], "./src/eval/agent-service.ts");
+		assertEquals(exports["./agent/testing"], undefined);
 	});
 
 	it("keeps browser-safe export patches aligned to public exports", async () => {

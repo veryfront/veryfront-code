@@ -18,6 +18,28 @@
  *   ],
  * });
  * ```
+ *
+ * @example Live agent-service eval
+ * ```ts
+ * import { datasets, evalAgent, metrics, runEval } from "veryfront/eval";
+ * import { createAgentServiceEvalAdapter } from "veryfront/eval/agent-service";
+ *
+ * const definition = evalAgent({
+ *   target: "agent:veryfront",
+ *   dataset: datasets.inline([{ id: "smoke", input: "List project files." }]),
+ *   metrics: [metrics.agent.noFailedTools().gate()],
+ * });
+ *
+ * const report = await runEval(definition, {
+ *   adapters: {
+ *     agent: createAgentServiceEvalAdapter({
+ *       endpoint: "http://127.0.0.1:3001/api/ag-ui",
+ *       authToken: "<TOKEN>",
+ *       projectId: "<PROJECT_ID>",
+ *     }),
+ *   },
+ * });
+ * ```
  */
 
 export { datasets } from "./datasets.ts";
