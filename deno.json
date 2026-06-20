@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.875",
+  "version": "0.1.876",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "minimumDependencyAge": {
@@ -79,6 +79,7 @@
     "./mdx": "./src/mdx/index.ts",
     "./agent": "./src/agent/index.ts",
     "./agent/identity": "./src/agent/identity-contracts.ts",
+    "./agent/testing": "./src/agent/testing/index.ts",
     "./eval": "./src/eval/index.ts",
     "./channels/control-plane": "./src/channels/control-plane.ts",
     "./channels/invoke": "./src/channels/invoke.ts",
@@ -192,6 +193,7 @@
     "veryfront/provider/shared": "./src/provider/shared/index.ts",
     "veryfront/tool/schema": "./src/tool/schema/index.ts",
     "veryfront/agent/composition": "./src/agent/composition/index.ts",
+    "veryfront/agent/testing": "./src/agent/testing/index.ts",
     "veryfront/extensions": "./src/extensions/index.ts",
     "veryfront/testing": "./src/testing/index.ts",
     "veryfront/testing/assert": "./src/testing/assert.ts",
