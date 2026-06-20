@@ -17,8 +17,8 @@ import { runTask, type RunTaskOptions, type TaskRunResult } from "#veryfront/tas
 import { type DiscoveredEval, findEvalById } from "#veryfront/eval/discovery.ts";
 import { runEval } from "#veryfront/eval/runner.ts";
 import {
-  createAgentServiceEvalAdapter,
   type AgentServiceEvalAdapterConfig,
+  createAgentServiceEvalAdapter,
 } from "#veryfront/eval/agent-service.ts";
 import type {
   EvalAgentAdapter,
