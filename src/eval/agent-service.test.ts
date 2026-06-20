@@ -6,7 +6,10 @@ import {
   buildAgentServiceEvalRequestBody,
   createAgentServiceEvalAdapter,
   evaluateAgentServiceEvalEnvironment,
+  evaluateRuntimeConfidenceEnv,
   resolveAgentServiceEvalEnvironment,
+  runDurableRunCanaryCli,
+  runLiveEvalCli,
 } from "veryfront/eval/agent-service";
 
 function createSseResponse(
@@ -224,6 +227,12 @@ describe("eval/agent-service", () => {
     const mod = await import("veryfront/eval/agent-service");
 
     assertEquals(typeof mod.createAgentServiceEvalAdapter, "function");
+    assertEquals(typeof mod.runLiveEvalCli, "function");
+    assertEquals(typeof mod.runDurableRunCanaryCli, "function");
+    assertEquals(typeof mod.evaluateRuntimeConfidenceEnv, "function");
+    assertEquals(typeof runLiveEvalCli, "function");
+    assertEquals(typeof runDurableRunCanaryCli, "function");
+    assertEquals(typeof evaluateRuntimeConfidenceEnv, "function");
   });
 
   it("does not revive the legacy agent testing import path", async () => {

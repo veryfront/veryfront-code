@@ -13,6 +13,9 @@ import type {
   EvalToolCall,
 } from "./types.ts";
 
+export * from "./agent-service/live-evals/index.ts";
+export * from "./agent-service/durable-run-canaries/index.ts";
+
 /** Default local AG-UI endpoint used by agent-service evals. */
 export const DEFAULT_AGENT_SERVICE_EVAL_ENDPOINT = "http://127.0.0.1:3001/api/ag-ui";
 
