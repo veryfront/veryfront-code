@@ -138,6 +138,14 @@ describe("normalizeNpmPackageMetadata", () => {
 });
 
 describe("npm supply-chain policy", () => {
+	it("exports Studio AG-UI package entrypoints", async () => {
+		const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
+		const exports = denoConfig.exports as Record<string, string>;
+
+		assertEquals(exports["./chat/ag-ui"], "./src/chat/ag-ui.ts");
+		assertEquals(exports["./chat/protocol"], "./src/chat/protocol.ts");
+	});
+
 	it("keeps browser-safe export patches aligned to public exports", async () => {
 		const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
 		const exports = denoConfig.exports as Record<string, string>;

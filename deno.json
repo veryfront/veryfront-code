@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.872",
+  "version": "0.1.873",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "minimumDependencyAge": {
@@ -72,6 +72,8 @@
     "./context": "./src/react/context/index.tsx",
     "./fonts": "./src/react/fonts/index.ts",
     "./chat": "./src/chat/index.ts",
+    "./chat/ag-ui": "./src/chat/ag-ui.ts",
+    "./chat/protocol": "./src/chat/protocol.ts",
     "./chat/types": "./src/chat/types.ts",
     "./markdown": "./src/markdown/index.ts",
     "./mdx": "./src/mdx/index.ts",
