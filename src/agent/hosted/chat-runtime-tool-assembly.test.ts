@@ -248,7 +248,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly separates provider tools from re
   assertEquals(taskContext.availableToolNames, ["create_file", "web_search"]);
 });
 
-Deno.test("prepareHostedChatRuntimeToolAssembly includes source provider tools outside forwarded allowed tools", async () => {
+Deno.test("prepareHostedChatRuntimeToolAssembly keeps source provider tools inside forwarded allowed tools", async () => {
   const taskContext: HostedChatRuntimeToolAssemblyContext = {
     authToken: "token",
     projectId: "project-1",
@@ -270,12 +270,11 @@ Deno.test("prepareHostedChatRuntimeToolAssembly includes source provider tools o
     preloadLatestConversationUserText: false,
   });
 
-  assertEquals(toolAssembly.localToolNames, ["sleep", "web_fetch"]);
-  assertEquals(toolAssembly.providerToolNames, ["web_search"]);
-  assertEquals(taskContext.availableToolNames, ["sleep", "web_fetch", "web_search"]);
-  assertExists(toolAssembly.runtimeTools.web_fetch);
-  assertStringIncludes(toolAssembly.systemInstructions, "- web_fetch");
-  assertStringIncludes(toolAssembly.systemInstructions, "- web_search");
+  assertEquals(toolAssembly.localToolNames, ["sleep"]);
+  assertEquals(toolAssembly.providerToolNames, []);
+  assertEquals(taskContext.availableToolNames, ["sleep"]);
+  assertEquals(toolAssembly.runtimeTools.web_fetch, undefined);
+  assertStringIncludes(toolAssembly.systemInstructions, "- sleep");
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly preloads default research artifacts", async () => {

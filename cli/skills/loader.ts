@@ -1,7 +1,7 @@
 import { createFileSystem } from "veryfront/platform";
 import { cwd } from "veryfront/platform";
 import { basename } from "#std/path.ts";
-import { parseSkillFrontmatter, validateSkillMetadata } from "#veryfront/skill";
+import { parseSkillFrontmatter, validateSkillMetadata } from "veryfront/skill";
 import type { LoadedSkill } from "./types.ts";
 import { CORE_SKILLS } from "./core-skills.ts";
 
