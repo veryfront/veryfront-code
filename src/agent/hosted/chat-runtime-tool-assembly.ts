@@ -36,8 +36,6 @@ import {
 } from "./runtime-essential-tools.ts";
 import type { HostedSubmittedFormInputResult } from "./chat-runtime-contract.ts";
 
-const HOSTED_LOCAL_PROVIDER_TOOL_NAMES = new Set(["web_fetch"]);
-
 /** Context for hosted chat runtime tool assembly. */
 export type HostedChatRuntimeToolAssemblyContext = DefaultResearchArtifactContext & {
   authToken: string;
@@ -127,12 +125,8 @@ export function filterHostedChatRuntimeLocalTools(input: {
   sourceProviderToolNames?: readonly string[];
 }): HostToolSet {
   const allowedToolNames = normalizeHostedRuntimeAllowedToolNames(input.allowedToolNames);
-  const sourceProviderToolNames = new Set(input.sourceProviderToolNames ?? []);
   const entries = Object.entries(input.tools).filter(([toolName]) =>
-    allowedToolNames
-      ? allowedToolNames.has(toolName) ||
-        (HOSTED_LOCAL_PROVIDER_TOOL_NAMES.has(toolName) && sourceProviderToolNames.has(toolName))
-      : true
+    allowedToolNames ? allowedToolNames.has(toolName) : true
   );
 
   return Object.fromEntries(entries.sort(([left], [right]) => left.localeCompare(right)));
@@ -182,15 +176,12 @@ export async function prepareHostedChatRuntimeToolAssembly<
   });
   const sourceProviderToolNames = new Set(input.sourceProviderToolNames ?? []);
   const localProviderToolNames = new Set(
-    Object.keys(sortedLocalTools).filter((toolName) =>
-      HOSTED_LOCAL_PROVIDER_TOOL_NAMES.has(toolName)
-    ),
+    Object.keys(sortedLocalTools).filter((toolName) => sourceProviderToolNames.has(toolName)),
   );
   const providerToolNames = getProviderNativeToolNames({ model: input.taskContext.model }).filter(
     (toolName) =>
       !localProviderToolNames.has(toolName) &&
-      (sourceProviderToolNames.has(toolName) ||
-        (allowedToolNames ? allowedToolNames.has(toolName) : false)),
+      (allowedToolNames ? allowedToolNames.has(toolName) : sourceProviderToolNames.has(toolName)),
   );
   const localToolNames = Object.keys(localHostTools);
   const availableToolNames = selectProviderCompatibleToolNames(

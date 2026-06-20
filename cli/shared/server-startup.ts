@@ -8,13 +8,13 @@ import {
 } from "veryfront/server";
 import type { RuntimeAdapter } from "veryfront/platform";
 import { ensureBuiltinContentProcessor } from "./ensure-content-processor.ts";
-import { join } from "#veryfront/compat/path";
-import { parseReleaseAssetManifest } from "#veryfront/release-assets/index.ts";
+import { join } from "veryfront/platform/path";
+import { parseReleaseAssetManifest } from "veryfront/release-assets";
 import {
   clearReleaseAssetManifestCache,
   configureReleaseAssetManifestFetcher,
-} from "#veryfront/release-assets/index.ts";
-import { LOCAL_RELEASE_ASSET_MANIFEST_PATH } from "#veryfront/build";
+} from "veryfront/release-assets";
+import { LOCAL_RELEASE_ASSET_MANIFEST_PATH } from "veryfront/build";
 
 export interface StartCliProxyModeServerOptions {
   port: number;

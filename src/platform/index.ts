@@ -66,7 +66,7 @@ export { resolveHostAddresses, type ResolveHostAddressesOptions } from "./compat
 export { createKVStore, MemoryKv } from "./compat/kv/index.ts";
 
 // Compat: runtime detection
-export { isDeno } from "./compat/runtime.ts";
+export { getDenoRuntime, isDeno } from "./compat/runtime.ts";
 
 // Adapters: filesystem
 export { createFSAdapter, VeryfrontFSAdapter } from "./adapters/fs/index.ts";

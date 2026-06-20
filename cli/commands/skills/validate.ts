@@ -9,7 +9,7 @@ import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json
 import { logError, logSuccess } from "#cli/utils";
 import { createFileSystem } from "veryfront/platform";
 import { basename } from "#std/path.ts";
-import { parseSkillFrontmatter, validateSkillMetadata } from "#veryfront/skill";
+import { parseSkillFrontmatter, validateSkillMetadata } from "veryfront/skill";
 
 interface ValidationIssue {
   severity: "error" | "warning";

@@ -1,4 +1,4 @@
-import type { SkillMetadata } from "#veryfront/skill";
+import type { SkillMetadata } from "veryfront/skill";
 
 export interface LoadedSkill {
   metadata: SkillMetadata;
