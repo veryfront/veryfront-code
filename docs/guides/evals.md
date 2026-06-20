@@ -277,8 +277,9 @@ for Studio panels. The document exposes `editableFields`, `dynamicFields`,
 the eval capabilities required by the panel.
 
 Use `project.evals.read` for listing reports and definitions. Use
-`project.evals.write` for editing eval source definitions. Triggering an eval run
-also records a canonical run with kind `eval` when the durable run API is used.
+`project.evals.write` for editing eval source definitions. Source documents that
+can start durable runs also include `project.evals.run`. Triggering an eval run
+records a canonical run with kind `eval` when the durable run API is used.
 
 ## Verify it worked
 

@@ -5,7 +5,7 @@ import type { EvalDefinition, EvalExample } from "./types.ts";
 
 /** Schema for Eval Studio capabilities. */
 export const getEvalStudioCapabilitySchema = defineSchema((v) =>
-  v.enum(["project.evals.read", "project.evals.write"] as const)
+  v.enum(["project.evals.read", "project.evals.write", "project.evals.run"] as const)
 );
 
 /** Schema for an editable Eval source field name. */
@@ -136,7 +136,7 @@ export const getEvalRunSchema = defineSchema((v) =>
   })
 );
 
-/** Capability string Studio uses for Eval read and write access. */
+/** Capability string Studio uses for Eval source and run actions. */
 export type EvalStudioCapability = InferSchema<ReturnType<typeof getEvalStudioCapabilitySchema>>;
 /** Form-editable Eval source field name. */
 export type EvalEditableField = InferSchema<ReturnType<typeof getEvalEditableFieldSchema>>;
@@ -158,6 +158,7 @@ export interface CreateEvalSourceDocumentOptions {
 const DEFAULT_EVAL_STUDIO_CAPABILITIES: EvalStudioCapability[] = [
   "project.evals.read",
   "project.evals.write",
+  "project.evals.run",
 ];
 
 const BASE_EDITABLE_FIELDS: EvalEditableField[] = [

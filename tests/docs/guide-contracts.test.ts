@@ -252,6 +252,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "--junit",
       "project.evals.read",
       "project.evals.write",
+      "project.evals.run",
     ],
   },
   "guides/head-and-seo.md": {
