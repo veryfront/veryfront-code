@@ -1,8 +1,14 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { register, reset, tryResolve } from "./contracts.ts";
+import type { EvalReportExporterRegistry } from "./eval/index.ts";
+import { EvalReportExporterRegistryName } from "./eval/index.ts";
 import type { SchemaValidator } from "./schema/index.ts";
-import { createBuiltinExtensions, ensureBuiltinSchemaValidator } from "./builtin-extensions.ts";
+import {
+  createBuiltinExtensions,
+  ensureBuiltinEvalReportExporterRegistry,
+  ensureBuiltinSchemaValidator,
+} from "./builtin-extensions.ts";
 import { createZodAdapter } from "../../extensions/ext-schema-zod/src/adapter.ts";
 
 describe("ensureBuiltinSchemaValidator", () => {
@@ -30,6 +36,49 @@ describe("ensureBuiltinSchemaValidator", () => {
     ensureBuiltinSchemaValidator();
 
     assertEquals(tryResolve<SchemaValidator>("SchemaValidator"), existing);
+  });
+});
+
+describe("ensureBuiltinEvalReportExporterRegistry", () => {
+  afterEach(() => {
+    reset();
+  });
+
+  it("registers the eval report exporter registry for exporter extensions", () => {
+    reset();
+
+    assertEquals(
+      tryResolve<EvalReportExporterRegistry>(EvalReportExporterRegistryName),
+      undefined,
+    );
+
+    const registry = ensureBuiltinEvalReportExporterRegistry();
+
+    assertEquals(
+      tryResolve<EvalReportExporterRegistry>(EvalReportExporterRegistryName),
+      registry,
+    );
+    assertEquals(registry.list(), []);
+  });
+
+  it("does not replace an existing eval report exporter registry", () => {
+    reset();
+    const existing: EvalReportExporterRegistry = {
+      register: () => {},
+      unregister: () => {},
+      get: () => undefined,
+      require: () => {
+        throw new Error("not used");
+      },
+      list: () => [],
+      has: () => false,
+      export: () => Promise.resolve([]),
+    };
+    register(EvalReportExporterRegistryName, existing);
+
+    const registry = ensureBuiltinEvalReportExporterRegistry();
+
+    assertEquals(registry, existing);
   });
 });
 

@@ -7,6 +7,10 @@ import type {
 import { clearConfigCache, getConfig } from "#veryfront/config";
 import { type ExtensionLoader, orchestrateExtensions, tryResolve } from "veryfront/extensions";
 import {
+  createEvalReportExporterRegistry,
+  EvalReportExporterRegistryName,
+} from "#veryfront/extensions/eval/index.ts";
+import {
   createLLMProviderRegistry,
   LLMProviderRegistryName,
 } from "#veryfront/extensions/llm/index.ts";
@@ -135,6 +139,13 @@ function wireTracingShim(): void {
   } else {
     bootstrapLog.debug("[bootstrap] no TracingExporter extension — using no-op tracer");
   }
+}
+
+function createBootstrapPrimeContracts(): Record<string, unknown> {
+  return {
+    [LLMProviderRegistryName]: createLLMProviderRegistry(),
+    [EvalReportExporterRegistryName]: createEvalReportExporterRegistry(),
+  };
 }
 
 const DEFAULT_FILE_LOG_PATH = ".veryfront/logs/server.log";
@@ -294,7 +305,7 @@ export async function bootstrap(
         projectDir,
         config,
         logger: bootstrapLog,
-        primeContracts: { [LLMProviderRegistryName]: createLLMProviderRegistry() },
+        primeContracts: createBootstrapPrimeContracts(),
         builtinExtensions: createBuiltinExtensions(),
         setupTimeoutMs: getEnvironmentConfig().extensionSetupTimeoutMs,
       });
@@ -346,7 +357,7 @@ export async function bootstrap(
         projectDir,
         config,
         logger: bootstrapLog,
-        primeContracts: { [LLMProviderRegistryName]: createLLMProviderRegistry() },
+        primeContracts: createBootstrapPrimeContracts(),
         builtinExtensions: createBuiltinExtensions(),
         setupTimeoutMs: getEnvironmentConfig().extensionSetupTimeoutMs,
       });
@@ -420,7 +431,7 @@ export async function bootstrap(
           projectDir,
           config,
           logger: bootstrapLog,
-          primeContracts: { [LLMProviderRegistryName]: createLLMProviderRegistry() },
+          primeContracts: createBootstrapPrimeContracts(),
           builtinExtensions: createBuiltinExtensions(),
           setupTimeoutMs: getEnvironmentConfig().extensionSetupTimeoutMs,
         }),

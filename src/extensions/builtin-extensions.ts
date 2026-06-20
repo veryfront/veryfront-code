@@ -1,5 +1,7 @@
 import type { ResolvedExtension } from "./types.ts";
 import { register, tryResolve } from "./contracts.ts";
+import type { EvalReportExporterRegistry } from "./eval/index.ts";
+import { createEvalReportExporterRegistry, EvalReportExporterRegistryName } from "./eval/index.ts";
 import type { LLMProvider, LLMProviderRegistry } from "./llm/index.ts";
 import { createLLMProviderRegistry, LLMProviderRegistryName } from "./llm/index.ts";
 import { OpenAIProvider } from "../../extensions/ext-llm-openai/src/index.ts";
@@ -46,6 +48,15 @@ function getOrCreateLLMProviderRegistry(): LLMProviderRegistry {
 
   const registry = createLLMProviderRegistry();
   register(LLMProviderRegistryName, registry);
+  return registry;
+}
+
+export function ensureBuiltinEvalReportExporterRegistry(): EvalReportExporterRegistry {
+  const existing = tryResolve<EvalReportExporterRegistry>(EvalReportExporterRegistryName);
+  if (existing) return existing;
+
+  const registry = createEvalReportExporterRegistry();
+  register(EvalReportExporterRegistryName, registry);
   return registry;
 }
 

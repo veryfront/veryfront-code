@@ -34,3 +34,15 @@ feature. Use a normal project module for that.
 
 For implementation steps, see [Extensions](../guides/extensions.md) and
 [Author extensions](../guides/extension-authoring.md).
+
+## Eval export and observability
+
+Eval report export and runtime observability are separate extension surfaces.
+Use `veryfront/extensions/eval` when a project needs to send completed
+`EvalReport` payloads to an eval platform such as Braintrust, Langfuse, or
+LangSmith. Use `veryfront/extensions/observability` for runtime tracing,
+OpenTelemetry SDK setup, spans, and monitoring.
+
+Eval exporters receive redacted reports by default. Projects must explicitly
+allow inputs, outputs, references, traces, metric evidence, metric explanations,
+or record metadata before those fields leave the process.

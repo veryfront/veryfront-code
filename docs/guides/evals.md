@@ -188,6 +188,70 @@ for product-specific canaries that are not yet expressed as `evalAgent`
 definitions. Do not import `veryfront/agent/testing`; that legacy testing path
 is intentionally absent.
 
+## Export reports
+
+Use `veryfront/extensions/eval` when reports need to flow to an external eval
+platform. The registry supports multiple exporters, so Braintrust, Langfuse, and
+LangSmith exporters can coexist behind the same contract.
+Veryfront bootstrap seeds the registry for project extensions. Standalone
+scripts can create and register a local registry explicitly.
+
+```ts
+import { datasets, evalAgent, metrics, runEval } from "veryfront/eval";
+import {
+  createEvalReportExporterRegistry,
+  EvalReportExporterRegistryName,
+} from "veryfront/extensions/eval";
+import { register } from "veryfront/extensions/contracts";
+
+const registry = createEvalReportExporterRegistry();
+register(EvalReportExporterRegistryName, registry);
+
+registry.register({
+  id: "custom-eval-platform",
+  async export(report, context) {
+    await fetch("https://evals.example.com/reports", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ report, context }),
+    });
+  },
+});
+
+const definition = evalAgent({
+  target: "agent:support",
+  dataset: datasets.inline([
+    { id: "q1", input: "Capital of France?", reference: "Paris", metadata: { dataset: "smoke" } },
+  ]),
+  metrics: [metrics.answer.exactMatch().gate()],
+});
+
+const adapters = {
+  agent: async () => ({ text: "Paris", completed: true }),
+};
+
+const report = await runEval(definition, { adapters });
+const exportResults = await registry.export(report, {
+  projectReference: "support-agent",
+  sourcePath: "evals/support.ts",
+  redaction: {
+    includeInputs: false,
+    includeOutputs: false,
+    includeReferences: false,
+    includeTraces: false,
+    includeMetricEvidence: false,
+    includeMetricExplanations: false,
+    metadataAllowlist: ["dataset"],
+  },
+});
+```
+
+The registry redacts inputs, outputs, references, traces, metric evidence,
+metric explanations, and metadata unless the export context explicitly allows
+each field. Runtime monitoring remains separate: use
+`veryfront/extensions/observability` and the OpenTelemetry extension for spans,
+traces, metrics, and service monitoring.
+
 ## Discovery
 
 Eval files are discovered from `evals/`:
