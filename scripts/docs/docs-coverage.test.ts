@@ -2,8 +2,8 @@ import { assert, assertEquals, assertStringIncludes } from "#std/assert";
 import { collectDocsCoverage, formatDocsCoverage } from "./docs-coverage.ts";
 
 const API_DECLARATION_BASELINE = {
-  total: 3059,
-  withSourceLinks: 3059,
+  total: 3024,
+  withSourceLinks: 3024,
   withoutSourceLinks: 0,
 } as const;
 

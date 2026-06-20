@@ -28,6 +28,7 @@ import * as resourceMod from "#veryfront/resource";
 import * as embeddingMod from "#veryfront/embedding/index.ts";
 import * as workflowMod from "#veryfront/workflow";
 import * as workMod from "#veryfront/work";
+import * as evalMod from "#veryfront/eval";
 import * as schemasMod from "#veryfront/schemas";
 
 const transpileCache = new Map<string, unknown>();
@@ -50,6 +51,7 @@ async function ensureVeryfrontGlobals(): Promise<void> {
     "veryfront/embedding": embeddingMod,
     "veryfront/workflow": workflowMod,
     "veryfront/work": workMod,
+    "veryfront/eval": evalMod,
     "veryfront/schemas": schemasMod,
   } satisfies Record<(typeof DISCOVERY_GLOBAL_VERYFRONT_MODULES)[number], unknown>;
 

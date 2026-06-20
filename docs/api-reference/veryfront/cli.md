@@ -69,6 +69,7 @@ The CLI groups commands by category. Each command supports `--help` for its full
 
 | Command | Description |
 |---------|-------------|
+| `veryfront eval` | Discover and run eval definitions |
 | `veryfront issues` | File-based issue tracking (SDLC conventions) |
 | `veryfront mcp` | Start MCP server for coding agents |
 | `veryfront skills` | List and inspect available agent skills |

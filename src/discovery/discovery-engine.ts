@@ -20,6 +20,7 @@ import { findTypeScriptFiles } from "./file-discovery.ts";
 import {
   agentHandler,
   discoverSkills,
+  evalHandler,
   promptHandler,
   resourceHandler,
   taskHandler,
@@ -170,6 +171,7 @@ export async function discoverAll(config: DiscoveryConfig): Promise<DiscoveryRes
     workflows: new Map(),
     works: new Map(),
     tasks: new Map(),
+    evals: new Map(),
     errors: [],
   };
 
@@ -234,6 +236,11 @@ export async function discoverAll(config: DiscoveryConfig): Promise<DiscoveryRes
   // Discover tasks
   for (const dir of config.taskDirs ?? ["tasks"]) {
     await discoverItems(`${baseDir}/${dir}`, result, context, taskHandler, config.verbose);
+  }
+
+  // Discover eval definitions
+  for (const dir of config.evalDirs ?? ["evals"]) {
+    await discoverItems(`${baseDir}/${dir}`, result, context, evalHandler, config.verbose);
   }
 
   return result;

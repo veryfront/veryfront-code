@@ -12,6 +12,7 @@ import type { Tool } from "#veryfront/tool/types.ts";
 import type { WorkDefinition } from "#veryfront/work";
 import type { Workflow } from "#veryfront/workflow/types.ts";
 import type { TaskDefinition } from "#veryfront/task/types.ts";
+import type { EvalDefinition } from "#veryfront/eval";
 import type { Platform } from "#veryfront/platform/core-platform.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 
@@ -41,6 +42,7 @@ export interface DiscoveryConfig {
   workflowDirs?: string[];
   workDirs?: string[];
   taskDirs?: string[];
+  evalDirs?: string[];
   verbose?: boolean;
   fsAdapter?: FileSystemAdapter;
 }
@@ -57,6 +59,7 @@ export interface DiscoveryResult {
   workflows: Map<string, Workflow>;
   works: Map<string, WorkDefinition>;
   tasks: Map<string, TaskDefinition>;
+  evals: Map<string, EvalDefinition>;
   errors: Array<{ file: string; error: Error }>;
 }
 

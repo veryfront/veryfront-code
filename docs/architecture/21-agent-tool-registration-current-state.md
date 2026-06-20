@@ -99,7 +99,7 @@ adding them to `tools`. At review start, the behavior was not uniform:
   the skill platform tools into the agent's internal tools config using the old
   hyphenated runtime spelling.
 - The hosted runtime injects `load_skill` into its local host tool set and uses
-  `load_skill` in hosted steering, live eval, and child-agent paths.
+  `load_skill` in hosted steering, eval, and child-agent paths.
 
 So the expected user experience mostly existed at review start: public users configure
 `skills`, not `tools: { load_skill: true }`. The defect is the mixed runtime

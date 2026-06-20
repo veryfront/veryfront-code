@@ -1,0 +1,162 @@
+import "#veryfront/schemas/_test-setup.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import type { EvalReport } from "veryfront/eval";
+import {
+  createJunitXml,
+  normalizeEvalCliId,
+  normalizeEvalInputForAgent,
+  summarizeReportForCli,
+} from "./command.ts";
+import { parseEvalArgs } from "./handler.ts";
+
+function createReport(): EvalReport {
+  return {
+    kind: "eval-report",
+    runId: "evalrun_test",
+    definitionId: "eval:answers",
+    targetKind: "agent",
+    target: "agent:assistant",
+    startedAt: "2026-01-01T00:00:00.000Z",
+    endedAt: "2026-01-01T00:00:01.000Z",
+    summary: {
+      records: 2,
+      passed: 1,
+      failed: 1,
+      passRate: 0.5,
+      metrics: [
+        {
+          name: "answer.exactMatch",
+          family: "answer",
+          severity: "gate",
+          passed: 1,
+          failed: 1,
+          skipped: 0,
+          passRate: 0.5,
+        },
+      ],
+    },
+    records: [
+      {
+        id: "q1:1",
+        evalId: "eval:answers",
+        exampleId: "q1",
+        repetition: 1,
+        input: "capital",
+        output: { text: "Paris" },
+        reference: "Paris",
+        metadata: {},
+        trace: { events: [], toolCalls: [] },
+        usage: { totalTokens: 12 },
+        durationMs: 12,
+        completed: true,
+        metrics: [
+          {
+            name: "answer.exactMatch",
+            family: "answer",
+            severity: "gate",
+            score: 1,
+            pass: true,
+          },
+        ],
+        checks: [],
+      },
+      {
+        id: "q2:1",
+        evalId: "eval:answers",
+        exampleId: "q2",
+        repetition: 1,
+        input: "capital",
+        output: { text: "Lyon" },
+        reference: "Paris",
+        metadata: {},
+        trace: { events: [], toolCalls: [] },
+        usage: { totalTokens: 10 },
+        durationMs: 10,
+        completed: true,
+        metrics: [
+          {
+            name: "answer.exactMatch",
+            family: "answer",
+            severity: "gate",
+            score: 0,
+            pass: false,
+            explanation: "Expected Paris, got Lyon",
+          },
+        ],
+        checks: [],
+      },
+    ],
+  };
+}
+
+describe("eval CLI command helpers", () => {
+  it("parses eval command arguments", () => {
+    const parsed = parseEvalArgs({
+      _: ["eval", "deep-research"],
+      list: false,
+      "dataset-base": "fixtures",
+      report: "reports/eval.json",
+      junit: "reports/eval.xml",
+      debug: true,
+    });
+
+    assertEquals(parsed.success, true);
+    if (parsed.success) {
+      assertEquals(parsed.data.id, "deep-research");
+      assertEquals(parsed.data.datasetBase, "fixtures");
+      assertEquals(parsed.data.report, "reports/eval.json");
+      assertEquals(parsed.data.junit, "reports/eval.xml");
+      assertEquals(parsed.data.debug, true);
+    }
+  });
+
+  it("normalizes eval ids without requiring users to type the namespace", () => {
+    assertEquals(normalizeEvalCliId("deep-research"), "eval:deep-research");
+    assertEquals(normalizeEvalCliId("eval:deep-research"), "eval:deep-research");
+  });
+
+  it("normalizes structured eval inputs into agent prompts", () => {
+    assertEquals(normalizeEvalInputForAgent("hello"), "hello");
+    assertEquals(normalizeEvalInputForAgent({ prompt: "Write a summary" }), "Write a summary");
+    assertEquals(
+      normalizeEvalInputForAgent({ question: "What changed?", context: "diff" }),
+      "What changed?",
+    );
+    assertEquals(normalizeEvalInputForAgent({ custom: true }), '{"custom":true}');
+  });
+
+  it("summarizes reports for JSON and human CLI output", () => {
+    assertEquals(summarizeReportForCli(createReport()), {
+      runId: "evalrun_test",
+      evalId: "eval:answers",
+      target: "agent:assistant",
+      records: 2,
+      passed: 1,
+      failed: 1,
+      passRate: 0.5,
+      metrics: [
+        {
+          name: "answer.exactMatch",
+          family: "answer",
+          severity: "gate",
+          passed: 1,
+          failed: 1,
+          skipped: 0,
+          passRate: 0.5,
+        },
+      ],
+    });
+  });
+
+  it("serializes eval reports to JUnit XML", () => {
+    const xml = createJunitXml(createReport());
+
+    assertStringIncludes(xml, '<testsuite name="eval:answers" tests="2" failures="1" skipped="0">');
+    assertStringIncludes(xml, '<testcase classname="eval:answers" name="q1#1" time="0.012" />');
+    assertStringIncludes(
+      xml,
+      '<failure message="answer.exactMatch failed">Expected Paris, got Lyon</failure>',
+    );
+  });
+});

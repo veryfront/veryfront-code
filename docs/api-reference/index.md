@@ -15,6 +15,7 @@ order: 1
 | [`veryfront/cli`](./veryfront/cli.md) | CLI runtime helpers. |
 | [`veryfront/context`](./veryfront/context.md) | Page context. |
 | [`veryfront/embedding`](./veryfront/embedding.md) | Embedding and retrieval helpers. |
+| [`veryfront/eval`](./veryfront/eval.md) | First-class eval primitives for agent quality checks. |
 | [`veryfront/extensions`](./veryfront/extensions.md) | Extension contracts and loader helpers. |
 | [`veryfront/fonts`](./veryfront/fonts.md) | Font components. |
 | [`veryfront/fs`](./veryfront/fs.md) | Filesystem and path utilities. |

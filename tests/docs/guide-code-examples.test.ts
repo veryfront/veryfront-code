@@ -28,6 +28,7 @@ import {
 } from "../../src/chat/index.ts";
 import { createUploadHandler, ragStore, useUploads } from "../../src/embedding/index.ts";
 import { defineConfig } from "../../src/config/index.ts";
+import { datasets, evalAgent, metrics, runEval } from "../../src/eval/index.ts";
 import {
   type ExtensionFactory,
   ExtensionLoader,
@@ -76,6 +77,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "coding-agents.md",
   "create-agent.md",
   "deploying.md",
+  "evals.md",
   "extension-authoring.md",
   "extensions.md",
   "head-and-seo.md",
@@ -94,6 +96,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "tasks.md",
   "work.md",
   "workflows-advanced.md",
+  "eval.md",
 ] as const;
 
 const GUIDE_CODE_EXAMPLE_COVERAGE = new Set<string>([
@@ -835,5 +838,43 @@ describe("Guide: tasks.md", () => {
 
     assertStringIncludes(guide, "veryfront task sync-data");
     assertEquals(guide.includes("veryfront task --list"), false);
+  });
+});
+
+describe("Guide: evals.md", () => {
+  it("defines and runs a portable eval without a provider call", async () => {
+    const deepResearchEval = evalAgent({
+      name: "Deep research answer quality",
+      target: "agent:researcher",
+      dataset: datasets.inline([
+        {
+          id: "capital-france",
+          input: { question: "What is the capital of France?" },
+          reference: "Paris",
+          metadata: { split: "smoke" },
+        },
+      ]),
+      metrics: [
+        metrics.answer.contains({ text: "Paris" }).gate(),
+        metrics.agent.noFailedTools().gate(),
+        metrics.ops.tokens({ maxTotal: 4_000 }).budget(),
+      ],
+    });
+
+    const report = await runEval(deepResearchEval, {
+      adapters: {
+        agent: async ({ example }) => ({
+          text: String(example.reference),
+          finishReason: "stop",
+          usage: { totalTokens: 64 },
+          toolCalls: [],
+        }),
+      },
+    });
+
+    assertEquals(deepResearchEval.kind, "eval");
+    assertEquals(deepResearchEval.target, "agent:researcher");
+    assertEquals(report.summary.failed, 0);
+    assertEquals(report.summary.records, 1);
   });
 });

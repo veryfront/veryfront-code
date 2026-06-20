@@ -1,0 +1,67 @@
+import "#veryfront/schemas/_test-setup.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { datasets, evalAgent, metrics, runEval } from "veryfront/eval";
+
+describe("eval/runner", () => {
+  it("runs an agent eval and summarizes metric results", async () => {
+    const definition = evalAgent({
+      id: "eval:capital-answer",
+      target: "agent:researcher",
+      dataset: datasets.inline([
+        { id: "q1", input: "France capital?", reference: "Paris" },
+        { id: "q2", input: "Germany capital?", reference: "Berlin" },
+      ]),
+      metrics: [metrics.answer.exactMatch().gate()],
+    });
+
+    const report = await runEval(definition, {
+      adapters: {
+        agent: async ({ example }) => ({ text: example.reference as string }),
+      },
+    });
+
+    assertEquals(report.kind, "eval-report");
+    assertEquals(report.definitionId, "eval:capital-answer");
+    assertEquals(report.target, "agent:researcher");
+    assertEquals(report.summary.records, 2);
+    assertEquals(report.summary.passed, 2);
+    assertEquals(report.summary.failed, 0);
+    assertEquals(report.summary.passRate, 1);
+    assertEquals(report.summary.metrics, [
+      {
+        name: "answer.exactMatch",
+        family: "answer",
+        severity: "gate",
+        passed: 2,
+        failed: 0,
+        skipped: 0,
+        passRate: 1,
+      },
+    ]);
+  });
+
+  it("records check assertions alongside metric results", async () => {
+    const definition = evalAgent({
+      id: "eval:check-api",
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "France capital?", reference: "Paris" }]),
+      check(ctx) {
+        ctx.expect.completed().gate();
+        ctx.expect.outputContains("Paris").gate();
+      },
+    });
+
+    const report = await runEval(definition, {
+      adapters: {
+        agent: async () => ({ text: "Paris" }),
+      },
+    });
+
+    assertEquals(report.records[0]?.checks.map((check) => check.name), [
+      "expect.completed",
+      "expect.outputContains",
+    ]);
+    assertEquals(report.summary.passed, 1);
+  });
+});

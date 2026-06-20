@@ -55,11 +55,11 @@ interface ExportEntry {
 }
 
 interface DeepImport {
-  /** e.g. "./agent/testing" or "./channels/control-plane" */
+  /** e.g. "./eval" or "./channels/control-plane" */
   exportPath: string;
-  /** e.g. "veryfront/agent/testing" */
+  /** e.g. "veryfront/eval" */
   importPath: string;
-  /** Sub-path under the parent, e.g. "testing" or "claude-code/react" */
+  /** Sub-path under the parent, e.g. "eval" or "claude-code/react" */
   subSlug: string;
   /** Relative TS file path */
   filePath: string;

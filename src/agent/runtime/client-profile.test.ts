@@ -18,7 +18,14 @@ Deno.test("resolveRuntimeClientProfile normalizes nested Veryfront client metada
       id: "veryfront-studio",
       type: "web",
       trusted: true,
-      capabilities: ["ui_panels", "form_input", "media_display", "project_switching"],
+      capabilities: [
+        "ui_panels",
+        "form_input",
+        "media_display",
+        "project_switching",
+        "project.evals.read",
+        "project.evals.write",
+      ],
     },
   );
 });
@@ -64,7 +71,14 @@ Deno.test("clientAllowsStudioMcp allows trusted studio-capable clients", () => {
     id: "veryfront-studio",
     type: "web",
     trusted: true,
-    capabilities: ["ui_panels", "form_input", "media_display", "project_switching"],
+    capabilities: [
+      "ui_panels",
+      "form_input",
+      "media_display",
+      "project_switching",
+      "project.evals.read",
+      "project.evals.write",
+    ],
   });
   assertEquals(clientAllowsStudioMcp(profile), true);
 });
