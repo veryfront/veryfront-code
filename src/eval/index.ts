@@ -1,0 +1,78 @@
+/**
+ * First-class eval primitives for agent quality checks.
+ *
+ * @module eval
+ *
+ * @example
+ * ```ts
+ * import { datasets, evalAgent, metrics } from "veryfront/eval";
+ *
+ * export default evalAgent({
+ *   target: "agent:researcher",
+ *   dataset: datasets.inline([
+ *     { id: "q1", input: "Capital of France?", reference: "Paris" },
+ *   ]),
+ *   metrics: [
+ *     metrics.answer.contains({ text: "Paris" }).gate(),
+ *     metrics.agent.noFailedTools().gate(),
+ *   ],
+ * });
+ * ```
+ */
+
+export { datasets } from "./datasets.ts";
+export { evalAgent, isEvalDefinition } from "./factory.ts";
+export { metrics } from "./metrics.ts";
+export { createEvalReport, summarizeEvalRecords } from "./report.ts";
+export { runEval } from "./runner.ts";
+export { deriveEvalId, discoverEvals, findEvalById } from "./discovery.ts";
+export {
+  createEvalSourceDocument,
+  getEvalEditableFieldSchema,
+  getEvalRunSchema,
+  getEvalSourceDocumentSchema,
+  getEvalSourcePatchSchema,
+  getEvalSourceReferenceSchema,
+  getEvalStudioCapabilitySchema,
+} from "./studio.ts";
+
+export type { DiscoveredEval, EvalDiscoveryOptions, EvalDiscoveryResult } from "./discovery.ts";
+export type {
+  EvalAgentAdapter,
+  EvalAgentAdapterContext,
+  EvalAgentAdapterResult,
+  EvalAgentInput,
+  EvalCheckContext,
+  EvalDataset,
+  EvalDatasetLoadContext,
+  EvalDefinition,
+  EvalExample,
+  EvalExampleInput,
+  EvalExpect,
+  EvalExpectation,
+  EvalMetric,
+  EvalMetricContext,
+  EvalMetricFamily,
+  EvalMetricResult,
+  EvalMetricSummary,
+  EvalMetricThreshold,
+  EvalRecord,
+  EvalReport,
+  EvalReportSummary,
+  EvalSeverity,
+  EvalSource,
+  EvalTargetKind,
+  EvalToolCall,
+  EvalTrace,
+  EvalUsage,
+  RunEvalOptions,
+} from "./types.ts";
+export type {
+  CreateEvalSourceDocumentOptions,
+  EvalEditableField,
+  EvalRun,
+  EvalSourceDocument,
+  EvalSourcePatch,
+  EvalSourceReference,
+  EvalStudioCapability,
+} from "./studio.ts";

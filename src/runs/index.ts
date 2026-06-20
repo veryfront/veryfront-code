@@ -1,5 +1,5 @@
 /**
- * Canonical durable runs for task and workflow execution.
+ * Canonical durable runs for task, workflow, and eval execution.
  *
  * @module
  *

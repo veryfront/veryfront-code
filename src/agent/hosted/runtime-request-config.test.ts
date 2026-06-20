@@ -111,7 +111,14 @@ Deno.test("resolveHostedRuntimeRequestConfig resolves overrides, thinking, max s
     id: "veryfront-studio",
     type: "web",
     trusted: true,
-    capabilities: ["ui_panels", "form_input", "media_display", "project_switching"],
+    capabilities: [
+      "ui_panels",
+      "form_input",
+      "media_display",
+      "project_switching",
+      "project.evals.read",
+      "project.evals.write",
+    ],
   });
 });
 

@@ -11,6 +11,7 @@ export const DEFAULT_PROJECT_DISCOVERY_DIRS = {
   workflowDirs: ["workflows"],
   workDirs: ["work"],
   taskDirs: ["tasks"],
+  evalDirs: ["evals"],
 };
 
 type DiscoverySettings = {
@@ -34,6 +35,7 @@ export type ProjectDiscoveryConfig = DiscoveryConfig & {
   workflowDirs: string[];
   workDirs: string[];
   taskDirs: string[];
+  evalDirs: string[];
 };
 
 function isDiscoveryEnabled(discovery: DiscoverySettings | undefined): boolean {
@@ -88,6 +90,10 @@ export function createProjectDiscoveryConfig(
     taskDirs: resolveDiscoveryPaths(
       aiConfig?.tasks?.discovery,
       DEFAULT_PROJECT_DISCOVERY_DIRS.taskDirs,
+    ),
+    evalDirs: resolveDiscoveryPaths(
+      aiConfig?.evals?.discovery,
+      DEFAULT_PROJECT_DISCOVERY_DIRS.evalDirs,
     ),
     fsAdapter: input.fsAdapter,
     verbose: input.verbose ?? false,

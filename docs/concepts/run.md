@@ -1,6 +1,6 @@
 ---
 title: "Run"
-description: "How runs execute tasks and workflows durably."
+description: "How runs execute tasks, workflows, and evals durably."
 order: 25
 ---
 
@@ -25,7 +25,7 @@ failed, or cancelled.
 The target defines what work is done. The run records that the work ran.
 
 Use a run when work needs to outlive an HTTP request or continue after the caller
-disconnects. A run can execute a task or workflow target.
+disconnects. A run can execute a task, workflow, or eval target.
 
 ## Wrong fit
 

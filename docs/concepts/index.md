@@ -21,6 +21,7 @@ clear.
 | [Skill](./skill.md)                                 | How skills package reusable agent instructions.            |
 | [Prompt](./prompt.md)                               | Reusable instruction templates for MCP.                    |
 | [Resource](./resource.md)                           | Read-only context exposed through MCP.                     |
+| [Eval](./eval.md)                                   | Repeatable quality checks for agents.                      |
 | [Work](./work.md)                                   | Business process outcomes and criteria.                    |
 | [Task](./task.md)                                   | Background work before it becomes a run.                   |
 | [Workflow](./workflow.md)                           | Multi-step work with visible process state.                |

@@ -17,6 +17,7 @@ const CONCEPT_FILES = new Set<string>([
   "concepts/tool.md",
   "concepts/workflow.md",
   "concepts/task.md",
+  "concepts/eval.md",
   "concepts/run.md",
   "concepts/schedule.md",
   "concepts/prompt.md",
@@ -159,12 +160,14 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "../api-reference/veryfront/mcp.md",
       "../api-reference/veryfront/sandbox.md",
       "../api-reference/veryfront/extensions.md",
+      "../api-reference/veryfront/eval.md",
     ],
     snippets: [
       "Agent",
       "Tool",
       "Workflow",
       "Task",
+      "Eval",
       "Run",
       "Integration",
       "MCP",
@@ -237,6 +240,20 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     references: ["../api-reference/veryfront/extensions.md"],
     snippets: ["defineConfig", "extRedis", "First-party extension areas"],
   },
+  "guides/evals.md": {
+    references: ["../api-reference/veryfront/eval.md"],
+    snippets: [
+      "evalAgent",
+      "datasets.inline",
+      "metrics.answer.contains",
+      "metrics.agent.noFailedTools",
+      "createEvalSourceDocument",
+      "veryfront eval deep-research",
+      "--junit",
+      "project.evals.read",
+      "project.evals.write",
+    ],
+  },
   "guides/head-and-seo.md": {
     references: [
       "../api-reference/veryfront/head.md",
@@ -297,6 +314,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     references: [
       "../guides/choose-a-primitive.md",
       "../api-reference/veryfront/agent.md",
+      "../api-reference/veryfront/eval.md",
     ],
     snippets: [
       "App",
@@ -304,6 +322,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "Tool",
       "Workflow",
       "Task",
+      "Eval",
       "Run",
       "Schedule",
       "Prompt",
@@ -360,12 +379,27 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     ],
     snippets: ["background work", "target", "run"],
   },
+  "concepts/eval.md": {
+    references: [
+      "../guides/evals.md",
+      "../api-reference/veryfront/eval.md",
+    ],
+    snippets: [
+      "repeatable quality check",
+      "dataset",
+      "metrics",
+      "eval run",
+      "report",
+      "createEvalSourceDocument",
+      "Studio integration",
+    ],
+  },
   "concepts/run.md": {
     references: [
       "../guides/runs.md",
       "../api-reference/veryfront/runs.md",
     ],
-    snippets: ["durable execution", "status", "events"],
+    snippets: ["durable execution", "status", "events", "eval target"],
   },
   "concepts/schedule.md": {
     references: [
@@ -441,6 +475,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     snippets: [
       "createRunsClient",
       "task:knowledge-ingest",
+      "eval:deep-research",
       "runs.events",
     ],
   },

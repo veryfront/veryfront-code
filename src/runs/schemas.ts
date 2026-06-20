@@ -1,7 +1,9 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
-export const getRunKindSchema = defineSchema((v) => v.enum(["agent", "workflow", "task"] as const));
+export const getRunKindSchema = defineSchema((v) =>
+  v.enum(["agent", "workflow", "task", "eval"] as const)
+);
 
 export const getRunStatusSchema = defineSchema((v) =>
   v.enum(["pending", "running", "waiting", "completed", "failed", "cancelled"] as const)

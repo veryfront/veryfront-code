@@ -33,6 +33,7 @@ import { handleStudioCommand } from "./commands/studio/handler.ts";
 import { handleStylesCommand } from "./commands/styles/handler.ts";
 import { handleUpCommand } from "./commands/up/index.ts";
 import { handleTaskCommand } from "./commands/task/handler.ts";
+import { handleEvalCommand } from "./commands/eval/handler.ts";
 import { handleWorkflowCommand } from "./commands/workflow/handler.ts";
 import { handleWorkerCommand } from "./commands/worker/handler.ts";
 import { handleSchemaCommand } from "./commands/schema/handler.ts";
@@ -125,6 +126,7 @@ const commands: Record<string, (args: ParsedArgs) => Promise<void>> = {
   "issues": handleIssuesCommand,
   "start": handleStartCommand,
   "task": handleTaskCommand,
+  "eval": handleEvalCommand,
   "workflow": handleWorkflowCommand,
   "worker": handleWorkerCommand,
   "schema": handleSchemaCommand,

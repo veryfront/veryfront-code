@@ -57,7 +57,6 @@ function shouldSkip(path: string): boolean {
     path.includes("/agent/react/") ||
     path.includes("/embedding/react/") ||
     // Test utilities
-    path.includes("/agent/testing/agent-tester.ts") ||
     path.includes("/testing/isolation.ts") ||
     path.includes("/_smoke-test.ts")
   );

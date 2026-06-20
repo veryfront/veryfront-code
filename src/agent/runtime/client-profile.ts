@@ -13,6 +13,8 @@ export const getRuntimeClientCapabilitySchema = defineSchema((v) =>
     "form_input",
     "media_display",
     "project_switching",
+    "project.evals.read",
+    "project.evals.write",
   ])
 );
 
@@ -76,7 +78,14 @@ type FirstPartyClientProfile = {
 const FIRST_PARTY_CLIENTS: Readonly<Record<string, FirstPartyClientProfile>> = {
   "veryfront-studio": {
     type: "web",
-    capabilities: ["ui_panels", "form_input", "media_display", "project_switching"],
+    capabilities: [
+      "ui_panels",
+      "form_input",
+      "media_display",
+      "project_switching",
+      "project.evals.read",
+      "project.evals.write",
+    ],
   },
   "veryfront-cli": {
     type: "cli",

@@ -1,16 +1,18 @@
 ---
 title: "Runs"
-description: "Run project-scoped task and workflow definitions through the Veryfront platform."
+description: "Run project-scoped task, workflow, and eval definitions through the Veryfront platform."
 order: 31
 ---
 
-Veryfront runs are durable, project-scoped executions. Tasks and workflows are
-definitions. A run is what executes one of those definitions.
+Veryfront runs are durable, project-scoped executions. Tasks, workflows, and
+evals are definitions. A run is what executes one of those definitions.
 
 - A **task run** executes a `task:<task-id>` target.
 - A **workflow run** executes a `workflow:<workflow-id>` target.
+- An **eval run** executes an `eval:<eval-id>` target.
 - A **target** names the capability being executed, for example
-  `task:knowledge-ingest` or `workflow:content-pipeline`.
+  `task:knowledge-ingest`, `workflow:content-pipeline`, or
+  `eval:deep-research`.
 - **events** are the canonical user-visible output stream.
 - The run record stores the terminal execution shape directly: `target`,
   `input`, `config`, `output`, `error`, `logs`, `artifacts`, `duration_ms`,
@@ -22,11 +24,12 @@ definitions. A run is what executes one of those definitions.
 - A Veryfront Cloud project and a `VERYFRONT_API_TOKEN`. Set
   `VERYFRONT_PROJECT_ID` or `VERYFRONT_PROJECT_SLUG` to identify the project
   (see [Configuration](./configuration.md)).
-- A task or workflow definition the run should execute.
+- A task, workflow, or eval definition the run should execute.
 
 ## Setup
 
-Use the runs SDK for one-off task and workflow execution:
+Use the runs SDK for one-off task and workflow execution. Eval runs share the
+same durable run record shape when the eval execution API is used:
 
 ```ts
 import { createRunsClient } from "veryfront/runs";

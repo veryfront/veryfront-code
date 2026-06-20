@@ -1,7 +1,7 @@
 ---
 title: "veryfront/work"
 description: "Declare source-backed Work definitions for business process observability."
-order: 29
+order: 30
 ---
 
 ## Import
@@ -34,13 +34,13 @@ export default work({
 
 Create a typed Work definition.
 
-| Property              | Type                | Description                                                   | Source                                                                                |
-| --------------------- | ------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `id`                  | `string`            | Stable project-local Work identifier.                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/work/types.ts#L21) |
-| `name?`               | `string`            | Human-readable display name. Defaults to the id when omitted. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/work/types.ts#L23) |
-| `outcome`             | `string`            | Business outcome the execution layer should make true.        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/work/types.ts#L25) |
-| `expectations?`       | `WorkExpectation[]` | Expectations tracked as business process state.               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/work/types.ts#L27) |
-| `acceptanceCriteria?` | `WorkExpectation[]` | Deprecated alias for expectations                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/work/types.ts#L29) |
+| Property | Type | Description | Source |
+|----------|------|-------------|--------|
+| `id` | `string` | Stable project-local Work identifier. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/work/types.ts#L20) |
+| `name?` | `string` | Human-readable display name. Defaults to the id when omitted. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/work/types.ts#L22) |
+| `outcome` | `string` | Business outcome the execution layer should make true. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/work/types.ts#L24) |
+| `expectations?` | `WorkExpectation[]` | Expectations tracked as business process state. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/work/types.ts#L26) |
+| `acceptanceCriteria?` | `WorkExpectation[]` | Deprecated alias for expectations | [source](https://github.com/veryfront/veryfront-code/blob/main/src/work/types.ts#L28) |
 
 **Returns:** `WorkDefinition`
 
@@ -50,32 +50,32 @@ Create a typed Work definition.
 
 One measurable expectation for a Work definition.
 
-| Property      | Type     | Description                                                      | Source                                                                               |
-| ------------- | -------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `id`          | `string` | Stable identifier used by execution state and cloud persistence. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/work/types.ts#L4) |
-| `description` | `string` | Human-readable condition that must be satisfied unless optional. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/work/types.ts#L6) |
-| `optional?`   | `true`   | Optional expectations do not block Work execution completion.    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/work/types.ts#L8) |
+| Property | Type | Description | Source |
+|----------|------|-------------|--------|
+| `id` | `string` | Stable identifier used by execution state and cloud persistence. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/work/types.ts#L3) |
+| `description` | `string` | Human-readable condition that must be satisfied unless optional. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/work/types.ts#L5) |
+| `optional?` | `true` | Optional expectations do not block Work execution completion. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/work/types.ts#L7) |
 
 ## Exports
 
 ### Functions
 
-| Name   | Description                     | Source                                                                                 |
-| ------ | ------------------------------- | -------------------------------------------------------------------------------------- |
-| `work` | Create a typed Work definition. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/work/factory.ts#L5) |
+| Name | Description | Source |
+|------|-------------|--------|
+| `work` | Create a typed Work definition. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/work/factory.ts#L4) |
 
 ### Types
 
-| Name                      | Description                                       | Source                                                                                |
-| ------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `WorkAcceptanceCriterion` | Deprecated alias for WorkExpectation.             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/work/types.ts#L16) |
-| `WorkConfig`              | Configuration used by work().                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/work/types.ts#L19) |
-| `WorkDefinition`          | Public API contract for Work definitions.         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/work/types.ts#L33) |
-| `WorkExpectation`         | One measurable expectation for a Work definition. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/work/types.ts#L2)  |
-| `WorkReference`           | Agent-level reference to source-declared Work.    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/work/types.ts#L43) |
+| Name | Description | Source |
+|------|-------------|--------|
+| `WorkAcceptanceCriterion` | Deprecated alias for WorkExpectation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/work/types.ts#L15) |
+| `WorkConfig` | Configuration used by work(). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/work/types.ts#L18) |
+| `WorkDefinition` | Public API contract for Work definitions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/work/types.ts#L32) |
+| `WorkExpectation` | One measurable expectation for a Work definition. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/work/types.ts#L1) |
+| `WorkReference` | Agent-level reference to source-declared Work. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/work/types.ts#L42) |
 
 ### Constants
 
-| Name           | Description                 | Source                                                                                   |
-| -------------- | --------------------------- | ---------------------------------------------------------------------------------------- |
-| `workRegistry` | Shared Work registry value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/work/registry.ts#L30) |
+| Name | Description | Source |
+|------|-------------|--------|
+| `workRegistry` | Shared Work registry value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/work/registry.ts#L29) |

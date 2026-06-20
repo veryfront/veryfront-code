@@ -1,6 +1,6 @@
 ---
 title: "Framework primitives"
-description: "How Veryfront Code apps, agents, tools, skills, prompts, resources, tasks, workflows, runs, integrations, MCP, sandbox, and extensions fit together."
+description: "How Veryfront Code apps, agents, tools, skills, prompts, resources, evals, tasks, workflows, runs, integrations, MCP, sandbox, and extensions fit together."
 order: 2
 ---
 
@@ -21,6 +21,7 @@ that explains the work clearly.
 | [Skill](./skill.md)                     | Reusable agent instructions and tool policy.    |
 | [Prompt](./prompt.md)                   | Reusable instruction templates.                 |
 | [Resource](./resource.md)               | Readable project data for MCP.                  |
+| [Eval](./eval.md)                       | Repeatable quality checks for agents.           |
 | [Work](./work.md)                       | Business process outcomes and criteria.         |
 | [Task](./task.md)                       | A background work target.                       |
 | [Workflow](./workflow.md)               | Multi-step coordination.                        |
@@ -42,8 +43,8 @@ user-facing decision. A skill can give the agent task-specific instructions.
 
 This keeps the project understandable. The app owns entry points. Agents own
 model decisions. Tools own deterministic actions. Work owns business process
-state. Workflows own automation logic. Runs own durable execution. Extensions
-own replaceable runtime infrastructure.
+state. Evals own quality measurement. Workflows own automation logic. Runs own
+durable execution. Extensions own replaceable runtime infrastructure.
 
 For task-focused selection, see [Choose a primitive](../guides/choose-a-primitive.md).
 For exact agent runtime APIs, see
