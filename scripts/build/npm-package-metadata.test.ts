@@ -149,9 +149,12 @@ describe("npm supply-chain policy", () => {
 	it("exports agent-service evals without legacy agent testing", async () => {
 		const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
 		const exports = denoConfig.exports as Record<string, string>;
+		const imports = denoConfig.imports as Record<string, string>;
 
 		assertEquals(exports["./eval/agent-service"], "./src/eval/agent-service.ts");
+		assertEquals(imports["veryfront/eval/agent-service"], "./src/eval/agent-service.ts");
 		assertEquals(exports["./agent/testing"], undefined);
+		assertEquals(imports["veryfront/agent/testing"], undefined);
 	});
 
 	it("keeps browser-safe export patches aligned to public exports", async () => {
