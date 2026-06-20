@@ -383,30 +383,54 @@
                 "name": "key"
               },
               {
-                "name": "summary"
-              },
-              {
-                "name": "status",
+                "name": "fields",
                 "kind": "object"
               },
               {
+                "name": "summary",
+                "path": [
+                  "fields",
+                  "summary"
+                ]
+              },
+              {
+                "name": "status",
+                "kind": "object",
+                "path": [
+                  "fields",
+                  "status"
+                ]
+              },
+              {
                 "name": "assignee",
-                "kind": "contact"
+                "kind": "contact",
+                "path": [
+                  "fields",
+                  "assignee"
+                ]
               },
               {
-                "name": "created"
+                "name": "created",
+                "path": [
+                  "fields",
+                  "created"
+                ]
               },
               {
-                "name": "updated"
+                "name": "updated",
+                "path": [
+                  "fields",
+                  "updated"
+                ]
               }
             ],
             "omitted": "issue descriptions, comments, changelog, and provider-specific payload fields",
             "outputFields": [
               {
-                "name": "total"
+                "name": "nextPageToken"
               },
               {
-                "name": "startAt"
+                "name": "isLast"
               },
               {
                 "name": "maxResults"
@@ -692,8 +716,7 @@
           "query": {
             "type": "string",
             "in": "query",
-            "description": "Matches against display name and email address",
-            "required": true
+            "description": "Matches against display name and email address; pass an empty string to list users"
           },
           "maxResults": {
             "type": "number",

@@ -95,6 +95,10 @@
                 "name": "full_name"
               },
               {
+                "name": "description",
+                "maxLength": 300
+              },
+              {
                 "name": "owner",
                 "kind": "contact"
               },
@@ -103,6 +107,18 @@
               },
               {
                 "name": "private"
+              },
+              {
+                "name": "visibility"
+              },
+              {
+                "name": "language"
+              },
+              {
+                "name": "stargazers_count"
+              },
+              {
+                "name": "fork"
               },
               {
                 "name": "archived"
@@ -120,7 +136,7 @@
                 "name": "pushed_at"
               }
             ],
-            "omitted": "repository descriptions and provider-specific payload fields"
+            "omitted": "provider-specific repository payload fields"
           }
         }
       }
@@ -227,10 +243,30 @@
                 "name": "title"
               },
               {
+                "name": "body",
+                "maxLength": 500
+              },
+              {
                 "name": "state"
               },
               {
                 "name": "html_url"
+              },
+              {
+                "name": "head",
+                "kind": "object"
+              },
+              {
+                "name": "base",
+                "kind": "object"
+              },
+              {
+                "name": "labels",
+                "kind": "named-array"
+              },
+              {
+                "name": "requested_reviewers",
+                "kind": "contact-array"
               },
               {
                 "name": "user",
@@ -252,7 +288,7 @@
                 "name": "draft"
               }
             ],
-            "omitted": "pull request bodies, diff details, and provider-specific payload fields"
+            "omitted": "pull request diffs and provider-specific payload fields"
           }
         }
       }
@@ -345,7 +381,7 @@
         "type": "graphql",
         "method": "POST",
         "url": "https://api.github.com/graphql",
-        "query": "query($owner: String!, $repo: String!, $first: Int, $states: [IssueState!]) { repository(owner: $owner, name: $repo) { issues(first: $first, states: $states, orderBy: { field: UPDATED_AT, direction: DESC }) { nodes { id number title body state url createdAt updatedAt author { login } labels(first: 10) { nodes { name } } assignees(first: 10) { nodes { login } } } pageInfo { hasNextPage endCursor } } } }",
+        "query": "query($owner: String!, $repo: String!, $first: Int, $after: String, $states: [IssueState!]) { repository(owner: $owner, name: $repo) { issues(first: $first, after: $after, states: $states, orderBy: { field: UPDATED_AT, direction: DESC }) { nodes { id number title body state url createdAt updatedAt author { login } labels(first: 10) { totalCount nodes { name } } assignees(first: 10) { totalCount nodes { login } } } pageInfo { hasNextPage endCursor } } } }",
         "params": {
           "owner": {
             "type": "string",
@@ -372,6 +408,11 @@
             "in": "body",
             "description": "Results per page",
             "default": 30
+          },
+          "after": {
+            "type": "string",
+            "in": "body",
+            "description": "Pagination cursor from pageInfo.endCursor"
           }
         },
         "response": {
@@ -397,6 +438,10 @@
                 "name": "title"
               },
               {
+                "name": "body",
+                "maxLength": 500
+              },
+              {
                 "name": "state"
               },
               {
@@ -404,6 +449,14 @@
               },
               {
                 "name": "html_url"
+              },
+              {
+                "name": "labels",
+                "kind": "object"
+              },
+              {
+                "name": "assignees",
+                "kind": "object"
               },
               {
                 "name": "author",
@@ -432,7 +485,7 @@
                 "kind": "object"
               }
             ],
-            "omitted": "issue bodies, comments, and provider-specific payload fields"
+            "omitted": "issue comments, timeline, and provider-specific payload fields"
           }
         }
       }
@@ -486,6 +539,10 @@
                 "name": "title"
               },
               {
+                "name": "body",
+                "maxLength": 2000
+              },
+              {
                 "name": "state"
               },
               {
@@ -519,7 +576,7 @@
               }
             ],
             "singleItem": true,
-            "omitted": "issue body, comments, timeline, and provider-specific payload fields"
+            "omitted": "issue comments, timeline, and provider-specific payload fields"
           }
         }
       }
@@ -662,6 +719,10 @@
                 "name": "title"
               },
               {
+                "name": "body",
+                "maxLength": 2000
+              },
+              {
                 "name": "state"
               },
               {
@@ -704,7 +765,7 @@
               }
             ],
             "singleItem": true,
-            "omitted": "pull request body, diff, reviews, and provider-specific payload fields"
+            "omitted": "pull request diff, reviews, and provider-specific payload fields"
           }
         }
       }
@@ -865,6 +926,10 @@
                 "name": "html_url"
               },
               {
+                "name": "commit",
+                "kind": "object"
+              },
+              {
                 "name": "author",
                 "kind": "contact"
               },
@@ -873,7 +938,7 @@
                 "kind": "contact"
               }
             ],
-            "omitted": "full commit messages, verification payloads, and file details"
+            "omitted": "commit verification payloads and file details"
           }
         }
       }

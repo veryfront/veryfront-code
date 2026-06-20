@@ -55,7 +55,33 @@
         "method": "GET",
         "url": "https://api.atlassian.com/oauth/token/accessible-resources",
         "response": {
-          "transform": ""
+          "transform": "",
+          "historicalSummary": {
+            "collectionKeys": [
+              "sites",
+              "data"
+            ],
+            "collectionName": "sites",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "url"
+              },
+              {
+                "name": "scopes",
+                "kind": "string-array"
+              },
+              {
+                "name": "avatarUrl"
+              }
+            ],
+            "omitted": "provider-specific accessible resource payload fields"
+          }
         }
       }
     },
@@ -100,7 +126,61 @@
           }
         },
         "response": {
-          "transform": "results"
+          "transform": "results",
+          "historicalSummary": {
+            "collectionKeys": [
+              "results",
+              "content",
+              "data"
+            ],
+            "collectionName": "content",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "type"
+              },
+              {
+                "name": "status"
+              },
+              {
+                "name": "title"
+              },
+              {
+                "name": "excerpt",
+                "maxLength": 300
+              },
+              {
+                "name": "space",
+                "kind": "object"
+              },
+              {
+                "name": "version",
+                "kind": "object"
+              },
+              {
+                "name": "_links",
+                "kind": "object"
+              }
+            ],
+            "outputFields": [
+              {
+                "name": "size"
+              },
+              {
+                "name": "limit"
+              },
+              {
+                "name": "start"
+              },
+              {
+                "name": "_links",
+                "kind": "object"
+              }
+            ],
+            "omitted": "page bodies, comments, and provider-specific payload fields"
+          }
         }
       }
     },
@@ -256,7 +336,52 @@
           }
         },
         "response": {
-          "transform": "results"
+          "transform": "results",
+          "historicalSummary": {
+            "collectionKeys": [
+              "results",
+              "spaces",
+              "data"
+            ],
+            "collectionName": "spaces",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "key"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "type"
+              },
+              {
+                "name": "status"
+              },
+              {
+                "name": "_links",
+                "kind": "object"
+              }
+            ],
+            "outputFields": [
+              {
+                "name": "size"
+              },
+              {
+                "name": "limit"
+              },
+              {
+                "name": "start"
+              },
+              {
+                "name": "_links",
+                "kind": "object"
+              }
+            ],
+            "omitted": "space descriptions and provider-specific payload fields"
+          }
         }
       }
     },
