@@ -1,7 +1,7 @@
 import {
   mergeToolInputDelta,
   parseToolInputObject,
-} from "#veryfront/agent/streaming/data-stream.ts";
+} from "#veryfront/agent/streaming/tool-input.ts";
 import {
   formatToolErrorText,
   isCommentOnlySseFrame,
