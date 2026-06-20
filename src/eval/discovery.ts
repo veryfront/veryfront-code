@@ -28,12 +28,20 @@ export interface DiscoveredEval {
   definition: EvalDefinition;
 }
 
+/** Loader used to import an eval source module during discovery. */
+export type EvalModuleLoader = (
+  filePath: string,
+  options: { adapter: RuntimeAdapter; projectDir: string },
+) => Promise<Record<string, unknown>>;
+
 /** Options for project-local eval discovery. */
 export interface EvalDiscoveryOptions {
   projectDir: string;
   adapter: RuntimeAdapter;
   config?: VeryfrontConfig;
   evalsDir?: string;
+  /** @internal Override source loading for tests and custom runtimes. */
+  moduleLoader?: EvalModuleLoader;
 }
 
 /** Result returned by eval discovery. */
@@ -112,11 +120,12 @@ async function loadEvalFromFile(
   fallbackId: string,
   adapter: RuntimeAdapter,
   projectDir: string,
+  moduleLoader: EvalModuleLoader,
 ): Promise<DiscoveredEval | null> {
-  const module = await importDiscoveryModule(filePath, {
+  const module = await moduleLoader(filePath, {
     adapter,
     projectDir,
-  }) as Record<string, unknown>;
+  });
   const evalExport = extractEvalExport(module);
   if (!evalExport) return null;
 
@@ -149,6 +158,7 @@ export async function discoverEvals(
     adapter,
     config,
     evalsDir = "evals",
+    moduleLoader = importDiscoveryModule,
   } = options;
 
   const evals: DiscoveredEval[] = [];
@@ -168,6 +178,7 @@ export async function discoverEvals(
           deriveEvalId(file.path, baseDir),
           adapter,
           projectDir,
+          moduleLoader,
         );
         if (evalItem) evals.push(evalItem);
       } catch (error) {

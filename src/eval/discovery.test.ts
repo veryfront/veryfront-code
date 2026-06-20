@@ -1,11 +1,17 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { FileSystemAdapter, RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { clearTranspileCache } from "#veryfront/discovery/transpiler.ts";
-import { discoverAll } from "#veryfront/discovery";
-import { stop as stopEsbuild } from "veryfront/extensions/bundler";
-import { deriveEvalId, discoverEvals, findEvalById } from "veryfront/eval";
+import type { DiscoveryResult } from "#veryfront/discovery/types.ts";
+import { evalHandler } from "#veryfront/discovery/handlers/eval-handler.ts";
+import {
+  datasets,
+  deriveEvalId,
+  discoverEvals,
+  evalAgent,
+  findEvalById,
+  metrics,
+} from "veryfront/eval";
 
 function createMockAdapter(files: Record<string, string>): FileSystemAdapter {
   const normalize = (path: string): string => path.replace(/^\/project\/?/, "").replace(/^\/+/, "");
@@ -99,15 +105,7 @@ function createRuntimeAdapter(files: Record<string, string>): RuntimeAdapter {
   };
 }
 
-describe("eval/discovery", { sanitizeOps: false, sanitizeResources: false }, () => {
-  afterEach(() => {
-    clearTranspileCache();
-  });
-
-  afterAll(async () => {
-    await stopEsbuild();
-  });
-
+describe("eval/discovery", () => {
   it("derives stable eval ids from eval file paths", () => {
     assertEquals(deriveEvalId("evals/deep-research.eval.ts", "evals"), "eval:deep-research");
     assertEquals(deriveEvalId("evals/rag/retrieval.ts", "evals"), "eval:rag/retrieval");
@@ -115,22 +113,22 @@ describe("eval/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
 
   it("discovers eval files with source metadata for Studio editing", async () => {
     const adapter = createRuntimeAdapter({
-      "/project/evals/deep-research.eval.ts": [
-        'import { datasets, evalAgent, metrics } from "veryfront/eval";',
-        "export default evalAgent({",
-        '  id: "eval:deep-research",',
-        '  name: "Deep research eval",',
-        '  target: "agent:researcher",',
-        '  dataset: datasets.inline([{ id: "q1", input: "capital", reference: "Paris" }]),',
-        "  metrics: [metrics.answer.contains({ text: 'Paris' }).gate()],",
-        "});",
-      ].join("\n"),
+      "/project/evals/deep-research.eval.ts": "",
     });
 
     const result = await discoverEvals({
       projectDir: "/project",
       adapter,
       config: { fs: { type: "veryfront-api" } } as never,
+      moduleLoader: async () => ({
+        default: evalAgent({
+          id: "eval:deep-research",
+          name: "Deep research eval",
+          target: "agent:researcher",
+          dataset: datasets.inline([{ id: "q1", input: "capital", reference: "Paris" }]),
+          metrics: [metrics.answer.contains({ text: "Paris" }).gate()],
+        }),
+      }),
     });
 
     assertEquals(result.errors, []);
@@ -160,58 +158,50 @@ describe("eval/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
 
   it("finds an eval by id even when another eval file fails to load", async () => {
     const adapter = createRuntimeAdapter({
-      "/project/evals/broken.eval.ts": 'import "./missing.ts"; export default {};',
-      "/project/evals/deep-research.eval.ts": [
-        'import { datasets, evalAgent } from "veryfront/eval";',
-        "export const deepResearch = evalAgent({",
-        '  target: "agent:researcher",',
-        '  dataset: datasets.inline([{ id: "q1", input: "capital" }]),',
-        "});",
-      ].join("\n"),
+      "/project/evals/broken.eval.ts": "",
+      "/project/evals/deep-research.eval.ts": "",
     });
 
     const evalItem = await findEvalById("eval:deep-research", {
       projectDir: "/project",
       adapter,
       config: { fs: { type: "veryfront-api" } } as never,
+      moduleLoader: async (filePath) => {
+        if (filePath.endsWith("broken.eval.ts")) {
+          throw new Error("missing import");
+        }
+        return {
+          deepResearch: evalAgent({
+            target: "agent:researcher",
+            dataset: datasets.inline([{ id: "q1", input: "capital" }]),
+          }),
+        };
+      },
     });
 
     assertEquals(evalItem?.id, "eval:deep-research");
     assertEquals(evalItem?.exportName, "deepResearch");
   });
 
-  it("registers eval definitions in the generic discovery result", async () => {
-    const root = await Deno.makeTempDir({ prefix: "vf-eval-discovery-" });
-    try {
-      await Deno.mkdir(`${root}/evals`, { recursive: true });
-      await Deno.writeTextFile(
-        `${root}/evals/deep-research.eval.ts`,
-        [
-          'import { datasets, evalAgent } from "veryfront/eval";',
-          "export default evalAgent({",
-          '  target: "agent:researcher",',
-          '  dataset: datasets.inline([{ id: "q1", input: "capital" }]),',
-          "});",
-        ].join("\n"),
-      );
+  it("registers eval definitions in the generic discovery handler", () => {
+    const definition = evalAgent({
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "capital" }]),
+    });
+    const filePath = "/project/evals/deep-research.eval.ts";
+    const dir = "/project/evals";
+    const result = {
+      evals: new Map(),
+    } as DiscoveryResult;
 
-      const result = await discoverAll({
-        baseDir: root,
-        toolDirs: [],
-        agentDirs: [],
-        skillDirs: [],
-        resourceDirs: [],
-        promptDirs: [],
-        workflowDirs: [],
-        workDirs: [],
-        taskDirs: [],
-        evalDirs: ["evals"],
-      });
+    const id = evalHandler.getId(definition, filePath, dir);
+    evalHandler.getResultMap(result).set(id, evalHandler.register(id, definition, filePath, dir));
 
-      assertEquals(result.evals.has("eval:deep-research"), true);
-      assertEquals(result.evals.get("eval:deep-research")?.target, "agent:researcher");
-    } finally {
-      await Deno.remove(root, { recursive: true });
-    }
+    assertEquals(result.evals.has("eval:deep-research"), true);
+    assertEquals(result.evals.get("eval:deep-research")?.target, "agent:researcher");
+    assertEquals(result.evals.get("eval:deep-research")?.source, {
+      filePath,
+      exportName: "default",
+    });
   });
 });
