@@ -28,6 +28,7 @@ export interface AgentServiceEvalEnvironment {
   authToken: string;
   apiUrl: string;
   projectId?: string;
+  projectSlug?: string;
   branchId?: string;
   model?: string;
 }
@@ -90,6 +91,7 @@ export interface AgentServiceEvalAdapterConfig {
   authToken: string;
   agentId?: string | null;
   projectId?: string | null;
+  projectSlug?: string | null;
   conversationId?: string | null;
   branchId?: string | null;
   model?: string | null;
@@ -174,10 +176,13 @@ function createVeryfrontForwardedProps(
   return Object.keys(veryfront).length > 0 ? veryfront : null;
 }
 
-function createHeaders(authToken: string): Record<string, string> {
+function createHeaders(
+  config: Pick<AgentServiceEvalAdapterConfig, "authToken" | "projectSlug">,
+): Record<string, string> {
   return {
     "Content-Type": "application/json",
-    Authorization: `Bearer ${authToken}`,
+    Authorization: `Bearer ${config.authToken}`,
+    ...(config.projectSlug ? { "x-project-slug": config.projectSlug } : {}),
   };
 }
 
@@ -260,7 +265,7 @@ function createRequestInit(
 ): RequestInit {
   return {
     method: "POST",
-    headers: createHeaders(config.authToken),
+    headers: createHeaders(config),
     body: JSON.stringify(body),
     ...(config.requestTimeoutMs ? { signal: AbortSignal.timeout(config.requestTimeoutMs) } : {}),
   };
@@ -280,6 +285,11 @@ export function resolveAgentServiceEvalEnvironment(
       : parseAgentServiceConfig(env).VERYFRONT_API_URL,
     ...(typeof env.AG_UI_EVAL_PROJECT_ID === "string"
       ? { projectId: env.AG_UI_EVAL_PROJECT_ID }
+      : {}),
+    ...(typeof env.AG_UI_EVAL_PROJECT_SLUG === "string"
+      ? { projectSlug: env.AG_UI_EVAL_PROJECT_SLUG }
+      : typeof env.VERYFRONT_PROJECT_SLUG === "string"
+      ? { projectSlug: env.VERYFRONT_PROJECT_SLUG }
       : {}),
     ...(typeof env.AG_UI_EVAL_BRANCH_ID === "string" ? { branchId: env.AG_UI_EVAL_BRANCH_ID } : {}),
     ...(typeof env.AG_UI_EVAL_MODEL === "string" ? { model: env.AG_UI_EVAL_MODEL } : {}),

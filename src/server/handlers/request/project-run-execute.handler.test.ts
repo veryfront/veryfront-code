@@ -256,7 +256,8 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     let receivedBaseDir: string | undefined;
     let receivedEndpoint: string | undefined;
     let receivedAuthToken: string | undefined;
-    let receivedAgentId: string | undefined;
+    let receivedAgentId: string | null | undefined;
+    let receivedProjectSlug: string | null | undefined;
     const handler = new ProjectRunExecuteHandler(createDeps({
       runEval: async (_definition, options) => {
         receivedRunId = options.runId;
@@ -267,6 +268,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         receivedEndpoint = config.endpoint;
         receivedAuthToken = config.authToken;
         receivedAgentId = config.agentId;
+        receivedProjectSlug = (config as { projectSlug?: string | null }).projectSlug;
         return async () => ({ text: "Paris" });
       },
     }));
@@ -299,6 +301,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(receivedEndpoint, "https://example.com/api/ag-ui");
     assertEquals(receivedAuthToken, "runtime-token");
     assertEquals(receivedAgentId, "researcher");
+    assertEquals(receivedProjectSlug, "demo-project");
   });
 
   it("marks eval execution unsuccessful when records contain adapter failures", async () => {

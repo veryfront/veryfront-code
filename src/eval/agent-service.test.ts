@@ -33,6 +33,7 @@ describe("eval/agent-service", () => {
       VERYFRONT_TOKEN: "token",
       VERYFRONT_API_URL: "https://api.example.test",
       AG_UI_EVAL_PROJECT_ID: "project_123",
+      AG_UI_EVAL_PROJECT_SLUG: "demo-project",
       AG_UI_EVAL_BRANCH_ID: "branch_123",
       AG_UI_EVAL_MODEL: "provider/model",
     });
@@ -42,6 +43,7 @@ describe("eval/agent-service", () => {
       authToken: "token",
       apiUrl: "https://api.example.test",
       projectId: "project_123",
+      projectSlug: "demo-project",
       branchId: "branch_123",
       model: "provider/model",
     });
@@ -124,6 +126,7 @@ describe("eval/agent-service", () => {
       authToken: "token",
       agentId: "veryfront",
       projectId: "project_123",
+      projectSlug: "demo-project",
       branchId: "branch_123",
       fetch: async (input, init) => {
         requests.push({
@@ -158,6 +161,10 @@ describe("eval/agent-service", () => {
     assertEquals(
       (requests[0]?.init.headers as Record<string, string>).Authorization,
       "Bearer token",
+    );
+    assertEquals(
+      (requests[0]?.init.headers as Record<string, string>)["x-project-slug"],
+      "demo-project",
     );
     assertEquals(requests[0]?.body.forwardedProps, {
       veryfront: {
