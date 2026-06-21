@@ -4,6 +4,12 @@
  * @module eval
  */
 
+import type {
+  EvalReportExportContext,
+  EvalReportExporterRegistry,
+  EvalReportExportResult,
+} from "#veryfront/extensions/eval";
+
 /** Primitive kind an eval can execute. V1 supports agent targets. */
 export type EvalTargetKind = "agent";
 
@@ -215,6 +221,14 @@ export interface RunEvalOptions {
   baseDir?: string;
   runId?: string;
   now?: () => Date;
+  export?: EvalReportExportConfig;
+}
+
+/** Export configuration for a completed eval report. */
+export interface EvalReportExportConfig {
+  registry?: EvalReportExporterRegistry;
+  exporterIds?: string[];
+  context?: EvalReportExportContext;
 }
 
 /** Aggregate pass/fail summary for one metric. */
@@ -248,4 +262,5 @@ export interface EvalReport {
   endedAt: string;
   summary: EvalReportSummary;
   records: EvalRecord[];
+  exports?: EvalReportExportResult[];
 }

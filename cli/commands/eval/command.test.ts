@@ -98,6 +98,7 @@ describe("eval CLI command helpers", () => {
       "dataset-base": "fixtures",
       report: "reports/eval.json",
       junit: "reports/eval.xml",
+      export: "braintrust,langfuse",
       debug: true,
     });
 
@@ -107,6 +108,7 @@ describe("eval CLI command helpers", () => {
       assertEquals(parsed.data.datasetBase, "fixtures");
       assertEquals(parsed.data.report, "reports/eval.json");
       assertEquals(parsed.data.junit, "reports/eval.xml");
+      assertEquals(parsed.data.exporters, ["braintrust", "langfuse"]);
       assertEquals(parsed.data.debug, true);
     }
   });
