@@ -7,10 +7,7 @@ import {
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withEnv } from "#veryfront/testing/deno-compat.ts";
 import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
-import {
-  getHostTelemetryEnv,
-  isReservedSharedRuntimeTelemetryEnvKey,
-} from "./telemetry-env.ts";
+import { getHostTelemetryEnv, isReservedSharedRuntimeTelemetryEnvKey } from "./telemetry-env.ts";
 
 describe("observability/tracing/telemetry-env", () => {
   it("reads OTel exporter settings from host env instead of project env", async () => {

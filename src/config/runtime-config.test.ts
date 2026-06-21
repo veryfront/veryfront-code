@@ -137,23 +137,26 @@ describe("RuntimeConfig", () => {
     });
 
     it("ignores project-file observability routing in shared proxy mode", () => {
-      const config = createRuntimeConfig({
-        observability: {
-          tracing: {
-            enabled: true,
-            endpoint: "https://tenant-collector.example/otlp",
-            serviceName: "tenant-service",
-          },
-          metrics: {
-            enabled: true,
-            endpoint: "https://tenant-metrics.example/otlp",
+      const config = createRuntimeConfig(
+        {
+          observability: {
+            tracing: {
+              enabled: true,
+              endpoint: "https://tenant-collector.example/otlp",
+              serviceName: "tenant-service",
+            },
+            metrics: {
+              enabled: true,
+              endpoint: "https://tenant-metrics.example/otlp",
+            },
           },
         },
-      }, createTestEnvironmentConfig({
-        proxyMode: true,
-        otelEnabled: false,
-        otelMetricsEnabled: false,
-      }));
+        createTestEnvironmentConfig({
+          proxyMode: true,
+          otelEnabled: false,
+          otelMetricsEnabled: false,
+        }),
+      );
 
       expect(config.observability?.tracing?.enabled).toBe(false);
       expect(config.observability?.tracing?.endpoint).toBeUndefined();
