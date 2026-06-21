@@ -10,6 +10,7 @@ import type {
   EvalMetricResult,
   EvalRecord,
   EvalReport,
+  EvalReportExportConfig,
   EvalToolCall,
 } from "veryfront/eval";
 import { createProjectDiscoveryConfig, discoverAll } from "veryfront/discovery";
@@ -234,6 +235,34 @@ function printReport(report: EvalReport): void {
       }%)`,
     );
   }
+
+  for (const result of report.exports ?? []) {
+    if (result.ok) {
+      cliLogger.info(`Export ${result.exporterId}: ok`);
+    } else {
+      cliLogger.warn(`Export ${result.exporterId}: failed: ${result.error}`);
+    }
+  }
+}
+
+function createEvalCliExportConfig(
+  evalItem: DiscoveredEval,
+  options: EvalOptions,
+  projectDir: string,
+): EvalReportExportConfig | undefined {
+  if (options.exporters.length === 0) return undefined;
+
+  return {
+    exporterIds: options.exporters,
+    context: {
+      evalId: evalItem.definition.id,
+      sourcePath: displaySourcePath(evalItem.filePath, projectDir),
+      reportPath: options.report,
+      tags: evalItem.definition.tags,
+      metadata: evalItem.definition.metadata,
+      redaction: {},
+    },
+  };
 }
 
 async function outputEvalNotFound(id: string, evals: DiscoveredEval[]): Promise<void> {
@@ -340,6 +369,7 @@ export async function evalCommand(options: EvalOptions): Promise<void> {
       adapters: {
         agent: createAgentAdapter(agent, options),
       },
+      export: createEvalCliExportConfig(evalItem, options, projectDir),
     });
 
     if (options.report) {

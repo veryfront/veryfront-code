@@ -1,10 +1,18 @@
 import { createEvalCheckContext } from "./expect.ts";
 import { createEvalReport } from "./report.ts";
+import {
+  createEvalReportExporterRegistry,
+  type EvalReportExporterRegistry,
+  EvalReportExporterRegistryName,
+  type EvalReportExportResult,
+} from "#veryfront/extensions/eval";
+import { tryResolve } from "../extensions/contracts.ts";
 import type {
   EvalAgentAdapterResult,
   EvalDefinition,
   EvalMetricResult,
   EvalRecord,
+  EvalReportExportConfig,
   EvalTrace,
   EvalUsage,
   RunEvalOptions,
@@ -41,6 +49,69 @@ function isBlockingFailure(record: EvalRecord): boolean {
     !result.skipped && result.pass === false &&
     (result.severity === "gate" || result.severity === "budget")
   );
+}
+
+function createMissingRegistryResults(exporterIds: string[]): EvalReportExportResult[] {
+  return exporterIds.map((exporterId) => ({
+    exporterId,
+    ok: false,
+    error: "No EvalReportExporter registry resolved.",
+  }));
+}
+
+function createMissingExporterResult(exporterId: string): EvalReportExportResult {
+  return {
+    exporterId,
+    ok: false,
+    error: `No EvalReportExporter registered for "${exporterId}".`,
+  };
+}
+
+function resolveExporterRegistry(
+  config: EvalReportExportConfig,
+): EvalReportExporterRegistry | undefined {
+  return config.registry ??
+    tryResolve<EvalReportExporterRegistry>(EvalReportExporterRegistryName);
+}
+
+async function exportWithSelectedExporter(
+  registry: EvalReportExporterRegistry,
+  report: ReturnType<typeof createEvalReport>,
+  config: EvalReportExportConfig,
+  exporterId: string,
+): Promise<EvalReportExportResult> {
+  const exporter = registry.get(exporterId);
+  if (!exporter) return createMissingExporterResult(exporterId);
+
+  const selectedRegistry = createEvalReportExporterRegistry();
+  selectedRegistry.register(exporter);
+  const [result] = await selectedRegistry.export(report, config.context);
+  return result ?? {
+    exporterId,
+    ok: false,
+    error: `EvalReportExporter "${exporterId}" did not return an export result.`,
+  };
+}
+
+async function exportEvalReport(
+  report: ReturnType<typeof createEvalReport>,
+  config?: EvalReportExportConfig,
+): Promise<EvalReportExportResult[] | undefined> {
+  if (!config) return undefined;
+
+  const exporterIds = config.exporterIds?.filter((id) => id.length > 0) ?? [];
+  const registry = resolveExporterRegistry(config);
+  if (!registry) return createMissingRegistryResults(exporterIds);
+
+  if (exporterIds.length === 0) {
+    return registry.export(report, config.context);
+  }
+
+  const results: EvalReportExportResult[] = [];
+  for (const exporterId of exporterIds) {
+    results.push(await exportWithSelectedExporter(registry, report, config, exporterId));
+  }
+  return results;
 }
 
 async function runRecord(
@@ -123,11 +194,13 @@ export async function runEval(
   }
 
   const endedAt = options.now?.() ?? new Date();
-  return createEvalReport({
+  const report = createEvalReport({
     definition,
     records,
     runId: options.runId ?? createRunId(startedAt),
     startedAt,
     endedAt,
   });
+  const exports = await exportEvalReport(report, options.export);
+  return exports === undefined ? report : { ...report, exports };
 }

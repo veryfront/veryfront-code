@@ -80,6 +80,7 @@ export type {
   EvalMetricThreshold,
   EvalRecord,
   EvalReport,
+  EvalReportExportConfig,
   EvalReportSummary,
   EvalSeverity,
   EvalSource,

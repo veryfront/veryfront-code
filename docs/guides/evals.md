@@ -192,7 +192,9 @@ is intentionally absent.
 
 Use `veryfront/extensions/eval` when reports need to flow to an external eval
 platform. The registry supports multiple exporters, so Braintrust, Langfuse, and
-LangSmith exporters can coexist behind the same contract.
+LangSmith exporters can coexist behind the same contract. `runEval` can export a
+completed report through selected exporters and includes export receipts or
+failures in `report.exports`.
 Veryfront bootstrap seeds the registry for project extensions. Standalone
 scripts can create and register a local registry explicitly.
 
@@ -230,18 +232,24 @@ const adapters = {
   agent: async () => ({ text: "Paris", completed: true }),
 };
 
-const report = await runEval(definition, { adapters });
-const exportResults = await registry.export(report, {
-  projectReference: "support-agent",
-  sourcePath: "evals/support.ts",
-  redaction: {
-    includeInputs: false,
-    includeOutputs: false,
-    includeReferences: false,
-    includeTraces: false,
-    includeMetricEvidence: false,
-    includeMetricExplanations: false,
-    metadataAllowlist: ["dataset"],
+const report = await runEval(definition, {
+  adapters,
+  export: {
+    registry,
+    exporterIds: ["custom-eval-platform"],
+    context: {
+      projectReference: "support-agent",
+      sourcePath: "evals/support.ts",
+      redaction: {
+        includeInputs: false,
+        includeOutputs: false,
+        includeReferences: false,
+        includeTraces: false,
+        includeMetricEvidence: false,
+        includeMetricExplanations: false,
+        metadataAllowlist: ["dataset"],
+      },
+    },
   },
 });
 ```
@@ -251,6 +259,18 @@ metric explanations, and metadata unless the export context explicitly allows
 each field. Runtime monitoring remains separate: use
 `veryfront/extensions/observability` and the OpenTelemetry extension for spans,
 traces, metrics, and service monitoring.
+
+From the CLI, pass comma-separated exporter ids. Export failures are reported in
+the JSON report and do not prevent local report or JUnit files from being
+written.
+
+```bash
+veryfront eval deep-research \
+  --report .veryfront/evals/deep-research.json \
+  --junit .veryfront/evals/deep-research.xml \
+  --export braintrust,langfuse \
+  --json
+```
 
 ## Discovery
 
