@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.892",
+  "version": "0.1.893",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "minimumDependencyAge": {
@@ -95,6 +95,7 @@
     "./prompt": "./src/prompt/index.ts",
     "./resource": "./src/resource/index.ts",
     "./runs": "./src/runs/index.ts",
+    "./skill": "./src/skill/index.ts",
     "./mcp": "./src/mcp/index.ts",
     "./middleware": "./src/middleware/index.ts",
     "./observability": "./src/observability/index.ts",

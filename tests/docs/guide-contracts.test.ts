@@ -612,7 +612,10 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     snippets: ["Sandbox.create", "executeCommand", "sandbox.close"],
   },
   "guides/skills.md": {
-    references: ["../api-reference/veryfront/agent.md"],
+    references: [
+      "../api-reference/veryfront/agent.md",
+      "../api-reference/veryfront/skill.md",
+    ],
     snippets: ["SKILL.md", "allowed_tools", "veryfront skills validate"],
   },
   "guides/tasks.md": {

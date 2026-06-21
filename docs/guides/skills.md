@@ -5,6 +5,8 @@ order: 29
 ---
 
 A skill is a directory under `skills/` containing a `SKILL.md` file. It bundles structured agent instructions, an `allowed_tools` policy, optional resource and reference files, static assets, and executable scripts. The format follows the [agentskills.io](https://agentskills.io) specification.
+Use [veryfront/skill](../api-reference/veryfront/skill.md) for parser,
+registry, tool, and policy helpers in framework code.
 
 ## Prerequisites
 

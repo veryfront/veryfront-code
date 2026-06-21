@@ -1,11 +1,19 @@
 /**
- * Agent Skills
+ * Agent skills.
  *
  * Public API for the agent skills system.
  * Skills are project-level capabilities defined as SKILL.md files
  * following the agentskills.io specification.
  *
  * @module
+ *
+ * @example
+ * ```ts
+ * import { parseSkillFrontmatter, validateSkillMetadata } from "veryfront/skill";
+ *
+ * const parsed = await parseSkillFrontmatter("---\nname: review\ndescription: Review code\n---\n");
+ * validateSkillMetadata(parsed.frontmatter, "review");
+ * ```
  */
 
 // Types

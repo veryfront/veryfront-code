@@ -157,8 +157,8 @@ flowchart TD
 
 Skills provide instruction packs and tool policy. They are not workflows,
 runs, or local tool definitions. Skills are configured through project
-discovery and `agent({ skills })`; there is no top-level `veryfront/skill`
-import path in the current public export map.
+discovery and `agent({ skills })`; parser, registry, tool, and policy helpers
+are available from the public `veryfront/skill` package subpath.
 
 ## Boundaries
 
