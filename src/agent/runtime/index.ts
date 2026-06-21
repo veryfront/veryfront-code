@@ -919,10 +919,11 @@ export class AgentRuntime {
       currentRuntimeContext = preparedStep.runtimeContext;
       const toolContext = preparedStep.toolContext;
       const tools = toolsDisabledForFinalResponse ? [] : preparedStep.tools;
+      const stepProviderTools = toolsDisabledForFinalResponse ? [] : providerTools;
 
       const runtimeTools = convertToolsToRuntimeTools(tools, {
         model: effectiveModel,
-        providerTools,
+        providerTools: stepProviderTools,
       });
       const runtimeToolNames = Object.keys(runtimeTools ?? {});
 

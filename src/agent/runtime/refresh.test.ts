@@ -207,6 +207,93 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(toolResults[0]?.context?.projectId, "project-generate");
   });
 
+  it("removes provider-native tools from the forced final response after create_agent", async () => {
+    const toolNamesByStep: string[][] = [];
+    let callCount = 0;
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream(options) {
+        const rawTools = (options as { tools?: unknown }).tools;
+        const toolNames = Array.isArray(rawTools)
+          ? rawTools.map((entry) =>
+            (entry as { name?: string; id?: string }).name ??
+              (entry as { name?: string; id?: string }).id ?? ""
+          )
+          : Object.keys((rawTools as Record<string, unknown> | undefined) ?? {});
+        toolNamesByStep.push(toolNames);
+        callCount++;
+
+        if (callCount === 1) {
+          return {
+            stream: createRuntimeStream([
+              {
+                type: "tool-call",
+                toolCallId: "create-agent-1",
+                toolName: "create_agent",
+                input: '{"id":"gmail-assistant-e2e"}',
+              },
+              {
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              },
+            ]),
+          };
+        }
+
+        return {
+          stream: createRuntimeStream([
+            { type: "text-delta", text: "Created Gmail Assistant." },
+            {
+              type: "finish",
+              finishReason: "stop",
+              usage: { inputTokens: 1, outputTokens: 1 },
+            },
+          ]),
+        };
+      },
+    };
+
+    const createAgent = tool({
+      id: "create_agent",
+      description: "Create a Studio project agent",
+      inputSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+      execute: async ({ id }) => ({
+        id,
+        name: "Gmail Assistant",
+        source_path: `agents/${id}.ts`,
+      }),
+    });
+
+    const assistant = agent({
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Create agents and summarize successful tool results.",
+      tools: { create_agent: createAgent },
+      providerTools: ["web_search", "web_fetch"],
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const response = (await assistant.stream({
+      input: "Create a Gmail agent",
+    })).toDataStreamResponse();
+
+    await response.text();
+    assertEquals(toolNamesByStep.length, 2);
+    assertEquals(toolNamesByStep[0]?.includes("create_agent"), true);
+    assertEquals(toolNamesByStep[0]?.includes("web_search"), true);
+    assertEquals(toolNamesByStep[0]?.includes("web_fetch"), true);
+    assertEquals(toolNamesByStep[1], []);
+  });
+
   it("notifies configured hooks after stream() executes a tool", async () => {
     const toolResults: ToolExecutionResultRequest[] = [];
     let callCount = 0;
