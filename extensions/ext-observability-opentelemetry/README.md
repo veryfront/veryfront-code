@@ -2,7 +2,7 @@
 
 > **Category:** Observability | **Contracts:** `TracingExporter`, `NodeTelemetryProvider` | **Optional**
 
-Provides distributed tracing, the OpenTelemetry metrics API bridge, and Node telemetry bootstrap for Veryfront via the [OpenTelemetry JS SDK](https://github.com/open-telemetry/opentelemetry-js). Exports trace spans over OTLP/HTTP to any OpenTelemetry-compatible collector.
+Provides distributed tracing, OTLP metrics export, the OpenTelemetry metrics API bridge, and Node telemetry bootstrap for Veryfront via the [OpenTelemetry JS SDK](https://github.com/open-telemetry/opentelemetry-js). Exports trace spans and metrics over OTLP/HTTP to any OpenTelemetry-compatible collector.
 
 ## Installation
 
@@ -20,14 +20,20 @@ export default defineConfig({
 
 The extension reads the standard OpenTelemetry env vars at setup time:
 
-| Variable                      | Required         | Description                                                       |
-| ----------------------------- | ---------------- | ----------------------------------------------------------------- |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | Yes (for export) | Collector URL, e.g. `http://localhost:4318`                       |
-| `OTEL_EXPORTER_OTLP_HEADERS`  | No               | Comma-separated `key=value` pairs (commonly used for auth tokens) |
-| `OTEL_SERVICE_NAME`           | No               | Service name attached to spans                                    |
-| `OTEL_TRACES_ENABLED`         | No               | Set to `true` to enable trace export                              |
+| Variable                              | Required         | Description                                                       |
+| ------------------------------------- | ---------------- | ----------------------------------------------------------------- |
+| Variable                              | Required         | Description                                                       |
+| ------------------------------------  | ---------------- | ----------------------------------------------------------------- |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`         | Yes (for export) | Base collector URL, e.g. `http://localhost:4318`                  |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`  | No               | Trace-specific OTLP HTTP URL                                      |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | No               | Metric-specific OTLP HTTP URL                                     |
+| `OTEL_EXPORTER_OTLP_HEADERS`          | No               | Comma-separated `key=value` pairs (commonly used for auth tokens) |
+| `OTEL_SERVICE_NAME`                   | No               | Service name attached to telemetry                                |
+| `OTEL_TRACES_ENABLED`                 | No               | Set to `true` to enable trace export                              |
+| `OTEL_METRICS_ENABLED`                | No               | Set to `true` to enable metric export                             |
+| `OTEL_METRIC_EXPORT_INTERVAL`         | No               | Metric export interval in milliseconds                            |
 
-Explicit config under `ctx.config.otel` wins over env vars.
+Configuration is read from process `OTEL_*` environment variables. In shared Veryfront runtimes these are platform-owned host env vars. The extension does not accept `ctx.config.otel` exporter endpoint, header, service name, or enable-flag overrides because project config is tenant controlled in shared runtimes.
 
 ## Factory configuration
 
@@ -35,18 +41,13 @@ Explicit config under `ctx.config.otel` wins over env vars.
 extOpenTelemetry();
 ```
 
-Configuration is read from `ctx.config.otel`:
+Exporter configuration is process-level. Dedicated runtimes can use project-specific collector endpoints by running the project in its own process with its own process environment.
 
-```ts
-config = {
-  otel: {
-    serviceName: "my-app",
-    serviceVersion: "1.0.0",
-    endpoint: "http://collector:4318",
-    headers: { authorization: "Bearer <token>" },
-  },
-};
-```
+## Metrics
+
+Set `OTEL_METRICS_ENABLED=true` to export framework metrics through OTLP HTTP. The extension resolves `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` first, then `OTEL_EXPORTER_OTLP_ENDPOINT`. A base OTLP endpoint receives `/v1/metrics`.
+
+In shared Veryfront runtimes, these variables are platform-owned host env vars. Project env overlays must not control the shared runtime metrics exporter. Use a dedicated runtime for project-owned collector endpoints or credentials.
 
 ## Provided contracts
 
@@ -59,4 +60,4 @@ config = {
 ## Capabilities
 
 - **net `*`:** OTLP exporter reaches the configured collector.
-- **env:** reads the four `OTEL_*` variables listed above.
+- **env:** reads the `OTEL_*` variables listed above.

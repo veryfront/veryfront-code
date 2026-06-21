@@ -212,6 +212,7 @@ describe("EnvironmentConfig", () => {
         "nodeEnv",
         "veryfrontEnv",
         "veryfrontMode",
+        "proxyMode",
         "debug",
         "ci",
         "denoTesting",

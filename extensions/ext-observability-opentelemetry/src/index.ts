@@ -9,8 +9,7 @@
  *  - `getProvider()`: returns the SDK TracerProvider for shim wiring
  *  - `initialize(options)`: starts NodeSDK auto-instrumentation
  *
- * Configuration is read from `ctx.config` (see `OtlpExtConfig`) and falls
- * back to standard OTEL environment variables.
+ * Configuration is read from standard OTEL environment variables.
  *
  * @module extensions/ext-observability-opentelemetry
  */
@@ -28,6 +27,8 @@ import { getNodeAutoInstrumentations } from "@opentelemetry/auto-instrumentation
 import { W3CTraceContextPropagator } from "@opentelemetry/core";
 import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
 import { NodeSDK } from "@opentelemetry/sdk-node";
+import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
+import { MeterProvider, PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
 import {
   BasicTracerProvider,
   BatchSpanProcessor,
@@ -46,16 +47,17 @@ interface ShimTracerProvider {
   getTracer(name: string, version?: string): unknown;
 }
 
-/**
- * Configuration shape accepted by this extension factory.
- */
-export interface OtlpExtConfig {
-  otel?: {
-    serviceName?: string;
-    serviceVersion?: string;
-    endpoint?: string;
-    headers?: string | Record<string, string>;
-  };
+type EnvReader = (name: string) => string | undefined;
+
+export interface ResolvedOtlpExtensionConfig {
+  serviceName: string;
+  serviceVersion: string;
+  headers: Record<string, string>;
+  tracesEnabled: boolean;
+  metricsEnabled: boolean;
+  tracesUrl: string | undefined;
+  metricsUrl: string | undefined;
+  metricsExportIntervalMillis: number;
 }
 
 function readEnv(name: string): string | undefined {
@@ -88,68 +90,113 @@ function parseHeaders(headerInput: string | Record<string, string> | undefined):
   return result;
 }
 
-function resolveConfig(ctxConfig: Record<string, unknown>): {
-  serviceName: string;
-  serviceVersion: string;
-  endpoint: string;
-  headers: Record<string, string>;
-  enabled: boolean;
-} {
-  const otelCfg = (ctxConfig as OtlpExtConfig).otel ?? {};
+export function resolveOtlpSignalUrl(
+  endpoint: string | undefined,
+  signal: "traces" | "metrics",
+): string | undefined {
+  if (!endpoint) return undefined;
+  const trimmed = endpoint.replace(/\/$/, "");
+  const suffix = `/v1/${signal}`;
+  return trimmed.endsWith(suffix) ? trimmed : `${trimmed}${suffix}`;
+}
 
-  const enabled = readEnv("OTEL_TRACES_ENABLED") === "true";
-  const serviceName = otelCfg.serviceName ?? readEnv("OTEL_SERVICE_NAME") ?? "veryfront";
-  const serviceVersion = otelCfg.serviceVersion ?? "0.1.0";
-  const endpoint = otelCfg.endpoint ??
-    readEnv("OTEL_EXPORTER_OTLP_ENDPOINT") ??
-    "";
-  const headersRaw = otelCfg.headers ?? readEnv("OTEL_EXPORTER_OTLP_HEADERS");
-  const headers = parseHeaders(headersRaw);
+export function resolveOtlpExtensionConfig(
+  read: EnvReader = readEnv,
+): ResolvedOtlpExtensionConfig {
+  const endpoint = read("OTEL_EXPORTER_OTLP_ENDPOINT");
+  const tracesEndpoint = read("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") ?? endpoint;
+  const metricsEndpoint = read("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") ?? endpoint;
+  const metricsExportIntervalMillis = Number.parseInt(
+    read("OTEL_METRIC_EXPORT_INTERVAL") ?? "60000",
+    10,
+  );
 
-  return { enabled, serviceName, serviceVersion, endpoint, headers };
+  return {
+    serviceName: read("OTEL_SERVICE_NAME") ?? "veryfront",
+    serviceVersion: "0.1.0",
+    headers: parseHeaders(read("OTEL_EXPORTER_OTLP_HEADERS")),
+    tracesEnabled: read("OTEL_TRACES_ENABLED") === "true",
+    metricsEnabled: read("OTEL_METRICS_ENABLED") === "true",
+    tracesUrl: resolveOtlpSignalUrl(tracesEndpoint, "traces"),
+    metricsUrl: resolveOtlpSignalUrl(metricsEndpoint, "metrics"),
+    metricsExportIntervalMillis: Number.isFinite(metricsExportIntervalMillis)
+      ? metricsExportIntervalMillis
+      : 60_000,
+  };
 }
 
 class OtlpTracingExporter implements TracingExporter {
   private sdkProvider: BasicTracerProvider | null = null;
+  private meterProvider: MeterProvider | null = null;
+  private metricReader: PeriodicExportingMetricReader | null = null;
 
-  async start(ctxConfig: Record<string, unknown>): Promise<void> {
-    const cfg = resolveConfig(ctxConfig);
+  async start(_ctxConfig: Record<string, unknown>): Promise<void> {
+    const cfg = resolveOtlpExtensionConfig(readEnv);
 
     // Honor OTEL_TRACES_ENABLED: when unset/false, skip exporter wiring so
     // deployments opting out never create OTLP traffic or set globals.
-    if (!cfg.enabled) return;
+    if (!cfg.tracesEnabled && !cfg.metricsEnabled) return;
 
     const resource = resourceFromAttributes({
       [ATTR_SERVICE_NAME]: cfg.serviceName,
       [ATTR_SERVICE_VERSION]: cfg.serviceVersion,
     });
 
-    const endpointBase = cfg.endpoint.replace(/\/$/, "");
-    const exporter = new OTLPTraceExporter({
-      url: endpointBase ? `${endpointBase}/v1/traces` : undefined,
-      headers: cfg.headers,
-    });
+    if (cfg.tracesEnabled) {
+      if (!cfg.tracesUrl) {
+        throw new Error(
+          "OTEL_TRACES_ENABLED=true requires OTEL_EXPORTER_OTLP_ENDPOINT or OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        );
+      }
 
-    const provider = new BasicTracerProvider({
-      resource,
-      spanProcessors: [new BatchSpanProcessor(exporter)],
-    });
+      const exporter = new OTLPTraceExporter({
+        url: cfg.tracesUrl,
+        headers: cfg.headers,
+      });
 
-    // Wire OTel SDK globals so the real API delegates to this provider.
-    // The shim also gets wired separately in bootstrap.ts via getProvider().
-    trace.setGlobalTracerProvider(provider);
+      const provider = new BasicTracerProvider({
+        resource,
+        spanProcessors: [new BatchSpanProcessor(exporter)],
+      });
 
-    const contextManager = new AsyncLocalStorageContextManager();
-    contextManager.enable();
+      // Wire OTel SDK globals so the real API delegates to this provider.
+      // The shim also gets wired separately in bootstrap.ts via getProvider().
+      trace.setGlobalTracerProvider(provider);
 
-    const propagator = new W3CTraceContextPropagator();
+      const contextManager = new AsyncLocalStorageContextManager();
+      contextManager.enable();
 
-    // Set propagator via OTel API (import is available in this extension).
-    const { propagation, context: otelContext } = await import("@opentelemetry/api");
-    propagation.setGlobalPropagator(propagator);
-    otelContext.setGlobalContextManager(contextManager);
+      const propagator = new W3CTraceContextPropagator();
 
-    this.sdkProvider = provider;
+      // Set propagator via OTel API (import is available in this extension).
+      const { propagation, context: otelContext } = await import("@opentelemetry/api");
+      propagation.setGlobalPropagator(propagator);
+      otelContext.setGlobalContextManager(contextManager);
+
+      this.sdkProvider = provider;
+    }
+
+    if (cfg.metricsEnabled) {
+      if (!cfg.metricsUrl) {
+        throw new Error(
+          "OTEL_METRICS_ENABLED=true requires OTEL_EXPORTER_OTLP_ENDPOINT or OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        );
+      }
+
+      this.metricReader = new PeriodicExportingMetricReader({
+        exporter: new OTLPMetricExporter({
+          url: cfg.metricsUrl,
+          headers: cfg.headers,
+        }),
+        exportIntervalMillis: cfg.metricsExportIntervalMillis,
+      });
+
+      this.meterProvider = new MeterProvider({
+        resource,
+        readers: [this.metricReader],
+      });
+      metrics.setGlobalMeterProvider(this.meterProvider);
+    }
   }
 
   // eslint-disable-next-line require-await
@@ -159,6 +206,15 @@ class OtlpTracingExporter implements TracingExporter {
   }
 
   async shutdown(): Promise<void> {
+    if (this.meterProvider) {
+      try {
+        await this.meterProvider.shutdown();
+      } finally {
+        this.meterProvider = null;
+        this.metricReader = null;
+      }
+    }
+
     if (this.sdkProvider) {
       try {
         await this.sdkProvider.shutdown();
@@ -266,9 +322,13 @@ const extOpenTelemetry: ExtensionFactory = () => {
         type: "env:read",
         keys: [
           "OTEL_EXPORTER_OTLP_ENDPOINT",
+          "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+          "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
           "OTEL_EXPORTER_OTLP_HEADERS",
           "OTEL_SERVICE_NAME",
           "OTEL_TRACES_ENABLED",
+          "OTEL_METRICS_ENABLED",
+          "OTEL_METRIC_EXPORT_INTERVAL",
         ],
       },
     ],

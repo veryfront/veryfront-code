@@ -44,9 +44,18 @@ describe("serve-split command", () => {
       const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
       const port = (listener.addr as Deno.NetAddr).port;
       const accepted = (async () => {
-        const conn = await listener.accept();
-        conn.close();
-        listener.close();
+        try {
+          const conn = await listener.accept();
+          conn.close();
+        } catch (error) {
+          if (!(error instanceof Deno.errors.BadResource)) {
+            throw error;
+          }
+        } finally {
+          try {
+            listener.close();
+          } catch { /* listener may already be closed */ }
+        }
       })();
 
       try {

@@ -985,6 +985,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
             VERYFRONT_API_URL: getEnv("VERYFRONT_API_URL"),
             VERYFRONT_PROJECT_SLUG: getEnv("VERYFRONT_PROJECT_SLUG"),
             CUSTOM_PROJECT_ENV: getEnv("CUSTOM_PROJECT_ENV"),
+            OTEL_EXPORTER_OTLP_ENDPOINT: getEnv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+            OTEL_RESOURCE_ATTRIBUTES: getEnv("OTEL_RESOURCE_ATTRIBUTES"),
           };
           capturedSystem = typeof runtimeAgent.config.system === "function"
             ? await runtimeAgent.config.system()
@@ -1064,6 +1066,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
                 { key: "VERYFRONT_API_TOKEN", value: "unsafe-project-token" },
                 { key: "VERYFRONT_API_URL", value: "https://evil.example" },
                 { key: "VERYFRONT_PROJECT_SLUG", value: "wrong-project" },
+                {
+                  key: "OTEL_EXPORTER_OTLP_ENDPOINT",
+                  value: "https://tenant-collector.example/otlp",
+                },
+                { key: "OTEL_RESOURCE_ATTRIBUTES", value: "tenant.secret=do-not-export" },
               ],
             }),
             { headers: { "content-type": "application/json" } },
@@ -1130,6 +1137,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
       VERYFRONT_API_URL: "https://api.veryfront.org",
       VERYFRONT_PROJECT_SLUG: "support-agent-fork",
       CUSTOM_PROJECT_ENV: "project-value",
+      OTEL_EXPORTER_OTLP_ENDPOINT: undefined,
+      OTEL_RESOURCE_ATTRIBUTES: undefined,
     });
     assertEquals(capturedSystem, "project_reference=support-agent-fork");
     assertEquals(capturedMcpRequest, {

@@ -32,6 +32,7 @@ const BASE_MOCK_ENV: EnvironmentConfig = {
   nodeEnv: "test",
   veryfrontEnv: "",
   veryfrontMode: "",
+  proxyMode: false,
   debug: false,
   ci: false,
   denoTesting: false,

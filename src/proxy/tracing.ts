@@ -20,7 +20,7 @@ import {
   trace as shimTrace,
   type Tracer,
 } from "#veryfront/observability/tracing/api-shim.ts";
-import { getEnv } from "./env.ts";
+import { getHostTelemetryEnv } from "#veryfront/observability/tracing/telemetry-env.ts";
 import { proxyLogger } from "./logger.ts";
 
 let initialized = false;
@@ -47,10 +47,10 @@ function parseHeaders(headerString: string | undefined): Record<string, string> 
 
 function getConfig(): OTLPConfig {
   return {
-    enabled: getEnv("OTEL_TRACES_ENABLED") === "true",
-    serviceName: getEnv("OTEL_SERVICE_NAME") || "veryfront-proxy",
-    endpoint: getEnv("OTEL_EXPORTER_OTLP_ENDPOINT") || "",
-    headers: parseHeaders(getEnv("OTEL_EXPORTER_OTLP_HEADERS")),
+    enabled: getHostTelemetryEnv("OTEL_TRACES_ENABLED") === "true",
+    serviceName: getHostTelemetryEnv("OTEL_SERVICE_NAME") || "veryfront-proxy",
+    endpoint: getHostTelemetryEnv("OTEL_EXPORTER_OTLP_ENDPOINT") || "",
+    headers: parseHeaders(getHostTelemetryEnv("OTEL_EXPORTER_OTLP_HEADERS")),
   };
 }
 

@@ -113,6 +113,7 @@ import { withRequestTimeout } from "./timeout-manager.ts";
 import {
   EnvironmentVariableCache,
   fetchProjectEnvVars,
+  filterSharedRuntimeProjectEnv,
   runWithProjectEnv,
 } from "../project-env/index.ts";
 import { SCANNER_PATH_PATTERN } from "#veryfront/utils/constants/security.ts";
@@ -667,7 +668,10 @@ export function createVeryfrontHandler(
             () =>
               profilePhase("handler.execute", () => {
                 if (shouldIsolateEnv) {
-                  return runWithProjectEnv(envVarsForRequest, executeRoute);
+                  return runWithProjectEnv(
+                    filterSharedRuntimeProjectEnv(envVarsForRequest),
+                    executeRoute,
+                  );
                 }
                 return executeRoute();
               }),
