@@ -52,6 +52,12 @@ Extension availability is separate from contract requirement:
 | --------------------------------------------------------------- | ------------------- | ------------------------ |
 | [`@veryfront/ext-document-kreuzberg`](./ext-document-kreuzberg) | `DocumentExtractor` | Document text extraction |
 
+### Eval export
+
+| Package                                                     | Contract                     | Description                                             |
+| ----------------------------------------------------------- | ---------------------------- | ------------------------------------------------------- |
+| [`@veryfront/ext-eval-report-http`](./ext-eval-report-http) | `EvalReportExporterRegistry` | Generic HTTP transport for redacted eval report exports |
+
 ### Schema
 
 | Package                                         | Contract          | Description                         |
@@ -114,6 +120,7 @@ level.
 | `LLMProvider:*`             | A matching model provider is selected           | Auto-enabled core extension           |
 | `AuthProvider`              | Auth signing or verification is configured      | User-installed extension              |
 | `TokenCacheStore`           | Redis-backed token cache is configured          | User-installed extension              |
+| `EvalReportExporterRegistry` | Eval report exporters are registered            | Auto-enabled core extension           |
 | `TracingExporter`           | OTLP tracing export is configured               | User-installed extension              |
 | `NodeTelemetryProvider`     | Node agent service telemetry is enabled         | Auto-enabled agent service extension  |
 
@@ -233,6 +240,7 @@ check for drift and to enforce the sensitive capability policies below.
 | `ext-db-sqlite`                        | `fs:read`, `fs:write`                                          | Opens native SQLite databases               |
 | `ext-document-kreuzberg`               | `fs:read`                                                      | Parses uploaded or user-provided documents  |
 | `ext-observability-opentelemetry`      | `net:outbound`, `env:read` for `OTEL_*`                        | Exports telemetry and reads collector config |
+| `ext-eval-report-http`                 | `net:outbound`, `env:read` for `VERYFRONT_EVAL_HTTP_*`         | Exports eval reports to an external endpoint |
 
 Use `veryfront.contracts` for contract ownership and dependency ordering. Use
 `veryfront.capabilities` only for runtime resource access and audit metadata.

@@ -1,10 +1,19 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { datasets, evalAgent, metrics, runEval } from "veryfront/eval";
 import { createEvalReportExporterRegistry } from "veryfront/extensions/eval";
+import {
+  _resetShimForTests,
+  setGlobalActiveSpanAccessor,
+  type Span,
+} from "../observability/tracing/api-shim.ts";
 
 describe("eval/runner", () => {
+  afterEach(() => {
+    _resetShimForTests();
+  });
+
   it("runs an agent eval and summarizes metric results", async () => {
     const definition = evalAgent({
       id: "eval:capital-answer",
@@ -163,5 +172,115 @@ describe("eval/runner", () => {
       sourcePath: "evals/export.eval.ts",
       redaction: { metadataAllowlist: ["dataset"] },
     });
+  });
+
+  it("adds the active runtime trace context to eval report exports", async () => {
+    const registry = createEvalReportExporterRegistry();
+    const exportedContexts: unknown[] = [];
+
+    registry.register({
+      id: "capture",
+      export(_report, context) {
+        exportedContexts.push(context);
+      },
+    });
+
+    setGlobalActiveSpanAccessor({
+      getActiveSpan: () => ({
+        spanContext: () => ({
+          traceId: "trace-1234567890abcdef1234567890abcdef",
+          spanId: "span-1234567890",
+          traceFlags: 1,
+        }),
+      } as Span),
+      getSpan: () => undefined,
+    });
+
+    const definition = evalAgent({
+      id: "eval:trace-export",
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "France capital?", reference: "Paris" }]),
+      metrics: [metrics.answer.exactMatch().gate()],
+    });
+
+    await runEval(definition, {
+      adapters: {
+        agent: async () => ({ text: "Paris" }),
+      },
+      export: {
+        registry,
+        exporterIds: ["capture"],
+        context: {
+          projectReference: "docs-agent",
+        },
+      },
+    });
+
+    assertEquals(exportedContexts, [
+      {
+        projectReference: "docs-agent",
+        trace: {
+          traceId: "trace-1234567890abcdef1234567890abcdef",
+          spanId: "span-1234567890",
+        },
+      },
+    ]);
+  });
+
+  it("preserves explicit eval report export trace context", async () => {
+    const registry = createEvalReportExporterRegistry();
+    const exportedContexts: unknown[] = [];
+
+    registry.register({
+      id: "capture",
+      export(_report, context) {
+        exportedContexts.push(context);
+      },
+    });
+
+    setGlobalActiveSpanAccessor({
+      getActiveSpan: () => ({
+        spanContext: () => ({
+          traceId: "active-trace",
+          spanId: "active-span",
+          traceFlags: 1,
+        }),
+      } as Span),
+      getSpan: () => undefined,
+    });
+
+    const definition = evalAgent({
+      id: "eval:explicit-trace-export",
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "France capital?", reference: "Paris" }]),
+      metrics: [metrics.answer.exactMatch().gate()],
+    });
+
+    await runEval(definition, {
+      adapters: {
+        agent: async () => ({ text: "Paris" }),
+      },
+      export: {
+        registry,
+        exporterIds: ["capture"],
+        context: {
+          trace: {
+            traceId: "explicit-trace",
+            spanId: "explicit-span",
+            parentSpanId: "explicit-parent",
+          },
+        },
+      },
+    });
+
+    assertEquals(exportedContexts, [
+      {
+        trace: {
+          traceId: "explicit-trace",
+          spanId: "explicit-span",
+          parentSpanId: "explicit-parent",
+        },
+      },
+    ]);
   });
 });

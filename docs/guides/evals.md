@@ -258,7 +258,31 @@ The registry redacts inputs, outputs, references, traces, metric evidence,
 metric explanations, and metadata unless the export context explicitly allows
 each field. Runtime monitoring remains separate: use
 `veryfront/extensions/observability` and the OpenTelemetry extension for spans,
-traces, metrics, and service monitoring.
+traces, metrics, and service monitoring. When OpenTelemetry is active, `runEval`
+adds the active `traceId` and `spanId` to export context unless you pass
+`context.trace` explicitly.
+
+Use `@veryfront/ext-eval-report-http` when an eval gateway endpoint should
+receive reports without adding a vendor SDK:
+
+```ts
+import extEvalReportHttp from "@veryfront/ext-eval-report-http";
+import { defineConfig } from "veryfront";
+
+export default defineConfig({
+  extensions: [
+    extEvalReportHttp({
+      exporters: [
+        {
+          id: "eval-gateway",
+          url: "https://evals.example.com/reports",
+          token: "<TOKEN>",
+        },
+      ],
+    }),
+  ],
+});
+```
 
 From the CLI, pass comma-separated exporter ids. Export failures are reported in
 the JSON report and do not prevent local report or JUnit files from being

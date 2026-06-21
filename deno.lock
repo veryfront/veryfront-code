@@ -5026,6 +5026,12 @@
           "npm:@kreuzberg/wasm@4.5.2"
         ]
       },
+      "extensions/ext-eval-report-http": {
+        "dependencies": [
+          "jsr:@std/assert@1.0.19",
+          "jsr:@std/testing@1.0.17"
+        ]
+      },
       "extensions/ext-llm-anthropic": {
         "dependencies": [
           "jsr:@std/assert@1.0.19",

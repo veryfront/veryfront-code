@@ -50,6 +50,7 @@
     "./extensions/ext-parser-babel",
     "./extensions/ext-sandbox-shell-tools",
     "./extensions/ext-observability-opentelemetry",
+    "./extensions/ext-eval-report-http",
     "./extensions/ext-content-mdx",
     "./extensions/ext-schema-zod"
   ],
