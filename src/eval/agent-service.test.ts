@@ -163,6 +163,10 @@ describe("eval/agent-service", () => {
       "Bearer token",
     );
     assertEquals(
+      (requests[0]?.init.headers as Record<string, string>)["x-token"],
+      "token",
+    );
+    assertEquals(
       (requests[0]?.init.headers as Record<string, string>)["x-project-slug"],
       "demo-project",
     );

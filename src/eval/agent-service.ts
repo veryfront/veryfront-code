@@ -182,6 +182,7 @@ function createHeaders(
   return {
     "Content-Type": "application/json",
     Authorization: `Bearer ${config.authToken}`,
+    "x-token": config.authToken,
     ...(config.projectSlug ? { "x-project-slug": config.projectSlug } : {}),
   };
 }
