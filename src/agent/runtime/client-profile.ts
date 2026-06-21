@@ -15,6 +15,7 @@ export const getRuntimeClientCapabilitySchema = defineSchema((v) =>
     "project_switching",
     "project.evals.read",
     "project.evals.write",
+    "project.evals.run",
   ])
 );
 
@@ -85,6 +86,7 @@ const FIRST_PARTY_CLIENTS: Readonly<Record<string, FirstPartyClientProfile>> = {
       "project_switching",
       "project.evals.read",
       "project.evals.write",
+      "project.evals.run",
     ],
   },
   "veryfront-cli": {

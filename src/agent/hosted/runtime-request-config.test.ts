@@ -118,6 +118,7 @@ Deno.test("resolveHostedRuntimeRequestConfig resolves overrides, thinking, max s
       "project_switching",
       "project.evals.read",
       "project.evals.write",
+      "project.evals.run",
     ],
   });
 });
