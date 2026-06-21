@@ -2,10 +2,13 @@ import { createEvalCheckContext } from "./expect.ts";
 import { createEvalReport } from "./report.ts";
 import {
   createEvalReportExporterRegistry,
+  type EvalReportExportContext,
   type EvalReportExporterRegistry,
   EvalReportExporterRegistryName,
   type EvalReportExportResult,
+  type EvalReportExportTraceContext,
 } from "#veryfront/extensions/eval";
+import { trace } from "../observability/tracing/api-shim.ts";
 import { tryResolve } from "../extensions/contracts.ts";
 import type {
   EvalAgentAdapterResult,
@@ -74,6 +77,36 @@ function resolveExporterRegistry(
     tryResolve<EvalReportExporterRegistry>(EvalReportExporterRegistryName);
 }
 
+function isEmptyTraceId(value: string | undefined): boolean {
+  return value === undefined || /^0+$/.test(value);
+}
+
+function getActiveEvalExportTraceContext(): EvalReportExportTraceContext | undefined {
+  const spanContext = trace.getActiveSpan()?.spanContext();
+  if (!spanContext) return undefined;
+  if (isEmptyTraceId(spanContext.traceId) || isEmptyTraceId(spanContext.spanId)) {
+    return undefined;
+  }
+  return {
+    traceId: spanContext.traceId,
+    spanId: spanContext.spanId,
+  };
+}
+
+function withActiveTraceContext(
+  context?: EvalReportExportContext,
+): EvalReportExportContext | undefined {
+  if (context?.trace) return context;
+
+  const activeTrace = getActiveEvalExportTraceContext();
+  if (!activeTrace) return context;
+
+  return {
+    ...(context ?? {}),
+    trace: activeTrace,
+  };
+}
+
 async function exportWithSelectedExporter(
   registry: EvalReportExporterRegistry,
   report: ReturnType<typeof createEvalReport>,
@@ -85,7 +118,7 @@ async function exportWithSelectedExporter(
 
   const selectedRegistry = createEvalReportExporterRegistry();
   selectedRegistry.register(exporter);
-  const [result] = await selectedRegistry.export(report, config.context);
+  const [result] = await selectedRegistry.export(report, withActiveTraceContext(config.context));
   return result ?? {
     exporterId,
     ok: false,
@@ -104,7 +137,7 @@ async function exportEvalReport(
   if (!registry) return createMissingRegistryResults(exporterIds);
 
   if (exporterIds.length === 0) {
-    return registry.export(report, config.context);
+    return registry.export(report, withActiveTraceContext(config.context));
   }
 
   const results: EvalReportExportResult[] = [];

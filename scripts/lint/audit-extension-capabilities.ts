@@ -67,6 +67,22 @@ export const SENSITIVE_EXTENSION_CAPABILITY_POLICIES:
         },
       ],
     },
+    {
+      label: "eval report HTTP export",
+      manifestPath: "extensions/ext-eval-report-http/deno.json",
+      requiredCapabilities: [
+        { type: "net:outbound", hosts: ["*"] },
+        {
+          type: "env:read",
+          keys: [
+            "VERYFRONT_EVAL_HTTP_EXPORTER_HEADERS",
+            "VERYFRONT_EVAL_HTTP_EXPORTER_ID",
+            "VERYFRONT_EVAL_HTTP_EXPORTER_TOKEN",
+            "VERYFRONT_EVAL_HTTP_EXPORTER_URL",
+          ],
+        },
+      ],
+    },
   ];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
