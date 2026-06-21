@@ -18,7 +18,7 @@ with one deterministic unit test.
 - An eval loads examples from inline data, JSON, or JSONL.
 - An eval records `input`, optional `reference`, and optional `metadata` for each example.
 - An eval uses metrics such as exact match, contains, JSON match, no failed tools, latency, tokens, cost, and rubric judges.
-- An eval produces a report with records, metric summaries, pass rate, and optional JUnit XML output.
+- An eval produces `summary.json` and `results.jsonl` artifacts, with optional raw JSON and JUnit XML output.
 
 ## Boundary
 

@@ -19,6 +19,10 @@ export const evalHelp: CommandHelp = {
       description: "Write the raw eval report JSON to a file",
     },
     {
+      flag: "--report-dir <path>",
+      description: "Write summary.json and results.jsonl artifacts to a directory",
+    },
+    {
       flag: "--junit <path>",
       description: "Write a JUnit XML report to a file",
     },
@@ -42,7 +46,8 @@ export const evalHelp: CommandHelp = {
   examples: [
     "veryfront eval --list",
     "veryfront eval deep-research",
-    "veryfront eval eval:deep-research --report .veryfront/evals/deep-research.json --junit .veryfront/evals/deep-research.xml",
+    "veryfront eval eval:deep-research --report-dir .veryfront/evals/deep-research",
+    "veryfront eval eval:deep-research --report .veryfront/evals/deep-research/report.json --junit .veryfront/evals/deep-research/junit.xml",
     "veryfront eval deep-research --export braintrust,langfuse --json",
     "veryfront eval deep-research --json",
   ],
