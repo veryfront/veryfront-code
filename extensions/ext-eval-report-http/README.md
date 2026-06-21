@@ -10,6 +10,14 @@ The extension does not own runtime tracing. Use
 `@veryfront/ext-observability-opentelemetry` for OpenTelemetry spans, metrics,
 and service monitoring.
 
+Eval report HTTP export is an explicit data export path. It sends the completed,
+redacted `EvalReport` and its export context to the configured endpoint only
+when an eval run selects the exporter. Use this extension for Langfuse,
+LangSmith, Braintrust, or internal gateway integrations that need eval records,
+scores, redaction policy, and optional trace correlation. Do not use OTLP
+runtime telemetry env vars to route eval reports; `OTEL_*` settings only control
+runtime trace and metric export.
+
 ## Installation
 
 Add the extension to your project's `veryfront.config.ts`:
@@ -79,6 +87,10 @@ Each exporter sends:
 `runEval` enriches export context with the active runtime `traceId` and `spanId`
 when OpenTelemetry is active and the caller did not pass an explicit
 `context.trace`.
+
+That trace context is correlation metadata only. It does not include span data,
+metric streams, or logs, and changing the eval HTTP exporter does not change the
+OpenTelemetry runtime exporter.
 
 ## Required contract
 

@@ -265,6 +265,15 @@ traces, metrics, and service monitoring. When OpenTelemetry is active, `runEval`
 adds the active `traceId` and `spanId` to export context unless you pass
 `context.trace` explicitly.
 
+Eval exports are explicit data exports, not ambient telemetry. Exporters receive
+the completed `EvalReport` plus `EvalReportExportContext` only when the eval run
+selects an exporter id or passes an export registry. This is the right hook for
+Langfuse, LangSmith, Braintrust, or an internal gateway that translates the
+redacted report into a vendor-specific API shape. Regular OpenTelemetry settings
+such as `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_METRICS_ENABLED`, and
+`OTEL_TRACES_ENABLED` do not route eval reports to those vendors; they only
+control runtime trace and metric export.
+
 Use `@veryfront/ext-eval-report-http` when an eval gateway endpoint should
 receive reports without adding a vendor SDK:
 
