@@ -6,6 +6,15 @@ import {
 } from "./browser-safe-exports.mjs";
 import { normalizeNpmPackageMetadata } from "./npm-package-metadata.ts";
 
+Deno.test("exports agent skill helpers as a public package subpath", async () => {
+	const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
+	const exports = denoConfig.exports as Record<string, string>;
+	const imports = denoConfig.imports as Record<string, string>;
+
+	assertEquals(exports["./skill"], "./src/skill/index.ts");
+	assertEquals(imports["veryfront/skill"], "./src/skill/index.ts");
+});
+
 describe("normalizeNpmPackageMetadata", () => {
 	it("removes source files from the published npm file list", () => {
 		const pkg = normalizeNpmPackageMetadata({
