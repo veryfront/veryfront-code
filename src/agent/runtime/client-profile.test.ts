@@ -25,6 +25,7 @@ Deno.test("resolveRuntimeClientProfile normalizes nested Veryfront client metada
         "project_switching",
         "project.evals.read",
         "project.evals.write",
+        "project.evals.run",
       ],
     },
   );
@@ -78,6 +79,7 @@ Deno.test("clientAllowsStudioMcp allows trusted studio-capable clients", () => {
       "project_switching",
       "project.evals.read",
       "project.evals.write",
+      "project.evals.run",
     ],
   });
   assertEquals(clientAllowsStudioMcp(profile), true);

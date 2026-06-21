@@ -6,6 +6,7 @@ import {
   datasets,
   type DiscoveredEval,
   evalAgent,
+  type EvalRun,
   getEvalRunSchema,
   getEvalSourceDocumentSchema,
   metrics,
@@ -77,7 +78,7 @@ describe("eval/studio", () => {
   });
 
   it("validates V2-ready EvalRun projections", () => {
-    const run = {
+    const run: EvalRun = {
       kind: "eval-run",
       runId: "evalrun_123",
       evalId: "eval:deep-research",
