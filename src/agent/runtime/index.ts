@@ -157,6 +157,10 @@ import { resolveAgentModelTransport, type ResolvedModelTransport } from "./model
 
 const logger = serverLogger.component("agent");
 
+function shouldDisableToolsForFinalResponseAfterToolSuccess(toolName: string): boolean {
+  return toolName === "create_agent" || toolName === "update_agent";
+}
+
 function parseToolResultJson(result: string): unknown {
   try {
     return JSON.parse(result);
@@ -1104,9 +1108,6 @@ export class AgentRuntime {
 
         if (matchingResult) {
           await persistToolResult(matchingResult);
-          if (tc.name === "create_agent") {
-            toolsDisabledForFinalResponse = true;
-          }
           toolCall.status = matchingResult.error === undefined ? "completed" : "error";
           toolCall.result = matchingResult.output;
           toolCall.error = matchingResult.error === undefined
@@ -1115,6 +1116,9 @@ export class AgentRuntime {
           toolCalls.push(toolCall);
 
           if (matchingResult.error === undefined) {
+            if (shouldDisableToolsForFinalResponseAfterToolSuccess(tc.name)) {
+              toolsDisabledForFinalResponse = true;
+            }
             if (tc.name === LOAD_SKILL_TOOL_ID) {
               activeSkillId = extractSkillId(matchingResult.output);
               activeSkillPolicy = extractSkillPolicy(matchingResult.output);
@@ -1139,14 +1143,14 @@ export class AgentRuntime {
 
         if (persistedResult) {
           const persistedError = getToolResultError(persistedResult.result);
-          if (tc.name === "create_agent") {
-            toolsDisabledForFinalResponse = true;
-          }
           toolCall.status = persistedError === undefined ? "completed" : "error";
           toolCall.result = persistedResult.result;
           toolCall.error = persistedError;
           toolCalls.push(toolCall);
           if (persistedError === undefined) {
+            if (shouldDisableToolsForFinalResponseAfterToolSuccess(tc.name)) {
+              toolsDisabledForFinalResponse = true;
+            }
             if (tc.name === LOAD_SKILL_TOOL_ID) {
               activeSkillId = extractSkillId(persistedResult.result);
               activeSkillPolicy = extractSkillPolicy(persistedResult.result);
@@ -1278,7 +1282,7 @@ export class AgentRuntime {
             hasSubmittedFormInputInLoop = true;
             currentRuntimeContext = markSubmittedFormInputRuntimeContext(currentRuntimeContext);
           }
-          if (tc.name === "create_agent") {
+          if (shouldDisableToolsForFinalResponseAfterToolSuccess(tc.name)) {
             toolsDisabledForFinalResponse = true;
           }
 
@@ -1306,9 +1310,6 @@ export class AgentRuntime {
             currentMessages,
             toolCalls,
           );
-          if (tc.name === "create_agent") {
-            toolsDisabledForFinalResponse = true;
-          }
         }
       }
 
