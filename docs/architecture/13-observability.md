@@ -26,6 +26,27 @@ Primary source areas:
 4. Log subscribers and buffers expose recent runtime output.
 5. Request profiling records route-level timing and resource use.
 
+## OpenTelemetry Runtime Modes
+
+OpenTelemetry exporter routing is process-level runtime configuration. In shared
+Veryfront runtimes, the platform process owns `OTEL_*` and `VERYFRONT_OTEL`
+values so one project cannot route another project's spans or metrics to a
+tenant-controlled collector. Project code can still create framework spans and
+metrics; the shared process decides where they are exported.
+
+| Runtime mode                         | Telemetry config owner               | Supported behavior                                                                                                                             |
+| ------------------------------------ | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Shared multi-tenant/proxy runtime    | Platform host env                    | Supported. `OTEL_*` and `VERYFRONT_OTEL` are host-owned. Project env overlays are filtered before request execution.                           |
+| Shared runtime project env/config    | Project env or `veryfront.config.ts` | Blocked. Project-controlled exporter endpoints, headers, service names, and resource attributes are ignored for shared runtime export routing. |
+| Dedicated runtime or per-project pod | Project deployment env               | Supported. The process boundary isolates the project, so deployment env can point to a project-owned OTLP collector.                           |
+| Local development                    | Developer env                        | Supported. Local env controls the local process only.                                                                                          |
+
+Eval report exports are separate from regular runtime telemetry. Eval exporters
+send explicit, redacted `EvalReport` payloads to selected exporters such as
+Langfuse, LangSmith, Braintrust, or an internal gateway. OpenTelemetry trace IDs
+can be attached for correlation, but OTLP trace or metric env vars do not route
+eval report payloads.
+
 ## Server timing
 
 When `VERYFRONT_ENABLE_SERVER_TIMING=1`, HTML and page-data responses include
@@ -66,6 +87,10 @@ to estimate proxy-to-renderer network and response header overhead.
 - Observability records behavior. It does not own business logic.
 - Public monitoring routes belong in [server runtime](./04-server-runtime.md).
 - Error type definitions and registry patterns belong in [`src/errors/`](../../src/errors/).
+- In shared/proxy runtimes, telemetry exporter routing is platform-owned host
+  configuration. Do not read `OTEL_*` routing values from project env overlays.
+- Dedicated runtimes can use project-owned `OTEL_*` values because each project
+  has its own process boundary.
 
 ## Change checks
 

@@ -232,7 +232,17 @@ Common groups:
 - **Runtime**: `PORT`, `NODE_ENV`, `REDIS_URL`, request timeouts, SSR limits,
   and `VERYFRONT_EXPERIMENTAL_RSC`.
 - **Observability**: `VERYFRONT_OTEL`, `OTEL_TRACES_ENABLED`,
-  `OTEL_METRICS_ENABLED`, OTLP endpoints, and `OTEL_SERVICE_NAME`.
+  `OTEL_METRICS_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`,
+  `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME`, and related `OTEL_*`
+  values.
+
+In shared/proxy runtimes, observability exporter routing is platform-owned.
+Project env overlays and project `veryfront.config.ts` files must not choose the
+shared runtime OTLP endpoint, headers, service name, resource attributes, or
+enable flags. Veryfront filters `OTEL_*` and `VERYFRONT_OTEL` from shared
+runtime project env before request execution. Dedicated runtimes and local
+development can use project/deployment `OTEL_*` values because they run in their
+own process boundary.
 
 Use [Providers](./providers.md) for model-provider setup. Use
 [Agent service runtime](./agent-service-runtime.md) for the registration
