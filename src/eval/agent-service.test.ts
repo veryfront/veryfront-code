@@ -64,6 +64,7 @@ describe("eval/agent-service", () => {
     const body = buildAgentServiceEvalRequestBody({
       exampleId: "smoke",
       input: { prompt: "List files", metadata: { area: "files" } },
+      agentId: "researcher",
       projectId: "project_123",
       branchId: "branch_123",
       model: "provider/model",
@@ -85,6 +86,7 @@ describe("eval/agent-service", () => {
     ]);
     assertEquals(body.forwardedProps, {
       veryfront: {
+        agentId: "researcher",
         projectId: "project_123",
         branchId: "branch_123",
         conversationId: "conversation_123",
@@ -120,6 +122,7 @@ describe("eval/agent-service", () => {
     const adapter = createAgentServiceEvalAdapter({
       endpoint: "http://127.0.0.1:4311/api/ag-ui",
       authToken: "token",
+      agentId: "veryfront",
       projectId: "project_123",
       branchId: "branch_123",
       fetch: async (input, init) => {
@@ -158,6 +161,7 @@ describe("eval/agent-service", () => {
     );
     assertEquals(requests[0]?.body.forwardedProps, {
       veryfront: {
+        agentId: "veryfront",
         projectId: "project_123",
         branchId: "branch_123",
       },

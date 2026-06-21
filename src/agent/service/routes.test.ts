@@ -125,6 +125,26 @@ Deno.test("agent service routes stream prepared AG-UI execution", async () => {
   assertEquals(streamInputs, [{ executionId: "exec-1", agUiRunId: "run-1" }]);
 });
 
+Deno.test("agent service routes preserve forwarded AG-UI target agent ids", async () => {
+  const { routeSet, preparedRequests } = createRouteSet();
+  const response = await routeSet.handleAgUiRequest(
+    createAuthenticatedRequest("/api/ag-ui", {
+      ...createAgUiBody(),
+      forwardedProps: {
+        veryfront: {
+          agentId: "researcher",
+          projectId: "project_123",
+        },
+      },
+    }),
+  );
+
+  assertEquals(response.status, 200);
+  assertEquals(preparedRequests.length, 1);
+  assertEquals(preparedRequests[0]?.agentId, "researcher");
+  assertEquals(preparedRequests[0]?.projectId, "project_123");
+});
+
 Deno.test("agent service routes preserve control-plane target agent ids", async () => {
   const { routeSet, preparedRequests } = createRouteSet();
   const response = await routeSet.handleRuntimeAgentRunInvocationExecuteRequest({

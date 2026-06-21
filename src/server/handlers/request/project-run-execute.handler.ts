@@ -689,8 +689,17 @@ function withEvalRunConfig(
   };
 }
 
+function getEvalTargetAgentId(definition: EvalDefinition): string | undefined {
+  if (definition.targetKind !== "agent") return undefined;
+  const target = definition.target.startsWith("agent:")
+    ? definition.target.slice("agent:".length)
+    : definition.target;
+  return target.length > 0 ? target : undefined;
+}
+
 function createEvalAdapterConfig(input: {
   request: ProjectRunExecuteRequest;
+  definition: EvalDefinition;
   req: Request;
   ctx: HandlerContext;
 }): AgentServiceEvalAdapterConfig {
@@ -704,6 +713,7 @@ function createEvalAdapterConfig(input: {
   return {
     endpoint: getSameOriginAgUiEndpoint(input.req),
     authToken,
+    agentId: getEvalTargetAgentId(input.definition),
     projectId: input.request.projectId,
     branchId: getStringConfig(config, ["branch_id", "branchId"]) ??
       getStringConfig(runInput, ["branch_id", "branchId"]),
@@ -740,7 +750,9 @@ async function executeEvalRun(
   const config = request.config ?? {};
   const report = await deps.runEval(withEvalRunConfig(evalItem.definition, config), {
     adapters: {
-      agent: deps.createEvalAgentAdapter(createEvalAdapterConfig({ request, req, ctx })),
+      agent: deps.createEvalAgentAdapter(
+        createEvalAdapterConfig({ request, definition: evalItem.definition, req, ctx }),
+      ),
     },
     baseDir: ctx.projectDir,
     runId: request.runId,
