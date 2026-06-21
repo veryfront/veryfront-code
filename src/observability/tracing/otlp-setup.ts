@@ -12,7 +12,6 @@
  * - OTEL_EXPORTER_OTLP_HEADERS: Auth headers
  **************************/
 
-import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import {
@@ -29,6 +28,7 @@ import {
   trace as shimTrace,
   type Tracer,
 } from "./api-shim.ts";
+import { getHostTelemetryEnv } from "./telemetry-env.ts";
 
 const logger = serverLogger.component("otel");
 
@@ -63,11 +63,11 @@ function getConfig(): OTLPConfig {
   // bootstrap has loaded .env files. Read tracing env directly here so no-op
   // spans do not force early EnvironmentConfig initialization.
   return {
-    enabled: isTruthyEnvValue(getEnv("VERYFRONT_OTEL")) ||
-      isTruthyEnvValue(getEnv("OTEL_TRACES_ENABLED")),
-    serviceName: getEnv("OTEL_SERVICE_NAME") || "veryfront",
-    endpoint: getEnv("OTEL_EXPORTER_OTLP_ENDPOINT") || "",
-    headers: parseHeaders(getEnv("OTEL_EXPORTER_OTLP_HEADERS")),
+    enabled: isTruthyEnvValue(getHostTelemetryEnv("VERYFRONT_OTEL")) ||
+      isTruthyEnvValue(getHostTelemetryEnv("OTEL_TRACES_ENABLED")),
+    serviceName: getHostTelemetryEnv("OTEL_SERVICE_NAME") || "veryfront",
+    endpoint: getHostTelemetryEnv("OTEL_EXPORTER_OTLP_ENDPOINT") || "",
+    headers: parseHeaders(getHostTelemetryEnv("OTEL_EXPORTER_OTLP_HEADERS")),
   };
 }
 

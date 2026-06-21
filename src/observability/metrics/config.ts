@@ -1,7 +1,7 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { MetricsConfig } from "./types.ts";
 import { memoryUsage as platformMemoryUsage } from "#veryfront/platform/compat/process.ts";
-import { getOtelMetricsConfig } from "#veryfront/config/env.ts";
+import { getHostTelemetryEnv } from "#veryfront/observability/tracing/telemetry-env.ts";
 
 const DEFAULT_METRICS_COLLECT_INTERVAL_MS = 60000;
 
@@ -67,13 +67,12 @@ export function loadConfig(
   }
 
   try {
-    const metricsConfig = getOtelMetricsConfig();
     applyEnvConfig({
-      enabledFlag: metricsConfig.enabledFlag,
-      veryfrontFlag: metricsConfig.veryfrontFlag,
-      endpoint: metricsConfig.endpoint,
-      metricsEndpoint: metricsConfig.metricsEndpoint,
-      exporter: metricsConfig.exporter,
+      enabledFlag: getHostTelemetryEnv("OTEL_METRICS_ENABLED"),
+      veryfrontFlag: getHostTelemetryEnv("VERYFRONT_OTEL"),
+      endpoint: getHostTelemetryEnv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+      metricsEndpoint: getHostTelemetryEnv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"),
+      exporter: getHostTelemetryEnv("OTEL_METRICS_EXPORTER"),
     });
   } catch (_) {
     /* expected: getEnv access may fail in some runtimes */

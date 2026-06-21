@@ -94,6 +94,39 @@ function createRuntimeInfo(env: EnvironmentConfig): RuntimeInfo {
   };
 }
 
+function mergeObservabilityConfig(
+  fileConfig: VeryfrontConfig,
+  env: EnvironmentConfig,
+): VeryfrontConfig["observability"] {
+  if (env.proxyMode) {
+    return {
+      tracing: {
+        enabled: env.otelEnabled,
+        endpoint: env.otelEndpoint,
+        serviceName: env.otelServiceName,
+      },
+      metrics: {
+        enabled: env.otelMetricsEnabled,
+        endpoint: env.otelMetricsEndpoint,
+      },
+    };
+  }
+
+  return {
+    tracing: {
+      ...fileConfig.observability?.tracing,
+      enabled: env.otelEnabled || fileConfig.observability?.tracing?.enabled,
+      endpoint: env.otelEndpoint || fileConfig.observability?.tracing?.endpoint,
+      serviceName: env.otelServiceName || fileConfig.observability?.tracing?.serviceName,
+    },
+    metrics: {
+      ...fileConfig.observability?.metrics,
+      enabled: env.otelMetricsEnabled || fileConfig.observability?.metrics?.enabled,
+      endpoint: env.otelMetricsEndpoint || fileConfig.observability?.metrics?.endpoint,
+    },
+  };
+}
+
 function mergeConfigWithEnv(fileConfig: VeryfrontConfig, env: EnvironmentConfig): VeryfrontConfig {
   return {
     ...fileConfig,
@@ -119,19 +152,7 @@ function mergeConfigWithEnv(fileConfig: VeryfrontConfig, env: EnvironmentConfig)
       port: env.port || fileConfig.dev?.port,
     },
 
-    observability: {
-      tracing: {
-        ...fileConfig.observability?.tracing,
-        enabled: env.otelEnabled || fileConfig.observability?.tracing?.enabled,
-        endpoint: env.otelEndpoint || fileConfig.observability?.tracing?.endpoint,
-        serviceName: env.otelServiceName || fileConfig.observability?.tracing?.serviceName,
-      },
-      metrics: {
-        ...fileConfig.observability?.metrics,
-        enabled: env.otelMetricsEnabled || fileConfig.observability?.metrics?.enabled,
-        endpoint: env.otelMetricsEndpoint || fileConfig.observability?.metrics?.endpoint,
-      },
-    },
+    observability: mergeObservabilityConfig(fileConfig, env),
   };
 }
 

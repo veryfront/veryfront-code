@@ -1,4 +1,9 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
+import {
+  _resetEnvironmentConfig,
+  getEnvironmentConfig,
+  refreshEnvironmentConfig,
+} from "#veryfront/config/environment-config.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withEnv } from "#veryfront/testing/deno-compat.ts";
 import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
@@ -42,5 +47,27 @@ describe("observability/tracing/telemetry-env", () => {
     assertEquals(isReservedSharedRuntimeTelemetryEnvKey("OTEL_TRACES_ENABLED"), true);
     assertEquals(isReservedSharedRuntimeTelemetryEnvKey("VERYFRONT_OTEL"), true);
     assertEquals(isReservedSharedRuntimeTelemetryEnvKey("OPENAI_API_KEY"), false);
+  });
+
+  it("keeps framework OTel environment config host-owned inside project env overlays", async () => {
+    await withEnv({
+      OTEL_TRACES_ENABLED: "true",
+      OTEL_EXPORTER_OTLP_ENDPOINT: "https://platform-collector.example/otlp",
+      OTEL_SERVICE_NAME: "veryfront-server",
+    }, async () => {
+      runWithProjectEnv({
+        OTEL_TRACES_ENABLED: "false",
+        OTEL_EXPORTER_OTLP_ENDPOINT: "https://tenant-collector.example/otlp",
+        OTEL_SERVICE_NAME: "tenant-service",
+      }, () => {
+        _resetEnvironmentConfig();
+        const config = refreshEnvironmentConfig();
+        assertEquals(config.otelEnabled, true);
+        assertEquals(config.otelEndpoint, "https://platform-collector.example/otlp");
+        assertEquals(config.otelServiceName, "veryfront-server");
+      });
+      _resetEnvironmentConfig();
+      getEnvironmentConfig();
+    });
   });
 });

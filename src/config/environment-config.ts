@@ -1,4 +1,5 @@
-import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { getHostTelemetryEnv } from "#veryfront/observability/tracing/telemetry-env.ts";
 import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
 import { logger } from "#veryfront/utils/logger/logger.ts";
 import { hasEnvLoaded } from "#veryfront/utils/env-loader.ts";
@@ -7,6 +8,7 @@ export interface EnvironmentConfig {
   nodeEnv: "development" | "production" | "test" | string;
   veryfrontEnv: string;
   veryfrontMode: string;
+  proxyMode: boolean;
 
   debug: boolean;
   ci: boolean;
@@ -113,6 +115,7 @@ function readEnvSnapshot(): EnvironmentConfig {
     nodeEnv,
     veryfrontEnv,
     veryfrontMode: getEnv("VERYFRONT_MODE") ?? "development",
+    proxyMode: getHostEnv("PROXY_MODE") === "1",
 
     debug: isTruthyEnvValue(getEnv("VERYFRONT_DEBUG")),
     ci: getEnv("CI") === "1",
@@ -163,16 +166,16 @@ function readEnvSnapshot(): EnvironmentConfig {
       DEFAULTS.ssrMaxConcurrentTransforms,
     ),
 
-    otelEnabled: isTruthyEnvValue(getEnv("VERYFRONT_OTEL")) ||
-      isTruthyEnvValue(getEnv("OTEL_TRACES_ENABLED")),
-    otelServiceName: getEnv("OTEL_SERVICE_NAME") || undefined,
-    otelEndpoint: getEnv("OTEL_EXPORTER_OTLP_ENDPOINT") || undefined,
-    otelTracesEndpoint: getEnv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") || undefined,
-    otelMetricsEndpoint: getEnv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") || undefined,
-    otelTracesExporter: getEnv("OTEL_TRACES_EXPORTER") || undefined,
-    otelMetricsExporter: getEnv("OTEL_METRICS_EXPORTER") || undefined,
-    otelHeaders: getEnv("OTEL_EXPORTER_OTLP_HEADERS") || undefined,
-    otelMetricsEnabled: isTruthyEnvValue(getEnv("OTEL_METRICS_ENABLED")),
+    otelEnabled: isTruthyEnvValue(getHostTelemetryEnv("VERYFRONT_OTEL")) ||
+      isTruthyEnvValue(getHostTelemetryEnv("OTEL_TRACES_ENABLED")),
+    otelServiceName: getHostTelemetryEnv("OTEL_SERVICE_NAME") || undefined,
+    otelEndpoint: getHostTelemetryEnv("OTEL_EXPORTER_OTLP_ENDPOINT") || undefined,
+    otelTracesEndpoint: getHostTelemetryEnv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") || undefined,
+    otelMetricsEndpoint: getHostTelemetryEnv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") || undefined,
+    otelTracesExporter: getHostTelemetryEnv("OTEL_TRACES_EXPORTER") || undefined,
+    otelMetricsExporter: getHostTelemetryEnv("OTEL_METRICS_EXPORTER") || undefined,
+    otelHeaders: getHostTelemetryEnv("OTEL_EXPORTER_OTLP_HEADERS") || undefined,
+    otelMetricsEnabled: isTruthyEnvValue(getHostTelemetryEnv("OTEL_METRICS_ENABLED")),
 
     openaiApiKey: getEnv("OPENAI_API_KEY") || undefined,
     openaiBaseUrl: getEnv("OPENAI_BASE_URL") || undefined,
