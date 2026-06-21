@@ -274,18 +274,34 @@ async function createBootstrappedHostedChatRuntime(
     resolveProvider: input.resolveProvider,
     ...(input.createTerminalAdapter ? { createTerminalAdapter: input.createTerminalAdapter } : {}),
   });
-  const bootstrap = await createHostedChatExecutionRuntimeBootstrap({
-    agent: input.agent,
-    cleanup: input.cleanup,
-    lifecycleAdapter,
-    finalMessages: input.finalMessages,
-    conversationId: input.conversationId,
-    abortSignal: input.abortSignal,
-    traceStream: input.traceStream,
-    ...(input.createRootStreamWatchdog
-      ? { createRootStreamWatchdog: input.createRootStreamWatchdog }
-      : {}),
-  });
+  let bootstrap: HostedChatExecutionRuntimeBootstrap;
+  try {
+    bootstrap = await createHostedChatExecutionRuntimeBootstrap({
+      agent: input.agent,
+      cleanup: input.cleanup,
+      lifecycleAdapter,
+      finalMessages: input.finalMessages,
+      conversationId: input.conversationId,
+      abortSignal: input.abortSignal,
+      traceStream: input.traceStream,
+      ...(input.createRootStreamWatchdog
+        ? { createRootStreamWatchdog: input.createRootStreamWatchdog }
+        : {}),
+    });
+  } catch (error) {
+    await dispatchConversationHostedStreamErrorState(lifecycleAdapter, error).catch(
+      (terminalError) => {
+        input.logger?.error("Durable chat bootstrap failure finalization failed", {
+          error: terminalError instanceof Error ? terminalError.message : String(terminalError),
+        });
+      },
+    );
+    await cleanupAfterHostedChatExecutionFinalization({
+      cleanup: input.cleanup,
+      logger: input.logger,
+    });
+    throw error;
+  }
 
   return createHostedChatExecutionRuntime({
     agentId: input.agentId,

@@ -450,6 +450,95 @@ describe("agent/hosted-chat-execution-runtime", () => {
     });
   });
 
+  it("finalizes durable root runs when bootstrapping hosted chat execution fails", async () => {
+    const tracer = createTracer();
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+    const agent: HostedChatRuntimeAgent = {
+      stream: async () => {
+        throw new Error("stream startup failed");
+      },
+    };
+
+    await assertRejects(
+      async () => {
+        await createBootstrappedHostedChatExecutionRuntime({
+          authToken: "token",
+          apiUrl: "https://api.example.test",
+          agent,
+          agentId: "agent-1",
+          modelId: "openai/gpt-5.4",
+          cleanup: async () => {},
+          messages: [],
+          finalMessages: [],
+          conversationId: "conversation-1",
+          projectId: "project-1",
+          userId: "user-1",
+          rootRunContext: {
+            durableRootRun: {
+              runId: "root-run-1",
+              conversationId: "conversation-1",
+              messageId: "stream-message-1",
+              latestEventId: 0,
+              latestExternalEventSequence: 0,
+            },
+            durableRunMirror: null,
+          },
+          abortSignal: new AbortController().signal,
+          tracer: tracer.tracer,
+          resolveProvider: () => "openai",
+          createTerminalAdapter: (input) => ({
+            toTerminalState: (state) => ({
+              status: state.status,
+              metadata: state.metadata ?? { modelId: input.fallbackModelId },
+              ...(state.terminalErrorCode !== undefined
+                ? { terminalErrorCode: state.terminalErrorCode }
+                : {}),
+              ...(state.terminalErrorMessage !== undefined
+                ? { terminalErrorMessage: state.terminalErrorMessage }
+                : {}),
+            }),
+            finalizeRun: async (state) => {
+              terminalStates.push(state);
+            },
+            cancelRun: async (state) => {
+              terminalStates.push(state);
+            },
+            onTerminalState: async (state) => {
+              await input.onTerminalState?.(state);
+            },
+            dispatch: async (state) => {
+              const terminalState = {
+                status: state.status,
+                metadata: state.metadata ?? { modelId: input.fallbackModelId },
+                ...(state.terminalErrorCode !== undefined
+                  ? { terminalErrorCode: state.terminalErrorCode }
+                  : {}),
+                ...(state.terminalErrorMessage !== undefined
+                  ? { terminalErrorMessage: state.terminalErrorMessage }
+                  : {}),
+              };
+              terminalStates.push(terminalState);
+              await input.onTerminalState?.(terminalState);
+              return terminalState;
+            },
+          }),
+        });
+      },
+      Error,
+      "stream startup failed",
+    );
+
+    assertEquals(terminalStates, [
+      {
+        status: "failed",
+        metadata: { modelId: "openai/gpt-5.4" },
+        terminalErrorCode: "STREAM_ERROR",
+        terminalErrorMessage: "stream startup failed",
+      },
+    ]);
+    assertEquals(tracer.finishCount, 1);
+  });
+
   it("appends fallback chunks and flushes through the mirror", async () => {
     const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
     const flushes: string[] = [];
