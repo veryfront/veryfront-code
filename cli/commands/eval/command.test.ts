@@ -3,10 +3,15 @@ import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { EvalReport } from "veryfront/eval";
 import {
+  createDefaultEvalReportDir,
+  createEvalArtifactPaths,
   createJunitXml,
+  createResultsJsonl,
+  createSummaryArtifact,
   normalizeEvalCliId,
   normalizeEvalInputForAgent,
   summarizeReportForCli,
+  writeEvalArtifacts,
 } from "./command.ts";
 import { parseEvalArgs } from "./handler.ts";
 
@@ -96,6 +101,7 @@ describe("eval CLI command helpers", () => {
       _: ["eval", "deep-research"],
       list: false,
       "dataset-base": "fixtures",
+      "report-dir": ".veryfront/evals/run-1",
       report: "reports/eval.json",
       junit: "reports/eval.xml",
       export: "braintrust,langfuse",
@@ -106,6 +112,7 @@ describe("eval CLI command helpers", () => {
     if (parsed.success) {
       assertEquals(parsed.data.id, "deep-research");
       assertEquals(parsed.data.datasetBase, "fixtures");
+      assertEquals(parsed.data.reportDir, ".veryfront/evals/run-1");
       assertEquals(parsed.data.report, "reports/eval.json");
       assertEquals(parsed.data.junit, "reports/eval.xml");
       assertEquals(parsed.data.exporters, ["braintrust", "langfuse"]);
@@ -149,6 +156,62 @@ describe("eval CLI command helpers", () => {
         },
       ],
     });
+  });
+
+  it("creates default eval artifact paths", () => {
+    assertEquals(
+      createDefaultEvalReportDir("evalrun_20260621_010203000"),
+      [
+        ".veryfront",
+        "evals",
+        "evalrun_20260621_010203000",
+      ].join("/"),
+    );
+    assertEquals(createEvalArtifactPaths(".veryfront/evals/run-1"), {
+      directory: ".veryfront/evals/run-1",
+      summary: ".veryfront/evals/run-1/summary.json",
+      results: ".veryfront/evals/run-1/results.jsonl",
+    });
+  });
+
+  it("serializes eval summary and record artifacts", () => {
+    const report = createReport();
+
+    assertEquals(createSummaryArtifact(report), {
+      kind: "eval-summary",
+      runId: "evalrun_test",
+      definitionId: "eval:answers",
+      targetKind: "agent",
+      target: "agent:assistant",
+      startedAt: "2026-01-01T00:00:00.000Z",
+      endedAt: "2026-01-01T00:00:01.000Z",
+      summary: report.summary,
+    });
+
+    const lines = createResultsJsonl(report).trimEnd().split("\n").map((line) =>
+      JSON.parse(line) as { id: string }
+    );
+    assertEquals(lines.map((record) => record.id), ["q1:1", "q2:1"]);
+  });
+
+  it("writes summary and JSONL artifacts to the report directory", async () => {
+    const tempDir = await Deno.makeTempDir();
+    try {
+      const paths = createEvalArtifactPaths(`${tempDir}/eval-report`);
+      await writeEvalArtifacts(createReport(), paths);
+
+      const summary = JSON.parse(await Deno.readTextFile(paths.summary)) as {
+        kind: string;
+        summary: { records: number };
+      };
+      const results = (await Deno.readTextFile(paths.results)).trimEnd().split("\n");
+
+      assertEquals(summary.kind, "eval-summary");
+      assertEquals(summary.summary.records, 2);
+      assertEquals(results.length, 2);
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
   });
 
   it("serializes eval reports to JUnit XML", () => {

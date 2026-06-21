@@ -2,7 +2,7 @@
  * Eval command - Discover and run eval definitions from the evals/ directory.
  */
 
-import { dirname, relative } from "@std/path";
+import { dirname, join, relative } from "@std/path";
 import type { Agent, AgentResponse } from "veryfront/agent";
 import type {
   DiscoveredEval,
@@ -38,6 +38,24 @@ type CliEvalSummary = {
   metrics: EvalReport["summary"]["metrics"];
 };
 
+type EvalArtifactPaths = {
+  directory: string;
+  summary: string;
+  results: string;
+};
+
+type EvalSummaryArtifact = {
+  kind: "eval-summary";
+  runId: string;
+  definitionId: string;
+  targetKind: EvalReport["targetKind"];
+  target: string;
+  startedAt: string;
+  endedAt: string;
+  summary: EvalReport["summary"];
+  exports?: EvalReport["exports"];
+};
+
 function xmlEscape(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -50,6 +68,22 @@ function xmlEscape(value: string): string {
 function stripFileProtocol(path: string): string {
   if (!path.startsWith("file://")) return path;
   return decodeURIComponent(new URL(path).pathname);
+}
+
+function createCliRunId(now = new Date()): string {
+  return `evalrun_${now.toISOString().replace(/[-:.]/g, "").replace("T", "_").replace("Z", "")}`;
+}
+
+export function createDefaultEvalReportDir(runId: string): string {
+  return join(".veryfront", "evals", runId);
+}
+
+export function createEvalArtifactPaths(reportDir: string): EvalArtifactPaths {
+  return {
+    directory: reportDir,
+    summary: join(reportDir, "summary.json"),
+    results: join(reportDir, "results.jsonl"),
+  };
 }
 
 function displaySourcePath(filePath: string, projectDir: string): string {
@@ -113,6 +147,25 @@ export function summarizeReportForCli(report: EvalReport): CliEvalSummary {
   };
 }
 
+export function createSummaryArtifact(report: EvalReport): EvalSummaryArtifact {
+  return {
+    kind: "eval-summary",
+    runId: report.runId,
+    definitionId: report.definitionId,
+    targetKind: report.targetKind,
+    target: report.target,
+    startedAt: report.startedAt,
+    endedAt: report.endedAt,
+    summary: report.summary,
+    ...(report.exports ? { exports: report.exports } : {}),
+  };
+}
+
+export function createResultsJsonl(report: EvalReport): string {
+  if (report.records.length === 0) return "";
+  return `${report.records.map((record) => JSON.stringify(record)).join("\n")}\n`;
+}
+
 export function createJunitXml(report: EvalReport): string {
   const skipped = report.records.reduce(
     (count, record) => count + skippedResults(record).length,
@@ -161,6 +214,15 @@ async function writeTextFileEnsuringDir(path: string, content: string): Promise<
   const dir = dirname(path);
   if (dir && dir !== ".") await Deno.mkdir(dir, { recursive: true });
   await Deno.writeTextFile(path, content);
+}
+
+export async function writeEvalArtifacts(
+  report: EvalReport,
+  paths: EvalArtifactPaths,
+): Promise<void> {
+  await Deno.mkdir(paths.directory, { recursive: true });
+  await Deno.writeTextFile(paths.summary, JSON.stringify(createSummaryArtifact(report), null, 2));
+  await Deno.writeTextFile(paths.results, createResultsJsonl(report));
 }
 
 function resolveAgentTargetId(target: string): string {
@@ -249,6 +311,7 @@ function createEvalCliExportConfig(
   evalItem: DiscoveredEval,
   options: EvalOptions,
   projectDir: string,
+  artifactPaths: EvalArtifactPaths,
 ): EvalReportExportConfig | undefined {
   if (options.exporters.length === 0) return undefined;
 
@@ -257,7 +320,7 @@ function createEvalCliExportConfig(
     context: {
       evalId: evalItem.definition.id,
       sourcePath: displaySourcePath(evalItem.filePath, projectDir),
-      reportPath: options.report,
+      reportPath: options.report ?? artifactPaths.summary,
       tags: evalItem.definition.tags,
       metadata: evalItem.definition.metadata,
       redaction: {},
@@ -364,14 +427,20 @@ export async function evalCommand(options: EvalOptions): Promise<void> {
       return;
     }
 
+    const runId = createCliRunId();
+    const artifactPaths = createEvalArtifactPaths(
+      options.reportDir ?? createDefaultEvalReportDir(runId),
+    );
     const report = await runEval(evalItem.definition, {
       baseDir: options.datasetBase ?? projectDir,
+      runId,
       adapters: {
         agent: createAgentAdapter(agent, options),
       },
-      export: createEvalCliExportConfig(evalItem, options, projectDir),
+      export: createEvalCliExportConfig(evalItem, options, projectDir, artifactPaths),
     });
 
+    await writeEvalArtifacts(report, artifactPaths);
     if (options.report) {
       await writeTextFileEnsuringDir(options.report, JSON.stringify(report, null, 2));
     }
@@ -383,9 +452,11 @@ export async function evalCommand(options: EvalOptions): Promise<void> {
       await outputJson(createSuccessEnvelope("eval", {
         report,
         summary: summarizeReportForCli(report),
+        artifacts: artifactPaths,
       }));
     } else {
       printReport(report);
+      cliLogger.info(`Report directory: ${artifactPaths.directory}`);
       if (options.report) cliLogger.info(`Report: ${options.report}`);
       if (options.junit) cliLogger.info(`JUnit: ${options.junit}`);
     }

@@ -5,7 +5,7 @@ order: 40
 ---
 
 Evals are project-defined quality checks in `evals/`. Run them locally with
-`veryfront eval <eval-id>` and store JSON or JUnit reports in CI.
+`veryfront eval <eval-id>` and store report artifacts in CI.
 
 ## Prerequisites
 
@@ -50,9 +50,15 @@ Write machine-readable reports:
 
 ```bash
 veryfront eval deep-research \
-  --report .veryfront/evals/deep-research.json \
-  --junit .veryfront/evals/deep-research.xml
+  --report-dir .veryfront/evals/deep-research \
+  --report .veryfront/evals/deep-research/report.json \
+  --junit .veryfront/evals/deep-research/junit.xml
 ```
+
+Each run writes `summary.json` and `results.jsonl` to the report directory. If
+`--report-dir` is omitted, Veryfront writes them under
+`.veryfront/evals/<run-id>/`. Use `--report` only when CI also needs the full
+raw report in one JSON file.
 
 Use JSON mode for automation:
 
@@ -293,8 +299,9 @@ written.
 
 ```bash
 veryfront eval deep-research \
-  --report .veryfront/evals/deep-research.json \
-  --junit .veryfront/evals/deep-research.xml \
+  --report-dir .veryfront/evals/deep-research \
+  --report .veryfront/evals/deep-research/report.json \
+  --junit .veryfront/evals/deep-research/junit.xml \
   --export braintrust,langfuse \
   --json
 ```
