@@ -160,6 +160,7 @@ const environment = resolveAgentServiceEvalEnvironment({
   AG_UI_EVAL_ENDPOINT: "http://127.0.0.1:3001/api/ag-ui",
   VERYFRONT_TOKEN: "<TOKEN>",
   AG_UI_EVAL_PROJECT_ID: "<PROJECT_ID>",
+  AG_UI_EVAL_PROJECT_SLUG: "<PROJECT_SLUG>",
 });
 
 const definition = evalAgent({
@@ -178,7 +179,9 @@ const report = await runEval(definition, {
 ```
 
 Set `AG_UI_EVAL_PROJECT_ID` when cases need project files, releases, or other
-project-scoped API state. The adapter reads AG-UI events into
+project-scoped API state. Set `AG_UI_EVAL_PROJECT_SLUG` or
+`VERYFRONT_PROJECT_SLUG` when the AG-UI endpoint runs behind the project runtime
+proxy. The adapter reads AG-UI events into
 `record.trace.events`, records tool starts as `record.trace.toolCalls`, and puts
 the parsed text at `record.output.text`.
 

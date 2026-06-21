@@ -715,6 +715,7 @@ function createEvalAdapterConfig(input: {
     authToken,
     agentId: getEvalTargetAgentId(input.definition),
     projectId: input.request.projectId,
+    projectSlug: input.ctx.projectSlug,
     branchId: getStringConfig(config, ["branch_id", "branchId"]) ??
       getStringConfig(runInput, ["branch_id", "branchId"]),
     model: getStringConfig(config, ["model"]),
