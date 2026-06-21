@@ -41,6 +41,7 @@ export interface AgentServiceEvalEnvironmentPreflightResult {
 
 /** Veryfront forwarded props included in an AG-UI eval request. */
 export interface AgentServiceEvalForwardedProps {
+  agentId?: string;
   projectId?: string;
   conversationId?: string;
   branchId?: string;
@@ -56,6 +57,7 @@ export interface BuildAgentServiceEvalRequestBodyInput {
   exampleId: string;
   input: unknown;
   metadata?: Record<string, unknown>;
+  agentId?: string | null;
   projectId?: string | null;
   conversationId?: string | null;
   branchId?: string | null;
@@ -86,6 +88,7 @@ export interface AgentServiceEvalRequestBody {
 export interface AgentServiceEvalAdapterConfig {
   endpoint?: string;
   authToken: string;
+  agentId?: string | null;
   projectId?: string | null;
   conversationId?: string | null;
   branchId?: string | null;
@@ -135,6 +138,7 @@ function getInputMetadata(input: unknown): Record<string, unknown> {
 function getRequestOverrides(input: BuildAgentServiceEvalRequestBodyInput) {
   const record = isRecord(input.input) ? input.input : {};
   return {
+    agentId: input.agentId ?? null,
     projectId: input.projectId ?? readString(record.projectId) ?? null,
     conversationId: input.conversationId ?? readString(record.conversationId) ?? null,
     branchId: input.branchId ?? readString(record.branchId) ?? null,
@@ -151,6 +155,7 @@ function createVeryfrontForwardedProps(
   const overrides = getRequestOverrides(input);
   const veryfront: AgentServiceEvalForwardedProps = {};
 
+  if (overrides.agentId) veryfront.agentId = overrides.agentId;
   if (overrides.projectId) veryfront.projectId = overrides.projectId;
   if (overrides.conversationId) veryfront.conversationId = overrides.conversationId;
   if (overrides.branchId) veryfront.branchId = overrides.branchId;
@@ -345,6 +350,7 @@ export function createAgentServiceEvalAdapter(
       exampleId: context.example.id,
       input: context.example.input,
       metadata: context.example.metadata,
+      agentId: config.agentId,
       projectId: config.projectId,
       conversationId: config.conversationId,
       branchId: config.branchId,

@@ -20,6 +20,7 @@ import type {
 
 export const getHostedAgUiChatForwardedConfigSchema = defineSchema((v) =>
   v.object({
+    agentId: v.string().min(1).max(128).optional(),
     projectId: v.string().nullable().optional(),
     branchId: v.string().nullable().optional(),
     conversationId: v.string().optional(),
@@ -47,6 +48,7 @@ export type HostedAgUiChatForwardedConfig = InferSchema<
 /** Context for derived hosted AG-UI chat. */
 export type DerivedHostedAgUiChatContext = {
   validatedContext: ChatRequestContext;
+  agentId?: string;
   projectId: string | null;
   conversationId: string | undefined;
   model: string | undefined;
@@ -123,6 +125,8 @@ export function deriveHostedAgUiChatContext(
     parseAgUiContextString(contextMap.get(`${contextNamespace}.environmentContext`));
   const conversationId = forwardedConfig?.conversationId ??
     parseAgUiContextString(contextMap.get(`${contextNamespace}.conversationId`));
+  const agentId = forwardedConfig?.agentId ??
+    parseAgUiContextString(contextMap.get(`${contextNamespace}.agentId`));
 
   const validatedContext: ChatRequestContext = {
     projectId,
@@ -133,6 +137,7 @@ export function deriveHostedAgUiChatContext(
 
   return {
     validatedContext,
+    ...(agentId ? { agentId } : {}),
     projectId,
     conversationId,
     model: forwardedConfig?.model ??
@@ -187,7 +192,7 @@ export async function buildParsedHostedAgUiRequest(
   }
 
   return {
-    agentId: undefined,
+    agentId: chatContext.agentId,
     agUiInput: input.agUiInput,
     userId: input.userId,
     authToken: input.authToken,
