@@ -7,7 +7,7 @@
 import { assertEquals, assertExists } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 
-import factory from "./index.ts";
+import factory, { resolveOtlpExtensionConfig, resolveOtlpSignalUrl } from "./index.ts";
 
 const noopLogger = {
   debug: () => {},
@@ -15,6 +15,10 @@ const noopLogger = {
   warn: () => {},
   error: () => {},
 };
+
+function env(vars: Record<string, string>): (name: string) => string | undefined {
+  return (name) => vars[name];
+}
 
 describe("ext-observability-opentelemetry factory", () => {
   it("produces an Extension with name ext-observability-opentelemetry", () => {
@@ -26,6 +30,58 @@ describe("ext-observability-opentelemetry factory", () => {
       "TracingExporter",
       "NodeTelemetryProvider",
     ]);
+  });
+});
+
+describe("ext-observability-opentelemetry config helpers", () => {
+  it("resolves trace and metric signal URLs from a base OTLP endpoint", () => {
+    assertEquals(
+      resolveOtlpSignalUrl("https://collector.example/otlp", "traces"),
+      "https://collector.example/otlp/v1/traces",
+    );
+    assertEquals(
+      resolveOtlpSignalUrl("https://collector.example/otlp", "metrics"),
+      "https://collector.example/otlp/v1/metrics",
+    );
+  });
+
+  it("preserves explicit OTLP signal URLs", () => {
+    assertEquals(
+      resolveOtlpSignalUrl("https://collector.example/v1/traces", "traces"),
+      "https://collector.example/v1/traces",
+    );
+    assertEquals(
+      resolveOtlpSignalUrl("https://collector.example/v1/metrics", "metrics"),
+      "https://collector.example/v1/metrics",
+    );
+  });
+
+  it("resolves metrics without requiring trace export", () => {
+    const config = resolveOtlpExtensionConfig(env({
+      OTEL_TRACES_ENABLED: "false",
+      OTEL_METRICS_ENABLED: "true",
+      OTEL_EXPORTER_OTLP_ENDPOINT: "https://collector.example/otlp",
+      OTEL_EXPORTER_OTLP_HEADERS: "Authorization=Basic platform-token",
+      OTEL_SERVICE_NAME: "veryfront-server",
+    }));
+
+    assertEquals(config.tracesEnabled, false);
+    assertEquals(config.metricsEnabled, true);
+    assertEquals(config.tracesUrl, "https://collector.example/otlp/v1/traces");
+    assertEquals(config.metricsUrl, "https://collector.example/otlp/v1/metrics");
+    assertEquals(config.headers, { Authorization: "Basic platform-token" });
+    assertEquals(config.serviceName, "veryfront-server");
+  });
+
+  it("does not expose a ctx.config.otel exporter-routing override", () => {
+    const config = resolveOtlpExtensionConfig(env({
+      OTEL_TRACES_ENABLED: "true",
+      OTEL_EXPORTER_OTLP_ENDPOINT: "https://platform-collector.example/otlp",
+      OTEL_SERVICE_NAME: "veryfront-server",
+    }));
+
+    assertEquals(config.serviceName, "veryfront-server");
+    assertEquals(config.tracesUrl, "https://platform-collector.example/otlp/v1/traces");
   });
 });
 
