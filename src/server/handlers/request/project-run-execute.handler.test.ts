@@ -357,7 +357,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(receivedEndpoint, "https://agent-service.example.com/api/ag-ui");
   });
 
-  it("rewrites preview AG-UI endpoints when control-plane requests use an internal runtime host", async () => {
+  it("preserves external preview AG-UI endpoints when control-plane requests use an internal runtime host", async () => {
     let receivedEndpoint: string | undefined;
     const handler = new ProjectRunExecuteHandler(createDeps({
       createEvalAgentAdapter: (config) => {
@@ -387,7 +387,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
 
     assertExists(result.response);
     assertEquals(result.response.status, 200);
-    assertEquals(receivedEndpoint, "http://127.0.0.1:4311/api/ag-ui");
+    assertEquals(receivedEndpoint, "https://demo-project.preview.veryfront.org/api/ag-ui");
   });
 
   it("marks eval execution unsuccessful when records contain adapter failures", async () => {
