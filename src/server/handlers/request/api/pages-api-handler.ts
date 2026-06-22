@@ -9,6 +9,10 @@
 
 import { APIRouteHandler } from "#veryfront/routing";
 import { serverLogger } from "#veryfront/utils";
+import {
+  extractCacheKeyContext,
+  tryGetCacheKeyContext,
+} from "#veryfront/cache/cache-key-builder.ts";
 import type { HandlerContext } from "../../types.ts";
 
 const logger = serverLogger.component("reset-api-handler");
@@ -35,8 +39,27 @@ export function __injectCacheForTests(
   injectedCache = cache;
 }
 
+function getApiHandlerCacheContext(ctx: HandlerContext) {
+  return tryGetCacheKeyContext() ?? extractCacheKeyContext(ctx);
+}
+
 function getCacheKey(ctx: HandlerContext): string {
-  return ctx.projectSlug ? `${ctx.projectDir}:${ctx.projectSlug}` : ctx.projectDir;
+  if (!ctx.projectSlug) return ctx.projectDir;
+
+  const cacheContext = getApiHandlerCacheContext(ctx);
+  return `${ctx.projectDir}:${ctx.projectSlug}:${cacheContext.mode}:${cacheContext.versionId}`;
+}
+
+function shouldCacheApiHandler(ctx: HandlerContext): boolean {
+  if (!ctx.projectSlug) return true;
+
+  return getApiHandlerCacheContext(ctx).mode === "production";
+}
+
+async function createApiHandler(ctx: HandlerContext): Promise<APIRouteHandler> {
+  const handler = new APIRouteHandler(ctx.projectDir, ctx.adapter);
+  await handler.initialize();
+  return handler;
 }
 
 async function destroyHandler(promise?: Promise<APIRouteHandler>): Promise<void> {
@@ -55,16 +78,14 @@ async function destroyHandler(promise?: Promise<APIRouteHandler>): Promise<void>
 }
 
 export async function getApiHandler(ctx: HandlerContext): Promise<APIRouteHandler> {
+  if (!shouldCacheApiHandler(ctx)) return createApiHandler(ctx);
+
   const cache = getCache();
   const key = getCacheKey(ctx);
 
   let promise = cache.get(key);
   if (!promise) {
-    promise = (async () => {
-      const handler = new APIRouteHandler(ctx.projectDir, ctx.adapter);
-      await handler.initialize();
-      return handler;
-    })();
+    promise = createApiHandler(ctx);
     cache.set(key, promise);
   }
 
@@ -89,19 +110,20 @@ export async function resetApiHandler(projectDir?: string): Promise<void> {
 /**
  * Reset cached API handlers for a specific project slug.
  *
- * In proxy/production mode the cache key is `"${projectDir}:${projectSlug}"`,
- * so we can't reuse `resetApiHandler(projectDir)`. Instead we iterate all
- * entries and destroy those whose key ends with `:${projectSlug}`.
+ * In proxy/production mode the cache key includes the project slug and release
+ * context, so we can't reuse `resetApiHandler(projectDir)`. Instead we iterate
+ * all entries and destroy those scoped to the project slug.
  */
 export async function resetApiHandlerForProject(
   projectSlug: string,
 ): Promise<void> {
   const cache = getCache();
-  const suffix = `:${projectSlug}`;
   const toDestroy: Promise<APIRouteHandler>[] = [];
 
   for (const [key, promise] of cache.entries()) {
-    if (key.endsWith(suffix) || key === projectSlug) {
+    if (
+      key === projectSlug || key.endsWith(`:${projectSlug}`) || key.includes(`:${projectSlug}:`)
+    ) {
       cache.delete(key);
       toDestroy.push(promise);
     }
