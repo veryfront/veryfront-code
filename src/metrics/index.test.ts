@@ -339,6 +339,45 @@ describe("metrics public SDK", () => {
     );
   });
 
+  it("exports direct histograms with cumulative temporality", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+
+    Deno.env.set("OTEL_METRICS_ENABLED", "true");
+    Deno.env.set("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "https://collector.example/v1/metrics");
+
+    globalThis.fetch = ((url: string | URL | Request, init?: RequestInit) => {
+      requests.push({ url: String(url), init });
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    }) as typeof fetch;
+
+    try {
+      metrics.histogram("vf_eval_duration_ms", 42, { project_id: "project-123" });
+      metrics.histogram("vf_eval_duration_ms", 120, { project_id: "project-123" });
+      await (metrics as unknown as { __flushForTests(): Promise<void> }).__flushForTests();
+    } finally {
+      globalThis.fetch = originalFetch;
+      Deno.env.delete("OTEL_METRICS_ENABLED");
+      Deno.env.delete("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT");
+    }
+
+    assertEquals(requests.length, 1);
+    const body = JSON.parse(String(requests[0]?.init?.body));
+    const emittedMetrics = body.resourceMetrics[0].scopeMetrics[0].metrics;
+    const metric = emittedMetrics.at(-1);
+    assertEquals(metric.name, "vf_eval_duration_ms");
+    assertEquals(metric.histogram.aggregationTemporality, 2);
+    assertEquals(metric.histogram.dataPoints[0].count, 2);
+    assertEquals(metric.histogram.dataPoints[0].sum, 162);
+    assertEquals(
+      metric.histogram.dataPoints[0].bucketCounts.reduce(
+        (sum: number, count: number) => sum + count,
+        0,
+      ),
+      2,
+    );
+  });
+
   it("exports gauges directly even when no SDK meter is installed", async () => {
     const originalFetch = globalThis.fetch;
     const requests: Array<{ url: string; init?: RequestInit }> = [];
