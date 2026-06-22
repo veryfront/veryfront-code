@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { AgUiRequestSchema } from "veryfront/agent";
 import { datasets, evalAgent, metrics, runEval } from "veryfront/eval";
 import {
   buildAgentServiceEvalRequestBody,
@@ -83,9 +84,11 @@ describe("eval/agent-service", () => {
       {
         id: body.messages[0]?.id,
         role: "user",
-        content: "List files",
+        parts: [{ type: "text", text: "List files" }],
       },
     ]);
+    const parsedAgUiRequest = AgUiRequestSchema.parse(body);
+    assertEquals(parsedAgUiRequest.messages[0]?.parts, [{ type: "text", text: "List files" }]);
     assertEquals(body.forwardedProps, {
       veryfront: {
         agentId: "researcher",
