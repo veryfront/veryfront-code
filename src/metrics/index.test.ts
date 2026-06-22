@@ -71,6 +71,7 @@ describe("metrics public SDK", () => {
           project_id: "project-123",
           project_slug: "demo-project",
           environment: "Staging",
+          branch: "main",
           provider: "openai",
         },
       },
@@ -83,7 +84,65 @@ describe("metrics public SDK", () => {
           project_id: "project-123",
           project_slug: "demo-project",
           environment: "Staging",
+          branch: "main",
           model: "gpt-5",
+        },
+      },
+    ]);
+  });
+
+  it("records preview metrics with the request-scoped branch label", async () => {
+    const counterCalls: unknown[] = [];
+
+    setGlobalMetricsAPI({
+      getMeter() {
+        return {
+          createCounter(name: string) {
+            return {
+              add(value: number, attributes?: Record<string, unknown>) {
+                counterCalls.push({ name, value, attributes });
+              },
+            };
+          },
+          createHistogram() {
+            return { record() {} };
+          },
+          createUpDownCounter() {
+            return { add() {} };
+          },
+          createObservableGauge() {
+            return { addCallback() {} };
+          },
+        };
+      },
+    } as MetricsAPI);
+
+    await runWithRequestContext(
+      {
+        projectSlug: "demo-project",
+        projectId: "project-123",
+        token: "token",
+        environmentName: "Preview",
+        branch: "feature-metrics",
+      },
+      async () => {
+        metrics.counter("vf_eval_result_total", 1, {
+          branch: "user-supplied-branch",
+          outcome: "pass",
+        });
+      },
+    );
+
+    assertEquals(counterCalls, [
+      {
+        name: "vf_eval_result_total",
+        value: 1,
+        attributes: {
+          project_id: "project-123",
+          project_slug: "demo-project",
+          environment: "Preview",
+          branch: "feature-metrics",
+          outcome: "pass",
         },
       },
     ]);

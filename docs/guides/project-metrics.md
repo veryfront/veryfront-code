@@ -38,8 +38,10 @@ current values. Prefer stable `vf_`-prefixed metric names so they are easy to
 discover in Studio.
 
 When code runs inside Veryfront, the SDK adds request-scoped labels for
-`project_id`, `project_slug`, and `environment`. User code should not provide
-or trust those labels for isolation; the platform-owned request context wins.
+`project_id`, `project_slug`, `environment`, and `branch` for preview requests.
+Preview requests without an explicit branch use `branch="main"`. User code
+should not provide or trust those labels for isolation; the platform-owned
+request context wins.
 
 ## Emit eval metrics
 
@@ -76,13 +78,13 @@ export default evalAgent({
 
 Metric labels become query dimensions. Keep them low-cardinality and safe:
 
-| Good labels                                                                            | Avoid                                                                                    |
-| -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `environment`, `service`, `route`, `status`, `outcome`, `model`, `provider`, `eval_id` | User IDs, email addresses, prompts, outputs, request IDs, session IDs, raw URLs, secrets |
+| Good labels                                                                                      | Avoid                                                                                    |
+| ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| `environment`, `branch`, `service`, `route`, `status`, `outcome`, `model`, `provider`, `eval_id` | User IDs, email addresses, prompts, outputs, request IDs, session IDs, raw URLs, secrets |
 
 Use a small allowlist per metric. Do not put tenant identity, project identity,
 credentials, or personally identifiable data into user-supplied labels.
-Project and environment labels are injected by the platform.
+Project, environment, and preview branch labels are injected by the platform.
 
 ## Relationship to OpenTelemetry
 
