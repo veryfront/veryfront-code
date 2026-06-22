@@ -71,6 +71,77 @@ export const getEvalSourceMetricSchema = defineSchema((v) =>
   })
 );
 
+/** Schema for an Eval report metric summary in Studio run projections. */
+export const getEvalRunMetricSummarySchema = defineSchema((v) =>
+  v.object({
+    name: v.string(),
+    family: v.enum(["answer", "agent", "ops", "judge", "check"] as const),
+    severity: v.enum(["gate", "soft", "budget"] as const),
+    passed: v.number().int().nonnegative(),
+    failed: v.number().int().nonnegative(),
+    skipped: v.number().int().nonnegative(),
+    passRate: v.number(),
+  })
+);
+
+/** Schema for Eval duration aggregates in Studio run projections. */
+export const getEvalRunDurationSummarySchema = defineSchema((v) =>
+  v.object({
+    totalMs: v.number().nonnegative(),
+    minMs: v.number().nonnegative(),
+    maxMs: v.number().nonnegative(),
+    meanMs: v.number().nonnegative(),
+    p50Ms: v.number().nonnegative(),
+    p95Ms: v.number().nonnegative(),
+  })
+);
+
+/** Schema for Eval usage totals in Studio run projections. */
+export const getEvalRunUsageSummarySchema = defineSchema((v) =>
+  v.object({
+    inputTokens: v.number().nonnegative().optional(),
+    outputTokens: v.number().nonnegative().optional(),
+    totalTokens: v.number().nonnegative().optional(),
+    costUsd: v.number().nonnegative().optional(),
+  })
+);
+
+/** Schema for blocking Eval failures in Studio run projections. */
+export const getEvalRunGateFailureSummarySchema = defineSchema((v) =>
+  v.object({
+    recordId: v.string(),
+    exampleId: v.string(),
+    repetition: v.number().int().positive(),
+    name: v.string(),
+    family: v.enum(["answer", "agent", "ops", "judge", "check"] as const),
+    severity: v.enum(["gate", "budget"] as const),
+    explanation: v.string().optional(),
+    evidence: v.record(v.string(), v.unknown()).optional(),
+  })
+);
+
+/** Schema for failed Eval examples in Studio run projections. */
+export const getEvalRunFailedExampleSummarySchema = defineSchema((v) =>
+  v.object({
+    exampleId: v.string(),
+    records: v.number().int().nonnegative(),
+    passed: v.number().int().nonnegative(),
+    failed: v.number().int().nonnegative(),
+    passRate: v.number(),
+    flaky: v.boolean(),
+  })
+);
+
+/** Schema for Eval flake aggregates in Studio run projections. */
+export const getEvalRunFlakeSummarySchema = defineSchema((v) =>
+  v.object({
+    examples: v.number().int().nonnegative(),
+    stablePassed: v.number().int().nonnegative(),
+    stableFailed: v.number().int().nonnegative(),
+    flaky: v.number().int().nonnegative(),
+  })
+);
+
 /** Schema for a Studio-editable Eval source document. */
 export const getEvalSourceDocumentSchema = defineSchema((v) =>
   v.object({
@@ -126,6 +197,13 @@ export const getEvalRunSchema = defineSchema((v) =>
       passed: v.number().int().nonnegative(),
       failed: v.number().int().nonnegative(),
       passRate: v.number(),
+      skippedResults: v.number().int().nonnegative().optional(),
+      metrics: v.array(getEvalRunMetricSummarySchema()).optional(),
+      duration: getEvalRunDurationSummarySchema().optional(),
+      usage: getEvalRunUsageSummarySchema().optional(),
+      gateFailures: v.array(getEvalRunGateFailureSummarySchema()).optional(),
+      failedExamples: v.array(getEvalRunFailedExampleSummarySchema()).optional(),
+      flakes: getEvalRunFlakeSummarySchema().optional(),
     }).nullable(),
     reportPath: v.string().nullable(),
     error: v.unknown().nullable(),

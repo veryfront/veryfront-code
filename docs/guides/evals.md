@@ -60,10 +60,34 @@ Each run writes `summary.json` and `results.jsonl` to the report directory. If
 `.veryfront/evals/<run-id>/`. Use `--report` only when CI also needs the full
 raw report in one JSON file.
 
+The summary artifact includes pass/fail counts, metric aggregates, skipped
+metric or check results, gate failures, failed examples, flake classification
+for repeated examples, duration aggregates, and usage totals. Use
+`results.jsonl` when you need the full input, output, trace, and per-record
+metric evidence.
+
 Use JSON mode for automation:
 
 ```bash
 veryfront eval deep-research --json
+```
+
+Use a saved report as a CI baseline. The command exits with status `1` when the
+current run introduces a regression against the baseline:
+
+```bash
+veryfront eval deep-research \
+  --baseline .veryfront/evals/baseline.json \
+  --report .veryfront/evals/current.json \
+  --json
+```
+
+Update the baseline explicitly after reviewing the current report:
+
+```bash
+veryfront eval deep-research \
+  --write-baseline .veryfront/evals/baseline.json \
+  --json
 ```
 
 ## Datasets

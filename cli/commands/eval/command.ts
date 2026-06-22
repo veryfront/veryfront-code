@@ -10,11 +10,12 @@ import type {
   EvalMetricResult,
   EvalRecord,
   EvalReport,
+  EvalReportComparison,
   EvalReportExportConfig,
   EvalToolCall,
 } from "veryfront/eval";
 import { createProjectDiscoveryConfig, discoverAll } from "veryfront/discovery";
-import { discoverEvals, runEval } from "veryfront/eval";
+import { compareEvalReports, discoverEvals, runEval } from "veryfront/eval";
 import { cliLogger, exitProcess } from "#cli/utils";
 import {
   createErrorEnvelope,
@@ -54,6 +55,7 @@ type EvalSummaryArtifact = {
   endedAt: string;
   summary: EvalReport["summary"];
   exports?: EvalReport["exports"];
+  baseline?: EvalReportComparison;
 };
 
 function xmlEscape(value: string): string {
@@ -147,7 +149,10 @@ export function summarizeReportForCli(report: EvalReport): CliEvalSummary {
   };
 }
 
-export function createSummaryArtifact(report: EvalReport): EvalSummaryArtifact {
+export function createSummaryArtifact(
+  report: EvalReport,
+  baseline?: EvalReportComparison,
+): EvalSummaryArtifact {
   return {
     kind: "eval-summary",
     runId: report.runId,
@@ -158,6 +163,7 @@ export function createSummaryArtifact(report: EvalReport): EvalSummaryArtifact {
     endedAt: report.endedAt,
     summary: report.summary,
     ...(report.exports ? { exports: report.exports } : {}),
+    ...(baseline ? { baseline } : {}),
   };
 }
 
@@ -219,10 +225,25 @@ async function writeTextFileEnsuringDir(path: string, content: string): Promise<
 export async function writeEvalArtifacts(
   report: EvalReport,
   paths: EvalArtifactPaths,
+  baseline?: EvalReportComparison,
 ): Promise<void> {
   await Deno.mkdir(paths.directory, { recursive: true });
-  await Deno.writeTextFile(paths.summary, JSON.stringify(createSummaryArtifact(report), null, 2));
+  await Deno.writeTextFile(
+    paths.summary,
+    JSON.stringify(createSummaryArtifact(report, baseline), null, 2),
+  );
   await Deno.writeTextFile(paths.results, createResultsJsonl(report));
+}
+
+async function readEvalReport(path: string): Promise<EvalReport> {
+  return JSON.parse(await Deno.readTextFile(path)) as EvalReport;
+}
+
+export function createEvalExitCode(
+  report: EvalReport,
+  baseline?: EvalReportComparison,
+): 0 | 1 {
+  return report.summary.failed === 0 && baseline?.regressed !== true ? 0 : 1;
 }
 
 function resolveAgentTargetId(target: string): string {
@@ -281,7 +302,7 @@ function listEvals(evals: DiscoveredEval[], projectDir: string) {
   }));
 }
 
-function printReport(report: EvalReport): void {
+function printReport(report: EvalReport, baseline?: EvalReportComparison): void {
   cliLogger.info(`Eval ${report.definitionId}`);
   cliLogger.info(`Target: ${report.target}`);
   cliLogger.info(
@@ -303,6 +324,18 @@ function printReport(report: EvalReport): void {
       cliLogger.info(`Export ${result.exporterId}: ok`);
     } else {
       cliLogger.warn(`Export ${result.exporterId}: failed: ${result.error}`);
+    }
+  }
+
+  if (baseline) {
+    const direction = baseline.passRateDelta >= 0 ? "+" : "";
+    cliLogger.info(
+      `Baseline: ${baseline.regressed ? "regressed" : "ok"} (${direction}${
+        Math.round(baseline.passRateDelta * 100)
+      } pp pass rate)`,
+    );
+    if (baseline.newFailedExamples.length > 0) {
+      cliLogger.warn(`New failed examples: ${baseline.newFailedExamples.join(", ")}`);
     }
   }
 }
@@ -440,27 +473,36 @@ export async function evalCommand(options: EvalOptions): Promise<void> {
       export: createEvalCliExportConfig(evalItem, options, projectDir, artifactPaths),
     });
 
-    await writeEvalArtifacts(report, artifactPaths);
+    const baseline = options.baseline
+      ? compareEvalReports(report, await readEvalReport(options.baseline))
+      : undefined;
+
+    await writeEvalArtifacts(report, artifactPaths, baseline);
     if (options.report) {
       await writeTextFileEnsuringDir(options.report, JSON.stringify(report, null, 2));
     }
     if (options.junit) {
       await writeTextFileEnsuringDir(options.junit, createJunitXml(report));
     }
+    if (options.writeBaseline) {
+      await writeTextFileEnsuringDir(options.writeBaseline, JSON.stringify(report, null, 2));
+    }
 
     if (isJsonMode()) {
       await outputJson(createSuccessEnvelope("eval", {
         report,
         summary: summarizeReportForCli(report),
+        baseline,
         artifacts: artifactPaths,
       }));
     } else {
-      printReport(report);
+      printReport(report, baseline);
       cliLogger.info(`Report directory: ${artifactPaths.directory}`);
       if (options.report) cliLogger.info(`Report: ${options.report}`);
       if (options.junit) cliLogger.info(`JUnit: ${options.junit}`);
+      if (options.writeBaseline) cliLogger.info(`Baseline written: ${options.writeBaseline}`);
     }
 
-    exitProcess(report.summary.failed === 0 ? 0 : 1);
+    exitProcess(createEvalExitCode(report, baseline));
   });
 }

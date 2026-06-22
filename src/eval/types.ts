@@ -242,6 +242,82 @@ export interface EvalMetricSummary {
   passRate: number;
 }
 
+/** Duration aggregate for an eval report. */
+export interface EvalDurationSummary {
+  totalMs: number;
+  minMs: number;
+  maxMs: number;
+  meanMs: number;
+  p50Ms: number;
+  p95Ms: number;
+}
+
+/** Usage totals for an eval report. */
+export interface EvalUsageSummary {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  costUsd?: number;
+}
+
+/** Blocking failure included in a report summary. */
+export interface EvalGateFailureSummary {
+  recordId: string;
+  exampleId: string;
+  repetition: number;
+  name: string;
+  family: EvalMetricFamily;
+  severity: "gate" | "budget";
+  explanation?: string;
+  evidence?: Record<string, unknown>;
+}
+
+/** Per-example failure aggregate included in a report summary. */
+export interface EvalFailedExampleSummary {
+  exampleId: string;
+  records: number;
+  passed: number;
+  failed: number;
+  passRate: number;
+  flaky: boolean;
+}
+
+/** Flake classification for repeated eval examples. */
+export interface EvalFlakeSummary {
+  examples: number;
+  stablePassed: number;
+  stableFailed: number;
+  flaky: number;
+}
+
+/** Per-metric delta between a current eval report and a baseline report. */
+export interface EvalMetricDeltaSummary {
+  name: string;
+  family: EvalMetricFamily;
+  severity: EvalSeverity;
+  baselinePassRate: number | null;
+  currentPassRate: number | null;
+  passRateDelta: number | null;
+  baselineFailed: number | null;
+  currentFailed: number | null;
+  failedDelta: number | null;
+  regressed: boolean;
+}
+
+/** Baseline comparison for a current eval report. */
+export interface EvalReportComparison {
+  kind: "eval-report-comparison";
+  currentRunId: string;
+  baselineRunId: string;
+  passRateDelta: number;
+  passedDelta: number;
+  failedDelta: number;
+  metricDeltas: EvalMetricDeltaSummary[];
+  newFailedExamples: string[];
+  fixedExamples: string[];
+  regressed: boolean;
+}
+
 /** Aggregate pass/fail summary for one eval report. */
 export interface EvalReportSummary {
   records: number;
@@ -249,6 +325,18 @@ export interface EvalReportSummary {
   failed: number;
   passRate: number;
   metrics: EvalMetricSummary[];
+  /** Count of skipped metric and check results. */
+  skippedResults?: number;
+  /** Duration aggregate across records. */
+  duration?: EvalDurationSummary;
+  /** Usage totals across records. */
+  usage?: EvalUsageSummary;
+  /** Blocking metric, check, and record failures for quick debugging. */
+  gateFailures?: EvalGateFailureSummary[];
+  /** Failed example aggregates, including flaky repeated examples. */
+  failedExamples?: EvalFailedExampleSummary[];
+  /** Repetition-based flake classification. */
+  flakes?: EvalFlakeSummary;
 }
 
 /** JSON-serializable report produced by `runEval`. */

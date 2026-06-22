@@ -1,10 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { EvalReport } from "veryfront/eval";
+import { compareEvalReports, type EvalReport } from "veryfront/eval";
 import {
   createDefaultEvalReportDir,
   createEvalArtifactPaths,
+  createEvalExitCode,
   createJunitXml,
   createResultsJsonl,
   createSummaryArtifact,
@@ -104,6 +105,8 @@ describe("eval CLI command helpers", () => {
       "report-dir": ".veryfront/evals/run-1",
       report: "reports/eval.json",
       junit: "reports/eval.xml",
+      baseline: "reports/baseline.json",
+      "write-baseline": "reports/next-baseline.json",
       export: "braintrust,langfuse",
       debug: true,
     });
@@ -115,6 +118,8 @@ describe("eval CLI command helpers", () => {
       assertEquals(parsed.data.reportDir, ".veryfront/evals/run-1");
       assertEquals(parsed.data.report, "reports/eval.json");
       assertEquals(parsed.data.junit, "reports/eval.xml");
+      assertEquals(parsed.data.baseline, "reports/baseline.json");
+      assertEquals(parsed.data.writeBaseline, "reports/next-baseline.json");
       assertEquals(parsed.data.exporters, ["braintrust", "langfuse"]);
       assertEquals(parsed.data.debug, true);
     }
@@ -176,8 +181,19 @@ describe("eval CLI command helpers", () => {
 
   it("serializes eval summary and record artifacts", () => {
     const report = createReport();
+    const baseline = compareEvalReports(report, {
+      ...report,
+      runId: "evalrun_baseline",
+      summary: {
+        ...report.summary,
+        passed: 2,
+        failed: 0,
+        passRate: 1,
+        failedExamples: [],
+      },
+    });
 
-    assertEquals(createSummaryArtifact(report), {
+    assertEquals(createSummaryArtifact(report, baseline), {
       kind: "eval-summary",
       runId: "evalrun_test",
       definitionId: "eval:answers",
@@ -186,6 +202,7 @@ describe("eval CLI command helpers", () => {
       startedAt: "2026-01-01T00:00:00.000Z",
       endedAt: "2026-01-01T00:00:01.000Z",
       summary: report.summary,
+      baseline,
     });
 
     const lines = createResultsJsonl(report).trimEnd().split("\n").map((line) =>
@@ -222,6 +239,28 @@ describe("eval CLI command helpers", () => {
     assertStringIncludes(
       xml,
       '<failure message="answer.exactMatch failed">Expected Paris, got Lyon</failure>',
+    );
+  });
+
+  it("fails the command exit code when baseline comparison regresses", () => {
+    const report = createReport();
+    const baseline = compareEvalReports(report, {
+      ...report,
+      runId: "evalrun_baseline",
+      summary: {
+        ...report.summary,
+        passed: 2,
+        failed: 0,
+        passRate: 1,
+        failedExamples: [],
+      },
+    });
+
+    assertEquals(createEvalExitCode(report), 1);
+    assertEquals(createEvalExitCode({ ...report, summary: { ...report.summary, failed: 0 } }), 0);
+    assertEquals(
+      createEvalExitCode({ ...report, summary: { ...report.summary, failed: 0 } }, baseline),
+      1,
     );
   });
 });
