@@ -96,6 +96,7 @@ async function signedRequest(
   path: string,
   body: Record<string, unknown>,
   headers: Record<string, string> = {},
+  origin = "https://example.com",
 ): Promise<{ request: Request; publicKeyPem: string }> {
   const rawBody = JSON.stringify(body);
   const { jws, publicKeyPem } = await createControlPlaneSignature(rawBody, {
@@ -105,7 +106,7 @@ async function signedRequest(
 
   return {
     publicKeyPem,
-    request: new Request(`https://example.com${path}`, {
+    request: new Request(`${origin}${path}`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -354,6 +355,39 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertExists(result.response);
     assertEquals(result.response.status, 200);
     assertEquals(receivedEndpoint, "https://agent-service.example.com/api/ag-ui");
+  });
+
+  it("rewrites preview AG-UI endpoints when control-plane requests use an internal runtime host", async () => {
+    let receivedEndpoint: string | undefined;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createEvalAgentAdapter: (config) => {
+        receivedEndpoint = config.endpoint;
+        return async () => ({ text: "Paris" });
+      },
+    }));
+    const body = {
+      runId: "run_eval_internal_host",
+      kind: "eval",
+      target: "eval:deep-research",
+      projectId: "proj-1",
+      runtimeAgUiEndpoint: "https://demo-project.preview.veryfront.org/api/ag-ui",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_internal_host/execute",
+      body,
+      { "x-token": "runtime-token" },
+      "http://veryfront-server",
+    );
+
+    const result = await withEnvValue(
+      "PORT",
+      "4311",
+      () => handler.handle(request, createCtx(publicKeyPem)),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(receivedEndpoint, "http://127.0.0.1:4311/api/ag-ui");
   });
 
   it("marks eval execution unsuccessful when records contain adapter failures", async () => {

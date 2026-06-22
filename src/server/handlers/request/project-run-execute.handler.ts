@@ -447,6 +447,26 @@ function isLocalHostname(hostname: string): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
 }
 
+function isInternalRuntimeHostname(hostname: string): boolean {
+  const normalized = hostname.toLowerCase();
+  return isLocalHostname(normalized) ||
+    normalized === "veryfront-server" ||
+    normalized.endsWith(".svc") ||
+    normalized.endsWith(".svc.cluster.local");
+}
+
+function isAgUiEndpoint(endpoint: string): boolean {
+  try {
+    return new URL(endpoint).pathname === "/api/ag-ui";
+  } catch {
+    return false;
+  }
+}
+
+function requestUsesInternalRuntimeHost(req: Request): boolean {
+  return isInternalRuntimeHostname(new URL(req.url).hostname);
+}
+
 function getRuntimeLocalPort(req: Request): number {
   const url = new URL(req.url);
   const requestPort = isLocalHostname(url.hostname) ? url.port : "";
@@ -463,7 +483,11 @@ function getLocalAgUiEndpoint(req: Request): string {
 }
 
 function resolveEvalAgUiEndpoint(req: Request, endpoint?: string): string {
-  if (endpoint && !isRequestSiblingAgUiEndpoint(endpoint, req)) {
+  if (
+    endpoint &&
+    !isRequestSiblingAgUiEndpoint(endpoint, req) &&
+    !(isAgUiEndpoint(endpoint) && requestUsesInternalRuntimeHost(req))
+  ) {
     return endpoint;
   }
   return getLocalAgUiEndpoint(req);
