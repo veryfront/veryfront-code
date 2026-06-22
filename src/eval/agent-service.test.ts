@@ -128,6 +128,11 @@ describe("eval/agent-service", () => {
       projectId: "project_123",
       projectSlug: "demo-project",
       branchId: "branch_123",
+      branchName: "main",
+      environment: "preview",
+      environmentId: "env_123",
+      forwardedHost: "demo-project.preview.veryfront.org",
+      forwardedProto: "https",
       fetch: async (input, init) => {
         requests.push({
           url: String(input),
@@ -169,6 +174,34 @@ describe("eval/agent-service", () => {
     assertEquals(
       (requests[0]?.init.headers as Record<string, string>)["x-project-slug"],
       "demo-project",
+    );
+    assertEquals(
+      (requests[0]?.init.headers as Record<string, string>)["x-project-id"],
+      "project_123",
+    );
+    assertEquals(
+      (requests[0]?.init.headers as Record<string, string>)["x-branch-id"],
+      "branch_123",
+    );
+    assertEquals(
+      (requests[0]?.init.headers as Record<string, string>)["x-branch-name"],
+      "main",
+    );
+    assertEquals(
+      (requests[0]?.init.headers as Record<string, string>)["x-environment"],
+      "preview",
+    );
+    assertEquals(
+      (requests[0]?.init.headers as Record<string, string>)["x-environment-id"],
+      "env_123",
+    );
+    assertEquals(
+      (requests[0]?.init.headers as Record<string, string>)["x-forwarded-host"],
+      "demo-project.preview.veryfront.org",
+    );
+    assertEquals(
+      (requests[0]?.init.headers as Record<string, string>)["x-forwarded-proto"],
+      "https",
     );
     assertEquals(requests[0]?.body.forwardedProps, {
       veryfront: {

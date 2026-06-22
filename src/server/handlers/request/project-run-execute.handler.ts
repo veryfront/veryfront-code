@@ -38,6 +38,7 @@ import { ensureProjectDiscovery } from "./api/project-discovery.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { BaseHandler } from "../response/base.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
+import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 
 const EXECUTE_PATH_REGEX = /^\/api\/control-plane\/runs\/([^/]+)\/execute$/;
 const DEFAULT_WORKFLOW_STATUS_POLL_INTERVAL_MS = 100;
@@ -455,6 +456,18 @@ function isLocalAgUiEndpoint(endpoint: string): boolean {
   }
 }
 
+function isManagedProjectAgUiEndpoint(endpoint: string, projectSlug?: string): boolean {
+  if (!projectSlug) return false;
+  try {
+    const endpointUrl = new URL(endpoint);
+    if (endpointUrl.pathname !== "/api/ag-ui") return false;
+    const parsed = parseProjectDomain(endpointUrl.host);
+    return parsed.isVeryfrontDomain && parsed.slug === projectSlug;
+  } catch {
+    return false;
+  }
+}
+
 function getRuntimeLocalPort(req: Request): number {
   const url = new URL(req.url);
   const requestPort = isLocalHostname(url.hostname) ? url.port : "";
@@ -470,14 +483,39 @@ function getLocalAgUiEndpoint(req: Request): string {
   return `http://127.0.0.1:${getRuntimeLocalPort(req)}/api/ag-ui`;
 }
 
-function resolveEvalAgUiEndpoint(req: Request, endpoint?: string): string {
+function resolveEvalAgUiEndpoint(
+  req: Request,
+  endpoint?: string,
+  projectSlug?: string,
+): string {
   if (!endpoint) {
     return getLocalAgUiEndpoint(req);
   }
-  if (!isRequestSiblingAgUiEndpoint(endpoint, req) || !isLocalAgUiEndpoint(endpoint)) {
+  const shouldUseLocalEndpoint = isRequestSiblingAgUiEndpoint(endpoint, req) ||
+    isManagedProjectAgUiEndpoint(endpoint, projectSlug) ||
+    isLocalAgUiEndpoint(endpoint);
+  if (!shouldUseLocalEndpoint) {
     return endpoint;
   }
   return getLocalAgUiEndpoint(req);
+}
+
+function getEndpointHost(endpoint?: string): string | undefined {
+  if (!endpoint) return undefined;
+  try {
+    return new URL(endpoint).host;
+  } catch {
+    return undefined;
+  }
+}
+
+function getEndpointProtocol(endpoint?: string): string | undefined {
+  if (!endpoint) return undefined;
+  try {
+    return new URL(endpoint).protocol.replace(/:$/, "");
+  } catch {
+    return undefined;
+  }
 }
 
 function createRuntimeApiClient(req: Request, ctx: HandlerContext): RuntimeApiClient {
@@ -798,13 +836,26 @@ function createEvalAdapterConfig(input: {
   }
 
   return {
-    endpoint: resolveEvalAgUiEndpoint(input.req, input.request.runtimeAgUiEndpoint),
+    endpoint: resolveEvalAgUiEndpoint(
+      input.req,
+      input.request.runtimeAgUiEndpoint,
+      input.ctx.projectSlug,
+    ),
     authToken,
     agentId: getEvalTargetAgentId(input.definition),
     projectId: input.request.projectId,
     projectSlug: input.ctx.projectSlug,
+    releaseId: input.req.headers.get("x-release-id") ?? input.ctx.releaseId,
     branchId: getStringConfig(config, ["branch_id", "branchId"]) ??
-      getStringConfig(runInput, ["branch_id", "branchId"]),
+      getStringConfig(runInput, ["branch_id", "branchId"]) ??
+      input.req.headers.get("x-branch-id"),
+    branchName: input.req.headers.get("x-branch-name"),
+    environment: input.req.headers.get("x-environment") ?? input.ctx.resolvedEnvironment,
+    environmentId: input.req.headers.get("x-environment-id") ?? input.ctx.environmentId,
+    forwardedHost: getHeaderFirstValue(input.req.headers.get("x-forwarded-host")) ??
+      getEndpointHost(input.request.runtimeAgUiEndpoint),
+    forwardedProto: getHeaderFirstValue(input.req.headers.get("x-forwarded-proto")) ??
+      getEndpointProtocol(input.request.runtimeAgUiEndpoint),
     model: getStringConfig(config, ["model"]),
     allowedTools: getStringArrayConfig(config, ["allowed_tools", "allowedTools"]),
     maxSteps: getPositiveIntConfig(config, ["max_steps", "maxSteps"]),
