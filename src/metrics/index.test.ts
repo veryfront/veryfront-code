@@ -248,4 +248,82 @@ describe("metrics public SDK", () => {
     metrics.histogram("vf_missing_provider_ms", 1);
     metrics.gauge("vf_missing_provider_gauge", 1);
   });
+
+  it("exports project metrics directly to OTLP when configured", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+
+    Deno.env.set("OTEL_METRICS_ENABLED", "true");
+    Deno.env.set("OTEL_EXPORTER_OTLP_ENDPOINT", "https://collector.example/otlp");
+    Deno.env.set("OTEL_EXPORTER_OTLP_HEADERS", "Authorization=Basic secret");
+    Deno.env.set("OTEL_SERVICE_NAME", "veryfront-server");
+
+    globalThis.fetch = ((url: string | URL | Request, init?: RequestInit) => {
+      requests.push({ url: String(url), init });
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    }) as typeof fetch;
+
+    try {
+      metrics.counter("vf_eval_result_total", 1, {
+        project_id: "project-123",
+        environment: "preview",
+        branch: "main",
+        metric: "answer.contains",
+        outcome: "pass",
+      });
+      await (metrics as unknown as { __flushForTests(): Promise<void> }).__flushForTests();
+    } finally {
+      globalThis.fetch = originalFetch;
+      Deno.env.delete("OTEL_METRICS_ENABLED");
+      Deno.env.delete("OTEL_EXPORTER_OTLP_ENDPOINT");
+      Deno.env.delete("OTEL_EXPORTER_OTLP_HEADERS");
+      Deno.env.delete("OTEL_SERVICE_NAME");
+    }
+
+    assertEquals(requests.length, 1);
+    assertEquals(requests[0]?.url, "https://collector.example/otlp/v1/metrics");
+    assertEquals(
+      (requests[0]?.init?.headers as Record<string, string>).Authorization,
+      "Basic secret",
+    );
+
+    const body = JSON.parse(String(requests[0]?.init?.body));
+    const metric = body.resourceMetrics[0].scopeMetrics[0].metrics[0];
+    assertEquals(metric.name, "vf_eval_result_total");
+    assertEquals(metric.sum.isMonotonic, true);
+    assertEquals(metric.sum.dataPoints[0].asDouble, 1);
+    assertEquals(
+      metric.sum.dataPoints[0].attributes.find((attr: { key: string }) => attr.key === "project_id")
+        .value.stringValue,
+      "project-123",
+    );
+  });
+
+  it("exports gauges directly even when no SDK meter is installed", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+
+    Deno.env.set("OTEL_METRICS_ENABLED", "true");
+    Deno.env.set("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "https://collector.example/v1/metrics");
+
+    globalThis.fetch = ((url: string | URL | Request, init?: RequestInit) => {
+      requests.push({ url: String(url), init });
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    }) as typeof fetch;
+
+    try {
+      metrics.gauge("vf_queue_depth", 3, { project_id: "project-123" });
+      await (metrics as unknown as { __flushForTests(): Promise<void> }).__flushForTests();
+    } finally {
+      globalThis.fetch = originalFetch;
+      Deno.env.delete("OTEL_METRICS_ENABLED");
+      Deno.env.delete("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT");
+    }
+
+    assertEquals(requests.length, 1);
+    const body = JSON.parse(String(requests[0]?.init?.body));
+    const metric = body.resourceMetrics[0].scopeMetrics[0].metrics[0];
+    assertEquals(metric.name, "vf_queue_depth");
+    assertEquals(metric.gauge.dataPoints[0].asDouble, 3);
+  });
 });
