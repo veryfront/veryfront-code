@@ -81,7 +81,10 @@ export interface AgentServiceEvalRequestBody {
   messages: Array<{
     id: string;
     role: "user";
-    content: string;
+    parts: Array<{
+      type: "text";
+      text: string;
+    }>;
   }>;
 }
 
@@ -356,7 +359,7 @@ export function buildAgentServiceEvalRequestBody(
       {
         id: crypto.randomUUID(),
         role: "user",
-        content: stringifyPromptInput(input.input),
+        parts: [{ type: "text", text: stringifyPromptInput(input.input) }],
       },
     ],
   };
