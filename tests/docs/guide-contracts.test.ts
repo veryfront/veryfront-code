@@ -523,6 +523,21 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     references: ["../api-reference/veryfront/index.md"],
     snippets: ["app/", "agents/", "tools/"],
   },
+  "guides/project-metrics.md": {
+    references: ["../api-reference/veryfront/observability.md"],
+    snippets: [
+      "veryfront/metrics",
+      "metrics.counter",
+      "metrics.histogram",
+      "metrics.gauge",
+      "vf_eval_result_total",
+      "project_id",
+      "Langfuse",
+      "LangSmith",
+      "Braintrust",
+      "Do not expose arbitrary raw metric writes over MCP",
+    ],
+  },
   "getting-started/installation.md": {
     references: [],
     snippets: [

@@ -29,6 +29,7 @@ import {
 import { createUploadHandler, ragStore, useUploads } from "../../src/embedding/index.ts";
 import { defineConfig } from "../../src/config/index.ts";
 import { datasets, evalAgent, metrics, runEval } from "../../src/eval/index.ts";
+import { metrics as projectMetrics } from "../../src/metrics/index.ts";
 import {
   type ExtensionFactory,
   ExtensionLoader,
@@ -90,6 +91,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "integrations.md",
   "pages-and-routing.md",
   "project-structure.md",
+  "project-metrics.md",
   "quickstart.md",
   "sandbox.md",
   "skills.md",
@@ -194,6 +196,17 @@ describe("Guide: index.md", () => {
     ) {
       assertStringIncludes(guide, snippet);
     }
+  });
+});
+
+describe("Guide: project-metrics.md", () => {
+  it("uses the public project metrics SDK hook", async () => {
+    const guide = await readGuide("project-metrics.md");
+
+    assertEquals(typeof projectMetrics.counter, "function");
+    assertEquals(typeof projectMetrics.histogram, "function");
+    assertEquals(typeof projectMetrics.gauge, "function");
+    assertStringIncludes(guide, 'import { metrics } from "veryfront/metrics"');
   });
 });
 
