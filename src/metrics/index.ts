@@ -58,6 +58,15 @@ const gauges = new Map<
 >();
 const directQueue: DirectMetricSample[] = [];
 const directCounterTotals = new Map<string, { value: number; startTimeUnixNano: string }>();
+const directHistogramTotals = new Map<
+  string,
+  {
+    count: number;
+    sum: number;
+    bucketCounts: number[];
+    startTimeUnixNano: string;
+  }
+>();
 let directFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
 const DIRECT_FLUSH_DELAY_MS = 1_000;
@@ -261,19 +270,32 @@ function buildDirectMetric(sample: DirectMetricSample) {
   }
 
   if (sample.kind === "histogram") {
+    const key = `${sample.name}:${attributesKey(sample.attributes)}`;
+    const total = directHistogramTotals.get(key) ?? {
+      count: 0,
+      sum: 0,
+      bucketCounts: new Array(HISTOGRAM_BOUNDS.length + 1).fill(0),
+      startTimeUnixNano: sample.timestampUnixNano,
+    };
+    const sampleBuckets = buildHistogramBuckets(sample.value);
+    total.count += 1;
+    total.sum += sample.value;
+    total.bucketCounts = total.bucketCounts.map((count, index) => count + sampleBuckets[index]);
+    directHistogramTotals.set(key, total);
+
     return {
       name: sample.name,
       histogram: {
         dataPoints: [{
           attributes,
-          startTimeUnixNano: sample.timestampUnixNano,
+          startTimeUnixNano: total.startTimeUnixNano,
           timeUnixNano: sample.timestampUnixNano,
-          count: 1,
-          sum: sample.value,
+          count: total.count,
+          sum: total.sum,
           explicitBounds: HISTOGRAM_BOUNDS,
-          bucketCounts: buildHistogramBuckets(sample.value),
+          bucketCounts: total.bucketCounts,
         }],
-        aggregationTemporality: 1,
+        aggregationTemporality: 2,
       },
     };
   }
@@ -448,6 +470,7 @@ export const metrics = {
     gauges.clear();
     directQueue.length = 0;
     directCounterTotals.clear();
+    directHistogramTotals.clear();
     if (directFlushTimer) {
       clearTimeout(directFlushTimer);
       directFlushTimer = null;
