@@ -27,6 +27,14 @@ export const evalHelp: CommandHelp = {
       description: "Write a JUnit XML report to a file",
     },
     {
+      flag: "--baseline <path>",
+      description: "Compare the eval report against a saved baseline report",
+    },
+    {
+      flag: "--write-baseline <path>",
+      description: "Write the eval report JSON as the next baseline",
+    },
+    {
       flag: "--export <ids>",
       description: "Export the report through registered eval exporters",
     },
@@ -48,6 +56,7 @@ export const evalHelp: CommandHelp = {
     "veryfront eval deep-research",
     "veryfront eval eval:deep-research --report-dir .veryfront/evals/deep-research",
     "veryfront eval eval:deep-research --report .veryfront/evals/deep-research/report.json --junit .veryfront/evals/deep-research/junit.xml",
+    "veryfront eval deep-research --baseline .veryfront/evals/baseline.json --json",
     "veryfront eval deep-research --export braintrust,langfuse --json",
     "veryfront eval deep-research --json",
   ],

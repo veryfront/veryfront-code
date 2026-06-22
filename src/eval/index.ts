@@ -46,6 +46,7 @@ export { datasets } from "./datasets.ts";
 export { evalAgent, isEvalDefinition } from "./factory.ts";
 export { metrics } from "./metrics.ts";
 export { createEvalReport, summarizeEvalRecords } from "./report.ts";
+export { compareEvalReports } from "./baseline.ts";
 export { runEval } from "./runner.ts";
 export { deriveEvalId, discoverEvals, findEvalById } from "./discovery.ts";
 export {
@@ -68,18 +69,24 @@ export type {
   EvalDataset,
   EvalDatasetLoadContext,
   EvalDefinition,
+  EvalDurationSummary,
   EvalExample,
   EvalExampleInput,
   EvalExpect,
   EvalExpectation,
+  EvalFailedExampleSummary,
+  EvalFlakeSummary,
+  EvalGateFailureSummary,
   EvalMetric,
   EvalMetricContext,
+  EvalMetricDeltaSummary,
   EvalMetricFamily,
   EvalMetricResult,
   EvalMetricSummary,
   EvalMetricThreshold,
   EvalRecord,
   EvalReport,
+  EvalReportComparison,
   EvalReportExportConfig,
   EvalReportSummary,
   EvalSeverity,
@@ -88,6 +95,7 @@ export type {
   EvalToolCall,
   EvalTrace,
   EvalUsage,
+  EvalUsageSummary,
   RunEvalOptions,
 } from "./types.ts";
 export type {
