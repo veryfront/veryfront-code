@@ -127,7 +127,12 @@ export abstract class BaseHandler implements Handler {
         token: string,
         fn: () => Promise<R>,
         projectId?: string,
-        options?: { productionMode?: boolean; releaseId?: string | null; branch?: string | null },
+        options?: {
+          productionMode?: boolean;
+          releaseId?: string | null;
+          branch?: string | null;
+          environmentName?: string | null;
+        },
       ) => Promise<R>;
     };
 
@@ -177,7 +182,12 @@ export abstract class BaseHandler implements Handler {
         effectiveToken,
         fn,
         ctx.projectId,
-        { productionMode: isProduction, releaseId: ctx.releaseId, branch },
+        {
+          productionMode: isProduction,
+          releaseId: ctx.releaseId,
+          branch,
+          environmentName: ctx.environmentName,
+        },
       );
     }
 

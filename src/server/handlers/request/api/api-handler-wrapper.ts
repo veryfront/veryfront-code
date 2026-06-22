@@ -17,7 +17,11 @@ type FsWrapper = {
     token: string,
     fn: () => Promise<T>,
     projectId?: string,
-    options?: { productionMode?: boolean; releaseId?: string | null },
+    options?: {
+      productionMode?: boolean;
+      releaseId?: string | null;
+      environmentName?: string | null;
+    },
   ) => Promise<T>;
 };
 
@@ -92,7 +96,11 @@ export class ApiHandlerWrapper extends BaseHandler {
       ctx.proxyToken ?? "",
       () => this.handleWithContext(req, ctx, pathname),
       ctx.projectId,
-      { productionMode: isProduction, releaseId: ctx.releaseId },
+      {
+        productionMode: isProduction,
+        releaseId: ctx.releaseId,
+        environmentName: ctx.environmentName,
+      },
     );
   }
 
