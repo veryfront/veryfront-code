@@ -20,6 +20,7 @@ type FsWrapper = {
     options?: {
       productionMode?: boolean;
       releaseId?: string | null;
+      branch?: string | null;
       environmentName?: string | null;
     },
   ) => Promise<T>;
@@ -99,6 +100,8 @@ export class ApiHandlerWrapper extends BaseHandler {
       {
         productionMode: isProduction,
         releaseId: ctx.releaseId,
+        branch: isProduction ? null : ctx.requestContext?.branch ?? ctx.parsedDomain?.branch ??
+          null,
         environmentName: ctx.environmentName,
       },
     );

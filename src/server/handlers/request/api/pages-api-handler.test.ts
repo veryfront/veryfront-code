@@ -76,7 +76,7 @@ function createHandlerContext(
     releaseId: input.releaseId,
     requestContext: {
       token: "test-token",
-      projectSlug: input.projectSlug ?? "test-project",
+      slug: input.projectSlug ?? "test-project",
       mode: input.mode ?? "preview",
       branch: "main",
     },
