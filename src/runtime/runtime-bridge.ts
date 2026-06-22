@@ -8,6 +8,7 @@
 import type { TextGenerationRuntimeMessage } from "#veryfront/agent/runtime/text-generation-runtime-message-types.ts";
 import type {
   RuntimeGenerateTextResult,
+  RuntimeStreamPart,
   RuntimeStreamResult,
   RuntimeToolCallRepairFunction,
   RuntimeToolSet,
@@ -146,6 +147,8 @@ type DirectToolDefinition =
     id: `${string}.${string}`;
     args: Record<string, unknown>;
   };
+
+type DirectTextOptions = GenerateTextOptions | StreamTextOptions;
 
 function normalizeSystemPrompt(system: GenerateTextOptions["system"]): string | undefined {
   if (typeof system === "string") {
@@ -321,6 +324,10 @@ function normalizeFinishReason(finishReason: unknown): string | null {
   return null;
 }
 
+function shouldGenerateViaStream(model: ModelRuntime): boolean {
+  return model._generateViaStream === true;
+}
+
 function parseToolCallInput(input: unknown): unknown {
   if (typeof input !== "string") {
     return input;
@@ -406,6 +413,36 @@ async function resolveDirectTools(
   return resolvedTools.length > 0 ? resolvedTools : undefined;
 }
 
+function buildDirectModelOptions(
+  options: DirectTextOptions,
+  tools: DirectToolDefinition[] | undefined,
+): Record<string, unknown> {
+  return {
+    prompt: toRuntimePrompt(
+      normalizeSystemPrompt(options.system),
+      getProviderRequestMessages(options.messages),
+    ),
+    maxOutputTokens: options.maxOutputTokens,
+    ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
+    topP: options.topP,
+    topK: options.topK,
+    stopSequences: options.stopSequences,
+    ...(tools ? { tools } : {}),
+    ...(options.toolChoice ? { toolChoice: options.toolChoice } : {}),
+    ...(options.seed !== undefined ? { seed: options.seed } : {}),
+    ...(options.presencePenalty !== undefined ? { presencePenalty: options.presencePenalty } : {}),
+    ...(options.frequencyPenalty !== undefined
+      ? { frequencyPenalty: options.frequencyPenalty }
+      : {}),
+    ...(options.headers ? { headers: options.headers } : {}),
+    ...(options.providerOptions ? { providerOptions: options.providerOptions } : {}),
+    ...("includeRawChunks" in options && options.includeRawChunks !== undefined
+      ? { includeRawChunks: options.includeRawChunks }
+      : {}),
+    abortSignal: options.abortSignal,
+  };
+}
+
 function isDirectToolCallPart(
   part: unknown,
 ): part is { type: "tool-call"; toolCallId: string; toolName: string; input: unknown } {
@@ -488,6 +525,149 @@ function buildDirectGenerateResult(
   };
 }
 
+function streamUsageToGenerateUsage(
+  totalUsage: Extract<RuntimeStreamPart, { type: "finish" }>["totalUsage"],
+): RuntimeGenerateTextResult["usage"] {
+  if (!totalUsage) {
+    return undefined;
+  }
+
+  const inputTokens = totalUsage.inputTokens;
+  const outputTokens = totalUsage.outputTokens;
+  const totalTokens = totalUsage.totalTokens ??
+    (inputTokens !== undefined || outputTokens !== undefined
+      ? (inputTokens ?? 0) + (outputTokens ?? 0)
+      : undefined);
+
+  return {
+    inputTokens,
+    outputTokens,
+    ...(totalTokens !== undefined ? { totalTokens } : {}),
+    ...(totalUsage.cacheCreationInputTokens !== undefined
+      ? { cacheCreationInputTokens: totalUsage.cacheCreationInputTokens }
+      : {}),
+    ...(totalUsage.cacheReadInputTokens !== undefined
+      ? { cacheReadInputTokens: totalUsage.cacheReadInputTokens }
+      : {}),
+    ...(totalUsage.cachedInputTokens !== undefined
+      ? { cachedInputTokens: totalUsage.cachedInputTokens }
+      : {}),
+    ...(totalUsage.reasoningTokens !== undefined
+      ? { reasoningTokens: totalUsage.reasoningTokens }
+      : {}),
+  };
+}
+
+async function buildGenerateResultFromStream(
+  stream: ReadableStream<unknown>,
+): Promise<RuntimeGenerateTextResult> {
+  let text = "";
+  let usage: RuntimeGenerateTextResult["usage"];
+  let finishReason: string | null = null;
+  const toolCalls = new Map<string, NonNullable<RuntimeGenerateTextResult["toolCalls"]>[number]>();
+  const toolInputs = new Map<string, { toolCallId: string; toolName: string; input: string }>();
+  const toolResults: NonNullable<RuntimeGenerateTextResult["toolResults"]> = [];
+
+  for await (const rawPart of mapReadableStream(stream)) {
+    if (!rawPart || typeof rawPart !== "object" || !("type" in rawPart)) {
+      continue;
+    }
+
+    const part = rawPart as RuntimeStreamPart;
+
+    switch (part.type) {
+      case "text-delta":
+        text += part.text;
+        break;
+
+      case "tool-input-start":
+        toolInputs.set(part.id, {
+          toolCallId: part.id,
+          toolName: part.toolName,
+          input: "",
+        });
+        break;
+
+      case "tool-input-delta": {
+        const input = toolInputs.get(part.id);
+        if (input) {
+          input.input += part.delta;
+        }
+        break;
+      }
+
+      case "tool-input-end": {
+        const input = toolInputs.get(part.id);
+        if (input) {
+          toolCalls.set(input.toolCallId, {
+            toolCallId: input.toolCallId,
+            toolName: input.toolName,
+            input: parseToolCallInput(input.input),
+          });
+        }
+        break;
+      }
+
+      case "tool-input-available": {
+        const toolCallId = part.toolCallId ?? part.id;
+        if (toolCallId) {
+          toolCalls.set(toolCallId, {
+            toolCallId,
+            toolName: part.toolName,
+            input: parseToolCallInput(part.input),
+          });
+        }
+        break;
+      }
+
+      case "tool-call":
+        toolCalls.set(part.toolCallId, {
+          toolCallId: part.toolCallId,
+          toolName: part.toolName,
+          input: parseToolCallInput(part.input),
+        });
+        break;
+
+      case "tool-result": {
+        const result = part.result ?? part.output ?? part.error;
+        toolResults.push({
+          toolCallId: part.toolCallId,
+          toolName: part.toolName,
+          result,
+          ...(part.isError === true || part.error !== undefined ? { isError: true } : {}),
+          ...(part.providerExecuted === true ? { providerExecuted: true } : {}),
+        });
+        break;
+      }
+
+      case "tool-error":
+        toolResults.push({
+          toolCallId: part.toolCallId,
+          toolName: part.toolName,
+          result: part.error,
+          isError: true,
+          ...(part.providerExecuted === true ? { providerExecuted: true } : {}),
+        });
+        break;
+
+      case "finish":
+        finishReason = part.finishReason ?? null;
+        usage = streamUsageToGenerateUsage(part.totalUsage);
+        break;
+    }
+  }
+
+  const finalToolCalls = [...toolCalls.values()];
+
+  return {
+    text,
+    ...(finalToolCalls.length > 0 ? { toolCalls: finalToolCalls } : {}),
+    ...(toolResults.length > 0 ? { toolResults } : {}),
+    usage,
+    finishReason,
+  };
+}
+
 function normalizeStreamPart(part: unknown): unknown {
   if (!part || typeof part !== "object" || !("type" in part)) {
     return part;
@@ -511,9 +691,10 @@ function normalizeStreamPart(part: unknown): unknown {
   const finishPart = part as {
     type: "finish";
     usage?: unknown;
+    totalUsage?: unknown;
     finishReason?: unknown;
   };
-  const usage = normalizeUsage(finishPart.usage);
+  const usage = normalizeUsage(finishPart.usage) ?? normalizeUsage(finishPart.totalUsage);
   const recomputedTotal = usage ? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0) : undefined;
 
   return {
@@ -569,61 +750,21 @@ async function* textDeltasFromStream(stream: ReadableStream<unknown>): AsyncIter
 }
 
 export function generateText(options: GenerateTextOptions): PromiseLike<RuntimeGenerateTextResult> {
-  return resolveDirectTools(options.tools).then((tools) =>
-    options.model.doGenerate({
-      prompt: toRuntimePrompt(
-        normalizeSystemPrompt(options.system),
-        getProviderRequestMessages(options.messages),
-      ),
-      maxOutputTokens: options.maxOutputTokens,
-      ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
-      topP: options.topP,
-      topK: options.topK,
-      stopSequences: options.stopSequences,
-      ...(tools ? { tools } : {}),
-      ...(options.toolChoice ? { toolChoice: options.toolChoice } : {}),
-      ...(options.seed !== undefined ? { seed: options.seed } : {}),
-      ...(options.presencePenalty !== undefined
-        ? { presencePenalty: options.presencePenalty }
-        : {}),
-      ...(options.frequencyPenalty !== undefined
-        ? { frequencyPenalty: options.frequencyPenalty }
-        : {}),
-      ...(options.headers ? { headers: options.headers } : {}),
-      ...(options.providerOptions ? { providerOptions: options.providerOptions } : {}),
-      abortSignal: options.abortSignal,
-    }).then(buildDirectGenerateResult)
-  );
+  return resolveDirectTools(options.tools).then((tools) => {
+    const directOptions = buildDirectModelOptions(options, tools);
+    if (shouldGenerateViaStream(options.model)) {
+      return options.model.doStream(directOptions).then(({ stream }) =>
+        buildGenerateResultFromStream(stream)
+      );
+    }
+
+    return options.model.doGenerate(directOptions).then(buildDirectGenerateResult);
+  });
 }
 
 export function streamText(options: StreamTextOptions): RuntimeStreamResult {
   const directResultPromise = resolveDirectTools(options.tools).then((tools) =>
-    options.model.doStream({
-      prompt: toRuntimePrompt(
-        normalizeSystemPrompt(options.system),
-        getProviderRequestMessages(options.messages),
-      ),
-      maxOutputTokens: options.maxOutputTokens,
-      ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
-      topP: options.topP,
-      topK: options.topK,
-      stopSequences: options.stopSequences,
-      ...(tools ? { tools } : {}),
-      ...(options.toolChoice ? { toolChoice: options.toolChoice } : {}),
-      ...(options.seed !== undefined ? { seed: options.seed } : {}),
-      ...(options.presencePenalty !== undefined
-        ? { presencePenalty: options.presencePenalty }
-        : {}),
-      ...(options.frequencyPenalty !== undefined
-        ? { frequencyPenalty: options.frequencyPenalty }
-        : {}),
-      ...(options.headers ? { headers: options.headers } : {}),
-      ...(options.providerOptions ? { providerOptions: options.providerOptions } : {}),
-      ...(options.includeRawChunks !== undefined
-        ? { includeRawChunks: options.includeRawChunks }
-        : {}),
-      abortSignal: options.abortSignal,
-    })
+    options.model.doStream(buildDirectModelOptions(options, tools))
   );
   const branchedStreamsPromise = directResultPromise.then(({ stream }) => stream.tee());
 
