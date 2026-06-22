@@ -32,7 +32,7 @@ function createCtx(captured: { options?: Record<string, unknown> }): HandlerCont
     environmentName: "Staging",
     requestContext: {
       token: "vf_proxy_token",
-      branch: null,
+      branch: "feature-branch",
       mode: "production",
     },
   } as unknown as HandlerContext;
@@ -46,5 +46,17 @@ describe("ApiHandlerWrapper", () => {
     await handler.handle(new Request("http://localhost/api/test"), createCtx(captured));
 
     assertEquals(captured.options?.environmentName, "Staging");
+  });
+
+  it("forwards preview branch into multi-project request context", async () => {
+    const captured: { options?: Record<string, unknown> } = {};
+    const ctx = createCtx(captured);
+    ctx.requestContext!.mode = "preview";
+    ctx.releaseId = undefined;
+    const handler = new ApiHandlerWrapper("/tmp/project", ctx.adapter);
+
+    await handler.handle(new Request("http://localhost/api/test"), ctx);
+
+    assertEquals(captured.options?.branch, "feature-branch");
   });
 });

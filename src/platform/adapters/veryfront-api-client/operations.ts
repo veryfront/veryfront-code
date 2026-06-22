@@ -232,7 +232,7 @@ export class VeryfrontAPIOperations {
     branchRef = "main",
     options: ListFilesOptions = {},
   ): Promise<FileListResult> {
-    const params = buildListParams(options);
+    const params = addRuntimeServerFunctionAccess(buildListParams(options));
     params.set("branch", branchRef);
     const url = `/projects/${encodeURIComponent(projectRef)}/files?${params}`;
     logger.debug("listBranchFiles", { projectRef, branchRef, pattern: options.pattern });
@@ -272,7 +272,7 @@ export class VeryfrontAPIOperations {
     return withSpan(
       SpanNames.API_GET_FILE,
       async () => {
-        const params = new URLSearchParams({ branch: branchRef });
+        const params = addRuntimeServerFunctionAccess(new URLSearchParams({ branch: branchRef }));
         const url = `/projects/${encodeURIComponent(projectRef)}/files/${
           encodeURIComponent(pathOrId)
         }?${params}`;

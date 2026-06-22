@@ -139,7 +139,41 @@ describe("VeryfrontAPIOperations", () => {
     });
   });
 
-  describe("published server function access", () => {
+  describe("runtime server function access", () => {
+    it("requests branch file lists with server functions for preview route discovery", async () => {
+      let requestedUrl = "";
+      stubJsonFetch((url) => {
+        requestedUrl = url;
+        return {
+          data: [],
+          page_info: { self: null, first: null, next: null, prev: null },
+        };
+      });
+
+      await createOps().listBranchFiles("project-slug", "main");
+
+      assertStringIncludes(requestedUrl, "include_server_functions=true");
+    });
+
+    it("requests branch file content with server functions for preview handlers", async () => {
+      let requestedUrl = "";
+      stubJsonFetch((url) => {
+        requestedUrl = url;
+        return {
+          id: "file-id",
+          path: "app/api/ag-ui/route.ts",
+          content: "export const POST = () => new Response();",
+          size: 40,
+          type: "function",
+          updated_at: "2026-04-23T00:00:00.000Z",
+        };
+      });
+
+      await createOps().getBranchFile("project-slug", "main", "app/api/ag-ui/route.ts");
+
+      assertStringIncludes(requestedUrl, "include_server_functions=true");
+    });
+
     it("requests release file lists with server functions for runtime route discovery", async () => {
       let requestedUrl = "";
       stubJsonFetch((url) => {
