@@ -90,4 +90,16 @@ describe("createBuiltinExtensions", () => {
 
     assertEquals(authExtension?.extension.provides?.AuthProvider !== undefined, true);
   });
+
+  it("includes the OpenTelemetry observability extension for runtime metrics", () => {
+    const otelExtension = createBuiltinExtensions().find((entry) =>
+      entry.extension.name === "ext-observability-opentelemetry"
+    );
+
+    assertEquals(otelExtension?.extension.contracts?.provides?.includes("TracingExporter"), true);
+    assertEquals(
+      otelExtension?.extension.contracts?.provides?.includes("NodeTelemetryProvider"),
+      true,
+    );
+  });
 });

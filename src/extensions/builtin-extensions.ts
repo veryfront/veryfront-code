@@ -14,6 +14,7 @@ import extMdx from "../../extensions/ext-content-mdx/src/index.ts";
 import extTailwind from "../../extensions/ext-css-tailwind/src/index.ts";
 import extDocumentKreuzberg from "../../extensions/ext-document-kreuzberg/src/index.ts";
 import extDbSqlite from "../../extensions/ext-db-sqlite/src/index.ts";
+import extOpenTelemetry from "../../extensions/ext-observability-opentelemetry/src/index.ts";
 import extSandboxShellTools from "../../extensions/ext-sandbox-shell-tools/src/index.ts";
 import extZod from "../../extensions/ext-schema-zod/src/index.ts";
 import { createZodAdapter } from "../../extensions/ext-schema-zod/src/adapter.ts";
@@ -131,6 +132,11 @@ export function createBuiltinExtensions(): ResolvedExtension[] {
       source: "builtin",
       origin: "veryfront/ext-auth-jwt",
       extension: extJwt(),
+    },
+    {
+      source: "builtin",
+      origin: "veryfront/ext-observability-opentelemetry",
+      extension: extOpenTelemetry(),
     },
     {
       source: "builtin",
