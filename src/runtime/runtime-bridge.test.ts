@@ -44,6 +44,93 @@ describe("runtime-bridge", () => {
     });
   });
 
+  it("buffers the stream path for models that prefer streamed generate", async () => {
+    let called = false;
+
+    const model = {
+      ...createStreamModel(
+        "veryfront-cloud",
+        "veryfront-cloud/openai/gpt-test",
+        async (options) => {
+          called = true;
+          assertEquals(options.prompt, [{
+            role: "user",
+            content: [{ type: "text", text: "Hello" }],
+          }]);
+          return {
+            stream: ReadableStream.from([
+              { type: "text-delta", delta: "Hel" },
+              { type: "text-delta", delta: "lo" },
+              {
+                type: "finish",
+                finishReason: { unified: "stop", raw: "stop" },
+                usage: {
+                  inputTokens: { total: 2 },
+                  outputTokens: { total: 5 },
+                },
+              },
+            ]),
+          };
+        },
+      ),
+      _generateViaStream: true,
+    };
+
+    const result = await generateText({
+      model,
+      messages: [{ role: "user", content: "Hello" }],
+      temperature: 0,
+    });
+
+    assertEquals(called, true);
+    assertEquals(result.text, "Hello");
+    assertEquals(result.finishReason, "stop");
+    assertEquals(result.usage, {
+      inputTokens: 2,
+      outputTokens: 5,
+      totalTokens: 7,
+    });
+  });
+
+  it("buffers streamed tool calls for models that prefer streamed generate", async () => {
+    const model = {
+      ...createStreamModel("veryfront-cloud", "veryfront-cloud/anthropic/claude-test", async () => {
+        return {
+          stream: ReadableStream.from([
+            { type: "tool-input-start", id: "tool-1", toolName: "search" },
+            { type: "tool-input-delta", id: "tool-1", delta: '{"query":' },
+            { type: "tool-input-delta", id: "tool-1", delta: '"webgpu"}' },
+            { type: "tool-input-end", id: "tool-1" },
+            {
+              type: "finish",
+              finishReason: "tool-calls",
+              usage: { inputTokens: 4, outputTokens: 3 },
+            },
+          ]),
+        };
+      }),
+      _generateViaStream: true,
+    };
+
+    const result = await generateText({
+      model,
+      messages: [{ role: "user", content: "Search" }],
+      temperature: 0,
+    });
+
+    assertEquals(result.finishReason, "tool-calls");
+    assertEquals(result.toolCalls, [{
+      toolCallId: "tool-1",
+      toolName: "search",
+      input: { query: "webgpu" },
+    }]);
+    assertEquals(result.usage, {
+      inputTokens: 4,
+      outputTokens: 3,
+      totalTokens: 7,
+    });
+  });
+
   it("uses the direct stream path for models without tools", async () => {
     const model = createStreamModel("test", "test/direct-stream", async (options) => {
       assertEquals(options.prompt, [{

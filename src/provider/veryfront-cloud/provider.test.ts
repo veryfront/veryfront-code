@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { agent } from "#veryfront/agent";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import { clearEmbeddingProviders, resolveEmbeddingModel } from "#veryfront/embedding/index.ts";
 import { clearModelProviders, resolveModel } from "#veryfront/provider";
@@ -31,7 +32,10 @@ function setCloudBootstrap(): void {
 }
 
 describe("provider/veryfront-cloud", () => {
+  const originalFetch = globalThis.fetch;
+
   afterEach(() => {
+    globalThis.fetch = originalFetch;
     clearCloudEnv();
     clearModelProviders();
     clearEmbeddingProviders();
@@ -44,6 +48,60 @@ describe("provider/veryfront-cloud", () => {
 
     assertEquals(typeof model.doGenerate, "function");
     assertEquals(typeof model.doStream, "function");
+    assertEquals(model._generateViaStream, true);
+  });
+
+  it("routes agent.generate through the streaming Veryfront Cloud gateway path", async () => {
+    setCloudBootstrap();
+    const encoder = new TextEncoder();
+    let capturedRequest: Request | undefined;
+    let capturedBody: Record<string, unknown> | undefined;
+
+    globalThis.fetch = (async (input: URL | Request | string, init?: RequestInit) => {
+      const request = new Request(input, init);
+      capturedRequest = request;
+      capturedBody = JSON.parse(await request.text()) as Record<string, unknown>;
+
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(
+              encoder.encode('data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n'),
+            );
+            controller.enqueue(
+              encoder.encode(
+                'data: {"choices":[{"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}\n\n',
+              ),
+            );
+            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            controller.close();
+          },
+        }),
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    }) as typeof fetch;
+
+    const assistant = agent({
+      model: "veryfront-cloud/openai/gpt-test",
+      system: "You are concise.",
+    });
+
+    const result = await assistant.generate({ input: "Hi" });
+
+    assertEquals(
+      capturedRequest?.url,
+      "https://api.veryfront.com/ai/gateway/openai/v1/chat/completions",
+    );
+    assertEquals(capturedRequest?.headers.get("Authorization"), "Bearer vf_test_provider");
+    assertEquals(capturedRequest?.headers.get("x-veryfront-project-slug"), "provider-test-project");
+    assertEquals(capturedBody?.stream, true);
+    assertEquals(capturedBody?.stream_options, { include_usage: true });
+    assertEquals(result.text, "Hello");
+    assertEquals(result.usage, {
+      promptTokens: 2,
+      completionTokens: 1,
+      totalTokens: 3,
+    });
   });
 
   it("resolves veryfront-cloud moonshotai models without project ext-llm-openai installed", () => {
@@ -53,6 +111,7 @@ describe("provider/veryfront-cloud", () => {
 
     assertEquals(typeof model.doGenerate, "function");
     assertEquals(typeof model.doStream, "function");
+    assertEquals(model._generateViaStream, true);
   });
 
   it("resolves veryfront-cloud mistral models without project ext-llm-openai installed", () => {
@@ -65,6 +124,7 @@ describe("provider/veryfront-cloud", () => {
 
     assertEquals(typeof model.doGenerate, "function");
     assertEquals(typeof model.doStream, "function");
+    assertEquals(model._generateViaStream, true);
   });
 
   it("rejects unsupported pre-prefixed veryfront-cloud Mistral models", () => {
@@ -92,6 +152,7 @@ describe("provider/veryfront-cloud", () => {
 
     assertEquals(typeof model.doGenerate, "function");
     assertEquals(typeof model.doStream, "function");
+    assertEquals(model._generateViaStream, true);
   });
 
   it("resolves veryfront-cloud google models without project ext-llm-google installed", () => {
@@ -104,6 +165,7 @@ describe("provider/veryfront-cloud", () => {
 
     assertEquals(typeof model.doGenerate, "function");
     assertEquals(typeof model.doStream, "function");
+    assertEquals(model._generateViaStream, true);
   });
 
   it("resolves direct anthropic models through the built-in provider", () => {

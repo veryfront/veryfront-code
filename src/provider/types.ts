@@ -20,6 +20,7 @@ export interface ModelRuntimeStreamResult {
 /** Public API contract for model runtime. */
 export interface ModelRuntime extends RuntimeMetadata {
   readonly _isVfLocalModel?: boolean;
+  readonly _generateViaStream?: boolean;
   doGenerate(options: unknown): PromiseLike<ModelRuntimeGenerateResult>;
   doStream(options: unknown): PromiseLike<ModelRuntimeStreamResult>;
 }
