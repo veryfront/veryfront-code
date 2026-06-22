@@ -1,5 +1,6 @@
 import { createEvalCheckContext } from "./expect.ts";
 import { createEvalReport } from "./report.ts";
+import { metrics as runtimeMetrics } from "#veryfront/metrics";
 import {
   createEvalReportExporterRegistry,
   type EvalReportExportContext,
@@ -52,6 +53,74 @@ function isBlockingFailure(record: EvalRecord): boolean {
     !result.skipped && result.pass === false &&
     (result.severity === "gate" || result.severity === "budget")
   );
+}
+
+function recordPassed(record: EvalRecord): boolean {
+  if (!record.completed || record.error) return false;
+  return !isBlockingFailure(record);
+}
+
+function emitEvalRuntimeMetrics(report: ReturnType<typeof createEvalReport>): void {
+  const baseAttributes = {
+    eval_id: report.definitionId,
+    target_kind: report.targetKind,
+  };
+
+  for (const metric of report.summary.metrics) {
+    const common = {
+      ...baseAttributes,
+      metric: metric.name,
+      family: metric.family,
+      severity: metric.severity,
+    };
+    if (metric.passed > 0) {
+      runtimeMetrics.counter("vf_eval_result_total", metric.passed, {
+        ...common,
+        outcome: "pass",
+      });
+    }
+    if (metric.failed > 0) {
+      runtimeMetrics.counter("vf_eval_result_total", metric.failed, {
+        ...common,
+        outcome: "fail",
+      });
+    }
+    if (metric.skipped > 0) {
+      runtimeMetrics.counter("vf_eval_result_total", metric.skipped, {
+        ...common,
+        outcome: "skipped",
+      });
+    }
+  }
+
+  if (report.summary.metrics.length === 0) {
+    if (report.summary.passed > 0) {
+      runtimeMetrics.counter("vf_eval_result_total", report.summary.passed, {
+        ...baseAttributes,
+        metric: "record",
+        family: "record",
+        severity: "gate",
+        outcome: "pass",
+      });
+    }
+    if (report.summary.failed > 0) {
+      runtimeMetrics.counter("vf_eval_result_total", report.summary.failed, {
+        ...baseAttributes,
+        metric: "record",
+        family: "record",
+        severity: "gate",
+        outcome: "fail",
+      });
+    }
+  }
+
+  for (const record of report.records) {
+    runtimeMetrics.histogram("vf_eval_duration_ms", record.durationMs, {
+      ...baseAttributes,
+      metric: "duration",
+      outcome: recordPassed(record) ? "pass" : "fail",
+    });
+  }
 }
 
 function createMissingRegistryResults(exporterIds: string[]): EvalReportExportResult[] {
@@ -234,6 +303,7 @@ export async function runEval(
     startedAt,
     endedAt,
   });
+  emitEvalRuntimeMetrics(report);
   const exports = await exportEvalReport(report, options.export);
   return exports === undefined ? report : { ...report, exports };
 }
