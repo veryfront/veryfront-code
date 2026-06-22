@@ -1,12 +1,70 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { datasets, evalAgent, type EvalReport } from "veryfront/eval";
+import type { Agent } from "#veryfront/agent";
+import type { Message } from "#veryfront/agent/types.ts";
+import { agentRegistry } from "#veryfront/agent/composition/index.ts";
+import { createAgentServiceEvalAdapter } from "#veryfront/eval/agent-service.ts";
+import { runEval as runEvalDefinition } from "#veryfront/eval/runner.ts";
+import { datasets, evalAgent, type EvalReport, metrics } from "veryfront/eval";
 import {
   ProjectRunExecuteHandler,
   type ProjectRunExecuteHandlerDeps,
 } from "./project-run-execute.handler.ts";
 import { createControlPlaneSignature, createCtx } from "./internal-agent-run.test-helpers.ts";
+
+const encoder = new TextEncoder();
+
+function encodeDataStreamEvent(payload: Record<string, unknown>): Uint8Array {
+  return encoder.encode(`data: ${JSON.stringify(payload)}\n\n`);
+}
+
+function createStreamingAgent(id: string, text: string): Agent {
+  let capturedMessages: Message[] = [];
+
+  return {
+    id,
+    config: {
+      id,
+      system: "Answer directly.",
+      model: "anthropic/claude-sonnet-4-6",
+    } as Agent["config"],
+    generate: async () => {
+      throw new Error("not used");
+    },
+    stream: async (input) => {
+      capturedMessages = input.messages ?? [];
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encodeDataStreamEvent({ type: "message-start", messageId: "msg-1" }));
+          controller.enqueue(encodeDataStreamEvent({ type: "text-start", id: "text-1" }));
+          controller.enqueue(
+            encodeDataStreamEvent({ type: "text-delta", id: "text-1", delta: text }),
+          );
+          controller.enqueue(encodeDataStreamEvent({ type: "text-end", id: "text-1" }));
+          controller.close();
+        },
+      });
+
+      return {
+        toDataStreamResponse: () =>
+          new Response(stream, { headers: { "Content-Type": "text/event-stream" } }),
+      };
+    },
+    respond: async () => new Response("not used"),
+    getMemory: () => {
+      throw new Error("not used");
+    },
+    getMemoryStats: async () => ({
+      totalMessages: capturedMessages.length,
+      estimatedTokens: 0,
+      type: "conversation",
+    }),
+    clearMemory: async () => {
+      capturedMessages = [];
+    },
+  };
+}
 
 function createDeps(
   overrides: Partial<ProjectRunExecuteHandlerDeps> = {},
@@ -385,6 +443,63 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertExists(result.response);
     assertEquals(result.response.status, 200);
     assertEquals(receivedEndpoint, "http://127.0.0.1:4311/api/ag-ui");
+  });
+
+  it("runs localized eval AG-UI requests through discovered source agents", async () => {
+    agentRegistry.register("researcher", createStreamingAgent("researcher", "Paris"));
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findEvalById: async (target) =>
+        target === "eval:deep-research"
+          ? {
+            id: "eval:deep-research",
+            name: "Deep research quality",
+            filePath: "evals/deep-research.eval.ts",
+            exportName: "default",
+            definition: evalAgent({
+              id: "eval:deep-research",
+              target: "agent:researcher",
+              dataset: datasets.inline([
+                { id: "q1", input: "France capital?", reference: "Paris" },
+              ]),
+              metrics: [metrics.answer.contains({ text: "Paris" }).gate()],
+            }),
+          }
+          : null,
+      runEval: runEvalDefinition,
+      createEvalAgentAdapter: (config) =>
+        createAgentServiceEvalAdapter({ ...config, requestTimeoutMs: 250 }),
+    }));
+    const body = {
+      runId: "run_eval_source_agent",
+      kind: "eval",
+      target: "eval:deep-research",
+      projectId: "proj-1",
+      runtimeAgUiEndpoint: "https://demo-project.preview.veryfront.org/api/ag-ui",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_source_agent/execute",
+      body,
+      { "x-token": "runtime-token" },
+      "https://veryfront.org",
+    );
+
+    try {
+      const result = await withEnvValue(
+        "PORT",
+        "4311",
+        () => handler.handle(request, createCtx(publicKeyPem)),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      const payload = await result.response.json();
+      assertEquals(payload.success, true);
+      assertEquals(payload.error, undefined);
+      assertEquals(payload.result.summary.failed, 0);
+      assertStringIncludes(JSON.stringify(payload.result.records[0]?.output), "Paris");
+    } finally {
+      agentRegistry.delete("researcher");
+    }
   });
 
   it("forwards managed AG-UI endpoint host context when localizing from a generic control-plane host", async () => {

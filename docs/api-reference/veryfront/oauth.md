@@ -1,7 +1,7 @@
 ---
 title: "veryfront/oauth"
 description: "OAuth 2.0 with pre-configured providers. Default supported integrations are visible in the CLI/MCP/runtime connector surface. Additional provider configs are retained for feature-gated integrations enabled with VERYFRONT_EXPERIMENTAL_INTEGRATIONS."
-order: 17
+order: 18
 ---
 
 ## Import

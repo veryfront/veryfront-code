@@ -24,6 +24,7 @@ order: 1
 | [`veryfront/markdown`](./veryfront/markdown.md) | Markdown rendering. |
 | [`veryfront/mcp`](./veryfront/mcp.md) | MCP server helpers. |
 | [`veryfront/mdx`](./veryfront/mdx.md) | MDX component overrides. |
+| [`veryfront/metrics`](./veryfront/metrics.md) | Runtime/application metric hooks for project code. |
 | [`veryfront/middleware`](./veryfront/middleware.md) | HTTP middleware. |
 | [`veryfront/oauth`](./veryfront/oauth.md) | OAuth provider helpers. |
 | [`veryfront/observability`](./veryfront/observability.md) | Tracing, metrics, errors, and logs. |

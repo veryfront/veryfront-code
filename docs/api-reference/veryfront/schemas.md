@@ -1,7 +1,7 @@
 ---
 title: "veryfront/schemas"
 description: "Reusable validation schemas and the `defineSchema` helper."
-order: 25
+order: 26
 ---
 
 ## Import

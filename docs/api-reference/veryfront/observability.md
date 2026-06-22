@@ -1,7 +1,7 @@
 ---
 title: "veryfront/observability"
 description: "Tracing, metrics, OTLP export, and structured logs."
-order: 18
+order: 19
 ---
 
 ## Import
