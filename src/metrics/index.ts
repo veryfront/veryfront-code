@@ -56,8 +56,12 @@ function normalizeAttributes(attributes?: MetricAttributes): Record<string, Attr
   const context = getCurrentRequestContext();
   if (context?.projectId) normalized.project_id = context.projectId;
   if (context?.projectSlug) normalized.project_slug = context.projectSlug;
-  if (context?.environmentName) normalized.environment = context.environmentName;
-  if (context && !context.productionMode) normalized.branch = context.branch ?? "main";
+  if (context) {
+    const environmentName = context.environmentName ??
+      (!context.productionMode ? "preview" : undefined);
+    if (environmentName) normalized.environment = environmentName;
+    if (!context.productionMode) normalized.branch = context.branch ?? "main";
+  }
 
   return normalized;
 }
