@@ -35,12 +35,29 @@ interface GaugeSample {
   attributes: Record<string, AttributeValue>;
 }
 
+type DirectMetricKind = "counter" | "histogram" | "gauge";
+
+interface DirectMetricSample {
+  kind: DirectMetricKind;
+  name: string;
+  value: number;
+  attributes: Record<string, AttributeValue>;
+  timestampUnixNano: string;
+}
+
 const counters = new Map<string, Counter>();
 const histograms = new Map<string, Histogram>();
 const gauges = new Map<
   string,
   { instrument: ObservableGauge; samples: Map<string, GaugeSample> }
 >();
+const directQueue: DirectMetricSample[] = [];
+const directCounterTotals = new Map<string, { value: number; startTimeUnixNano: string }>();
+let directFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+const DIRECT_FLUSH_DELAY_MS = 1_000;
+const DIRECT_MAX_BATCH_SIZE = 100;
+const HISTOGRAM_BOUNDS = [0, 10, 50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000];
 
 function getMeter() {
   return getGlobalMetricsAPI()?.getMeter("veryfront.project.metrics");
@@ -118,13 +135,229 @@ function getGauge(name: string, options?: MetricInstrumentOptions) {
   return gauge;
 }
 
+function readEnv(name: string): string | undefined {
+  try {
+    return Deno.env.get(name);
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveOtlpMetricsUrl(): string | null {
+  if (readEnv("OTEL_METRICS_ENABLED") !== "true") return null;
+  const endpoint = readEnv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") ??
+    readEnv("OTEL_EXPORTER_OTLP_ENDPOINT");
+  if (!endpoint) return null;
+  const trimmed = endpoint.replace(/\/$/, "");
+  return trimmed.endsWith("/v1/metrics") ? trimmed : `${trimmed}/v1/metrics`;
+}
+
+function parseHeaders(headerInput: string | undefined): Record<string, string> {
+  if (!headerInput) return {};
+  if (headerInput.startsWith("Basic ")) return { Authorization: headerInput };
+  if (headerInput.startsWith("Authorization=")) {
+    return { Authorization: headerInput.slice("Authorization=".length) };
+  }
+
+  const result: Record<string, string> = {};
+  for (const part of headerInput.split(",")) {
+    const [key, ...valueParts] = part.split("=");
+    if (key && valueParts.length > 0) {
+      result[key.trim()] = valueParts.join("=").trim();
+    }
+  }
+  return result;
+}
+
+function toOtlpValue(value: AttributeValue) {
+  if (typeof value === "boolean") return { boolValue: value };
+  if (typeof value === "number") return { doubleValue: value };
+  return { stringValue: String(value) };
+}
+
+function toOtlpAttributes(attributes: Record<string, AttributeValue>) {
+  return Object.entries(attributes).map(([key, value]) => ({
+    key,
+    value: toOtlpValue(value),
+  }));
+}
+
+function getUnixNanoTimestamp(): string {
+  return String(BigInt(Date.now()) * 1_000_000n);
+}
+
+function buildHistogramBuckets(value: number): number[] {
+  const counts = new Array(HISTOGRAM_BOUNDS.length + 1).fill(0);
+  const bucketIndex = HISTOGRAM_BOUNDS.findIndex((bound) => value <= bound);
+  counts[bucketIndex === -1 ? counts.length - 1 : bucketIndex] = 1;
+  return counts;
+}
+
+function buildDirectMetric(sample: DirectMetricSample) {
+  const attributes = toOtlpAttributes(sample.attributes);
+  if (sample.kind === "counter") {
+    const key = `${sample.name}:${attributesKey(sample.attributes)}`;
+    const total = directCounterTotals.get(key) ?? {
+      value: 0,
+      startTimeUnixNano: sample.timestampUnixNano,
+    };
+    total.value += sample.value;
+    directCounterTotals.set(key, total);
+
+    return {
+      name: sample.name,
+      sum: {
+        dataPoints: [{
+          attributes,
+          startTimeUnixNano: total.startTimeUnixNano,
+          timeUnixNano: sample.timestampUnixNano,
+          asDouble: total.value,
+        }],
+        aggregationTemporality: 2,
+        isMonotonic: true,
+      },
+    };
+  }
+
+  if (sample.kind === "histogram") {
+    return {
+      name: sample.name,
+      histogram: {
+        dataPoints: [{
+          attributes,
+          startTimeUnixNano: sample.timestampUnixNano,
+          timeUnixNano: sample.timestampUnixNano,
+          count: 1,
+          sum: sample.value,
+          explicitBounds: HISTOGRAM_BOUNDS,
+          bucketCounts: buildHistogramBuckets(sample.value),
+        }],
+        aggregationTemporality: 1,
+      },
+    };
+  }
+
+  return {
+    name: sample.name,
+    gauge: {
+      dataPoints: [{
+        attributes,
+        timeUnixNano: sample.timestampUnixNano,
+        asDouble: sample.value,
+      }],
+    },
+  };
+}
+
+function buildDirectOtlpBody(samples: DirectMetricSample[]) {
+  return {
+    resourceMetrics: [{
+      resource: {
+        attributes: toOtlpAttributes({
+          "service.name": readEnv("OTEL_SERVICE_NAME") ?? "veryfront",
+          "service.version": readEnv("VERYFRONT_VERSION") ??
+            readEnv("RELEASE_VERSION") ??
+            "unknown",
+        }),
+      },
+      scopeMetrics: [{
+        scope: {
+          name: "veryfront.project.metrics",
+        },
+        metrics: samples.map(buildDirectMetric),
+      }],
+    }],
+  };
+}
+
+function logDirectExportFailure(error: unknown): void {
+  if (readEnv("VERYFRONT_DEBUG") !== "1") return;
+  console.warn("[metrics] direct OTLP export failed", error);
+}
+
+async function flushDirectMetrics(): Promise<void> {
+  if (directFlushTimer) {
+    clearTimeout(directFlushTimer);
+    directFlushTimer = null;
+  }
+
+  const url = resolveOtlpMetricsUrl();
+  if (!url || directQueue.length === 0) {
+    directQueue.length = 0;
+    return;
+  }
+
+  const batch = directQueue.splice(0, DIRECT_MAX_BATCH_SIZE);
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        ...parseHeaders(readEnv("OTEL_EXPORTER_OTLP_HEADERS")),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(buildDirectOtlpBody(batch)),
+    });
+    if (!response.ok) {
+      logDirectExportFailure(`HTTP ${response.status}`);
+    }
+  } catch (error) {
+    logDirectExportFailure(error);
+  }
+
+  if (directQueue.length > 0) {
+    scheduleDirectFlush();
+  }
+}
+
+function scheduleDirectFlush(): void {
+  if (directFlushTimer || resolveOtlpMetricsUrl() === null) return;
+  directFlushTimer = setTimeout(() => {
+    void flushDirectMetrics();
+  }, DIRECT_FLUSH_DELAY_MS);
+  try {
+    if (typeof directFlushTimer === "number") {
+      Deno.unrefTimer(directFlushTimer);
+    } else {
+      (directFlushTimer as { unref?: () => void }).unref?.();
+    }
+  } catch {
+    // Some runtimes do not expose unref support; exporting still works there.
+  }
+}
+
+function enqueueDirectMetric(
+  kind: DirectMetricKind,
+  name: string,
+  value: number,
+  attributes: Record<string, AttributeValue>,
+): void {
+  if (resolveOtlpMetricsUrl() === null) return;
+  directQueue.push({
+    kind,
+    name,
+    value,
+    attributes,
+    timestampUnixNano: getUnixNanoTimestamp(),
+  });
+  if (directQueue.length >= DIRECT_MAX_BATCH_SIZE) {
+    void flushDirectMetrics();
+    return;
+  }
+  scheduleDirectFlush();
+}
+
 export function counter(
   name: string,
   value = 1,
   attributes?: MetricAttributes,
   options?: MetricInstrumentOptions,
 ): void {
-  getCounter(name, options)?.add(value, normalizeAttributes(attributes));
+  const normalizedAttributes = normalizeAttributes(attributes);
+  if (resolveOtlpMetricsUrl() === null) {
+    getCounter(name, options)?.add(value, normalizedAttributes);
+    return;
+  }
+  enqueueDirectMetric("counter", name, value, normalizedAttributes);
 }
 
 export function histogram(
@@ -133,7 +366,12 @@ export function histogram(
   attributes?: MetricAttributes,
   options?: MetricInstrumentOptions,
 ): void {
-  getHistogram(name, options)?.record(value, normalizeAttributes(attributes));
+  const normalizedAttributes = normalizeAttributes(attributes);
+  if (resolveOtlpMetricsUrl() === null) {
+    getHistogram(name, options)?.record(value, normalizedAttributes);
+    return;
+  }
+  enqueueDirectMetric("histogram", name, value, normalizedAttributes);
 }
 
 export function gauge(
@@ -143,6 +381,10 @@ export function gauge(
   options?: MetricInstrumentOptions,
 ): void {
   const normalizedAttributes = normalizeAttributes(attributes);
+  if (resolveOtlpMetricsUrl() !== null) {
+    enqueueDirectMetric("gauge", name, value, normalizedAttributes);
+    return;
+  }
   const target = getGauge(name, options);
   if (!target) return;
 
@@ -156,9 +398,18 @@ export const metrics = {
   counter,
   histogram,
   gauge,
+  async __flushForTests(): Promise<void> {
+    await flushDirectMetrics();
+  },
   __resetForTests(): void {
     counters.clear();
     histograms.clear();
     gauges.clear();
+    directQueue.length = 0;
+    directCounterTotals.clear();
+    if (directFlushTimer) {
+      clearTimeout(directFlushTimer);
+      directFlushTimer = null;
+    }
   },
 };
