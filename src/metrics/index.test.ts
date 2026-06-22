@@ -148,6 +148,64 @@ describe("metrics public SDK", () => {
     ]);
   });
 
+  it("defaults preview metrics to the preview environment label", async () => {
+    const counterCalls: unknown[] = [];
+
+    setGlobalMetricsAPI({
+      getMeter() {
+        return {
+          createCounter(name: string) {
+            return {
+              add(value: number, attributes?: Record<string, unknown>) {
+                counterCalls.push({ name, value, attributes });
+              },
+            };
+          },
+          createHistogram() {
+            return { record() {} };
+          },
+          createUpDownCounter() {
+            return { add() {} };
+          },
+          createObservableGauge() {
+            return { addCallback() {} };
+          },
+        };
+      },
+    } as MetricsAPI);
+
+    await runWithRequestContext(
+      {
+        projectSlug: "demo-project",
+        projectId: "project-123",
+        token: "token",
+        productionMode: false,
+        branch: "main",
+      },
+      async () => {
+        metrics.counter("vf_eval_result_total", 1, {
+          metric: "answer.contains",
+          outcome: "pass",
+        });
+      },
+    );
+
+    assertEquals(counterCalls, [
+      {
+        name: "vf_eval_result_total",
+        value: 1,
+        attributes: {
+          project_id: "project-123",
+          project_slug: "demo-project",
+          environment: "preview",
+          branch: "main",
+          metric: "answer.contains",
+          outcome: "pass",
+        },
+      },
+    ]);
+  });
+
   it("records gauges through an observable callback", () => {
     let callback: ((result: ObservableResult) => void) | undefined;
     const observed: unknown[] = [];
