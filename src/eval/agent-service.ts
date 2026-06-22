@@ -94,6 +94,7 @@ export interface AgentServiceEvalAdapterConfig {
   projectSlug?: string | null;
   conversationId?: string | null;
   releaseId?: string | null;
+  contentSourceId?: string | null;
   branchId?: string | null;
   branchName?: string | null;
   environment?: string | null;
@@ -190,6 +191,7 @@ function createHeaders(config: AgentServiceEvalAdapterConfig): Record<string, st
     ...(config.projectId ? { "x-project-id": config.projectId } : {}),
     ...(config.projectSlug ? { "x-project-slug": config.projectSlug } : {}),
     ...(config.releaseId ? { "x-release-id": config.releaseId } : {}),
+    ...(config.contentSourceId ? { "x-content-source-id": config.contentSourceId } : {}),
     ...(config.branchId ? { "x-branch-id": config.branchId } : {}),
     ...(config.branchName ? { "x-branch-name": config.branchName } : {}),
     ...(config.environment ? { "x-environment": config.environment } : {}),

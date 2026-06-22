@@ -387,6 +387,52 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(receivedEndpoint, "http://127.0.0.1:4311/api/ag-ui");
   });
 
+  it("forwards managed AG-UI endpoint host context when localizing from a generic control-plane host", async () => {
+    let receivedEndpoint: string | undefined;
+    let receivedForwardedHost: unknown;
+    let receivedForwardedProto: unknown;
+    let receivedEnvironment: unknown;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createEvalAgentAdapter: (config) => {
+        receivedEndpoint = config.endpoint;
+        receivedForwardedHost = config.forwardedHost;
+        receivedForwardedProto = config.forwardedProto;
+        receivedEnvironment = config.environment;
+        return async () => ({ text: "Paris" });
+      },
+    }));
+    const body = {
+      runId: "run_eval_generic_control_host",
+      kind: "eval",
+      target: "eval:deep-research",
+      projectId: "proj-1",
+      runtimeAgUiEndpoint: "https://demo-project.preview.veryfront.org/api/ag-ui",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_generic_control_host/execute",
+      body,
+      {
+        "x-token": "runtime-token",
+        "x-forwarded-host": "veryfront.org",
+        "x-forwarded-proto": "https",
+      },
+      "https://veryfront.org",
+    );
+
+    const result = await withEnvValue(
+      "PORT",
+      "4311",
+      () => handler.handle(request, createCtx(publicKeyPem)),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(receivedEndpoint, "http://127.0.0.1:4311/api/ag-ui");
+    assertEquals(receivedForwardedHost, "demo-project.preview.veryfront.org");
+    assertEquals(receivedForwardedProto, "https");
+    assertEquals(receivedEnvironment, "preview");
+  });
+
   it("preserves non-sibling eval AG-UI endpoints", async () => {
     let receivedEndpoint: string | undefined;
     const handler = new ProjectRunExecuteHandler(createDeps({

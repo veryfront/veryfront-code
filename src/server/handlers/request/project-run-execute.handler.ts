@@ -456,15 +456,29 @@ function isLocalAgUiEndpoint(endpoint: string): boolean {
   }
 }
 
-function isManagedProjectAgUiEndpoint(endpoint: string, projectSlug?: string): boolean {
-  if (!projectSlug) return false;
+interface ManagedProjectAgUiEndpointContext {
+  forwardedHost: string;
+  forwardedProto: string;
+  environment: "preview" | "production";
+}
+
+function getManagedProjectAgUiEndpointContext(
+  endpoint?: string,
+  projectSlug?: string,
+): ManagedProjectAgUiEndpointContext | null {
+  if (!endpoint || !projectSlug) return null;
   try {
     const endpointUrl = new URL(endpoint);
-    if (endpointUrl.pathname !== "/api/ag-ui") return false;
+    if (endpointUrl.pathname !== "/api/ag-ui") return null;
     const parsed = parseProjectDomain(endpointUrl.host);
-    return parsed.isVeryfrontDomain && parsed.slug === projectSlug;
+    if (!parsed.isVeryfrontDomain || parsed.slug !== projectSlug) return null;
+    return {
+      forwardedHost: endpointUrl.host,
+      forwardedProto: endpointUrl.protocol.replace(/:$/, ""),
+      environment: parsed.environment === "preview" ? "preview" : "production",
+    };
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -492,7 +506,7 @@ function resolveEvalAgUiEndpoint(
     return getLocalAgUiEndpoint(req);
   }
   const shouldUseLocalEndpoint = isRequestSiblingAgUiEndpoint(endpoint, req) ||
-    isManagedProjectAgUiEndpoint(endpoint, projectSlug) ||
+    !!getManagedProjectAgUiEndpointContext(endpoint, projectSlug) ||
     isLocalAgUiEndpoint(endpoint);
   if (!shouldUseLocalEndpoint) {
     return endpoint;
@@ -834,6 +848,10 @@ function createEvalAdapterConfig(input: {
   if (!authToken) {
     throw new Error("Missing project runtime API token");
   }
+  const managedEndpointContext = getManagedProjectAgUiEndpointContext(
+    input.request.runtimeAgUiEndpoint,
+    input.ctx.projectSlug,
+  );
 
   return {
     endpoint: resolveEvalAgUiEndpoint(
@@ -846,15 +864,19 @@ function createEvalAdapterConfig(input: {
     projectId: input.request.projectId,
     projectSlug: input.ctx.projectSlug,
     releaseId: input.req.headers.get("x-release-id") ?? input.ctx.releaseId,
+    contentSourceId: input.req.headers.get("x-content-source-id"),
     branchId: getStringConfig(config, ["branch_id", "branchId"]) ??
       getStringConfig(runInput, ["branch_id", "branchId"]) ??
       input.req.headers.get("x-branch-id"),
     branchName: input.req.headers.get("x-branch-name"),
-    environment: input.req.headers.get("x-environment") ?? input.ctx.resolvedEnvironment,
+    environment: managedEndpointContext?.environment ?? input.req.headers.get("x-environment") ??
+      input.ctx.resolvedEnvironment,
     environmentId: input.req.headers.get("x-environment-id") ?? input.ctx.environmentId,
-    forwardedHost: getHeaderFirstValue(input.req.headers.get("x-forwarded-host")) ??
+    forwardedHost: managedEndpointContext?.forwardedHost ??
+      getHeaderFirstValue(input.req.headers.get("x-forwarded-host")) ??
       getEndpointHost(input.request.runtimeAgUiEndpoint),
-    forwardedProto: getHeaderFirstValue(input.req.headers.get("x-forwarded-proto")) ??
+    forwardedProto: managedEndpointContext?.forwardedProto ??
+      getHeaderFirstValue(input.req.headers.get("x-forwarded-proto")) ??
       getEndpointProtocol(input.request.runtimeAgUiEndpoint),
     model: getStringConfig(config, ["model"]),
     allowedTools: getStringArrayConfig(config, ["allowed_tools", "allowedTools"]),
