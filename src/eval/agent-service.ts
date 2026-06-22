@@ -93,7 +93,13 @@ export interface AgentServiceEvalAdapterConfig {
   projectId?: string | null;
   projectSlug?: string | null;
   conversationId?: string | null;
+  releaseId?: string | null;
   branchId?: string | null;
+  branchName?: string | null;
+  environment?: string | null;
+  environmentId?: string | null;
+  forwardedHost?: string | null;
+  forwardedProto?: string | null;
   model?: string | null;
   allowedTools?: string[];
   forceRuntimeOverrides?: boolean;
@@ -176,14 +182,20 @@ function createVeryfrontForwardedProps(
   return Object.keys(veryfront).length > 0 ? veryfront : null;
 }
 
-function createHeaders(
-  config: Pick<AgentServiceEvalAdapterConfig, "authToken" | "projectSlug">,
-): Record<string, string> {
+function createHeaders(config: AgentServiceEvalAdapterConfig): Record<string, string> {
   return {
     "Content-Type": "application/json",
     Authorization: `Bearer ${config.authToken}`,
     "x-token": config.authToken,
+    ...(config.projectId ? { "x-project-id": config.projectId } : {}),
     ...(config.projectSlug ? { "x-project-slug": config.projectSlug } : {}),
+    ...(config.releaseId ? { "x-release-id": config.releaseId } : {}),
+    ...(config.branchId ? { "x-branch-id": config.branchId } : {}),
+    ...(config.branchName ? { "x-branch-name": config.branchName } : {}),
+    ...(config.environment ? { "x-environment": config.environment } : {}),
+    ...(config.environmentId ? { "x-environment-id": config.environmentId } : {}),
+    ...(config.forwardedHost ? { "x-forwarded-host": config.forwardedHost } : {}),
+    ...(config.forwardedProto ? { "x-forwarded-proto": config.forwardedProto } : {}),
   };
 }
 

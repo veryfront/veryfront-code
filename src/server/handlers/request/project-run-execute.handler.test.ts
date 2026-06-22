@@ -256,7 +256,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
   });
 
-  it("runs a discovered eval with the canonical run id and external preview AG-UI adapter endpoint", async () => {
+  it("runs a discovered eval with the canonical run id and local routed AG-UI adapter endpoint", async () => {
     const report: EvalReport = {
       kind: "eval-report",
       runId: "run_eval_1",
@@ -274,6 +274,12 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     let receivedAuthToken: string | undefined;
     let receivedAgentId: string | null | undefined;
     let receivedProjectSlug: string | null | undefined;
+    let receivedForwardedHost: unknown;
+    let receivedForwardedProto: unknown;
+    let receivedEnvironment: unknown;
+    let receivedEnvironmentId: unknown;
+    let receivedProjectIdHeader: unknown;
+    let receivedBranchName: unknown;
     const handler = new ProjectRunExecuteHandler(createDeps({
       runEval: async (_definition, options) => {
         receivedRunId = options.runId;
@@ -285,6 +291,12 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         receivedAuthToken = config.authToken;
         receivedAgentId = config.agentId;
         receivedProjectSlug = (config as { projectSlug?: string | null }).projectSlug;
+        receivedForwardedHost = config.forwardedHost;
+        receivedForwardedProto = config.forwardedProto;
+        receivedEnvironment = config.environment;
+        receivedEnvironmentId = config.environmentId;
+        receivedProjectIdHeader = config.projectId;
+        receivedBranchName = config.branchName;
         return async () => ({ text: "Paris" });
       },
     }));
@@ -304,6 +316,9 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         "x-token": "runtime-token",
         "x-forwarded-host": "demo-project.preview.veryfront.org",
         "x-forwarded-proto": "https",
+        "x-environment": "preview",
+        "x-environment-id": "env-1",
+        "x-branch-name": "main",
       },
     );
 
@@ -323,10 +338,16 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
     assertEquals(receivedRunId, "run_eval_1");
     assertEquals(receivedBaseDir, "/project");
-    assertEquals(receivedEndpoint, "https://demo-project.preview.veryfront.org/api/ag-ui");
+    assertEquals(receivedEndpoint, "http://127.0.0.1:4311/api/ag-ui");
     assertEquals(receivedAuthToken, "runtime-token");
     assertEquals(receivedAgentId, "researcher");
     assertEquals(receivedProjectSlug, "demo-project");
+    assertEquals(receivedForwardedHost, "demo-project.preview.veryfront.org");
+    assertEquals(receivedForwardedProto, "https");
+    assertEquals(receivedEnvironment, "preview");
+    assertEquals(receivedEnvironmentId, "env-1");
+    assertEquals(receivedProjectIdHeader, "proj-1");
+    assertEquals(receivedBranchName, "main");
   });
 
   it("uses the local AG-UI adapter endpoint when the runtime endpoint is local", async () => {
@@ -394,7 +415,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(receivedEndpoint, "https://agent-service.example.com/api/ag-ui");
   });
 
-  it("preserves external preview AG-UI endpoints when control-plane requests use an internal runtime host", async () => {
+  it("uses local AG-UI endpoints for managed preview URLs when control-plane requests use an internal runtime host", async () => {
     let receivedEndpoint: string | undefined;
     const handler = new ProjectRunExecuteHandler(createDeps({
       createEvalAgentAdapter: (config) => {
@@ -424,7 +445,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
 
     assertExists(result.response);
     assertEquals(result.response.status, 200);
-    assertEquals(receivedEndpoint, "https://demo-project.preview.veryfront.org/api/ag-ui");
+    assertEquals(receivedEndpoint, "http://127.0.0.1:4311/api/ag-ui");
   });
 
   it("marks eval execution unsuccessful when records contain adapter failures", async () => {
