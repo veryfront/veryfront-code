@@ -127,6 +127,7 @@ describe("eval/agent-service", () => {
       agentId: "veryfront",
       projectId: "project_123",
       projectSlug: "demo-project",
+      contentSourceId: "preview-main",
       branchId: "branch_123",
       branchName: "main",
       environment: "preview",
@@ -178,6 +179,10 @@ describe("eval/agent-service", () => {
     assertEquals(
       (requests[0]?.init.headers as Record<string, string>)["x-project-id"],
       "project_123",
+    );
+    assertEquals(
+      (requests[0]?.init.headers as Record<string, string>)["x-content-source-id"],
+      "preview-main",
     );
     assertEquals(
       (requests[0]?.init.headers as Record<string, string>)["x-branch-id"],
