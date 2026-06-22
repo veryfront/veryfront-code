@@ -117,6 +117,21 @@ async function signedRequest(
   };
 }
 
+async function withEnvValue<T>(
+  key: string,
+  value: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const original = Deno.env.get(key);
+  Deno.env.set(key, value);
+  try {
+    return await fn();
+  } finally {
+    if (original === undefined) Deno.env.delete(key);
+    else Deno.env.set(key, original);
+  }
+}
+
 describe("server/handlers/request/project-run-execute.handler", () => {
   it("runs a discovered task and returns canonical runtime execution output", async () => {
     let receivedConfig: Record<string, unknown> | undefined;
@@ -240,7 +255,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
   });
 
-  it("runs a discovered eval with the canonical run id and AG-UI adapter", async () => {
+  it("runs a discovered eval with the canonical run id and local AG-UI adapter endpoint", async () => {
     const report: EvalReport = {
       kind: "eval-report",
       runId: "run_eval_1",
@@ -284,10 +299,18 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_eval_1/execute",
       body,
-      { "x-token": "runtime-token" },
+      {
+        "x-token": "runtime-token",
+        "x-forwarded-host": "demo-project.preview.veryfront.org",
+        "x-forwarded-proto": "https",
+      },
     );
 
-    const result = await handler.handle(request, createCtx(publicKeyPem));
+    const result = await withEnvValue(
+      "PORT",
+      "4311",
+      () => handler.handle(request, createCtx(publicKeyPem)),
+    );
 
     assertExists(result.response);
     assertEquals(result.response.status, 200);
@@ -299,10 +322,38 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
     assertEquals(receivedRunId, "run_eval_1");
     assertEquals(receivedBaseDir, "/project");
-    assertEquals(receivedEndpoint, "https://demo-project.preview.veryfront.org/api/ag-ui");
+    assertEquals(receivedEndpoint, "http://127.0.0.1:4311/api/ag-ui");
     assertEquals(receivedAuthToken, "runtime-token");
     assertEquals(receivedAgentId, "researcher");
     assertEquals(receivedProjectSlug, "demo-project");
+  });
+
+  it("preserves non-sibling eval AG-UI endpoints", async () => {
+    let receivedEndpoint: string | undefined;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createEvalAgentAdapter: (config) => {
+        receivedEndpoint = config.endpoint;
+        return async () => ({ text: "Paris" });
+      },
+    }));
+    const body = {
+      runId: "run_eval_custom_endpoint",
+      kind: "eval",
+      target: "eval:deep-research",
+      projectId: "proj-1",
+      runtimeAgUiEndpoint: "https://agent-service.example.com/api/ag-ui",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_custom_endpoint/execute",
+      body,
+      { "x-token": "runtime-token" },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(receivedEndpoint, "https://agent-service.example.com/api/ag-ui");
   });
 
   it("marks eval execution unsuccessful when records contain adapter failures", async () => {

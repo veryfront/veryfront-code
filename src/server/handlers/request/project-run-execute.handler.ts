@@ -42,6 +42,7 @@ import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 const EXECUTE_PATH_REGEX = /^\/api\/control-plane\/runs\/([^/]+)\/execute$/;
 const DEFAULT_WORKFLOW_STATUS_POLL_INTERVAL_MS = 100;
 const DEFAULT_WORKFLOW_STATUS_TIMEOUT_MS = 15 * 60 * 1_000;
+const DEFAULT_LOCAL_AG_UI_PORT = 3001;
 const WORKFLOW_PERSISTENCE_REQUIRED_ERROR =
   "Workflow paused but runtime workflow persistence is not configured";
 
@@ -402,12 +403,70 @@ function getRuntimeApiToken(req: Request, ctx: HandlerContext): string {
   return req.headers.get("x-token") ?? ctx.proxyToken ?? ctx.requestContext?.token ?? "";
 }
 
-function getSameOriginAgUiEndpoint(req: Request): string {
+function getHeaderFirstValue(value: string | null): string | undefined {
+  return value?.split(",")[0]?.trim() || undefined;
+}
+
+function getForwardedProtocol(req: Request): "http:" | "https:" | undefined {
+  const value = getHeaderFirstValue(req.headers.get("x-forwarded-proto"))?.replace(/:$/, "");
+  return value === "http" || value === "https" ? `${value}:` : undefined;
+}
+
+function getRequestOriginCandidates(req: Request): Set<string> {
   const url = new URL(req.url);
-  url.pathname = "/api/ag-ui";
-  url.search = "";
-  url.hash = "";
-  return url.toString();
+  const protocols = new Set([url.protocol]);
+  const forwardedProtocol = getForwardedProtocol(req);
+  if (forwardedProtocol) protocols.add(forwardedProtocol);
+
+  const hosts = new Set([url.host]);
+  const hostHeader = getHeaderFirstValue(req.headers.get("host"));
+  const forwardedHost = getHeaderFirstValue(req.headers.get("x-forwarded-host"));
+  if (hostHeader) hosts.add(hostHeader);
+  if (forwardedHost) hosts.add(forwardedHost);
+
+  const origins = new Set<string>();
+  for (const protocol of protocols) {
+    for (const host of hosts) {
+      origins.add(`${protocol}//${host}`);
+    }
+  }
+  return origins;
+}
+
+function isRequestSiblingAgUiEndpoint(endpoint: string, req: Request): boolean {
+  try {
+    const endpointUrl = new URL(endpoint);
+    if (endpointUrl.pathname !== "/api/ag-ui") return false;
+    return getRequestOriginCandidates(req).has(endpointUrl.origin);
+  } catch {
+    return false;
+  }
+}
+
+function isLocalHostname(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+}
+
+function getRuntimeLocalPort(req: Request): number {
+  const url = new URL(req.url);
+  const requestPort = isLocalHostname(url.hostname) ? url.port : "";
+  for (const value of [getHostEnv("PORT"), getHostEnv("VERYFRONT_PORT"), requestPort]) {
+    if (!value) continue;
+    const port = Number.parseInt(value, 10);
+    if (Number.isInteger(port) && port > 0 && port <= 65_535) return port;
+  }
+  return DEFAULT_LOCAL_AG_UI_PORT;
+}
+
+function getLocalAgUiEndpoint(req: Request): string {
+  return `http://127.0.0.1:${getRuntimeLocalPort(req)}/api/ag-ui`;
+}
+
+function resolveEvalAgUiEndpoint(req: Request, endpoint?: string): string {
+  if (endpoint && !isRequestSiblingAgUiEndpoint(endpoint, req)) {
+    return endpoint;
+  }
+  return getLocalAgUiEndpoint(req);
 }
 
 function createRuntimeApiClient(req: Request, ctx: HandlerContext): RuntimeApiClient {
@@ -728,7 +787,7 @@ function createEvalAdapterConfig(input: {
   }
 
   return {
-    endpoint: input.request.runtimeAgUiEndpoint ?? getSameOriginAgUiEndpoint(input.req),
+    endpoint: resolveEvalAgUiEndpoint(input.req, input.request.runtimeAgUiEndpoint),
     authToken,
     agentId: getEvalTargetAgentId(input.definition),
     projectId: input.request.projectId,
