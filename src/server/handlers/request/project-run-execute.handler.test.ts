@@ -256,7 +256,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
   });
 
-  it("runs a discovered eval with the canonical run id and local AG-UI adapter endpoint", async () => {
+  it("runs a discovered eval with the canonical run id and external preview AG-UI adapter endpoint", async () => {
     const report: EvalReport = {
       kind: "eval-report",
       runId: "run_eval_1",
@@ -323,10 +323,47 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
     assertEquals(receivedRunId, "run_eval_1");
     assertEquals(receivedBaseDir, "/project");
-    assertEquals(receivedEndpoint, "http://127.0.0.1:4311/api/ag-ui");
+    assertEquals(receivedEndpoint, "https://demo-project.preview.veryfront.org/api/ag-ui");
     assertEquals(receivedAuthToken, "runtime-token");
     assertEquals(receivedAgentId, "researcher");
     assertEquals(receivedProjectSlug, "demo-project");
+  });
+
+  it("uses the local AG-UI adapter endpoint when the runtime endpoint is local", async () => {
+    let receivedEndpoint: string | undefined;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createEvalAgentAdapter: (config) => {
+        receivedEndpoint = config.endpoint;
+        return async () => ({ text: "Paris" });
+      },
+    }));
+    const body = {
+      runId: "run_eval_local_endpoint",
+      kind: "eval",
+      target: "eval:deep-research",
+      projectId: "proj-1",
+      runtimeAgUiEndpoint: "http://localhost:4311/api/ag-ui",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_local_endpoint/execute",
+      body,
+      {
+        "x-token": "runtime-token",
+        "x-forwarded-host": "localhost:4311",
+        "x-forwarded-proto": "http",
+      },
+      "http://localhost:4311",
+    );
+
+    const result = await withEnvValue(
+      "PORT",
+      "4311",
+      () => handler.handle(request, createCtx(publicKeyPem)),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(receivedEndpoint, "http://127.0.0.1:4311/api/ag-ui");
   });
 
   it("preserves non-sibling eval AG-UI endpoints", async () => {
