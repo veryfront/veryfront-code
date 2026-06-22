@@ -45,6 +45,11 @@ interface DirectMetricSample {
   timestampUnixNano: string;
 }
 
+interface DirectMetricsTarget {
+  url: string;
+  headers: Record<string, string>;
+}
+
 const counters = new Map<string, Counter>();
 const histograms = new Map<string, Histogram>();
 const gauges = new Map<
@@ -152,6 +157,20 @@ function resolveOtlpMetricsUrl(): string | null {
   return trimmed.endsWith("/v1/metrics") ? trimmed : `${trimmed}/v1/metrics`;
 }
 
+function resolveInternalMetricsUrl(): string | null {
+  if (readEnv("OTEL_METRICS_ENABLED") !== "true") return null;
+  const apiBaseUrl = readEnv("VERYFRONT_API_BASE_URL") ?? readEnv("VERYFRONT_API_URL");
+  const username = readEnv("VERYFRONT_API_INTERNAL_USER");
+  const password = readEnv("VERYFRONT_API_INTERNAL_PASS");
+  if (!apiBaseUrl || !username || !password) return null;
+  return `${apiBaseUrl.replace(/\/$/, "")}/internal/metrics/otlp/v1/metrics`;
+}
+
+function buildBasicAuth(username: string, password: string): string {
+  const credentials = `${username}:${password}`;
+  return `Basic ${globalThis.btoa(credentials)}`;
+}
+
 function parseHeaders(headerInput: string | undefined): Record<string, string> {
   if (!headerInput) return {};
   if (headerInput.startsWith("Basic ")) return { Authorization: headerInput };
@@ -167,6 +186,28 @@ function parseHeaders(headerInput: string | undefined): Record<string, string> {
     }
   }
   return result;
+}
+
+function resolveDirectMetricsTarget(): DirectMetricsTarget | null {
+  const internalUrl = resolveInternalMetricsUrl();
+  if (internalUrl) {
+    return {
+      url: internalUrl,
+      headers: {
+        Authorization: buildBasicAuth(
+          readEnv("VERYFRONT_API_INTERNAL_USER") ?? "",
+          readEnv("VERYFRONT_API_INTERNAL_PASS") ?? "",
+        ),
+      },
+    };
+  }
+
+  const otlpUrl = resolveOtlpMetricsUrl();
+  if (!otlpUrl) return null;
+  return {
+    url: otlpUrl,
+    headers: parseHeaders(readEnv("OTEL_EXPORTER_OTLP_HEADERS")),
+  };
 }
 
 function toOtlpValue(value: AttributeValue) {
@@ -281,18 +322,18 @@ async function flushDirectMetrics(): Promise<void> {
     directFlushTimer = null;
   }
 
-  const url = resolveOtlpMetricsUrl();
-  if (!url || directQueue.length === 0) {
+  const target = resolveDirectMetricsTarget();
+  if (!target || directQueue.length === 0) {
     directQueue.length = 0;
     return;
   }
 
   const batch = directQueue.splice(0, DIRECT_MAX_BATCH_SIZE);
   try {
-    const response = await fetch(url, {
+    const response = await fetch(target.url, {
       method: "POST",
       headers: {
-        ...parseHeaders(readEnv("OTEL_EXPORTER_OTLP_HEADERS")),
+        ...target.headers,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(buildDirectOtlpBody(batch)),
@@ -310,7 +351,7 @@ async function flushDirectMetrics(): Promise<void> {
 }
 
 function scheduleDirectFlush(): void {
-  if (directFlushTimer || resolveOtlpMetricsUrl() === null) return;
+  if (directFlushTimer || resolveDirectMetricsTarget() === null) return;
   directFlushTimer = setTimeout(() => {
     void flushDirectMetrics();
   }, DIRECT_FLUSH_DELAY_MS);
@@ -331,7 +372,7 @@ function enqueueDirectMetric(
   value: number,
   attributes: Record<string, AttributeValue>,
 ): void {
-  if (resolveOtlpMetricsUrl() === null) return;
+  if (resolveDirectMetricsTarget() === null) return;
   directQueue.push({
     kind,
     name,
@@ -353,7 +394,7 @@ export function counter(
   options?: MetricInstrumentOptions,
 ): void {
   const normalizedAttributes = normalizeAttributes(attributes);
-  if (resolveOtlpMetricsUrl() === null) {
+  if (resolveDirectMetricsTarget() === null) {
     getCounter(name, options)?.add(value, normalizedAttributes);
     return;
   }
@@ -367,7 +408,7 @@ export function histogram(
   options?: MetricInstrumentOptions,
 ): void {
   const normalizedAttributes = normalizeAttributes(attributes);
-  if (resolveOtlpMetricsUrl() === null) {
+  if (resolveDirectMetricsTarget() === null) {
     getHistogram(name, options)?.record(value, normalizedAttributes);
     return;
   }
@@ -381,7 +422,7 @@ export function gauge(
   options?: MetricInstrumentOptions,
 ): void {
   const normalizedAttributes = normalizeAttributes(attributes);
-  if (resolveOtlpMetricsUrl() !== null) {
+  if (resolveDirectMetricsTarget() !== null) {
     enqueueDirectMetric("gauge", name, value, normalizedAttributes);
     return;
   }
