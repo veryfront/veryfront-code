@@ -280,6 +280,11 @@ such as `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_METRICS_ENABLED`, and
 `OTEL_TRACES_ENABLED` do not route eval reports to those vendors; they only
 control runtime trace and metric export.
 
+Use [project metrics](./project-metrics.md) when an eval should also emit
+aggregate dashboard signals such as `vf_eval_result_total` or
+`vf_eval_duration_ms`. Keep report exports for rich per-case eval data, and keep
+project metrics to low-cardinality counters, histograms, and gauges.
+
 Use `@veryfront/ext-eval-report-http` when an eval gateway endpoint should
 receive reports without adding a vendor SDK:
 
