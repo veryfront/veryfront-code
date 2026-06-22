@@ -166,6 +166,13 @@ describe("server/handlers/request/api/pages-api-handler", () => {
   describe("getApiHandler", () => {
     it("should not reuse stale preview route maps after source changes", async () => {
       const adapter = createMockAdapter();
+      let refreshCalls = 0;
+      (adapter.fs as unknown as { refreshSourceSnapshot?: (reason?: string) => Promise<void> })
+        .refreshSourceSnapshot = (reason?: string) => {
+          refreshCalls++;
+          assertEquals(reason, "preview-api-route-discovery");
+          return Promise.resolve();
+        };
       const ctx = createHandlerContext({
         adapter,
         projectSlug: "my-project",
@@ -202,11 +209,18 @@ describe("server/handlers/request/api/pages-api-handler", () => {
       assertExists(updatedResponse);
       assertEquals(updatedResponse.status, 200);
       assertEquals(await updatedResponse.json(), { ok: true });
+      assertEquals(refreshCalls, 2);
     });
 
     it("should cache production route handlers by release context", async () => {
       const cache = createMockCache();
       const adapter = createMockAdapter();
+      let refreshCalls = 0;
+      (adapter.fs as unknown as { refreshSourceSnapshot?: (reason?: string) => Promise<void> })
+        .refreshSourceSnapshot = () => {
+          refreshCalls++;
+          return Promise.resolve();
+        };
       __injectCacheForTests(cache as any);
 
       await getApiHandler(
@@ -242,6 +256,7 @@ describe("server/handlers/request/api/pages-api-handler", () => {
           "/project-dir:my-project:production:release-2",
         ],
       );
+      assertEquals(refreshCalls, 0);
     });
   });
 });

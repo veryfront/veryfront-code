@@ -56,7 +56,16 @@ function shouldCacheApiHandler(ctx: HandlerContext): boolean {
   return getApiHandlerCacheContext(ctx).mode === "production";
 }
 
+async function refreshPreviewSourceSnapshot(ctx: HandlerContext): Promise<void> {
+  if (!ctx.projectSlug) return;
+  if (getApiHandlerCacheContext(ctx).mode === "production") return;
+
+  await ctx.adapter.fs.refreshSourceSnapshot?.("preview-api-route-discovery");
+}
+
 async function createApiHandler(ctx: HandlerContext): Promise<APIRouteHandler> {
+  await refreshPreviewSourceSnapshot(ctx);
+
   const handler = new APIRouteHandler(ctx.projectDir, ctx.adapter);
   await handler.initialize();
   return handler;
