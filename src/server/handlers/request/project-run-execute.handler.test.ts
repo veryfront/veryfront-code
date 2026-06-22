@@ -277,6 +277,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       kind: "eval",
       target: "eval:deep-research",
       projectId: "proj-1",
+      runtimeAgUiEndpoint: "https://demo-project.preview.veryfront.org/api/ag-ui",
       input: { dataset: "smoke" },
       config: { repetitions: 2 },
     };
@@ -298,7 +299,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
     assertEquals(receivedRunId, "run_eval_1");
     assertEquals(receivedBaseDir, "/project");
-    assertEquals(receivedEndpoint, "https://example.com/api/ag-ui");
+    assertEquals(receivedEndpoint, "https://demo-project.preview.veryfront.org/api/ag-ui");
     assertEquals(receivedAuthToken, "runtime-token");
     assertEquals(receivedAgentId, "researcher");
     assertEquals(receivedProjectSlug, "demo-project");

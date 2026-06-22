@@ -50,6 +50,7 @@ export interface ProjectRunExecuteRequest {
   kind: "task" | "workflow" | "eval";
   target: string;
   projectId: string;
+  runtimeAgUiEndpoint?: string;
   config?: Record<string, unknown>;
   input?: Record<string, unknown>;
 }
@@ -145,6 +146,21 @@ function parseRecord(value: unknown): Record<string, unknown> | undefined {
   return value;
 }
 
+function parseOptionalUrl(value: unknown, fieldName: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value.length === 0) throw new Error(`Invalid ${fieldName}`);
+
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      throw new Error(`Invalid ${fieldName}`);
+    }
+    return url.toString();
+  } catch {
+    throw new Error(`Invalid ${fieldName}`);
+  }
+}
+
 function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecuteRequest {
   if (!isRecord(value)) throw new Error("Expected object");
 
@@ -171,6 +187,7 @@ function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecu
     kind,
     target,
     projectId,
+    runtimeAgUiEndpoint: parseOptionalUrl(value.runtimeAgUiEndpoint, "runtimeAgUiEndpoint"),
     config: parseRecord(value.config),
     input: parseRecord(value.input),
   };
@@ -711,7 +728,7 @@ function createEvalAdapterConfig(input: {
   }
 
   return {
-    endpoint: getSameOriginAgUiEndpoint(input.req),
+    endpoint: input.request.runtimeAgUiEndpoint ?? getSameOriginAgUiEndpoint(input.req),
     authToken,
     agentId: getEvalTargetAgentId(input.definition),
     projectId: input.request.projectId,
