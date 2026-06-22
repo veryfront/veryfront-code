@@ -447,6 +447,14 @@ function isLocalHostname(hostname: string): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
 }
 
+function isLocalAgUiEndpoint(endpoint: string): boolean {
+  try {
+    return isLocalHostname(new URL(endpoint).hostname);
+  } catch {
+    return false;
+  }
+}
+
 function getRuntimeLocalPort(req: Request): number {
   const url = new URL(req.url);
   const requestPort = isLocalHostname(url.hostname) ? url.port : "";
@@ -463,7 +471,10 @@ function getLocalAgUiEndpoint(req: Request): string {
 }
 
 function resolveEvalAgUiEndpoint(req: Request, endpoint?: string): string {
-  if (endpoint && !isRequestSiblingAgUiEndpoint(endpoint, req)) {
+  if (!endpoint) {
+    return getLocalAgUiEndpoint(req);
+  }
+  if (!isRequestSiblingAgUiEndpoint(endpoint, req) || !isLocalAgUiEndpoint(endpoint)) {
     return endpoint;
   }
   return getLocalAgUiEndpoint(req);
