@@ -42,7 +42,7 @@ export const { POST, GET, DELETE } = createUploadHandler(store, {
 | `ragStore` | Creates a persistent RAG store with lazy embedding and similarity search. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/rag-store.ts#L172) |
 | `registerEmbeddingProvider` | Register an embedding provider factory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/resolve.ts#L22) |
 | `resolveEmbeddingModel` | Resolve a "provider/model" string to an embedding runtime instance. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/resolve.ts#L109) |
-| `similarity` | Compute cosine similarity between two numeric vectors. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runtime/runtime-bridge.ts#L666) |
+| `similarity` | Compute cosine similarity between two numeric vectors. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runtime/runtime-bridge.ts#L807) |
 | `useUploads` | useUploads hook for managing RAG upload lifecycle. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/react/use-uploads.ts#L40) |
 | `vectorStore` | Creates an in-memory vector store with integrated embedding and similarity search. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/vector-store.ts#L45) |
 

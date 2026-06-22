@@ -1,7 +1,7 @@
 ---
 title: "veryfront/prompt"
 description: "Declare and register prompts exposable over MCP."
-order: 19
+order: 20
 ---
 
 ## Import

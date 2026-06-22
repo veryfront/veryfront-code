@@ -20,6 +20,7 @@ import {
   type AgentServiceEvalAdapterConfig,
   createAgentServiceEvalAdapter,
 } from "#veryfront/eval/agent-service.ts";
+import { createAgUiHandler } from "#veryfront/agent/ag-ui/handler.ts";
 import type {
   EvalAgentAdapter,
   EvalDefinition,
@@ -514,6 +515,23 @@ function resolveEvalAgUiEndpoint(
   return getLocalAgUiEndpoint(req);
 }
 
+function createLocalEvalAgentFetch(input: {
+  endpoint: string;
+  agentId?: string;
+}): AgentServiceEvalAdapterConfig["fetch"] | undefined {
+  if (!input.agentId || !isLocalAgUiEndpoint(input.endpoint)) return undefined;
+
+  const agent = agentRegistry.get(input.agentId);
+  if (!agent) return undefined;
+
+  const handler = createAgUiHandler({ agent });
+  return async (requestInput, init) => {
+    const request = new Request(requestInput, init);
+    if (!isLocalAgUiEndpoint(request.url)) return fetch(request);
+    return await handler(request);
+  };
+}
+
 function getEndpointHost(endpoint?: string): string | undefined {
   if (!endpoint) return undefined;
   try {
@@ -852,15 +870,17 @@ function createEvalAdapterConfig(input: {
     input.request.runtimeAgUiEndpoint,
     input.ctx.projectSlug,
   );
+  const endpoint = resolveEvalAgUiEndpoint(
+    input.req,
+    input.request.runtimeAgUiEndpoint,
+    input.ctx.projectSlug,
+  );
+  const agentId = getEvalTargetAgentId(input.definition);
 
   return {
-    endpoint: resolveEvalAgUiEndpoint(
-      input.req,
-      input.request.runtimeAgUiEndpoint,
-      input.ctx.projectSlug,
-    ),
+    endpoint,
     authToken,
-    agentId: getEvalTargetAgentId(input.definition),
+    agentId,
     projectId: input.request.projectId,
     projectSlug: input.ctx.projectSlug,
     releaseId: input.req.headers.get("x-release-id") ?? input.ctx.releaseId,
@@ -881,6 +901,7 @@ function createEvalAdapterConfig(input: {
     model: getStringConfig(config, ["model"]),
     allowedTools: getStringArrayConfig(config, ["allowed_tools", "allowedTools"]),
     maxSteps: getPositiveIntConfig(config, ["max_steps", "maxSteps"]),
+    fetch: createLocalEvalAgentFetch({ endpoint, agentId }),
   };
 }
 
