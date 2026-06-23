@@ -29,6 +29,10 @@ const VERYFRONT_CLOUD_GATEWAY_MODEL_PROVIDER_PREFIXES = [
   "mistral/",
   "moonshotai/",
 ];
+const ANTHROPIC_ADAPTIVE_THINKING_ONLY_MODELS = new Set([
+  "anthropic/claude-opus-4-7",
+  "anthropic/claude-opus-4-8",
+]);
 
 export function isSupportedMistralModelId(modelId: string): boolean {
   return VERYFRONT_CLOUD_CHAT_MODELS.some((model) => model.modelId === modelId);
@@ -231,6 +235,21 @@ export function resolveVeryfrontCloudThinkingProviderOptions(
   const provider = getVeryfrontCloudProviderFromModelId(modelId);
   if (provider !== "anthropic") {
     return undefined;
+  }
+
+  const normalizedModelId = normalizeVeryfrontCloudModelId(modelId);
+  if (ANTHROPIC_ADAPTIVE_THINKING_ONLY_MODELS.has(normalizedModelId)) {
+    return {
+      anthropic: {
+        thinking: {
+          type: "adaptive",
+          display: "summarized",
+        },
+        output_config: {
+          effort: "high",
+        },
+      },
+    };
   }
 
   return {
