@@ -47582,11 +47582,7 @@ export const connectors: IntegrationConfig[] = [
         "method": "POST",
         "url": "{{oauth.raw.instance_url}}/services/data/v61.0/sobjects/CaseComment",
         "body": {
-          "ParentId": {
-            "type": "string",
-            "description": "Salesforce Case ID",
-            "required": true,
-          },
+          "ParentId": { "type": "string", "description": "Salesforce Case ID", "required": true },
           "CommentBody": { "type": "string", "description": "Comment body", "required": true },
           "IsPublished": {
             "type": "boolean",
@@ -47668,54 +47664,62 @@ export const connectors: IntegrationConfig[] = [
       "icon": "search",
     }, {
       "id": "create_case",
-      "title": "Create a case",
-      "prompt": "Create a Service Cloud case from the customer issue I describe.",
+      "title": "Create a support case",
+      "prompt":
+        "Create a Salesforce Service Cloud case with the customer, subject, priority, and issue summary I provide.",
       "category": "support",
       "icon": "plus",
     }, {
-      "id": "knowledge_answer",
-      "title": "Find knowledge",
+      "id": "knowledge_search",
+      "title": "Search Knowledge",
       "prompt": "Search Salesforce Knowledge for articles that answer this customer support issue.",
       "category": "support",
       "icon": "book",
     }, {
-      "id": "pipeline_context",
-      "title": "Pipeline context",
-      "prompt": "Show sales opportunities related to this customer account for support context.",
+      "id": "pipeline_summary",
+      "title": "Pipeline summary",
+      "prompt":
+        "Summarize Salesforce opportunities for this account and highlight any renewal or expansion context relevant to support.",
       "category": "crm",
       "icon": "chart",
     }],
-    "suggestedWith": ["gmail", "outlook", "slack", "confluence"],
-    "category": "crm",
+    "suggestedWith": ["gmail", "slack", "calendar"],
     "setupGuide": {
-      "title": "Salesforce setup",
+      "title": "Salesforce Connected App Setup",
       "steps": [{
         "step": 1,
-        "title": "Create a Salesforce sandbox or developer org",
+        "title": "Create a Salesforce test org",
         "description":
           "Use a sandbox or free Developer Edition org for staging. Enable Service Cloud, Cases, and Knowledge if the demo needs support workflows.",
       }, {
         "step": 2,
         "title": "Create a Connected App",
         "description":
-          "Create a Connected App with OAuth enabled and callback URLs for the Veryfront environment.",
+          "In Salesforce Setup, create a Connected App with OAuth enabled. Add the Veryfront callback URL for the target environment.",
+        "docsUrl": "https://help.salesforce.com/s/articleView?id=sf.connected_app_create.htm",
       }, {
         "step": 3,
-        "title": "Set OAuth scopes",
+        "title": "Configure OAuth scopes",
         "description":
-          "Grant api and refresh_token/offline_access. Use Salesforce profiles, permission sets, and sharing rules to scope the connected user.",
+          "Add api, refresh_token, and offline_access scopes. Use the Web Server Flow with a client secret for Veryfront API environments.",
       }, {
         "step": 4,
-        "title": "Configure environment variables",
+        "title": "Store Veryfront environment credentials",
         "description":
-          "Set SALESFORCE_CLIENT_ID and SALESFORCE_CLIENT_SECRET separately for staging and production.",
+          "Set SALESFORCE_CLIENT_ID and SALESFORCE_CLIENT_SECRET for the matching Veryfront environment. Keep staging and production credentials separate.",
+      }, {
+        "step": 5,
+        "title": "Grant least-privilege Salesforce permissions",
+        "description":
+          "Assign the connected user access to Account, Contact, Case, CaseComment, Opportunity, Lead, and Knowledge objects required by the enabled tools.",
       }],
       "notes": [
-        "Veryfront exposes curated Service Cloud and Sales Cloud tools by default; destructive generic record deletion is not part of this default surface.",
-        "Advanced SOQL and Describe Object are read-only escape hatches for expert inspection and custom-object discovery.",
-        "Record-level safety comes from the connected Salesforce user's permissions, sharing model, and the Veryfront project integration binding.",
+        "Staging callback: https://api.veryfront.org/oauth/callback/salesforce",
+        "Production callback: https://api.veryfront.com/oauth/callback/salesforce",
+        "Write tools should be explicitly enabled for an agent or project; read tools are the default demo surface.",
       ],
-      "documentation": "https://help.salesforce.com/s/articleView?id=sf.connected_app_create.htm",
+      "documentation":
+        "https://developer.salesforce.com/docs/atlas.en-us.api_rest.meta/api_rest/intro_rest.htm",
     },
   },
   {
