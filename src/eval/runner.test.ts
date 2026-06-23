@@ -5,13 +5,17 @@ import { datasets, evalAgent, metrics, runEval } from "veryfront/eval";
 import { createEvalReportExporterRegistry } from "veryfront/extensions/eval";
 import {
   _resetShimForTests,
+  type MetricsAPI,
   setGlobalActiveSpanAccessor,
+  setGlobalMetricsAPI,
   type Span,
 } from "../observability/tracing/api-shim.ts";
+import { metrics as runtimeMetrics } from "#veryfront/metrics";
 
 describe("eval/runner", () => {
   afterEach(() => {
     _resetShimForTests();
+    runtimeMetrics.__resetForTests();
   });
 
   it("runs an agent eval and summarizes metric results", async () => {
@@ -98,6 +102,80 @@ describe("eval/runner", () => {
     assertEquals(report.summary.passRate, 0);
     assertEquals(report.records[0]?.completed, false);
     assertEquals(report.records[0]?.error, "AG-UI request failed");
+  });
+
+  it("emits eval result and duration metrics through the runtime metrics API", async () => {
+    const counterCalls: unknown[] = [];
+    const histogramCalls: unknown[] = [];
+
+    setGlobalMetricsAPI({
+      getMeter() {
+        return {
+          createCounter(name: string) {
+            return {
+              add(value: number, attributes?: Record<string, unknown>) {
+                counterCalls.push({ name, value, attributes });
+              },
+            };
+          },
+          createHistogram(name: string) {
+            return {
+              record(value: number, attributes?: Record<string, unknown>) {
+                histogramCalls.push({ name, value, attributes });
+              },
+            };
+          },
+          createUpDownCounter() {
+            return { add() {} };
+          },
+          createObservableGauge() {
+            return { addCallback() {} };
+          },
+        };
+      },
+    } as MetricsAPI);
+
+    const definition = evalAgent({
+      id: "metrics-smoke-runtime",
+      target: "agent:researcher",
+      dataset: datasets.inline([
+        { id: "q1", input: "France capital?", reference: "Paris" },
+      ]),
+      metrics: [metrics.answer.contains({ text: "Paris" }).gate()],
+    });
+
+    await runEval(definition, {
+      adapters: {
+        agent: async () => ({ text: "Paris", durationMs: 1558 }),
+      },
+    });
+
+    assertEquals(counterCalls, [
+      {
+        name: "vf_eval_result_total",
+        value: 1,
+        attributes: {
+          eval_id: "metrics-smoke-runtime",
+          target_kind: "agent",
+          metric: "answer.contains",
+          family: "answer",
+          severity: "gate",
+          outcome: "pass",
+        },
+      },
+    ]);
+    assertEquals(histogramCalls, [
+      {
+        name: "vf_eval_duration_ms",
+        value: 1558,
+        attributes: {
+          eval_id: "metrics-smoke-runtime",
+          target_kind: "agent",
+          metric: "duration",
+          outcome: "pass",
+        },
+      },
+    ]);
   });
 
   it("exports completed reports through selected eval report exporters", async () => {
