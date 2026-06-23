@@ -19,7 +19,11 @@ function encodeDataStreamEvent(payload: Record<string, unknown>): Uint8Array {
   return encoder.encode(`data: ${JSON.stringify(payload)}\n\n`);
 }
 
-function createStreamingAgent(id: string, text: string): Agent {
+function createStreamingAgent(
+  id: string,
+  text: string,
+  usage?: { promptTokens: number; completionTokens: number; totalTokens: number },
+): Agent {
   let capturedMessages: Message[] = [];
 
   return {
@@ -42,6 +46,13 @@ function createStreamingAgent(id: string, text: string): Agent {
             encodeDataStreamEvent({ type: "text-delta", id: "text-1", delta: text }),
           );
           controller.enqueue(encodeDataStreamEvent({ type: "text-end", id: "text-1" }));
+          input.onFinish?.({
+            text,
+            messages: [],
+            toolCalls: [],
+            status: "completed",
+            ...(usage ? { usage } : {}),
+          });
           controller.close();
         },
       });
@@ -500,7 +511,14 @@ describe("server/handlers/request/project-run-execute.handler", () => {
   });
 
   it("runs localized eval AG-UI requests through discovered source agents", async () => {
-    agentRegistry.register("researcher", createStreamingAgent("researcher", "Paris"));
+    agentRegistry.register(
+      "researcher",
+      createStreamingAgent("researcher", "Paris", {
+        promptTokens: 12,
+        completionTokens: 8,
+        totalTokens: 20,
+      }),
+    );
     const handler = new ProjectRunExecuteHandler(createDeps({
       findEvalById: async (target) =>
         target === "eval:deep-research"
@@ -550,6 +568,16 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       assertEquals(payload.success, true);
       assertEquals(payload.error, undefined);
       assertEquals(payload.result.summary.failed, 0);
+      assertEquals(payload.result.summary.usage, {
+        inputTokens: 12,
+        outputTokens: 8,
+        totalTokens: 20,
+      });
+      assertEquals(payload.result.records[0]?.usage, {
+        inputTokens: 12,
+        outputTokens: 8,
+        totalTokens: 20,
+      });
       assertStringIncludes(JSON.stringify(payload.result.records[0]?.output), "Paris");
     } finally {
       agentRegistry.delete("researcher");

@@ -484,7 +484,9 @@ describe("agent/ag-ui-browser-encoder", () => {
           reasoningTokens: 2,
         },
         metadata: {
+          costUsd: 0.002,
           finishReason: "stop",
+          usageCaptureStatus: "complete",
         },
       }),
       [
@@ -502,8 +504,10 @@ describe("agent/ag-ui-browser-encoder", () => {
               cachedInputTokens: 4,
               cacheCreationInputTokens: 6,
               cacheReadInputTokens: 4,
+              costUsd: 0.002,
               reasoningTokens: 2,
               finishReason: "stop",
+              usageCaptureStatus: "complete",
             },
           },
         },
