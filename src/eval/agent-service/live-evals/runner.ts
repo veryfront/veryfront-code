@@ -104,7 +104,10 @@ function resolveFetch(config: Pick<LiveEvalRunnerConfig, "fetch">) {
 }
 
 function createLiveEvalJudgeSupport(
-  config: Pick<LiveEvalRunnerConfig, "endpoint" | "authToken" | "enableLlmJudge" | "fetch">,
+  config: Pick<
+    LiveEvalRunnerConfig,
+    "endpoint" | "authToken" | "projectId" | "branchId" | "model" | "enableLlmJudge" | "fetch"
+  >,
 ): {
   judgeLlm: (input: LiveEvalJudgeRequest) => Promise<LiveEvalJudgeResult>;
   withJudge: (
@@ -127,7 +130,9 @@ CRITERIA: ${input.criteria}
 Respond with exactly one line: PASS or FAIL followed by a brief reason.
 Example: "PASS — correctly explains the pattern with accurate details"
 Example: "FAIL — mentions the wrong file convention"`,
-        projectId: null,
+        projectId: config.projectId,
+        ...(config.branchId ? { branchId: config.branchId } : {}),
+        ...(config.model ? { model: config.model } : {}),
         allowedTools: [],
         forceRuntimeOverrides: true,
         maxSteps: 2,

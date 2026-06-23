@@ -6,6 +6,7 @@ import { datasets, evalAgent, metrics, runEval } from "veryfront/eval";
 import {
   buildAgentServiceEvalRequestBody,
   createAgentServiceEvalAdapter,
+  createLiveEvalCaseSupport,
   evaluateAgentServiceEvalEnvironment,
   evaluateRuntimeConfidenceEnv,
   resolveAgentServiceEvalEnvironment,
@@ -277,6 +278,53 @@ describe("eval/agent-service", () => {
     }]);
     assertEquals(record.metrics?.[0]?.pass, false);
     assertEquals(record.metrics?.[0]?.evidence, { failedTools: ["search"] });
+  });
+
+  it("forwards eval project and model context to optional LLM judge requests", async () => {
+    const requests: Array<{ body: Record<string, unknown>; headers: Record<string, string> }> = [];
+    const { judgeLlm } = createLiveEvalCaseSupport({
+      endpoint: "http://127.0.0.1:4311/api/ag-ui",
+      authToken: "token",
+      apiUrl: "https://api.example.test",
+      projectId: "project_123",
+      branchId: "branch_123",
+      model: "openai/gpt-5.5",
+      requestTimeoutMs: 240_000,
+      progressLogIntervalMs: 15_000,
+      enableLlmJudge: true,
+      fetch: async (_input, init) => {
+        requests.push({
+          body: JSON.parse(String(init?.body)),
+          headers: init?.headers as Record<string, string>,
+        });
+        return createSseResponse([
+          { event: "RunStarted", data: { runId: "run_judge" } },
+          { event: "TextMessageContent", data: { delta: "PASS enough evidence" } },
+          { event: "RunFinished", data: {} },
+        ]);
+      },
+    });
+
+    const result = await judgeLlm({
+      question: "What happened?",
+      answer: "The run used the gateway.",
+      criteria: "Pass if the answer identifies the gateway.",
+    });
+
+    assertEquals(result, { pass: true, reason: "PASS enough evidence" });
+    assertEquals(requests.length, 1);
+    assertEquals(requests[0]?.headers.Authorization, "Bearer token");
+    assertEquals(requests[0]?.body.forwardedProps, {
+      veryfront: {
+        projectId: "project_123",
+        branchId: "branch_123",
+        model: "openai/gpt-5.5",
+        runtimeOverrides: {
+          allowedTools: [],
+          maxSteps: 2,
+        },
+      },
+    });
   });
 
   it("exports the agent-service module from the public import map", async () => {
