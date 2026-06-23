@@ -29,6 +29,13 @@ const AI_PROVIDER_SPEND_LIMIT_ERROR = {
   status: 402,
 } as const;
 
+const AI_PROVIDER_BILLING_ERROR = {
+  code: "AI_PROVIDER_BILLING_ERROR",
+  message:
+    "The configured AI provider account cannot process this request. Try a different model, or ask an administrator to check provider billing.",
+  status: 502,
+} as const;
+
 function isErrorRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -117,6 +124,20 @@ function isAssistantPrefillUnsupportedMessage(message: string): boolean {
   return mentionsAssistantPrefill && rejectsAssistantPrefill;
 }
 
+function isProviderBillingMessage(normalizedMessage: string): boolean {
+  const mentionsProviderApi = normalizedMessage.includes("anthropic api") ||
+    normalizedMessage.includes("openai api") ||
+    normalizedMessage.includes("google api") ||
+    normalizedMessage.includes("mistral api");
+  const mentionsProviderBilling = normalizedMessage.includes("plans & billing") ||
+    normalizedMessage.includes("provider billing") ||
+    normalizedMessage.includes("provider account");
+  const mentionsProviderCredits = normalizedMessage.includes("credit balance is too low") ||
+    normalizedMessage.includes("provider credits");
+
+  return mentionsProviderApi && mentionsProviderCredits && mentionsProviderBilling;
+}
+
 function parseKnownProviderBody(
   body: unknown,
   seen: WeakSet<object> = new WeakSet(),
@@ -171,10 +192,14 @@ function parseKnownProviderBody(
   }
 
   if (body.type === "invalid_request_error" && typeof body.message === "string") {
+    const normalizedMessage = body.message.toLowerCase();
+    if (isProviderBillingMessage(normalizedMessage)) {
+      return AI_PROVIDER_BILLING_ERROR;
+    }
     if (isAssistantPrefillUnsupportedMessage(body.message)) {
       return MODEL_UNSUPPORTED_ASSISTANT_PREFILL_ERROR;
     }
-    if (body.message.includes("too long")) {
+    if (normalizedMessage.includes("too long")) {
       return { code: "CONTEXT_LENGTH_EXCEEDED", message: "Conversation is too long" };
     }
   }
@@ -271,6 +296,9 @@ function parseProviderErrorInner(error: unknown, seen: WeakSet<object>): ParsedP
     const normalizedMessage = message.toLowerCase();
     if (isAssistantPrefillUnsupportedMessage(message)) {
       return MODEL_UNSUPPORTED_ASSISTANT_PREFILL_ERROR;
+    }
+    if (isProviderBillingMessage(normalizedMessage)) {
+      return AI_PROVIDER_BILLING_ERROR;
     }
     if (isCreditLimitMessage(normalizedMessage)) {
       return { code: "INSUFFICIENT_CREDITS", message: "Insufficient AI credits", status: 402 };

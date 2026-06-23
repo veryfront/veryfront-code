@@ -78,6 +78,34 @@ describe("chat/provider-errors", () => {
     );
   });
 
+  it("classifies upstream provider billing failures separately from user credits", () => {
+    const expected = {
+      code: "AI_PROVIDER_BILLING_ERROR",
+      message:
+        "The configured AI provider account cannot process this request. Try a different model, or ask an administrator to check provider billing.",
+      status: 502,
+    };
+
+    assertEquals(
+      parseProviderError({
+        type: "error",
+        error: {
+          type: "invalid_request_error",
+          message:
+            "Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+        },
+      }),
+      expected,
+    );
+
+    assertEquals(
+      parseProviderError(
+        'veryfront-cloud request failed: {"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."},"request_id":"req_test"}',
+      ),
+      expected,
+    );
+  });
+
   it("classifies unsupported assistant prefill provider rejections as model capability errors", () => {
     const expected = {
       code: "MODEL_UNSUPPORTED_ASSISTANT_PREFILL",
