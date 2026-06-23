@@ -131,6 +131,7 @@ function createDeps(
       records: [],
     }),
     createEvalAgentAdapter: () => async () => ({ text: "Paris" }),
+    uploadEvalReport: async () => null,
     executeKnowledgeIngest: async () => ({
       success: true,
       result: { kind: "knowledge_ingest", summary: { ingested_count: 1 } },
@@ -406,6 +407,59 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(receivedEnvironmentId, "env-1");
     assertEquals(receivedProjectIdHeader, "proj-1");
     assertEquals(receivedBranchName, "main");
+  });
+
+  it("returns an eval report artifact path when report upload succeeds", async () => {
+    const report: EvalReport = {
+      kind: "eval-report",
+      runId: "run_eval_report_artifact",
+      definitionId: "eval:deep-research",
+      targetKind: "agent",
+      target: "agent:researcher",
+      startedAt: "2026-06-20T10:00:00.000Z",
+      endedAt: "2026-06-20T10:00:01.000Z",
+      summary: { records: 1, passed: 1, failed: 0, passRate: 1, metrics: [] },
+      records: [],
+    };
+    const reportPath = "evals/reports/deep-research/run_eval_report_artifact.json";
+    let receivedReport: EvalReport | undefined;
+    let receivedProjectReference: string | undefined;
+    let receivedReportPath: string | undefined;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runEval: async () => report,
+      uploadEvalReport: async (input) => {
+        receivedReport = input.report;
+        receivedProjectReference = input.projectReference;
+        receivedReportPath = input.reportPath;
+        return input.reportPath;
+      },
+    }));
+    const body = {
+      runId: "run_eval_report_artifact",
+      kind: "eval",
+      target: "eval:deep-research",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_report_artifact/execute",
+      body,
+      { "x-token": "runtime-token" },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(await result.response.json(), {
+      success: true,
+      result: { ...report, reportPath },
+      artifacts: [{ kind: "eval-report", path: reportPath, contentType: "application/json" }],
+      duration_ms: 0,
+      logs: null,
+    });
+    assertEquals(receivedReport, report);
+    assertEquals(receivedProjectReference, "demo-project");
+    assertEquals(receivedReportPath, reportPath);
   });
 
   it("uses the local AG-UI adapter endpoint when the runtime endpoint is local", async () => {

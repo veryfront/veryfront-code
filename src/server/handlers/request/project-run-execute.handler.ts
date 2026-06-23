@@ -67,6 +67,15 @@ export interface ProjectRunExecuteResponse {
   artifacts?: unknown[];
 }
 
+interface EvalReportUploadInput {
+  request: ProjectRunExecuteRequest;
+  ctx: HandlerContext;
+  req: Request;
+  report: EvalReport;
+  projectReference: string;
+  reportPath: string;
+}
+
 interface WorkflowRunView {
   status: string;
   output?: unknown;
@@ -124,6 +133,7 @@ export interface ProjectRunExecuteHandlerDeps {
   ): WorkflowClientView | Promise<WorkflowClientView>;
   runEval(definition: EvalDefinition, options: RunEvalOptions): Promise<EvalReport>;
   createEvalAgentAdapter(config: AgentServiceEvalAdapterConfig): EvalAgentAdapter;
+  uploadEvalReport(input: EvalReportUploadInput): Promise<string | null>;
   ensureProjectDiscovery(ctx: HandlerContext): Promise<void>;
   executeKnowledgeIngest(input: {
     request: ProjectRunExecuteRequest;
@@ -194,6 +204,25 @@ function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecu
     config: parseRecord(value.config),
     input: parseRecord(value.input),
   };
+}
+
+function sanitizePathSegment(value: string, fallback: string): string {
+  const normalized = value
+    .replace(/^eval:/, "")
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 120);
+  return normalized || fallback;
+}
+
+function buildEvalReportPath(report: EvalReport, request: ProjectRunExecuteRequest): string {
+  const evalId = sanitizePathSegment(report.definitionId || request.target, "eval");
+  const runId = sanitizePathSegment(request.runId, "run");
+  return `evals/reports/${evalId}/${runId}.json`;
+}
+
+function createEvalReportArtifact(path: string): Record<string, string> {
+  return { kind: "eval-report", path, contentType: "application/json" };
 }
 
 function getRunId(pathname: string): string | null {
@@ -606,6 +635,20 @@ function createRuntimeApiClient(req: Request, ctx: HandlerContext): RuntimeApiCl
   };
 }
 
+async function uploadEvalReportToProjectFiles(
+  input: EvalReportUploadInput,
+): Promise<string | null> {
+  const client = createRuntimeApiClient(input.req, input.ctx);
+  const encodedProject = encodeURIComponent(input.projectReference);
+  const encodedPath = encodeURIComponent(input.reportPath);
+  const reportWithPath = { ...input.report, reportPath: input.reportPath };
+  const response = await client.put<{ path?: string }>(
+    `/projects/${encodedProject}/files/${encodedPath}`,
+    { content: `${JSON.stringify(reportWithPath, null, 2)}\n` },
+  );
+  return response.path ?? input.reportPath;
+}
+
 function getStringArrayConfig(
   config: Record<string, unknown>,
   keys: readonly string[],
@@ -940,12 +983,28 @@ async function executeEvalRun(
     runId: request.runId,
   });
   const failed = Math.max(report.summary.failed, countFailedEvalRecords(report));
+  const projectReference = ctx.projectSlug ?? request.projectId;
+  const requestedReportPath = buildEvalReportPath(report, request);
+  let uploadError: string | null = null;
+  const reportPath = await deps.uploadEvalReport({
+    request,
+    ctx,
+    req,
+    report,
+    projectReference,
+    reportPath: requestedReportPath,
+  }).catch((error) => {
+    uploadError = `Eval report upload failed: ${errorMessage(error)}`;
+    return null;
+  });
+  const result = reportPath ? { ...report, reportPath } : report;
 
   return {
     success: failed === 0,
-    result: report,
+    result,
+    ...(reportPath ? { artifacts: [createEvalReportArtifact(reportPath)] } : {}),
     ...(failed > 0 ? { error: `${failed} eval record${failed === 1 ? "" : "s"} failed` } : {}),
-    logs: null,
+    logs: uploadError,
     duration_ms: Math.max(0, deps.now() - startedAt),
   };
 }
@@ -1057,6 +1116,7 @@ const defaultDeps: ProjectRunExecuteHandlerDeps = {
   createWorkflowClient: createRuntimeWorkflowClient,
   runEval,
   createEvalAgentAdapter: createAgentServiceEvalAdapter,
+  uploadEvalReport: uploadEvalReportToProjectFiles,
   ensureProjectDiscovery,
   executeKnowledgeIngest: executeKnowledgeIngestRun,
   executeReleaseAssetBuild: executeReleaseAssetBuildRun,
