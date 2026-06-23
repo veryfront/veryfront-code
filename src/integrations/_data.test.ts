@@ -330,15 +330,16 @@ describe("integration endpoint specs", () => {
     assertEquals(paypal.auth.authorizationUrl, undefined);
   });
 
-  it("publishes generic record tools via body passthrough", () => {
-    const salesforceCreate = getTool("salesforce", "create_record");
-    assertEquals(salesforceCreate.requiresWrite, true);
-    assertEquals(salesforceCreate.endpoint?.bodyMode, "passthrough");
-    assertEquals(salesforceCreate.endpoint?.body?.record?.required, true);
-    assertEquals(
-      getTool("salesforce", "delete_record").endpoint?.method,
-      "DELETE",
-    );
+  it("keeps Salesforce write tools curated instead of exposing generic record mutation", () => {
+    const salesforce = getConnector("salesforce");
+    const toolIds = salesforce.tools.map((tool) => tool.id);
+
+    assertEquals(toolIds.includes("create_record"), false);
+    assertEquals(toolIds.includes("update_record"), false);
+    assertEquals(toolIds.includes("delete_record"), false);
+    assertEquals(getTool("salesforce", "create_case").requiresWrite, true);
+    assertEquals(getTool("salesforce", "add_case_comment").endpoint?.method, "POST");
+    assertEquals(getTool("salesforce", "update_case").endpoint?.method, "PATCH");
 
     const servicenowQuery = getTool("servicenow", "query_table");
     assertEquals(servicenowQuery.requiresWrite, false);
@@ -350,6 +351,50 @@ describe("integration endpoint specs", () => {
       getTool("servicenow", "create_table_record").endpoint?.bodyMode,
       "passthrough",
     );
+  });
+
+  it("declares the Salesforce baseline tools", () => {
+    const connector = getConnector("salesforce");
+
+    assertEquals(
+      connector.tools.map((tool) => tool.id),
+      [
+        "find_customer",
+        "search_accounts",
+        "get_account",
+        "search_contacts",
+        "get_contact",
+        "list_cases",
+        "get_case",
+        "list_case_activity",
+        "search_knowledge_articles",
+        "list_opportunities",
+        "create_lead",
+        "create_case",
+        "add_case_comment",
+        "update_case",
+        "describe_object",
+        "run_soql_query",
+      ],
+    );
+  });
+
+  it("declares Service Cloud support tools", () => {
+    const expected = [
+      "find_customer",
+      "list_cases",
+      "get_case",
+      "list_case_activity",
+      "search_knowledge_articles",
+      "add_case_comment",
+      "update_case",
+      "create_case",
+    ];
+
+    for (const toolId of expected) {
+      const tool = getTool("salesforce", toolId);
+      assertExists(tool, `Expected salesforce:${toolId}`);
+    }
   });
 
   it("uploads DATEV documents as a multipart form-data request with a binary file part", () => {

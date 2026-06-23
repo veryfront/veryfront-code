@@ -47319,7 +47319,8 @@ export const connectors: IntegrationConfig[] = [
     "name": "salesforce",
     "displayName": "Salesforce",
     "icon": "salesforce.svg",
-    "description": "Manage accounts, contacts, opportunities, and leads in your Salesforce CRM",
+    "description":
+      "Connect Salesforce Service Cloud and Sales Cloud for customer support and CRM workflows",
     "auth": {
       "type": "oauth2",
       "provider": "salesforce",
@@ -47346,9 +47347,10 @@ export const connectors: IntegrationConfig[] = [
       "docsUrl": "https://help.salesforce.com/s/articleView?id=sf.connected_app_create.htm",
     }],
     "tools": [{
-      "id": "list_accounts",
-      "name": "List Accounts",
-      "description": "List accounts from your Salesforce CRM",
+      "id": "find_customer",
+      "name": "Find Customer",
+      "description":
+        "Find customer contacts with account context for support triage. Pass a focused SOQL query when searching by email, name, phone, or account.",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -47357,9 +47359,29 @@ export const connectors: IntegrationConfig[] = [
           "q": {
             "type": "string",
             "in": "query",
-            "description": "SOQL query for accounts",
+            "description":
+              "SOQL Contact query. Include Account fields when the agent needs customer context.",
             "default":
-              "SELECT Id, Name, Type, Industry, Phone, Website FROM Account ORDER BY LastModifiedDate DESC LIMIT 50",
+              "SELECT Id, FirstName, LastName, Email, Phone, Title, AccountId, Account.Name, Account.Type, Account.Industry FROM Contact ORDER BY LastModifiedDate DESC LIMIT 25",
+          },
+        },
+        "response": { "transform": "records" },
+      },
+    }, {
+      "id": "search_accounts",
+      "name": "Search Accounts",
+      "description": "Search Salesforce accounts with business context for support or sales work",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "{{oauth.raw.instance_url}}/services/data/v61.0/query",
+        "params": {
+          "q": {
+            "type": "string",
+            "in": "query",
+            "description": "SOQL Account query",
+            "default":
+              "SELECT Id, Name, Type, Industry, Phone, Website, OwnerId, LastModifiedDate FROM Account ORDER BY LastModifiedDate DESC LIMIT 50",
           },
         },
         "response": { "transform": "records" },
@@ -47382,9 +47404,9 @@ export const connectors: IntegrationConfig[] = [
         },
       },
     }, {
-      "id": "list_contacts",
-      "name": "List Contacts",
-      "description": "List contacts from your Salesforce CRM",
+      "id": "search_contacts",
+      "name": "Search Contacts",
+      "description": "Search contacts with account fields for CRM follow-up and support context",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -47395,7 +47417,103 @@ export const connectors: IntegrationConfig[] = [
             "in": "query",
             "description": "SOQL query for contacts",
             "default":
-              "SELECT Id, FirstName, LastName, Email, Phone, AccountId FROM Contact ORDER BY LastModifiedDate DESC LIMIT 50",
+              "SELECT Id, FirstName, LastName, Email, Phone, Title, AccountId, Account.Name FROM Contact ORDER BY LastModifiedDate DESC LIMIT 50",
+          },
+        },
+        "response": { "transform": "records" },
+      },
+    }, {
+      "id": "get_contact",
+      "name": "Get Contact",
+      "description": "Get a Salesforce contact by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "{{oauth.raw.instance_url}}/services/data/v61.0/sobjects/Contact/{contactId}",
+        "params": {
+          "contactId": {
+            "type": "string",
+            "in": "path",
+            "description": "Salesforce Contact ID",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "list_cases",
+      "name": "List Cases",
+      "description": "List Service Cloud cases for a customer, account, owner, status, or queue",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "{{oauth.raw.instance_url}}/services/data/v61.0/query",
+        "params": {
+          "q": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "SOQL Case query. Filter by ContactId, AccountId, Status, OwnerId, Priority, or CreatedDate as needed.",
+            "default":
+              "SELECT Id, CaseNumber, Subject, Status, Priority, Origin, ContactId, AccountId, OwnerId, CreatedDate, LastModifiedDate FROM Case ORDER BY LastModifiedDate DESC LIMIT 50",
+          },
+        },
+        "response": { "transform": "records" },
+      },
+    }, {
+      "id": "get_case",
+      "name": "Get Case",
+      "description": "Get a Service Cloud case by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "{{oauth.raw.instance_url}}/services/data/v61.0/sobjects/Case/{caseId}",
+        "params": {
+          "caseId": {
+            "type": "string",
+            "in": "path",
+            "description": "Salesforce Case ID",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "list_case_activity",
+      "name": "List Case Activity",
+      "description":
+        "List case comments for support handoff, timeline review, and resolution context",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "{{oauth.raw.instance_url}}/services/data/v61.0/query",
+        "params": {
+          "q": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "SOQL CaseComment query. Add WHERE ParentId = '<caseId>' to inspect one case.",
+            "default":
+              "SELECT Id, ParentId, CommentBody, CreatedDate, CreatedById, IsPublished FROM CaseComment ORDER BY CreatedDate DESC LIMIT 50",
+          },
+        },
+        "response": { "transform": "records" },
+      },
+    }, {
+      "id": "search_knowledge_articles",
+      "name": "Search Knowledge Articles",
+      "description":
+        "Search published Salesforce Knowledge articles that can help answer or deflect a support case",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "{{oauth.raw.instance_url}}/services/data/v61.0/query",
+        "params": {
+          "q": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "SOQL KnowledgeArticleVersion query. Filter by Title, Summary, DataCategory, or language when needed.",
+            "default":
+              "SELECT Id, KnowledgeArticleId, Title, Summary, UrlName, Language, LastPublishedDate FROM KnowledgeArticleVersion WHERE PublishStatus = 'Online' ORDER BY LastPublishedDate DESC LIMIT 25",
           },
         },
         "response": { "transform": "records" },
@@ -47403,7 +47521,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "list_opportunities",
       "name": "List Opportunities",
-      "description": "List sales opportunities from your Salesforce CRM",
+      "description": "List Sales Cloud opportunities for account planning and customer context",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -47414,7 +47532,7 @@ export const connectors: IntegrationConfig[] = [
             "in": "query",
             "description": "SOQL query for opportunities",
             "default":
-              "SELECT Id, Name, StageName, Amount, CloseDate, AccountId FROM Opportunity ORDER BY CloseDate DESC LIMIT 50",
+              "SELECT Id, Name, StageName, Amount, CloseDate, AccountId, OwnerId, LastModifiedDate FROM Opportunity ORDER BY CloseDate DESC LIMIT 50",
           },
         },
         "response": { "transform": "records" },
@@ -47437,23 +47555,70 @@ export const connectors: IntegrationConfig[] = [
         },
       },
     }, {
-      "id": "soql_query",
-      "name": "Run SOQL Query",
-      "description": "Run an arbitrary SOQL query against any Salesforce object",
-      "requiresWrite": false,
+      "id": "create_case",
+      "name": "Create Case",
+      "description": "Create a Service Cloud case for customer support",
+      "requiresWrite": true,
       "endpoint": {
-        "method": "GET",
-        "url": "{{oauth.raw.instance_url}}/services/data/v61.0/query",
-        "params": {
-          "q": {
+        "method": "POST",
+        "url": "{{oauth.raw.instance_url}}/services/data/v61.0/sobjects/Case",
+        "body": {
+          "Subject": { "type": "string", "description": "Case subject", "required": true },
+          "Description": { "type": "string", "description": "Case description" },
+          "Status": { "type": "string", "description": "Case status", "default": "New" },
+          "Priority": { "type": "string", "description": "Case priority" },
+          "Origin": { "type": "string", "description": "Case origin", "default": "Web" },
+          "ContactId": { "type": "string", "description": "Related Salesforce Contact ID" },
+          "AccountId": { "type": "string", "description": "Related Salesforce Account ID" },
+          "OwnerId": { "type": "string", "description": "Queue or user owner ID" },
+        },
+      },
+    }, {
+      "id": "add_case_comment",
+      "name": "Add Case Comment",
+      "description": "Add a support note or customer-visible comment to a Service Cloud case",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "{{oauth.raw.instance_url}}/services/data/v61.0/sobjects/CaseComment",
+        "body": {
+          "ParentId": {
             "type": "string",
-            "in": "query",
-            "description":
-              "SOQL query to execute, for example SELECT Id, Name FROM Account LIMIT 10",
+            "description": "Salesforce Case ID",
+            "required": true,
+          },
+          "CommentBody": { "type": "string", "description": "Comment body", "required": true },
+          "IsPublished": {
+            "type": "boolean",
+            "description": "Whether the comment is visible externally",
+            "default": false,
+          },
+        },
+      },
+    }, {
+      "id": "update_case",
+      "name": "Update Case",
+      "description": "Update status, priority, owner, or resolution fields on a Service Cloud case",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "{{oauth.raw.instance_url}}/services/data/v61.0/sobjects/Case/{caseId}",
+        "params": {
+          "caseId": {
+            "type": "string",
+            "in": "path",
+            "description": "Salesforce Case ID",
             "required": true,
           },
         },
-        "response": { "transform": "records" },
+        "body": {
+          "Status": { "type": "string", "description": "New case status" },
+          "Priority": { "type": "string", "description": "New case priority" },
+          "OwnerId": { "type": "string", "description": "Queue or user owner ID" },
+          "Reason": { "type": "string", "description": "Case reason" },
+          "SuppliedEmail": { "type": "string", "description": "Customer supplied email" },
+          "Description": { "type": "string", "description": "Updated case description" },
+        },
       },
     }, {
       "id": "describe_object",
@@ -47468,118 +47633,90 @@ export const connectors: IntegrationConfig[] = [
             "type": "string",
             "in": "path",
             "description":
-              "Salesforce object API name, for example Account, Contact, or Opportunity",
+              "Salesforce object API name, for example Case, Account, Contact, Opportunity, or a custom object",
             "required": true,
           },
         },
       },
     }, {
-      "id": "create_record",
-      "name": "Create Record",
-      "description": "Create a record of any object type (use Describe Object to discover fields)",
-      "requiresWrite": true,
+      "id": "run_soql_query",
+      "name": "Run SOQL Query",
+      "description":
+        "Run a read-only SOQL query for expert inspection when curated tools are not enough",
+      "requiresWrite": false,
       "endpoint": {
-        "method": "POST",
-        "url": "{{oauth.raw.instance_url}}/services/data/v61.0/sobjects/{sobjectType}",
+        "method": "GET",
+        "url": "{{oauth.raw.instance_url}}/services/data/v61.0/query",
         "params": {
-          "sobjectType": {
+          "q": {
             "type": "string",
-            "in": "path",
-            "description": "Object API name, e.g. Account, Contact, Custom_Object__c",
-            "required": true,
-          },
-        },
-        "body": {
-          "record": {
-            "type": "object",
+            "in": "query",
             "description":
-              'Field map for the new record, e.g. {"Name":"Acme","Industry":"Technology"}',
+              "Read-only SOQL query, for example SELECT Id, Subject FROM Case LIMIT 10",
             "required": true,
           },
         },
-        "bodyMode": "passthrough",
-      },
-    }, {
-      "id": "update_record",
-      "name": "Update Record",
-      "description": "Update fields on a record of any object type",
-      "requiresWrite": true,
-      "endpoint": {
-        "method": "PATCH",
-        "url": "{{oauth.raw.instance_url}}/services/data/v61.0/sobjects/{sobjectType}/{recordId}",
-        "params": {
-          "sobjectType": {
-            "type": "string",
-            "in": "path",
-            "description": "Object API name, e.g. Account, Contact, Custom_Object__c",
-            "required": true,
-          },
-          "recordId": {
-            "type": "string",
-            "in": "path",
-            "description": "Salesforce record ID (15 or 18 chars)",
-            "required": true,
-          },
-        },
-        "body": {
-          "record": {
-            "type": "object",
-            "description": "Field map of fields to update",
-            "required": true,
-          },
-        },
-        "bodyMode": "passthrough",
-      },
-    }, {
-      "id": "delete_record",
-      "name": "Delete Record",
-      "description": "Delete a record of any object type",
-      "requiresWrite": true,
-      "endpoint": {
-        "method": "DELETE",
-        "url": "{{oauth.raw.instance_url}}/services/data/v61.0/sobjects/{sobjectType}/{recordId}",
-        "params": {
-          "sobjectType": {
-            "type": "string",
-            "in": "path",
-            "description": "Object API name, e.g. Account, Contact, Custom_Object__c",
-            "required": true,
-          },
-          "recordId": {
-            "type": "string",
-            "in": "path",
-            "description": "Salesforce record ID (15 or 18 chars)",
-            "required": true,
-          },
-        },
+        "response": { "transform": "records" },
       },
     }],
     "prompts": [{
-      "id": "find_accounts",
-      "title": "Find accounts",
-      "prompt": "Search for accounts in my Salesforce CRM and show me their key information.",
-      "category": "crm",
+      "id": "support_triage",
+      "title": "Support triage",
+      "prompt":
+        "Find the customer in Salesforce, summarize their open cases, and suggest the next support action.",
+      "category": "support",
       "icon": "search",
     }, {
-      "id": "create_lead",
-      "title": "Create a lead",
-      "prompt": "Create a new lead in Salesforce CRM with the information I provide.",
-      "category": "crm",
+      "id": "create_case",
+      "title": "Create a case",
+      "prompt": "Create a Service Cloud case from the customer issue I describe.",
+      "category": "support",
       "icon": "plus",
     }, {
-      "id": "pipeline_summary",
-      "title": "Pipeline summary",
-      "prompt": "Show me a summary of my current sales opportunities and pipeline status.",
+      "id": "knowledge_answer",
+      "title": "Find knowledge",
+      "prompt": "Search Salesforce Knowledge for articles that answer this customer support issue.",
+      "category": "support",
+      "icon": "book",
+    }, {
+      "id": "pipeline_context",
+      "title": "Pipeline context",
+      "prompt": "Show sales opportunities related to this customer account for support context.",
       "category": "crm",
       "icon": "chart",
-    }, {
-      "id": "contact_lookup",
-      "title": "Contact lookup",
-      "prompt": "Find and display information about specific contacts in my Salesforce CRM.",
-      "category": "crm",
-      "icon": "user",
     }],
-    "suggestedWith": ["gmail", "slack", "calendar"],
+    "suggestedWith": ["gmail", "outlook", "slack", "confluence"],
+    "category": "crm",
+    "setupGuide": {
+      "title": "Salesforce setup",
+      "steps": [{
+        "step": 1,
+        "title": "Create a Salesforce sandbox or developer org",
+        "description":
+          "Use a sandbox or free Developer Edition org for staging. Enable Service Cloud, Cases, and Knowledge if the demo needs support workflows.",
+      }, {
+        "step": 2,
+        "title": "Create a Connected App",
+        "description":
+          "Create a Connected App with OAuth enabled and callback URLs for the Veryfront environment.",
+      }, {
+        "step": 3,
+        "title": "Set OAuth scopes",
+        "description":
+          "Grant api and refresh_token/offline_access. Use Salesforce profiles, permission sets, and sharing rules to scope the connected user.",
+      }, {
+        "step": 4,
+        "title": "Configure environment variables",
+        "description":
+          "Set SALESFORCE_CLIENT_ID and SALESFORCE_CLIENT_SECRET separately for staging and production.",
+      }],
+      "notes": [
+        "Veryfront exposes curated Service Cloud and Sales Cloud tools by default; destructive generic record deletion is not part of this default surface.",
+        "Advanced SOQL and Describe Object are read-only escape hatches for expert inspection and custom-object discovery.",
+        "Record-level safety comes from the connected Salesforce user's permissions, sharing model, and the Veryfront project integration binding.",
+      ],
+      "documentation": "https://help.salesforce.com/s/articleView?id=sf.connected_app_create.htm",
+    },
   },
   {
     "name": "sap",
