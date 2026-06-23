@@ -169,6 +169,26 @@ describe("provider/veryfront-cloud/model-catalog", () => {
     );
   });
 
+  it("maps Claude Opus 4.8 thinking overrides to adaptive provider options", () => {
+    assertEquals(
+      resolveVeryfrontCloudThinkingProviderOptions("anthropic/claude-opus-4-8", {
+        enabled: true,
+        budgetTokens: 2048,
+      }),
+      {
+        anthropic: {
+          thinking: {
+            type: "adaptive",
+            display: "summarized",
+          },
+          output_config: {
+            effort: "high",
+          },
+        },
+      },
+    );
+  });
+
   it("omits disabled, missing-budget, and non-Anthropic thinking options", () => {
     assertEquals(
       resolveVeryfrontCloudThinkingProviderOptions("anthropic/claude-sonnet-4-6", {
