@@ -14,6 +14,7 @@ export interface AgUiBrowserRunFinishedMetadata {
   cacheCreationInputTokens?: number;
   cacheReadInputTokens?: number;
   reasoningTokens?: number;
+  costUsd?: number;
   finishReason?: string;
   usageCaptureStatus?: "complete" | "partial" | "missing";
 }
@@ -209,11 +210,24 @@ function applyResponseMetadata(
     }
   }
 
-  const finishReason = response.metadata && typeof response.metadata === "object"
-    ? response.metadata.finishReason
+  const metadata = response.metadata && typeof response.metadata === "object"
+    ? response.metadata
     : undefined;
+  const finishReason = metadata?.finishReason;
   if (typeof finishReason === "string") {
     state.metadata.finishReason = finishReason;
+  }
+  const costUsd = metadata?.costUsd;
+  if (typeof costUsd === "number" && Number.isFinite(costUsd) && costUsd >= 0) {
+    state.metadata.costUsd = costUsd;
+  }
+  const usageCaptureStatus = metadata?.usageCaptureStatus;
+  if (
+    usageCaptureStatus === "complete" ||
+    usageCaptureStatus === "partial" ||
+    usageCaptureStatus === "missing"
+  ) {
+    state.metadata.usageCaptureStatus = usageCaptureStatus;
   }
 }
 
@@ -236,6 +250,9 @@ export function buildAgUiBrowserFinalizeResponse(
   }
   if (typeof metadata.reasoningTokens === "number") {
     responseMetadata.reasoningTokens = metadata.reasoningTokens;
+  }
+  if (typeof metadata.costUsd === "number") {
+    responseMetadata.costUsd = metadata.costUsd;
   }
   if (metadata.usageCaptureStatus) {
     responseMetadata.usageCaptureStatus = metadata.usageCaptureStatus;

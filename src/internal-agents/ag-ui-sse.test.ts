@@ -376,6 +376,30 @@ describe("internal-agents/ag-ui-sse", () => {
     );
   });
 
+  it("preserves extended usage metadata in RunFinished frames", () => {
+    const payload = formatAgUiEvent("RunFinished", {
+      metadata: {
+        provider: "veryfront-cloud",
+        model: "anthropic/claude-sonnet-4-6",
+        inputTokens: 12,
+        outputTokens: 8,
+        totalTokens: 20,
+        cachedInputTokens: 4,
+        cacheCreationInputTokens: 6,
+        cacheReadInputTokens: 4,
+        reasoningTokens: 2,
+        costUsd: 0.002,
+        usageCaptureStatus: "complete",
+        finishReason: "stop",
+      },
+    });
+
+    assertEquals(
+      new TextDecoder().decode(payload),
+      'event: RunFinished\ndata: {"metadata":{"provider":"veryfront-cloud","model":"anthropic/claude-sonnet-4-6","inputTokens":12,"outputTokens":8,"totalTokens":20,"cachedInputTokens":4,"cacheCreationInputTokens":6,"cacheReadInputTokens":4,"reasoningTokens":2,"costUsd":0.002,"usageCaptureStatus":"complete","finishReason":"stop"}}\n\n',
+    );
+  });
+
   it("preserves text content ids when formatting AG-UI events", () => {
     const payload = formatAgUiEvent("TextMessageContent", {
       messageId: "assistant-1",

@@ -4,7 +4,7 @@ import {
   RunAlreadyExistsError,
   type RunResumeSessionManager,
 } from "../runtime/index.ts";
-import type { Agent } from "../types.ts";
+import type { Agent, AgentResponse } from "../types.ts";
 import {
   type AgUiRuntimeRequest,
   parseAgUiRuntimeRequestOrError,
@@ -109,6 +109,7 @@ async function createAgUiRuntimeStreamResponse(
     upstreamBody: ReadableStream<Uint8Array> | null;
     upstreamStatus: number;
     upstreamStatusText?: string;
+    getCompletedResponse?: () => AgentResponse | null;
     onFinish?: () => void;
     onError?: (error: unknown) => void;
     onToolCallSeen?: (toolCallId: string) => void;
@@ -120,6 +121,7 @@ async function createAgUiRuntimeStreamResponse(
     upstreamBody,
     upstreamStatus,
     upstreamStatusText,
+    getCompletedResponse,
     onFinish,
     onError,
     onToolCallSeen,
@@ -189,7 +191,7 @@ async function createAgUiRuntimeStreamResponse(
           }
         }
 
-        for (const event of finalizeRunEvents(state, null)) {
+        for (const event of finalizeRunEvents(state, getCompletedResponse?.() ?? null)) {
           if (!enqueueEvent(controller, event.event, event.payload)) {
             return;
           }
@@ -225,9 +227,13 @@ async function createAgUiRuntimeDirectStreamResponse(
 ): Promise<Response> {
   await agent.clearMemory();
 
+  let completedResponse: AgentResponse | null = null;
   const result = await agent.stream({
     messages: normalizeAgUiRuntimeMessages(request.messages),
     context: buildStreamContext(request, baseContext),
+    onFinish: (response) => {
+      completedResponse = response;
+    },
   });
 
   const upstream = result.toDataStreamResponse();
@@ -237,6 +243,7 @@ async function createAgUiRuntimeDirectStreamResponse(
     upstreamBody: upstream.body,
     upstreamStatus: upstream.status,
     upstreamStatusText: upstream.statusText,
+    getCompletedResponse: () => completedResponse,
     onFinish: lifecycle?.onFinish,
     onError: lifecycle?.onError,
     onToolCallSeen: lifecycle?.onToolCallSeen,
@@ -277,11 +284,16 @@ async function createAgUiRuntimeInjectedToolsStreamResponse(
   });
 
   let upstreamBody: ReadableStream<Uint8Array>;
+  let completedResponse: AgentResponse | null = null;
   try {
     upstreamBody = await runtime.stream(
       normalizeAgUiRuntimeMessages(request.messages),
       buildStreamContext(request, baseContext),
-      undefined,
+      {
+        onFinish: (response) => {
+          completedResponse = response;
+        },
+      },
       undefined,
       undefined,
     );
@@ -295,6 +307,7 @@ async function createAgUiRuntimeInjectedToolsStreamResponse(
     request,
     upstreamBody,
     upstreamStatus: 200,
+    getCompletedResponse: () => completedResponse,
     onFinish: () => {
       sessionManager.completeRun(request.runId);
       void lifecycle?.onFinish?.();

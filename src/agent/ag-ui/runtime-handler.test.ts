@@ -582,6 +582,7 @@ describe("agent/ag-ui-runtime-handler", () => {
       tools: {
         "number-generator": {
           id: "number-generator",
+          type: "function",
           description: "Generate a number.",
           inputSchema: defineSchema((v) =>
             v.object({
@@ -589,7 +590,7 @@ describe("agent/ag-ui-runtime-handler", () => {
               max: v.number(),
             })
           )(),
-          execute: () => {
+          execute: async () => {
             sourceToolCalled = true;
             return { randomNumber: 42 };
           },

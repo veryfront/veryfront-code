@@ -60,6 +60,9 @@ export function createAgUiBrowserFinalizeTracker<TChunk>(
       if (typeof nextMetadata.reasoningTokens === "number") {
         metadata.reasoningTokens = nextMetadata.reasoningTokens;
       }
+      if (typeof nextMetadata.costUsd === "number") {
+        metadata.costUsd = nextMetadata.costUsd;
+      }
       if (nextMetadata.usageCaptureStatus) {
         metadata.usageCaptureStatus = nextMetadata.usageCaptureStatus;
       }

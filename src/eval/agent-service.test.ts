@@ -148,7 +148,17 @@ describe("eval/agent-service", () => {
           { event: "RunStarted", data: { runId: "run_123" } },
           { event: "ToolCallStart", data: { toolCallName: "list_files" } },
           { event: "TextMessageContent", data: { delta: "Done" } },
-          { event: "RunFinished", data: {} },
+          {
+            event: "RunFinished",
+            data: {
+              metadata: {
+                inputTokens: 12,
+                outputTokens: 8,
+                totalTokens: 20,
+                costUsd: 0.002,
+              },
+            },
+          },
         ]);
       },
       now: () => 1_000,
@@ -231,6 +241,18 @@ describe("eval/agent-service", () => {
     });
     assertEquals(record.completed, true);
     assertEquals(record.trace.toolCalls, [{ name: "list_files", status: "ok" }]);
+    assertEquals(record.usage, {
+      inputTokens: 12,
+      outputTokens: 8,
+      totalTokens: 20,
+      costUsd: 0.002,
+    });
+    assertEquals(report.summary.usage, {
+      inputTokens: 12,
+      outputTokens: 8,
+      totalTokens: 20,
+      costUsd: 0.002,
+    });
     assertEquals(record.durationMs, 0);
     assertStringIncludes(JSON.stringify(record.trace.events), "RUN_FINISHED");
   });

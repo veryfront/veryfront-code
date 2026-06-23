@@ -1,6 +1,6 @@
 import { isResponseLike } from "../service/response-like.ts";
 import { getAgent } from "../composition/index.ts";
-import type { Agent } from "../types.ts";
+import type { Agent, AgentResponse } from "../types.ts";
 import { fromError } from "#veryfront/errors/veryfront-error.ts";
 import {
   AgentRuntime,
@@ -148,6 +148,7 @@ async function createAgUiStreamResponse(
     upstreamBody: ReadableStream<Uint8Array> | null;
     upstreamStatus: number;
     upstreamStatusText?: string;
+    getCompletedResponse?: () => AgentResponse | null;
     onFinish?: () => void;
     onError?: (error: unknown) => void;
     onToolCallSeen?: (toolCallId: string) => void;
@@ -161,6 +162,7 @@ async function createAgUiStreamResponse(
     upstreamBody,
     upstreamStatus,
     upstreamStatusText,
+    getCompletedResponse,
     onFinish,
     onError,
     onToolCallSeen,
@@ -216,7 +218,7 @@ async function createAgUiStreamResponse(
           }
         }
 
-        for (const event of finalizeRunEvents(state, null)) {
+        for (const event of finalizeRunEvents(state, getCompletedResponse?.() ?? null)) {
           if (!enqueueEvent(controller, event.event, event.payload)) {
             return;
           }
@@ -268,6 +270,7 @@ async function createAgUiDirectStreamResponse(
   await agent.clearMemory();
 
   const toolDataEvents = createToolDataEventBridge();
+  let completedResponse: AgentResponse | null = null;
   const result = await agent.stream({
     messages,
     context: {
@@ -276,6 +279,9 @@ async function createAgUiDirectStreamResponse(
     },
     ...(request.model ? { model: request.model } : {}),
     ...(request.maxOutputTokens ? { maxOutputTokens: request.maxOutputTokens } : {}),
+    onFinish: (response) => {
+      completedResponse = response;
+    },
   });
 
   const upstream = result.toDataStreamResponse();
@@ -288,6 +294,7 @@ async function createAgUiDirectStreamResponse(
     upstreamBody,
     upstreamStatus: upstream.status,
     upstreamStatusText: upstream.statusText,
+    getCompletedResponse: () => completedResponse,
   });
 }
 
@@ -332,6 +339,7 @@ async function createAgUiInjectedToolsStreamResponse(
   });
 
   let upstreamBody: ReadableStream<Uint8Array>;
+  let completedResponse: AgentResponse | null = null;
   const toolDataEvents = createToolDataEventBridge();
   try {
     upstreamBody = await runtime.stream(
@@ -340,7 +348,11 @@ async function createAgUiInjectedToolsStreamResponse(
         ...finalContext,
         publishDataEvent: toolDataEvents.publishDataEvent,
       },
-      undefined,
+      {
+        onFinish: (response) => {
+          completedResponse = response;
+        },
+      },
       request.model,
       request.maxOutputTokens,
     );
@@ -357,6 +369,7 @@ async function createAgUiInjectedToolsStreamResponse(
     threadId,
     upstreamBody,
     upstreamStatus: 200,
+    getCompletedResponse: () => completedResponse,
     onFinish: () => {
       sessionManager.completeRun(runId);
     },

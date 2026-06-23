@@ -11,6 +11,7 @@ import type {
   EvalAgentAdapterContext,
   EvalAgentAdapterResult,
   EvalToolCall,
+  EvalUsage,
 } from "./types.ts";
 
 export * from "./agent-service/live-evals/index.ts";
@@ -277,6 +278,44 @@ function createRunOutput(run: Awaited<ReturnType<typeof parseAgUiSseResponse>>) 
   };
 }
 
+function createUsageFromRecord(record: Record<string, unknown>): EvalUsage | undefined {
+  const inputTokens = readNumber(record.inputTokens) ?? readNumber(record.promptTokens);
+  const outputTokens = readNumber(record.outputTokens) ?? readNumber(record.completionTokens);
+  const totalTokens = readNumber(record.totalTokens) ??
+    (inputTokens !== undefined || outputTokens !== undefined
+      ? (inputTokens ?? 0) + (outputTokens ?? 0)
+      : undefined);
+  const costUsd = readNumber(record.costUsd) ?? readNumber(record.totalCostUsd) ??
+    readNumber(record.total_cost_usd);
+
+  const usage: EvalUsage = {
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(outputTokens !== undefined ? { outputTokens } : {}),
+    ...(totalTokens !== undefined ? { totalTokens } : {}),
+    ...(costUsd !== undefined ? { costUsd } : {}),
+  };
+
+  return Object.keys(usage).length > 0 ? usage : undefined;
+}
+
+function readEvalUsage(value: unknown): EvalUsage | undefined {
+  if (!isRecord(value)) return undefined;
+  if (isRecord(value.usage)) {
+    return createUsageFromRecord(value.usage) ?? createUsageFromRecord(value);
+  }
+  return createUsageFromRecord(value);
+}
+
+function getRunFinishedUsage(events: Array<Record<string, unknown>>): EvalUsage | undefined {
+  for (const event of [...events].reverse()) {
+    const type = getAgUiSseStringField(event, "type");
+    if (type !== agUiSseEventTypes.runFinished) continue;
+
+    return readEvalUsage(event.metadata) ?? readEvalUsage(event.usage) ?? readEvalUsage(event);
+  }
+  return undefined;
+}
+
 function createRequestInit(
   config: AgentServiceEvalAdapterConfig,
   body: AgentServiceEvalRequestBody,
@@ -402,6 +441,7 @@ export function createAgentServiceEvalAdapter(
       const completed = response.ok && run.runError === null &&
         run.eventTypes.includes(agUiSseEventTypes.runFinished);
       const output = createRunOutput(run);
+      const usage = getRunFinishedUsage(run.events);
 
       return {
         text: run.text,
@@ -410,6 +450,7 @@ export function createAgentServiceEvalAdapter(
           events: run.events,
           toolCalls: createToolCalls(run.events),
         },
+        ...(usage ? { usage } : {}),
         durationMs: getNow(config) - started,
         completed,
         ...(!completed
