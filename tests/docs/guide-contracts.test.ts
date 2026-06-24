@@ -25,6 +25,7 @@ const CONCEPT_FILES = new Set<string>([
   "concepts/work.md",
   "concepts/skill.md",
   "concepts/integration.md",
+  "concepts/salesforce-integration.md",
   "concepts/mcp-server.md",
   "concepts/sandbox.md",
   "concepts/framework-extensions.md",
@@ -439,6 +440,13 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "../api-reference/veryfront/integrations.md",
     ],
     snippets: ["connector metadata", "auth", "remote tool"],
+  },
+  "concepts/salesforce-integration.md": {
+    references: [
+      "./integration.md",
+      "./mcp-server.md",
+    ],
+    snippets: ["Salesforce MCP", "write-tool allowlisting", "cross-system"],
   },
   "concepts/mcp-server.md": {
     references: [
