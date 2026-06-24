@@ -8,6 +8,7 @@ import { createAgentServiceEvalAdapter } from "#veryfront/eval/agent-service.ts"
 import { runEval as runEvalDefinition } from "#veryfront/eval/runner.ts";
 import { datasets, evalAgent, type EvalReport, metrics } from "veryfront/eval";
 import {
+  downloadRuntimeUploadToFile,
   ProjectRunExecuteHandler,
   type ProjectRunExecuteHandlerDeps,
 } from "./project-run-execute.handler.ts";
@@ -277,6 +278,33 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       duration_ms: 51,
     });
     assertEquals(receivedConfig, { upload_ids: ["upload-1"] });
+  });
+
+  it("downloads knowledge ingest uploads through the API content endpoint", async () => {
+    const tempDir = await Deno.makeTempDir();
+    const calls: string[] = [];
+    const client = {
+      getBytes: async (path: string) => {
+        calls.push(path);
+        return new TextEncoder().encode("knowledge source");
+      },
+    };
+
+    try {
+      const result = await downloadRuntimeUploadToFile(
+        client,
+        "my-project",
+        "knowledge/source.md",
+        tempDir,
+      );
+
+      assertEquals(calls, ["/projects/my-project/uploads/knowledge%2Fsource.md/content"]);
+      assertStringIncludes(result.localPath, "/knowledge/source.md");
+      assertEquals(await Deno.readTextFile(result.localPath), "knowledge source");
+      assertEquals(result.bytes, 16);
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
   });
 
   it("runs a discovered workflow with the canonical run id and input", async () => {

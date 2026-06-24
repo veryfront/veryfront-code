@@ -40,6 +40,7 @@ import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } 
 import { BaseHandler } from "../response/base.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
+import { dirname } from "veryfront/platform/path";
 
 const EXECUTE_PATH_REGEX = /^\/api\/control-plane\/runs\/([^/]+)\/execute$/;
 const DEFAULT_WORKFLOW_STATUS_POLL_INTERVAL_MS = 100;
@@ -424,6 +425,7 @@ async function executeWorkflowRun(
 
 interface RuntimeApiClient {
   get<T>(path: string, params?: Record<string, string>): Promise<T>;
+  getBytes(path: string, params?: Record<string, string>): Promise<Uint8Array>;
   post<T>(path: string, body?: unknown): Promise<T>;
   put<T>(path: string, body?: unknown): Promise<T>;
   patch<T>(path: string, body?: unknown): Promise<T>;
@@ -616,9 +618,36 @@ function createRuntimeApiClient(req: Request, ctx: HandlerContext): RuntimeApiCl
     return response.json() as Promise<T>;
   }
 
+  async function requestBytes(
+    path: string,
+    params?: Record<string, string>,
+  ): Promise<Uint8Array> {
+    const url = new URL(`${apiUrl}${path}`);
+    for (const [key, value] of Object.entries(params ?? {})) {
+      url.searchParams.set(key, value);
+    }
+
+    const response = await fetch(url.toString(), {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/octet-stream",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Veryfront API request failed: ${response.status} ${response.statusText}`);
+    }
+
+    return new Uint8Array(await response.arrayBuffer());
+  }
+
   return {
     get<T>(path: string, params?: Record<string, string>): Promise<T> {
       return requestJson<T>("GET", path, undefined, params);
+    },
+    getBytes(path: string, params?: Record<string, string>): Promise<Uint8Array> {
+      return requestBytes(path, params);
     },
     post<T>(path: string, body?: unknown): Promise<T> {
       return requestJson<T>("POST", path, body);
@@ -633,6 +662,27 @@ function createRuntimeApiClient(req: Request, ctx: HandlerContext): RuntimeApiCl
       return requestJson<T>("DELETE", path);
     },
   };
+}
+
+export async function downloadRuntimeUploadToFile(
+  client: Pick<RuntimeApiClient, "getBytes">,
+  projectReference: string,
+  uploadPath: string,
+  outputDir: string,
+): Promise<{ uploadPath: string; localPath: string; bytes: number }> {
+  const { resolveUploadOutputPath } = await import("#cli/commands/uploads/command");
+  const normalizedPath = uploadPath.replace(/^\/+/, "");
+  const localPath = resolveUploadOutputPath(uploadPath, outputDir);
+  const bytes = await client.getBytes(
+    `/projects/${encodeURIComponent(projectReference)}/uploads/${
+      encodeURIComponent(normalizedPath)
+    }/content`,
+  );
+
+  await Deno.mkdir(dirname(localPath), { recursive: true });
+  await Deno.writeFile(localPath, bytes);
+
+  return { uploadPath: normalizedPath, localPath, bytes: bytes.byteLength };
 }
 
 async function uploadEvalReportToProjectFiles(
@@ -737,7 +787,6 @@ async function executeKnowledgeIngestRun(input: {
       resolveKnowledgeDownloadOutputDir,
       runKnowledgeParser,
     } = await import("#cli/commands/knowledge/command");
-    const { downloadUploadToFile } = await import("#cli/commands/uploads/command");
     const { putRemoteFileFromLocal } = await import("#cli/commands/files/command");
 
     const uploadIds = getStringArrayConfig(config, ["upload_ids", "uploadIds"]);
@@ -783,7 +832,7 @@ async function executeKnowledgeIngestRun(input: {
       downloadUploads: (uploadTargets) =>
         Promise.all(
           uploadTargets.map((uploadPath) =>
-            downloadUploadToFile(client, projectReference, uploadPath, downloadOutputDir)
+            downloadRuntimeUploadToFile(client, projectReference, uploadPath, downloadOutputDir)
           ),
         ),
     });
