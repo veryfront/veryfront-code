@@ -603,7 +603,7 @@ describe("integration endpoint specs", () => {
       ["gitlab", 10],
       ["jira", 12],
       ["confluence", 7],
-      ["outlook", 61],
+      ["outlook", 63],
       ["teams", 7],
     ]);
 
@@ -1294,6 +1294,22 @@ describe("integration endpoint specs", () => {
     assertEquals(toolFiles.sort(), expectedFiles);
   });
 
+  it("ships scaffolded Outlook tool handlers required by the request-desk demo", async () => {
+    const requiredToolFiles = [
+      "list-threads.ts",
+      "get-thread.ts",
+      "create-draft.ts",
+      "send-email.ts",
+    ];
+
+    for (const fileName of requiredToolFiles) {
+      const source = await Deno.readTextFile(
+        `cli/templates/integrations/outlook/files/tools/${fileName}`,
+      );
+      assertStringIncludes(source, "tool({");
+    }
+  });
+
   it("keeps sheets connector aligned with standard spreadsheet automation tools", async () => {
     const sheets = getConnector("sheets");
     const expectedToolIds = [
@@ -1625,6 +1641,8 @@ describe("integration endpoint specs", () => {
       "get_attachment",
       "add_attachment_to_message",
       "list_conversation_messages",
+      "list_threads",
+      "get_thread",
       "list_shared_mailbox_emails",
       "search_shared_mailbox_emails",
       "find_group_by_mail",
@@ -1671,6 +1689,22 @@ describe("integration endpoint specs", () => {
     assertEquals(
       getTool("outlook", "list_conversation_messages").endpoint?.params?.["$orderby"],
       undefined,
+    );
+    assertEquals(
+      getTool("outlook", "list_threads").endpoint?.url,
+      "https://graph.microsoft.com/v1.0/me/mailFolders/{folderId}/messages",
+    );
+    assertEquals(
+      getTool("outlook", "list_threads").endpoint?.params?.["$select"]?.default,
+      "id,conversationId,internetMessageId,subject,from,sender,toRecipients,ccRecipients,receivedDateTime,sentDateTime,bodyPreview,categories,isRead,importance,hasAttachments,webLink,flag",
+    );
+    assertEquals(
+      getTool("outlook", "get_thread").endpoint?.url,
+      "https://graph.microsoft.com/v1.0/me/messages?$filter=conversationId eq '{thread_id}'",
+    );
+    assertEquals(
+      getTool("outlook", "get_thread").endpoint?.params?.thread_id?.required,
+      true,
     );
     assertEquals(
       getTool("outlook", "list_shared_mailbox_emails").endpoint?.url,
@@ -1727,6 +1761,35 @@ describe("integration endpoint specs", () => {
       getTool("outlook", "add_event_attachment").endpoint?.body,
       getTool("outlook", "add_attachment_to_message").endpoint?.body,
     );
+  });
+
+  it("publishes the request-desk demo connector contract for mock-to-real runs", () => {
+    const demoTools = [
+      ["outlook", "list_threads"],
+      ["outlook", "get_thread"],
+      ["outlook", "create_draft"],
+      ["outlook", "send_email"],
+      ["confluence", "list_sites"],
+      ["confluence", "list_spaces"],
+      ["confluence", "search_content"],
+      ["confluence", "get_page"],
+      ["confluence", "update_page"],
+      ["servicenow", "list_incidents"],
+      ["servicenow", "get_incident"],
+      ["servicenow", "create_incident"],
+      ["servicenow", "update_incident"],
+    ] as const;
+
+    for (const [connector, toolId] of demoTools) {
+      getTool(connector, toolId);
+    }
+
+    assertEquals(getTool("outlook", "create_draft").requiresWrite, true);
+    assertEquals(getTool("outlook", "send_email").requiresWrite, true);
+    assertEquals(getTool("confluence", "get_page").requiresWrite, false);
+    assertEquals(getTool("confluence", "update_page").requiresWrite, true);
+    assertEquals(getTool("servicenow", "create_incident").requiresWrite, true);
+    assertEquals(getTool("servicenow", "update_incident").requiresWrite, true);
   });
 
   it("publishes provider-declared historical summary contracts for email list/search tools", () => {

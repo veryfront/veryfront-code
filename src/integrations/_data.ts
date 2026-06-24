@@ -38855,6 +38855,110 @@ export const connectors: IntegrationConfig[] = [
         },
       },
     }, {
+      "id": "list_threads",
+      "name": "List Threads",
+      "description":
+        "List recent Outlook conversation threads for request-desk triage. Returns representative messages with conversationId; pass that value as thread_id to get_thread.",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/me/mailFolders/{folderId}/messages",
+        "params": {
+          "folderId": {
+            "type": "string",
+            "in": "path",
+            "description": "Mail folder ID or well-known folder name",
+            "required": true,
+            "default": "inbox",
+          },
+          "$top": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum recent messages to inspect as thread representatives",
+            "default": 25,
+          },
+          "$select": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated message fields to return",
+            "default":
+              "id,conversationId,internetMessageId,subject,from,sender,toRecipients,ccRecipients,receivedDateTime,sentDateTime,bodyPreview,categories,isRead,importance,hasAttachments,webLink,flag",
+          },
+          "$orderby": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort expression",
+            "default": "receivedDateTime desc",
+          },
+          "$filter": {
+            "type": "string",
+            "in": "query",
+            "description": "Optional OData filter expression, e.g. isRead eq false",
+          },
+        },
+        "response": {
+          "transform": "value",
+          "historicalSummary": {
+            "collectionKeys": ["value", "data", "messages"],
+            "collectionName": "threads",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "conversationId" },
+              { "name": "internetMessageId" },
+              { "name": "from", "kind": "contact" },
+              { "name": "sender", "kind": "contact" },
+              { "name": "toRecipients", "kind": "contact-array" },
+              { "name": "ccRecipients", "kind": "contact-array" },
+              { "name": "subject" },
+              { "name": "receivedDateTime" },
+              { "name": "sentDateTime" },
+              { "name": "bodyPreview", "maxLength": 300 },
+              { "name": "categories", "kind": "string-array" },
+              { "name": "isRead" },
+              { "name": "importance" },
+              { "name": "hasAttachments" },
+              { "name": "webLink" },
+              { "name": "flag", "kind": "object" },
+            ],
+            "outputFields": [{ "name": "@odata.nextLink" }, { "name": "@odata.count" }],
+            "omitted": "large email bodies and provider-specific message fields",
+          },
+        },
+      },
+    }, {
+      "id": "get_thread",
+      "name": "Get Thread",
+      "description":
+        "Get Outlook messages in a conversation. Uses the mock-compatible thread_id argument as the Microsoft Graph conversationId.",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url":
+          "https://graph.microsoft.com/v1.0/me/messages?$filter=conversationId eq '{thread_id}'",
+        "params": {
+          "thread_id": {
+            "type": "string",
+            "in": "path",
+            "description": "Outlook conversationId returned by list_threads",
+            "required": true,
+          },
+          "$top": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum messages to return",
+            "default": 25,
+          },
+          "$select": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated message fields to return",
+            "default":
+              "id,conversationId,internetMessageId,subject,body,bodyPreview,from,sender,toRecipients,ccRecipients,bccRecipients,replyTo,receivedDateTime,sentDateTime,categories,isRead,importance,hasAttachments,webLink,flag",
+          },
+        },
+        "response": { "transform": "value" },
+      },
+    }, {
       "id": "list_shared_mailbox_emails",
       "name": "List Shared Mailbox Emails",
       "description":
