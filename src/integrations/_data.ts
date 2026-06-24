@@ -49192,6 +49192,10 @@ export const connectors: IntegrationConfig[] = [
       "requiredApis": [{
         "name": "ServiceNow Table API",
         "enableUrl": "https://developer.servicenow.com/dev.do",
+      }, {
+        "name": "ServiceNow Service Catalog API",
+        "enableUrl":
+          "https://www.servicenow.com/docs/r/api-reference/rest-apis/c_ServiceCatalogAPI.html",
       }],
       "keyName": "SERVICENOW_ACCESS_TOKEN",
       "headerName": "Authorization",
@@ -49337,6 +49341,354 @@ export const connectors: IntegrationConfig[] = [
             "description": "Assignment group sys_id or display value",
           },
           "assigned_to": { "type": "string", "description": "Assignee sys_id or display value" },
+          "work_notes": { "type": "string", "description": "Internal work notes" },
+          "comments": { "type": "string", "description": "Customer-visible comments" },
+        },
+        "response": { "transform": "result" },
+      },
+    }, {
+      "id": "list_interactions",
+      "name": "List Interactions",
+      "description": "List ServiceNow Interaction records used for request-desk intake and routing",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{instanceHost}/api/now/v1/table/interaction",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "ServiceNow instance host, for example example.service-now.com",
+            "required": true,
+          },
+          "sysparm_query": {
+            "type": "string",
+            "in": "query",
+            "description": "Encoded ServiceNow query",
+            "default": "active=true^ORDERBYDESCsys_updated_on",
+          },
+          "sysparm_limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum interactions to return",
+            "default": 25,
+          },
+          "sysparm_fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated interaction fields to return",
+            "default":
+              "sys_id,number,short_description,description,state,type,opened_for,opened_by,parent,sys_created_on,sys_updated_on",
+          },
+        },
+        "response": { "transform": "result" },
+      },
+    }, {
+      "id": "get_interaction",
+      "name": "Get Interaction",
+      "description": "Get details of a specific ServiceNow Interaction record",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{instanceHost}/api/now/v1/table/interaction/{sysId}",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "ServiceNow instance host, for example example.service-now.com",
+            "required": true,
+          },
+          "sysId": {
+            "type": "string",
+            "in": "path",
+            "description": "Interaction sys_id",
+            "required": true,
+          },
+          "sysparm_display_value": {
+            "type": "string",
+            "in": "query",
+            "description": "Display value mode",
+            "default": "all",
+          },
+        },
+        "response": { "transform": "result" },
+      },
+    }, {
+      "id": "create_interaction",
+      "name": "Create Interaction",
+      "description":
+        "Create a ServiceNow Interaction intake record before converting or linking it to an incident or request",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{instanceHost}/api/now/v1/table/interaction",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "ServiceNow instance host, for example example.service-now.com",
+            "required": true,
+          },
+        },
+        "body": {
+          "short_description": {
+            "type": "string",
+            "description": "Interaction short description",
+            "required": true,
+          },
+          "description": { "type": "string", "description": "Interaction details" },
+          "opened_for": { "type": "string", "description": "Requester sys_id or display value" },
+          "opened_by": { "type": "string", "description": "Opener sys_id or display value" },
+          "type": {
+            "type": "string",
+            "description": "Interaction channel or type, for example email, phone, chat, or portal",
+          },
+          "parent": { "type": "string", "description": "Optional parent record sys_id" },
+          "work_notes": { "type": "string", "description": "Internal work notes" },
+        },
+        "response": { "transform": "result" },
+      },
+    }, {
+      "id": "update_interaction",
+      "name": "Update Interaction",
+      "description":
+        "Update an existing ServiceNow Interaction with routing status, parent record, notes, or comments",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://{instanceHost}/api/now/v1/table/interaction/{sysId}",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "ServiceNow instance host, for example example.service-now.com",
+            "required": true,
+          },
+          "sysId": {
+            "type": "string",
+            "in": "path",
+            "description": "Interaction sys_id",
+            "required": true,
+          },
+        },
+        "body": {
+          "state": { "type": "string", "description": "Interaction state" },
+          "parent": { "type": "string", "description": "Parent incident, request, or task sys_id" },
+          "short_description": { "type": "string", "description": "Updated short description" },
+          "description": { "type": "string", "description": "Updated interaction details" },
+          "work_notes": { "type": "string", "description": "Internal work notes" },
+          "comments": { "type": "string", "description": "Customer-visible comments" },
+        },
+        "response": { "transform": "result" },
+      },
+    }, {
+      "id": "list_requests",
+      "name": "List Requests",
+      "description": "List ServiceNow service request records from the sc_request table",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{instanceHost}/api/now/v1/table/sc_request",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "ServiceNow instance host, for example example.service-now.com",
+            "required": true,
+          },
+          "sysparm_query": {
+            "type": "string",
+            "in": "query",
+            "description": "Encoded ServiceNow query",
+            "default": "ORDERBYDESCsys_updated_on",
+          },
+          "sysparm_limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum requests to return",
+            "default": 25,
+          },
+          "sysparm_fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated request fields to return",
+            "default":
+              "sys_id,number,short_description,description,request_state,stage,approval,requested_for,opened_by,assignment_group,sys_created_on,sys_updated_on",
+          },
+        },
+        "response": { "transform": "result" },
+      },
+    }, {
+      "id": "get_request",
+      "name": "Get Request",
+      "description": "Get details of a specific ServiceNow service request",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{instanceHost}/api/now/v1/table/sc_request/{sysId}",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "ServiceNow instance host, for example example.service-now.com",
+            "required": true,
+          },
+          "sysId": {
+            "type": "string",
+            "in": "path",
+            "description": "Request sys_id",
+            "required": true,
+          },
+          "sysparm_display_value": {
+            "type": "string",
+            "in": "query",
+            "description": "Display value mode",
+            "default": "all",
+          },
+        },
+        "response": { "transform": "result" },
+      },
+    }, {
+      "id": "create_request",
+      "name": "Create Request",
+      "description": "Order a Service Catalog item to create a workflow-backed ServiceNow request",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url":
+          "https://{instanceHost}/api/sn_sc/v1/servicecatalog/items/{catalogItemSysId}/order_now",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "ServiceNow instance host, for example example.service-now.com",
+            "required": true,
+          },
+          "catalogItemSysId": {
+            "type": "string",
+            "in": "path",
+            "description": "Service Catalog item sys_id to order",
+            "required": true,
+          },
+        },
+        "body": {
+          "sysparm_quantity": {
+            "type": "number",
+            "description": "Quantity to order",
+            "default": 1,
+          },
+          "variables": {
+            "type": "object",
+            "description":
+              "Catalog item variables, for example requested_for, business_justification, or short_description",
+          },
+        },
+        "response": { "transform": "result" },
+      },
+    }, {
+      "id": "list_request_items",
+      "name": "List Request Items",
+      "description": "List ServiceNow requested item records from the sc_req_item table",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{instanceHost}/api/now/v1/table/sc_req_item",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "ServiceNow instance host, for example example.service-now.com",
+            "required": true,
+          },
+          "sysparm_query": {
+            "type": "string",
+            "in": "query",
+            "description": "Encoded ServiceNow query",
+            "default": "ORDERBYDESCsys_updated_on",
+          },
+          "sysparm_limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum requested items to return",
+            "default": 25,
+          },
+          "sysparm_fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated requested item fields to return",
+            "default":
+              "sys_id,number,request,cat_item,short_description,description,state,stage,approval,requested_for,assignment_group,sys_created_on,sys_updated_on",
+          },
+        },
+        "response": { "transform": "result" },
+      },
+    }, {
+      "id": "get_request_item",
+      "name": "Get Request Item",
+      "description": "Get details of a specific ServiceNow requested item",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{instanceHost}/api/now/v1/table/sc_req_item/{sysId}",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "ServiceNow instance host, for example example.service-now.com",
+            "required": true,
+          },
+          "sysId": {
+            "type": "string",
+            "in": "path",
+            "description": "Requested item sys_id",
+            "required": true,
+          },
+          "sysparm_display_value": {
+            "type": "string",
+            "in": "query",
+            "description": "Display value mode",
+            "default": "all",
+          },
+        },
+        "response": { "transform": "result" },
+      },
+    }, {
+      "id": "create_request_item",
+      "name": "Create Request Item",
+      "description":
+        "Create a requested item table record when direct sc_req_item writes are allowed",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{instanceHost}/api/now/v1/table/sc_req_item",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "ServiceNow instance host, for example example.service-now.com",
+            "required": true,
+          },
+        },
+        "body": {
+          "request": {
+            "type": "string",
+            "description": "Parent sc_request sys_id",
+            "required": true,
+          },
+          "cat_item": { "type": "string", "description": "Catalog item sys_id" },
+          "short_description": {
+            "type": "string",
+            "description": "Requested item short description",
+            "required": true,
+          },
+          "description": { "type": "string", "description": "Requested item details" },
+          "requested_for": { "type": "string", "description": "Requester sys_id or display value" },
+          "assignment_group": {
+            "type": "string",
+            "description": "Assignment group sys_id or display value",
+          },
+          "state": { "type": "string", "description": "Requested item state" },
+          "stage": { "type": "string", "description": "Requested item stage" },
           "work_notes": { "type": "string", "description": "Internal work notes" },
           "comments": { "type": "string", "description": "Customer-visible comments" },
         },

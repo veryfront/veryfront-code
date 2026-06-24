@@ -1778,6 +1778,16 @@ describe("integration endpoint specs", () => {
       ["servicenow", "get_incident"],
       ["servicenow", "create_incident"],
       ["servicenow", "update_incident"],
+      ["servicenow", "list_interactions"],
+      ["servicenow", "get_interaction"],
+      ["servicenow", "create_interaction"],
+      ["servicenow", "update_interaction"],
+      ["servicenow", "list_requests"],
+      ["servicenow", "get_request"],
+      ["servicenow", "create_request"],
+      ["servicenow", "list_request_items"],
+      ["servicenow", "get_request_item"],
+      ["servicenow", "create_request_item"],
     ] as const;
 
     for (const [connector, toolId] of demoTools) {
@@ -1790,6 +1800,22 @@ describe("integration endpoint specs", () => {
     assertEquals(getTool("confluence", "update_page").requiresWrite, true);
     assertEquals(getTool("servicenow", "create_incident").requiresWrite, true);
     assertEquals(getTool("servicenow", "update_incident").requiresWrite, true);
+    assertEquals(
+      getTool("servicenow", "list_interactions").endpoint?.url,
+      "https://{instanceHost}/api/now/v1/table/interaction",
+    );
+    assertEquals(getTool("servicenow", "create_interaction").requiresWrite, true);
+    assertEquals(getTool("servicenow", "update_interaction").requiresWrite, true);
+    assertEquals(
+      getTool("servicenow", "list_requests").endpoint?.url,
+      "https://{instanceHost}/api/now/v1/table/sc_request",
+    );
+    assertEquals(getTool("servicenow", "create_request").requiresWrite, true);
+    assertEquals(
+      getTool("servicenow", "list_request_items").endpoint?.url,
+      "https://{instanceHost}/api/now/v1/table/sc_req_item",
+    );
+    assertEquals(getTool("servicenow", "create_request_item").requiresWrite, true);
   });
 
   it("publishes provider-declared historical summary contracts for email list/search tools", () => {
