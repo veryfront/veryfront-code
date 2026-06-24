@@ -984,6 +984,30 @@ describe("integration endpoint specs", () => {
       confluence.auth.additionalAuthParams?.audience,
       "api.atlassian.com",
     );
+    assertEquals(
+      confluence.auth.scopes?.includes("offline_access"),
+      true,
+    );
+    assertEquals(
+      confluence.auth.scopes?.includes("read:confluence-space.summary"),
+      true,
+    );
+    assertEquals(
+      confluence.auth.scopes?.includes("read:confluence-user"),
+      true,
+    );
+    assertEquals(
+      confluence.auth.scopes?.includes("search:confluence"),
+      true,
+    );
+    assertEquals(
+      confluence.auth.scopes?.includes("read:page:confluence"),
+      true,
+    );
+    assertEquals(
+      confluence.auth.scopes?.includes("write:page:confluence"),
+      true,
+    );
   });
 
   it("keeps newly added static endpoints executor-compatible", () => {

@@ -10,7 +10,13 @@
     "tokenUrl": "https://auth.atlassian.com/oauth/token",
     "scopes": [
       "read:confluence-content.all",
-      "write:confluence-content"
+      "write:confluence-content",
+      "read:confluence-space.summary",
+      "read:confluence-user",
+      "search:confluence",
+      "read:page:confluence",
+      "write:page:confluence",
+      "offline_access"
     ],
     "callbackPath": "/api/auth/confluence/callback",
     "tokenAuthMethod": "client_secret_post",

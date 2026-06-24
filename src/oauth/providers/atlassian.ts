@@ -39,6 +39,9 @@ export const confluenceConfig: OAuthServiceConfig = {
     "write:confluence-content",
     "read:confluence-space.summary",
     "read:confluence-user",
+    "search:confluence",
+    "read:page:confluence",
+    "write:page:confluence",
     "offline_access",
   ],
 };
