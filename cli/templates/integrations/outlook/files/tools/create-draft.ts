@@ -1,6 +1,6 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createDraft } from "../../lib/outlook-client.ts";
+import { createDraft, summarizeContacts } from "../../lib/outlook-client.ts";
 
 export default tool({
   id: "create-draft",
@@ -41,10 +41,7 @@ export default tool({
         id: draft.id,
         thread_id: draft.conversationId,
         subject: draft.subject,
-        to: draft.toRecipients.map(({ emailAddress }) => ({
-          name: emailAddress.name,
-          email: emailAddress.address,
-        })),
+        to: summarizeContacts(draft.toRecipients),
         preview: draft.bodyPreview,
         webLink: draft.webLink,
         isDraft: true,

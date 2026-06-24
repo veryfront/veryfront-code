@@ -1700,11 +1700,19 @@ describe("integration endpoint specs", () => {
     );
     assertEquals(
       getTool("outlook", "get_thread").endpoint?.url,
-      "https://graph.microsoft.com/v1.0/me/messages?$filter=conversationId eq '{thread_id}'",
+      "https://graph.microsoft.com/v1.0/me/messages",
     );
     assertEquals(
-      getTool("outlook", "get_thread").endpoint?.params?.thread_id?.required,
+      getTool("outlook", "get_thread").endpoint?.params?.filter?.required,
       true,
+    );
+    assertEquals(
+      getTool("outlook", "get_thread").endpoint?.params?.filter?.in,
+      "query",
+    );
+    assertEquals(
+      getTool("outlook", "get_thread").endpoint?.params?.filter?.queryName,
+      "$filter",
     );
     assertEquals(
       getTool("outlook", "list_shared_mailbox_emails").endpoint?.url,

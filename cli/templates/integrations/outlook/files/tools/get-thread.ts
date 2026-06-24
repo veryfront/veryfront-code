@@ -1,6 +1,6 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { getThread } from "../../lib/outlook-client.ts";
+import { getThread, summarizeContact, summarizeContacts } from "../../lib/outlook-client.ts";
 
 export default tool({
   id: "get-thread",
@@ -29,18 +29,9 @@ export default tool({
         messages: messages.map((message) => ({
           id: message.id,
           subject: message.subject,
-          from: {
-            name: message.from.emailAddress.name,
-            email: message.from.emailAddress.address,
-          },
-          to: message.toRecipients.map(({ emailAddress }) => ({
-            name: emailAddress.name,
-            email: emailAddress.address,
-          })),
-          cc: message.ccRecipients?.map(({ emailAddress }) => ({
-            name: emailAddress.name,
-            email: emailAddress.address,
-          })),
+          from: summarizeContact(message.from),
+          to: summarizeContacts(message.toRecipients),
+          cc: summarizeContacts(message.ccRecipients),
           body: message.body,
           bodyPreview: message.bodyPreview,
           receivedAt: message.receivedDateTime,

@@ -1,6 +1,6 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { searchEmails } from "../../lib/outlook-client.ts";
+import { searchEmails, summarizeContact, summarizeContacts } from "../../lib/outlook-client.ts";
 
 export default tool({
   id: "search-emails",
@@ -26,14 +26,8 @@ export default tool({
       emails: messages.map((msg) => ({
         id: msg.id,
         subject: msg.subject,
-        from: {
-          name: msg.from.emailAddress.name,
-          email: msg.from.emailAddress.address,
-        },
-        to: msg.toRecipients.map((r) => ({
-          name: r.emailAddress.name,
-          email: r.emailAddress.address,
-        })),
+        from: summarizeContact(msg.from),
+        to: summarizeContacts(msg.toRecipients),
         preview: msg.bodyPreview,
         receivedAt: msg.receivedDateTime,
         isRead: msg.isRead,
