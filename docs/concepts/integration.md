@@ -28,6 +28,10 @@ tools, and workflows use the capabilities it exposes.
 Keep product logic outside the integration. The integration should describe and
 authorize the external capability.
 
+Some integrations need a governed agent-facing layer rather than a raw provider
+surface. Salesforce is the clearest example: see
+[Salesforce integration](./salesforce-integration.md) for the rationale.
+
 ## Wrong fit
 
 Do not create an integration for one small local helper. Use a tool when the
