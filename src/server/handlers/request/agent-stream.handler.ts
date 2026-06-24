@@ -42,6 +42,7 @@ import {
   getInternalAgentStreamRequestSchema,
   type InternalAgentStreamRequest,
   type RuntimeAgentSourceContext,
+  type RuntimeRunAgentInput,
   toRuntimeRunAgentInput,
 } from "#veryfront/internal-agents/schema.ts";
 import { BaseHandler } from "../response/base.ts";
@@ -185,6 +186,75 @@ function getRequestedStudioToolNames(input: {
   return [...requestedToolNames]
     .filter((toolName) => STUDIO_RUNTIME_REMOTE_TOOL_NAMES.has(toolName))
     .sort();
+}
+
+function sanitizeForwardedRuntimeAllowedTools(input: {
+  forwardedProps?: Record<string, unknown>;
+  availableToolNames: string[];
+  allowStudioRuntimeTools: boolean;
+}): Record<string, unknown> | undefined {
+  const forwardedProps = input.forwardedProps;
+  if (!isRecord(forwardedProps)) {
+    return forwardedProps;
+  }
+
+  const runtimeOverrides = isRecord(forwardedProps.runtimeOverrides)
+    ? forwardedProps.runtimeOverrides
+    : null;
+  if (!runtimeOverrides || !Object.hasOwn(runtimeOverrides, "allowedTools")) {
+    return forwardedProps;
+  }
+
+  const allowedTools = runtimeOverrides.allowedTools;
+  if (
+    !Array.isArray(allowedTools) || !allowedTools.every((toolName) => typeof toolName === "string")
+  ) {
+    return forwardedProps;
+  }
+
+  const availableToolNames = new Set(input.availableToolNames);
+  // Platform remote tools are gated separately by the child agent config in
+  // withVeryfrontPlatformRemoteTools. The Studio path is the one that consumes
+  // forwarded allowedTools, and Studio-only runtime tools are preserved only
+  // for trusted Studio clients that can already attach the Studio MCP surface.
+  const sanitizedAllowedTools = allowedTools.filter((toolName) =>
+    availableToolNames.has(toolName) ||
+    (input.allowStudioRuntimeTools && STUDIO_RUNTIME_REMOTE_TOOL_NAMES.has(toolName))
+  );
+  if (sanitizedAllowedTools.length === allowedTools.length) {
+    return forwardedProps;
+  }
+
+  const nextRuntimeOverrides: Record<string, unknown> = {
+    ...runtimeOverrides,
+    allowedTools: sanitizedAllowedTools,
+  };
+  if (sanitizedAllowedTools.length === 0) {
+    delete nextRuntimeOverrides.allowedTools;
+  }
+
+  const nextForwardedProps: Record<string, unknown> = {
+    ...forwardedProps,
+    runtimeOverrides: nextRuntimeOverrides,
+  };
+  if (Object.keys(nextRuntimeOverrides).length === 0) {
+    delete nextForwardedProps.runtimeOverrides;
+  }
+
+  return Object.keys(nextForwardedProps).length > 0 ? nextForwardedProps : undefined;
+}
+
+function sanitizeRuntimeRunAgentInput(input: RuntimeRunAgentInput): RuntimeRunAgentInput {
+  const clientProfile = resolveRuntimeClientProfile(input.forwardedProps);
+
+  return {
+    ...input,
+    forwardedProps: sanitizeForwardedRuntimeAllowedTools({
+      forwardedProps: input.forwardedProps,
+      availableToolNames: input.tools.map((tool) => tool.name),
+      allowStudioRuntimeTools: clientAllowsStudioMcp(clientProfile),
+    }),
+  };
 }
 
 function getVeryfrontApiMcpPolicy(agent: Agent): {
@@ -559,7 +629,7 @@ export class AgentStreamHandler extends BaseHandler {
               return this.respond(builder.json({ error: "Agent not found" }, 404));
             }
 
-            const runtimeInput = toRuntimeRunAgentInput(payload);
+            const runtimeInput = sanitizeRuntimeRunAgentInput(toRuntimeRunAgentInput(payload));
             const apiAuthToken = payload.credentials?.authToken || ctx.proxyToken ||
               getHostEnv("VERYFRONT_API_TOKEN") || "";
             const platformRuntimeAgent = await withVeryfrontPlatformRemoteTools({
