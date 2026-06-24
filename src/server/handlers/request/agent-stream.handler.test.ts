@@ -531,7 +531,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(injectedToolSchema, inputSchema);
   });
 
-  it("passes runtime integration tool allowlists from forwarded props into the runtime agent config", async () => {
+  it("does not pass undeclared forwarded remote tool allowlists into the runtime agent config", async () => {
     let capturedAllowedTools: string[] | undefined;
 
     const handler = new AgentStreamHandler({
@@ -590,7 +590,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
     assertExists(result.response);
     assertEquals(result.response.status, 200);
-    assertEquals(capturedAllowedTools, ["gmail:list-emails", "gmail:get-email"]);
+    assertEquals(capturedAllowedTools, undefined);
   });
 
   it("auto-exposes Studio MCP tools for trusted Studio project-agent requests", async () => {
