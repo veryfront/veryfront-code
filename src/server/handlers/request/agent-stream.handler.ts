@@ -191,6 +191,7 @@ function getRequestedStudioToolNames(input: {
 function sanitizeForwardedRuntimeAllowedTools(input: {
   forwardedProps?: Record<string, unknown>;
   availableToolNames: string[];
+  allowStudioRuntimeTools: boolean;
 }): Record<string, unknown> | undefined {
   const forwardedProps = input.forwardedProps;
   if (!isRecord(forwardedProps)) {
@@ -212,8 +213,13 @@ function sanitizeForwardedRuntimeAllowedTools(input: {
   }
 
   const availableToolNames = new Set(input.availableToolNames);
+  // Platform remote tools are gated separately by the child agent config in
+  // withVeryfrontPlatformRemoteTools. The Studio path is the one that consumes
+  // forwarded allowedTools, and Studio-only runtime tools are preserved only
+  // for trusted Studio clients that can already attach the Studio MCP surface.
   const sanitizedAllowedTools = allowedTools.filter((toolName) =>
-    availableToolNames.has(toolName) || STUDIO_RUNTIME_REMOTE_TOOL_NAMES.has(toolName)
+    availableToolNames.has(toolName) ||
+    (input.allowStudioRuntimeTools && STUDIO_RUNTIME_REMOTE_TOOL_NAMES.has(toolName))
   );
   if (sanitizedAllowedTools.length === allowedTools.length) {
     return forwardedProps;
@@ -239,11 +245,14 @@ function sanitizeForwardedRuntimeAllowedTools(input: {
 }
 
 function sanitizeRuntimeRunAgentInput(input: RuntimeRunAgentInput): RuntimeRunAgentInput {
+  const clientProfile = resolveRuntimeClientProfile(input.forwardedProps);
+
   return {
     ...input,
     forwardedProps: sanitizeForwardedRuntimeAllowedTools({
       forwardedProps: input.forwardedProps,
       availableToolNames: input.tools.map((tool) => tool.name),
+      allowStudioRuntimeTools: clientAllowsStudioMcp(clientProfile),
     }),
   };
 }

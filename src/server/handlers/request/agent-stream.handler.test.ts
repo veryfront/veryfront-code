@@ -593,6 +593,69 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(capturedAllowedTools, undefined);
   });
 
+  it("drops undeclared Studio runtime tool allowlists for untrusted clients", async () => {
+    let capturedAllowedTools: string[] | undefined;
+
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => {},
+      getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+      createRuntime: (agent) => {
+        capturedAllowedTools = (agent.config as typeof agent.config & RuntimeRemoteToolConfig)
+          .__vfAllowedRemoteTools;
+
+        return {
+          stream: async (_messages, _context, callbacks) => {
+            callbacks?.onFinish?.({
+              text: "ok",
+              messages: [],
+              toolCalls: [],
+              status: "completed",
+              usage: {
+                promptTokens: 1,
+                completionTokens: 1,
+                totalTokens: 2,
+              },
+            });
+
+            return new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            });
+          },
+        };
+      },
+    });
+
+    const body = createAgentStreamRequestBody({
+      forwardedProps: {
+        clientId: "external-client",
+        runtimeOverrides: {
+          allowedTools: ["studio_todo_write"],
+        },
+      },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(capturedAllowedTools, undefined);
+  });
+
   it("auto-exposes Studio MCP tools for trusted Studio project-agent requests", async () => {
     let capturedAllowedRemoteTools: string[] | undefined;
     let capturedRemoteToolNames: string[] = [];
