@@ -12211,7 +12211,16 @@ export const connectors: IntegrationConfig[] = [
       "provider": "atlassian",
       "authorizationUrl": "https://auth.atlassian.com/authorize",
       "tokenUrl": "https://auth.atlassian.com/oauth/token",
-      "scopes": ["read:confluence-content.all", "write:confluence-content"],
+      "scopes": [
+        "read:confluence-content.all",
+        "write:confluence-content",
+        "read:confluence-space.summary",
+        "read:confluence-user",
+        "search:confluence",
+        "read:page:confluence",
+        "write:page:confluence",
+        "offline_access",
+      ],
       "tokenAuthMethod": "client_secret_post",
       "requiredApis": [{
         "name": "Atlassian OAuth 2.0 App",
