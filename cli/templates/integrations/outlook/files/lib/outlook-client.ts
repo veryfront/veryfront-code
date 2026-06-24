@@ -7,6 +7,15 @@ interface GraphResponse<T> {
   "@odata.nextLink"?: string;
 }
 
+interface OutlookEmailAddress {
+  name?: string;
+  address?: string;
+}
+
+export interface OutlookContact {
+  emailAddress?: OutlookEmailAddress | null;
+}
+
 export interface OutlookMessage {
   id: string;
   subject: string;
@@ -15,24 +24,9 @@ export interface OutlookMessage {
     contentType: "text" | "html";
     content: string;
   };
-  from: {
-    emailAddress: {
-      name: string;
-      address: string;
-    };
-  };
-  toRecipients: Array<{
-    emailAddress: {
-      name: string;
-      address: string;
-    };
-  }>;
-  ccRecipients?: Array<{
-    emailAddress: {
-      name: string;
-      address: string;
-    };
-  }>;
+  from?: OutlookContact | null;
+  toRecipients: OutlookContact[];
+  ccRecipients?: OutlookContact[] | null;
   receivedDateTime: string;
   sentDateTime: string;
   isRead: boolean;
@@ -59,6 +53,11 @@ export interface SendEmailOptions {
   bcc?: string[];
   importance?: "low" | "normal" | "high";
   bodyType?: "text" | "html";
+}
+
+export interface CreateDraftOptions extends SendEmailOptions {
+  replyTo?: string[];
+  categories?: string[];
 }
 
 async function graphFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
@@ -116,7 +115,16 @@ export function getEmail(messageId: string): Promise<OutlookMessage> {
 }
 
 export async function sendEmail(options: SendEmailOptions): Promise<void> {
-  const message = {
+  const message = buildMessage(options);
+
+  await graphFetch("/sendMail", {
+    method: "POST",
+    body: JSON.stringify({ message }),
+  });
+}
+
+function buildMessage(options: CreateDraftOptions) {
+  return {
     subject: options.subject,
     body: {
       contentType: options.bodyType ?? "text",
@@ -131,12 +139,18 @@ export async function sendEmail(options: SendEmailOptions): Promise<void> {
     bccRecipients: options.bcc?.map((email) => ({
       emailAddress: { address: email },
     })),
+    replyTo: options.replyTo?.map((email) => ({
+      emailAddress: { address: email },
+    })),
     importance: options.importance ?? "normal",
+    categories: options.categories,
   };
+}
 
-  await graphFetch("/sendMail", {
+export async function createDraft(options: CreateDraftOptions): Promise<OutlookMessage> {
+  return graphFetch<OutlookMessage>("/messages", {
     method: "POST",
-    body: JSON.stringify({ message }),
+    body: JSON.stringify(buildMessage(options)),
   });
 }
 
@@ -156,6 +170,41 @@ export async function searchEmails(options: {
 
 export async function listFolders(): Promise<OutlookFolder[]> {
   const response = await graphFetch<GraphResponse<OutlookFolder>>("/mailFolders");
+  return response.value ?? [];
+}
+
+export async function listThreads(options?: {
+  folderId?: string;
+  top?: number;
+  filter?: string;
+  orderBy?: string;
+}): Promise<OutlookMessage[]> {
+  const messages = await listEmails({
+    folderId: options?.folderId ?? "inbox",
+    top: options?.top,
+    filter: options?.filter,
+    orderBy: options?.orderBy ?? "receivedDateTime desc",
+  });
+
+  const seenConversationIds = new Set<string>();
+  return messages.filter((message) => {
+    const conversationId = message.conversationId || message.id;
+    if (seenConversationIds.has(conversationId)) return false;
+    seenConversationIds.add(conversationId);
+    return true;
+  });
+}
+
+export async function getThread(threadId: string, limit = 25): Promise<OutlookMessage[]> {
+  const safeThreadId = threadId.replaceAll("'", "''");
+  const params = new URLSearchParams({
+    $filter: `conversationId eq '${safeThreadId}'`,
+    $top: String(limit),
+    $select:
+      "id,conversationId,internetMessageId,subject,body,bodyPreview,from,sender,toRecipients,ccRecipients,bccRecipients,replyTo,receivedDateTime,sentDateTime,categories,isRead,importance,hasAttachments,webLink,flag",
+  });
+
+  const response = await graphFetch<GraphResponse<OutlookMessage>>(`/messages?${params}`);
   return response.value ?? [];
 }
 
@@ -186,8 +235,9 @@ export async function moveEmail(messageId: string, destinationFolderId: string):
 }
 
 export function formatEmail(message: OutlookMessage): string {
-  const from = message.from.emailAddress.name || message.from.emailAddress.address;
-  const to = message.toRecipients.map((r) => r.emailAddress.address).join(", ");
+  const fromContact = summarizeContact(message.from);
+  const from = fromContact.name || fromContact.email || "Unknown sender";
+  const to = summarizeContacts(message.toRecipients).map((r) => r.email).filter(Boolean).join(", ");
   const date = new Date(message.receivedDateTime).toLocaleString();
   const read = message.isRead ? "Yes" : "No";
 
@@ -198,4 +248,20 @@ Date: ${date}
 Read: ${read}
 
 ${message.bodyPreview}`;
+}
+
+export function summarizeContact(contact?: OutlookContact | null): { name: string; email: string } {
+  const emailAddress = contact?.emailAddress;
+  const email = emailAddress?.address ?? "";
+  return {
+    name: emailAddress?.name ?? email,
+    email,
+  };
+}
+
+export function summarizeContacts(contacts?: OutlookContact[] | null): Array<{
+  name: string;
+  email: string;
+}> {
+  return (contacts ?? []).map(summarizeContact);
 }
