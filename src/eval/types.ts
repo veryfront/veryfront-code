@@ -65,10 +65,32 @@ export interface EvalUsage {
   costUsd?: number;
 }
 
+/** Normalized status for a tool call captured during an eval record. */
+export type EvalToolCallStatus = "ok" | "error" | "skipped" | "denied";
+
+/** How expected tool input is compared to the captured tool input. */
+export type EvalToolInputMatchMode = "exact" | "partial";
+
+/** Options for matching a required tool call. */
+export interface EvalToolCallMatchOptions {
+  input?: unknown;
+  match?: EvalToolInputMatchMode;
+}
+
+/** Options for checking how often a tool was called. */
+export interface EvalToolCallCountOptions {
+  exact?: number;
+  min?: number;
+  max?: number;
+}
+
 /** Tool call metadata captured during one eval record. */
 export interface EvalToolCall {
+  id?: string;
   name: string;
-  status?: "ok" | "error" | "skipped";
+  status?: EvalToolCallStatus;
+  input?: unknown;
+  output?: unknown;
   error?: string;
   metadata?: Record<string, unknown>;
 }
@@ -141,6 +163,9 @@ export interface EvalExpect {
   completed(): EvalExpectation;
   outputContains(text: string): EvalExpectation;
   noFailedTools(): EvalExpectation;
+  calledTool(name: string, options?: EvalToolCallMatchOptions): EvalExpectation;
+  notCalledTool(name: string): EvalExpectation;
+  toolCallCount(name: string, options: EvalToolCallCountOptions): EvalExpectation;
 }
 
 /** Context passed to an eval definition's `check` callback. */

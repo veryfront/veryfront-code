@@ -1,4 +1,10 @@
 import { getOutputText } from "./metrics.ts";
+import {
+  evaluateCalledTool,
+  evaluateNotCalledTool,
+  evaluateToolCallCount,
+  isEvalToolFailed,
+} from "./tool-behavior.ts";
 import type {
   EvalDefinition,
   EvalExample,
@@ -57,7 +63,7 @@ export function createEvalExpect(record: EvalRecord, checks: EvalMetricResult[])
 
     noFailedTools() {
       const failedTools = record.trace.toolCalls
-        .filter((tool) => tool.status === "error" || typeof tool.error === "string")
+        .filter(isEvalToolFailed)
         .map((tool) => tool.name);
       return createExpectation(checks, {
         name: "expect.noFailedTools",
@@ -65,6 +71,30 @@ export function createEvalExpect(record: EvalRecord, checks: EvalMetricResult[])
         score: failedTools.length === 0 ? 1 : 0,
         pass: failedTools.length === 0,
         ...(failedTools.length > 0 ? { evidence: { failedTools } } : {}),
+      });
+    },
+
+    calledTool(name, options) {
+      return createExpectation(checks, {
+        name: "expect.calledTool",
+        family: "check",
+        ...evaluateCalledTool(record, name, options),
+      });
+    },
+
+    notCalledTool(name) {
+      return createExpectation(checks, {
+        name: "expect.notCalledTool",
+        family: "check",
+        ...evaluateNotCalledTool(record, name),
+      });
+    },
+
+    toolCallCount(name, options) {
+      return createExpectation(checks, {
+        name: "expect.toolCallCount",
+        family: "check",
+        ...evaluateToolCallCount(record, name, options),
       });
     },
   };

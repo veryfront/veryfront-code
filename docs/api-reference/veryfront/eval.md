@@ -29,9 +29,22 @@ export default evalAgent({
   ]),
   metrics: [
     metrics.answer.contains({ text: "Paris" }).gate(),
+    metrics.agent.calledTool("search_docs").gate(),
     metrics.agent.noFailedTools().gate(),
   ],
 });
+```
+
+Use agent behavior metrics to assert that a real runtime trace used the right
+tools and avoided dangerous tools:
+
+```ts
+metrics.agent.calledTool("orders_lookup", {
+  input: { orderId: "A1049" },
+  match: "partial",
+}).gate();
+metrics.agent.notCalledTool("refunds_issue").gate();
+metrics.agent.toolCallCount("orders_lookup", { exact: 1 }).gate();
 ```
 
 ### Live agent-service eval
@@ -120,6 +133,10 @@ const report = await runEval(definition, {
 | `EvalStudioCapability` | Capability string Studio uses for Eval source and run actions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/studio.ts#L217) |
 | `EvalTargetKind` | Primitive kind an eval can execute. V1 supports agent targets. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L13) |
 | `EvalToolCall` | Tool call metadata captured during one eval record. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L68) |
+| `EvalToolCallCountOptions` | Options for checking how often a tool was called. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L80) |
+| `EvalToolCallMatchOptions` | Options for matching a required tool call. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L74) |
+| `EvalToolCallStatus` | Normalized status for a tool call captured during an eval record. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L68) |
+| `EvalToolInputMatchMode` | How expected tool input is compared to the captured tool input. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L71) |
 | `EvalTrace` | Trace metadata captured for one eval record. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L76) |
 | `EvalUsage` | Token and cost usage captured for one eval record. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L60) |
 | `EvalUsageSummary` | Usage totals for an eval report. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L255) |

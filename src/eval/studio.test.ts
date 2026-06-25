@@ -30,6 +30,12 @@ describe("eval/studio", () => {
       metrics: [
         metrics.answer.contains({ text: "Paris" }).gate(),
         metrics.agent.noFailedTools().gate(),
+        metrics.agent.calledTool("orders_lookup", {
+          input: { orderId: "A1049" },
+          match: "partial",
+        }).gate(),
+        metrics.agent.notCalledTool("refunds_issue").gate(),
+        metrics.agent.toolCallCount("orders_lookup", { exact: 1 }).gate(),
         metrics.judge.rubric({ rubric: "Answer must cite the correct city." }).soft({
           min: 0.8,
         }),
@@ -72,6 +78,9 @@ describe("eval/studio", () => {
       [
         { name: "answer.contains", editable: true, dynamic: false },
         { name: "agent.noFailedTools", editable: true, dynamic: false },
+        { name: "agent.calledTool", editable: true, dynamic: false },
+        { name: "agent.notCalledTool", editable: true, dynamic: false },
+        { name: "agent.toolCallCount", editable: true, dynamic: false },
         { name: "judge.rubric", editable: true, dynamic: true },
       ],
     );
