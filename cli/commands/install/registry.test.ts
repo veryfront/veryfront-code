@@ -130,9 +130,18 @@ describe("getTemplateContent", () => {
   it("should load agents template", async () => {
     const content = await getTemplateContent("agents");
     assertEquals(content.includes("Veryfront"), true);
-    assertEquals(content.includes("vf_bootstrap"), true);
+    assertEquals(content.includes("`app/`"), true);
+    assertEquals(content.includes("`agents/`"), true);
+    assertEquals(content.includes("`tools/`"), true);
+    assertEquals(content.includes("`workflows/`"), true);
+    assertEquals(content.includes("`skills/`"), true);
+    assertEquals(content.includes("`veryfront.config.ts`"), true);
     assertEquals(content.includes("veryfront.com/docs"), true);
     assertEquals(content.includes("src/pages"), false);
+    assertEquals(content.includes("vf_bootstrap"), false);
+    assertEquals(content.includes("Veryfront MCP"), false);
+    assertEquals(content.includes("`resources/`"), false);
+    assertEquals(content.includes("`tasks/`"), false);
   });
 
   it("should load tool-specific templates with current app conventions", async () => {
@@ -141,10 +150,19 @@ describe("getTemplateContent", () => {
     for (const targetId of targetIds) {
       const content = await getTemplateContent(targetId);
       assertEquals(content.includes("Veryfront"), true);
-      assertEquals(content.includes("app/"), true);
+      assertEquals(content.includes("`app/`"), true);
+      assertEquals(content.includes("`agents/`"), true);
+      assertEquals(content.includes("`tools/`"), true);
+      assertEquals(content.includes("`workflows/`"), true);
+      assertEquals(content.includes("`skills/`"), true);
+      assertEquals(content.includes("`veryfront.config.ts`"), true);
       assertEquals(content.includes("veryfront.com/docs"), true);
       assertEquals(content.includes("src/pages"), false);
       assertEquals(content.includes("src/api"), false);
+      assertEquals(content.includes("vf_bootstrap"), false);
+      assertEquals(content.includes("Veryfront MCP"), false);
+      assertEquals(content.includes("`resources/`"), false);
+      assertEquals(content.includes("`tasks/`"), false);
     }
   });
 

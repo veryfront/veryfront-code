@@ -20,28 +20,21 @@ Use these folders as runtime boundaries. Create folders only when the feature ne
 - `agents/`: model reasoning and tool use.
 - `tools/`: deterministic callable capabilities.
 - `workflows/`: multi-step coordination.
-- `tasks/`: background work targets.
-- `prompts/`: reusable prompt templates.
-- `resources/`: project data exposed to MCP clients.
 - `skills/`: reusable agent instructions in `skills/<id>/SKILL.md`.
-- `integrations/`: service connectors and integration-local code.
+- `veryfront.config.ts`: project metadata and router configuration.
 
 ## Developer loop
 
 1. Start local development with `veryfront dev`.
 2. Generate new files with `veryfront generate <type> <name>`.
-3. For example, add an agent with a tool and skill by running `veryfront generate agent research-agent`, `veryfront generate tool search-docs`, and `veryfront generate skill research`. Use names that match the app domain.
-4. Inspect current CLI commands with `veryfront schema --json`.
-5. Use https://veryfront.com/docs when local files and CLI schema do not answer a Veryfront API or convention question.
-6. Run focused tests and lint before shipping.
+3. Inspect current CLI commands with `veryfront schema --json`.
+4. Verify discovered routes with `veryfront routes`.
+5. Run focused tests and builds before shipping.
+6. Use https://veryfront.com/docs when local files and CLI schema do not answer a Veryfront API or convention question.
 
 ## Coding agent loop
 
-When the Veryfront MCP server is connected, call `vf_bootstrap` once at session start. Use `vf_get_conventions` before adding files, `vf_scaffold` for new routes and AI primitives, `vf_get_errors` after edits, and `vf_run_tests` or `vf_run_lint` for verification.
-
-`veryfront dev` starts the HTTP MCP endpoint on the app port plus 2. With the default app port, use `http://localhost:3002/mcp`.
-
-If MCP is not connected, use `veryfront schema --json` and the documented CLI commands from the shell.
+Prefer Veryfront scaffold tools over hand-written boilerplate. Keep app routes, agents, tools, workflows, and skills in their expected folders.
 
 ## Inference
 
