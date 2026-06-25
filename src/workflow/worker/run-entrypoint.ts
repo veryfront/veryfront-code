@@ -22,6 +22,8 @@
 
 import { logger as baseLogger } from "#veryfront/utils";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { agentRegistry } from "#veryfront/agent/composition/index.ts";
+import { toolRegistry } from "#veryfront/tool/registry.ts";
 import type { WorkflowBackend } from "../backends/types.ts";
 import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
 import type { WorkflowDefinition } from "../types.ts";
@@ -202,6 +204,10 @@ export async function createWorkflowRunEntrypoint(
   const executor = new WorkflowExecutor({
     backend,
     debug: options.debug,
+    stepExecutor: {
+      agentRegistry,
+      toolRegistry,
+    },
   });
 
   // Register workflows

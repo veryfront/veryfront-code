@@ -29,8 +29,9 @@ import { logger as baseLogger } from "#veryfront/utils";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { enhanceAdapterWithFS } from "#veryfront/platform/adapters/fs/integration.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
-import { discoverWorkflows } from "../discovery/index.ts";
-import type { VeryfrontConfig } from "#veryfront/config";
+import { agentRegistry } from "#veryfront/agent/composition/index.ts";
+import { discoverProjectAgentRuntime } from "#veryfront/agent/project/agent-runtime.ts";
+import { toolRegistry } from "#veryfront/tool/registry.ts";
 import type { WorkflowBackend } from "../backends/types.ts";
 import { WorkflowExecutor } from "../executor/workflow-executor.ts";
 import {
@@ -139,50 +140,53 @@ export async function runDynamicWorkflowRun(
           logger.info("FS adapter initialized");
         }
 
-        // Discover workflows from user's project
-        const discoveryResult = await discoverWorkflows({
+        // Discover workflows and the project-local agent/tool registries they may reference.
+        const discoveryResult = await discoverProjectAgentRuntime({
           projectDir: "", // Root of project (relative paths with API)
           adapter,
-          config: fsConfig as Partial<VeryfrontConfig> as VeryfrontConfig,
-          debug,
+          verbose: debug,
         });
 
         if (discoveryResult.errors.length > 0 && debug) {
           logger.warn("Some workflow files failed to load:", discoveryResult.errors);
         }
 
-        if (discoveryResult.workflows.length === 0) {
+        const workflows = [...discoveryResult.workflows.values()];
+
+        if (workflows.length === 0) {
           logger.error("No workflows discovered");
           return DYNAMIC_EXIT_CODES.DISCOVERY_FAILED;
         }
 
         if (debug) {
           logger.info(
-            `[DynamicWorkflowRun] Discovered ${discoveryResult.workflows.length} workflows:`,
-            discoveryResult.workflows.map((w) => w.id),
+            `[DynamicWorkflowRun] Discovered ${workflows.length} workflows:`,
+            workflows.map((w) => w.id),
           );
         }
 
         // Find the matching workflow
-        const workflow = discoveryResult.workflows.find((w) => w.id === run.workflowId);
+        const workflow = workflows.find((w) => w.id === run.workflowId);
         if (!workflow) {
           logger.error(`Workflow not found: ${run.workflowId}`);
           logger.error(
-            `[DynamicWorkflowRun] Available workflows: ${
-              discoveryResult.workflows.map((w) => w.id).join(", ")
-            }`,
+            `[DynamicWorkflowRun] Available workflows: ${workflows.map((w) => w.id).join(", ")}`,
           );
           return DYNAMIC_EXIT_CODES.NOT_FOUND;
         }
 
         if (debug) {
-          logger.info(`Found workflow "${workflow.id}" at ${workflow.filePath}`);
+          logger.info(`Found workflow "${workflow.id}"`);
         }
 
         // Create executor and register the workflow
         const executor = new WorkflowExecutor({
           backend,
           debug,
+          stepExecutor: {
+            agentRegistry,
+            toolRegistry,
+          },
         });
 
         executor.register(workflow.definition);
