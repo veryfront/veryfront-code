@@ -186,6 +186,36 @@ describe("npm supply-chain policy", () => {
 		assertEquals(source.includes('from "bash-tool"'), false);
 	});
 
+	it("lazy-loads OpenTelemetry dependencies for npm CLI startup", async () => {
+		const source = await Deno.readTextFile(
+			"extensions/ext-observability-opentelemetry/src/index.ts",
+		);
+		const optionalOpenTelemetryPackages = [
+			"@opentelemetry/api",
+			"@opentelemetry/auto-instrumentations-node",
+			"@opentelemetry/context-async-hooks",
+			"@opentelemetry/core",
+			"@opentelemetry/exporter-trace-otlp-http",
+			"@opentelemetry/resources",
+			"@opentelemetry/sdk-node",
+			"@opentelemetry/sdk-trace-base",
+			"@opentelemetry/semantic-conventions",
+		];
+
+		for (const packageName of optionalOpenTelemetryPackages) {
+			assertEquals(
+				source.includes(`import("${packageName}")`),
+				true,
+				`${packageName} must be loaded only when OpenTelemetry is enabled`,
+			);
+			assertEquals(
+				source.includes(`from "${packageName}"`),
+				false,
+				`${packageName} must not be a value import at CLI startup`,
+			);
+		}
+	});
+
 	it("keeps workflow React hooks off the broad errors barrel", async () => {
 		const hookSources = [
 			"src/workflow/react/use-approval.ts",

@@ -22,29 +22,136 @@ import type {
   TracingExporter,
 } from "veryfront/extensions/observability";
 
-import { metrics, trace } from "@opentelemetry/api";
-import { getNodeAutoInstrumentations } from "@opentelemetry/auto-instrumentations-node";
-import { W3CTraceContextPropagator } from "@opentelemetry/core";
-import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
-import { NodeSDK } from "@opentelemetry/sdk-node";
-import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
-import { MeterProvider, PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
-import {
-  BasicTracerProvider,
-  BatchSpanProcessor,
-  ParentBasedSampler,
-  TraceIdRatioBasedSampler,
-} from "@opentelemetry/sdk-trace-base";
-import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
-import { resourceFromAttributes } from "@opentelemetry/resources";
-import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from "@opentelemetry/semantic-conventions";
-
 /**
  * The TracerProvider interface as expected by the core shim.
  * Using structural typing because the real SDK provider satisfies this shape.
  */
 interface ShimTracerProvider {
   getTracer(name: string, version?: string): unknown;
+}
+
+type OpenTelemetryRuntime = {
+  api: typeof import("@opentelemetry/api");
+  autoInstrumentations: typeof import("@opentelemetry/auto-instrumentations-node");
+  core: typeof import("@opentelemetry/core");
+  contextAsyncHooks: typeof import("@opentelemetry/context-async-hooks");
+  sdkNode: typeof import("@opentelemetry/sdk-node");
+  metricsExporter: typeof import("@opentelemetry/exporter-metrics-otlp-http");
+  sdkMetrics: typeof import("@opentelemetry/sdk-metrics");
+  sdkTraceBase: typeof import("@opentelemetry/sdk-trace-base");
+  traceExporter: typeof import("@opentelemetry/exporter-trace-otlp-http");
+  resources: typeof import("@opentelemetry/resources");
+  semanticConventions: typeof import("@opentelemetry/semantic-conventions");
+};
+
+type SdkMeterProvider = InstanceType<
+  typeof import("@opentelemetry/sdk-metrics").MeterProvider
+>;
+type SdkTracerProvider = InstanceType<
+  typeof import("@opentelemetry/sdk-trace-base").BasicTracerProvider
+>;
+type MetricsAPI = { getMeter(name: string | undefined, version?: string): unknown };
+type TraceAPI = { getActiveSpan(): unknown; getSpan(ctx: unknown): unknown };
+
+const NOOP_SPAN = {
+  setAttribute() {
+    return NOOP_SPAN;
+  },
+  setAttributes() {
+    return NOOP_SPAN;
+  },
+  setStatus() {
+    return NOOP_SPAN;
+  },
+  recordException() {},
+  addEvent() {
+    return NOOP_SPAN;
+  },
+  end() {},
+  spanContext() {
+    return {
+      traceId: "00000000000000000000000000000000",
+      spanId: "0000000000000000",
+      traceFlags: 0,
+    };
+  },
+  updateName() {},
+};
+
+const NOOP_TRACER = {
+  startSpan() {
+    return NOOP_SPAN;
+  },
+  startActiveSpan(
+    _name: string,
+    optionsOrFn:
+      | { kind?: number; attributes?: Record<string, string | number | boolean | undefined> }
+      | ((span: typeof NOOP_SPAN) => unknown),
+    contextOrFn?: unknown,
+    fn?: (span: typeof NOOP_SPAN) => unknown,
+  ) {
+    const callback = typeof optionsOrFn === "function"
+      ? optionsOrFn
+      : typeof contextOrFn === "function"
+      ? contextOrFn
+      : fn;
+    return callback?.(NOOP_SPAN);
+  },
+};
+
+const NOOP_TRACER_PROVIDER: ShimTracerProvider = {
+  getTracer() {
+    return NOOP_TRACER;
+  },
+};
+
+async function loadOpenTelemetryRuntime(): Promise<OpenTelemetryRuntime> {
+  try {
+    const [
+      api,
+      autoInstrumentations,
+      core,
+      contextAsyncHooks,
+      sdkNode,
+      metricsExporter,
+      sdkMetrics,
+      sdkTraceBase,
+      traceExporter,
+      resources,
+      semanticConventions,
+    ] = await Promise.all([
+      import("@opentelemetry/api"),
+      import("@opentelemetry/auto-instrumentations-node"),
+      import("@opentelemetry/core"),
+      import("@opentelemetry/context-async-hooks"),
+      import("@opentelemetry/sdk-node"),
+      import("@opentelemetry/exporter-metrics-otlp-http"),
+      import("@opentelemetry/sdk-metrics"),
+      import("@opentelemetry/sdk-trace-base"),
+      import("@opentelemetry/exporter-trace-otlp-http"),
+      import("@opentelemetry/resources"),
+      import("@opentelemetry/semantic-conventions"),
+    ]);
+
+    return {
+      api,
+      autoInstrumentations,
+      core,
+      contextAsyncHooks,
+      sdkNode,
+      metricsExporter,
+      sdkMetrics,
+      sdkTraceBase,
+      traceExporter,
+      resources,
+      semanticConventions,
+    };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `OpenTelemetry observability requires the optional @opentelemetry packages to be installed. ${detail}`,
+    );
+  }
 }
 
 type EnvReader = (name: string) => string | undefined;
@@ -126,9 +233,10 @@ export function resolveOtlpExtensionConfig(
 }
 
 class OtlpTracingExporter implements TracingExporter {
-  private sdkProvider: BasicTracerProvider | null = null;
-  private meterProvider: MeterProvider | null = null;
-  private metricReader: PeriodicExportingMetricReader | null = null;
+  private sdkProvider: SdkTracerProvider | null = null;
+  private meterProvider: SdkMeterProvider | null = null;
+  private metricsApi: MetricsAPI | null = null;
+  private traceApi: TraceAPI | null = null;
 
   async start(_ctxConfig: Record<string, unknown>): Promise<void> {
     const cfg = resolveOtlpExtensionConfig(readEnv);
@@ -137,9 +245,10 @@ class OtlpTracingExporter implements TracingExporter {
     // deployments opting out never create OTLP traffic or set globals.
     if (!cfg.tracesEnabled && !cfg.metricsEnabled) return;
 
-    const resource = resourceFromAttributes({
-      [ATTR_SERVICE_NAME]: cfg.serviceName,
-      [ATTR_SERVICE_VERSION]: cfg.serviceVersion,
+    const otel = await loadOpenTelemetryRuntime();
+    const resource = otel.resources.resourceFromAttributes({
+      [otel.semanticConventions.ATTR_SERVICE_NAME]: cfg.serviceName,
+      [otel.semanticConventions.ATTR_SERVICE_VERSION]: cfg.serviceVersion,
     });
 
     if (cfg.tracesEnabled) {
@@ -149,31 +258,34 @@ class OtlpTracingExporter implements TracingExporter {
         );
       }
 
-      const exporter = new OTLPTraceExporter({
+      const exporter = new otel.traceExporter.OTLPTraceExporter({
         url: cfg.tracesUrl,
         headers: cfg.headers,
       });
 
-      const provider = new BasicTracerProvider({
+      const provider = new otel.sdkTraceBase.BasicTracerProvider({
         resource,
-        spanProcessors: [new BatchSpanProcessor(exporter)],
+        spanProcessors: [new otel.sdkTraceBase.BatchSpanProcessor(exporter)],
       });
 
       // Wire OTel SDK globals so the real API delegates to this provider.
       // The shim also gets wired separately in bootstrap.ts via getProvider().
-      trace.setGlobalTracerProvider(provider);
+      otel.api.trace.setGlobalTracerProvider(provider);
 
-      const contextManager = new AsyncLocalStorageContextManager();
+      const contextManager = new otel.contextAsyncHooks.AsyncLocalStorageContextManager();
       contextManager.enable();
 
-      const propagator = new W3CTraceContextPropagator();
+      const propagator = new otel.core.W3CTraceContextPropagator();
 
-      // Set propagator via OTel API (import is available in this extension).
-      const { propagation, context: otelContext } = await import("@opentelemetry/api");
-      propagation.setGlobalPropagator(propagator);
-      otelContext.setGlobalContextManager(contextManager);
+      otel.api.propagation.setGlobalPropagator(propagator);
+      otel.api.context.setGlobalContextManager(contextManager);
 
       this.sdkProvider = provider;
+      this.traceApi = {
+        getActiveSpan: () => otel.api.trace.getActiveSpan(),
+        getSpan: (ctx) =>
+          otel.api.trace.getSpan(ctx as Parameters<typeof otel.api.trace.getSpan>[0]),
+      };
     }
 
     if (cfg.metricsEnabled) {
@@ -183,19 +295,20 @@ class OtlpTracingExporter implements TracingExporter {
         );
       }
 
-      this.metricReader = new PeriodicExportingMetricReader({
-        exporter: new OTLPMetricExporter({
+      const metricReader = new otel.sdkMetrics.PeriodicExportingMetricReader({
+        exporter: new otel.metricsExporter.OTLPMetricExporter({
           url: cfg.metricsUrl,
           headers: cfg.headers,
         }),
         exportIntervalMillis: cfg.metricsExportIntervalMillis,
       });
 
-      this.meterProvider = new MeterProvider({
+      this.meterProvider = new otel.sdkMetrics.MeterProvider({
         resource,
-        readers: [this.metricReader],
+        readers: [metricReader],
       });
-      metrics.setGlobalMeterProvider(this.meterProvider);
+      otel.api.metrics.setGlobalMeterProvider(this.meterProvider);
+      this.metricsApi = otel.api.metrics;
     }
   }
 
@@ -211,7 +324,6 @@ class OtlpTracingExporter implements TracingExporter {
         await this.meterProvider.shutdown();
       } finally {
         this.meterProvider = null;
-        this.metricReader = null;
       }
     }
 
@@ -226,47 +338,43 @@ class OtlpTracingExporter implements TracingExporter {
 
   getProvider(): ShimTracerProvider {
     if (this.sdkProvider) return this.sdkProvider;
-    // Return a passthrough to OTel's real global provider if start() wasn't
-    // called (e.g., test scaffolding without full setup).
-    return trace.getTracerProvider();
+    return NOOP_TRACER_PROVIDER;
   }
 
-  getMetricsAPI(): { getMeter(name: string | undefined, version?: string): unknown } | null {
-    // Return the OTel Metrics API so the core metrics subsystem can get meters.
-    return metrics;
+  getMetricsAPI(): MetricsAPI | null {
+    return this.metricsApi;
   }
 
-  getTraceAPI(): { getActiveSpan(): unknown; getSpan(ctx: unknown): unknown } | null {
-    if (!this.sdkProvider) return null;
-    return {
-      getActiveSpan: () => trace.getActiveSpan(),
-      getSpan: (ctx) => trace.getSpan(ctx as Parameters<typeof trace.getSpan>[0]),
-    };
+  getTraceAPI(): TraceAPI | null {
+    return this.traceApi;
   }
 }
 
 class OpenTelemetryNodeTelemetryProvider implements NodeTelemetryProvider {
-  private sdk: NodeSDK | null = null;
+  private sdk: { shutdown(): Promise<void> } | null = null;
 
   async initialize(options: NodeTelemetryInitializeOptions): Promise<boolean> {
-    const resource = resourceFromAttributes({
+    const otel = await loadOpenTelemetryRuntime();
+    const resource = otel.resources.resourceFromAttributes({
       "service.name": options.serviceName,
       "service.version": options.serviceVersion,
       "deployment.environment": options.deploymentEnvironment,
     });
-    const traceExporter = new OTLPTraceExporter({ headers: options.exporterHeaders });
+    const traceExporter = new otel.traceExporter.OTLPTraceExporter({
+      headers: options.exporterHeaders,
+    });
 
-    const sdk = new NodeSDK({
+    const sdk = new otel.sdkNode.NodeSDK({
       resource,
-      sampler: new ParentBasedSampler({
-        root: new TraceIdRatioBasedSampler(options.samplingRatio),
+      sampler: new otel.sdkTraceBase.ParentBasedSampler({
+        root: new otel.sdkTraceBase.TraceIdRatioBasedSampler(options.samplingRatio),
       }),
-      spanProcessor: new BatchSpanProcessor(traceExporter, {
+      spanProcessor: new otel.sdkTraceBase.BatchSpanProcessor(traceExporter, {
         maxExportBatchSize: 100,
         scheduledDelayMillis: 500,
       }),
       instrumentations: [
-        getNodeAutoInstrumentations({
+        otel.autoInstrumentations.getNodeAutoInstrumentations({
           "@opentelemetry/instrumentation-fs": { enabled: options.instrumentation.fs },
           "@opentelemetry/instrumentation-http": { enabled: options.instrumentation.http },
           "@opentelemetry/instrumentation-express": { enabled: options.instrumentation.express },
