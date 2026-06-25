@@ -18,6 +18,8 @@ import { applyCORSHeaders } from "#veryfront/security";
 import { HTTP_NOT_FOUND, PRIORITY_MEDIUM } from "#veryfront/utils/constants/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { generateNonce } from "#veryfront/security/http/response/security-handler.ts";
+import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
 export class RSCHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -52,15 +54,37 @@ export class RSCHandler extends BaseHandler {
         }
 
         const nonce = generateNonce();
-        const res = await handleRSCEndpoint({
-          req,
-          pathname,
-          projectDir: ctx.projectDir,
-          projectId: ctx.projectId,
-          adapter: ctx.adapter,
-          config: ctx.config,
-          nonce,
-        });
+        const execute = () =>
+          handleRSCEndpoint({
+            req,
+            pathname,
+            projectDir: ctx.projectDir,
+            projectId: ctx.projectId,
+            adapter: ctx.adapter,
+            config: ctx.config,
+            nonce,
+          });
+        const fsAdapter = ctx.adapter.fs;
+        const isMultiProject = ctx.projectSlug &&
+          isExtendedFSAdapter(fsAdapter) &&
+          fsAdapter.isMultiProjectMode();
+
+        const res = isMultiProject
+          ? await fsAdapter.runWithContext(
+            ctx.projectSlug!,
+            ctx.proxyToken || getHostEnv("VERYFRONT_API_TOKEN") || "",
+            execute,
+            ctx.projectId,
+            {
+              productionMode: isRSCProductionMode(ctx),
+              releaseId: ctx.releaseId,
+              branch: ctx.resolvedEnvironment === "production"
+                ? null
+                : ctx.requestContext?.branch ?? ctx.parsedDomain?.branch ?? null,
+              environmentName: ctx.environmentName,
+            },
+          )
+          : await execute();
 
         if (!res) {
           return this.continue();
@@ -85,4 +109,9 @@ export class RSCHandler extends BaseHandler {
       { "rsc.pathname": pathname, "rsc.endpoint": endpoint },
     );
   }
+}
+
+function isRSCProductionMode(ctx: HandlerContext): boolean {
+  if (ctx.config?.fs?.veryfront?.productionMode === true) return true;
+  return (ctx.resolvedEnvironment ?? ctx.requestContext?.mode) === "production";
 }
