@@ -77,6 +77,9 @@ interface CloudStoreContext {
   fetch: typeof fetch;
   projectSlug: string;
   branch: string;
+  environmentName?: string | null;
+  hasRequestContext: boolean;
+  releaseId?: string | null;
 }
 
 interface ChunkMutationInput {
@@ -89,6 +92,26 @@ interface ChunkMutationInput {
 }
 
 type ResolvedCloudRagStoreConfig = RagStoreConfig & { model: string };
+
+interface ContentFile {
+  path: string;
+  content?: string;
+}
+
+interface CloudFileListResponse {
+  data: Array<{
+    path: string;
+    content?: string;
+  }>;
+  page_info?: {
+    next?: string | null;
+  };
+}
+
+interface CloudFileDetailResponse {
+  path: string;
+  content: string;
+}
 
 function buildUrl(base: string, path: string): string {
   return `${base.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
@@ -212,6 +235,7 @@ async function requestJson<T>(
 
 function getCloudStoreContext(config: RagStoreConfig): CloudStoreContext {
   const bootstrap = requireVeryfrontCloudBootstrap();
+  const requestContext = getCurrentRequestContext();
   if (!bootstrap.projectSlug) {
     throw INVALID_ARGUMENT.create({
       detail:
@@ -223,7 +247,10 @@ function getCloudStoreContext(config: RagStoreConfig): CloudStoreContext {
     apiBaseUrl: bootstrap.apiBaseUrl,
     fetch: createVeryfrontCloudFetch(bootstrap.apiToken),
     projectSlug: bootstrap.projectSlug,
-    branch: config.branch ?? getCurrentRequestContext()?.branch ?? "main",
+    branch: config.branch ?? requestContext?.branch ?? "main",
+    environmentName: requestContext?.environmentName ?? null,
+    hasRequestContext: requestContext !== null,
+    releaseId: requestContext?.releaseId ?? null,
   };
 }
 
@@ -459,8 +486,8 @@ function createEmbedder(config: ResolvedCloudRagStoreConfig) {
 async function listContentFiles(
   contentDir: string,
   contentExtensions: Set<string>,
-): Promise<string[]> {
-  const files: string[] = [];
+): Promise<ContentFile[]> {
+  const files: ContentFile[] = [];
 
   try {
     for await (const entry of readDir(contentDir)) {
@@ -468,7 +495,7 @@ async function listContentFiles(
       if (entry.isDirectory) {
         files.push(...(await listContentFiles(fullPath, contentExtensions)));
       } else if (entry.isFile && contentExtensions.has(extname(entry.name))) {
-        files.push(fullPath);
+        files.push({ path: fullPath });
       }
     }
   } catch (_) {
@@ -476,6 +503,117 @@ async function listContentFiles(
   }
 
   return files;
+}
+
+function buildContentDirPattern(contentDir: string): string {
+  return `${contentDir.replace(/\/+$/, "")}/**`;
+}
+
+function buildContentFilesQuery(
+  context: CloudStoreContext,
+  contentDir: string,
+  cursor?: string | null,
+): string {
+  const params = new URLSearchParams({
+    include_server_functions: "true",
+    limit: "100",
+    pattern: buildContentDirPattern(contentDir),
+  });
+
+  if (!context.releaseId && !context.environmentName) {
+    params.set("branch", context.branch);
+  }
+
+  if (cursor) {
+    params.set("cursor", cursor);
+  }
+
+  return params.toString();
+}
+
+function getPublishedFileListPath(
+  context: CloudStoreContext,
+  contentDir: string,
+  cursor?: string | null,
+): string {
+  const query = buildContentFilesQuery(context, contentDir, cursor);
+  const projectRef = encodeURIComponent(context.projectSlug);
+
+  if (context.releaseId) {
+    return `/projects/${projectRef}/releases/${
+      encodeURIComponent(context.releaseId)
+    }/files?${query}`;
+  }
+
+  if (context.environmentName) {
+    return `/projects/${projectRef}/environments/${
+      encodeURIComponent(context.environmentName)
+    }/files?${query}`;
+  }
+
+  return `/projects/${projectRef}/files?${query}`;
+}
+
+function getPublishedFileDetailPath(context: CloudStoreContext, path: string): string {
+  const query = new URLSearchParams({ include_server_functions: "true" });
+  const projectRef = encodeURIComponent(context.projectSlug);
+  const encodedPath = encodeURIComponent(path);
+
+  if (context.releaseId) {
+    return `/projects/${projectRef}/releases/${
+      encodeURIComponent(context.releaseId)
+    }/files/${encodedPath}?${query}`;
+  }
+
+  if (context.environmentName) {
+    return `/projects/${projectRef}/environments/${
+      encodeURIComponent(context.environmentName)
+    }/files/${encodedPath}?${query}`;
+  }
+
+  query.set("branch", context.branch);
+  return `/projects/${projectRef}/files/${encodedPath}?${query}`;
+}
+
+async function listPublishedContentFiles(
+  context: CloudStoreContext,
+  contentDir: string,
+  contentExtensions: Set<string>,
+): Promise<ContentFile[]> {
+  const files: ContentFile[] = [];
+  let cursor: string | null | undefined;
+
+  do {
+    const response = await requestJson<CloudFileListResponse>(
+      context,
+      getPublishedFileListPath(context, contentDir, cursor),
+    );
+
+    files.push(
+      ...(response?.data ?? [])
+        .filter((file) => contentExtensions.has(extname(file.path)))
+        .map((file) => ({ path: file.path, content: file.content })),
+    );
+
+    cursor = response?.page_info?.next ?? null;
+  } while (cursor);
+
+  return files;
+}
+
+async function readContentFile(
+  context: CloudStoreContext,
+  file: ContentFile,
+): Promise<string> {
+  if (file.content !== undefined) return file.content;
+  if (!context.hasRequestContext) return readTextFile(file.path);
+
+  const response = await requestJson<CloudFileDetailResponse>(
+    context,
+    getPublishedFileDetailPath(context, file.path),
+  );
+
+  return response?.content ?? "";
 }
 
 export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig): RagStore {
@@ -574,28 +712,30 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
       const context = getCloudStoreContext(config);
       const existingDocuments = await listRagDocuments(context);
       const indexedSources = new Set(existingDocuments.map((doc) => doc.source));
-      const files = await listContentFiles(contentDir, contentExtensions);
-      const newFiles = files.filter((file) => !indexedSources.has(file));
+      const files = context.hasRequestContext
+        ? await listPublishedContentFiles(context, contentDir, contentExtensions)
+        : await listContentFiles(contentDir, contentExtensions);
+      const newFiles = files.filter((file) => !indexedSources.has(file.path));
 
       for (const file of newFiles) {
-        const content = await readTextFile(file);
+        const content = await readContentFile(context, file);
         if (!content?.trim()) continue;
         if (content.length > MAX_TEXT_LENGTH) {
           serverLogger.warn(
-            `[rag-store/cloud] Skipping ${file}: exceeds ${
+            `[rag-store/cloud] Skipping ${file.path}: exceeds ${
               MAX_TEXT_LENGTH / 1024 / 1024
             } MB text limit`,
           );
           continue;
         }
 
-        const title = file.startsWith(contentDir + "/")
-          ? file.slice(contentDir.length + 1).replace(/\.[^.]+$/, "")
-          : file.replace(/\.[^.]+$/, "");
-        const type = extname(file).slice(1);
+        const title = file.path.startsWith(contentDir + "/")
+          ? file.path.slice(contentDir.length + 1).replace(/\.[^.]+$/, "")
+          : file.path.replace(/\.[^.]+$/, "");
+        const type = extname(file.path).slice(1);
 
         await ingestDocument(context, config, title, content, {
-          source: file,
+          source: file.path,
           type,
         });
       }
