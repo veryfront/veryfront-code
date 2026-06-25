@@ -576,6 +576,146 @@ describe("ragStore", () => {
     );
   });
 
+  it("indexes contentDir from published release files in request context", async () => {
+    registerTestEmbeddingProvider();
+
+    const ragDocuments = new Map<string, {
+      id: string;
+      title: string;
+      source: string;
+      type: string;
+      created_at: string;
+      updated_at: string;
+      metadata?: Record<string, unknown>;
+    }>();
+    const fileChunks = new Map<
+      string,
+      Array<{
+        id: string;
+        index: number;
+        content: string;
+        metadata?: Record<string, unknown>;
+      }>
+    >();
+    const requestedPaths: string[] = [];
+
+    await withMockFetch(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        const url = new URL(request.url);
+        requestedPaths.push(url.pathname);
+
+        if (
+          request.method === "GET" &&
+          url.pathname === "/projects/cloud-project/releases/rel-abc/files"
+        ) {
+          return Response.json({
+            data: [
+              {
+                id: "file-login",
+                version_id: "version-login",
+                path: "knowledge/login-troubleshooting.md",
+                content: "# Login troubleshooting\n\nEscalate blocked SSO login issues.",
+                size: 62,
+                type: "file",
+                updated_at: "2026-06-25T00:00:00.000Z",
+                release_id: "rel-abc",
+                release_version: "0.0.1",
+              },
+            ],
+            page_info: { next: null },
+            release_id: "rel-abc",
+            release_version: "0.0.1",
+          });
+        }
+
+        const ragDocMatch = url.pathname.match(/^\/projects\/[^/]+\/rag\/documents(?:\/(.+))?$/);
+        if (ragDocMatch !== null) {
+          const docId = ragDocMatch[1] ? decodeURIComponent(ragDocMatch[1]) : null;
+
+          if (request.method === "GET" && !docId) {
+            return Response.json({ documents: [...ragDocuments.values()] });
+          }
+
+          if (request.method === "POST" && !docId) {
+            const body = await request.json() as {
+              id: string;
+              title: string;
+              source: string;
+              type: string;
+              metadata?: Record<string, unknown>;
+            };
+            ragDocuments.set(body.id, {
+              ...body,
+              created_at: "2026-06-25T00:00:00.000Z",
+              updated_at: "2026-06-25T00:00:00.000Z",
+            });
+            return Response.json({ document: ragDocuments.get(body.id) });
+          }
+        }
+
+        const fileMatch = url.pathname.match(
+          /^\/projects\/[^/]+\/branches\/[^/]+\/files\/(.+)\/chunks$/,
+        );
+        const filePath = fileMatch ? decodeURIComponent(fileMatch[1] ?? "") : null;
+
+        if (request.method === "POST" && filePath) {
+          const body = await request.json() as {
+            chunks: Array<{
+              chunk_index: number;
+              content: string;
+              metadata?: Record<string, unknown>;
+            }>;
+          };
+          const stored = body.chunks.map((chunk) => ({
+            id: `${filePath}:${chunk.chunk_index}`,
+            index: chunk.chunk_index,
+            content: chunk.content,
+            metadata: chunk.metadata,
+          }));
+          fileChunks.set(filePath, stored);
+          return Response.json({
+            chunks: stored.map(({ id, index }) => ({ id, index })),
+          });
+        }
+
+        if (request.method === "POST" && url.pathname.endsWith("/embeddings")) {
+          return Response.json({
+            embeddings: [{ id: "embedding-1", model: "test/demo", status: "ready" }],
+          });
+        }
+
+        throw new Error(`Unhandled ${request.method} ${url.pathname}`);
+      },
+      async () => {
+        const store = ragStore({
+          contentDir: "knowledge",
+          model: "test/demo",
+        });
+
+        await runWithRequestContext(
+          {
+            projectSlug: "cloud-project",
+            token: "vf_request_token",
+            productionMode: true,
+            releaseId: "rel-abc",
+          },
+          () => store.indexContentDir(),
+        );
+
+        const documents = [...ragDocuments.values()];
+        assertEquals(documents.length, 1);
+        assertEquals(documents[0]?.title, "login-troubleshooting");
+        assertEquals(documents[0]?.source, "knowledge/login-troubleshooting.md");
+        assertEquals(fileChunks.size, 1);
+        assertEquals(
+          requestedPaths.includes("/projects/cloud-project/releases/rel-abc/files"),
+          true,
+        );
+      },
+    );
+  });
+
   it("respects VERYFRONT_RAG_BACKEND=local-json as an override", async () => {
     setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
     setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
