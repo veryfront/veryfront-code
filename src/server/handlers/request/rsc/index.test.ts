@@ -89,4 +89,72 @@ describe("server/handlers/request/rsc", () => {
     assertEquals(response.status, 400);
     assertEquals(await response.text(), "Missing rel query parameter");
   });
+
+  it("serves app router client module requests inside the multi-project filesystem context", async () => {
+    const handler = new RSCHandler();
+    let contextActive = false;
+    let runWithContextArgs: unknown[] | undefined;
+    const adapter = createMockAdapter({
+      exists: () => {
+        if (!contextActive) {
+          throw new Error("missing multi-project context");
+        }
+        return Promise.resolve(false);
+      },
+    });
+
+    adapter.fs = {
+      ...adapter.fs,
+      isVeryfrontAdapter: () => true,
+      getUnderlyingAdapter: () => ({}),
+      isMultiProjectMode: () => true,
+      isContextualMode: () => false,
+      runWithContext: async (
+        slug: string,
+        token: string,
+        fn: () => Promise<unknown>,
+        projectId?: string,
+        options?: unknown,
+      ) => {
+        runWithContextArgs = [slug, token, projectId, options];
+        contextActive = true;
+        try {
+          return await fn();
+        } finally {
+          contextActive = false;
+        }
+      },
+    } as RuntimeAdapter["fs"];
+
+    const result = await handler.handle(
+      new Request("http://localhost/_veryfront/rsc/module?rel=app%2Fpage.tsx"),
+      makeCtx({
+        adapter,
+        projectSlug: "customer-operations-agent",
+        projectId: "proj-123",
+        proxyToken: "proxy-token",
+        releaseId: "rel-123",
+        environmentName: "Preview",
+        resolvedEnvironment: "preview",
+        requestContext: {
+          slug: "customer-operations-agent",
+          branch: "main",
+          mode: "preview",
+          token: "proxy-token",
+        },
+      }),
+    );
+
+    const response = result.response!;
+    assertEquals(response.status, 404);
+    assertEquals(runWithContextArgs?.[0], "customer-operations-agent");
+    assertEquals(runWithContextArgs?.[1], "proxy-token");
+    assertEquals(runWithContextArgs?.[2], "proj-123");
+    assertEquals(runWithContextArgs?.[3], {
+      productionMode: false,
+      releaseId: "rel-123",
+      branch: "main",
+      environmentName: "Preview",
+    });
+  });
 });
