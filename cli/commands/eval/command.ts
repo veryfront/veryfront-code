@@ -125,6 +125,19 @@ export function normalizeEvalCliId(id: string): string {
   return id.startsWith("eval:") ? id : `eval:${id}`;
 }
 
+function createEvalCliIdCandidates(id: string): string[] {
+  const normalized = normalizeEvalCliId(id);
+  const bare = normalized.startsWith("eval:") ? normalized.slice("eval:".length) : normalized;
+  return Array.from(new Set([id, normalized, bare]));
+}
+
+export function findEvalForCliId(evals: DiscoveredEval[], id: string): DiscoveredEval | undefined {
+  const candidates = createEvalCliIdCandidates(id);
+  return candidates
+    .map((candidate) => evals.find((item) => item.id === candidate))
+    .find((item) => item !== undefined);
+}
+
 export function normalizeEvalInputForAgent(input: unknown): string {
   if (typeof input === "string") return input;
   if (input && typeof input === "object") {
@@ -440,7 +453,7 @@ export async function evalCommand(options: EvalOptions): Promise<void> {
     }
 
     const evalId = normalizeEvalCliId(options.id);
-    const evalItem = evalDiscovery.evals.find((item) => item.id === evalId);
+    const evalItem = findEvalForCliId(evalDiscovery.evals, options.id);
     if (!evalItem) {
       await outputEvalNotFound(evalId, evalDiscovery.evals);
       return;
