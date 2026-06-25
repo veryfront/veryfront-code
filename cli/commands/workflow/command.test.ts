@@ -1,19 +1,16 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { stop as stopEsbuild } from "veryfront/extensions/bundler";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import type { DiscoveryResult } from "#veryfront/discovery/types.ts";
+import { defineSchema } from "#veryfront/schemas";
+import { tool } from "#veryfront/tool";
+import { toolRegistry } from "#veryfront/tool/registry.ts";
+import { step, workflow } from "#veryfront/workflow";
 import { clearProjectAgentRuntimeRegistries } from "../../../src/agent/project/agent-runtime.ts";
-import { formatWorkflowDiscoveryErrors, workflowCommand } from "./command.ts";
+import { formatWorkflowDiscoveryErrors, runWorkflowCommand } from "./command.ts";
 
 const originalRedisUrl = Deno.env.get("REDIS_URL");
 const originalRunResultPath = Deno.env.get("VERYFRONT_RUN_RESULT_PATH");
-
-async function writeProjectFile(projectDir: string, filePath: string, content: string) {
-  const path = `${projectDir}/${filePath}`;
-  const dir = path.slice(0, path.lastIndexOf("/"));
-  await Deno.mkdir(dir, { recursive: true });
-  await Deno.writeTextFile(path, content);
-}
 
 function restoreEnv() {
   if (originalRedisUrl === undefined) {
@@ -29,16 +26,25 @@ function restoreEnv() {
   }
 }
 
-// Workflow discovery uses the shared esbuild-backed transpiler, which keeps a
-// warm child process across tests until stopEsbuild() runs in teardown.
-describe("workflow command", { sanitizeOps: false, sanitizeResources: false }, () => {
+function createEmptyDiscoveryResult(): DiscoveryResult {
+  return {
+    tools: new Map(),
+    agents: new Map(),
+    skills: new Map(),
+    resources: new Map(),
+    prompts: new Map(),
+    workflows: new Map(),
+    works: new Map(),
+    tasks: new Map(),
+    evals: new Map(),
+    errors: [],
+  };
+}
+
+describe("workflow command", () => {
   afterEach(() => {
     restoreEnv();
     clearProjectAgentRuntimeRegistries();
-  });
-
-  afterAll(async () => {
-    await stopEsbuild();
   });
 
   it("formats workflow load errors for non-debug logs", () => {
@@ -71,46 +77,42 @@ describe("workflow command", { sanitizeOps: false, sanitizeResources: false }, (
     const resultPath = `${projectDir}/.veryfront/result.json`;
 
     try {
-      await writeProjectFile(
-        projectDir,
-        "tools/echo.ts",
-        [
-          'import { defineSchema } from "veryfront/schemas";',
-          'import { tool } from "veryfront/tool";',
-          "",
-          "export default tool({",
-          '  id: "echo",',
-          '  description: "Echo workflow input.",',
-          "  inputSchema: defineSchema((v) => v.object({ message: v.string() }))(),",
-          "  execute: async (input) => ({ echoed: input.message }),",
-          "});",
-        ].join("\n"),
-      );
+      const echoTool = tool({
+        id: "echo",
+        description: "Echo workflow input.",
+        inputSchema: defineSchema((v) => v.object({ message: v.string() }))(),
+        execute: (input) => ({ echoed: input.message }),
+      });
 
-      await writeProjectFile(
-        projectDir,
-        "workflows/echo.ts",
-        [
-          'import { step, workflow } from "veryfront/workflow";',
-          "",
-          "export default workflow({",
-          '  id: "echo",',
-          '  description: "Echo a message through a project-local tool.",',
-          '  steps: [step("start", { tool: "echo", input: { message: "hello" } })],',
-          "});",
-        ].join("\n"),
-      );
+      const echoWorkflow = workflow({
+        id: "echo",
+        description: "Echo a message through a project-local tool.",
+        steps: [step("start", { tool: "echo", input: { message: "hello" } })],
+      });
 
       Deno.env.delete("REDIS_URL");
       Deno.env.set("VERYFRONT_RUN_RESULT_PATH", resultPath);
 
-      await workflowCommand({
-        action: "run",
-        name: "echo",
-        input: undefined,
-        debug: false,
-        projectDir,
-      });
+      await runWorkflowCommand(
+        {
+          action: "run",
+          name: "echo",
+          input: undefined,
+          debug: false,
+          projectDir,
+        },
+        {
+          discoverProjectAgentRuntime: () => {
+            toolRegistry.register(echoTool.id, echoTool);
+
+            const discovery = createEmptyDiscoveryResult();
+            discovery.tools.set(echoTool.id, echoTool);
+            discovery.workflows.set(echoWorkflow.id, echoWorkflow);
+
+            return Promise.resolve(discovery);
+          },
+        },
+      );
 
       assertEquals(JSON.parse(await Deno.readTextFile(resultPath)), {
         start: { echoed: "hello" },
