@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { compareEvalReports, type EvalReport } from "veryfront/eval";
+import { compareEvalReports, type DiscoveredEval, type EvalReport } from "veryfront/eval";
 import {
   createDefaultEvalReportDir,
   createEvalArtifactPaths,
@@ -9,6 +9,7 @@ import {
   createJunitXml,
   createResultsJsonl,
   createSummaryArtifact,
+  findEvalForCliId,
   normalizeEvalCliId,
   normalizeEvalInputForAgent,
   summarizeReportForCli,
@@ -128,6 +129,17 @@ describe("eval CLI command helpers", () => {
   it("normalizes eval ids without requiring users to type the namespace", () => {
     assertEquals(normalizeEvalCliId("deep-research"), "eval:deep-research");
     assertEquals(normalizeEvalCliId("eval:deep-research"), "eval:deep-research");
+  });
+
+  it("finds explicit eval ids without forcing the namespace", () => {
+    const evals = [
+      { id: "custom-capital" },
+      { id: "eval:deep-research" },
+    ] as DiscoveredEval[];
+
+    assertEquals(findEvalForCliId(evals, "custom-capital")?.id, "custom-capital");
+    assertEquals(findEvalForCliId(evals, "deep-research")?.id, "eval:deep-research");
+    assertEquals(findEvalForCliId(evals, "eval:custom-capital")?.id, "custom-capital");
   });
 
   it("normalizes structured eval inputs into agent prompts", () => {
