@@ -11,6 +11,7 @@ import {
 } from "#veryfront/cache/cache-key-builder.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 
 /** Pattern to match hashed CSS URLs: /_vf/css/[8-char-hash].css */
 const CSS_URL_PATTERN = /^\/_vf\/css\/([a-z0-9-]{1,16})\.css$/;
@@ -23,6 +24,20 @@ async function getCSSWithJITFallback(
   if (cached) return cached;
 
   return regenerateCSSByHash(cssHash, projectSlug);
+}
+
+async function getBuiltCSSFallback(
+  cssHash: string,
+  ctx: HandlerContext,
+): Promise<string | undefined> {
+  const builtCSSPath = join(ctx.projectDir, "dist", "_vf", "css", `${cssHash}.css`);
+  try {
+    const exists = await ctx.adapter.fs.exists(builtCSSPath);
+    if (!exists) return undefined;
+    return await ctx.adapter.fs.readFile(builtCSSPath);
+  } catch {
+    return undefined;
+  }
 }
 
 export class CSSHandler extends BaseHandler {
@@ -72,7 +87,9 @@ export class CSSHandler extends BaseHandler {
       )
       : await lookup();
 
-    if (!css) {
+    const resolvedCSS = css ?? await getBuiltCSSFallback(cssHash, ctx);
+
+    if (!resolvedCSS) {
       this.logInfo(
         `CSS not found and JIT regeneration failed: ${cssHash}. ` +
           `Server restart or cache expiry. Reload page to regenerate.`,
@@ -94,7 +111,7 @@ export class CSSHandler extends BaseHandler {
       return this.respond(response);
     }
 
-    const body = method === "HEAD" ? null : css;
+    const body = method === "HEAD" ? null : resolvedCSS;
 
     const response = this.createResponseBuilder(ctx)
       .withCORS(req, ctx.securityConfig?.cors)

@@ -39,9 +39,15 @@ export class RSCHandler extends BaseHandler {
       "rsc.handle",
       async () => {
         const isHydrationScript = endpoint === "client.js" || endpoint === "dom.js";
+        const isClientModuleEndpoint = endpoint === "module";
         const isDeprecatedEndpoint = endpoint === "flight_page";
 
-        if (!isRSCEnabled(ctx.config) && !isHydrationScript && !isDeprecatedEndpoint) {
+        if (
+          !isRSCEnabled(ctx.config) &&
+          !isHydrationScript &&
+          !isClientModuleEndpoint &&
+          !isDeprecatedEndpoint
+        ) {
           return this.respond(new Response("Not Found", { status: HTTP_NOT_FOUND }));
         }
 
