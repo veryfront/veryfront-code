@@ -29,7 +29,9 @@ function restoreEnv() {
   }
 }
 
-describe("workflow command", () => {
+// Workflow discovery uses the shared esbuild-backed transpiler, which keeps a
+// warm child process across tests until stopEsbuild() runs in teardown.
+describe("workflow command", { sanitizeOps: false, sanitizeResources: false }, () => {
   afterEach(() => {
     restoreEnv();
     clearProjectAgentRuntimeRegistries();
