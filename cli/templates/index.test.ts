@@ -190,6 +190,40 @@ describe("cli/templates", () => {
     );
   });
 
+  it("keeps generated AI rules focused on current project primitives", async () => {
+    const aiRulesRoot = new URL("./ai-rules/", import.meta.url);
+    const forbidden = [
+      "`tasks/`",
+      "`prompts/`",
+      "`resources/`",
+      "`integrations/`",
+      "Veryfront MCP",
+      "vf_bootstrap",
+      "http://localhost:3002/mcp",
+      "tasks, resources, prompts",
+    ];
+    const offenders: string[] = [];
+
+    for await (const entry of Deno.readDir(aiRulesRoot)) {
+      if (!entry.isFile || !entry.name.endsWith(".md")) continue;
+
+      const content = await Deno.readTextFile(new URL(entry.name, aiRulesRoot));
+      for (const needle of forbidden) {
+        if (content.includes(needle)) {
+          offenders.push(`${entry.name}: ${needle}`);
+        }
+      }
+    }
+
+    assertEquals(
+      offenders,
+      [],
+      `AI-rule templates must not teach legacy project folders or MCP setup. Offenders: ${
+        offenders.join(", ")
+      }`,
+    );
+  });
+
   it("does not depend on the global JSX namespace in template files", async () => {
     const checkedRoots = [
       new URL("./files/", import.meta.url),
