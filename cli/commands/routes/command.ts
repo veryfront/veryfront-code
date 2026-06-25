@@ -1,9 +1,10 @@
-import { join } from "#std/path.ts";
+import { join, relative } from "#std/path.ts";
 import { runtime } from "veryfront/platform";
-import { APIRouteHandler } from "veryfront/routing";
 import { getConfig } from "veryfront/config";
 import { cliLogger } from "#cli/utils";
-import { createFileSystem, type FileSystem } from "veryfront/platform";
+import { ApiRouteMatcher } from "#veryfront/routing/api/api-route-matcher.ts";
+import { discoverAppRoutes, discoverPagesRoutes } from "#veryfront/routing/api/route-discovery.ts";
+import { RouteDiscovery } from "#veryfront/server/dev-server/route-discovery.ts";
 
 export interface RoutesOptions {
   projectDir: string;
@@ -14,36 +15,50 @@ export async function routesCommand(
   projectDir: string,
   options: { json?: boolean } = {},
 ): Promise<void> {
-  const fs = createFileSystem();
   const adapter = await runtime.get();
-  await getConfig(projectDir, adapter);
+  const config = await getConfig(projectDir, adapter);
 
-  const apiHandler = new APIRouteHandler(projectDir, adapter);
-  await apiHandler.initialize();
-
-  const pages: Array<{ pattern: string; file: string }> = [];
-  const pagesDir = join(projectDir, "pages");
-
+  const pageRouter = new ApiRouteMatcher();
+  let pageRoutes: Array<{ pattern: string; page: string }> = [];
   try {
-    const entries = fs.readDir(pagesDir);
-    for await (const entry of entries) {
-      if (!entry.isFile) continue;
-      if (!entry.name.endsWith(".mdx") && !entry.name.endsWith(".tsx")) continue;
+    await new RouteDiscovery(projectDir, adapter, pageRouter, config).discoverRoutes();
+    pageRoutes = pageRouter.listRoutes();
+  } finally {
+    pageRouter.destroy();
+  }
 
-      const slug = entry.name.replace(/\.(mdx|tsx)$/i, "");
-      const path = slug === "index" ? "/" : `/${slug}`;
-      pages.push({ pattern: path, file: `pages/${entry.name}` });
+  const pages = pageRoutes
+    .map((route) => ({
+      pattern: route.pattern,
+      file: toProjectRelativePath(projectDir, route.page),
+    }))
+    .sort((a, b) => a.pattern.localeCompare(b.pattern));
+
+  const apiRouter = new ApiRouteMatcher();
+  let apiRoutes: Array<{ pattern: string; page: string }> = [];
+  try {
+    const pagesDir = config.directories?.pages ?? "pages";
+    const apiDir = join(projectDir, pagesDir, "api");
+    if (await adapter.fs.exists(apiDir)) {
+      await discoverPagesRoutes(apiRouter, apiDir, "/api", adapter);
     }
-  } catch (error) {
-    // Pages directory might not exist, which is okay for app router projects
-    cliLogger.debug("Could not read pages directory:", error);
+
+    const appDir = join(projectDir, config.directories?.app ?? "app");
+    if (await adapter.fs.exists(appDir)) {
+      await discoverAppRoutes(apiRouter, appDir, "", adapter);
+    }
+
+    apiRoutes = apiRouter.listRoutes();
+  } finally {
+    apiRouter.destroy();
   }
 
-  const apis: string[] = [];
-  const apiDir = join(projectDir, "pages", "api");
-  if (await fs.exists(apiDir)) {
-    await collectApiPatterns(fs, apiDir, "/api", apis);
-  }
+  const apis = apiRoutes
+    .map((route) => ({
+      pattern: route.pattern,
+      file: toProjectRelativePath(projectDir, route.page),
+    }))
+    .sort((a, b) => a.pattern.localeCompare(b.pattern));
 
   if (options.json) {
     console.log(JSON.stringify({ pages, apis }, null, 2));
@@ -57,32 +72,10 @@ export async function routesCommand(
 
   cliLogger.info("\nAPI:");
   for (const a of apis) {
-    cliLogger.info(`  ${a}`);
+    cliLogger.info(`  ${a.pattern} -> ${a.file}`);
   }
 }
 
-async function collectApiPatterns(
-  fs: FileSystem,
-  dir: string,
-  prefix: string,
-  out: string[],
-): Promise<void> {
-  const entries = fs.readDir(dir);
-
-  for await (const entry of entries) {
-    const fullPath = join(dir, entry.name);
-
-    if (entry.isDirectory) {
-      await collectApiPatterns(fs, fullPath, `${prefix}/${entry.name}`, out);
-      continue;
-    }
-
-    if (!entry.isFile || !/\.(ts|js|tsx|jsx)$/i.test(entry.name)) continue;
-
-    const nameWithoutExt = entry.name.replace(/\.(ts|js|tsx|jsx)$/i, "");
-    const routePath = `${prefix}/${nameWithoutExt}`;
-    const pattern = routePath.replace(/\/index$/, "");
-
-    out.push(pattern);
-  }
+function toProjectRelativePath(projectDir: string, path: string): string {
+  return path.startsWith(projectDir) ? relative(projectDir, path) : path;
 }

@@ -19,12 +19,32 @@ async function setupPagesRouter(context: TestContext): Promise<void> {
   );
 }
 
+async function setupAppRouter(context: TestContext): Promise<void> {
+  await remove(join(context.projectDir, "pages"), { recursive: true });
+
+  await mkdir(join(context.projectDir, "app", "api", "ag-ui"), { recursive: true });
+  await mkdir(join(context.projectDir, "app", "blog", "[slug]"), { recursive: true });
+
+  await writeTextFile(
+    join(context.projectDir, "app", "page.tsx"),
+    "export default function Home(){return <h1>Home</h1>}\n",
+  );
+  await writeTextFile(
+    join(context.projectDir, "app", "blog", "[slug]", "page.tsx"),
+    "export default function Blog(){return <h1>Blog</h1>}\n",
+  );
+  await writeTextFile(
+    join(context.projectDir, "app", "api", "ag-ui", "route.ts"),
+    "export const POST=()=>new Response('ok')\n",
+  );
+}
+
 async function captureConsoleLog(run: () => Promise<void>): Promise<string> {
   const output: string[] = [];
   const origLog = console.log;
 
   try {
-    console.log = (msg?: any, ...rest: any[]) => {
+    console.log = (msg?: unknown, ...rest: unknown[]) => {
       output.push(String(msg), ...rest.map(String));
     };
     await run();
@@ -118,12 +138,28 @@ describe("CLI routes command", () => {
       const jsonText = extractJson(text);
       const parsed = JSON.parse(jsonText) as {
         pages: Array<{ pattern: string; file: string }>;
-        apis: string[];
+        apis: Array<{ pattern: string; file: string }>;
       };
 
       if (!Array.isArray(parsed.pages) || !Array.isArray(parsed.apis)) {
         throw new Error("invalid json");
       }
+    });
+  });
+
+  it("prints app router pages and api routes", async () => {
+    await withTestContext("routes-app-router", async (context: TestContext) => {
+      await setupAppRouter(context);
+
+      const text = await captureConsoleLog(async () => {
+        await routesCommand(context.projectDir);
+      });
+
+      assertStringIncludes(text, "Pages:");
+      assertStringIncludes(text, "/ -> app/page.tsx");
+      assertStringIncludes(text, "/blog/[slug] -> app/blog/[slug]/page.tsx");
+      assertStringIncludes(text, "API:");
+      assertStringIncludes(text, "/api/ag-ui -> app/api/ag-ui/route.ts");
     });
   });
 });
