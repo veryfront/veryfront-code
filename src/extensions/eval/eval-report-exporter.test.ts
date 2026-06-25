@@ -45,7 +45,14 @@ function createReport(): EvalReport {
         metadata: { topic: "planning", tenantId: "tenant-secret" },
         trace: {
           events: [{ type: "message", content: "private model output" }],
-          toolCalls: [{ name: "search", status: "ok", metadata: { query: "secret" } }],
+          toolCalls: [{
+            id: "tool_1",
+            name: "search",
+            status: "ok",
+            input: { query: "private docs" },
+            output: { title: "private result" },
+            metadata: { query: "secret" },
+          }],
         },
         usage: { totalTokens: 42, costUsd: 0.01 },
         durationMs: 120,
@@ -165,6 +172,14 @@ describe("EvalReportExporterRegistry", () => {
     assertEquals(record.metadata, { topic: "planning", tenantId: "tenant-secret" });
     assertEquals(record.trace.events.length, 1);
     assertEquals(record.trace.toolCalls.length, 1);
+    assertEquals(record.trace.toolCalls[0], {
+      id: "tool_1",
+      name: "search",
+      status: "ok",
+      input: { query: "private docs" },
+      output: { title: "private result" },
+      metadata: { query: "secret" },
+    });
     assertEquals(record.metrics?.[0]?.explanation, "The private answer matched.");
     assertEquals(record.metrics?.[0]?.evidence, {
       output: "The plan changed.",

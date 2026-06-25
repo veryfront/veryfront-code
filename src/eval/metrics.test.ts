@@ -62,6 +62,89 @@ describe("eval/metrics", () => {
     assertEquals((await tokens.evaluate(createRecord())).pass, true);
   });
 
+  it("evaluates agent tool behavior metrics", async () => {
+    const record = createRecord({
+      trace: {
+        events: [],
+        toolCalls: [
+          {
+            name: "orders_lookup",
+            status: "ok",
+            input: { orderId: "A1049", includeHistory: true },
+            output: { status: "unverified" },
+          },
+          {
+            name: "policy_lookup",
+            status: "ok",
+            input: { topic: "refunds" },
+          },
+        ],
+      },
+    });
+
+    assertEquals(
+      await metrics.agent.calledTool("orders_lookup", {
+        input: { orderId: "A1049" },
+        match: "partial",
+      }).gate().evaluate(record),
+      {
+        name: "agent.calledTool",
+        family: "agent",
+        severity: "gate",
+        score: 1,
+        pass: true,
+        evidence: {
+          tool: "orders_lookup",
+          calls: 1,
+          expectedInput: { orderId: "A1049" },
+          match: "partial",
+        },
+      },
+    );
+    assertEquals(
+      await metrics.agent.notCalledTool("refunds_issue").gate().evaluate(record),
+      {
+        name: "agent.notCalledTool",
+        family: "agent",
+        severity: "gate",
+        score: 1,
+        pass: true,
+        evidence: { tool: "refunds_issue", calls: 0 },
+      },
+    );
+    assertEquals(
+      await metrics.agent.toolCallCount("orders_lookup", { exact: 1 }).gate().evaluate(record),
+      {
+        name: "agent.toolCallCount",
+        family: "agent",
+        severity: "gate",
+        score: 1,
+        pass: true,
+        evidence: { tool: "orders_lookup", calls: 1, expected: { exact: 1 } },
+      },
+    );
+    assertEquals(
+      await metrics.agent.calledTool("orders_lookup", {
+        input: { orderId: "A1050" },
+        match: "partial",
+      }).gate().evaluate(record),
+      {
+        name: "agent.calledTool",
+        family: "agent",
+        severity: "gate",
+        score: 0,
+        pass: false,
+        evidence: {
+          tool: "orders_lookup",
+          calls: 1,
+          expectedInput: { orderId: "A1050" },
+          match: "partial",
+          actualInputs: [{ orderId: "A1049", includeHistory: true }],
+        },
+      },
+    );
+  });
+
   it("supports rubric-style judge metrics through an injected judge", async () => {
     const rubric = metrics.judge.rubric({
       rubric: "Answer must identify the correct city.",

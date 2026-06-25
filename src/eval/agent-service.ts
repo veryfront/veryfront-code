@@ -2,6 +2,7 @@ import {
   agUiSseEventTypes,
   type AgUiSseProgressSnapshot,
   getAgUiSseStringField,
+  mergeToolInputDelta,
   parseAgentServiceConfig,
   parseAgUiSseResponse,
   type ParseAgUiSseResponseOptions,
@@ -227,8 +228,63 @@ function getToolResultError(event: Record<string, unknown>): string | undefined 
   return stringifyError(event.result) ?? stringifyError(event.content) ?? "Tool call failed";
 }
 
+function parseJsonString(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+function readToolInputDelta(event: Record<string, unknown>): string | undefined {
+  return readString(event.delta) ?? readString(event.inputTextDelta) ?? readString(event.argsDelta);
+}
+
+function readToolOutput(event: Record<string, unknown>): unknown {
+  if (Object.hasOwn(event, "result")) return event.result;
+  if (Object.hasOwn(event, "output")) return event.output;
+  if (Object.hasOwn(event, "content")) {
+    return typeof event.content === "string" ? parseJsonString(event.content) : event.content;
+  }
+  return undefined;
+}
+
+function isDeniedToolResult(event: Record<string, unknown>, error: string | undefined): boolean {
+  const status = getAgUiSseStringField(event, "status");
+  return status === "denied" || error?.toLowerCase().includes("denied") === true;
+}
+
+type PendingToolCall = {
+  call: EvalToolCall;
+  inputText?: string;
+};
+
+function getToolCallEntry(
+  toolCalls: Map<string, PendingToolCall>,
+  key: string,
+  id: string | null | undefined,
+  name: string | null | undefined,
+): PendingToolCall {
+  const existing = toolCalls.get(key);
+  if (existing) {
+    if (id && !existing.call.id) existing.call.id = id;
+    if (name && existing.call.name === "tool") existing.call.name = name;
+    return existing;
+  }
+
+  const next: PendingToolCall = {
+    call: {
+      ...(id ? { id } : {}),
+      name: name ?? "tool",
+      status: "ok",
+    },
+  };
+  toolCalls.set(key, next);
+  return next;
+}
+
 function createToolCalls(events: Array<Record<string, unknown>>): EvalToolCall[] {
-  const toolCalls = new Map<string, EvalToolCall>();
+  const toolCalls = new Map<string, PendingToolCall>();
 
   for (const [index, event] of events.entries()) {
     const type = getAgUiSseStringField(event, "type");
@@ -239,13 +295,34 @@ function createToolCalls(events: Array<Record<string, unknown>>): EvalToolCall[]
 
       const id = getAgUiSseStringField(event, "toolCallId");
       const key = id ?? `name:${name}`;
-      const existing = toolCalls.get(key);
-      toolCalls.set(key, {
-        name,
-        status: existing?.status ?? "ok",
-        ...(existing?.error ? { error: existing.error } : {}),
-        ...(existing?.metadata ? { metadata: existing.metadata } : {}),
-      });
+      getToolCallEntry(toolCalls, key, id, name);
+      continue;
+    }
+
+    if (type === agUiSseEventTypes.toolCallArgs) {
+      const id = getAgUiSseStringField(event, "toolCallId");
+      const toolName = getAgUiSseStringField(event, "toolCallName");
+      const key = id ?? (toolName ? `name:${toolName}` : `args:${index}`);
+      const entry = getToolCallEntry(toolCalls, key, id, toolName);
+      const input = Object.hasOwn(event, "input") ? event.input : undefined;
+      if (input !== undefined) {
+        entry.call.input = input;
+        continue;
+      }
+
+      const delta = readToolInputDelta(event);
+      if (delta === undefined) continue;
+
+      entry.inputText = mergeToolInputDelta(entry.inputText ?? "", delta);
+      entry.call.input = parseJsonString(entry.inputText);
+      continue;
+    }
+
+    if (type === agUiSseEventTypes.toolCallEnd) {
+      const id = getAgUiSseStringField(event, "toolCallId");
+      const toolName = getAgUiSseStringField(event, "toolCallName");
+      const key = id ?? (toolName ? `name:${toolName}` : `end:${index}`);
+      getToolCallEntry(toolCalls, key, id, toolName);
       continue;
     }
 
@@ -253,18 +330,23 @@ function createToolCalls(events: Array<Record<string, unknown>>): EvalToolCall[]
       const id = getAgUiSseStringField(event, "toolCallId");
       const toolName = getAgUiSseStringField(event, "toolCallName");
       const key = id ?? (toolName ? `name:${toolName}` : `result:${index}`);
-      const existing = toolCalls.get(key);
+      const entry = getToolCallEntry(toolCalls, key, id, toolName);
       const failed = event.isError === true;
-      toolCalls.set(key, {
-        name: existing?.name ?? toolName ?? "tool",
-        status: failed ? "error" : existing?.status ?? "ok",
-        ...(failed ? { error: getToolResultError(event) } : {}),
-        ...(existing?.metadata ? { metadata: existing.metadata } : {}),
-      });
+      const error = failed ? getToolResultError(event) : undefined;
+      const input = Object.hasOwn(event, "input") ? event.input : undefined;
+      if (input !== undefined) entry.call.input = input;
+      if (!failed) {
+        const output = readToolOutput(event);
+        if (output !== undefined) entry.call.output = output;
+      }
+      entry.call.status = failed
+        ? isDeniedToolResult(event, error) ? "denied" : "error"
+        : entry.call.status ?? "ok";
+      if (error) entry.call.error = error;
     }
   }
 
-  return [...toolCalls.values()];
+  return [...toolCalls.values()].map((entry) => entry.call);
 }
 
 function createRunOutput(run: Awaited<ReturnType<typeof parseAgUiSseResponse>>) {

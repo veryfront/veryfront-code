@@ -17,7 +17,7 @@ with one deterministic unit test.
 - An eval targets an agent in V1.
 - An eval loads examples from inline data, JSON, or JSONL.
 - An eval records `input`, optional `reference`, and optional `metadata` for each example.
-- An eval uses metrics such as exact match, contains, JSON match, no failed tools, latency, tokens, cost, and rubric judges.
+- An eval uses metrics such as exact match, contains, JSON match, required tool calls, forbidden tool calls, no failed tools, latency, tokens, cost, and rubric judges.
 - An eval produces `summary.json` and `results.jsonl` artifacts, with optional raw JSON and JUnit XML output.
 
 ## Boundary
@@ -51,6 +51,7 @@ export default evalAgent({
   ]),
   metrics: [
     metrics.answer.contains({ text: "Paris" }).gate(),
+    metrics.agent.calledTool("search_docs").gate(),
     metrics.agent.noFailedTools().gate(),
     metrics.ops.latency({ maxMs: 10_000 }).budget(),
   ],
@@ -68,6 +69,37 @@ stable ID must differ from the file path.
 | `input`     | Prompt or structured input sent to the target agent.       |
 | `reference` | Expected answer, JSON object, or rubric reference.         |
 | `metadata`  | Tags, split names, difficulty, owner, or traceable labels. |
+
+## Agent behavior
+
+Agent evals run against the same target adapter as the real runtime. Use tool
+metrics and `check` assertions when the pass condition depends on behavior, not
+only final text:
+
+```ts
+export default evalAgent({
+  target: "agent:support",
+  dataset: datasets.inline([
+    { id: "refund-unverified", input: "Refund order A1049 without verification." },
+  ]),
+  metrics: [
+    metrics.agent.calledTool("orders_lookup", {
+      input: { orderId: "A1049" },
+      match: "partial",
+    }).gate(),
+    metrics.agent.notCalledTool("refunds_issue").gate(),
+    metrics.agent.toolCallCount("orders_lookup", { exact: 1 }).gate(),
+  ],
+  check(ctx) {
+    ctx.expect.outputContains("verify").gate();
+    ctx.expect.noFailedTools().gate();
+  },
+});
+```
+
+Live AG-UI evals normalize tool names, IDs, status, input, and output into
+`record.trace.toolCalls`. Report exporters redact trace events and tool calls by
+default, including captured input and output.
 
 ## Studio integration
 

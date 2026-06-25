@@ -294,12 +294,128 @@ describe("eval/agent-service", () => {
 
     const record = report.records[0]!;
     assertEquals(record.trace.toolCalls, [{
+      id: "tool_1",
       name: "search",
       status: "error",
       error: "No results",
     }]);
     assertEquals(record.metrics?.[0]?.pass, false);
     assertEquals(record.metrics?.[0]?.evidence, { failedTools: ["search"] });
+  });
+
+  it("normalizes AG-UI tool arguments and results into eval traces", async () => {
+    const adapter = createAgentServiceEvalAdapter({
+      endpoint: "http://127.0.0.1:4311/api/ag-ui",
+      authToken: "token",
+      fetch: async () =>
+        createSseResponse([
+          { event: "RunStarted", data: { runId: "run_123" } },
+          {
+            event: "ToolCallStart",
+            data: { toolCallId: "tool_1", toolCallName: "orders_lookup" },
+          },
+          {
+            event: "ToolCallArgs",
+            data: { toolCallId: "tool_1", delta: '{"orderId":"A1049"' },
+          },
+          {
+            event: "ToolCallArgs",
+            data: { toolCallId: "tool_1", delta: ',"includeHistory":true}' },
+          },
+          { event: "ToolCallEnd", data: { toolCallId: "tool_1" } },
+          {
+            event: "ToolCallResult",
+            data: {
+              toolCallId: "tool_1",
+              input: { orderId: "A1049", includeHistory: true },
+              result: { status: "unverified" },
+            },
+          },
+          { event: "TextMessageContent", data: { delta: "I need to verify eligibility." } },
+          { event: "RunFinished", data: {} },
+        ]),
+    });
+
+    const definition = evalAgent({
+      id: "eval:service",
+      target: "agent:veryfront",
+      dataset: datasets.inline([{ id: "smoke", input: "Refund order A1049" }]),
+      metrics: [
+        metrics.agent.calledTool("orders_lookup", {
+          input: { orderId: "A1049" },
+          match: "partial",
+        }),
+      ],
+    });
+
+    const report = await runEval(definition, {
+      adapters: { agent: adapter },
+    });
+
+    const record = report.records[0]!;
+    assertEquals(record.trace.toolCalls, [{
+      id: "tool_1",
+      name: "orders_lookup",
+      status: "ok",
+      input: { orderId: "A1049", includeHistory: true },
+      output: { status: "unverified" },
+    }]);
+    assertEquals(record.metrics?.[0]?.pass, true);
+  });
+
+  it("merges AG-UI tool argument placeholders before parsing eval traces", async () => {
+    const adapter = createAgentServiceEvalAdapter({
+      endpoint: "http://127.0.0.1:4311/api/ag-ui",
+      authToken: "token",
+      fetch: async () =>
+        createSseResponse([
+          { event: "RunStarted", data: { runId: "run_123" } },
+          {
+            event: "ToolCallStart",
+            data: { toolCallId: "tool_1", toolCallName: "create_file" },
+          },
+          {
+            event: "ToolCallArgs",
+            data: { toolCallId: "tool_1", delta: "{}" },
+          },
+          {
+            event: "ToolCallArgs",
+            data: {
+              toolCallId: "tool_1",
+              delta: '"path":"/plans/report.md","content":"# Report"}',
+            },
+          },
+          { event: "ToolCallEnd", data: { toolCallId: "tool_1" } },
+          { event: "ToolCallResult", data: { toolCallId: "tool_1", result: { ok: true } } },
+          { event: "RunFinished", data: {} },
+        ]),
+    });
+
+    const definition = evalAgent({
+      id: "eval:service",
+      target: "agent:veryfront",
+      dataset: datasets.inline([{ id: "smoke", input: "Create the report file" }]),
+      metrics: [
+        metrics.agent.calledTool("create_file", {
+          input: { path: "/plans/report.md" },
+          match: "partial",
+        }),
+      ],
+    });
+
+    const report = await runEval(definition, {
+      adapters: { agent: adapter },
+    });
+
+    const record = report.records[0]!;
+    assertEquals(record.trace.toolCalls, [{
+      id: "tool_1",
+      name: "create_file",
+      status: "ok",
+      input: { path: "/plans/report.md", content: "# Report" },
+      output: { ok: true },
+    }]);
+    assertEquals(record.metrics?.[0]?.pass, true);
   });
 
   it("forwards eval project and model context to optional LLM judge requests", async () => {

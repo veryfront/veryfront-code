@@ -81,6 +81,50 @@ describe("eval/runner", () => {
     assertEquals(report.summary.passed, 1);
   });
 
+  it("records agent tool behavior checks", async () => {
+    const definition = evalAgent({
+      id: "eval:tool-checks",
+      target: "agent:support",
+      dataset: datasets.inline([{ id: "refund", input: "Process refund A1049" }]),
+      check(ctx) {
+        ctx.expect.calledTool("orders_lookup", {
+          input: { orderId: "A1049" },
+          match: "partial",
+        }).gate();
+        ctx.expect.notCalledTool("refunds_issue").gate();
+        ctx.expect.toolCallCount("orders_lookup", { exact: 1 }).gate();
+      },
+    });
+
+    const report = await runEval(definition, {
+      adapters: {
+        agent: async () => ({
+          text: "I need to verify eligibility before issuing a refund.",
+          trace: {
+            toolCalls: [
+              {
+                name: "orders_lookup",
+                status: "ok",
+                input: { orderId: "A1049", includeHistory: true },
+              },
+              { name: "policy_lookup", status: "ok", input: { topic: "refunds" } },
+            ],
+          },
+        }),
+      },
+    });
+
+    const record = report.records[0];
+    assertExists(record);
+    assertEquals(record.checks?.map((check) => check.name), [
+      "expect.calledTool",
+      "expect.notCalledTool",
+      "expect.toolCallCount",
+    ]);
+    assertEquals(record.checks?.map((check) => check.pass), [true, true, true]);
+    assertEquals(report.summary.passed, 1);
+  });
+
   it("counts adapter errors as failed records even without metrics", async () => {
     const definition = evalAgent({
       id: "eval:adapter-error",

@@ -5,7 +5,15 @@ import type {
   EvalMetricThreshold,
   EvalRecord,
   EvalSeverity,
+  EvalToolCallCountOptions,
+  EvalToolCallMatchOptions,
 } from "./types.ts";
+import {
+  evaluateCalledTool,
+  evaluateNotCalledTool,
+  evaluateToolCallCount,
+  isEvalToolFailed,
+} from "./tool-behavior.ts";
 
 type MetricEvaluator = (record: EvalRecord) => EvalMetricResult | Promise<EvalMetricResult>;
 
@@ -126,10 +134,6 @@ function scoreResult(
   return { name, family, severity, score, pass };
 }
 
-function isToolFailed(toolCall: { status?: string; error?: string }): boolean {
-  return toolCall.status === "error" || typeof toolCall.error === "string";
-}
-
 /** Metric factories for deterministic answers, agent behavior, operations, and judges. */
 export const metrics = {
   answer: {
@@ -176,7 +180,9 @@ export const metrics = {
   agent: {
     noFailedTools(): EvalMetric {
       return createMetric("agent.noFailedTools", "agent", (record) => {
-        const failedTools = record.trace.toolCalls.filter(isToolFailed).map((tool) => tool.name);
+        const failedTools = record.trace.toolCalls.filter(isEvalToolFailed).map((tool) =>
+          tool.name
+        );
         return {
           name: "agent.noFailedTools",
           family: "agent",
@@ -186,6 +192,48 @@ export const metrics = {
           ...(failedTools.length > 0 ? { evidence: { failedTools } } : {}),
         };
       });
+    },
+
+    calledTool(name: string, options?: EvalToolCallMatchOptions): EvalMetric {
+      return createMetric(
+        "agent.calledTool",
+        "agent",
+        (record) => ({
+          name: "agent.calledTool",
+          family: "agent",
+          severity: "gate",
+          ...evaluateCalledTool(record, name, options),
+        }),
+        { tool: name, ...(options ?? {}) },
+      );
+    },
+
+    notCalledTool(name: string): EvalMetric {
+      return createMetric(
+        "agent.notCalledTool",
+        "agent",
+        (record) => ({
+          name: "agent.notCalledTool",
+          family: "agent",
+          severity: "gate",
+          ...evaluateNotCalledTool(record, name),
+        }),
+        { tool: name },
+      );
+    },
+
+    toolCallCount(name: string, options: EvalToolCallCountOptions): EvalMetric {
+      return createMetric(
+        "agent.toolCallCount",
+        "agent",
+        (record) => ({
+          name: "agent.toolCallCount",
+          family: "agent",
+          severity: "gate",
+          ...evaluateToolCallCount(record, name, options),
+        }),
+        { tool: name, ...options },
+      );
     },
   },
 

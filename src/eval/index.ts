@@ -14,6 +14,7 @@
  *   ]),
  *   metrics: [
  *     metrics.answer.contains({ text: "Paris" }).gate(),
+ *     metrics.agent.calledTool("search_docs").gate(),
  *     metrics.agent.noFailedTools().gate(),
  *   ],
  * });
@@ -93,6 +94,10 @@ export type {
   EvalSource,
   EvalTargetKind,
   EvalToolCall,
+  EvalToolCallCountOptions,
+  EvalToolCallMatchOptions,
+  EvalToolCallStatus,
+  EvalToolInputMatchMode,
   EvalTrace,
   EvalUsage,
   EvalUsageSummary,
