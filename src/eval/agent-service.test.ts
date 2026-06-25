@@ -363,6 +363,61 @@ describe("eval/agent-service", () => {
     assertEquals(record.metrics?.[0]?.pass, true);
   });
 
+  it("merges AG-UI tool argument placeholders before parsing eval traces", async () => {
+    const adapter = createAgentServiceEvalAdapter({
+      endpoint: "http://127.0.0.1:4311/api/ag-ui",
+      authToken: "token",
+      fetch: async () =>
+        createSseResponse([
+          { event: "RunStarted", data: { runId: "run_123" } },
+          {
+            event: "ToolCallStart",
+            data: { toolCallId: "tool_1", toolCallName: "create_file" },
+          },
+          {
+            event: "ToolCallArgs",
+            data: { toolCallId: "tool_1", delta: "{}" },
+          },
+          {
+            event: "ToolCallArgs",
+            data: {
+              toolCallId: "tool_1",
+              delta: '"path":"/plans/report.md","content":"# Report"}',
+            },
+          },
+          { event: "ToolCallEnd", data: { toolCallId: "tool_1" } },
+          { event: "ToolCallResult", data: { toolCallId: "tool_1", result: { ok: true } } },
+          { event: "RunFinished", data: {} },
+        ]),
+    });
+
+    const definition = evalAgent({
+      id: "eval:service",
+      target: "agent:veryfront",
+      dataset: datasets.inline([{ id: "smoke", input: "Create the report file" }]),
+      metrics: [
+        metrics.agent.calledTool("create_file", {
+          input: { path: "/plans/report.md" },
+          match: "partial",
+        }),
+      ],
+    });
+
+    const report = await runEval(definition, {
+      adapters: { agent: adapter },
+    });
+
+    const record = report.records[0]!;
+    assertEquals(record.trace.toolCalls, [{
+      id: "tool_1",
+      name: "create_file",
+      status: "ok",
+      input: { path: "/plans/report.md", content: "# Report" },
+      output: { ok: true },
+    }]);
+    assertEquals(record.metrics?.[0]?.pass, true);
+  });
+
   it("forwards eval project and model context to optional LLM judge requests", async () => {
     const requests: Array<{ body: Record<string, unknown>; headers: Record<string, string> }> = [];
     const { judgeLlm } = createLiveEvalCaseSupport({

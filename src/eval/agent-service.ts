@@ -2,6 +2,7 @@ import {
   agUiSseEventTypes,
   type AgUiSseProgressSnapshot,
   getAgUiSseStringField,
+  mergeToolInputDelta,
   parseAgentServiceConfig,
   parseAgUiSseResponse,
   type ParseAgUiSseResponseOptions,
@@ -312,7 +313,7 @@ function createToolCalls(events: Array<Record<string, unknown>>): EvalToolCall[]
       const delta = readToolInputDelta(event);
       if (delta === undefined) continue;
 
-      entry.inputText = `${entry.inputText ?? ""}${delta}`;
+      entry.inputText = mergeToolInputDelta(entry.inputText ?? "", delta);
       entry.call.input = parseJsonString(entry.inputText);
       continue;
     }
