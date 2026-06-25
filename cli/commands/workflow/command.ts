@@ -3,6 +3,7 @@ import { exitProcess } from "#cli/utils";
 import { withProjectSourceContext } from "#cli/shared/project-source-context";
 import { agentRegistry } from "../../../src/agent/composition/index.ts";
 import { discoverProjectAgentRuntime } from "../../../src/agent/project/agent-runtime.ts";
+import type { DiscoveryResult } from "../../../src/discovery/types.ts";
 import { toolRegistry } from "../../../src/tool/registry.ts";
 import type { WorkflowClientConfig } from "../../../src/workflow/api/workflow-client.ts";
 import { sanitizeRunOutputForLogging } from "../../utils/sanitize-run-output.ts";
@@ -15,6 +16,10 @@ const MAX_DISCOVERY_ERRORS_TO_PRINT = 5;
 
 export interface WorkflowOptions extends WorkflowArgs {
   projectDir?: string;
+}
+
+interface WorkflowCommandDependencies {
+  discoverProjectAgentRuntime?: typeof discoverProjectAgentRuntime;
 }
 
 export interface WorkflowDiscoveryError {
@@ -122,6 +127,13 @@ async function waitForWorkflowExit(
 }
 
 export async function workflowCommand(options: WorkflowOptions): Promise<void> {
+  await runWorkflowCommand(options);
+}
+
+export async function runWorkflowCommand(
+  options: WorkflowOptions,
+  dependencies: WorkflowCommandDependencies = {},
+): Promise<void> {
   if (options.action !== "run") {
     cliLogger.error(`Unknown workflow action: ${options.action}`);
     exitProcess(1);
@@ -147,6 +159,10 @@ export async function workflowCommand(options: WorkflowOptions): Promise<void> {
   }
 
   const projectDir = options.projectDir ?? Deno.cwd();
+  const discoverRuntime: (
+    input: Parameters<typeof discoverProjectAgentRuntime>[0],
+  ) => Promise<DiscoveryResult> = dependencies.discoverProjectAgentRuntime ??
+    discoverProjectAgentRuntime;
 
   await withProjectSourceContext(projectDir, async ({ adapter, proxyContext }) => {
     const sourceLabel = proxyContext?.branchRef
@@ -157,7 +173,7 @@ export async function workflowCommand(options: WorkflowOptions): Promise<void> {
 
     cliLogger.info(`Discovering workflows in ${sourceLabel}`);
 
-    const discovery = await discoverProjectAgentRuntime({
+    const discovery = await discoverRuntime({
       projectDir,
       adapter,
       verbose: options.debug,
