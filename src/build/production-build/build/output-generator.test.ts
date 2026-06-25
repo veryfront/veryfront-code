@@ -24,8 +24,13 @@ describe("build/production-build/build/output-generator", () => {
 
     it("should write all production client scripts", async () => {
       const writes: { path: string; content: string }[] = [];
+      const mkdirs: string[] = [];
       const adapter = {
         fs: {
+          mkdir(path: string) {
+            mkdirs.push(path);
+            return Promise.resolve();
+          },
           writeFile(path: string, content: string) {
             writes.push({ path, content });
             return Promise.resolve();
@@ -40,6 +45,7 @@ describe("build/production-build/build/output-generator", () => {
       assertEquals(writes.some((write) => write.path.endsWith("_veryfront/client.js")), true);
       assertEquals(writes.some((write) => write.path.endsWith("_veryfront/router.js")), true);
       assertEquals(writes.some((write) => write.path.endsWith("_veryfront/prefetch.js")), true);
+      assertEquals(mkdirs.some((path) => path.endsWith("_veryfront")), true);
       assertEquals(
         writes.some((write) => write.path.endsWith("_veryfront/hydration-runtime.js")),
         true,

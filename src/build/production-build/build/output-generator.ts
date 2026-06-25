@@ -10,7 +10,7 @@
  */
 
 import { serverLogger as logger } from "#veryfront/utils";
-import { join } from "#veryfront/compat/path/index.ts";
+import { dirname, join } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { ChunkManifest } from "#veryfront/build/bundler/index.ts";
 import type { AppRouteInfo, BuildStats, RouteInfo } from "#veryfront/server/build-types.ts";
@@ -57,25 +57,42 @@ export async function generateClientScripts(
 
   if (dryRun) return;
 
-  await adapter.fs.writeFile(join(outputDir, "_veryfront/app.js"), generateAppModule());
-  await adapter.fs.writeFile(join(outputDir, "_veryfront/client.js"), await generateClientModule());
-  await adapter.fs.writeFile(
+  await writeOutputFile(adapter, join(outputDir, "_veryfront/app.js"), generateAppModule());
+  await writeOutputFile(
+    adapter,
+    join(outputDir, "_veryfront/client.js"),
+    await generateClientModule(),
+  );
+  await writeOutputFile(
+    adapter,
     join(outputDir, "_veryfront/router.js"),
     await generateRouterScript(adapter),
   );
-  await adapter.fs.writeFile(
+  await writeOutputFile(
+    adapter,
     join(outputDir, "_veryfront/prefetch.js"),
     await generatePrefetchScript(adapter),
   );
   const hydrationRuntime = generateProdHydrationModule();
-  await adapter.fs.writeFile(
+  await writeOutputFile(
+    adapter,
     join(outputDir, "_veryfront/hydration-runtime.js"),
     hydrationRuntime,
   );
-  await adapter.fs.writeFile(
+  await writeOutputFile(
+    adapter,
     join(outputDir, getProdHydrationModulePath().slice(1)),
     hydrationRuntime,
   );
+}
+
+async function writeOutputFile(
+  adapter: RuntimeAdapter,
+  path: string,
+  content: string,
+): Promise<void> {
+  await adapter.fs.mkdir(dirname(path), { recursive: true });
+  await adapter.fs.writeFile(path, content);
 }
 
 /**
