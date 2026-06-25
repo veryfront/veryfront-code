@@ -1,6 +1,10 @@
 import { cliLogger } from "#cli/utils";
 import { exitProcess } from "#cli/utils";
 import { withProjectSourceContext } from "#cli/shared/project-source-context";
+import { agentRegistry } from "../../../src/agent/composition/index.ts";
+import { discoverProjectAgentRuntime } from "../../../src/agent/project/agent-runtime.ts";
+import { toolRegistry } from "../../../src/tool/registry.ts";
+import type { WorkflowClientConfig } from "../../../src/workflow/api/workflow-client.ts";
 import { sanitizeRunOutputForLogging } from "../../utils/sanitize-run-output.ts";
 import { writeRunResultIfConfigured } from "../../utils/write-run-result.ts";
 import { getEnv } from "veryfront/platform";
@@ -9,7 +13,9 @@ import type { WorkflowArgs } from "./handler.ts";
 const WORKFLOW_STATUS_POLL_INTERVAL_MS = 1_000;
 const MAX_DISCOVERY_ERRORS_TO_PRINT = 5;
 
-export interface WorkflowOptions extends WorkflowArgs {}
+export interface WorkflowOptions extends WorkflowArgs {
+  projectDir?: string;
+}
 
 export interface WorkflowDiscoveryError {
   filePath: string;
@@ -30,26 +36,51 @@ export function formatWorkflowDiscoveryErrors(
   return lines;
 }
 
-async function createWorkflowClient(debug: boolean) {
+function formatRuntimeDiscoveryError(
+  error: { file: string; error: Error },
+): WorkflowDiscoveryError {
+  return {
+    filePath: error.file,
+    error: error.error.message,
+  };
+}
+
+function withProjectStepRegistries(config: WorkflowClientConfig): WorkflowClientConfig {
+  return {
+    ...config,
+    executor: {
+      ...config.executor,
+      stepExecutor: {
+        ...config.executor?.stepExecutor,
+        agentRegistry: config.executor?.stepExecutor?.agentRegistry ?? agentRegistry,
+        toolRegistry: config.executor?.stepExecutor?.toolRegistry ?? toolRegistry,
+      },
+    },
+  };
+}
+
+async function createWorkflowClient(config: WorkflowClientConfig) {
   const { createWorkflowClient } = await import(
     "../../../src/workflow/api/workflow-client.ts"
   );
+  const clientConfig = withProjectStepRegistries(config);
 
   const redisUrl = getEnv("REDIS_URL")?.trim();
   if (!redisUrl) {
-    return createWorkflowClient({ debug });
+    return createWorkflowClient(clientConfig);
   }
 
   const { RedisBackend } = await import(
     "../../../src/workflow/backends/redis.ts"
   );
 
+  const debug = clientConfig.debug ?? false;
   const backend = new RedisBackend({ url: redisUrl, debug });
   if (backend.initialize) {
     await backend.initialize();
   }
 
-  return createWorkflowClient({ backend, debug });
+  return createWorkflowClient({ ...clientConfig, backend });
 }
 
 async function waitForWorkflowExit(
@@ -115,44 +146,44 @@ export async function workflowCommand(options: WorkflowOptions): Promise<void> {
     }
   }
 
-  const { discoverWorkflows } = await import(
-    "../../../src/workflow/discovery/index.ts"
-  );
+  const projectDir = options.projectDir ?? Deno.cwd();
 
-  await withProjectSourceContext(Deno.cwd(), async ({ adapter, config, proxyContext }) => {
+  await withProjectSourceContext(projectDir, async ({ adapter, proxyContext }) => {
     const sourceLabel = proxyContext?.branchRef
       ? `branch ${proxyContext.branchRef}`
       : proxyContext
       ? "main"
-      : `${Deno.cwd()}/workflows/...`;
+      : `${projectDir}/workflows/...`;
 
     cliLogger.info(`Discovering workflows in ${sourceLabel}`);
 
-    const discovery = await discoverWorkflows({
-      projectDir: Deno.cwd(),
+    const discovery = await discoverProjectAgentRuntime({
+      projectDir,
       adapter,
-      config,
-      debug: options.debug,
+      verbose: options.debug,
     });
 
+    const workflows = [...discovery.workflows.values()];
+
     if (discovery.errors.length > 0 && options.debug) {
-      for (const err of discovery.errors) {
+      for (const err of discovery.errors.map(formatRuntimeDiscoveryError)) {
         cliLogger.warn(`  Warning: ${err.filePath}: ${err.error}`);
       }
     }
 
-    const workflow = discovery.workflows.find((candidate) => candidate.id === workflowId);
+    const workflow = workflows.find((candidate) => candidate.id === workflowId);
     if (!workflow) {
       cliLogger.error(`Workflow "${workflowId}" not found.`);
       if (discovery.errors.length > 0 && !options.debug) {
         cliLogger.warn("Some workflow files could not be loaded:");
-        for (const line of formatWorkflowDiscoveryErrors(discovery.errors)) {
+        const errors = discovery.errors.map(formatRuntimeDiscoveryError);
+        for (const line of formatWorkflowDiscoveryErrors(errors)) {
           cliLogger.warn(line);
         }
       }
-      if (discovery.workflows.length > 0) {
+      if (workflows.length > 0) {
         cliLogger.info("Available workflows:");
-        for (const candidate of discovery.workflows) {
+        for (const candidate of workflows) {
           cliLogger.info(`  - ${candidate.id}`);
         }
       } else {
@@ -162,7 +193,7 @@ export async function workflowCommand(options: WorkflowOptions): Promise<void> {
       return;
     }
 
-    const client = await createWorkflowClient(options.debug);
+    const client = await createWorkflowClient({ debug: options.debug });
 
     try {
       client.register(workflow.definition);
