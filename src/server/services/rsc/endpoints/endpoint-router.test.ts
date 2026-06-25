@@ -110,14 +110,15 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
       assertEquals(result, null);
     });
 
-    it("returns null for module endpoint when RSC disabled", async () => {
+    it("keeps the module endpoint available when RSC disabled", async () => {
       const result = await handleRSCEndpoint(
         makeParams({
           pathname: "/_veryfront/rsc/module",
           config: rscDisabledConfig,
         }),
       );
-      assertEquals(result, null);
+      assertEquals(result instanceof Response, true);
+      assertEquals(result!.status, 400);
     });
   });
 
@@ -233,6 +234,38 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
       const body = await result!.text();
       assertStringIncludes(body, 'from "react/jsx-runtime"');
       assertStringIncludes(body, '"data-kind": "widget"');
+    });
+
+    it("ignores CSS side-effect imports for app router hydration modules", async () => {
+      const files: Record<string, string> = {
+        "/tmp/test-project/app/layout.tsx": [
+          'import "../globals.css";',
+          "export default function Layout({ children }: { children: React.ReactNode }) {",
+          "  return <html><body>{children}</body></html>;",
+          "}",
+        ].join("\n"),
+        "/tmp/test-project/globals.css": '@import "tailwindcss";',
+      };
+      const adapter = createMockAdapter({
+        exists: (path: string) => Promise.resolve(path in files),
+        readFile: (path: string) => Promise.resolve(files[path] ?? ""),
+      });
+
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/module",
+          config: rscDisabledConfig,
+          req: new Request("http://localhost/_veryfront/rsc/module?rel=app%2Flayout.tsx"),
+          adapter,
+          projectDir: "/tmp/test-project",
+        }),
+      );
+
+      assertEquals(result instanceof Response, true);
+      assertEquals(result!.status, 200);
+      const body = await result!.text();
+      assertStringIncludes(body, "function Layout");
+      assertEquals(body.includes("tailwindcss"), false);
     });
 
     it("returns 404 when file not found in any candidate root", async () => {

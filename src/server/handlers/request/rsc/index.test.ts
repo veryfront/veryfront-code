@@ -5,7 +5,9 @@ import { RSCHandler } from "./index.ts";
 import type { HandlerContext } from "../../types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
-function createMockAdapter(): RuntimeAdapter {
+function createMockAdapter(
+  overrides: Partial<RuntimeAdapter["fs"]> = {},
+): RuntimeAdapter {
   return {
     id: "memory",
     name: "mock",
@@ -25,6 +27,7 @@ function createMockAdapter(): RuntimeAdapter {
       mkdir: () => Promise.resolve(),
       remove: () => Promise.resolve(),
       stat: () => Promise.resolve({ isFile: false, isDirectory: false, size: 0, mtime: null }),
+      ...overrides,
     },
     env: {
       get: () => undefined,
@@ -70,5 +73,20 @@ describe("server/handlers/request/rsc", () => {
       true,
     );
     assertEquals(html.includes(`<script type="module" nonce="${nonce}">`), true);
+  });
+
+  it("passes app router client module requests through without the experimental RSC flag", async () => {
+    const handler = new RSCHandler();
+
+    const result = await handler.handle(
+      new Request("http://localhost/_veryfront/rsc/module"),
+      makeCtx({
+        config: {} as HandlerContext["config"],
+      }),
+    );
+
+    const response = result.response!;
+    assertEquals(response.status, 400);
+    assertEquals(await response.text(), "Missing rel query parameter");
   });
 });

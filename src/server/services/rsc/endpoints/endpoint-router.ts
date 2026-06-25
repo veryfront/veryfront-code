@@ -53,14 +53,26 @@ export async function handleRSCEndpoint(
     return new Response("Flight endpoint removed. Use custom RSC endpoints.", { status: 410 });
   }
 
-  if (!isRSCEnabled(config)) {
-    return null;
-  }
-
   const url = new URL(req.url);
-  const handler = getRSCHandler(projectDir, projectId);
 
   try {
+    // App-router client-page hydration imports browser-safe page modules from
+    // this endpoint even when the broader RSC transport is not enabled.
+    if (sub === "module") {
+      return await handleModuleEndpoint({
+        searchParams: url.searchParams,
+        projectDir,
+        adapter,
+        config,
+      });
+    }
+
+    if (!isRSCEnabled(config)) {
+      return null;
+    }
+
+    const handler = getRSCHandler(projectDir, projectId);
+
     if (sub.startsWith("render/")) {
       return handler.handleRender(sub.replace("render/", ""), url.searchParams, req);
     }
@@ -108,15 +120,6 @@ export async function handleRSCEndpoint(
     if (sub === "payload") {
       metrics.recordRSC("page");
       return handlePayloadEndpoint({ handler, searchParams: url.searchParams });
-    }
-
-    if (sub === "module") {
-      return await handleModuleEndpoint({
-        searchParams: url.searchParams,
-        projectDir,
-        adapter,
-        config,
-      });
     }
 
     if (sub === "page") {
