@@ -36,6 +36,13 @@ describe("eval/studio", () => {
         }).gate(),
         metrics.agent.notCalledTool("refunds_issue").gate(),
         metrics.agent.toolCallCount("orders_lookup", { exact: 1 }).gate(),
+        metrics.knowledge.recallAtK({
+          k: 3,
+          expected: ["knowledge/login-troubleshooting.md"],
+        }).gate(),
+        metrics.answer.groundedness({
+          judge: async () => ({ score: 1, pass: true }),
+        }).gate(),
         metrics.judge.rubric({ rubric: "Answer must cite the correct city." }).soft({
           min: 0.8,
         }),
@@ -81,6 +88,8 @@ describe("eval/studio", () => {
         { name: "agent.calledTool", editable: true, dynamic: false },
         { name: "agent.notCalledTool", editable: true, dynamic: false },
         { name: "agent.toolCallCount", editable: true, dynamic: false },
+        { name: "knowledge.recallAtK", editable: true, dynamic: false },
+        { name: "answer.groundedness", editable: true, dynamic: true },
         { name: "judge.rubric", editable: true, dynamic: true },
       ],
     );
@@ -113,6 +122,15 @@ describe("eval/studio", () => {
             failed: 1,
             skipped: 0,
             passRate: 0.5,
+          },
+          {
+            name: "knowledge.recallAtK",
+            family: "knowledge",
+            severity: "gate",
+            passed: 2,
+            failed: 0,
+            skipped: 0,
+            passRate: 1,
           },
         ],
         duration: {

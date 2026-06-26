@@ -59,7 +59,7 @@ export const getEvalSourceDatasetSchema = defineSchema((v) =>
 export const getEvalSourceMetricSchema = defineSchema((v) =>
   v.object({
     name: v.string(),
-    family: v.enum(["answer", "agent", "ops", "judge", "check"] as const),
+    family: v.enum(["answer", "agent", "ops", "judge", "knowledge", "check"] as const),
     severity: v.enum(["gate", "soft", "budget"] as const),
     threshold: v.object({
       min: v.number().optional(),
@@ -75,7 +75,7 @@ export const getEvalSourceMetricSchema = defineSchema((v) =>
 export const getEvalRunMetricSummarySchema = defineSchema((v) =>
   v.object({
     name: v.string(),
-    family: v.enum(["answer", "agent", "ops", "judge", "check"] as const),
+    family: v.enum(["answer", "agent", "ops", "judge", "knowledge", "check"] as const),
     severity: v.enum(["gate", "soft", "budget"] as const),
     passed: v.number().int().nonnegative(),
     failed: v.number().int().nonnegative(),
@@ -113,7 +113,7 @@ export const getEvalRunGateFailureSummarySchema = defineSchema((v) =>
     exampleId: v.string(),
     repetition: v.number().int().positive(),
     name: v.string(),
-    family: v.enum(["answer", "agent", "ops", "judge", "check"] as const),
+    family: v.enum(["answer", "agent", "ops", "judge", "knowledge", "check"] as const),
     severity: v.enum(["gate", "budget"] as const),
     explanation: v.string().optional(),
     evidence: v.record(v.string(), v.unknown()).optional(),
@@ -274,7 +274,8 @@ function copyExample(example: EvalExample): EvalExample {
 function createSourceMetric(
   metric: EvalDefinition["metrics"][number],
 ): EvalSourceDocument["metrics"][number] {
-  const dynamic = metric.family === "judge" || metric.family === "check";
+  const dynamic = metric.family === "judge" || metric.family === "check" ||
+    metric.name === "answer.groundedness";
   return {
     name: metric.name,
     family: metric.family,
