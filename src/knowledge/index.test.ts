@@ -116,6 +116,7 @@ describe("projectKnowledge", () => {
           "type: runbook",
           "title: Billing escalation",
           "description: Escalate billing disputes to finance after account review.",
+          "added: 2026-06-26",
           "tags:",
           "  - billing",
           "  - escalation",
@@ -155,6 +156,10 @@ describe("projectKnowledge", () => {
       assertEquals(
         result.data[0]?.frontmatter.find((field) => field.key === "title")?.value,
         "Billing escalation",
+      );
+      assertEquals(
+        result.data[0]?.frontmatter.find((field) => field.key === "added")?.value,
+        "2026-06-26",
       );
       assertEquals(result.shard, { shard_index: 0, shard_count: 1, total_items: 2 });
     });
