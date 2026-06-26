@@ -171,4 +171,228 @@ describe("eval/metrics", () => {
 
     assertEquals((await belowThreshold.evaluate(createRecord())).pass, false);
   });
+
+  it("evaluates knowledge retrieval metrics from search_knowledge traces", async () => {
+    const record = createRecord({
+      trace: {
+        events: [],
+        toolCalls: [
+          {
+            name: "search_knowledge",
+            status: "ok",
+            output: {
+              data: [
+                {
+                  path: "knowledge/login-troubleshooting.md",
+                  frontmatter: [{ key: "title", value: "Login troubleshooting" }],
+                },
+                {
+                  path: "knowledge/deployment-incident-triage.md",
+                  frontmatter: [{ key: "title", value: "Deployment incident triage" }],
+                },
+                {
+                  path: "knowledge/billing-escalation.md",
+                  frontmatter: [{ key: "title", value: "Billing escalation" }],
+                },
+              ],
+            },
+          },
+        ],
+      },
+    });
+
+    assertEquals(
+      await metrics.knowledge.recallAtK({
+        k: 2,
+        expected: [
+          "knowledge/login-troubleshooting.md",
+          "knowledge/billing-escalation.md",
+        ],
+      }).gate({ min: 0.5 }).evaluate(record),
+      {
+        name: "knowledge.recallAtK",
+        family: "knowledge",
+        severity: "gate",
+        score: 0.5,
+        pass: true,
+        evidence: {
+          tool: "search_knowledge",
+          k: 2,
+          retrieved: [
+            "knowledge/login-troubleshooting.md",
+            "knowledge/deployment-incident-triage.md",
+          ],
+          expected: [
+            "knowledge/login-troubleshooting.md",
+            "knowledge/billing-escalation.md",
+          ],
+          found: ["knowledge/login-troubleshooting.md"],
+          foundCount: 1,
+          expectedCount: 2,
+        },
+      },
+    );
+
+    assertEquals(
+      await metrics.knowledge.precisionAtK({
+        k: 2,
+        expected: [
+          "knowledge/login-troubleshooting.md",
+          "knowledge/billing-escalation.md",
+        ],
+      }).gate({ min: 0.5 }).evaluate(record),
+      {
+        name: "knowledge.precisionAtK",
+        family: "knowledge",
+        severity: "gate",
+        score: 0.5,
+        pass: true,
+        evidence: {
+          tool: "search_knowledge",
+          k: 2,
+          retrieved: [
+            "knowledge/login-troubleshooting.md",
+            "knowledge/deployment-incident-triage.md",
+          ],
+          expected: [
+            "knowledge/login-troubleshooting.md",
+            "knowledge/billing-escalation.md",
+          ],
+          relevant: ["knowledge/login-troubleshooting.md"],
+          relevantCount: 1,
+          retrievedCount: 2,
+        },
+      },
+    );
+
+    assertEquals(
+      await metrics.knowledge.mrr({
+        expected: ["knowledge/billing-escalation.md"],
+      }).gate({ min: 0.3 }).evaluate(record),
+      {
+        name: "knowledge.mrr",
+        family: "knowledge",
+        severity: "gate",
+        score: 1 / 3,
+        pass: true,
+        evidence: {
+          tool: "search_knowledge",
+          k: 3,
+          retrieved: [
+            "knowledge/login-troubleshooting.md",
+            "knowledge/deployment-incident-triage.md",
+            "knowledge/billing-escalation.md",
+          ],
+          expected: ["knowledge/billing-escalation.md"],
+          rank: 3,
+          match: "knowledge/billing-escalation.md",
+        },
+      },
+    );
+  });
+
+  it("can read expected knowledge sources from record metadata", async () => {
+    const record = createRecord({
+      metadata: {
+        expectedKnowledge: [
+          "knowledge/login-troubleshooting.md",
+          "knowledge/deployment-incident-triage.md",
+        ],
+      },
+      trace: {
+        events: [],
+        toolCalls: [
+          {
+            name: "search_knowledge",
+            status: "ok",
+            output: {
+              data: [
+                { path: "knowledge/login-troubleshooting.md" },
+                { path: "knowledge/deployment-incident-triage.md" },
+              ],
+            },
+          },
+        ],
+      },
+    });
+
+    assertEquals(
+      await metrics.knowledge.recallAtK({ k: 2 }).gate().evaluate(record),
+      {
+        name: "knowledge.recallAtK",
+        family: "knowledge",
+        severity: "gate",
+        score: 1,
+        pass: true,
+        evidence: {
+          tool: "search_knowledge",
+          k: 2,
+          retrieved: [
+            "knowledge/login-troubleshooting.md",
+            "knowledge/deployment-incident-triage.md",
+          ],
+          expected: [
+            "knowledge/login-troubleshooting.md",
+            "knowledge/deployment-incident-triage.md",
+          ],
+          expectedFrom: "metadata.expectedKnowledge",
+          found: [
+            "knowledge/login-troubleshooting.md",
+            "knowledge/deployment-incident-triage.md",
+          ],
+          foundCount: 2,
+          expectedCount: 2,
+        },
+      },
+    );
+  });
+
+  it("evaluates answer groundedness with retrieved knowledge evidence", async () => {
+    const groundedness = metrics.answer.groundedness({
+      judge: async ({ evidence, output }) => ({
+        score: evidence.some((entry) => entry.includes("identity provider metadata")) &&
+            String(output.text).includes("SSO metadata")
+          ? 0.9
+          : 0.2,
+        explanation: "Answer is supported by the retrieved SSO runbook.",
+      }),
+    }).gate({ min: 0.8 });
+
+    assertEquals(
+      await groundedness.evaluate(createRecord({
+        output: { text: "Ask whether SSO metadata or group mapping changed recently." },
+        trace: {
+          events: [],
+          toolCalls: [
+            {
+              name: "search_knowledge",
+              status: "ok",
+              output: {
+                data: [
+                  {
+                    path: "knowledge/login-troubleshooting.md",
+                    content:
+                      "If SSO changed recently, ask whether the identity provider metadata, callback URL, or user group mapping changed.",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      })),
+      {
+        name: "answer.groundedness",
+        family: "answer",
+        severity: "gate",
+        score: 0.9,
+        pass: true,
+        explanation: "Answer is supported by the retrieved SSO runbook.",
+        evidence: {
+          tool: "search_knowledge",
+          evidenceCount: 1,
+          sources: ["knowledge/login-troubleshooting.md"],
+        },
+      },
+    );
+  });
 });

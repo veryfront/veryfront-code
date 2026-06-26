@@ -17,7 +17,7 @@ export type EvalTargetKind = "agent";
 export type EvalSeverity = "gate" | "soft" | "budget";
 
 /** Metric family used for grouping report summaries. */
-export type EvalMetricFamily = "answer" | "agent" | "ops" | "judge" | "check";
+export type EvalMetricFamily = "answer" | "agent" | "ops" | "judge" | "knowledge" | "check";
 
 /** Numeric threshold attached to score-based metrics. */
 export type EvalMetricThreshold = {
@@ -82,6 +82,51 @@ export interface EvalToolCallCountOptions {
   exact?: number;
   min?: number;
   max?: number;
+}
+
+/** Expected knowledge source or passage for retrieval-quality metrics. */
+export type EvalKnowledgeExpectedSource = string | {
+  path?: string;
+  source?: string;
+  id?: string;
+  title?: string;
+  documentCode?: string;
+  document_code?: string;
+  contentMatch?: string;
+  verificationQuote?: string;
+  content?: string;
+  text?: string;
+};
+
+/** Options shared by knowledge retrieval metrics. */
+export interface EvalKnowledgeRetrievalMetricOptions {
+  expected?: EvalKnowledgeExpectedSource[];
+  expectedFrom?: string;
+  k: number;
+  tool?: string;
+}
+
+/** Options for mean reciprocal rank over retrieved knowledge. */
+export interface EvalKnowledgeMrrMetricOptions {
+  expected?: EvalKnowledgeExpectedSource[];
+  expectedFrom?: string;
+  k?: number;
+  tool?: string;
+}
+
+/** Options for judge-backed answer grounding checks. */
+export interface EvalAnswerGroundednessMetricOptions {
+  tool?: string;
+  rubric?: string;
+  judge?: (input: {
+    rubric: string;
+    input: unknown;
+    output: Record<string, unknown>;
+    reference?: unknown;
+    metadata: Record<string, unknown>;
+    evidence: string[];
+    sources: string[];
+  }) => EvalMaybePromise<{ score: number; pass?: boolean; explanation?: string }>;
 }
 
 /** Tool call metadata captured during one eval record. */

@@ -156,6 +156,65 @@ expected fields are present and allows extra runtime fields. Use
 for dangerous side-effect tools, and `toolCallCount` for exact, minimum, or
 maximum call budgets.
 
+Use knowledge metrics when an agent should retrieve the right project knowledge
+before answering. They read retrieved items from the `search_knowledge` tool
+trace by default and compare them with expected sources or passages. For larger
+datasets, put the expected knowledge on each example under
+`metadata.expectedKnowledge`:
+
+```json
+[
+  {
+    "id": "login-sso",
+    "input": "Users cannot sign in with SSO after the release.",
+    "metadata": {
+      "expectedKnowledge": [
+        "knowledge/login-troubleshooting.md",
+        "knowledge/deployment-incident-triage.md"
+      ]
+    }
+  }
+]
+```
+
+```ts
+metrics.knowledge.recallAtK({
+  k: 5,
+}).gate({ min: 0.8 });
+```
+
+For small suites, expected sources can also be configured directly on the
+metric:
+
+```ts
+metrics.knowledge.recallAtK({
+  k: 5,
+  expected: [
+    "knowledge/login-troubleshooting.md",
+    {
+      path: "knowledge/deployment-incident-triage.md",
+      contentMatch: "Check deployment status, build logs, runtime logs",
+    },
+  ],
+}).gate({ min: 0.8 });
+
+metrics.knowledge.precisionAtK({
+  k: 5,
+  expected: ["knowledge/login-troubleshooting.md"],
+}).soft({ min: 0.5 });
+
+metrics.knowledge.mrr({
+  expected: ["knowledge/login-troubleshooting.md"],
+}).gate({ min: 0.5 });
+```
+
+Pass `expectedFrom: "metadata.yourField"` when examples store expected sources
+under a different path. Pass `tool: "your_tool_name"` when the project exposes
+knowledge through a custom retrieval tool. `recallAtK` measures how many
+expected sources appeared in the top `k`, `precisionAtK` measures how many
+retrieved top-`k` items were expected, and `mrr` measures the rank of the first
+expected hit.
+
 Use rubric judges for semantic quality. Inject the judge function from your
 project so the eval definition stays portable:
 
@@ -168,6 +227,22 @@ metrics.judge.rubric({
   },
 }).gate({ min: 0.8 });
 ```
+
+Use `answer.groundedness` when the judge should compare the final answer against
+retrieved knowledge evidence:
+
+```ts
+metrics.answer.groundedness({
+  judge: async ({ output, evidence, sources }) => {
+    const score = await judgeGrounding({ output, evidence, sources });
+    return { score, pass: score >= 0.8 };
+  },
+}).gate({ min: 0.8 });
+```
+
+The helper extracts evidence from `search_knowledge` by default and passes it to
+your judge. This keeps model choice and credentials in project code while the
+eval report uses the standard Veryfront metric shape.
 
 ## Checks
 
