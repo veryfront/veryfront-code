@@ -216,8 +216,9 @@ describe("init command integration", () => {
           assertEquals(await exists(join(dir, "AGENTS.md")), true);
 
           const content = await readTextFile(join(dir, "AGENTS.md"));
-          assertEquals(content.includes("vf_bootstrap"), true);
+          assertEquals(content.includes("veryfront dev"), true);
           assertEquals(content.includes("veryfront schema --json"), true);
+          assertEquals(content.includes("veryfront routes"), true);
           assertEquals(content.includes("src/pages"), false);
         } finally {
           await remove(dir, { recursive: true }).catch(() => {});

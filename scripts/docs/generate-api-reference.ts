@@ -815,6 +815,7 @@ const API_REFERENCE_INDEX_DESCRIPTIONS: Record<string, string> = {
   "veryfront/fs": "Filesystem and path utilities.",
   "veryfront/head": "Document metadata components.",
   "veryfront/integrations": "Connector metadata and remote tools.",
+  "veryfront/knowledge": "Project knowledge retrieval helpers.",
   "veryfront/runs": "Canonical durable task and workflow runs.",
   "veryfront/markdown": "Markdown rendering.",
   "veryfront/mcp": "MCP server helpers.",

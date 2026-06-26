@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.933",
+  "version": "0.1.934",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "minimumDependencyAge": {
@@ -109,6 +109,7 @@
     "./integrations": "./src/integrations/index.ts",
     "./sandbox": "./src/sandbox/index.ts",
     "./embedding": "./src/embedding/index.ts",
+    "./knowledge": "./src/knowledge/index.ts",
     "./extensions": "./src/extensions/index.ts",
     "./extensions/llm": "./src/extensions/llm/index.ts",
     "./extensions/auth": "./src/extensions/auth/index.ts",
@@ -150,6 +151,7 @@
     "veryfront/components/chat": "./src/react/components/chat/index.ts",
     "veryfront/sandbox": "./src/sandbox/index.ts",
     "veryfront/embedding": "./src/embedding/index.ts",
+    "veryfront/knowledge": "./src/knowledge/index.ts",
     "veryfront/runs": "./src/runs/index.ts",
     "veryfront/eval": "./src/eval/index.ts",
     "veryfront/metrics": "./src/metrics/index.ts",
@@ -235,6 +237,7 @@
     "#veryfront/discovery": "./src/discovery/index.ts",
     "#veryfront/data": "./src/data/index.ts",
     "#veryfront/errors": "./src/errors/index.ts",
+    "#veryfront/knowledge": "./src/knowledge/index.ts",
     "#veryfront/eval": "./src/eval/index.ts",
     "#veryfront/eval/agent-service": "./src/eval/agent-service.ts",
     "#veryfront/metrics": "./src/metrics/index.ts",

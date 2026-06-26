@@ -61,6 +61,7 @@
 | **`mcp/`**       | `veryfront/mcp`        | Model Context Protocol server (SSE, sessions)         |
 | **`provider/`**  | `veryfront/provider`   | AI model providers (OpenAI, Anthropic, Google)        |
 | **`embedding/`** | `veryfront/embedding`  | Vector embeddings for semantic search                 |
+| **`knowledge/`** | `veryfront/knowledge`  | Project knowledge retrieval helpers                   |
 | **`discovery/`** | `#veryfront/discovery` | Auto-discovery of tools, agents, workflows            |
 
 ### Services & Infrastructure
@@ -580,6 +581,14 @@ See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README
 
 - Vector embedding generation
 - Semantic search support
+
+#### `knowledge/` - Project Knowledge
+
+**Exports**: `veryfront/knowledge`
+
+- Standard `knowledge/` folder retrieval
+- Prompt-ready context formatting
+- Explicit indexing over local JSON or Veryfront Cloud RAG backends
 
 #### `discovery/` - Auto-Discovery
 
