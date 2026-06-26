@@ -4,7 +4,7 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { exists, mkdir, withTempDir, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 import { join } from "#veryfront/compat/path";
 import { clearEmbeddingProviders, registerEmbeddingProvider } from "#veryfront/embedding/index.ts";
-import { formatKnowledgeContext, projectKnowledge } from "./index.ts";
+import { createSearchKnowledgeTool, formatKnowledgeContext, projectKnowledge } from "./index.ts";
 
 function registerTestEmbeddingProvider(): void {
   registerEmbeddingProvider("test", () =>
@@ -103,6 +103,131 @@ describe("projectKnowledge", () => {
       assertEquals(result.matches, []);
       assertEquals(result.context, "");
       assertEquals(await exists(join(projectDir, "data", "knowledge-index.json")), false);
+    });
+  });
+
+  it("looks up local OKF knowledge frontmatter with the hosted response shape", async () => {
+    await withTempDir(async (projectDir) => {
+      await mkdir(join(projectDir, "knowledge"), { recursive: true });
+      await writeTextFile(
+        join(projectDir, "knowledge", "billing-escalation.md"),
+        [
+          "---",
+          "type: runbook",
+          "title: Billing escalation",
+          "description: Escalate billing disputes to finance after account review.",
+          "tags:",
+          "  - billing",
+          "  - escalation",
+          "---",
+          "",
+          "# Billing escalation",
+          "",
+          "Body text should not be required for manifest lookup.",
+        ].join("\n"),
+      );
+      await writeTextFile(
+        join(projectDir, "knowledge", "login-troubleshooting.md"),
+        [
+          "---",
+          "type: runbook",
+          "title: Login troubleshooting",
+          "description: Diagnose SSO failures after releases.",
+          "tags:",
+          "  - auth",
+          "---",
+          "",
+          "# Login troubleshooting",
+        ].join("\n"),
+      );
+
+      const result = await projectKnowledge({ projectDir }).lookup({
+        query: "billing escalation",
+        limit: 3,
+      });
+
+      assertEquals(result.query, "billing escalation");
+      assertEquals(result.mode, "search");
+      assertEquals(result.returned, 1);
+      assertEquals(result.total_matches, 1);
+      assertEquals(result.data[0]?.path, "knowledge/billing-escalation.md");
+      assertEquals(result.data[0]?.matched_fields.includes("title"), true);
+      assertEquals(
+        result.data[0]?.frontmatter.find((field) => field.key === "title")?.value,
+        "Billing escalation",
+      );
+      assertEquals(result.shard, { shard_index: 0, shard_count: 1, total_items: 2 });
+    });
+  });
+
+  it("falls back to browse order and paginates local knowledge lookups", async () => {
+    await withTempDir(async (projectDir) => {
+      await mkdir(join(projectDir, "knowledge"), { recursive: true });
+      await writeTextFile(
+        join(projectDir, "knowledge", "billing.md"),
+        [
+          "---",
+          "type: runbook",
+          "title: Billing",
+          "---",
+          "",
+          "Billing content.",
+        ].join("\n"),
+      );
+      await writeTextFile(
+        join(projectDir, "knowledge", "login.md"),
+        [
+          "---",
+          "type: runbook",
+          "title: Login",
+          "---",
+          "",
+          "Login content.",
+        ].join("\n"),
+      );
+
+      const knowledge = projectKnowledge({ projectDir });
+      const firstPage = await knowledge.lookup({ query: "zxqv yjkp", limit: 1 });
+
+      assertEquals(firstPage.mode, "browse");
+      assertEquals(firstPage.returned, 1);
+      assertEquals(firstPage.total_matches, 2);
+      assertEquals(typeof firstPage.page_info.next, "string");
+
+      const secondPage = await knowledge.lookup({
+        query: "zxqv yjkp",
+        cursor: firstPage.page_info.next ?? undefined,
+      });
+
+      assertEquals(secondPage.mode, "browse");
+      assertEquals(secondPage.page_info.self, firstPage.page_info.next);
+      assertEquals(secondPage.returned, 1);
+      assertEquals(secondPage.page_info.next, null);
+      assertEquals(secondPage.data.map((item) => item.path), ["knowledge/login.md"]);
+    });
+  });
+
+  it("creates a local search_knowledge tool for parity with hosted MCP", async () => {
+    await withTempDir(async (projectDir) => {
+      await mkdir(join(projectDir, "knowledge"), { recursive: true });
+      await writeTextFile(
+        join(projectDir, "knowledge", "billing.md"),
+        [
+          "---",
+          "type: runbook",
+          "title: Billing escalation",
+          "---",
+          "",
+          "Billing content.",
+        ].join("\n"),
+      );
+
+      const searchKnowledge = createSearchKnowledgeTool({ projectDir });
+      const result = await searchKnowledge.execute({ query: "billing" });
+
+      assertEquals(searchKnowledge.id, "search_knowledge");
+      assertEquals(searchKnowledge.inputSchemaJson?.properties?.query?.type, "string");
+      assertEquals(result.data.map((item) => item.path), ["knowledge/billing.md"]);
     });
   });
 
