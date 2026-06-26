@@ -814,104 +814,111 @@ describe("server/handlers/request/project-run-execute.handler", () => {
   });
 
   it("executes discovered project tool steps from control-plane workflow runs", async () => {
+    await stopEsbuild();
     agentRegistry.clearAll();
     toolRegistry.clearAll();
 
-    const adapter = createMockAdapter();
-    const projectDir = "/runtime-tool-workflow-project";
-    await adapter.fs.writeFile(
-      `${projectDir}/tools/echo-tool.ts`,
-      [
-        'import { tool } from "veryfront/tool";',
-        "",
-        "export default tool({",
-        '  id: "echo_tool",',
-        '  description: "Echo the provided message",',
-        "  inputSchema: {",
-        '    type: "object",',
-        '    properties: { message: { type: "string" } },',
-        '    required: ["message"],',
-        "    additionalProperties: false,",
-        "  },",
-        '  execute: async ({ message }) => ({ message, source: "project-tool" }),',
-        "});",
-        "",
-      ].join("\n"),
-    );
-    await adapter.fs.writeFile(
-      `${projectDir}/workflows/remote-tool-workflow.ts`,
-      [
-        'import { step, workflow } from "veryfront/workflow";',
-        "",
-        "export default workflow({",
-        '  id: "remote-tool-workflow",',
-        '  description: "Run a project tool from the control-plane workflow path.",',
-        "  steps: [",
-        '    step("lookup", {',
-        '      tool: "echo_tool",',
-        '      input: { message: "hello from control plane" },',
-        "    }),",
-        "  ],",
-        "});",
-        "",
-      ].join("\n"),
-    );
+    try {
+      const adapter = createMockAdapter();
+      const projectDir = "/runtime-tool-workflow-project";
+      await adapter.fs.writeFile(
+        `${projectDir}/tools/echo-tool.ts`,
+        [
+          'import { tool } from "veryfront/tool";',
+          "",
+          "export default tool({",
+          '  id: "echo_tool",',
+          '  description: "Echo the provided message",',
+          "  inputSchema: {",
+          '    type: "object",',
+          '    properties: { message: { type: "string" } },',
+          '    required: ["message"],',
+          "    additionalProperties: false,",
+          "  },",
+          '  execute: async ({ message }) => ({ message, source: "project-tool" }),',
+          "});",
+          "",
+        ].join("\n"),
+      );
+      await adapter.fs.writeFile(
+        `${projectDir}/workflows/remote-tool-workflow.ts`,
+        [
+          'import { step, workflow } from "veryfront/workflow";',
+          "",
+          "export default workflow({",
+          '  id: "remote-tool-workflow",',
+          '  description: "Run a project tool from the control-plane workflow path.",',
+          "  steps: [",
+          '    step("lookup", {',
+          '      tool: "echo_tool",',
+          '      input: { message: "hello from control plane" },',
+          "    }),",
+          "  ],",
+          "});",
+          "",
+        ].join("\n"),
+      );
 
-    const handler = new ProjectRunExecuteHandler();
-    const body = {
-      runId: "run_workflow_project_tool_1",
-      kind: "workflow",
-      target: "workflow:remote-tool-workflow",
-      projectId: "proj-1",
-      input: { ticket: "VF-1" },
-    };
-    const { request, publicKeyPem } = await signedRequest(
-      "/api/control-plane/runs/run_workflow_project_tool_1/execute",
-      body,
-      { "x-token": "runtime-token" },
-    );
-    adapter.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", publicKeyPem);
-    const ctx = {
-      ...createCtx(publicKeyPem),
-      adapter,
-      projectDir,
-      config: {},
-      proxyToken: "runtime-token",
-      requestContext: {
-        token: "runtime-token",
-        slug: "demo-project",
-        branch: "main",
-        mode: "preview",
-      },
-      resolvedEnvironment: "preview",
-    };
-
-    const result = await runWithRequestContext(
-      {
-        projectSlug: "demo-project",
+      const handler = new ProjectRunExecuteHandler();
+      const body = {
+        runId: "run_workflow_project_tool_1",
+        kind: "workflow",
+        target: "workflow:remote-tool-workflow",
         projectId: "proj-1",
-        token: "runtime-token",
-        productionMode: false,
-        branch: "main",
-      },
-      () => handler.handle(request, ctx),
-    );
+        input: { ticket: "VF-1" },
+      };
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_workflow_project_tool_1/execute",
+        body,
+        { "x-token": "runtime-token" },
+      );
+      adapter.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", publicKeyPem);
+      const ctx = {
+        ...createCtx(publicKeyPem),
+        adapter,
+        projectDir,
+        config: {},
+        proxyToken: "runtime-token",
+        requestContext: {
+          token: "runtime-token",
+          slug: "demo-project",
+          branch: "main",
+          mode: "preview",
+        },
+        resolvedEnvironment: "preview",
+      };
 
-    assertExists(result.response);
-    assertEquals(result.response.status, 200);
-    const response = await result.response.json();
-    assertEquals(response.success, true);
-    assertEquals(response.result, {
-      lookup: {
-        message: "hello from control plane",
-        source: "project-tool",
-      },
-    });
-    assertEquals(response.logs, null);
-    assertEquals(typeof response.duration_ms, "number");
-    assertEquals(response.duration_ms >= 0, true);
-    assertEquals(response.error, undefined);
-    assertEquals(response.artifacts, undefined);
+      const result = await runWithRequestContext(
+        {
+          projectSlug: "demo-project",
+          projectId: "proj-1",
+          token: "runtime-token",
+          productionMode: false,
+          branch: "main",
+        },
+        () => handler.handle(request, ctx),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      const response = await result.response.json();
+      assertEquals(response.success, true);
+      assertEquals(response.result, {
+        lookup: {
+          message: "hello from control plane",
+          source: "project-tool",
+        },
+      });
+      assertEquals(response.logs, null);
+      assertEquals(typeof response.duration_ms, "number");
+      assertEquals(response.duration_ms >= 0, true);
+      assertEquals(response.error, undefined);
+      assertEquals(response.artifacts, undefined);
+    } finally {
+      agentRegistry.clearAll();
+      toolRegistry.clearAll();
+      await stopEsbuild();
+    }
   });
 
   it("waits for async workflow finalization before destroying the workflow client", async () => {

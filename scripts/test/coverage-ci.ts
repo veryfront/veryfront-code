@@ -167,6 +167,7 @@ async function runShard(args: string[]): Promise<void> {
     UNIT_COVERAGE_ENV,
   );
 
+  await clearEmptyCoverageProfileJson(coverageDir);
   const lcov = await captureDeno(buildCoverageCommandArgs([coverageDir]));
   await clearCoverageProfileJson(coverageDir);
   await Deno.writeTextFile(`${coverageDir}/lcov.info`, lcov);
@@ -275,6 +276,20 @@ async function clearCoverageProfileJson(path: string): Promise<void> {
     })
   ) {
     await Deno.remove(entry.path);
+  }
+}
+
+async function clearEmptyCoverageProfileJson(path: string): Promise<void> {
+  for await (
+    const entry of walk(path, {
+      includeDirs: false,
+      exts: [".json"],
+    })
+  ) {
+    const stat = await Deno.stat(entry.path);
+    if (stat.size === 0) {
+      await Deno.remove(entry.path);
+    }
   }
 }
 
