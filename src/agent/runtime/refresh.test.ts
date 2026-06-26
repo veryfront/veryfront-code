@@ -294,6 +294,163 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(toolNamesByStep[1], []);
   });
 
+  for (const agentWriteToolName of ["create_agent", "update_agent"] as const) {
+    it(`keeps follow-up project tools available after ${agentWriteToolName} for scheduled-agent flows`, async () => {
+      const toolNamesByStep: string[][] = [];
+      const executedTools: string[] = [];
+      let callCount = 0;
+      const model: ModelRuntime = {
+        provider: "anthropic",
+        modelId: "claude-sonnet-4-6",
+        async doGenerate() {
+          return {
+            content: [{ type: "text", text: "unused" }],
+            finishReason: "stop",
+            usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+          };
+        },
+        async doStream(options) {
+          const rawTools = (options as { tools?: unknown }).tools;
+          const toolNames = Array.isArray(rawTools)
+            ? rawTools.map((entry) =>
+              (entry as { name?: string; id?: string }).name ??
+                (entry as { name?: string; id?: string }).id ?? ""
+            )
+            : Object.keys((rawTools as Record<string, unknown> | undefined) ?? {});
+          toolNamesByStep.push(toolNames);
+          callCount++;
+
+          if (callCount === 1) {
+            return {
+              stream: createRuntimeStream([
+                {
+                  type: "tool-call",
+                  toolCallId: "agent-write-1",
+                  toolName: agentWriteToolName,
+                  input: '{"id":"hourly-triage-agent"}',
+                },
+                {
+                  type: "finish",
+                  finishReason: "tool-calls",
+                  usage: { inputTokens: 1, outputTokens: 1 },
+                },
+              ]),
+            };
+          }
+
+          if (callCount === 2 && toolNames.includes("create_schedule")) {
+            return {
+              stream: createRuntimeStream([
+                {
+                  type: "tool-call",
+                  toolCallId: "create-schedule-1",
+                  toolName: "create_schedule",
+                  input: JSON.stringify({
+                    target: {
+                      kind: "agent",
+                      id: "hourly-triage-agent",
+                      conversation_mode: "create_new",
+                    },
+                    schedule: "0 * * * *",
+                    timezone: "Europe/Berlin",
+                    config: {
+                      prompt: "Check project status and report whether any tasks need attention.",
+                    },
+                  }),
+                },
+                {
+                  type: "finish",
+                  finishReason: "tool-calls",
+                  usage: { inputTokens: 1, outputTokens: 1 },
+                },
+              ]),
+            };
+          }
+
+          return {
+            stream: createRuntimeStream([
+              { type: "text-delta", text: "Scheduled agent created." },
+              {
+                type: "finish",
+                finishReason: "stop",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              },
+            ]),
+          };
+        },
+      };
+
+      const agentWriteTool = tool({
+        id: agentWriteToolName,
+        description: agentWriteToolName === "create_agent"
+          ? "Create a Studio project agent"
+          : "Update a Studio project agent",
+        inputSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+        execute: async ({ id }) => {
+          executedTools.push(agentWriteToolName);
+          return {
+            id,
+            name: "Hourly Triage Agent",
+            source_path: `agents/${id}.ts`,
+          };
+        },
+      });
+
+      const createSchedule = tool({
+        id: "create_schedule",
+        description: "Create a Studio schedule",
+        inputSchema: defineSchema((v) =>
+          v.object({
+            target: v.object({
+              kind: v.literal("agent"),
+              id: v.string(),
+              conversation_mode: v.string(),
+            }),
+            schedule: v.string(),
+            timezone: v.string(),
+            config: v.object({ prompt: v.string() }),
+          })
+        )(),
+        execute: async ({ target, schedule, timezone }) => {
+          executedTools.push("create_schedule");
+          return {
+            id: "schedule-hourly-triage",
+            status: "active",
+            target,
+            schedule,
+            timezone,
+          };
+        },
+      });
+
+      const assistant = agent({
+        model: "anthropic/claude-sonnet-4-6",
+        system:
+          `Create scheduled agents. After ${agentWriteToolName} succeeds, call create_schedule before final output.`,
+        tools: {
+          [agentWriteToolName]: agentWriteTool,
+          create_schedule: createSchedule,
+        },
+        providerTools: ["web_search", "web_fetch"],
+        maxSteps: 4,
+        resolveModelTransport: async () => ({ model }),
+      });
+
+      const response = (await assistant.stream({
+        input: "Create or update an agent and schedule it hourly.",
+      })).toDataStreamResponse();
+
+      await response.text();
+      assertEquals(toolNamesByStep[0]?.includes(agentWriteToolName), true);
+      assertEquals(toolNamesByStep[0]?.includes("create_schedule"), true);
+      assertEquals(toolNamesByStep[0]?.includes("web_search"), true);
+      assertEquals(toolNamesByStep[0]?.includes("web_fetch"), true);
+      assertEquals(toolNamesByStep[1], ["create_schedule"]);
+      assertEquals(toolNamesByStep.length, 3);
+      assertEquals(executedTools, [agentWriteToolName, "create_schedule"]);
+    });
+  }
+
   it("keeps tools available after a failed create_agent attempt", async () => {
     const toolNamesByStep: string[][] = [];
     let callCount = 0;
