@@ -215,7 +215,7 @@ describe("createRelease", () => {
     });
 
     await createRelease(mockClient, "my-project", { branch: "develop" });
-    assertEquals(capturedBody, { branch: "develop" });
+    assertEquals(capturedBody, { branch_reference: "develop" });
   });
 
   it("should create release with name and branch", async () => {
@@ -229,7 +229,7 @@ describe("createRelease", () => {
     });
 
     await createRelease(mockClient, "my-project", { name: "v2.0.0", branch: "develop" });
-    assertEquals(capturedBody, { name: "v2.0.0", branch: "develop" });
+    assertEquals(capturedBody, { name: "v2.0.0", branch_reference: "develop" });
   });
 });
 
