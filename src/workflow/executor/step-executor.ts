@@ -257,7 +257,7 @@ export class StepExecutor {
     context: WorkflowContext,
   ): Promise<unknown> {
     if (config.agent) return this.executeAgent(config.agent, input, context);
-    if (config.tool) return this.executeTool(config.tool, input);
+    if (config.tool) return this.executeTool(config.tool, input, context);
     throw INVALID_ARGUMENT.create({ detail: "Step must have either 'agent' or 'tool' specified" });
   }
 
@@ -279,12 +279,24 @@ export class StepExecutor {
     };
   }
 
-  private async executeTool(tool: string | Tool, input: unknown): Promise<unknown> {
+  private async executeTool(
+    tool: string | Tool,
+    input: unknown,
+    context: WorkflowContext,
+  ): Promise<unknown> {
     const resolvedTool = typeof tool === "string" ? this.getTool(tool) : tool;
+    const tenant = context._tenant ?? getWorkflowTenant();
 
     return resolvedTool.execute(input as Record<string, unknown>, {
       agentId: "workflow",
       blobStorage: this.config.blobStorage,
+      projectId: tenant?.projectId,
+      projectSlug: tenant?.projectSlug,
+      authToken: tenant?.token,
+      productionMode: tenant?.productionMode,
+      releaseId: tenant?.releaseId,
+      branch: tenant?.branch,
+      environmentName: tenant?.environmentName,
     });
   }
 

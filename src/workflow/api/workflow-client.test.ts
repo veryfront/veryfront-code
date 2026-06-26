@@ -5,7 +5,7 @@ import { VeryfrontError } from "#veryfront/errors";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
-import type { Tool } from "#veryfront/tool";
+import type { Tool, ToolExecutionContext } from "#veryfront/tool";
 import { toolRegistry } from "#veryfront/tool";
 import { createWorkflowClient, WorkflowClient } from "./workflow-client.ts";
 import { MemoryBackend } from "../backends/memory.ts";
@@ -184,6 +184,65 @@ describe("WorkflowClient", () => {
       assertEquals((run.output as Record<string, unknown>)["_tenant"], undefined);
       assertEquals((run.context as Record<string, unknown>)["_tenant"], undefined);
       assertEquals(run.output, { "tenant-step": { result: "ok" } });
+    });
+
+    it("passes captured tenant metadata to workflow tool execution context", async () => {
+      let capturedContext: ToolExecutionContext | undefined;
+      const contextTool: Tool = {
+        id: "context-tool",
+        type: "function",
+        description: "Capture workflow tool context",
+        inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+        execute: (_input, context) => {
+          capturedContext = context;
+          return {
+            projectSlug: context?.projectSlug,
+            projectId: context?.projectId,
+            authToken: context?.authToken,
+            productionMode: context?.productionMode,
+            releaseId: context?.releaseId,
+            branch: context?.branch,
+            environmentName: context?.environmentName,
+          };
+        },
+      };
+      const tenantWorkflow = workflow({
+        id: "tenant-tool-context-workflow",
+        steps: [
+          step("tenant-step", {
+            tool: contextTool,
+          }),
+        ],
+      });
+
+      client.register(tenantWorkflow);
+
+      const handle = await runWithRequestContext(
+        {
+          projectSlug: "tests-1d0745b0",
+          projectId: "project-1",
+          token: "internal-runtime-token",
+          productionMode: true,
+          releaseId: "release-1",
+          environmentName: "production",
+        },
+        () => client.start("tenant-tool-context-workflow", { topic: "test" }),
+      );
+
+      const output = await handle.result();
+
+      assertEquals(capturedContext?.agentId, "workflow");
+      assertEquals(output, {
+        "tenant-step": {
+          projectSlug: "tests-1d0745b0",
+          projectId: "project-1",
+          authToken: "internal-runtime-token",
+          productionMode: true,
+          releaseId: "release-1",
+          branch: null,
+          environmentName: "production",
+        },
+      });
     });
 
     it("resolves project-scoped tools from stored tenant context when resuming a run", async () => {

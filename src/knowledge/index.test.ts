@@ -4,7 +4,10 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { exists, mkdir, withTempDir, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 import { join } from "#veryfront/compat/path";
 import { clearEmbeddingProviders, registerEmbeddingProvider } from "#veryfront/embedding/index.ts";
+import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { createSearchKnowledgeTool, formatKnowledgeContext, projectKnowledge } from "./index.ts";
+
+const originalFetch = globalThis.fetch;
 
 function registerTestEmbeddingProvider(): void {
   registerEmbeddingProvider("test", () =>
@@ -33,6 +36,7 @@ function registerTestEmbeddingProvider(): void {
 describe("projectKnowledge", () => {
   afterEach(() => {
     clearEmbeddingProviders();
+    globalThis.fetch = originalFetch;
   });
 
   it("retrieves source-controlled project knowledge with default paths", async () => {
@@ -234,6 +238,90 @@ describe("projectKnowledge", () => {
       assertEquals(searchKnowledge.inputSchemaJson?.properties?.query?.type, "string");
       assertEquals(result.data.map((item) => item.path), ["knowledge/billing.md"]);
     });
+  });
+
+  it("looks up hosted OKF knowledge from the request-scoped project context", async () => {
+    const requestedUrls: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input instanceof Request ? input.url : String(input);
+      requestedUrls.push(url);
+      assertEquals(new Headers(init?.headers).get("Authorization"), "Bearer tenant-token");
+
+      const parsed = new URL(url);
+      if (
+        parsed.pathname === "/projects/acme/releases/release-1/files" &&
+        parsed.searchParams.get("include_server_functions") === "true"
+      ) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: "file-1",
+                version_id: "version-1",
+                path: "knowledge/login-troubleshooting.md",
+                content: [
+                  "---",
+                  "type: runbook",
+                  "title: Login troubleshooting",
+                  "description: Diagnose SSO failures after releases.",
+                  "---",
+                  "",
+                  "# Login troubleshooting",
+                ].join("\n"),
+                type: "file",
+                size: 128,
+                updated_at: "2026-06-26T00:00:00.000Z",
+              },
+              {
+                id: "file-2",
+                version_id: "version-2",
+                path: "app/page.tsx",
+                content: "export default function Page() { return null; }",
+                type: "file",
+                size: 48,
+                updated_at: "2026-06-26T00:00:00.000Z",
+              },
+            ],
+            page_info: {
+              self: null,
+              first: null,
+              next: null,
+              prev: null,
+            },
+            release_id: "release-1",
+            release_version: "1",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      return new Response(JSON.stringify({ error: "unexpected request", url }), {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    const searchKnowledge = createSearchKnowledgeTool();
+    const result = await runWithRequestContext(
+      {
+        projectSlug: "acme",
+        projectId: "project-1",
+        token: "tenant-token",
+        productionMode: true,
+        releaseId: "release-1",
+      },
+      () => searchKnowledge.execute({ query: "sso release" }),
+    );
+
+    assertEquals(result.mode, "search");
+    assertEquals(result.returned, 1);
+    assertEquals(result.data[0]?.path, "knowledge/login-troubleshooting.md");
+    assertEquals(
+      result.data[0]?.frontmatter.find((field) => field.key === "title")?.value,
+      "Login troubleshooting",
+    );
+    assertEquals(requestedUrls.length, 1);
+    assertStringIncludes(requestedUrls[0] ?? "", "/projects/acme/releases/release-1/files");
   });
 
   it("indexes project knowledge when requested explicitly", async () => {
