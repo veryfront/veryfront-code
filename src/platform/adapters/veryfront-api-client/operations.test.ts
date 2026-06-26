@@ -155,6 +155,22 @@ describe("VeryfrontAPIOperations", () => {
       assertStringIncludes(requestedUrl, "include_server_functions=true");
     });
 
+    it("passes path filters through branch file list requests", async () => {
+      let requestedUrl = "";
+      stubJsonFetch((url) => {
+        requestedUrl = url;
+        return {
+          data: [],
+          page_info: { self: null, first: null, next: null, prev: null },
+        };
+      });
+
+      await createOps().listBranchFiles("project-slug", "main", { path: "knowledge/" });
+
+      const parsed = new URL(requestedUrl);
+      assertEquals(parsed.searchParams.get("path"), "knowledge/");
+    });
+
     it("requests branch file content with server functions for preview handlers", async () => {
       let requestedUrl = "";
       stubJsonFetch((url) => {

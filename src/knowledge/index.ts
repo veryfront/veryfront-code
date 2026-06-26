@@ -638,8 +638,9 @@ async function getHostedProjectKnowledgeManifest(
 
   const contentDir = config.contentDir ?? DEFAULT_CONTENT_DIR;
   const client = createHostedKnowledgeClient(hostedContext);
+  const contentPath = `${stripTrailingSlash(trimLeadingSlash(contentDir))}/`;
   const files = await client.listAllFiles({
-    pattern: stripTrailingSlash(trimLeadingSlash(contentDir)),
+    path: contentPath,
     sortBy: "path",
     sortOrder: "asc",
   });

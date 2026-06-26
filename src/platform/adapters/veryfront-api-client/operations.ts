@@ -37,6 +37,7 @@ export type TokenProvider = () => string;
 export interface ListFilesOptions {
   cursor?: string;
   limit?: number;
+  path?: string;
   pattern?: string;
   sortBy?: "path" | "updated_at";
   sortOrder?: "asc" | "desc";
@@ -98,8 +99,14 @@ export interface ProjectStyleArtifactResolution {
 }
 
 function buildListParams(options: ListFilesOptions): URLSearchParams {
-  const { cursor, limit = DEFAULT_PAGE_LIMIT, pattern, sortBy = "updated_at", sortOrder = "desc" } =
-    options;
+  const {
+    cursor,
+    limit = DEFAULT_PAGE_LIMIT,
+    path,
+    pattern,
+    sortBy = "updated_at",
+    sortOrder = "desc",
+  } = options;
 
   const params = new URLSearchParams({
     limit: String(limit),
@@ -108,6 +115,7 @@ function buildListParams(options: ListFilesOptions): URLSearchParams {
   });
 
   if (cursor) params.set("cursor", cursor);
+  if (path) params.set("path", path);
   if (pattern) params.set("pattern", pattern);
 
   return params;
