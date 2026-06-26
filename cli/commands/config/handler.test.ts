@@ -1,8 +1,24 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { join } from "veryfront/platform/path";
 import { createSuccessEnvelope } from "../../shared/json-output.ts";
-import { detectConfigSource, getEnvOverrides } from "./handler.ts";
+import { detectConfigSource, getConfigCommandData, getEnvOverrides } from "./handler.ts";
+
+async function withTempConfigProject(
+  files: Record<string, string>,
+  fn: (projectDir: string) => Promise<void>,
+): Promise<void> {
+  const projectDir = await Deno.makeTempDir();
+  try {
+    for (const [name, content] of Object.entries(files)) {
+      await Deno.writeTextFile(join(projectDir, name), content);
+    }
+    await fn(projectDir);
+  } finally {
+    await Deno.remove(projectDir, { recursive: true });
+  }
+}
 
 describe("Config Command", () => {
   describe("JSON output structure", () => {
@@ -60,6 +76,30 @@ describe("Config Command", () => {
     it("returns null for directory without config", async () => {
       const source = await detectConfigSource("/tmp");
       assertEquals(source, null);
+    });
+  });
+
+  describe("getConfigCommandData", () => {
+    it("reports projectSlug from veryfront.config.ts", async () => {
+      const saved = Deno.env.get("VERYFRONT_PROJECT_SLUG");
+      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      try {
+        await withTempConfigProject(
+          {
+            "veryfront.config.ts": [
+              'export default { projectSlug: "ts-config-project" };',
+              "",
+            ].join("\n"),
+          },
+          async (projectDir) => {
+            const data = await getConfigCommandData(projectDir);
+            assertEquals(data.projectSlug, "ts-config-project");
+            assertEquals(data.configSource, "veryfront.config.ts");
+          },
+        );
+      } finally {
+        if (saved) Deno.env.set("VERYFRONT_PROJECT_SLUG", saved);
+      }
     });
   });
 

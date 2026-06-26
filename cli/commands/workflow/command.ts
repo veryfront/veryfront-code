@@ -1,6 +1,7 @@
 import { cliLogger } from "#cli/utils";
 import { exitProcess } from "#cli/utils";
 import { withProjectSourceContext } from "#cli/shared/project-source-context";
+import { applyRuntimeAuthContext } from "#cli/shared/runtime-auth";
 import { agentRegistry } from "../../../src/agent/composition/index.ts";
 import { discoverProjectAgentRuntime } from "../../../src/agent/project/agent-runtime.ts";
 import type { DiscoveryResult } from "../../../src/discovery/types.ts";
@@ -159,6 +160,13 @@ export async function runWorkflowCommand(
   }
 
   const projectDir = options.projectDir ?? Deno.cwd();
+  const { readConfigFile } = await import("#cli/shared/config");
+  const configFile = await readConfigFile(projectDir);
+  await applyRuntimeAuthContext({
+    projectDir,
+    projectSlug: configFile?.projectSlug,
+  });
+
   const discoverRuntime: (
     input: Parameters<typeof discoverProjectAgentRuntime>[0],
   ) => Promise<DiscoveryResult> = dependencies.discoverProjectAgentRuntime ??

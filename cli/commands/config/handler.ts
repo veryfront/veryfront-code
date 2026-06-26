@@ -40,26 +40,44 @@ export function getEnvOverrides(): string[] {
   return overrides;
 }
 
-export async function handleConfigCommand(_args: ParsedArgs): Promise<void> {
-  const { getEnvironmentConfig } = await import("veryfront/config");
-  const { cwd } = await import("veryfront/platform");
-  const config = getEnvironmentConfig();
+export type ConfigCommandData = {
+  projectSlug: string | null;
+  nodeEnv: string;
+  veryfrontEnv: string | null;
+  apiBaseUrl: string;
+  debug: boolean;
+  ci: boolean;
+  hasApiToken: boolean;
+  configSource: string | null;
+  envOverrides: string[];
+};
 
-  const projectDir = cwd();
+export async function getConfigCommandData(projectDir: string): Promise<ConfigCommandData> {
+  const { getEnvironmentConfig } = await import("veryfront/config");
+  const config = getEnvironmentConfig();
+  const { readConfigFile } = await import("#cli/shared/config");
+
   const configSource = await detectConfigSource(projectDir);
   const envOverrides = getEnvOverrides();
+  const fileConfig = await readConfigFile(projectDir);
 
-  const configData = {
-    projectSlug: config.projectSlug ?? null,
+  return {
+    projectSlug: config.projectSlug ?? fileConfig?.projectSlug ?? null,
     nodeEnv: config.nodeEnv,
     veryfrontEnv: config.veryfrontEnv || null,
     apiBaseUrl: config.apiBaseUrl,
     debug: config.debug,
     ci: config.ci,
-    hasApiToken: !!config.apiToken,
+    hasApiToken: !!(config.apiToken ?? fileConfig?.apiToken),
     configSource,
     envOverrides,
   };
+}
+
+export async function handleConfigCommand(_args: ParsedArgs): Promise<void> {
+  const { cwd } = await import("veryfront/platform");
+
+  const configData = await getConfigCommandData(cwd());
 
   if (isJsonMode()) {
     await outputJson(createSuccessEnvelope("config", configData));
@@ -83,8 +101,8 @@ export async function handleConfigCommand(_args: ParsedArgs): Promise<void> {
   cliLogger.info(
     `  ${dim("Config file:")}   ${configData.configSource ?? "(none)"}`,
   );
-  if (envOverrides.length > 0) {
-    cliLogger.info(`  ${dim("Env overrides:")}  ${envOverrides.join(", ")}`);
+  if (configData.envOverrides.length > 0) {
+    cliLogger.info(`  ${dim("Env overrides:")}  ${configData.envOverrides.join(", ")}`);
   }
   cliLogger.info("");
 }
