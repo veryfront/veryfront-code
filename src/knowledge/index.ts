@@ -23,9 +23,12 @@ import type {
 import { exists, readDir, readTextFile } from "#veryfront/platform/compat/index.ts";
 import { extract } from "#veryfront/compat/std/front-matter-yaml.ts";
 import { isAbsolute, join, relative } from "#veryfront/platform/compat/path/index.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { VeryfrontApiClient } from "#veryfront/platform/adapters/veryfront-api-client/client.ts";
 import { tool } from "#veryfront/tool/factory.ts";
 import type { JsonSchema } from "#veryfront/tool/schema/index.ts";
-import type { Tool } from "#veryfront/tool/types.ts";
+import type { Tool, ToolExecutionContext } from "#veryfront/tool/types.ts";
 
 const DEFAULT_CONTENT_DIR = "knowledge";
 const DEFAULT_STORAGE_PATH = "data/knowledge-index.json";
@@ -165,6 +168,17 @@ interface ProjectKnowledgeLookupCursorState {
   shardIndex: number;
 }
 
+interface HostedKnowledgeContext {
+  projectRef: string;
+  projectSlug?: string;
+  projectId?: string;
+  authToken: string;
+  productionMode: boolean;
+  releaseId?: string | null;
+  branch?: string | null;
+  environmentName?: string | null;
+}
+
 const SEARCH_KNOWLEDGE_INPUT_SCHEMA: JsonSchema = {
   type: "object",
   properties: {
@@ -234,6 +248,29 @@ function toPosixPath(path: string): string {
 
 function stripTrailingSlash(path: string): string {
   return toPosixPath(path).replace(/\/+$/, "");
+}
+
+function trimLeadingSlash(path: string): string {
+  return toPosixPath(path).replace(/^\/+/, "");
+}
+
+function buildHostedManifestPath(contentDir: string, filePath: string): string | null {
+  const normalizedPath = trimLeadingSlash(filePath);
+  const normalizedContentDir = stripTrailingSlash(trimLeadingSlash(contentDir)).replace(
+    /^\.\//,
+    "",
+  );
+
+  if (
+    normalizedPath === normalizedContentDir || !normalizedPath.startsWith(
+      `${normalizedContentDir}/`,
+    )
+  ) {
+    return null;
+  }
+
+  if (!normalizedPath.endsWith(".md")) return null;
+  return normalizedPath;
 }
 
 function buildManifestPath(config: ProjectKnowledgeConfig, absolutePath: string): string {
@@ -496,7 +533,13 @@ function scoreEntry(
 
 async function getProjectKnowledgeManifest(
   config: ProjectKnowledgeConfig,
+  context?: ToolExecutionContext,
 ): Promise<ProjectKnowledgeManifestEntry[]> {
+  if (!config.projectDir) {
+    const hostedManifest = await getHostedProjectKnowledgeManifest(config, context);
+    if (hostedManifest) return hostedManifest;
+  }
+
   const contentDir = resolveProjectPath(
     config.projectDir,
     config.contentDir ?? DEFAULT_CONTENT_DIR,
@@ -521,6 +564,105 @@ async function getProjectKnowledgeManifest(
   }
 
   return manifest;
+}
+
+function getHostedKnowledgeContext(context?: ToolExecutionContext): HostedKnowledgeContext | null {
+  const requestContext = getCurrentRequestContext();
+  const authToken = typeof context?.authToken === "string" && context.authToken
+    ? context.authToken
+    : requestContext?.token;
+  const projectSlug = typeof context?.projectSlug === "string" && context.projectSlug
+    ? context.projectSlug
+    : requestContext?.projectSlug;
+  const projectId = typeof context?.projectId === "string" && context.projectId
+    ? context.projectId
+    : requestContext?.projectId;
+  const projectRef = projectSlug ?? projectId;
+
+  if (!authToken || !projectRef) return null;
+
+  const productionMode = typeof context?.productionMode === "boolean"
+    ? context.productionMode
+    : requestContext?.productionMode ?? false;
+  const releaseId = typeof context?.releaseId === "string" || context?.releaseId === null
+    ? context.releaseId
+    : requestContext?.releaseId ?? null;
+  const branch = typeof context?.branch === "string" || context?.branch === null
+    ? context.branch
+    : requestContext?.branch ?? null;
+  const environmentName =
+    typeof context?.environmentName === "string" || context?.environmentName === null
+      ? context.environmentName
+      : requestContext?.environmentName ?? null;
+
+  return {
+    projectRef,
+    projectSlug,
+    projectId,
+    authToken,
+    productionMode,
+    releaseId,
+    branch,
+    environmentName,
+  };
+}
+
+function createHostedKnowledgeClient(hostedContext: HostedKnowledgeContext): VeryfrontApiClient {
+  const client = new VeryfrontApiClient({
+    apiBaseUrl: getHostEnv("VERYFRONT_API_URL") || "https://api.veryfront.com",
+    proxyMode: true,
+    projectId: hostedContext.projectId,
+    projectSlug: hostedContext.projectRef,
+  });
+
+  client.setRequestToken(hostedContext.authToken);
+  client.setProjectSlug(hostedContext.projectRef);
+
+  if (hostedContext.productionMode && hostedContext.releaseId) {
+    client.setContext({ type: "release", version: hostedContext.releaseId });
+  } else if (hostedContext.productionMode && hostedContext.environmentName) {
+    client.setContext({ type: "environment", name: hostedContext.environmentName });
+  } else {
+    client.setContext({ type: "branch", name: hostedContext.branch ?? "main" });
+  }
+
+  return client;
+}
+
+async function getHostedProjectKnowledgeManifest(
+  config: ProjectKnowledgeConfig,
+  context?: ToolExecutionContext,
+): Promise<ProjectKnowledgeManifestEntry[] | null> {
+  const hostedContext = getHostedKnowledgeContext(context);
+  if (!hostedContext) return null;
+
+  const contentDir = config.contentDir ?? DEFAULT_CONTENT_DIR;
+  const client = createHostedKnowledgeClient(hostedContext);
+  const files = await client.listAllFiles({
+    pattern: stripTrailingSlash(trimLeadingSlash(contentDir)),
+    sortBy: "path",
+    sortOrder: "asc",
+  });
+
+  const manifest: ProjectKnowledgeManifestEntry[] = [];
+  for (const file of files) {
+    const manifestPath = buildHostedManifestPath(contentDir, file.path);
+    if (!manifestPath || typeof file.content !== "string") continue;
+
+    let parsedFrontmatter: Record<string, unknown> = {};
+    try {
+      parsedFrontmatter = extract<Record<string, unknown>>(file.content).attrs;
+    } catch {
+      parsedFrontmatter = {};
+    }
+
+    manifest.push({
+      path: manifestPath,
+      ...sanitizeFrontmatter(parsedFrontmatter),
+    });
+  }
+
+  return manifest.sort((left, right) => left.path.localeCompare(right.path));
 }
 
 function lookupKnowledgeManifest(
@@ -657,8 +799,9 @@ export function formatKnowledgeContext(results: RagSearchResult[]): string {
 export async function searchProjectKnowledge(
   input: ProjectKnowledgeLookupInput,
   config: ProjectKnowledgeConfig = {},
+  context?: ToolExecutionContext,
 ): Promise<ProjectKnowledgeLookupOutput> {
-  const manifest = await getProjectKnowledgeManifest(config);
+  const manifest = await getProjectKnowledgeManifest(config, context);
   return lookupKnowledgeManifest(manifest, input);
 }
 
@@ -671,9 +814,10 @@ export function createSearchKnowledgeTool(
   return tool<ProjectKnowledgeLookupInput, ProjectKnowledgeLookupOutput>({
     id,
     description: description ??
-      "Retrieve a compact, cursor-based slice of the local project knowledge manifest.",
+      "Retrieve a compact, cursor-based slice of the project knowledge manifest.",
     inputSchema: SEARCH_KNOWLEDGE_INPUT_SCHEMA,
-    execute: (input) => searchProjectKnowledge(coerceSearchKnowledgeInput(input), config),
+    execute: (input, context) =>
+      searchProjectKnowledge(coerceSearchKnowledgeInput(input), config, context),
   });
 }
 

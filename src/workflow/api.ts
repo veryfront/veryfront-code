@@ -95,6 +95,14 @@ function getClient(): VeryfrontApiClient {
   client.setRequestToken(tenant.token);
   client.setProjectSlug(tenant.projectSlug);
 
+  if (tenant.productionMode && tenant.releaseId) {
+    client.setContext({ type: "release", version: tenant.releaseId });
+  } else if (tenant.productionMode && tenant.environmentName) {
+    client.setContext({ type: "environment", name: tenant.environmentName });
+  } else {
+    client.setContext({ type: "branch", name: tenant.branch ?? "main" });
+  }
+
   return client;
 }
 
