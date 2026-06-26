@@ -8,6 +8,7 @@ import {
   createTestConfig,
 } from "#veryfront/config/runtime-config.ts";
 import { runWithVeryfrontCloudContext } from "#veryfront/provider";
+import { runWithProjectEnv } from "#veryfront/server/project-env";
 import {
   getDefaultVeryfrontCloudEmbeddingModel,
   getDefaultVeryfrontCloudModel,
@@ -74,6 +75,19 @@ describe("platform/cloud/resolver", () => {
     setEnv("VERYFRONT_API_TOKEN", "vf_test_runtime");
 
     assertEquals(isVeryfrontCloudEnabled(), true);
+  });
+
+  it("uses host framework env under project env overlays", () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_host_token");
+    setEnv("VERYFRONT_PROJECT_SLUG", "host-project");
+    setEnv("VERYFRONT_DEFAULT_MODEL", "openai/gpt-5.2");
+
+    runWithProjectEnv({ VERYFRONT_API_TOKEN: "tenant-token" }, () => {
+      assertEquals(isVeryfrontCloudEnabled(), true);
+      assertEquals(getVeryfrontCloudAuthToken(), "vf_host_token");
+      assertEquals(getVeryfrontCloudProjectSlug(), "host-project");
+      assertEquals(getDefaultVeryfrontCloudModel(), "veryfront-cloud/openai/gpt-5.2");
+    });
   });
 
   it("normalizes default cloud model overrides without requiring the prefix", () => {

@@ -1,5 +1,5 @@
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
-import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { getCurrentVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 
 // ---------------------------------------------------------------------------
@@ -32,8 +32,8 @@ function getApiBaseUrlEnv(): string {
   const getter = (globalThis as Record<string, unknown>).__vfGetApiBaseUrlEnv as
     | (() => string)
     | undefined;
-  return getter?.() ?? getEnv("VERYFRONT_API_BASE_URL") ??
-    getEnv("VERYFRONT_API_URL")?.replace("/graphql", "/api") ?? DEFAULT_API_BASE_URL;
+  return getter?.() ?? getHostEnv("VERYFRONT_API_BASE_URL") ??
+    getHostEnv("VERYFRONT_API_URL")?.replace("/graphql", "/api") ?? DEFAULT_API_BASE_URL;
 }
 
 export const DEFAULT_VERYFRONT_CLOUD_MODEL = "veryfront-cloud/anthropic/claude-sonnet-4-6";
@@ -85,14 +85,14 @@ function getResolvedVeryfrontCloudContext(): Omit<VeryfrontCloudBootstrap, "apiB
   return {
     apiToken: requestContext?.token ??
       scopedContext?.apiToken ??
-      getEnv("VERYFRONT_API_TOKEN") ??
+      getHostEnv("VERYFRONT_API_TOKEN") ??
       runtimeBootstrap.apiToken,
     projectSlug: requestContext?.projectSlug ??
       scopedContext?.projectSlug ??
-      getEnv("VERYFRONT_PROJECT_SLUG") ??
+      getHostEnv("VERYFRONT_PROJECT_SLUG") ??
       runtimeBootstrap.projectSlug,
     serviceLayer: normalizeServiceLayer(scopedContext?.serviceLayer) ??
-      normalizeServiceLayer(getEnv("VERYFRONT_SERVICE_LAYER")),
+      normalizeServiceLayer(getHostEnv("VERYFRONT_SERVICE_LAYER")),
     hasRequestContext: requestContext !== null || scopedContext !== undefined,
     usesVeryfrontFs: runtimeBootstrap.usesVeryfrontFs,
   };
@@ -135,14 +135,14 @@ export function isVeryfrontCloudEnabled(): boolean {
 
 export function getDefaultVeryfrontCloudModel(): string {
   return normalizeCloudModelString(
-    getEnv("VERYFRONT_DEFAULT_MODEL"),
+    getHostEnv("VERYFRONT_DEFAULT_MODEL"),
     DEFAULT_VERYFRONT_CLOUD_MODEL,
   );
 }
 
 export function getDefaultVeryfrontCloudEmbeddingModel(): string {
   return normalizeCloudModelString(
-    getEnv("VERYFRONT_DEFAULT_EMBEDDING_MODEL"),
+    getHostEnv("VERYFRONT_DEFAULT_EMBEDDING_MODEL"),
     DEFAULT_VERYFRONT_CLOUD_EMBEDDING_MODEL,
   );
 }

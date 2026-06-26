@@ -73,6 +73,7 @@ export type {
 };
 import { ReloadNotifier } from "./reload-notifier.ts";
 export { ReloadNotifier };
+export { RouteDiscovery } from "./dev-server/route-discovery.ts";
 export type { BuildOptions, BuildStats } from "./build-types.ts";
 export { defaultDistributedCacheInitializers } from "./distributed-cache-initializers.ts";
 
