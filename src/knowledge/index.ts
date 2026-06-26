@@ -20,12 +20,31 @@ import type {
   RagStore,
   RagStoreBackend,
 } from "#veryfront/embedding/index.ts";
-import { isAbsolute, join } from "#veryfront/platform/compat/path/index.ts";
+import { exists, readDir, readTextFile } from "#veryfront/platform/compat/index.ts";
+import { extract } from "#veryfront/compat/std/front-matter-yaml.ts";
+import { isAbsolute, join, relative } from "#veryfront/platform/compat/path/index.ts";
+import { tool } from "#veryfront/tool/factory.ts";
+import type { JsonSchema } from "#veryfront/tool/schema/index.ts";
+import type { Tool } from "#veryfront/tool/types.ts";
 
 const DEFAULT_CONTENT_DIR = "knowledge";
 const DEFAULT_STORAGE_PATH = "data/knowledge-index.json";
 const DEFAULT_TOP_K = 3;
 const DEFAULT_QUERY_MAX_CHARS = 500;
+const DEFAULT_LOOKUP_LIMIT = 8;
+const MAX_LOOKUP_LIMIT = 12;
+const MAX_FRONTMATTER_FIELDS = 6;
+const MAX_FRONTMATTER_VALUE_LENGTH = 240;
+const KNOWLEDGE_LOOKUP_CURSOR_VERSION = 1;
+const FRONTMATTER_FIELD_PRIORITY = [
+  "title",
+  "name",
+  "description",
+  "summary",
+  "source",
+  "source_type",
+  "added",
+] as const;
 
 /** Configuration for project knowledge indexing and retrieval. */
 export interface ProjectKnowledgeConfig {
@@ -70,6 +89,118 @@ export interface ProjectKnowledgeResult {
   context: string;
 }
 
+export interface ProjectKnowledgeLookupInput {
+  project_reference?: string;
+  query?: string;
+  cursor?: string;
+  lookup_target?: unknown;
+  limit?: number;
+  shard_count?: number;
+  shard_index?: number;
+}
+
+export interface ProjectKnowledgeLookupFrontmatterField {
+  key: string;
+  value: string;
+}
+
+export interface ProjectKnowledgeLookupItem {
+  path: string;
+  matched_fields: string[];
+  frontmatter: ProjectKnowledgeLookupFrontmatterField[];
+}
+
+export interface ProjectKnowledgeLookupPageInfo {
+  self: string | null;
+  first: string | null;
+  next: string | null;
+  prev: string | null;
+}
+
+export interface ProjectKnowledgeLookupShard {
+  shard_index: number;
+  shard_count: number;
+  total_items: number;
+}
+
+export interface ProjectKnowledgeLookupOutput {
+  query: string;
+  mode: "search" | "browse";
+  data: ProjectKnowledgeLookupItem[];
+  page_info: ProjectKnowledgeLookupPageInfo;
+  returned: number;
+  total_matches: number;
+  shard: ProjectKnowledgeLookupShard;
+}
+
+export interface CreateSearchKnowledgeToolOptions extends ProjectKnowledgeConfig {
+  id?: string;
+  description?: string;
+}
+
+export type SearchKnowledgeTool = Tool<ProjectKnowledgeLookupInput, ProjectKnowledgeLookupOutput>;
+
+interface ProjectKnowledgeManifestEntry {
+  path: string;
+  frontmatter: ProjectKnowledgeLookupFrontmatterField[];
+  searchableFrontmatter: ProjectKnowledgeLookupFrontmatterField[];
+}
+
+interface SearchableProjectKnowledgeManifestEntry extends ProjectKnowledgeManifestEntry {
+  normalizedPath: string;
+  searchableFrontmatter: Array<
+    ProjectKnowledgeLookupFrontmatterField & {
+      normalizedKey: string;
+      normalizedValue: string;
+    }
+  >;
+}
+
+interface ProjectKnowledgeLookupCursorState {
+  version: typeof KNOWLEDGE_LOOKUP_CURSOR_VERSION;
+  query: string;
+  offset: number;
+  limit: number;
+  shardCount: number;
+  shardIndex: number;
+}
+
+const SEARCH_KNOWLEDGE_INPUT_SCHEMA: JsonSchema = {
+  type: "object",
+  properties: {
+    project_reference: {
+      type: "string",
+      description: "Project reference accepted for hosted/local parity.",
+    },
+    query: {
+      type: "string",
+      description: "Knowledge query to match against OKF frontmatter.",
+    },
+    cursor: {
+      type: "string",
+      description: "Cursor from a previous search_knowledge response.",
+    },
+    lookup_target: {
+      type: "object",
+      additionalProperties: true,
+      description: "Hosted lookup target accepted for API parity and ignored locally.",
+    },
+    limit: {
+      type: "integer",
+      description: "Maximum number of manifest entries to return.",
+    },
+    shard_count: {
+      type: "integer",
+      description: "Optional shard count for splitting large manifests.",
+    },
+    shard_index: {
+      type: "integer",
+      description: "Zero-based shard index.",
+    },
+  },
+  additionalProperties: false,
+};
+
 /** Helper for indexing and retrieving project knowledge. */
 export interface ProjectKnowledge {
   /**
@@ -79,6 +210,12 @@ export interface ProjectKnowledge {
    * ingestion, or another controlled lifecycle step.
    */
   index(): Promise<void>;
+  /**
+   * Search the local OKF knowledge manifest using the same compact
+   * frontmatter-only response shape as Veryfront Cloud's `search_knowledge`
+   * tool. This does not build or query the embedding index.
+   */
+  lookup(input: ProjectKnowledgeLookupInput): Promise<ProjectKnowledgeLookupOutput>;
   retrieve(
     query: string,
     options?: ProjectKnowledgeRetrieveOptions,
@@ -89,6 +226,409 @@ export interface ProjectKnowledge {
 function resolveProjectPath(projectDir: string | undefined, path: string): string {
   if (!projectDir || isAbsolute(path)) return path;
   return join(projectDir, path);
+}
+
+function toPosixPath(path: string): string {
+  return path.replace(/\\/g, "/");
+}
+
+function stripTrailingSlash(path: string): string {
+  return toPosixPath(path).replace(/\/+$/, "");
+}
+
+function buildManifestPath(config: ProjectKnowledgeConfig, absolutePath: string): string {
+  const contentDir = config.contentDir ?? DEFAULT_CONTENT_DIR;
+  const contentDirPath = resolveProjectPath(config.projectDir, contentDir);
+  const relativeToContent = toPosixPath(relative(contentDirPath, absolutePath));
+
+  if (!isAbsolute(contentDir)) {
+    const normalizedContentDir = stripTrailingSlash(contentDir).replace(/^\.\//, "");
+    return `${normalizedContentDir}/${relativeToContent}`;
+  }
+
+  if (config.projectDir) {
+    return toPosixPath(relative(config.projectDir, absolutePath));
+  }
+
+  return relativeToContent;
+}
+
+async function collectMarkdownFiles(dir: string): Promise<string[]> {
+  if (!(await exists(dir))) return [];
+
+  const files: string[] = [];
+  for await (const entry of readDir(dir)) {
+    const entryPath = join(dir, entry.name);
+    if (entry.isDirectory) {
+      files.push(...await collectMarkdownFiles(entryPath));
+      continue;
+    }
+
+    if (entry.isFile && entry.name.endsWith(".md")) {
+      files.push(entryPath);
+    }
+  }
+
+  return files;
+}
+
+function normalizeText(value: string): string {
+  return value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function tokenize(value: string): string[] {
+  return [
+    ...new Set(
+      normalizeText(value)
+        .split(/\s+/)
+        .filter((token) => token.length >= 2),
+    ),
+  ];
+}
+
+function hashPath(value: string): number {
+  let hash = 5381;
+  for (const char of value) {
+    hash = ((hash * 33) ^ char.charCodeAt(0)) >>> 0;
+  }
+  return hash;
+}
+
+function collapseFrontmatterValue(value: unknown): string | null {
+  if (value == null) return null;
+
+  let stringValue = "";
+  if (typeof value === "string") {
+    stringValue = value;
+  } else if (typeof value === "number" || typeof value === "boolean") {
+    stringValue = String(value);
+  } else if (Array.isArray(value)) {
+    stringValue = value
+      .map((item) => collapseFrontmatterValue(item))
+      .filter((item): item is string => typeof item === "string" && item.length > 0)
+      .join(", ");
+  } else {
+    try {
+      stringValue = JSON.stringify(value);
+    } catch {
+      stringValue = String(value);
+    }
+  }
+
+  const collapsed = stringValue.replace(/\s+/g, " ").trim();
+  return collapsed.length > 0 ? collapsed : null;
+}
+
+function truncateFrontmatterValue(value: string): string {
+  if (value.length <= MAX_FRONTMATTER_VALUE_LENGTH) return value;
+  return `${value.slice(0, MAX_FRONTMATTER_VALUE_LENGTH - 3)}...`;
+}
+
+function compareFrontmatterFields(
+  left: ProjectKnowledgeLookupFrontmatterField,
+  right: ProjectKnowledgeLookupFrontmatterField,
+): number {
+  const leftPriority = FRONTMATTER_FIELD_PRIORITY.indexOf(
+    left.key as typeof FRONTMATTER_FIELD_PRIORITY[number],
+  );
+  const rightPriority = FRONTMATTER_FIELD_PRIORITY.indexOf(
+    right.key as typeof FRONTMATTER_FIELD_PRIORITY[number],
+  );
+
+  if (leftPriority !== rightPriority) {
+    if (leftPriority === -1) return 1;
+    if (rightPriority === -1) return -1;
+    return leftPriority - rightPriority;
+  }
+
+  return left.key.localeCompare(right.key);
+}
+
+function collectFrontmatter(
+  frontmatter: Record<string, unknown>,
+): ProjectKnowledgeLookupFrontmatterField[] {
+  return Object.entries(frontmatter)
+    .map(([key, rawValue]) => {
+      const value = collapseFrontmatterValue(rawValue);
+      return value ? { key, value } : null;
+    })
+    .filter((entry): entry is ProjectKnowledgeLookupFrontmatterField => entry !== null)
+    .sort(compareFrontmatterFields);
+}
+
+function sanitizeFrontmatter(frontmatter: Record<string, unknown>): {
+  frontmatter: ProjectKnowledgeLookupFrontmatterField[];
+  searchableFrontmatter: ProjectKnowledgeLookupFrontmatterField[];
+} {
+  const searchableFrontmatter = collectFrontmatter(frontmatter);
+  return {
+    frontmatter: searchableFrontmatter.slice(0, MAX_FRONTMATTER_FIELDS).map((field) => ({
+      key: field.key,
+      value: truncateFrontmatterValue(field.value),
+    })),
+    searchableFrontmatter,
+  };
+}
+
+function toSearchableEntry(
+  entry: ProjectKnowledgeManifestEntry,
+): SearchableProjectKnowledgeManifestEntry {
+  return {
+    ...entry,
+    normalizedPath: normalizeText(entry.path),
+    searchableFrontmatter: entry.searchableFrontmatter.map((field) => ({
+      ...field,
+      normalizedKey: normalizeText(field.key),
+      normalizedValue: normalizeText(field.value),
+    })),
+  };
+}
+
+function encodeCursor(state: ProjectKnowledgeLookupCursorState): string {
+  const bytes = new TextEncoder().encode(JSON.stringify(state));
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function decodeCursor(cursor: string): ProjectKnowledgeLookupCursorState {
+  try {
+    const padded = cursor.replace(/-/g, "+").replace(/_/g, "/").padEnd(
+      Math.ceil(cursor.length / 4) * 4,
+      "=",
+    );
+    const binary = atob(padded);
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    const parsed = JSON.parse(new TextDecoder().decode(bytes)) as Partial<
+      ProjectKnowledgeLookupCursorState
+    >;
+
+    if (
+      parsed.version !== KNOWLEDGE_LOOKUP_CURSOR_VERSION ||
+      typeof parsed.query !== "string" ||
+      typeof parsed.offset !== "number" ||
+      typeof parsed.limit !== "number" ||
+      typeof parsed.shardCount !== "number" ||
+      typeof parsed.shardIndex !== "number"
+    ) {
+      throw new Error("Invalid cursor payload");
+    }
+
+    if (parsed.shardIndex < 0 || parsed.shardIndex >= parsed.shardCount) {
+      throw new Error("Cursor shard_index must be within shard_count");
+    }
+
+    return {
+      version: parsed.version,
+      query: parsed.query,
+      offset: parsed.offset,
+      limit: parsed.limit,
+      shardCount: parsed.shardCount,
+      shardIndex: parsed.shardIndex,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not decode cursor";
+    throw new Error(`Invalid knowledge lookup cursor: ${message}`);
+  }
+}
+
+function scoreEntry(
+  entry: SearchableProjectKnowledgeManifestEntry,
+  query: string,
+  queryTokens: string[],
+): { score: number; matchedFields: string[] } {
+  const matchedFields = new Set<string>();
+  const normalizedQuery = normalizeText(query);
+  let score = 0;
+
+  if (normalizedQuery && entry.normalizedPath.includes(normalizedQuery)) {
+    score += 40;
+    matchedFields.add("path");
+  }
+
+  for (const field of entry.searchableFrontmatter) {
+    if (normalizedQuery && field.normalizedValue.includes(normalizedQuery)) {
+      score += 28;
+      matchedFields.add(field.key);
+    }
+
+    if (normalizedQuery && field.normalizedKey.includes(normalizedQuery)) {
+      score += 12;
+      matchedFields.add(field.key);
+    }
+  }
+
+  if (queryTokens.length > 1) {
+    for (const token of queryTokens) {
+      if (entry.normalizedPath.includes(token)) {
+        score += 10;
+        matchedFields.add("path");
+      }
+
+      for (const field of entry.searchableFrontmatter) {
+        if (field.normalizedValue.includes(token)) {
+          score += 7;
+          matchedFields.add(field.key);
+        }
+
+        if (field.normalizedKey.includes(token)) {
+          score += 4;
+          matchedFields.add(field.key);
+        }
+      }
+    }
+  }
+
+  return {
+    score,
+    matchedFields: [...matchedFields].sort((left, right) => left.localeCompare(right)),
+  };
+}
+
+async function getProjectKnowledgeManifest(
+  config: ProjectKnowledgeConfig,
+): Promise<ProjectKnowledgeManifestEntry[]> {
+  const contentDir = resolveProjectPath(
+    config.projectDir,
+    config.contentDir ?? DEFAULT_CONTENT_DIR,
+  );
+  const files = (await collectMarkdownFiles(contentDir)).sort((left, right) =>
+    buildManifestPath(config, left).localeCompare(buildManifestPath(config, right))
+  );
+
+  const manifest: ProjectKnowledgeManifestEntry[] = [];
+  for (const file of files) {
+    let parsedFrontmatter: Record<string, unknown> = {};
+    try {
+      parsedFrontmatter = extract<Record<string, unknown>>(await readTextFile(file)).attrs;
+    } catch {
+      parsedFrontmatter = {};
+    }
+
+    manifest.push({
+      path: buildManifestPath(config, file),
+      ...sanitizeFrontmatter(parsedFrontmatter),
+    });
+  }
+
+  return manifest;
+}
+
+function lookupKnowledgeManifest(
+  manifest: ProjectKnowledgeManifestEntry[],
+  input: ProjectKnowledgeLookupInput,
+): ProjectKnowledgeLookupOutput {
+  const cursorState = input.cursor ? decodeCursor(input.cursor) : null;
+  const providedQuery = input.query?.trim() ?? "";
+  const resolvedQuery = (cursorState?.query ?? providedQuery).trim();
+
+  if (!resolvedQuery) {
+    throw new Error("search_knowledge requires a non-empty query");
+  }
+
+  if (cursorState && providedQuery && providedQuery !== cursorState.query) {
+    throw new Error("search_knowledge cursor query mismatch");
+  }
+
+  const resolvedShardCount = cursorState?.shardCount ?? input.shard_count ?? 1;
+  const resolvedShardIndex = cursorState?.shardIndex ?? input.shard_index ?? 0;
+
+  if (resolvedShardCount < 1) {
+    throw new Error("search_knowledge shard_count must be at least 1");
+  }
+
+  if (resolvedShardIndex < 0 || resolvedShardIndex >= resolvedShardCount) {
+    throw new Error("search_knowledge shard_index must be within shard_count");
+  }
+
+  const resolvedLimit = Math.min(
+    Math.max(cursorState?.limit ?? input.limit ?? DEFAULT_LOOKUP_LIMIT, 1),
+    MAX_LOOKUP_LIMIT,
+  );
+  const resolvedOffset = Math.max(cursorState?.offset ?? 0, 0);
+  const queryTokens = tokenize(resolvedQuery);
+
+  const shardEntries = manifest
+    .filter((entry) => hashPath(entry.path) % resolvedShardCount === resolvedShardIndex)
+    .map(toSearchableEntry);
+
+  const scoredEntries = shardEntries
+    .map((entry) => ({
+      entry,
+      ...scoreEntry(entry, resolvedQuery, queryTokens),
+    }))
+    .sort((left, right) => {
+      if (right.score !== left.score) return right.score - left.score;
+      return left.entry.path.localeCompare(right.entry.path);
+    });
+
+  const hasScoredMatches = scoredEntries.some((entry) => entry.score > 0);
+  const mode = hasScoredMatches ? "search" : "browse";
+  const orderedEntries = hasScoredMatches
+    ? scoredEntries.filter((entry) => entry.score > 0)
+    : scoredEntries;
+  const pageEntries = orderedEntries.slice(resolvedOffset, resolvedOffset + resolvedLimit);
+  const nextOffset = resolvedOffset + pageEntries.length;
+  const hasMore = nextOffset < orderedEntries.length;
+  const nextCursor = hasMore
+    ? encodeCursor({
+      version: KNOWLEDGE_LOOKUP_CURSOR_VERSION,
+      query: resolvedQuery,
+      offset: nextOffset,
+      limit: resolvedLimit,
+      shardCount: resolvedShardCount,
+      shardIndex: resolvedShardIndex,
+    })
+    : null;
+
+  return {
+    query: resolvedQuery,
+    mode,
+    data: pageEntries.map(({ entry, matchedFields }) => ({
+      path: entry.path,
+      matched_fields: matchedFields,
+      frontmatter: entry.frontmatter,
+    })),
+    page_info: {
+      self: input.cursor ?? null,
+      first: null,
+      next: nextCursor,
+      prev: null,
+    },
+    returned: pageEntries.length,
+    total_matches: orderedEntries.length,
+    shard: {
+      shard_index: resolvedShardIndex,
+      shard_count: resolvedShardCount,
+      total_items: shardEntries.length,
+    },
+  };
+}
+
+function coerceSearchKnowledgeInput(
+  input: ProjectKnowledgeLookupInput,
+): ProjectKnowledgeLookupInput {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("search_knowledge input must be an object");
+  }
+
+  const value = input as Record<string, unknown>;
+  return {
+    project_reference: typeof value.project_reference === "string"
+      ? value.project_reference
+      : undefined,
+    query: typeof value.query === "string" ? value.query : undefined,
+    cursor: typeof value.cursor === "string" ? value.cursor : undefined,
+    lookup_target: value.lookup_target,
+    limit: typeof value.limit === "number" ? value.limit : undefined,
+    shard_count: typeof value.shard_count === "number" ? value.shard_count : undefined,
+    shard_index: typeof value.shard_index === "number" ? value.shard_index : undefined,
+  };
 }
 
 /** Normalize a knowledge query before retrieval. */
@@ -104,6 +644,33 @@ export function formatKnowledgeContext(results: RagSearchResult[]): string {
   return results
     .map((result) => `[${result.title}] (score: ${result.score.toFixed(2)})\n${result.text}`)
     .join("\n\n---\n\n");
+}
+
+/**
+ * Search the local OKF knowledge manifest with the same input/output shape as
+ * Veryfront Cloud's `search_knowledge` MCP tool.
+ */
+export async function searchProjectKnowledge(
+  input: ProjectKnowledgeLookupInput,
+  config: ProjectKnowledgeConfig = {},
+): Promise<ProjectKnowledgeLookupOutput> {
+  const manifest = await getProjectKnowledgeManifest(config);
+  return lookupKnowledgeManifest(manifest, input);
+}
+
+/** Create a local tool with the same id and response shape as hosted `search_knowledge`. */
+export function createSearchKnowledgeTool(
+  options: CreateSearchKnowledgeToolOptions = {},
+): SearchKnowledgeTool {
+  const { id = "search_knowledge", description, ...config } = options;
+
+  return tool<ProjectKnowledgeLookupInput, ProjectKnowledgeLookupOutput>({
+    id,
+    description: description ??
+      "Retrieve a compact, cursor-based slice of the local project knowledge manifest.",
+    inputSchema: SEARCH_KNOWLEDGE_INPUT_SCHEMA,
+    execute: (input) => searchProjectKnowledge(coerceSearchKnowledgeInput(input), config),
+  });
 }
 
 /** Create a project knowledge helper backed by the configured RAG store. */
@@ -135,6 +702,9 @@ export function projectKnowledge(config: ProjectKnowledgeConfig = {}): ProjectKn
 
   return {
     index,
+    lookup(input: ProjectKnowledgeLookupInput): Promise<ProjectKnowledgeLookupOutput> {
+      return searchProjectKnowledge(input, config);
+    },
     async retrieve(
       query: string,
       options?: ProjectKnowledgeRetrieveOptions,
