@@ -128,7 +128,7 @@ export function createRelease(
 ): Promise<Release> {
   const body: Record<string, string> = {};
   if (options?.name) body.name = options.name;
-  if (options?.branch) body.branch = options.branch;
+  if (options?.branch) body.branch_reference = options.branch;
 
   return client.post<Release>(`/projects/${projectSlug}/releases`, body);
 }
