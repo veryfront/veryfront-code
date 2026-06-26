@@ -307,6 +307,10 @@ function collapseFrontmatterValue(value: unknown): string | null {
     stringValue = value;
   } else if (typeof value === "number" || typeof value === "boolean") {
     stringValue = String(value);
+  } else if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    const iso = value.toISOString();
+    stringValue = iso.endsWith("T00:00:00.000Z") ? iso.slice(0, 10) : iso;
   } else if (Array.isArray(value)) {
     stringValue = value
       .map((item) => collapseFrontmatterValue(item))
