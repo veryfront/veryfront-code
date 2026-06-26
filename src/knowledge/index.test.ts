@@ -250,7 +250,9 @@ describe("projectKnowledge", () => {
       const parsed = new URL(url);
       if (
         parsed.pathname === "/projects/acme/releases/release-1/files" &&
-        parsed.searchParams.get("include_server_functions") === "true"
+        parsed.searchParams.get("include_server_functions") === "true" &&
+        parsed.searchParams.get("path") === "knowledge/" &&
+        !parsed.searchParams.has("pattern")
       ) {
         return new Response(
           JSON.stringify({
@@ -322,6 +324,7 @@ describe("projectKnowledge", () => {
     );
     assertEquals(requestedUrls.length, 1);
     assertStringIncludes(requestedUrls[0] ?? "", "/projects/acme/releases/release-1/files");
+    assertStringIncludes(requestedUrls[0] ?? "", "path=knowledge%2F");
   });
 
   it("indexes project knowledge when requested explicitly", async () => {
