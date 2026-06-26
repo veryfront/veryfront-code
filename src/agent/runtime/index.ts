@@ -157,7 +157,7 @@ import { resolveAgentModelTransport, type ResolvedModelTransport } from "./model
 
 const logger = serverLogger.component("agent");
 
-function shouldDisableToolsForFinalResponseAfterToolSuccess(toolName: string): boolean {
+function shouldHideProjectToolAfterAgentWriteSuccess(toolName: string): boolean {
   return toolName === "create_agent" || toolName === "update_agent";
 }
 
@@ -892,7 +892,7 @@ export class AgentRuntime {
     const remoteToolSources = getRuntimeRemoteToolSources(this.config);
     let currentSystemPrompt = systemPrompt;
     let currentRuntimeContext = runtimeContext;
-    let toolsDisabledForFinalResponse = false;
+    let agentWriteFinalResponseToolGuardEnabled = false;
 
     for (let step = 0; step < maxSteps; step++) {
       throwIfAborted(abortSignal);
@@ -922,8 +922,12 @@ export class AgentRuntime {
       currentSystemPrompt = preparedStep.systemPrompt;
       currentRuntimeContext = preparedStep.runtimeContext;
       const toolContext = preparedStep.toolContext;
-      const tools = toolsDisabledForFinalResponse ? [] : preparedStep.tools;
-      const stepProviderTools = toolsDisabledForFinalResponse ? [] : providerTools;
+      const tools = agentWriteFinalResponseToolGuardEnabled
+        ? preparedStep.tools.filter((tool) =>
+          !shouldHideProjectToolAfterAgentWriteSuccess(tool.name)
+        )
+        : preparedStep.tools;
+      const stepProviderTools = agentWriteFinalResponseToolGuardEnabled ? [] : providerTools;
 
       const runtimeTools = convertToolsToRuntimeTools(tools, {
         model: effectiveModel,
@@ -1116,8 +1120,8 @@ export class AgentRuntime {
           toolCalls.push(toolCall);
 
           if (matchingResult.error === undefined) {
-            if (shouldDisableToolsForFinalResponseAfterToolSuccess(tc.name)) {
-              toolsDisabledForFinalResponse = true;
+            if (shouldHideProjectToolAfterAgentWriteSuccess(tc.name)) {
+              agentWriteFinalResponseToolGuardEnabled = true;
             }
             if (tc.name === LOAD_SKILL_TOOL_ID) {
               activeSkillId = extractSkillId(matchingResult.output);
@@ -1148,8 +1152,8 @@ export class AgentRuntime {
           toolCall.error = persistedError;
           toolCalls.push(toolCall);
           if (persistedError === undefined) {
-            if (shouldDisableToolsForFinalResponseAfterToolSuccess(tc.name)) {
-              toolsDisabledForFinalResponse = true;
+            if (shouldHideProjectToolAfterAgentWriteSuccess(tc.name)) {
+              agentWriteFinalResponseToolGuardEnabled = true;
             }
             if (tc.name === LOAD_SKILL_TOOL_ID) {
               activeSkillId = extractSkillId(persistedResult.result);
@@ -1282,8 +1286,8 @@ export class AgentRuntime {
             hasSubmittedFormInputInLoop = true;
             currentRuntimeContext = markSubmittedFormInputRuntimeContext(currentRuntimeContext);
           }
-          if (shouldDisableToolsForFinalResponseAfterToolSuccess(tc.name)) {
-            toolsDisabledForFinalResponse = true;
+          if (shouldHideProjectToolAfterAgentWriteSuccess(tc.name)) {
+            agentWriteFinalResponseToolGuardEnabled = true;
           }
 
           const dynamic = isDynamicTool(tc.name);
