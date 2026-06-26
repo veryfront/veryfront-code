@@ -1,7 +1,7 @@
 ---
 title: "veryfront/work"
 description: "Declare source-backed Work definitions for business process observability."
-order: 32
+order: 33
 ---
 
 ## Import

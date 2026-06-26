@@ -1,7 +1,7 @@
 ---
 title: "veryfront/metrics"
 description: "Runtime/application metric hooks for project code."
-order: 16
+order: 17
 ---
 
 ## Import
@@ -31,9 +31,9 @@ metrics.gauge("vf_eval_queue_depth", 3);
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `counter` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L116) |
-| `gauge` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L134) |
-| `histogram` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L125) |
+| `counter` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L411) |
+| `gauge` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L439) |
+| `histogram` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L425) |
 
 ### Types
 
@@ -47,4 +47,4 @@ metrics.gauge("vf_eval_queue_depth", 3);
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `metrics` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L150) |
+| `metrics` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L459) |

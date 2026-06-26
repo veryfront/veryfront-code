@@ -1,7 +1,7 @@
 ---
 title: "veryfront/workflow"
 description: "DAG-based agentic workflows with human-in-the-loop support."
-order: 33
+order: 34
 ---
 
 ## Import
@@ -363,20 +363,20 @@ import { createDynamicWorkflowRunEntrypoint, createWorkflowRunEntrypoint, create
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `DYNAMIC_EXIT_CODES` | Exit codes for the dynamic workflow run entrypoint. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/dynamic-run-entrypoint.ts#L48) |
-| `EXIT_CODES` | Exit codes for the workflow run entrypoint. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/run-entrypoint.ts#L54) |
+| `DYNAMIC_EXIT_CODES` | Exit codes for the dynamic workflow run entrypoint. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/dynamic-run-entrypoint.ts#L49) |
+| `EXIT_CODES` | Exit codes for the workflow run entrypoint. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/run-entrypoint.ts#L56) |
 
 #### Functions
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `createDynamicWorkflowRunEntrypoint` | Create a dynamic workflow run entrypoint. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/dynamic-run-entrypoint.ts#L239) |
-| `createWorkflowRunEntrypoint` | Create a workflow run entrypoint. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/run-entrypoint.ts#L189) |
+| `createDynamicWorkflowRunEntrypoint` | Create a dynamic workflow run entrypoint. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/dynamic-run-entrypoint.ts#L243) |
+| `createWorkflowRunEntrypoint` | Create a workflow run entrypoint. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/run-entrypoint.ts#L191) |
 | `createWorkflowRunManager` | Create a workflow run manager backed by run executors. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/run-manager.ts#L465) |
 | `createWorkflowWorker` | Create a workflow worker | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/workflow-worker.ts#L333) |
 | `isRunExecutor` | Type guard to check if an object implements RunExecutor | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/executors/types.ts#L129) |
-| `runDynamicWorkflowRun` | Run a workflow run with dynamic discovery. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/dynamic-run-entrypoint.ts#L78) |
-| `runWorkflowRun` | Run the workflow run entrypoint | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/run-entrypoint.ts#L89) |
+| `runDynamicWorkflowRun` | Run a workflow run with dynamic discovery. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/dynamic-run-entrypoint.ts#L79) |
+| `runWorkflowRun` | Run the workflow run entrypoint | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/run-entrypoint.ts#L91) |
 
 #### Classes
 
@@ -390,9 +390,9 @@ import { createDynamicWorkflowRunEntrypoint, createWorkflowRunEntrypoint, create
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `CreateDynamicWorkflowRunEntrypointOptions` | Create a dynamic workflow run entrypoint. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/dynamic-run-entrypoint.ts#L230) |
-| `CreateWorkflowRunEntrypointOptions` | Create a simple workflow run entrypoint script. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/run-entrypoint.ts#L177) |
-| `DynamicWorkflowRunEntrypointConfig` | Configuration for the dynamic workflow run entrypoint. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/dynamic-run-entrypoint.ts#L59) |
+| `CreateDynamicWorkflowRunEntrypointOptions` | Create a dynamic workflow run entrypoint. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/dynamic-run-entrypoint.ts#L234) |
+| `CreateWorkflowRunEntrypointOptions` | Create a simple workflow run entrypoint script. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/run-entrypoint.ts#L179) |
+| `DynamicWorkflowRunEntrypointConfig` | Configuration for the dynamic workflow run entrypoint. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/dynamic-run-entrypoint.ts#L60) |
 | `ManagerStats` | Manager statistics | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/run-manager.ts#L73) |
 | `ManagerStatus` | Manager status | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/run-manager.ts#L68) |
 | `ProcessRunExecutorConfig` | Process run executor configuration | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/executors/process.ts#L23) |
@@ -402,6 +402,6 @@ import { createDynamicWorkflowRunEntrypoint, createWorkflowRunEntrypoint, create
 | `RunExecutor` | Run Executor Interface | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/executors/types.ts#L90) |
 | `WorkerStats` | Worker statistics | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/workflow-worker.ts#L59) |
 | `WorkerStatus` | Worker status | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/workflow-worker.ts#L54) |
-| `WorkflowRunEntrypointConfig` | Configuration for the workflow run entrypoint. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/run-entrypoint.ts#L40) |
+| `WorkflowRunEntrypointConfig` | Configuration for the workflow run entrypoint. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/run-entrypoint.ts#L42) |
 | `WorkflowRunManagerConfig` | Configuration for the workflow run manager backed by run executors. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/run-manager.ts#L39) |
 | `WorkflowWorkerConfig` | Configuration for the workflow worker | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/workflow-worker.ts#L28) |

@@ -10,6 +10,7 @@ describe("discovery/import-rewriter", () => {
       [
         'import { defineSchema } from "veryfront/schemas";',
         'import { tool } from "veryfront/tool";',
+        'import { projectKnowledge } from "veryfront/knowledge";',
         'import { step, workflow } from "veryfront/workflow";',
         'import { work } from "veryfront/work";',
         'import { evalAgent } from "veryfront/eval";',
@@ -19,6 +20,7 @@ describe("discovery/import-rewriter", () => {
 
     assertStringIncludes(transformed, import.meta.resolve("veryfront/schemas"));
     assertStringIncludes(transformed, import.meta.resolve("veryfront/tool"));
+    assertStringIncludes(transformed, import.meta.resolve("veryfront/knowledge"));
     assertStringIncludes(transformed, import.meta.resolve("veryfront/workflow"));
     assertStringIncludes(transformed, import.meta.resolve("veryfront/work"));
     assertStringIncludes(transformed, import.meta.resolve("veryfront/eval"));
@@ -30,6 +32,7 @@ describe("discovery/import-rewriter", () => {
       [
         'import { defineSchema } from "veryfront/schemas";',
         'import { tool } from "veryfront/tool";',
+        'import { projectKnowledge } from "veryfront/knowledge";',
         'import { step, workflow } from "veryfront/workflow";',
         'import { work } from "veryfront/work";',
         'import { evalAgent } from "veryfront/eval";',
@@ -45,6 +48,10 @@ describe("discovery/import-rewriter", () => {
     assertStringIncludes(
       transformed,
       'const { tool } = globalThis.__VERYFRONT_MODULES__["veryfront/tool"]',
+    );
+    assertStringIncludes(
+      transformed,
+      'const { projectKnowledge } = globalThis.__VERYFRONT_MODULES__["veryfront/knowledge"]',
     );
     assertStringIncludes(
       transformed,

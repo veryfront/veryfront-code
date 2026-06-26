@@ -10,4 +10,11 @@ describe("discovery import rewriter metrics module", () => {
       "veryfront/metrics should be available to discovered project modules",
     );
   });
+
+  it("makes veryfront/knowledge available to project-authored modules", () => {
+    assert(
+      DISCOVERY_GLOBAL_VERYFRONT_MODULES.includes("veryfront/knowledge"),
+      "veryfront/knowledge should be available to discovered project modules",
+    );
+  });
 });

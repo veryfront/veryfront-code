@@ -1,7 +1,7 @@
 ---
 title: "veryfront/oauth"
 description: "OAuth 2.0 with pre-configured providers. Default supported integrations are visible in the CLI/MCP/runtime connector surface. Additional provider configs are retained for feature-gated integrations enabled with VERYFRONT_EXPERIMENTAL_INTEGRATIONS."
-order: 18
+order: 19
 ---
 
 ## Import
@@ -71,7 +71,7 @@ export const GET = createOAuthCallbackHandler(gmailConfig);
 |------|-------------|--------|
 | `airtableConfig` | Configuration used by airtable. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L102) |
 | `asanaConfig` | Configuration used by asana. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L164) |
-| `bitbucketConfig` | Configuration used by bitbucket. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/atlassian.ts#L46) |
+| `bitbucketConfig` | Configuration used by bitbucket. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/atlassian.ts#L49) |
 | `boxConfig` | Configuration used by box. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L288) |
 | `calendarConfig` | Configuration used by calendar. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/google.ts#L34) |
 | `clickupConfig` | Configuration used by clickup. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L330) |

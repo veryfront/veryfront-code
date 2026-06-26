@@ -6,6 +6,7 @@ import { clearTranspileCache, importModule } from "./transpiler.ts";
 import type { FileDiscoveryContext } from "./types.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import * as embeddingMod from "#veryfront/embedding/index.ts";
+import * as knowledgeMod from "#veryfront/knowledge";
 
 /**
  * Creates a mock FileSystemAdapter backed by an in-memory file map.
@@ -85,6 +86,12 @@ describe("embedding module static import", () => {
 
   it("exports loadUpload", () => {
     assertEquals(typeof embeddingMod.loadUpload, "function");
+  });
+});
+
+describe("knowledge module static import", () => {
+  it("exports projectKnowledge", () => {
+    assertEquals(typeof knowledgeMod.projectKnowledge, "function");
   });
 });
 
