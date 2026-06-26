@@ -39,9 +39,12 @@ export {
 export type { APIContext, APIHandler, APIResponse, APIRoute } from "./api/index.ts";
 export {
   APIRouteHandler,
+  ApiRouteMatcher,
   applyCORSHeaders,
   badRequest,
   createContext,
+  discoverAppRoutes,
+  discoverPagesRoutes,
   forbidden,
   handleCORSPreflight,
   json,

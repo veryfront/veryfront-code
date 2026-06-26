@@ -9,6 +9,7 @@ export type { APIContext, APIHandler, APIResponse, APIRoute } from "./handler.ts
 
 export { ApiRouteMatcher } from "./api-route-matcher.ts";
 export type { Route, RouteMatch } from "./api-route-matcher.ts";
+export { discoverAppRoutes, discoverPagesRoutes } from "./route-discovery.ts";
 
 export {
   badRequest,

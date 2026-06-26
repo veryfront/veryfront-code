@@ -2,9 +2,8 @@ import { join, relative } from "#std/path.ts";
 import { runtime } from "veryfront/platform";
 import { getConfig } from "veryfront/config";
 import { cliLogger } from "#cli/utils";
-import { ApiRouteMatcher } from "#veryfront/routing/api/api-route-matcher.ts";
-import { discoverAppRoutes, discoverPagesRoutes } from "#veryfront/routing/api/route-discovery.ts";
-import { RouteDiscovery } from "#veryfront/server/dev-server/route-discovery.ts";
+import { ApiRouteMatcher, discoverAppRoutes, discoverPagesRoutes } from "veryfront/routing";
+import { RouteDiscovery } from "veryfront/server";
 
 export interface RoutesOptions {
   projectDir: string;
