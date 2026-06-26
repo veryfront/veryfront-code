@@ -1,6 +1,10 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Agent, AgentResponse } from "#veryfront/agent/types.ts";
 import type { Tool } from "#veryfront/tool/types.ts";
+import {
+  type CacheKeyContext,
+  runWithCacheKeyContext,
+} from "#veryfront/cache/cache-key-builder.ts";
 import { ensureError } from "#veryfront/errors/veryfront-error.ts";
 import {
   AGENT_NOT_FOUND,
@@ -39,6 +43,16 @@ export function getWorkflowTenant(): CapturedTenantContext | undefined {
   return workflowTenantStorage.getStore();
 }
 
+function cacheKeyContextFromWorkflowTenant(tenant: CapturedTenantContext): CacheKeyContext {
+  const mode = tenant.productionMode ? "production" : "preview";
+
+  return {
+    projectId: tenant.projectId || tenant.projectSlug || "default",
+    mode,
+    versionId: mode === "production" ? (tenant.releaseId || "latest") : (tenant.branch || "main"),
+  };
+}
+
 /**
  * Run a function with workflow tenant context available via AsyncLocalStorage.
  * If tenant is undefined, preserves any existing outer context.
@@ -48,7 +62,10 @@ export function runWithWorkflowTenant<T>(
   fn: () => Promise<T>,
 ): Promise<T> {
   if (!tenant) return fn();
-  return workflowTenantStorage.run(tenant, fn);
+  return workflowTenantStorage.run(
+    tenant,
+    () => runWithCacheKeyContext(cacheKeyContextFromWorkflowTenant(tenant), fn),
+  );
 }
 
 /** Default initial delay before first retry attempt */

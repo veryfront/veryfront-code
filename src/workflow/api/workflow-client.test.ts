@@ -3,13 +3,16 @@ import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/as
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import type { Tool } from "#veryfront/tool";
+import { toolRegistry } from "#veryfront/tool";
 import { createWorkflowClient, WorkflowClient } from "./workflow-client.ts";
 import { MemoryBackend } from "../backends/memory.ts";
 import { workflow } from "../dsl/workflow.ts";
 import { step } from "../dsl/step.ts";
 import { waitForApproval } from "../dsl/wait.ts";
+import type { WorkflowRun } from "../types.ts";
 
 function createMockTool(name: string, output: unknown): Tool {
   return {
@@ -181,6 +184,65 @@ describe("WorkflowClient", () => {
       assertEquals((run.output as Record<string, unknown>)["_tenant"], undefined);
       assertEquals((run.context as Record<string, unknown>)["_tenant"], undefined);
       assertEquals(run.output, { "tenant-step": { result: "ok" } });
+    });
+
+    it("resolves project-scoped tools from stored tenant context when resuming a run", async () => {
+      const scopedTool = createMockTool("scoped-tool", { result: "ok" });
+      const scopedBackend = new MemoryBackend();
+      const scopedClient = createWorkflowClient({
+        backend: scopedBackend,
+        executor: {
+          stepExecutor: {
+            toolRegistry,
+          },
+        },
+      });
+
+      try {
+        runWithCacheKeyContext(
+          { projectId: "project-123", mode: "preview", versionId: "branch-123" },
+          () => {
+            toolRegistry.register(scopedTool.id, scopedTool);
+          },
+        );
+
+        const tenantWorkflow = workflow({
+          id: "tenant-scoped-tool-workflow",
+          steps: [step("tenant-step", { tool: "scoped-tool" })],
+        });
+        scopedClient.register(tenantWorkflow);
+
+        const run: WorkflowRun = {
+          id: "run-scoped-tool",
+          workflowId: tenantWorkflow.id,
+          status: "pending",
+          input: {},
+          nodeStates: {},
+          currentNodes: [],
+          context: { input: {} },
+          checkpoints: [],
+          pendingApprovals: [],
+          createdAt: new Date(),
+          _tenant: {
+            projectSlug: "acme",
+            token: "tenant-token",
+            projectId: "project-123",
+            productionMode: false,
+            releaseId: null,
+            branch: "branch-123",
+          },
+        };
+        await scopedBackend.createRun(run);
+
+        await scopedClient.resume(run.id);
+
+        const completedRun = await scopedBackend.getRun(run.id);
+        assertEquals(completedRun?.status, "completed");
+        assertEquals(completedRun?.output, { "tenant-step": { result: "ok" } });
+      } finally {
+        toolRegistry.clearAll();
+        await scopedClient.destroy();
+      }
     });
   });
 
