@@ -122,7 +122,8 @@ export default agent({
 ```
 
 `temperature` controls model sampling and defaults to `0` for deterministic
-agent runs.
+agent runs. Runtime provider capabilities may omit or normalize the value for
+models that reject generic sampling parameters or require mode-specific values.
 
 `maxSteps` limits how many tool-call iterations the agent can perform per
 request. See [Tools](./tools.md) for how to define `getWeather`.

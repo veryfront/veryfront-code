@@ -148,7 +148,7 @@ import { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
 import { resolveRuntimeModel } from "./model-resolution.ts";
 import type { RuntimeGenerateToolResult } from "./runtime-tool-types.ts";
 import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
-import { supportsTemperatureParameter } from "./model-capabilities.ts";
+import { resolveTemperatureParameter } from "./model-capabilities.ts";
 import {
   applySkillDelegationOverridesToToolInput,
   extractSkillDelegationOverrides,
@@ -590,7 +590,10 @@ export class AgentRuntime {
         const toolContext = preparedStep.toolContext;
         const tools = preparedStep.tools;
 
-        const temperature = this.resolveTemperature(temperatureModelString ?? effectiveModel);
+        const temperature = this.resolveTemperature(
+          temperatureModelString ?? effectiveModel,
+          providerOptions,
+        );
         const response = await withSpan("agent.generate_text", async (span) => {
           setSpanAttributes(span, {
             "model.id": effectiveModel,
@@ -935,7 +938,10 @@ export class AgentRuntime {
       });
       const runtimeToolNames = Object.keys(runtimeTools ?? {});
 
-      const temperature = this.resolveTemperature(temperatureModelString ?? effectiveModel);
+      const temperature = this.resolveTemperature(
+        temperatureModelString ?? effectiveModel,
+        providerOptions,
+      );
       const result = streamText({
         model: languageModel,
         system: currentSystemPrompt,
@@ -1389,11 +1395,16 @@ export class AgentRuntime {
     return getMaxSteps(this.config.maxSteps, edgeMaxSteps, platformLimit);
   }
 
-  private resolveTemperature(modelString?: string): number | undefined {
-    if (!supportsTemperatureParameter(modelString)) {
-      return undefined;
-    }
-    return this.config.temperature ?? DEFAULT_TEMPERATURE;
+  private resolveTemperature(
+    modelString?: string,
+    providerOptions?: Record<string, unknown>,
+  ): number | undefined {
+    return resolveTemperatureParameter(
+      modelString,
+      this.config.temperature,
+      DEFAULT_TEMPERATURE,
+      providerOptions,
+    );
   }
 
   private resolveMaxOutputTokens(modelString?: string, maxOutputTokensOverride?: number): number {

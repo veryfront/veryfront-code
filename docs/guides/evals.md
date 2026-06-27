@@ -96,7 +96,7 @@ or latency without weakening quality:
 ```bash
 veryfront eval deep-research \
   --baseline-model anthropic/claude-sonnet-4-6 \
-  --candidate-model moonshotai/kimi-k2 \
+  --candidate-model moonshotai/kimi-k2.6 \
   --report-dir .veryfront/evals/deep-research-models \
   --json
 ```

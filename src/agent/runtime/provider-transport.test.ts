@@ -224,6 +224,82 @@ describe("agent provider transport hooks", () => {
     assertEquals("temperature" in captured.generateOptions, false);
   });
 
+  it("uses fixed temperature for Veryfront Cloud Kimi 2.6 generate requests", async () => {
+    const captured: {
+      generateOptions?: Record<string, unknown>;
+    } = {};
+
+    const transportModel: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/gateway-model",
+      async doGenerate(options: unknown) {
+        captured.generateOptions = options as Record<string, unknown>;
+        return {
+          content: [{ type: "text", text: "kimi generate" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return { stream: createTextStream([{ type: "finish" }]) };
+      },
+    };
+
+    const assistant = agent({
+      model: "veryfront-cloud/moonshotai/kimi-k2.6",
+      system: "You are a helpful assistant.",
+      temperature: 0,
+      resolveModelTransport: () => ({ model: transportModel }),
+    });
+
+    await assistant.generate({ input: "Hello" });
+
+    assertExists(captured.generateOptions);
+    assertEquals(captured.generateOptions.temperature, 1);
+  });
+
+  it("uses non-thinking fixed temperature for Veryfront Cloud Kimi 2.6 generate requests", async () => {
+    const captured: {
+      generateOptions?: Record<string, unknown>;
+    } = {};
+
+    const transportModel: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/gateway-model",
+      async doGenerate(options: unknown) {
+        captured.generateOptions = options as Record<string, unknown>;
+        return {
+          content: [{ type: "text", text: "kimi non-thinking generate" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return { stream: createTextStream([{ type: "finish" }]) };
+      },
+    };
+
+    const providerOptions = {
+      openai: {
+        extraBody: {
+          thinking: { type: "disabled" },
+        },
+      },
+    };
+    const assistant = agent({
+      model: "veryfront-cloud/moonshotai/kimi-k2.6",
+      system: "You are a helpful assistant.",
+      temperature: 0,
+      resolveModelTransport: () => ({ model: transportModel, providerOptions }),
+    });
+
+    await assistant.generate({ input: "Hello" });
+
+    assertExists(captured.generateOptions);
+    assertEquals(captured.generateOptions.temperature, 0.6);
+    assertEquals(captured.generateOptions.providerOptions, providerOptions);
+  });
+
   it("preserves temperature for other hosted models", async () => {
     const cases = [
       { model: "anthropic/claude-sonnet-4-6", temperature: 0 },

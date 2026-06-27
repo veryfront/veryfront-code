@@ -228,11 +228,11 @@ describe("cli/shared/args", () => {
       assertEquals(
         parseCliArgs([
           "--candidate-model",
-          "moonshotai/kimi-k2",
+          "moonshotai/kimi-k2.6",
           "--candidate-model",
           "openai/gpt-5.5",
         ])["candidate-model"],
-        ["moonshotai/kimi-k2", "openai/gpt-5.5"],
+        ["moonshotai/kimi-k2.6", "openai/gpt-5.5"],
       );
     });
 

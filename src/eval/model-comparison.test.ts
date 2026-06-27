@@ -112,16 +112,16 @@ describe("eval/model-comparison", () => {
     const comparison = compareEvalModelReports(
       [
         createReport("anthropic/claude-opus-4-6", { totalTokens: 10_000, costUsd: 1 }),
-        createReport("moonshotai/kimi-k2", { totalTokens: 9_000, costUsd: 0.5 }),
+        createReport("moonshotai/kimi-k2.6", { totalTokens: 9_000, costUsd: 0.5 }),
       ],
       { baselineModel: "anthropic/claude-opus-4-6" },
     );
 
     assertEquals(comparison.baselineModel, "anthropic/claude-opus-4-6");
-    assertEquals(comparison.candidateModels, ["moonshotai/kimi-k2"]);
+    assertEquals(comparison.candidateModels, ["moonshotai/kimi-k2.6"]);
     assertEquals(comparison.recommendation, {
       decision: "promote-candidate",
-      model: "moonshotai/kimi-k2",
+      model: "moonshotai/kimi-k2.6",
       reasons: [
         "candidate has no quality regressions",
         "groundedness is at or above 0.8",
@@ -134,7 +134,7 @@ describe("eval/model-comparison", () => {
     const comparison = compareEvalModelReports(
       [
         createReport("anthropic/claude-opus-4-6", { totalTokens: 10_000, costUsd: 1 }),
-        createReport("moonshotai/kimi-k2", {
+        createReport("moonshotai/kimi-k2.6", {
           passed: 3,
           failed: 1,
           totalTokens: 7_500,
@@ -157,7 +157,7 @@ describe("eval/model-comparison", () => {
           totalTokens: 10_000,
           costUsd: 1,
         }),
-        createReport("moonshotai/kimi-k2", {
+        createReport("moonshotai/kimi-k2.6", {
           measureGroundedness: false,
           totalTokens: 9_000,
           costUsd: 0.5,
@@ -168,7 +168,7 @@ describe("eval/model-comparison", () => {
 
     assertEquals(comparison.recommendation, {
       decision: "promote-candidate",
-      model: "moonshotai/kimi-k2",
+      model: "moonshotai/kimi-k2.6",
       reasons: [
         "candidate has no quality regressions",
         "groundedness was not measured",
@@ -181,7 +181,7 @@ describe("eval/model-comparison", () => {
     const comparison = compareEvalModelReports(
       [
         createReport("anthropic/claude-opus-4-6"),
-        createReport("moonshotai/kimi-k2"),
+        createReport("moonshotai/kimi-k2.6"),
       ],
       { baselineModel: "anthropic/claude-opus-4-6" },
     );
@@ -198,13 +198,15 @@ describe("eval/model-comparison", () => {
     const comparison = compareEvalModelReports(
       [
         createReport("anthropic/claude-opus-4-6", { totalTokens: 10_000, costUsd: 1 }),
-        createReport("moonshotai/kimi-k2", { totalTokens: 9_000, costUsd: 0.5 }),
+        createReport("moonshotai/kimi-k2.6", { totalTokens: 9_000, costUsd: 0.5 }),
       ],
       { baselineModel: "anthropic/claude-opus-4-6" },
     );
 
     assertEquals(
-      createEvalModelComparisonMarkdown(comparison).includes("| moonshotai/kimi-k2 | candidate |"),
+      createEvalModelComparisonMarkdown(comparison).includes(
+        "| moonshotai/kimi-k2.6 | candidate |",
+      ),
       true,
     );
   });

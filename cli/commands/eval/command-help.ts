@@ -66,7 +66,7 @@ export const evalHelp: CommandHelp = {
     "veryfront eval eval:deep-research --report-dir .veryfront/evals/deep-research",
     "veryfront eval eval:deep-research --report .veryfront/evals/deep-research/report.json --junit .veryfront/evals/deep-research/junit.xml",
     "veryfront eval deep-research --baseline .veryfront/evals/baseline.json --json",
-    "veryfront eval deep-research --baseline-model anthropic/claude-sonnet-4-6 --candidate-model moonshotai/kimi-k2",
+    "veryfront eval deep-research --baseline-model anthropic/claude-sonnet-4-6 --candidate-model moonshotai/kimi-k2.6",
     "veryfront eval deep-research --export braintrust,langfuse --json",
     "veryfront eval deep-research --json",
   ],
