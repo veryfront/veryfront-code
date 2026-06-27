@@ -56,6 +56,14 @@ function formatPct(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
 
+function hasBlockingRegression(
+  comparison: ReturnType<typeof compareEvalReports>,
+): boolean {
+  return comparison.passRateDelta < 0 || comparison.failedDelta > 0 ||
+    comparison.newFailedExamples.length > 0 ||
+    comparison.metricDeltas.some((metric) => metric.severity !== "soft" && metric.regressed);
+}
+
 function modelSummary(
   report: EvalReport,
   baselineModel: string,
@@ -96,7 +104,7 @@ function createCandidateDecision(input: {
   const reasons: string[] = [];
 
   if (
-    input.candidate.summary.failed > 0 || baselineComparison.regressed ||
+    input.candidate.summary.failed > 0 || hasBlockingRegression(baselineComparison) ||
     baselineComparison.newFailedExamples.length > 0
   ) {
     reasons.push("candidate has quality regressions");
