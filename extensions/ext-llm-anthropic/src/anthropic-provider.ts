@@ -9,6 +9,7 @@
  */
 
 import type { LLMProvider, LLMProviderConfig } from "veryfront/extensions/llm";
+import type { RuntimeUsage } from "veryfront/provider/shared";
 import type { ModelRuntime } from "veryfront/provider/types";
 import {
   buildProviderError,
@@ -61,14 +62,6 @@ export interface AnthropicRuntimeConfig {
   name?: string;
   fetch?: typeof globalThis.fetch;
 }
-
-type RuntimeUsage = {
-  inputTokens?: number;
-  outputTokens?: number;
-  totalTokens?: number;
-  cacheCreationInputTokens?: number;
-  cacheReadInputTokens?: number;
-};
 
 // ---------------------------------------------------------------------------
 // Anthropic helper functions

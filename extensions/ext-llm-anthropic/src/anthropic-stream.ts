@@ -4,14 +4,7 @@ import {
   readRecord,
   stringifyJsonValue,
 } from "veryfront/provider/shared";
-
-type RuntimeUsage = {
-  inputTokens?: number;
-  outputTokens?: number;
-  totalTokens?: number;
-  cacheCreationInputTokens?: number;
-  cacheReadInputTokens?: number;
-};
+import type { RuntimeUsage } from "veryfront/provider/shared";
 
 type AnthropicStreamToolCallState = {
   id: string;
@@ -67,6 +60,9 @@ export function extractAnthropicUsage(payload: unknown): RuntimeUsage | undefine
   const outputTokens = usage.output_tokens;
   const cacheCreationInputTokens = usage.cache_creation_input_tokens;
   const cacheReadInputTokens = usage.cache_read_input_tokens;
+  const veryfront = readRecord(usage.veryfront);
+  const costSource = veryfront?.cost_source;
+  const usageCaptureStatus = veryfront?.usage_capture_status;
 
   return {
     inputTokens: typeof inputTokens === "number" ? inputTokens : undefined,
@@ -77,6 +73,27 @@ export function extractAnthropicUsage(payload: unknown): RuntimeUsage | undefine
       : undefined,
     ...(typeof cacheCreationInputTokens === "number" ? { cacheCreationInputTokens } : {}),
     ...(typeof cacheReadInputTokens === "number" ? { cacheReadInputTokens } : {}),
+    ...(typeof veryfront?.billable_input_tokens === "number"
+      ? { billableInputTokens: veryfront.billable_input_tokens }
+      : {}),
+    ...(typeof veryfront?.billable_output_tokens === "number"
+      ? { billableOutputTokens: veryfront.billable_output_tokens }
+      : {}),
+    ...(typeof veryfront?.provider_cost_usd === "number"
+      ? { providerCostUsd: veryfront.provider_cost_usd }
+      : {}),
+    ...(typeof veryfront?.veryfront_charge_usd === "number"
+      ? { veryfrontChargeUsd: veryfront.veryfront_charge_usd }
+      : {}),
+    ...(typeof veryfront?.cost_credits === "number" ? { costCredits: veryfront.cost_credits } : {}),
+    ...(costSource === "gateway" || costSource === "missing" || costSource === "partial"
+      ? { costSource }
+      : {}),
+    ...(usageCaptureStatus === "complete" ||
+        usageCaptureStatus === "missing" ||
+        usageCaptureStatus === "partial"
+      ? { usageCaptureStatus }
+      : {}),
   };
 }
 

@@ -66,4 +66,34 @@ describe("provider/runtime-loader/provider-usage mergeUsage", () => {
       reasoningTokens: 2,
     });
   });
+
+  it("preserves gateway billing metadata from a final usage event", () => {
+    const merged = mergeUsage(
+      { inputTokens: 10, cacheReadInputTokens: 4 },
+      {
+        outputTokens: 5,
+        billableInputTokens: 10,
+        billableOutputTokens: 5,
+        providerCostUsd: 0.001,
+        veryfrontChargeUsd: 0.0025,
+        costCredits: 0.025,
+        costSource: "gateway",
+        usageCaptureStatus: "complete",
+      },
+    );
+
+    assertEquals(merged, {
+      inputTokens: 10,
+      outputTokens: 5,
+      totalTokens: 15,
+      cacheReadInputTokens: 4,
+      billableInputTokens: 10,
+      billableOutputTokens: 5,
+      providerCostUsd: 0.001,
+      veryfrontChargeUsd: 0.0025,
+      costCredits: 0.025,
+      costSource: "gateway",
+      usageCaptureStatus: "complete",
+    });
+  });
 });

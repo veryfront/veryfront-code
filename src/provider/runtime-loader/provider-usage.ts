@@ -8,6 +8,13 @@ export type RuntimeUsage = {
   cacheCreationInputTokens?: number;
   cacheReadInputTokens?: number;
   reasoningTokens?: number;
+  billableInputTokens?: number;
+  billableOutputTokens?: number;
+  providerCostUsd?: number;
+  veryfrontChargeUsd?: number;
+  costCredits?: number;
+  costSource?: "gateway" | "missing" | "partial";
+  usageCaptureStatus?: "complete" | "partial" | "missing";
 };
 
 export function extractAnthropicUsage(payload: unknown): RuntimeUsage | undefined {
@@ -136,6 +143,13 @@ export function mergeUsage(
     current.cacheCreationInputTokens;
   const cacheReadInputTokens = next.cacheReadInputTokens ?? current.cacheReadInputTokens;
   const reasoningTokens = next.reasoningTokens ?? current.reasoningTokens;
+  const billableInputTokens = next.billableInputTokens ?? current.billableInputTokens;
+  const billableOutputTokens = next.billableOutputTokens ?? current.billableOutputTokens;
+  const providerCostUsd = next.providerCostUsd ?? current.providerCostUsd;
+  const veryfrontChargeUsd = next.veryfrontChargeUsd ?? current.veryfrontChargeUsd;
+  const costCredits = next.costCredits ?? current.costCredits;
+  const costSource = next.costSource ?? current.costSource;
+  const usageCaptureStatus = next.usageCaptureStatus ?? current.usageCaptureStatus;
 
   // Prefer the provider-reported total (latest non-undefined wins, matching the
   // ?? semantics used for input/output above). Providers like Gemini 2.5
@@ -156,5 +170,12 @@ export function mergeUsage(
     ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
     ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
     ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
+    ...(billableInputTokens !== undefined ? { billableInputTokens } : {}),
+    ...(billableOutputTokens !== undefined ? { billableOutputTokens } : {}),
+    ...(providerCostUsd !== undefined ? { providerCostUsd } : {}),
+    ...(veryfrontChargeUsd !== undefined ? { veryfrontChargeUsd } : {}),
+    ...(costCredits !== undefined ? { costCredits } : {}),
+    ...(costSource !== undefined ? { costSource } : {}),
+    ...(usageCaptureStatus !== undefined ? { usageCaptureStatus } : {}),
   };
 }
