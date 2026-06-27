@@ -38,10 +38,10 @@ export function buildSkillManifestPrompt(skills: Map<string, Skill>): string {
     "- load_skill: Call with { skillId } to load a skill's full instructions and available references/resources/scripts",
   );
   lines.push(
-    "- load_skill_reference: Call with { skillId, reference } to read a file from the skill's references/, resources/, or assets/ directory",
+    "- load_skill_reference: Call with { skillId, reference } only after load_skill lists reference files for that skill",
   );
   lines.push(
-    "- execute_skill_script: Call with { skillId, script, args?, env?, timeoutMs? } to execute a script",
+    "- execute_skill_script: Call with { skillId, script, args?, env?, timeoutMs? } only after load_skill lists scripts for that skill",
   );
 
   return lines.join("\n");

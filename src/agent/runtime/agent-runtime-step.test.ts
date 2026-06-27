@@ -42,6 +42,7 @@ describe("agent/runtime-step", () => {
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
       activeSkillPolicy: ["allowed_tool"],
+      activeSkillToolAvailability: undefined,
       allowedRemoteToolNames: ["remote_allowed"],
       config,
       forwardedRemoteToolDefinitions: [toolDefinition("forwarded_remote")],
@@ -97,10 +98,44 @@ describe("agent/runtime-step", () => {
     assertEquals(prepared.tools.map((tool) => tool.name), ["allowed_tool"]);
   });
 
+  it("passes active skill state to tool execution context", async () => {
+    const prepared = await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillId: "support-escalation",
+      activeSkillPolicy: ["search_knowledge"],
+      activeSkillToolAvailability: {
+        hasActiveSkill: true,
+        references: ["references/guide.md"],
+        scripts: ["scripts/run.sh"],
+      },
+      allowedRemoteToolNames: undefined,
+      config: { model: "auto", system: "Base", tools: true } as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      isLocalModel: false,
+      messages: [],
+      mode: "stream",
+      remoteToolSources: [],
+      runtimeContext: undefined,
+      step: 1,
+      systemPrompt: "Base",
+      toolContextBase: undefined,
+      getAvailableTools: async () => [toolDefinition("search_knowledge")],
+      resolveRuntimeState: async () => ({ systemPrompt: "Base", context: undefined }),
+    });
+
+    assertEquals(prepared.toolContext.activeSkillId, "support-escalation");
+    assertEquals(prepared.toolContext.activeSkillToolAvailability, {
+      hasActiveSkill: true,
+      references: ["references/guide.md"],
+      scripts: ["scripts/run.sh"],
+    });
+  });
+
   it("skips tool loading for local models", async () => {
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
       activeSkillPolicy: undefined,
+      activeSkillToolAvailability: undefined,
       allowedRemoteToolNames: undefined,
       config: { model: "local/test", system: "Local", tools: true } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
@@ -138,6 +173,7 @@ describe("agent/runtime-step", () => {
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
       activeSkillPolicy: undefined,
+      activeSkillToolAvailability: undefined,
       allowedRemoteToolNames: undefined,
       config: { model: "auto", system: "Base", tools: true, skills: true } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
@@ -170,6 +206,7 @@ describe("agent/runtime-step", () => {
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
       activeSkillPolicy: undefined,
+      activeSkillToolAvailability: undefined,
       allowedRemoteToolNames: undefined,
       config: { model: "auto", system: "Base", tools: true, skills: true } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
@@ -225,6 +262,7 @@ describe("agent/runtime-step", () => {
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
       activeSkillPolicy: undefined,
+      activeSkillToolAvailability: undefined,
       allowedRemoteToolNames: undefined,
       config: { model: "auto", system: "Base", tools: true, skills: true } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
@@ -249,6 +287,76 @@ describe("agent/runtime-step", () => {
       "form_input",
       "load_skill",
       "invoke_agent",
+    ]);
+  });
+
+  it("hides load_skill_reference when the active skill has no references", async () => {
+    const prepared = await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillPolicy: ["search_knowledge"],
+      activeSkillToolAvailability: {
+        hasActiveSkill: true,
+        references: [],
+        scripts: [],
+      },
+      allowedRemoteToolNames: undefined,
+      config: { model: "auto", system: "Base", tools: true, skills: true } as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      isLocalModel: false,
+      messages: [],
+      mode: "stream",
+      remoteToolSources: [],
+      runtimeContext: undefined,
+      step: 1,
+      systemPrompt: "Base",
+      toolContextBase: undefined,
+      getAvailableTools: async () => [
+        toolDefinition("search_knowledge"),
+        toolDefinition("load_skill"),
+        toolDefinition("load_skill_reference"),
+        toolDefinition("execute_skill_script"),
+      ],
+      resolveRuntimeState: async () => ({ systemPrompt: "Base", context: undefined }),
+    });
+
+    assertEquals(prepared.tools.map((tool) => tool.name), [
+      "search_knowledge",
+      "load_skill",
+    ]);
+  });
+
+  it("hides skill file tools before any skill is active", async () => {
+    const prepared = await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillPolicy: undefined,
+      activeSkillToolAvailability: {
+        hasActiveSkill: false,
+        references: [],
+        scripts: [],
+      },
+      allowedRemoteToolNames: undefined,
+      config: { model: "auto", system: "Base", tools: true, skills: true } as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      isLocalModel: false,
+      messages: [],
+      mode: "stream",
+      remoteToolSources: [],
+      runtimeContext: undefined,
+      step: 0,
+      systemPrompt: "Base",
+      toolContextBase: undefined,
+      getAvailableTools: async () => [
+        toolDefinition("read_file"),
+        toolDefinition("load_skill"),
+        toolDefinition("load_skill_reference"),
+        toolDefinition("execute_skill_script"),
+      ],
+      resolveRuntimeState: async () => ({ systemPrompt: "Base", context: undefined }),
+    });
+
+    assertEquals(prepared.tools.map((tool) => tool.name), [
+      "read_file",
+      "load_skill",
     ]);
   });
 });

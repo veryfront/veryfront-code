@@ -85,6 +85,20 @@ export interface ToolExecutionContext {
   branch?: string | null;
   /** Environment name associated with project content */
   environmentName?: string | null;
+  /** Canonical id of the active skill loaded by the current agent run step. */
+  activeSkillId?: string;
+  /**
+   * File-backed capabilities advertised by the active loaded skill.
+   *
+   * Framework skill file tools use this to reject references/scripts that were
+   * not listed by `load_skill`, even if the model guesses a valid path under a
+   * skill directory.
+   */
+  activeSkillToolAvailability?: {
+    hasActiveSkill?: boolean;
+    references?: readonly string[];
+    scripts?: readonly string[];
+  };
   /** Abort signal for cooperative cancellation during long-running tool execution */
   abortSignal?: AbortSignal;
   /** Progress token for sending progress notifications (MCP 2025-11-25) */

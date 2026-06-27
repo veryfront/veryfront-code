@@ -209,8 +209,9 @@ Deno.test("load_skill loads the caller's own skill via its short name", async ()
     const content = await loadSkill.execute(
       { skillId: "cite" },
       { agentId: "researcher" },
-    ) as { instructions: string };
+    ) as { instructions: string; skillId: string };
 
+    assertEquals(content.skillId, "researcher--cite");
     assertEquals(content.instructions.trim(), "Always cite primary sources.");
   } finally {
     skillRegistry.clearAll();

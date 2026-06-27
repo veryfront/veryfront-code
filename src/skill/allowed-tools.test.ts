@@ -49,23 +49,68 @@ describe("src/skill/allowed-tools", () => {
       { name: "Write", description: "Write", parameters: {} },
       { name: "api:list", description: "API", parameters: {} },
       { name: "load_skill", description: "Load", parameters: {} },
+      { name: "load_skill_reference", description: "Load reference", parameters: {} },
+      { name: "execute_skill_script", description: "Execute script", parameters: {} },
     ];
 
     it("should return all tools when allowedTools is undefined", () => {
       const result = filterToolsForSkill(tools, undefined);
-      assertEquals(result.length, 4);
+      assertEquals(result.length, 6);
     });
 
-    it("should return only skill tools when allowedTools is empty", () => {
+    it("should constrain skill infrastructure tools when allowedTools is undefined", () => {
+      const result = filterToolsForSkill(tools, undefined, {
+        hasActiveSkill: true,
+        references: [],
+        scripts: [],
+      });
+
+      assertEquals(result.map((t) => t.name), [
+        "Read",
+        "Write",
+        "api:list",
+        "load_skill",
+      ]);
+    });
+
+    it("should return only load_skill when allowedTools is empty and no skill files are available", () => {
       const result = filterToolsForSkill(tools, []);
       assertEquals(result.length, 1);
       assertEquals(result.map((t) => t.name), ["load_skill"]);
     });
 
-    it("should filter to only allowed tools + skill tools", () => {
+    it("should filter to allowed tools plus load_skill when no skill files are available", () => {
       const result = filterToolsForSkill(tools, ["Read"]);
       assertEquals(result.length, 2); // Read + load_skill
       assertEquals(result.map((t) => t.name).sort(), ["Read", "load_skill"]);
+    });
+
+    it("should expose load_skill_reference only when the active skill has references", () => {
+      const result = filterToolsForSkill(tools, ["Read"], {
+        hasActiveSkill: true,
+        references: ["references/guide.md"],
+        scripts: [],
+      });
+
+      assertEquals(result.map((t) => t.name).sort(), [
+        "Read",
+        "load_skill",
+        "load_skill_reference",
+      ]);
+    });
+
+    it("should expose execute_skill_script only when the active skill has scripts", () => {
+      const result = filterToolsForSkill(tools, ["Read"], {
+        hasActiveSkill: true,
+        references: [],
+        scripts: ["scripts/run.sh"],
+      });
+
+      assertEquals(result.map((t) => t.name).sort(), [
+        "Read",
+        "execute_skill_script",
+        "load_skill",
+      ]);
     });
 
     it("should support prefix wildcards", () => {
@@ -73,9 +118,11 @@ describe("src/skill/allowed-tools", () => {
       assertEquals(result.length, 2); // api:list + load_skill
     });
 
-    it("should always include skill tools", () => {
+    it("should always include load_skill", () => {
       const result = filterToolsForSkill(tools, ["Write"]);
       assertEquals(result.some((t) => t.name === "load_skill"), true);
+      assertEquals(result.some((t) => t.name === "load_skill_reference"), false);
+      assertEquals(result.some((t) => t.name === "execute_skill_script"), false);
     });
   });
 
@@ -84,14 +131,33 @@ describe("src/skill/allowed-tools", () => {
       assertEquals(isToolAllowedBySkill("anything", undefined), true);
     });
 
+    it("should still constrain skill infrastructure tools when no policy", () => {
+      assertEquals(
+        isToolAllowedBySkill("load_skill_reference", undefined, {
+          hasActiveSkill: true,
+          references: [],
+          scripts: [],
+        }),
+        false,
+      );
+      assertEquals(
+        isToolAllowedBySkill("Read", undefined, {
+          hasActiveSkill: true,
+          references: [],
+          scripts: [],
+        }),
+        true,
+      );
+    });
+
     it("should deny non-skill tools when empty policy", () => {
       assertEquals(isToolAllowedBySkill("anything", []), false);
     });
 
-    it("should allow skill tools when empty policy", () => {
+    it("should allow only load_skill when empty policy and no active skill files are available", () => {
       assertEquals(isToolAllowedBySkill("load_skill", []), true);
-      assertEquals(isToolAllowedBySkill("load_skill_reference", []), true);
-      assertEquals(isToolAllowedBySkill("execute_skill_script", []), true);
+      assertEquals(isToolAllowedBySkill("load_skill_reference", []), false);
+      assertEquals(isToolAllowedBySkill("execute_skill_script", []), false);
     });
 
     it("should allow matching tool", () => {
@@ -102,10 +168,48 @@ describe("src/skill/allowed-tools", () => {
       assertEquals(isToolAllowedBySkill("Bash", ["Read", "Write"]), false);
     });
 
-    it("should always allow skill system tools", () => {
+    it("should always allow load_skill", () => {
       assertEquals(isToolAllowedBySkill("load_skill", ["Read"]), true);
-      assertEquals(isToolAllowedBySkill("load_skill_reference", ["Read"]), true);
-      assertEquals(isToolAllowedBySkill("execute_skill_script", ["Read"]), true);
+      assertEquals(isToolAllowedBySkill("load_skill_reference", ["Read"]), false);
+      assertEquals(isToolAllowedBySkill("execute_skill_script", ["Read"]), false);
+    });
+
+    it("should allow load_skill_reference only when the active skill has references", () => {
+      assertEquals(
+        isToolAllowedBySkill("load_skill_reference", ["Read"], {
+          hasActiveSkill: true,
+          references: ["references/guide.md"],
+          scripts: [],
+        }),
+        true,
+      );
+      assertEquals(
+        isToolAllowedBySkill("load_skill_reference", ["Read"], {
+          hasActiveSkill: true,
+          references: [],
+          scripts: [],
+        }),
+        false,
+      );
+    });
+
+    it("should allow execute_skill_script only when the active skill has scripts", () => {
+      assertEquals(
+        isToolAllowedBySkill("execute_skill_script", ["Read"], {
+          hasActiveSkill: true,
+          references: [],
+          scripts: ["scripts/run.sh"],
+        }),
+        true,
+      );
+      assertEquals(
+        isToolAllowedBySkill("execute_skill_script", ["Read"], {
+          hasActiveSkill: true,
+          references: [],
+          scripts: [],
+        }),
+        false,
+      );
     });
   });
 

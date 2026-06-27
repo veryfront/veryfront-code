@@ -11,6 +11,40 @@
 import { SKILL_ALLOWED_TOOL_PATTERN_REGEX, SKILL_TOOL_IDS } from "./types.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
+/** Active skill file-backed capabilities available to skill infrastructure tools. */
+export type SkillToolAvailability = {
+  hasActiveSkill?: boolean;
+  references?: readonly string[];
+  scripts?: readonly string[];
+};
+
+const LOAD_SKILL_TOOL_ID = "load_skill";
+const LOAD_SKILL_REFERENCE_TOOL_ID = "load_skill_reference";
+const EXECUTE_SKILL_SCRIPT_TOOL_ID = "execute_skill_script";
+
+function isSkillInfrastructureToolAllowed(
+  toolName: string,
+  availability: SkillToolAvailability = {},
+): boolean | undefined {
+  if (!SKILL_TOOL_IDS.has(toolName)) {
+    return undefined;
+  }
+
+  if (toolName === LOAD_SKILL_TOOL_ID) {
+    return true;
+  }
+
+  if (toolName === LOAD_SKILL_REFERENCE_TOOL_ID) {
+    return availability.hasActiveSkill === true && (availability.references?.length ?? 0) > 0;
+  }
+
+  if (toolName === EXECUTE_SKILL_SCRIPT_TOOL_ID) {
+    return availability.hasActiveSkill === true && (availability.scripts?.length ?? 0) > 0;
+  }
+
+  return false;
+}
+
 /**
  * Check if a tool name matches a single allowed-tools pattern.
  *
@@ -47,13 +81,25 @@ export function matchesAllowedTool(toolName: string, pattern: string): boolean {
 export function filterToolsForSkill<T extends { name: string }>(
   tools: T[],
   allowedTools: string[] | undefined,
+  skillToolAvailability?: SkillToolAvailability,
 ): T[] {
   if (allowedTools === undefined) {
-    return tools;
+    if (!skillToolAvailability) {
+      return tools;
+    }
+
+    return tools.filter((tool) => {
+      const skillToolAllowed = isSkillInfrastructureToolAllowed(
+        tool.name,
+        skillToolAvailability,
+      );
+      return skillToolAllowed ?? true;
+    });
   }
 
   return tools.filter((tool) => {
-    if (SKILL_TOOL_IDS.has(tool.name)) return true;
+    const skillToolAllowed = isSkillInfrastructureToolAllowed(tool.name, skillToolAvailability);
+    if (skillToolAllowed !== undefined) return skillToolAllowed;
     return allowedTools.some((pattern) => matchesAllowedTool(tool.name, pattern));
   });
 }
@@ -68,9 +114,11 @@ export function filterToolsForSkill<T extends { name: string }>(
 export function isToolAllowedBySkill(
   toolName: string,
   allowedTools: string[] | undefined,
+  skillToolAvailability?: SkillToolAvailability,
 ): boolean {
+  const skillToolAllowed = isSkillInfrastructureToolAllowed(toolName, skillToolAvailability);
+  if (skillToolAllowed !== undefined) return skillToolAllowed;
   if (allowedTools === undefined) return true;
-  if (SKILL_TOOL_IDS.has(toolName)) return true;
   return allowedTools.some((pattern) => matchesAllowedTool(toolName, pattern));
 }
 
