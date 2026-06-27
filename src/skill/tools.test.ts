@@ -112,7 +112,7 @@ Review the asset files.`,
     assertEquals(result.references, ["assets/checklist.txt"]);
   });
 
-  it("load_skill should note when no references or scripts are available", async () => {
+  it("load_skill should omit prompt notes for unavailable file tools", async () => {
     const fsAdapter = createSkillTestAdapter({
       "/project/skills/my-skill/SKILL.md": `---
 name: my-skill
@@ -126,14 +126,9 @@ Do work.`,
     const tool = createLoadSkillTool();
     const result = await tool.execute({ skillId: "my-skill" });
 
-    assertEquals(
-      result.note,
-      "This skill has no scripts or reference files. Do NOT call execute_skill_script or load_skill_reference.",
-    );
-  });
+    assertEquals(result.note, undefined);
 
-  it("load_skill should note when only references are available", async () => {
-    const fsAdapter = createSkillTestAdapter({
+    const referencesOnlyAdapter = createSkillTestAdapter({
       "/project/skills/my-skill/SKILL.md": `---
 name: my-skill
 description: Skill from adapter
@@ -142,16 +137,13 @@ description: Skill from adapter
 Do work.`,
       "/project/skills/my-skill/references/guide.md": "Guide",
     });
-    registerSkill("my-skill", createTestSkill(fsAdapter));
+    registerSkill("my-skill", createTestSkill(referencesOnlyAdapter));
 
-    const tool = createLoadSkillTool();
-    const result = await tool.execute({ skillId: "my-skill" });
+    const referencesOnly = await tool.execute({ skillId: "my-skill" });
 
-    assertEquals(result.note, "This skill has no scripts. Do NOT call execute_skill_script.");
-  });
+    assertEquals(referencesOnly.note, undefined);
 
-  it("load_skill should note when only scripts are available", async () => {
-    const fsAdapter = createSkillTestAdapter({
+    const scriptsOnlyAdapter = createSkillTestAdapter({
       "/project/skills/my-skill/SKILL.md": `---
 name: my-skill
 description: Skill from adapter
@@ -160,15 +152,11 @@ description: Skill from adapter
 Do work.`,
       "/project/skills/my-skill/scripts/run.sh": "echo run",
     });
-    registerSkill("my-skill", createTestSkill(fsAdapter));
+    registerSkill("my-skill", createTestSkill(scriptsOnlyAdapter));
 
-    const tool = createLoadSkillTool();
-    const result = await tool.execute({ skillId: "my-skill" });
+    const scriptsOnly = await tool.execute({ skillId: "my-skill" });
 
-    assertEquals(
-      result.note,
-      "This skill has no reference files. Do NOT call load_skill_reference.",
-    );
+    assertEquals(scriptsOnly.note, undefined);
   });
 
   it("load_skill_reference should read content via fsAdapter", async () => {
