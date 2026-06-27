@@ -149,6 +149,44 @@ describe("eval/model-comparison", () => {
     assertEquals(comparison.candidates[0]?.newFailedExamples, ["refund-escalation"]);
   });
 
+  it("promotes cheaper candidates that pass gates even when soft metrics drop", () => {
+    const baseline = createReport("anthropic/claude-opus-4-6", {
+      passed: 3,
+      failed: 1,
+      totalTokens: 10_000,
+      failedExamples: ["sso-login-after-release"],
+    });
+    baseline.summary.metrics.push({
+      name: "knowledge.precisionAtK",
+      family: "knowledge",
+      severity: "soft",
+      passed: 4,
+      failed: 0,
+      skipped: 0,
+      passRate: 1,
+    });
+
+    const candidate = createReport("moonshotai/kimi-k2.6", {
+      totalTokens: 6_000,
+    });
+    candidate.summary.metrics.push({
+      name: "knowledge.precisionAtK",
+      family: "knowledge",
+      severity: "soft",
+      passed: 3,
+      failed: 1,
+      skipped: 0,
+      passRate: 0.75,
+    });
+
+    const comparison = compareEvalModelReports([baseline, candidate], {
+      baselineModel: "anthropic/claude-opus-4-6",
+    });
+
+    assertEquals(comparison.candidates[0]?.decision, "promote-candidate");
+    assertEquals(comparison.recommendation.decision, "promote-candidate");
+  });
+
   it("promotes cheaper candidates when deterministic evals do not measure groundedness", () => {
     const comparison = compareEvalModelReports(
       [
