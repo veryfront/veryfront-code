@@ -75,6 +75,9 @@ export function createAgUiBrowserFinalizeTracker<TChunk>(
       if (typeof nextMetadata.veryfrontChargeUsd === "number") {
         metadata.veryfrontChargeUsd = nextMetadata.veryfrontChargeUsd;
       }
+      if (typeof nextMetadata.veryfrontBilledUsd === "number") {
+        metadata.veryfrontBilledUsd = nextMetadata.veryfrontBilledUsd;
+      }
       if (typeof nextMetadata.costCredits === "number") {
         metadata.costCredits = nextMetadata.costCredits;
       }

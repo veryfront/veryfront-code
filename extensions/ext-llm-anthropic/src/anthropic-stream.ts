@@ -85,6 +85,9 @@ export function extractAnthropicUsage(payload: unknown): RuntimeUsage | undefine
     ...(typeof veryfront?.veryfront_charge_usd === "number"
       ? { veryfrontChargeUsd: veryfront.veryfront_charge_usd }
       : {}),
+    ...(typeof veryfront?.veryfront_billed_usd === "number"
+      ? { veryfrontBilledUsd: veryfront.veryfront_billed_usd }
+      : {}),
     ...(typeof veryfront?.cost_credits === "number" ? { costCredits: veryfront.cost_credits } : {}),
     ...(costSource === "gateway" || costSource === "missing" || costSource === "partial"
       ? { costSource }

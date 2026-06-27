@@ -638,6 +638,7 @@ export class AgentRuntime {
             costUsd: response.usage.costUsd,
             providerCostUsd: response.usage.providerCostUsd,
             veryfrontChargeUsd: response.usage.veryfrontChargeUsd,
+            veryfrontBilledUsd: response.usage.veryfrontBilledUsd,
             costCredits: response.usage.costCredits,
             costSource: response.usage.costSource,
             usageCaptureStatus: response.usage.usageCaptureStatus,

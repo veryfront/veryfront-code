@@ -19,6 +19,7 @@ export interface AgUiBrowserRunFinishedMetadata {
   costUsd?: number;
   providerCostUsd?: number;
   veryfrontChargeUsd?: number;
+  veryfrontBilledUsd?: number;
   costCredits?: number;
   costSource?: "gateway" | "missing" | "partial";
   finishReason?: string;
@@ -230,6 +231,9 @@ function applyResponseMetadata(
     if (typeof usage.veryfrontChargeUsd === "number") {
       state.metadata.veryfrontChargeUsd = usage.veryfrontChargeUsd;
     }
+    if (typeof usage.veryfrontBilledUsd === "number") {
+      state.metadata.veryfrontBilledUsd = usage.veryfrontBilledUsd;
+    }
     if (typeof usage.costCredits === "number") {
       state.metadata.costCredits = usage.costCredits;
     }
@@ -264,6 +268,13 @@ function applyResponseMetadata(
     veryfrontChargeUsd >= 0
   ) {
     state.metadata.veryfrontChargeUsd = veryfrontChargeUsd;
+  }
+  const veryfrontBilledUsd = metadata?.veryfrontBilledUsd;
+  if (
+    typeof veryfrontBilledUsd === "number" && Number.isFinite(veryfrontBilledUsd) &&
+    veryfrontBilledUsd >= 0
+  ) {
+    state.metadata.veryfrontBilledUsd = veryfrontBilledUsd;
   }
   const costCredits = metadata?.costCredits;
   if (typeof costCredits === "number" && Number.isFinite(costCredits) && costCredits >= 0) {
@@ -331,6 +342,9 @@ export function buildAgUiBrowserFinalizeResponse(
   }
   if (typeof metadata.veryfrontChargeUsd === "number") {
     responseMetadata.veryfrontChargeUsd = metadata.veryfrontChargeUsd;
+  }
+  if (typeof metadata.veryfrontBilledUsd === "number") {
+    responseMetadata.veryfrontBilledUsd = metadata.veryfrontBilledUsd;
   }
   if (typeof metadata.costCredits === "number") {
     responseMetadata.costCredits = metadata.costCredits;

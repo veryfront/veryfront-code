@@ -64,6 +64,9 @@ function mergeMetadata(
   if (typeof metadata.veryfrontChargeUsd === "number") {
     target.veryfrontChargeUsd = metadata.veryfrontChargeUsd;
   }
+  if (typeof metadata.veryfrontBilledUsd === "number") {
+    target.veryfrontBilledUsd = metadata.veryfrontBilledUsd;
+  }
   if (typeof metadata.costCredits === "number") target.costCredits = metadata.costCredits;
   if (metadata.costSource) target.costSource = metadata.costSource;
   if (metadata.usageCaptureStatus) target.usageCaptureStatus = metadata.usageCaptureStatus;

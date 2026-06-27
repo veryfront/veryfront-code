@@ -70,7 +70,7 @@ describe("provider/veryfront-cloud", () => {
             );
             controller.enqueue(
               encoder.encode(
-                'data: {"choices":[{"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3,"veryfront":{"billable_input_tokens":2,"billable_output_tokens":1,"provider_cost_usd":0.001,"veryfront_charge_usd":0.0025,"cost_credits":0.025,"cost_source":"gateway","usage_capture_status":"complete"}}}\n\n',
+                'data: {"choices":[{"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3,"veryfront":{"billable_input_tokens":2,"billable_output_tokens":1,"provider_cost_usd":0.001,"veryfront_charge_usd":0.0025,"veryfront_billed_usd":0.1,"cost_credits":1,"cost_source":"gateway","usage_capture_status":"complete"}}}\n\n',
               ),
             );
             controller.enqueue(encoder.encode("data: [DONE]\n\n"));
@@ -105,7 +105,8 @@ describe("provider/veryfront-cloud", () => {
       billableOutputTokens: 1,
       providerCostUsd: 0.001,
       veryfrontChargeUsd: 0.0025,
-      costCredits: 0.025,
+      veryfrontBilledUsd: 0.1,
+      costCredits: 1,
       costSource: "gateway",
       usageCaptureStatus: "complete",
     });

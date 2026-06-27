@@ -36,6 +36,7 @@ const LOWER_IS_BETTER = new Set<EvalModelComparisonMetricName>([
   "costUsd",
   "providerCostUsd",
   "veryfrontChargeUsd",
+  "veryfrontBilledUsd",
   "costCredits",
   "p95Ms",
 ]);
@@ -90,10 +91,19 @@ function formatScore(value: number): number {
 }
 
 function comparisonCost(summary: EvalModelReportSummary): number | undefined {
-  return summary.veryfrontChargeUsd ?? summary.costUsd ?? summary.providerCostUsd;
+  return summary.veryfrontBilledUsd ?? summary.veryfrontChargeUsd ?? summary.costUsd ??
+    summary.providerCostUsd;
 }
 
-function hasGatewayChargeCost(
+function hasGatewayBilledCost(
+  baselineSummary: EvalModelReportSummary,
+  candidateSummary: EvalModelReportSummary,
+): boolean {
+  return baselineSummary.veryfrontBilledUsd !== undefined &&
+    candidateSummary.veryfrontBilledUsd !== undefined;
+}
+
+function hasGatewayMeteredCost(
   baselineSummary: EvalModelReportSummary,
   candidateSummary: EvalModelReportSummary,
 ): boolean {
@@ -130,6 +140,8 @@ function metricValue(
       return summary.providerCostUsd;
     case "veryfrontChargeUsd":
       return summary.veryfrontChargeUsd;
+    case "veryfrontBilledUsd":
+      return summary.veryfrontBilledUsd;
     case "costCredits":
       return summary.costCredits;
     case "p95Ms":
@@ -297,6 +309,9 @@ function modelSummary(
     ...(report.summary.usage?.veryfrontChargeUsd !== undefined
       ? { veryfrontChargeUsd: report.summary.usage.veryfrontChargeUsd }
       : {}),
+    ...(report.summary.usage?.veryfrontBilledUsd !== undefined
+      ? { veryfrontBilledUsd: report.summary.usage.veryfrontBilledUsd }
+      : {}),
     ...(report.summary.usage?.costCredits !== undefined
       ? { costCredits: report.summary.usage.costCredits }
       : {}),
@@ -395,10 +410,13 @@ function createCandidateDecision(input: {
   const latencyImprovement = improvementPct(baselineSummary.p95Ms, candidateSummary.p95Ms);
 
   if (meetsImprovement(costImprovement, input.options.minCostImprovementPct)) {
+    const costLabel = hasGatewayBilledCost(baselineSummary, candidateSummary)
+      ? "Veryfront billed cost"
+      : hasGatewayMeteredCost(baselineSummary, candidateSummary)
+      ? "Veryfront metered cost"
+      : "cost";
     reasons.push(
-      hasGatewayChargeCost(baselineSummary, candidateSummary)
-        ? `Veryfront charge improved by ${formatPct(costImprovement!)}`
-        : `cost improved by ${formatPct(costImprovement!)}`,
+      `${costLabel} improved by ${formatPct(costImprovement!)}`,
     );
     return { decision: "promote-candidate", reasons };
   }
@@ -561,8 +579,8 @@ export function createEvalModelComparisonMarkdown(comparison: EvalModelCompariso
     "",
     "## Models",
     "",
-    "| Model | Role | Passed | Failed | Pass rate | Groundedness | Input tok | Output tok | Total tok | Billable in | Billable out | Provider USD | Veryfront USD | Credits | Cost source | p95 ms |",
-    "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |",
+    "| Model | Role | Passed | Failed | Pass rate | Groundedness | Input tok | Output tok | Total tok | Billable in | Billable out | Provider USD | Metered USD | Billed USD | Credits | Cost source | p95 ms |",
+    "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |",
   ];
 
   for (const model of comparison.models) {
@@ -575,9 +593,9 @@ export function createEvalModelComparisonMarkdown(comparison: EvalModelCompariso
         numberCell(model.billableOutputTokens)
       } | ${costCell(model.providerCostUsd ?? model.costUsd, model.costSource)} | ${
         costCell(model.veryfrontChargeUsd, model.costSource)
-      } | ${decimalCell(model.costCredits)} | ${model.costSource ?? "-"} | ${
-        numberCell(model.p95Ms)
-      } |`,
+      } | ${costCell(model.veryfrontBilledUsd, model.costSource)} | ${
+        decimalCell(model.costCredits)
+      } | ${model.costSource ?? "-"} | ${numberCell(model.p95Ms)} |`,
     );
   }
 

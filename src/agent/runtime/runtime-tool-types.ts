@@ -36,6 +36,7 @@ export interface RuntimeGenerateUsage {
   costUsd?: number;
   providerCostUsd?: number;
   veryfrontChargeUsd?: number;
+  veryfrontBilledUsd?: number;
   costCredits?: number;
   costSource?: "gateway" | "missing" | "partial";
   usageCaptureStatus?: "complete" | "partial" | "missing";
@@ -150,6 +151,7 @@ export type RuntimeStreamPart =
       costUsd?: number;
       providerCostUsd?: number;
       veryfrontChargeUsd?: number;
+      veryfrontBilledUsd?: number;
       costCredits?: number;
       costSource?: "gateway" | "missing" | "partial";
       usageCaptureStatus?: "complete" | "partial" | "missing";

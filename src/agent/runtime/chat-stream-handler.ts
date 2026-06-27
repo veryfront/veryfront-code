@@ -82,6 +82,7 @@ export interface ChatStreamState {
     costUsd?: number;
     providerCostUsd?: number;
     veryfrontChargeUsd?: number;
+    veryfrontBilledUsd?: number;
     costCredits?: number;
     costSource?: "gateway" | "missing" | "partial";
     usageCaptureStatus?: "complete" | "partial" | "missing";
@@ -103,6 +104,7 @@ export interface ChatStreamCallbacks {
     costUsd?: number;
     providerCostUsd?: number;
     veryfrontChargeUsd?: number;
+    veryfrontBilledUsd?: number;
     costCredits?: number;
     costSource?: "gateway" | "missing" | "partial";
     usageCaptureStatus?: "complete" | "partial" | "missing";
@@ -1022,6 +1024,9 @@ export function processStream(
                 : {}),
               ...(typedPart.totalUsage.veryfrontChargeUsd !== undefined
                 ? { veryfrontChargeUsd: typedPart.totalUsage.veryfrontChargeUsd }
+                : {}),
+              ...(typedPart.totalUsage.veryfrontBilledUsd !== undefined
+                ? { veryfrontBilledUsd: typedPart.totalUsage.veryfrontBilledUsd }
                 : {}),
               ...(typedPart.totalUsage.costCredits !== undefined
                 ? { costCredits: typedPart.totalUsage.costCredits }

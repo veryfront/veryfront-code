@@ -392,6 +392,8 @@ function createUsageFromRecord(record: Record<string, unknown>): EvalUsage | und
     readNumber(record.provider_cost_usd);
   const veryfrontChargeUsd = readNumber(record.veryfrontChargeUsd) ??
     readNumber(record.veryfront_charge_usd);
+  const veryfrontBilledUsd = readNumber(record.veryfrontBilledUsd) ??
+    readNumber(record.veryfront_billed_usd);
   const costCredits = readNumber(record.costCredits) ?? readNumber(record.cost_credits);
   const costUsd = readNumber(record.costUsd) ?? readNumber(record.totalCostUsd) ??
     readNumber(record.total_cost_usd) ??
@@ -414,6 +416,7 @@ function createUsageFromRecord(record: Record<string, unknown>): EvalUsage | und
     ...(costUsd !== undefined ? { costUsd } : {}),
     ...(providerCostUsd !== undefined ? { providerCostUsd } : {}),
     ...(veryfrontChargeUsd !== undefined ? { veryfrontChargeUsd } : {}),
+    ...(veryfrontBilledUsd !== undefined ? { veryfrontBilledUsd } : {}),
     ...(costCredits !== undefined ? { costCredits } : {}),
     ...(costSource !== undefined ? { costSource } : {}),
     ...(usageCaptureStatus !== undefined ? { usageCaptureStatus } : {}),

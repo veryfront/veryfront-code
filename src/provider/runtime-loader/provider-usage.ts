@@ -12,6 +12,7 @@ export type RuntimeUsage = {
   billableOutputTokens?: number;
   providerCostUsd?: number;
   veryfrontChargeUsd?: number;
+  veryfrontBilledUsd?: number;
   costCredits?: number;
   costSource?: "gateway" | "missing" | "partial";
   usageCaptureStatus?: "complete" | "partial" | "missing";
@@ -147,6 +148,7 @@ export function mergeUsage(
   const billableOutputTokens = next.billableOutputTokens ?? current.billableOutputTokens;
   const providerCostUsd = next.providerCostUsd ?? current.providerCostUsd;
   const veryfrontChargeUsd = next.veryfrontChargeUsd ?? current.veryfrontChargeUsd;
+  const veryfrontBilledUsd = next.veryfrontBilledUsd ?? current.veryfrontBilledUsd;
   const costCredits = next.costCredits ?? current.costCredits;
   const costSource = next.costSource ?? current.costSource;
   const usageCaptureStatus = next.usageCaptureStatus ?? current.usageCaptureStatus;
@@ -174,6 +176,7 @@ export function mergeUsage(
     ...(billableOutputTokens !== undefined ? { billableOutputTokens } : {}),
     ...(providerCostUsd !== undefined ? { providerCostUsd } : {}),
     ...(veryfrontChargeUsd !== undefined ? { veryfrontChargeUsd } : {}),
+    ...(veryfrontBilledUsd !== undefined ? { veryfrontBilledUsd } : {}),
     ...(costCredits !== undefined ? { costCredits } : {}),
     ...(costSource !== undefined ? { costSource } : {}),
     ...(usageCaptureStatus !== undefined ? { usageCaptureStatus } : {}),

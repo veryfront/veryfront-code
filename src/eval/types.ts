@@ -77,6 +77,7 @@ export interface EvalUsage {
   costUsd?: number;
   providerCostUsd?: number;
   veryfrontChargeUsd?: number;
+  veryfrontBilledUsd?: number;
   costCredits?: number;
   costSource?: EvalUsageCostSource;
   usageCaptureStatus?: EvalUsageCaptureStatus;
@@ -354,6 +355,7 @@ export interface EvalUsageSummary {
   costUsd?: number;
   providerCostUsd?: number;
   veryfrontChargeUsd?: number;
+  veryfrontBilledUsd?: number;
   costCredits?: number;
   costSource?: EvalUsageCostSource;
   usageCaptureStatus?: EvalUsageCaptureStatus;
@@ -467,6 +469,7 @@ export interface EvalModelReportSummary {
   costUsd?: number;
   providerCostUsd?: number;
   veryfrontChargeUsd?: number;
+  veryfrontBilledUsd?: number;
   costCredits?: number;
   costSource?: EvalUsageCostSource;
   usageCaptureStatus?: EvalUsageCaptureStatus;
@@ -525,6 +528,7 @@ export type EvalModelComparisonMetricName =
   | "costUsd"
   | "providerCostUsd"
   | "veryfrontChargeUsd"
+  | "veryfrontBilledUsd"
   | "costCredits"
   | "p95Ms";
 

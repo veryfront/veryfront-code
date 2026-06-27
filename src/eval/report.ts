@@ -26,6 +26,7 @@ const USAGE_NUMERIC_KEYS = [
   "costUsd",
   "providerCostUsd",
   "veryfrontChargeUsd",
+  "veryfrontBilledUsd",
   "costCredits",
 ] as const satisfies ReadonlyArray<keyof EvalUsageSummary>;
 

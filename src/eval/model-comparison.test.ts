@@ -18,6 +18,7 @@ function createReport(
     costUsd?: number;
     providerCostUsd?: number;
     veryfrontChargeUsd?: number;
+    veryfrontBilledUsd?: number;
     costCredits?: number;
     costSource?: "gateway" | "missing" | "partial";
     usageCaptureStatus?: "complete" | "partial" | "missing";
@@ -98,6 +99,7 @@ function createReport(
         costUsd: overrides.costUsd,
         providerCostUsd: overrides.providerCostUsd,
         veryfrontChargeUsd: overrides.veryfrontChargeUsd,
+        veryfrontBilledUsd: overrides.veryfrontBilledUsd,
         costCredits: overrides.costCredits,
         costSource: overrides.costSource,
         usageCaptureStatus: overrides.usageCaptureStatus,
@@ -203,6 +205,31 @@ describe("eval/model-comparison", () => {
 
     assertEquals(comparison.candidates[0]?.decision, "promote-candidate");
     assertEquals(comparison.recommendation.decision, "promote-candidate");
+  });
+
+  it("uses billed Veryfront cost before metered gateway charge for cost decisions", () => {
+    const comparison = compareEvalModelReports(
+      [
+        createReport("anthropic/claude-sonnet-4-6", {
+          veryfrontChargeUsd: 0.14,
+          veryfrontBilledUsd: 0.4,
+          costCredits: 4,
+          costSource: "gateway",
+        }),
+        createReport("moonshotai/kimi-k2.6", {
+          veryfrontChargeUsd: 0.08,
+          veryfrontBilledUsd: 1.5,
+          costCredits: 15,
+          costSource: "gateway",
+        }),
+      ],
+      { baselineModel: "anthropic/claude-sonnet-4-6" },
+    );
+
+    assertEquals(comparison.candidates[0]?.decision, "needs-review");
+    assertEquals(comparison.candidates[0]?.costImprovementPct, -2.75);
+    assertEquals(comparison.models[0]?.veryfrontBilledUsd, 0.4);
+    assertEquals(comparison.models[1]?.veryfrontBilledUsd, 1.5);
   });
 
   it("keeps the baseline when a candidate violates a configured latency constraint", () => {
@@ -383,7 +410,7 @@ describe("eval/model-comparison", () => {
     );
   });
 
-  it("uses gateway Veryfront charge for cost comparison and shows token/cost breakdowns", () => {
+  it("falls back to gateway metered charge for cost comparison and shows token/cost breakdowns", () => {
     const comparison = compareEvalModelReports(
       [
         createReport("anthropic/claude-opus-4-6", {
@@ -420,20 +447,22 @@ describe("eval/model-comparison", () => {
       reasons: [
         "candidate has no quality regressions",
         "groundedness is at or above 0.8",
-        "Veryfront charge improved by 50%",
+        "Veryfront metered cost improved by 50%",
       ],
     });
 
     const markdown = createEvalModelComparisonMarkdown(comparison);
     assertEquals(
       markdown.includes(
-        "| Model | Role | Passed | Failed | Pass rate | Groundedness | Input tok | Output tok | Total tok | Billable in | Billable out | Provider USD | Veryfront USD | Credits | Cost source | p95 ms |",
+        "| Model | Role | Passed | Failed | Pass rate | Groundedness | Input tok | Output tok | Total tok | Billable in | Billable out | Provider USD | Metered USD | Billed USD | Credits | Cost source | p95 ms |",
       ),
       true,
     );
     assertEquals(markdown.includes("| moonshotai/kimi-k2.6 | candidate |"), true);
     assertEquals(
-      markdown.includes("| 7000 | 2000 | 9000 | 7000 | 2000 | 0.20 | 0.50 | 5.00 | gateway |"),
+      markdown.includes(
+        "| 7000 | 2000 | 9000 | 7000 | 2000 | 0.20 | 0.50 | - | 5.00 | gateway |",
+      ),
       true,
     );
   });

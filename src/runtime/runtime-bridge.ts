@@ -117,6 +117,7 @@ type DirectGenerateUsage = {
   costUsd?: number;
   providerCostUsd?: number;
   veryfrontChargeUsd?: number;
+  veryfrontBilledUsd?: number;
   costCredits?: number;
   costSource?: "gateway" | "missing" | "partial";
   usageCaptureStatus?: "complete" | "partial" | "missing";
@@ -302,6 +303,7 @@ function normalizeUsage(usage: unknown): DirectGenerateUsage | undefined {
     costUsd?: number;
     providerCostUsd?: number;
     veryfrontChargeUsd?: number;
+    veryfrontBilledUsd?: number;
     costCredits?: number;
     costSource?: unknown;
     usageCaptureStatus?: unknown;
@@ -339,6 +341,9 @@ function normalizeUsage(usage: unknown): DirectGenerateUsage | undefined {
       : {}),
     ...(typeof flatUsage.veryfrontChargeUsd === "number"
       ? { veryfrontChargeUsd: flatUsage.veryfrontChargeUsd }
+      : {}),
+    ...(typeof flatUsage.veryfrontBilledUsd === "number"
+      ? { veryfrontBilledUsd: flatUsage.veryfrontBilledUsd }
       : {}),
     ...(typeof flatUsage.costCredits === "number" ? { costCredits: flatUsage.costCredits } : {}),
     ...(costSource === "gateway" || costSource === "missing" || costSource === "partial"
@@ -608,6 +613,9 @@ function streamUsageToGenerateUsage(
     ...(totalUsage.veryfrontChargeUsd !== undefined
       ? { veryfrontChargeUsd: totalUsage.veryfrontChargeUsd }
       : {}),
+    ...(totalUsage.veryfrontBilledUsd !== undefined
+      ? { veryfrontBilledUsd: totalUsage.veryfrontBilledUsd }
+      : {}),
     ...(totalUsage.costCredits !== undefined ? { costCredits: totalUsage.costCredits } : {}),
     ...(totalUsage.costSource !== undefined ? { costSource: totalUsage.costSource } : {}),
     ...(totalUsage.usageCaptureStatus !== undefined
@@ -790,6 +798,9 @@ function normalizeStreamPart(part: unknown): unknown {
             : {}),
           ...(usage.veryfrontChargeUsd !== undefined
             ? { veryfrontChargeUsd: usage.veryfrontChargeUsd }
+            : {}),
+          ...(usage.veryfrontBilledUsd !== undefined
+            ? { veryfrontBilledUsd: usage.veryfrontBilledUsd }
             : {}),
           ...(usage.costCredits !== undefined ? { costCredits: usage.costCredits } : {}),
           ...(usage.costSource !== undefined ? { costSource: usage.costSource } : {}),
