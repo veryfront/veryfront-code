@@ -21,6 +21,7 @@ import {
   normalizeEvalCliId,
   normalizeEvalInputForAgent,
   normalizeToolCalls,
+  normalizeUsage,
   summarizeReportForCli,
   writeEvalArtifacts,
 } from "./command.ts";
@@ -193,6 +194,50 @@ describe("eval CLI command helpers", () => {
       "What changed?",
     );
     assertEquals(normalizeEvalInputForAgent({ custom: true }), '{"custom":true}');
+  });
+
+  it("preserves gateway usage metadata in eval usage", () => {
+    const response = {
+      text: "done",
+      messages: [],
+      status: "completed",
+      toolCalls: [],
+      usage: {
+        promptTokens: 12,
+        completionTokens: 5,
+        totalTokens: 17,
+        cachedInputTokens: 3,
+        cacheCreationInputTokens: 2,
+        cacheReadInputTokens: 1,
+        reasoningTokens: 4,
+        billableInputTokens: 10,
+        billableOutputTokens: 5,
+        costUsd: 0.001,
+        providerCostUsd: 0.001,
+        veryfrontChargeUsd: 0.0025,
+        costCredits: 0.025,
+        costSource: "gateway",
+        usageCaptureStatus: "complete",
+      },
+    } satisfies AgentResponse;
+
+    assertEquals(normalizeUsage(response), {
+      inputTokens: 12,
+      outputTokens: 5,
+      totalTokens: 17,
+      cachedInputTokens: 3,
+      cacheCreationInputTokens: 2,
+      cacheReadInputTokens: 1,
+      reasoningTokens: 4,
+      billableInputTokens: 10,
+      billableOutputTokens: 5,
+      costUsd: 0.001,
+      providerCostUsd: 0.001,
+      veryfrontChargeUsd: 0.0025,
+      costCredits: 0.025,
+      costSource: "gateway",
+      usageCaptureStatus: "complete",
+    });
   });
 
   it("preserves agent tool input and output in eval traces", () => {

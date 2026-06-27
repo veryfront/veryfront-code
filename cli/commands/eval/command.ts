@@ -519,12 +519,44 @@ export async function hydrateEvalRuntimeAuth(
   });
 }
 
-function normalizeUsage(response: AgentResponse) {
+export function normalizeUsage(response: AgentResponse) {
   return response.usage
     ? {
       inputTokens: response.usage.promptTokens,
       outputTokens: response.usage.completionTokens,
       totalTokens: response.usage.totalTokens,
+      ...(response.usage.cachedInputTokens !== undefined
+        ? { cachedInputTokens: response.usage.cachedInputTokens }
+        : {}),
+      ...(response.usage.cacheCreationInputTokens !== undefined
+        ? { cacheCreationInputTokens: response.usage.cacheCreationInputTokens }
+        : {}),
+      ...(response.usage.cacheReadInputTokens !== undefined
+        ? { cacheReadInputTokens: response.usage.cacheReadInputTokens }
+        : {}),
+      ...(response.usage.reasoningTokens !== undefined
+        ? { reasoningTokens: response.usage.reasoningTokens }
+        : {}),
+      ...(response.usage.billableInputTokens !== undefined
+        ? { billableInputTokens: response.usage.billableInputTokens }
+        : {}),
+      ...(response.usage.billableOutputTokens !== undefined
+        ? { billableOutputTokens: response.usage.billableOutputTokens }
+        : {}),
+      ...(response.usage.costUsd !== undefined ? { costUsd: response.usage.costUsd } : {}),
+      ...(response.usage.providerCostUsd !== undefined
+        ? { providerCostUsd: response.usage.providerCostUsd }
+        : {}),
+      ...(response.usage.veryfrontChargeUsd !== undefined
+        ? { veryfrontChargeUsd: response.usage.veryfrontChargeUsd }
+        : {}),
+      ...(response.usage.costCredits !== undefined
+        ? { costCredits: response.usage.costCredits }
+        : {}),
+      ...(response.usage.costSource !== undefined ? { costSource: response.usage.costSource } : {}),
+      ...(response.usage.usageCaptureStatus !== undefined
+        ? { usageCaptureStatus: response.usage.usageCaptureStatus }
+        : {}),
     }
     : {};
 }
