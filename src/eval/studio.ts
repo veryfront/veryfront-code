@@ -111,6 +111,7 @@ export const getEvalRunUsageSummarySchema = defineSchema((v) =>
     costUsd: v.number().nonnegative().optional(),
     providerCostUsd: v.number().nonnegative().optional(),
     veryfrontChargeUsd: v.number().nonnegative().optional(),
+    veryfrontBilledUsd: v.number().nonnegative().optional(),
     costCredits: v.number().nonnegative().optional(),
     costSource: v.enum(["gateway", "missing", "partial"] as const).optional(),
     usageCaptureStatus: v.enum(["complete", "partial", "missing"] as const).optional(),

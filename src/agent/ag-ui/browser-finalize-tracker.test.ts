@@ -18,6 +18,7 @@ describe("agent/ag-ui-browser-finalize-tracker", () => {
       };
       providerCostUsd?: number;
       veryfrontChargeUsd?: number;
+      veryfrontBilledUsd?: number;
       costCredits?: number;
       finishReason?: string;
     }>({
@@ -32,6 +33,7 @@ describe("agent/ag-ui-browser-finalize-tracker", () => {
         reasoningTokens: chunk.usage?.reasoningTokens,
         providerCostUsd: chunk.providerCostUsd,
         veryfrontChargeUsd: chunk.veryfrontChargeUsd,
+        veryfrontBilledUsd: chunk.veryfrontBilledUsd,
         costCredits: chunk.costCredits,
         costSource: "gateway",
         finishReason: chunk.finishReason,
@@ -51,7 +53,8 @@ describe("agent/ag-ui-browser-finalize-tracker", () => {
       },
       providerCostUsd: 0.001,
       veryfrontChargeUsd: 0.0025,
-      costCredits: 0.025,
+      veryfrontBilledUsd: 0.1,
+      costCredits: 1,
       finishReason: "stop",
     });
 
@@ -75,11 +78,12 @@ describe("agent/ag-ui-browser-finalize-tracker", () => {
         cachedInputTokens: 2,
         cacheCreationInputTokens: 4,
         cacheReadInputTokens: 2,
-        costCredits: 0.025,
+        costCredits: 1,
         costSource: "gateway",
         finishReason: "stop",
         providerCostUsd: 0.001,
         reasoningTokens: 1,
+        veryfrontBilledUsd: 0.1,
         veryfrontChargeUsd: 0.0025,
       },
     });

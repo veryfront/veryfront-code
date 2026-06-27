@@ -42,6 +42,7 @@ export function accumulateUsage(
     costUsd?: number;
     providerCostUsd?: number;
     veryfrontChargeUsd?: number;
+    veryfrontBilledUsd?: number;
     costCredits?: number;
     costSource?: "gateway" | "missing" | "partial";
     usageCaptureStatus?: "complete" | "partial" | "missing";
@@ -59,6 +60,7 @@ export function accumulateUsage(
     costUsd?: number;
     providerCostUsd?: number;
     veryfrontChargeUsd?: number;
+    veryfrontBilledUsd?: number;
     costCredits?: number;
     costSource?: "gateway" | "missing" | "partial";
     usageCaptureStatus?: "complete" | "partial" | "missing";
@@ -94,6 +96,9 @@ export function accumulateUsage(
   }
   if (typeof usage.veryfrontChargeUsd === "number") {
     total.veryfrontChargeUsd = (total.veryfrontChargeUsd ?? 0) + usage.veryfrontChargeUsd;
+  }
+  if (typeof usage.veryfrontBilledUsd === "number") {
+    total.veryfrontBilledUsd = (total.veryfrontBilledUsd ?? 0) + usage.veryfrontBilledUsd;
   }
   if (typeof usage.costCredits === "number") {
     total.costCredits = (total.costCredits ?? 0) + usage.costCredits;

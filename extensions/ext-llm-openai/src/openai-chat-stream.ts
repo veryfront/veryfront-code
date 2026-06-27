@@ -25,6 +25,7 @@ type RuntimeUsage = {
   costUsd?: number;
   providerCostUsd?: number;
   veryfrontChargeUsd?: number;
+  veryfrontBilledUsd?: number;
   costCredits?: number;
   costSource?: "gateway" | "missing" | "partial";
   usageCaptureStatus?: "complete" | "partial" | "missing";
@@ -84,6 +85,9 @@ function extractOpenAIUsage(payload: unknown): RuntimeUsage | undefined {
       : {}),
     ...(typeof veryfront?.veryfront_charge_usd === "number"
       ? { veryfrontChargeUsd: veryfront.veryfront_charge_usd }
+      : {}),
+    ...(typeof veryfront?.veryfront_billed_usd === "number"
+      ? { veryfrontBilledUsd: veryfront.veryfront_billed_usd }
       : {}),
     ...(typeof veryfront?.cost_credits === "number" ? { costCredits: veryfront.cost_credits } : {}),
     ...(costSource === "gateway" || costSource === "missing" || costSource === "partial"

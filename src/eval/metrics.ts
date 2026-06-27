@@ -791,8 +791,8 @@ export const metrics = {
 
     cost(options: { maxUsd: number }): EvalMetric {
       return createMetric("ops.cost", "ops", (record) => {
-        const costUsd = record.usage.veryfrontChargeUsd ?? record.usage.costUsd ??
-          record.usage.providerCostUsd ?? 0;
+        const costUsd = record.usage.veryfrontBilledUsd ?? record.usage.veryfrontChargeUsd ??
+          record.usage.costUsd ?? record.usage.providerCostUsd ?? 0;
         const pass = costUsd <= options.maxUsd;
         return {
           name: "ops.cost",
