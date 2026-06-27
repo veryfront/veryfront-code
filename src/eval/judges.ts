@@ -52,10 +52,17 @@ function truncate(value: string, maxChars: number): string {
 
 function buildEvidenceBlock(evidence: string[], sources: string[], maxChars: number): string {
   const entries = evidence.length > 0 ? evidence : ["No retrieved evidence was provided."];
-  const block = entries.map((entry, index) => {
-    const source = sources[index] ?? `evidence-${index + 1}`;
-    return `[${index + 1}] ${source}\n${entry}`;
-  }).join("\n\n");
+  const sourceBlock = sources.length > 0
+    ? sources.map((source, index) => `- [source ${index + 1}] ${source}`).join("\n")
+    : "- none";
+  const evidenceBlock = entries.map((entry, index) => `[evidence ${index + 1}]\n${entry}`).join(
+    "\n\n",
+  );
+  const block = `Retrieved sources:
+${sourceBlock}
+
+Evidence snippets:
+${evidenceBlock}`;
   return truncate(block, maxChars);
 }
 

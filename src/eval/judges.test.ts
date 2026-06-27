@@ -59,6 +59,8 @@ describe("eval/judges", () => {
     const promptText = call.prompt[0]?.content[0]?.text ?? "";
     assertStringIncludes(promptText, "Deployment errors after migration");
     assertStringIncludes(promptText, "knowledge/deployment-incident-triage.md");
+    assertStringIncludes(promptText, "[source 1] knowledge/deployment-incident-triage.md");
+    assertStringIncludes(promptText, "[evidence 1]");
   });
 
   it("accepts fenced JSON and clamps scores", async () => {
@@ -118,6 +120,37 @@ describe("eval/judges", () => {
     assertEquals(result.pass, false);
     assertStringIncludes(result.explanation ?? "", "unsupported rollback result");
     assertStringIncludes(result.explanation ?? "", "Rollback already completed");
+  });
+
+  it("does not imply source-to-evidence alignment", async () => {
+    const calls: unknown[] = [];
+    const judge = judges.llm.groundedness({
+      model: createJudgeModel(
+        JSON.stringify({
+          score: 1,
+          pass: true,
+          explanation: "Supported.",
+        }),
+        calls,
+      ),
+    });
+
+    await judge({
+      rubric: "Grounded answer.",
+      input: "Question",
+      output: { text: "Answer" },
+      metadata: {},
+      evidence: ["First evidence snippet", "Second evidence snippet"],
+      sources: ["knowledge/a.md", "knowledge/b.md"],
+    });
+
+    const [call] = calls as Array<{
+      prompt: Array<{ content: Array<{ type: string; text: string }> }>;
+    }>;
+    const promptText = call.prompt[0]?.content[0]?.text ?? "";
+    assertStringIncludes(promptText, "Retrieved sources:");
+    assertStringIncludes(promptText, "Evidence snippets:");
+    assertEquals(promptText.includes("knowledge/a.md\nFirst evidence snippet"), false);
   });
 
   it("fails closed when the judge does not return valid JSON", async () => {
