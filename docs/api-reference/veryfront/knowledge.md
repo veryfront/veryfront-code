@@ -18,9 +18,10 @@ import {
 
 ## Examples
 
-### Search OKF knowledge metadata locally
+### Search OKF knowledge locally
 
-Use this for the same compact frontmatter lookup shape as Veryfront Cloud's `search_knowledge` tool.
+Use this for the same compact lookup shape as Veryfront Cloud's `search_knowledge` tool.
+Search responses return paths, matched fields, and frontmatter.
 
 ```ts
 import { projectKnowledge } from "veryfront/knowledge";
@@ -30,6 +31,14 @@ const knowledge = projectKnowledge();
 const result = await knowledge.lookup({
   query: "billing escalation",
   limit: 5,
+});
+```
+
+Use `lookup_target` when the agent needs a specific document body after search:
+
+```ts
+const article = await knowledge.lookup({
+  lookup_target: { path: "knowledge/billing-escalation.md" },
 });
 ```
 
@@ -59,13 +68,13 @@ const result = await knowledge.retrieve("SSO login failure");
 
 ### Functions
 
-| Name                        | Description                                                              | Source                                                                                      |
-| --------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
-| `createSearchKnowledgeTool` | Create a local `search_knowledge` tool backed by OKF frontmatter files.  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts)      |
-| `formatKnowledgeContext`    | Format search results into a deterministic prompt context block.         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L102) |
-| `normalizeKnowledgeQuery`   | Normalize a knowledge query before retrieval.                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L94)  |
-| `projectKnowledge`          | Create a project knowledge helper backed by the configured RAG store.    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L109) |
-| `searchProjectKnowledge`    | Search local OKF frontmatter with the `search_knowledge` response shape. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts)      |
+| Name                        | Description                                                           | Source                                                                                      |
+| --------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `createSearchKnowledgeTool` | Create a local `search_knowledge` tool backed by OKF files.           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts)      |
+| `formatKnowledgeContext`    | Format search results into a deterministic prompt context block.      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L102) |
+| `normalizeKnowledgeQuery`   | Normalize a knowledge query before retrieval.                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L94)  |
+| `projectKnowledge`          | Create a project knowledge helper backed by the configured RAG store. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L109) |
+| `searchProjectKnowledge`    | Search local OKF files with the `search_knowledge` response shape.    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts)      |
 
 ### Types
 

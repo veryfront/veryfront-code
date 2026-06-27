@@ -6,6 +6,7 @@ import {
   runtime,
   type RuntimeAdapter,
 } from "veryfront/platform";
+import { applyRuntimeAuthContext } from "./runtime-auth.ts";
 
 interface ProxyProjectSourceContext {
   projectSlug: string;
@@ -51,12 +52,23 @@ async function loadProjectConfig(
   return await getConfig(projectDir, adapter, cacheKey ? { cacheKey } : undefined);
 }
 
+export async function applyProjectSourceRuntimeAuth(
+  projectDir: string,
+  config: VeryfrontConfig,
+) {
+  return await applyRuntimeAuthContext({
+    projectDir,
+    projectSlug: config.projectSlug ?? config.fs?.veryfront?.projectSlug,
+  });
+}
+
 export async function withProjectSourceContext<T>(
   projectDir: string,
   run: (context: ProjectSourceExecutionContext) => Promise<T>,
 ): Promise<T> {
   const baseAdapter = await runtime.get();
   const initialConfig = await getConfig(projectDir, baseAdapter);
+  await applyProjectSourceRuntimeAuth(projectDir, initialConfig);
   const adapter = await enhanceAdapterWithFS(baseAdapter, initialConfig as any, projectDir);
   const proxyContext = getProxyProjectSourceContext();
 

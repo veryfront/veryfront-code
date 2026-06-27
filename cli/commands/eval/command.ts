@@ -4,6 +4,7 @@
 
 import { dirname, join, relative } from "@std/path";
 import type { Agent, AgentResponse } from "veryfront/agent";
+import type { VeryfrontConfig } from "veryfront/config";
 import type {
   DiscoveredEval,
   EvalAgentAdapterContext,
@@ -16,6 +17,7 @@ import type {
 } from "veryfront/eval";
 import { createProjectDiscoveryConfig, discoverAll } from "veryfront/discovery";
 import { compareEvalReports, discoverEvals, runEval } from "veryfront/eval";
+import { applyRuntimeAuthContext } from "#cli/shared/runtime-auth";
 import { cliLogger, exitProcess } from "#cli/utils";
 import {
   createErrorEnvelope,
@@ -263,6 +265,26 @@ function resolveAgentTargetId(target: string): string {
   return target.startsWith("agent:") ? target.slice("agent:".length) : target;
 }
 
+type EvalRuntimeAuthConfig = Pick<VeryfrontConfig, "projectSlug" | "fs"> & {
+  projectSlug?: string;
+};
+
+function resolveEvalRuntimeProjectSlug(
+  config: EvalRuntimeAuthConfig | null | undefined,
+): string | undefined {
+  return config?.projectSlug ?? config?.fs?.veryfront?.projectSlug;
+}
+
+export async function hydrateEvalRuntimeAuth(
+  projectDir: string,
+  config: EvalRuntimeAuthConfig | null | undefined,
+) {
+  return await applyRuntimeAuthContext({
+    projectDir,
+    projectSlug: resolveEvalRuntimeProjectSlug(config),
+  });
+}
+
 function normalizeUsage(response: AgentResponse) {
   return response.usage
     ? {
@@ -273,11 +295,17 @@ function normalizeUsage(response: AgentResponse) {
     : {};
 }
 
-function normalizeToolCalls(response: AgentResponse): EvalToolCall[] {
+export function normalizeToolCalls(response: AgentResponse): EvalToolCall[] {
   return response.toolCalls.map((toolCall) => ({
+    id: toolCall.id,
     name: toolCall.name,
     status: toolCall.status === "error" ? "error" : "ok",
+    input: toolCall.args,
+    ...(Object.hasOwn(toolCall, "result") ? { output: toolCall.result } : {}),
     ...(toolCall.error ? { error: toolCall.error } : {}),
+    ...(toolCall.executionTime !== undefined
+      ? { metadata: { executionTime: toolCall.executionTime } }
+      : {}),
   }));
 }
 
@@ -411,6 +439,8 @@ export async function evalCommand(options: EvalOptions): Promise<void> {
   const projectDir = Deno.cwd();
 
   await withProjectSourceContext(projectDir, async ({ adapter, config }) => {
+    await hydrateEvalRuntimeAuth(projectDir, config);
+
     const evalDiscovery = await discoverEvals({ projectDir, adapter, config });
 
     if (options.debug) {

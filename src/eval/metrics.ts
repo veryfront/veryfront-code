@@ -26,6 +26,7 @@ type KnowledgeEntry = {
   source: string;
   sourceCandidates: string[];
   contentCandidates: string[];
+  evidenceCandidates: string[];
 };
 
 type JudgeRubricInput = {
@@ -67,6 +68,7 @@ const KNOWLEDGE_CONTENT_KEYS = [
   "verification_quote",
   "verificationQuote",
 ];
+const KNOWLEDGE_MATCHED_FIELD_KEYS = ["matched_fields", "matchedFields"];
 const KNOWLEDGE_STOP_WORDS = new Set([
   "the",
   "and",
@@ -156,15 +158,59 @@ function collectStringField(record: Record<string, unknown>, key: string): strin
   return typeof value === "string" && value.trim() ? [value] : [];
 }
 
+function collectLeafStrings(value: unknown): string[] {
+  if (typeof value === "string") return value.trim() ? [value] : [];
+  if (typeof value === "number" || typeof value === "boolean") return [String(value)];
+  if (Array.isArray(value)) return value.flatMap(collectLeafStrings);
+  if (!isRecord(value)) return [];
+  return Object.values(value).flatMap(collectLeafStrings);
+}
+
 function collectFrontmatterValues(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
+  if (!Array.isArray(value)) return collectLeafStrings(value);
+
   const values: string[] = [];
   for (const entry of value) {
-    if (!isRecord(entry)) continue;
+    if (!isRecord(entry)) {
+      values.push(...collectLeafStrings(entry));
+      continue;
+    }
     const fieldValue = entry.value;
     if (typeof fieldValue === "string" && fieldValue.trim()) values.push(fieldValue);
   }
   return values;
+}
+
+function formatFrontmatterEvidence(value: unknown): string[] {
+  if (!value) return [];
+  if (Array.isArray(value)) {
+    const pairs = value.flatMap((entry) => {
+      if (!isRecord(entry)) return collectLeafStrings(entry);
+      const key = typeof entry.key === "string" && entry.key.trim() ? `${entry.key}: ` : "";
+      return collectLeafStrings(entry.value).map((fieldValue) => `${key}${fieldValue}`);
+    });
+    return pairs.length > 0 ? [`frontmatter: ${pairs.join("; ")}`] : [];
+  }
+
+  if (isRecord(value)) {
+    const pairs = Object.entries(value).flatMap(([key, fieldValue]) =>
+      collectLeafStrings(fieldValue).map((item) => `${key}: ${item}`)
+    );
+    return pairs.length > 0 ? [`frontmatter: ${pairs.join("; ")}`] : [];
+  }
+
+  const values = collectLeafStrings(value);
+  return values.length > 0 ? [`frontmatter: ${values.join("; ")}`] : [];
+}
+
+function collectCompactEvidence(item: Record<string, unknown>): string[] {
+  const matchedFields = KNOWLEDGE_MATCHED_FIELD_KEYS.flatMap((key) =>
+    collectLeafStrings(item[key])
+  );
+  return [
+    ...(matchedFields.length > 0 ? [`matched_fields: ${matchedFields.join("; ")}`] : []),
+    ...formatFrontmatterEvidence(item.frontmatter),
+  ];
 }
 
 function extractKnowledgeItems(output: unknown): unknown[] {
@@ -182,7 +228,12 @@ function extractKnowledgeItems(output: unknown): unknown[] {
 function createKnowledgeEntry(item: unknown): KnowledgeEntry | null {
   if (!isRecord(item)) {
     if (typeof item === "string" && item.trim()) {
-      return { source: item, sourceCandidates: [item], contentCandidates: [item] };
+      return {
+        source: item,
+        sourceCandidates: [item],
+        contentCandidates: [item],
+        evidenceCandidates: [item],
+      };
     }
     return null;
   }
@@ -195,11 +246,16 @@ function createKnowledgeEntry(item: unknown): KnowledgeEntry | null {
     KNOWLEDGE_CONTENT_KEYS.flatMap((key) => collectStringField(item, key)),
   );
   const source = sourceCandidates[0] ?? contentCandidates[0] ?? stableStringify(item);
+  const evidenceCandidates = uniqueStrings([
+    ...contentCandidates,
+    ...collectCompactEvidence(item),
+  ]);
 
   return {
     source,
     sourceCandidates: sourceCandidates.length === 0 ? [source] : sourceCandidates,
     contentCandidates,
+    evidenceCandidates: evidenceCandidates.length === 0 ? [source] : evidenceCandidates,
   };
 }
 
@@ -476,7 +532,7 @@ export const metrics = {
       return createMetric("answer.groundedness", "answer", async (record) => {
         const tool = options.tool ?? DEFAULT_KNOWLEDGE_TOOL;
         const entries = getKnowledgeEntries(record, tool);
-        const evidence = uniqueStrings(entries.flatMap((entry) => entry.contentCandidates));
+        const evidence = uniqueStrings(entries.flatMap((entry) => entry.evidenceCandidates));
         const sources = uniqueStrings(retrievedSources(entries));
 
         if (!options.judge) {
