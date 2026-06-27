@@ -49,6 +49,8 @@ export { judges } from "./judges.ts";
 export { metrics } from "./metrics.ts";
 export { createEvalReport, summarizeEvalRecords } from "./report.ts";
 export { compareEvalReports } from "./baseline.ts";
+export { compareEvalModelReports, createEvalModelComparisonMarkdown } from "./model-comparison.ts";
+export { createEvalRunProvenance, resolveEvalRunProvenance } from "./provenance.ts";
 export { runEval } from "./runner.ts";
 export { deriveEvalId, discoverEvals, findEvalById } from "./discovery.ts";
 export {
@@ -92,11 +94,18 @@ export type {
   EvalMetricResult,
   EvalMetricSummary,
   EvalMetricThreshold,
+  EvalModelCandidateComparison,
+  EvalModelComparison,
+  EvalModelComparisonDecision,
+  EvalModelComparisonOptions,
+  EvalModelReportSummary,
   EvalRecord,
   EvalReport,
   EvalReportComparison,
   EvalReportExportConfig,
+  EvalReportMetadata,
   EvalReportSummary,
+  EvalRunProvenance,
   EvalSeverity,
   EvalSource,
   EvalTargetKind,

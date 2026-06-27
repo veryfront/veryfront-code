@@ -224,6 +224,18 @@ describe("cli/shared/args", () => {
       ]);
     });
 
+    it("should handle repeated --candidate-model values as an array flag", () => {
+      assertEquals(
+        parseCliArgs([
+          "--candidate-model",
+          "moonshotai/kimi-k2",
+          "--candidate-model",
+          "openai/gpt-5.5",
+        ])["candidate-model"],
+        ["moonshotai/kimi-k2", "openai/gpt-5.5"],
+      );
+    });
+
     it("should not set default port", () => {
       assertEquals(parseCliArgs([]).port, undefined);
     });

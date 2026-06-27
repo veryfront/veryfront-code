@@ -170,7 +170,7 @@ export const CommonArgs = {
 // Low-level parser that converts process argv into a ParsedArgs object.
 // Used once in cli/main.ts before routing to individual command handlers.
 
-const ARRAY_FLAGS = new Set(["with"]);
+const ARRAY_FLAGS = new Set(["with", "candidate-model"]);
 
 function maybeNumber(val: unknown): unknown {
   if (typeof val === "string" && /^\d+$/.test(val)) return parseInt(val, 10);
