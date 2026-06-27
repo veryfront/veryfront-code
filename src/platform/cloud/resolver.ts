@@ -29,10 +29,7 @@ function isRuntimeConfigInitialized(): boolean {
 const DEFAULT_API_BASE_URL = "https://api.veryfront.com";
 
 function getApiBaseUrlEnv(): string {
-  const getter = (globalThis as Record<string, unknown>).__vfGetApiBaseUrlEnv as
-    | (() => string)
-    | undefined;
-  return getter?.() ?? getHostEnv("VERYFRONT_API_BASE_URL") ??
+  return getHostEnv("VERYFRONT_API_BASE_URL") ??
     getHostEnv("VERYFRONT_API_URL")?.replace("/graphql", "/api") ?? DEFAULT_API_BASE_URL;
 }
 

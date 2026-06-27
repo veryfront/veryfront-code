@@ -19,7 +19,9 @@ import {
 } from "./resolver.ts";
 
 const CLOUD_ENV_KEYS = [
+  "VERYFRONT_API_BASE_URL",
   "VERYFRONT_API_TOKEN",
+  "VERYFRONT_API_URL",
   "VERYFRONT_PROJECT_SLUG",
   "VERYFRONT_SERVICE_LAYER",
   "VERYFRONT_DEFAULT_MODEL",
@@ -121,6 +123,28 @@ describe("platform/cloud/resolver", () => {
 
     assertEquals(getVeryfrontCloudAuthToken(), "vf_env_token");
     assertEquals(getVeryfrontCloudProjectSlug(), "env-project");
+  });
+
+  it("resolves the API base URL from host env without the config bridge", () => {
+    const globals = globalThis as Record<string, unknown>;
+    const originalBridge = globals.__vfGetApiBaseUrlEnv;
+    globals.__vfGetApiBaseUrlEnv = () => {
+      throw new Error("config bridge should not be called");
+    };
+    setEnv("VERYFRONT_API_URL", "https://api.staging.veryfront.org/graphql");
+
+    try {
+      assertEquals(
+        getVeryfrontCloudBootstrap().apiBaseUrl,
+        "https://api.staging.veryfront.org/api",
+      );
+    } finally {
+      if (originalBridge === undefined) {
+        delete globals.__vfGetApiBaseUrlEnv;
+      } else {
+        globals.__vfGetApiBaseUrlEnv = originalBridge;
+      }
+    }
   });
 
   it("treats scoped cloud context as sufficient runtime context even without projectSlug", () => {
