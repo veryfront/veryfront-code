@@ -25,7 +25,6 @@ import {
   isJsonMode,
   outputJson,
 } from "../../shared/json-output.ts";
-import { readConfigFile } from "../../shared/config.ts";
 import { withProjectSourceContext } from "../../shared/project-source-context.ts";
 import type { EvalArgs } from "./handler.ts";
 
@@ -438,11 +437,6 @@ async function outputAgentNotFound(agentId: string): Promise<void> {
 
 export async function evalCommand(options: EvalOptions): Promise<void> {
   const projectDir = Deno.cwd();
-  const configFile = await readConfigFile(projectDir);
-
-  if (configFile?.projectSlug) {
-    await hydrateEvalRuntimeAuth(projectDir, configFile);
-  }
 
   await withProjectSourceContext(projectDir, async ({ adapter, config }) => {
     await hydrateEvalRuntimeAuth(projectDir, config);
