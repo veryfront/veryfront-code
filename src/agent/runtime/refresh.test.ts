@@ -536,6 +536,97 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(toolNamesByStep[1]?.includes("web_fetch"), true);
   });
 
+  it("keeps skill file tools hidden after a failed load_skill attempt", async () => {
+    const toolNamesByStep: string[][] = [];
+    let callCount = 0;
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream(options) {
+        const rawTools = (options as { tools?: unknown }).tools;
+        const toolNames = Array.isArray(rawTools)
+          ? rawTools.map((entry) =>
+            (entry as { name?: string; id?: string }).name ??
+              (entry as { name?: string; id?: string }).id ?? ""
+          )
+          : Object.keys((rawTools as Record<string, unknown> | undefined) ?? {});
+        toolNamesByStep.push(toolNames);
+        callCount++;
+
+        if (callCount === 1) {
+          return {
+            stream: createRuntimeStream([
+              {
+                type: "tool-call",
+                toolCallId: "load-missing-skill",
+                toolName: "load_skill",
+                input: '{"skillId":"missing"}',
+              },
+              {
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              },
+            ]),
+          };
+        }
+
+        return {
+          stream: createRuntimeStream([
+            { type: "text-delta", text: "I could not load that skill." },
+            {
+              type: "finish",
+              finishReason: "stop",
+              usage: { inputTokens: 1, outputTokens: 1 },
+            },
+          ]),
+        };
+      },
+    };
+
+    const loadSkill = tool({
+      id: "load_skill",
+      description: "Load a skill",
+      inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
+      execute: () => ({ error: "Skill not found" }),
+    });
+    const loadSkillReference = tool({
+      id: "load_skill_reference",
+      description: "Load a skill reference",
+      inputSchema: defineSchema((v) => v.object({ skillId: v.string(), reference: v.string() }))(),
+      execute: () => ({ content: "reference" }),
+    });
+
+    const assistant = agent({
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Recover from a missing skill.",
+      tools: {
+        load_skill: loadSkill,
+        load_skill_reference: loadSkillReference,
+      },
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const response = (await assistant.stream({
+      input: "Load the missing skill",
+    })).toDataStreamResponse();
+
+    await response.text();
+    assertEquals(toolNamesByStep.length, 2);
+    assertEquals(toolNamesByStep[0]?.includes("load_skill"), true);
+    assertEquals(toolNamesByStep[0]?.includes("load_skill_reference"), false);
+    assertEquals(toolNamesByStep[1]?.includes("load_skill"), true);
+    assertEquals(toolNamesByStep[1]?.includes("load_skill_reference"), false);
+  });
+
   it("removes provider-native tools from the forced final response after update_agent", async () => {
     const toolNamesByStep: string[][] = [];
     let callCount = 0;

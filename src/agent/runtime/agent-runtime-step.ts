@@ -1,6 +1,6 @@
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
 import type { AgentConfig, Message } from "../types.ts";
-import { filterToolsForSkill } from "#veryfront/skill/allowed-tools.ts";
+import { filterToolsForSkill, type SkillToolAvailability } from "#veryfront/skill/allowed-tools.ts";
 import type { ToolConfigEntry } from "./tool-helpers.ts";
 import { filterToolsAfterSubmittedFormInput } from "./skill-policy-enforcement.ts";
 
@@ -34,7 +34,9 @@ export type RuntimeStepStateResolver = (
 
 export interface PrepareAgentRuntimeStepInput {
   agentId: string;
+  activeSkillId?: string | undefined;
   activeSkillPolicy: string[] | undefined;
+  activeSkillToolAvailability: SkillToolAvailability | undefined;
   allowedRemoteToolNames: string[] | undefined;
   config: AgentConfig;
   forwardedRemoteToolDefinitions: ToolDefinition[] | undefined;
@@ -68,7 +70,13 @@ export async function prepareAgentRuntimeStep(
     input.step,
     input.systemPrompt,
   );
-  const toolContext = { ...input.toolContextBase, ...runtimeState.context };
+  const toolContext: ToolExecutionContext = { ...input.toolContextBase, ...runtimeState.context };
+  if (input.activeSkillId !== undefined) {
+    toolContext.activeSkillId = input.activeSkillId;
+  }
+  if (input.activeSkillToolAvailability !== undefined) {
+    toolContext.activeSkillToolAvailability = input.activeSkillToolAvailability;
+  }
 
   let tools = input.isLocalModel ? [] : await input.getAvailableTools(input.config.tools, {
     callerAgentId: input.agentId,
@@ -79,8 +87,12 @@ export async function prepareAgentRuntimeStep(
     remoteToolContext: toolContext,
   });
 
-  if (input.activeSkillPolicy) {
-    tools = filterToolsForSkill(tools, input.activeSkillPolicy);
+  if (input.activeSkillPolicy || input.activeSkillToolAvailability) {
+    tools = filterToolsForSkill(
+      tools,
+      input.activeSkillPolicy,
+      input.activeSkillToolAvailability,
+    );
   }
   tools = filterToolsAfterSubmittedFormInput(tools, input.messages, runtimeState.context);
 

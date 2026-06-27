@@ -31,6 +31,8 @@ import {
 /** Maximum allowed script execution timeout in milliseconds (5 minutes) */
 const MAX_SCRIPT_TIMEOUT_MS = 300_000;
 
+type SkillFileKind = "reference" | "script";
+
 const getLoadSkillInputSchema = defineSchema((v) =>
   v.object({
     skillId: v.string().describe("The ID of the skill to load"),
@@ -115,6 +117,60 @@ function buildSkillAvailabilityNote(references: string[], scripts: string[]): st
   return undefined;
 }
 
+function hasRuntimeSkillBoundary(
+  context: ToolExecutionContext | undefined,
+): context is ToolExecutionContext {
+  if (!context) return false;
+  return context.activeSkillId !== undefined ||
+    context.activeSkillToolAvailability !== undefined;
+}
+
+function assertActiveSkillFileAvailable(
+  input: {
+    toolName: string;
+    skillId: string;
+    requestedSkillId: string;
+    path: string;
+    kind: SkillFileKind;
+  },
+  context: ToolExecutionContext | undefined,
+): void {
+  if (!hasRuntimeSkillBoundary(context)) return;
+
+  const activeSkillId = context.activeSkillId;
+  const availability = context.activeSkillToolAvailability;
+  if (!activeSkillId || availability?.hasActiveSkill !== true) {
+    throw toError(
+      createError({
+        type: "agent",
+        message: `${input.toolName} requires an active loaded skill.`,
+      }),
+    );
+  }
+
+  if (input.skillId !== activeSkillId) {
+    throw toError(
+      createError({
+        type: "agent",
+        message:
+          `${input.toolName} can only access the active loaded skill "${activeSkillId}". Requested "${input.requestedSkillId}".`,
+      }),
+    );
+  }
+
+  const advertised = input.kind === "reference"
+    ? availability.references ?? []
+    : availability.scripts ?? [];
+  if (!advertised.includes(input.path)) {
+    throw toError(
+      createError({
+        type: "agent",
+        message: `${input.toolName} can only access ${input.kind} files advertised by load_skill.`,
+      }),
+    );
+  }
+}
+
 /**
  * Create the load_skill tool.
  * Loads a skill's full instructions, available references, and scripts.
@@ -136,7 +192,7 @@ export function createLoadSkillTool(): Tool {
       const parsed = await parseSkillFrontmatter(content);
 
       // List available files the agent can load through load_skill_reference.
-      const [references, resources, scripts] = await Promise.all([
+      const [references, resources, assets, scripts] = await Promise.all([
         listSkillSubdir(
           skill.rootPath,
           SKILL_REFERENCES_DIR,
@@ -149,14 +205,20 @@ export function createLoadSkillTool(): Tool {
         ),
         listSkillSubdir(
           skill.rootPath,
+          SKILL_ASSETS_DIR,
+          skill.fsAdapter,
+        ),
+        listSkillSubdir(
+          skill.rootPath,
           SKILL_SCRIPTS_DIR,
           skill.fsAdapter,
         ),
       ]);
-      const loadableReferences = [...references, ...resources];
+      const loadableReferences = [...references, ...resources, ...assets];
       const note = buildSkillAvailabilityNote(loadableReferences, scripts);
 
       return {
+        skillId: skill.id,
         instructions: parsed.body,
         allowedTools: skill.metadata.allowedTools,
         references: loadableReferences,
@@ -179,6 +241,16 @@ export function createLoadSkillReferenceTool(): Tool {
     inputSchema: getLoadSkillReferenceInputSchema(),
     execute: async (input, context): Promise<{ content: string; path: string }> => {
       const skill = resolveVisibleSkillOrThrow(input.skillId, context);
+      assertActiveSkillFileAvailable(
+        {
+          toolName: "load_skill_reference",
+          skillId: skill.id,
+          requestedSkillId: input.skillId,
+          path: input.reference,
+          kind: "reference",
+        },
+        context,
+      );
 
       // Validate path safety before reading skill-provided context.
       const validatedPath = await validateSkillPath(
@@ -206,6 +278,16 @@ export function createExecuteSkillScriptTool(): Tool {
     inputSchema: getExecuteSkillScriptInputSchema(),
     execute: async (input, context) => {
       const skill = resolveVisibleSkillOrThrow(input.skillId, context);
+      assertActiveSkillFileAvailable(
+        {
+          toolName: "execute_skill_script",
+          skillId: skill.id,
+          requestedSkillId: input.skillId,
+          path: input.script,
+          kind: "script",
+        },
+        context,
+      );
 
       // Validate path safety (only scripts/ allowed)
       const validatedPath = await validateSkillPath(

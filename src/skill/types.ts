@@ -57,6 +57,8 @@ export interface SkillMetadata {
 
 /** Full skill content returned by load_skill tool */
 export interface SkillContent {
+  /** Loaded skill identifier */
+  skillId: string;
   /** Markdown instructions (body after frontmatter) */
   instructions: string;
   /** Tool access restrictions from frontmatter */

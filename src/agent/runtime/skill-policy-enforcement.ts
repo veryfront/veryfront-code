@@ -3,6 +3,7 @@ import type { ToolDefinition } from "#veryfront/tool";
 import { serverLogger } from "#veryfront/utils";
 import {
   isToolAllowedBySkill,
+  type SkillToolAvailability,
   validateAllowedToolPatterns,
 } from "#veryfront/skill/allowed-tools.ts";
 import { isToolResultPart } from "./tool-result-continuation.ts";
@@ -17,6 +18,12 @@ export const LOAD_SKILL_TOOL_ID = "load_skill";
 export const FORM_INPUT_TOOL_ID = "form_input";
 export const INVOKE_AGENT_TOOL_ID = "invoke_agent";
 export const SUBMITTED_FORM_INPUT_CONTEXT_KEY = "hasSubmittedFormInputResult";
+
+export const INACTIVE_SKILL_TOOL_AVAILABILITY: SkillToolAvailability = {
+  hasActiveSkill: false,
+  references: [],
+  scripts: [],
+};
 
 const POST_SUBMITTED_FORM_INPUT_BLOCKED_TOOL_IDS = new Set([
   FORM_INPUT_TOOL_ID,
@@ -33,10 +40,12 @@ export function hydrateActiveSkillStateFromMessages(
 ): {
   activeSkillId: string | undefined;
   activeSkillPolicy: string[] | undefined;
+  activeSkillToolAvailability: SkillToolAvailability | undefined;
   activeSkillDelegationOverrides: SkillDelegationOverrides | undefined;
 } {
   let activeSkillId: string | undefined;
   let activeSkillPolicy: string[] | undefined;
+  let activeSkillToolAvailability: SkillToolAvailability = INACTIVE_SKILL_TOOL_AVAILABILITY;
   let activeSkillDelegationOverrides: SkillDelegationOverrides | undefined;
 
   for (const message of messages) {
@@ -44,11 +53,18 @@ export function hydrateActiveSkillStateFromMessages(
       if (!isToolResultPart(part) || part.toolName !== LOAD_SKILL_TOOL_ID) continue;
       activeSkillId = extractSkillId(part.result);
       activeSkillPolicy = extractSkillPolicy(part.result);
+      activeSkillToolAvailability = extractSkillToolAvailability(part.result) ??
+        INACTIVE_SKILL_TOOL_AVAILABILITY;
       activeSkillDelegationOverrides = extractSkillDelegationOverrides(part.result);
     }
   }
 
-  return { activeSkillId, activeSkillPolicy, activeSkillDelegationOverrides };
+  return {
+    activeSkillId,
+    activeSkillPolicy,
+    activeSkillToolAvailability,
+    activeSkillDelegationOverrides,
+  };
 }
 
 export function extractSkillId(result: unknown): string | undefined {
@@ -82,6 +98,34 @@ export function extractSkillPolicy(result: unknown): string[] | undefined {
     );
     return [];
   }
+}
+
+function extractStringArrayField(result: Record<string, unknown>, field: string): string[] {
+  const raw = result[field];
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((value): value is string => typeof value === "string");
+}
+
+export function extractSkillToolAvailability(
+  result: unknown,
+): SkillToolAvailability | undefined {
+  if (!result || typeof result !== "object") return undefined;
+  const skillResult = result as Record<string, unknown>;
+  if (typeof skillResult.error === "string") return undefined;
+
+  const looksLikeLoadedSkill = typeof skillResult.instructions === "string" ||
+    typeof skillResult.skillId === "string" ||
+    "allowedTools" in skillResult ||
+    "references" in skillResult ||
+    "scripts" in skillResult;
+
+  if (!looksLikeLoadedSkill) return undefined;
+
+  return {
+    hasActiveSkill: true,
+    references: extractStringArrayField(skillResult, "references"),
+    scripts: extractStringArrayField(skillResult, "scripts"),
+  };
 }
 
 function parseToolResultJson(result: string): unknown {
@@ -208,6 +252,7 @@ export type SkillPolicyResult =
 
 export type SkillPolicyOptions = {
   hasSubmittedFormInput?: boolean;
+  skillToolAvailability?: SkillToolAvailability;
 };
 
 export function enforceSkillPolicy(
@@ -231,11 +276,13 @@ export function enforceSkillPolicy(
     };
   }
 
-  if (activeSkillPolicy && !isToolAllowedBySkill(toolName, activeSkillPolicy)) {
+  if (
+    !isToolAllowedBySkill(toolName, activeSkillPolicy, options.skillToolAvailability)
+  ) {
     return {
       allowed: false,
       error: `Tool "${toolName}" is not allowed by the active skill policy. Allowed: ${
-        activeSkillPolicy.join(", ")
+        activeSkillPolicy?.join(", ") ?? "none"
       }`,
     };
   }

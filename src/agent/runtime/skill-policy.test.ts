@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   enforceSkillPolicy,
   extractSkillPolicy,
+  extractSkillToolAvailability,
   hasSubmittedFormInputResult,
   hydrateActiveSkillStateFromMessages,
   removeFormInputAfterSubmission,
@@ -125,14 +126,54 @@ describe("src/agent/runtime skill policy helpers", () => {
       );
     });
 
-    it("should always allow skill system tools regardless of policy", () => {
+    it("should always allow load_skill regardless of policy", () => {
       assertEquals(enforceSkillPolicy("load_skill", ["Read"], false), { allowed: true });
-      assertEquals(enforceSkillPolicy("load_skill_reference", ["Read"], false), {
-        allowed: true,
+      assertEquals(enforceSkillPolicy("load_skill_reference", ["Read"], false).allowed, false);
+      assertEquals(enforceSkillPolicy("execute_skill_script", ["Read"], false).allowed, false);
+    });
+
+    it("allows load_skill_reference only when the active skill advertised references", () => {
+      assertEquals(
+        enforceSkillPolicy("load_skill_reference", ["Read"], false, {
+          skillToolAvailability: {
+            hasActiveSkill: true,
+            references: ["references/guide.md"],
+            scripts: [],
+          },
+        }),
+        { allowed: true },
+      );
+
+      const result = enforceSkillPolicy("load_skill_reference", ["Read"], false, {
+        skillToolAvailability: {
+          hasActiveSkill: true,
+          references: [],
+          scripts: [],
+        },
       });
-      assertEquals(enforceSkillPolicy("execute_skill_script", ["Read"], false), {
-        allowed: true,
+      assertEquals(result.allowed, false);
+    });
+
+    it("allows execute_skill_script only when the active skill advertised scripts", () => {
+      assertEquals(
+        enforceSkillPolicy("execute_skill_script", ["Read"], false, {
+          skillToolAvailability: {
+            hasActiveSkill: true,
+            references: [],
+            scripts: ["scripts/run.sh"],
+          },
+        }),
+        { allowed: true },
+      );
+
+      const result = enforceSkillPolicy("execute_skill_script", ["Read"], false, {
+        skillToolAvailability: {
+          hasActiveSkill: true,
+          references: [],
+          scripts: [],
+        },
       });
+      assertEquals(result.allowed, false);
     });
 
     it("should allow wildcard-matched tools", () => {
@@ -161,6 +202,48 @@ describe("src/agent/runtime skill policy helpers", () => {
       assertEquals(enforceSkillPolicy("Read", undefined, false), { allowed: true });
       assertEquals(enforceSkillPolicy("Write", undefined, false), { allowed: true });
       assertEquals(enforceSkillPolicy("Bash", undefined, false), { allowed: true });
+    });
+  });
+
+  describe("extractSkillToolAvailability", () => {
+    it("extracts references and scripts from load_skill results", () => {
+      assertEquals(
+        extractSkillToolAvailability({
+          instructions: "# Support",
+          references: ["references/guide.md"],
+          scripts: ["scripts/run.sh"],
+        }),
+        {
+          hasActiveSkill: true,
+          references: ["references/guide.md"],
+          scripts: ["scripts/run.sh"],
+        },
+      );
+    });
+
+    it("returns an active skill with empty file capabilities for no-reference skills", () => {
+      assertEquals(
+        extractSkillToolAvailability({
+          instructions: "# Support",
+          allowedTools: ["search_knowledge"],
+          references: [],
+          scripts: [],
+        }),
+        {
+          hasActiveSkill: true,
+          references: [],
+          scripts: [],
+        },
+      );
+    });
+
+    it("ignores non-load-skill error results", () => {
+      assertEquals(
+        extractSkillToolAvailability({
+          error: "Skill not found",
+        }),
+        undefined,
+      );
     });
   });
 
@@ -319,6 +402,16 @@ describe("src/agent/runtime skill policy helpers", () => {
   });
 
   describe("hydrateActiveSkillStateFromMessages", () => {
+    it("returns inactive skill tool availability before a skill is loaded", () => {
+      const hydrated = hydrateActiveSkillStateFromMessages([]);
+
+      assertEquals(hydrated.activeSkillToolAvailability, {
+        hasActiveSkill: false,
+        references: [],
+        scripts: [],
+      });
+    });
+
     it("detects a submitted form_input result in message history", () => {
       const messages: Message[] = [
         {
@@ -407,6 +500,8 @@ describe("src/agent/runtime skill policy helpers", () => {
             result: {
               skillId: "old",
               allowedTools: ["Read"],
+              references: ["references/old.md"],
+              scripts: [],
               model: "anthropic/claude-sonnet-4-5",
               thinking: true,
               maxSteps: 4,
@@ -433,6 +528,8 @@ describe("src/agent/runtime skill policy helpers", () => {
             result: {
               skillId: "new",
               allowedTools: ["Write"],
+              references: [],
+              scripts: ["scripts/run.sh"],
               model: "openai/gpt-5.1",
               thinking: false,
               maxSteps: 8,
@@ -445,6 +542,11 @@ describe("src/agent/runtime skill policy helpers", () => {
 
       assertEquals(hydrated.activeSkillId, "new");
       assertEquals(hydrated.activeSkillPolicy, ["Write"]);
+      assertEquals(hydrated.activeSkillToolAvailability, {
+        hasActiveSkill: true,
+        references: [],
+        scripts: ["scripts/run.sh"],
+      });
       assertEquals(hydrated.activeSkillDelegationOverrides, {
         model: "openai/gpt-5.1",
         thinking: false,
