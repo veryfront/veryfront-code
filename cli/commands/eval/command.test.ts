@@ -146,7 +146,7 @@ describe("eval CLI command helpers", () => {
       export: "braintrust,langfuse",
       debug: true,
       "baseline-model": "anthropic/claude-opus-4-6",
-      "candidate-model": ["moonshotai/kimi-k2"],
+      "candidate-model": ["moonshotai/kimi-k2.6"],
     });
 
     assertEquals(parsed.success, true);
@@ -161,7 +161,7 @@ describe("eval CLI command helpers", () => {
       assertEquals(parsed.data.exporters, ["braintrust", "langfuse"]);
       assertEquals(parsed.data.debug, true);
       assertEquals(parsed.data.baselineModel, "anthropic/claude-opus-4-6");
-      assertEquals(parsed.data.candidateModels, ["moonshotai/kimi-k2"]);
+      assertEquals(parsed.data.candidateModels, ["moonshotai/kimi-k2.6"]);
     }
   });
 
@@ -397,7 +397,7 @@ describe("eval CLI command helpers", () => {
     const candidate = {
       ...baseline,
       runId: "evalrun_candidate",
-      metadata: { model: "moonshotai/kimi-k2" },
+      metadata: { model: "moonshotai/kimi-k2.6" },
       summary: {
         ...baseline.summary,
         usage: { totalTokens: 90, costUsd: 0.5 },
@@ -411,7 +411,7 @@ describe("eval CLI command helpers", () => {
 
     assertEquals(artifact.kind, "eval-model-comparison");
     assertEquals(artifact.baselineModel, "anthropic/claude-opus-4-6");
-    assertEquals(artifact.candidateModels, ["moonshotai/kimi-k2"]);
+    assertEquals(artifact.candidateModels, ["moonshotai/kimi-k2.6"]);
     assertEquals(artifact.recommendation.decision, "promote-candidate");
   });
 
