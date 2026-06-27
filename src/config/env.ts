@@ -196,10 +196,3 @@ export function getOtelMetricsConfig(env: EnvironmentConfig = getEnvironmentConf
     exporter: env.otelMetricsExporter,
   };
 }
-
-// ============================================================================
-// GlobalThis Bridge
-// ============================================================================
-// Register on globalThis so bottom-layer code (platform/) can access the API
-// base URL without importing from config/ (which would violate layer rules).
-(globalThis as Record<string, unknown>).__vfGetApiBaseUrlEnv = getApiBaseUrlEnv;
