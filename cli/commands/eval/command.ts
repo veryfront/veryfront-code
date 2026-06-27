@@ -9,6 +9,7 @@ import type {
   DiscoveredEval,
   EvalAgentAdapterContext,
   EvalMetricResult,
+  EvalModelComparison,
   EvalRecord,
   EvalReport,
   EvalReportComparison,
@@ -16,9 +17,16 @@ import type {
   EvalToolCall,
 } from "veryfront/eval";
 import { createProjectDiscoveryConfig, discoverAll } from "veryfront/discovery";
-import { compareEvalReports, discoverEvals, runEval } from "veryfront/eval";
+import {
+  compareEvalModelReports,
+  compareEvalReports,
+  createEvalModelComparisonMarkdown,
+  discoverEvals,
+  resolveEvalRunProvenance,
+  runEval,
+} from "veryfront/eval";
 import { applyRuntimeAuthContext } from "#cli/shared/runtime-auth";
-import { cliLogger, exitProcess } from "#cli/utils";
+import { cliLogger, exitProcess, VERSION } from "#cli/utils";
 import {
   createErrorEnvelope,
   createSuccessEnvelope,
@@ -47,6 +55,17 @@ type EvalArtifactPaths = {
   results: string;
 };
 
+type EvalModelArtifactPaths = EvalArtifactPaths & {
+  junit: string;
+};
+
+type EvalModelComparisonArtifactPaths = {
+  directory: string;
+  comparisonJson: string;
+  comparisonMarkdown: string;
+  models: Record<string, EvalModelArtifactPaths>;
+};
+
 type EvalSummaryArtifact = {
   kind: "eval-summary";
   runId: string;
@@ -56,6 +75,7 @@ type EvalSummaryArtifact = {
   startedAt: string;
   endedAt: string;
   summary: EvalReport["summary"];
+  metadata?: EvalReport["metadata"];
   exports?: EvalReport["exports"];
   baseline?: EvalReportComparison;
 };
@@ -87,6 +107,37 @@ export function createEvalArtifactPaths(reportDir: string): EvalArtifactPaths {
     directory: reportDir,
     summary: join(reportDir, "summary.json"),
     results: join(reportDir, "results.jsonl"),
+  };
+}
+
+function sanitizeModelIdForPath(model: string): string {
+  return model.trim().replace(/[^A-Za-z0-9._-]+/g, "__").replace(/^_+|_+$/g, "") || "model";
+}
+
+export function createEvalModelArtifactPaths(
+  reportDir: string,
+  model: string,
+): EvalModelArtifactPaths {
+  const directory = join(reportDir, "models", sanitizeModelIdForPath(model));
+  return {
+    directory,
+    summary: join(directory, "summary.json"),
+    results: join(directory, "results.jsonl"),
+    junit: join(directory, "junit.xml"),
+  };
+}
+
+function createEvalModelComparisonArtifactPaths(
+  reportDir: string,
+  models: string[],
+): EvalModelComparisonArtifactPaths {
+  return {
+    directory: reportDir,
+    comparisonJson: join(reportDir, "comparison.json"),
+    comparisonMarkdown: join(reportDir, "comparison.md"),
+    models: Object.fromEntries(
+      models.map((model) => [model, createEvalModelArtifactPaths(reportDir, model)]),
+    ),
   };
 }
 
@@ -177,9 +228,21 @@ export function createSummaryArtifact(
     startedAt: report.startedAt,
     endedAt: report.endedAt,
     summary: report.summary,
+    ...(report.metadata ? { metadata: report.metadata } : {}),
     ...(report.exports ? { exports: report.exports } : {}),
     ...(baseline ? { baseline } : {}),
   };
+}
+
+export function createEvalModelComparisonArtifact(
+  reports: EvalReport[],
+  baselineModel: string,
+): EvalModelComparison {
+  return compareEvalModelReports(reports, { baselineModel });
+}
+
+export function createEvalModelComparisonExitCode(reports: EvalReport[]): 0 | 1 {
+  return reports.some((report) => report.summary.failed > 0) ? 1 : 0;
 }
 
 export function createResultsJsonl(report: EvalReport): string {
@@ -402,6 +465,131 @@ function createEvalCliExportConfig(
   };
 }
 
+type EvalModelComparisonConfig = {
+  baselineModel: string;
+  candidateModels: string[];
+  models: string[];
+};
+
+function uniqueValues(values: string[]): string[] {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+
+function resolveEvalModelComparisonConfig(
+  options: EvalOptions,
+): EvalModelComparisonConfig | undefined {
+  const candidateModels = uniqueValues(options.candidateModels);
+  const baselineModel = options.baselineModel?.trim();
+  if (!baselineModel && candidateModels.length === 0) return undefined;
+
+  if (!baselineModel) {
+    throw new Error("--baseline-model is required when using --candidate-model.");
+  }
+  if (candidateModels.length === 0) {
+    throw new Error("--candidate-model is required when using --baseline-model.");
+  }
+  if (options.model) {
+    throw new Error(
+      "--model is for single eval runs. Use --baseline-model with --candidate-model for comparisons.",
+    );
+  }
+  if (options.baseline || options.writeBaseline) {
+    throw new Error(
+      "--baseline and --write-baseline are for saved single-run reports, not model comparisons.",
+    );
+  }
+
+  return {
+    baselineModel,
+    candidateModels: candidateModels.filter((model) => model !== baselineModel),
+    models: uniqueValues([baselineModel, ...candidateModels]),
+  };
+}
+
+function createAgentAdapterForModel(agent: Agent, options: EvalOptions, model: string) {
+  return createAgentAdapter(agent, { ...options, model });
+}
+
+async function writeEvalModelComparisonArtifacts(
+  comparison: EvalModelComparison,
+  paths: EvalModelComparisonArtifactPaths,
+): Promise<void> {
+  await Deno.mkdir(paths.directory, { recursive: true });
+  await Deno.writeTextFile(paths.comparisonJson, JSON.stringify(comparison, null, 2));
+  await Deno.writeTextFile(paths.comparisonMarkdown, createEvalModelComparisonMarkdown(comparison));
+}
+
+async function runEvalModelComparison(input: {
+  evalItem: DiscoveredEval;
+  agent: Agent;
+  options: EvalOptions;
+  projectDir: string;
+  config: EvalModelComparisonConfig;
+}): Promise<void> {
+  const runId = createCliRunId();
+  const reportDir = input.options.reportDir ?? createDefaultEvalReportDir(runId);
+  const paths = createEvalModelComparisonArtifactPaths(reportDir, input.config.models);
+  const provenance = await resolveEvalRunProvenance({
+    projectDir: input.projectDir,
+    frameworkVersion: VERSION,
+  });
+  const reports: EvalReport[] = [];
+
+  for (const model of input.config.models) {
+    const modelPaths = paths.models[model]!;
+    const modelOptions = { ...input.options, model, report: undefined };
+    const report = await runEval(input.evalItem.definition, {
+      baseDir: input.options.datasetBase ?? input.projectDir,
+      runId: `${runId}_${sanitizeModelIdForPath(model)}`,
+      adapters: {
+        agent: createAgentAdapterForModel(input.agent, input.options, model),
+      },
+      metadata: {
+        model,
+        provenance,
+      },
+      export: createEvalCliExportConfig(input.evalItem, modelOptions, input.projectDir, modelPaths),
+    });
+    reports.push(report);
+    await writeEvalArtifacts(report, modelPaths);
+    await writeTextFileEnsuringDir(modelPaths.junit, createJunitXml(report));
+  }
+
+  const comparison = createEvalModelComparisonArtifact(reports, input.config.baselineModel);
+  await writeEvalModelComparisonArtifacts(comparison, paths);
+  if (input.options.report) {
+    await writeTextFileEnsuringDir(input.options.report, JSON.stringify(comparison, null, 2));
+  }
+
+  if (isJsonMode()) {
+    await outputJson(createSuccessEnvelope("eval", {
+      reports,
+      comparison,
+      artifacts: paths,
+    }));
+  } else {
+    for (const report of reports) {
+      const model = report.metadata?.model ?? report.runId;
+      cliLogger.info(`Model: ${model}`);
+      printReport(report);
+    }
+    cliLogger.info(
+      `Recommendation: ${comparison.recommendation.decision}${
+        comparison.recommendation.model ? ` (${comparison.recommendation.model})` : ""
+      }`,
+    );
+    for (const reason of comparison.recommendation.reasons) {
+      cliLogger.info(`  - ${reason}`);
+    }
+    cliLogger.info(`Report directory: ${paths.directory}`);
+    cliLogger.info(`Comparison: ${paths.comparisonJson}`);
+    cliLogger.info(`Comparison markdown: ${paths.comparisonMarkdown}`);
+    if (input.options.report) cliLogger.info(`Report: ${input.options.report}`);
+  }
+
+  exitProcess(createEvalModelComparisonExitCode(reports));
+}
+
 async function outputEvalNotFound(id: string, evals: DiscoveredEval[]): Promise<void> {
   if (isJsonMode()) {
     await outputJson(createErrorEnvelope("eval", {
@@ -433,6 +621,19 @@ async function outputAgentNotFound(agentId: string): Promise<void> {
     cliLogger.error(`Agent "${agentId}" not found for eval target.`);
   }
   exitProcess(1);
+}
+
+async function outputEvalUsageError(message: string): Promise<void> {
+  if (isJsonMode()) {
+    await outputJson(createErrorEnvelope("eval", {
+      code: "USAGE_ERROR",
+      slug: "eval-usage-error",
+      message,
+    }));
+  } else {
+    cliLogger.error(message);
+  }
+  exitProcess(2);
 }
 
 export async function evalCommand(options: EvalOptions): Promise<void> {
@@ -503,15 +704,42 @@ export async function evalCommand(options: EvalOptions): Promise<void> {
       return;
     }
 
+    let modelComparisonConfig: EvalModelComparisonConfig | undefined;
+    try {
+      modelComparisonConfig = resolveEvalModelComparisonConfig(options);
+    } catch (error) {
+      await outputEvalUsageError(error instanceof Error ? error.message : String(error));
+      return;
+    }
+
+    if (modelComparisonConfig) {
+      await runEvalModelComparison({
+        evalItem,
+        agent,
+        options,
+        projectDir,
+        config: modelComparisonConfig,
+      });
+      return;
+    }
+
     const runId = createCliRunId();
     const artifactPaths = createEvalArtifactPaths(
       options.reportDir ?? createDefaultEvalReportDir(runId),
     );
+    const provenance = await resolveEvalRunProvenance({
+      projectDir,
+      frameworkVersion: VERSION,
+    });
     const report = await runEval(evalItem.definition, {
       baseDir: options.datasetBase ?? projectDir,
       runId,
       adapters: {
         agent: createAgentAdapter(agent, options),
+      },
+      metadata: {
+        provenance,
+        ...(options.model ? { model: options.model } : {}),
       },
       export: createEvalCliExportConfig(evalItem, options, projectDir, artifactPaths),
     });

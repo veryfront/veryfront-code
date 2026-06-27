@@ -90,6 +90,30 @@ veryfront eval deep-research \
   --json
 ```
 
+Compare candidate models against a baseline model when you want to lower cost
+or latency without weakening quality:
+
+```bash
+veryfront eval deep-research \
+  --baseline-model anthropic/claude-sonnet-4-6 \
+  --candidate-model moonshotai/kimi-k2 \
+  --report-dir .veryfront/evals/deep-research-models \
+  --json
+```
+
+Model comparison runs the same eval once per model. It writes one report per
+model under `models/<model-id>/`, plus `comparison.json` and `comparison.md` at
+the report root. `comparison.json` keeps `baselineModel` and `candidateModels`
+separate, then includes `models[]` for the per-model metric summaries. The
+recommendation is conservative: a candidate is promoted only when it has no
+failed runs, introduces no newly failed examples, satisfies the groundedness
+threshold when measured, and improves cost, token use, or p95 latency. Otherwise
+the comparison keeps the baseline or asks for review.
+
+Each report includes provenance metadata. Local runs record git SHA, branch,
+dirty state, and a dirty hash. Cloud runs prefer release, deployment, or preview
+identity when those values are present.
+
 ## Datasets
 
 Use inline data for smoke coverage:

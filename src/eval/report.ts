@@ -8,6 +8,7 @@ import type {
   EvalMetricSummary,
   EvalRecord,
   EvalReport,
+  EvalReportMetadata,
   EvalReportSummary,
   EvalUsageSummary,
 } from "./types.ts";
@@ -222,6 +223,7 @@ export function createEvalReport(input: {
   runId: string;
   startedAt: Date;
   endedAt: Date;
+  metadata?: EvalReportMetadata;
 }): EvalReport {
   return {
     kind: "eval-report",
@@ -233,5 +235,6 @@ export function createEvalReport(input: {
     endedAt: input.endedAt.toISOString(),
     summary: summarizeEvalRecords(input.records),
     records: input.records,
+    ...(input.metadata ? { metadata: input.metadata } : {}),
   };
 }

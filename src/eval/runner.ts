@@ -302,6 +302,7 @@ export async function runEval(
     runId: options.runId ?? createRunId(startedAt),
     startedAt,
     endedAt,
+    metadata: options.metadata,
   });
   emitEvalRuntimeMetrics(report);
   const exports = await exportEvalReport(report, options.export);

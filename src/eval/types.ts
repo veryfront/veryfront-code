@@ -292,6 +292,7 @@ export interface RunEvalOptions {
   runId?: string;
   now?: () => Date;
   export?: EvalReportExportConfig;
+  metadata?: EvalReportMetadata;
 }
 
 /** Export configuration for a completed eval report. */
@@ -388,6 +389,98 @@ export interface EvalReportComparison {
   regressed: boolean;
 }
 
+/** Runtime and source identity attached to an eval report. */
+export interface EvalRunProvenance {
+  kind: "eval-run-provenance";
+  environment: "local" | "cloud" | "ci" | "unknown";
+  source: {
+    kind: "git" | "release" | "deployment" | "preview" | "workspace" | "unknown";
+    id?: string;
+  };
+  frameworkVersion?: string;
+  git?: {
+    sha?: string;
+    branch?: string;
+    dirty?: boolean;
+    dirtyHash?: string;
+  };
+  cloud?: {
+    projectId?: string;
+    projectSlug?: string;
+    releaseId?: string;
+    deploymentId?: string;
+    branchId?: string;
+    branchRef?: string;
+    environment?: string;
+  };
+}
+
+/** Additional report metadata that should not affect pass/fail semantics. */
+export interface EvalReportMetadata {
+  model?: string;
+  provenance?: EvalRunProvenance;
+}
+
+/** Per-model row in an eval model comparison report. */
+export interface EvalModelReportSummary {
+  model: string;
+  role: "baseline" | "candidate";
+  runId: string;
+  passed: number;
+  failed: number;
+  passRate: number;
+  failedExamples: string[];
+  gateFailures: number;
+  totalTokens?: number;
+  costUsd?: number;
+  p95Ms?: number;
+  groundednessScore?: number;
+}
+
+/** Candidate-vs-baseline comparison used to decide whether a model is promotable. */
+export interface EvalModelCandidateComparison {
+  model: string;
+  baselineModel: string;
+  passRateDelta: number;
+  failedDelta: number;
+  newFailedExamples: string[];
+  groundednessScore?: number;
+  costImprovementPct?: number;
+  tokenImprovementPct?: number;
+  latencyImprovementPct?: number;
+  decision: EvalModelComparisonDecision;
+  reasons: string[];
+}
+
+/** Conservative model comparison recommendation. */
+export type EvalModelComparisonDecision =
+  | "promote-candidate"
+  | "keep-baseline"
+  | "needs-review";
+
+/** Aggregate report for comparing one baseline model against candidate models. */
+export interface EvalModelComparison {
+  kind: "eval-model-comparison";
+  baselineModel: string;
+  candidateModels: string[];
+  models: EvalModelReportSummary[];
+  candidates: EvalModelCandidateComparison[];
+  recommendation: {
+    decision: EvalModelComparisonDecision;
+    model?: string;
+    reasons: string[];
+  };
+}
+
+/** Promotion thresholds for model comparison. */
+export interface EvalModelComparisonOptions {
+  baselineModel: string;
+  minGroundedness?: number;
+  minCostImprovementPct?: number;
+  minTokenImprovementPct?: number;
+  minLatencyImprovementPct?: number;
+}
+
 /** Aggregate pass/fail summary for one eval report. */
 export interface EvalReportSummary {
   records: number;
@@ -421,4 +514,5 @@ export interface EvalReport {
   summary: EvalReportSummary;
   records: EvalRecord[];
   exports?: EvalReportExportResult[];
+  metadata?: EvalReportMetadata;
 }

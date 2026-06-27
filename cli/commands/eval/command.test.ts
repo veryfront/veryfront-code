@@ -8,6 +8,9 @@ import {
   createDefaultEvalReportDir,
   createEvalArtifactPaths,
   createEvalExitCode,
+  createEvalModelArtifactPaths,
+  createEvalModelComparisonArtifact,
+  createEvalModelComparisonExitCode,
   createJunitXml,
   createResultsJsonl,
   createSummaryArtifact,
@@ -142,6 +145,8 @@ describe("eval CLI command helpers", () => {
       "write-baseline": "reports/next-baseline.json",
       export: "braintrust,langfuse",
       debug: true,
+      "baseline-model": "anthropic/claude-opus-4-6",
+      "candidate-model": ["moonshotai/kimi-k2"],
     });
 
     assertEquals(parsed.success, true);
@@ -155,6 +160,8 @@ describe("eval CLI command helpers", () => {
       assertEquals(parsed.data.writeBaseline, "reports/next-baseline.json");
       assertEquals(parsed.data.exporters, ["braintrust", "langfuse"]);
       assertEquals(parsed.data.debug, true);
+      assertEquals(parsed.data.baselineModel, "anthropic/claude-opus-4-6");
+      assertEquals(parsed.data.candidateModels, ["moonshotai/kimi-k2"]);
     }
   });
 
@@ -298,6 +305,15 @@ describe("eval CLI command helpers", () => {
       summary: ".veryfront/evals/run-1/summary.json",
       results: ".veryfront/evals/run-1/results.jsonl",
     });
+    assertEquals(
+      createEvalModelArtifactPaths(".veryfront/evals/run-1", "anthropic/claude-opus-4-6"),
+      {
+        directory: ".veryfront/evals/run-1/models/anthropic__claude-opus-4-6",
+        summary: ".veryfront/evals/run-1/models/anthropic__claude-opus-4-6/summary.json",
+        results: ".veryfront/evals/run-1/models/anthropic__claude-opus-4-6/results.jsonl",
+        junit: ".veryfront/evals/run-1/models/anthropic__claude-opus-4-6/junit.xml",
+      },
+    );
   });
 
   it("serializes eval summary and record artifacts", () => {
@@ -352,6 +368,53 @@ describe("eval CLI command helpers", () => {
     }
   });
 
+  it("creates a model comparison artifact for JSON and report output", () => {
+    const baseline = {
+      ...createReport(),
+      runId: "evalrun_baseline",
+      metadata: { model: "anthropic/claude-opus-4-6" },
+      summary: {
+        ...createReport().summary,
+        passed: 2,
+        failed: 0,
+        passRate: 1,
+        failedExamples: [],
+        metrics: [
+          ...createReport().summary.metrics,
+          {
+            name: "answer.groundedness",
+            family: "answer",
+            severity: "gate",
+            passed: 2,
+            failed: 0,
+            skipped: 0,
+            passRate: 0.9,
+          },
+        ],
+        usage: { totalTokens: 100, costUsd: 1 },
+      },
+    };
+    const candidate = {
+      ...baseline,
+      runId: "evalrun_candidate",
+      metadata: { model: "moonshotai/kimi-k2" },
+      summary: {
+        ...baseline.summary,
+        usage: { totalTokens: 90, costUsd: 0.5 },
+      },
+    };
+
+    const artifact = createEvalModelComparisonArtifact(
+      [baseline, candidate],
+      "anthropic/claude-opus-4-6",
+    );
+
+    assertEquals(artifact.kind, "eval-model-comparison");
+    assertEquals(artifact.baselineModel, "anthropic/claude-opus-4-6");
+    assertEquals(artifact.candidateModels, ["moonshotai/kimi-k2"]);
+    assertEquals(artifact.recommendation.decision, "promote-candidate");
+  });
+
   it("serializes eval reports to JUnit XML", () => {
     const xml = createJunitXml(createReport());
 
@@ -383,5 +446,16 @@ describe("eval CLI command helpers", () => {
       createEvalExitCode({ ...report, summary: { ...report.summary, failed: 0 } }, baseline),
       1,
     );
+  });
+
+  it("fails model comparison exit code only when an evaluated report fails", () => {
+    const passing = {
+      ...createReport(),
+      summary: { ...createReport().summary, failed: 0, passed: 2, passRate: 1 },
+    };
+    const failing = createReport();
+
+    assertEquals(createEvalModelComparisonExitCode([passing]), 0);
+    assertEquals(createEvalModelComparisonExitCode([passing, failing]), 1);
   });
 });
