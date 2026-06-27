@@ -45,6 +45,7 @@
 
 export { datasets } from "./datasets.ts";
 export { evalAgent, isEvalDefinition } from "./factory.ts";
+export { judges } from "./judges.ts";
 export { metrics } from "./metrics.ts";
 export { createEvalReport, summarizeEvalRecords } from "./report.ts";
 export { compareEvalReports } from "./baseline.ts";
@@ -61,6 +62,8 @@ export {
 } from "./studio.ts";
 
 export type { DiscoveredEval, EvalDiscoveryOptions, EvalDiscoveryResult } from "./discovery.ts";
+export type { EvalLlmGroundednessJudgeOptions } from "./judges.ts";
+
 export type {
   EvalAgentAdapter,
   EvalAgentAdapterContext,
