@@ -112,6 +112,14 @@ type DirectGenerateUsage = {
   cacheReadInputTokens?: number;
   cachedInputTokens?: number;
   reasoningTokens?: number;
+  billableInputTokens?: number;
+  billableOutputTokens?: number;
+  costUsd?: number;
+  providerCostUsd?: number;
+  veryfrontChargeUsd?: number;
+  costCredits?: number;
+  costSource?: "gateway" | "missing" | "partial";
+  usageCaptureStatus?: "complete" | "partial" | "missing";
 };
 
 type DirectGenerateResult = {
@@ -289,7 +297,17 @@ function normalizeUsage(usage: unknown): DirectGenerateUsage | undefined {
     cacheReadInputTokens?: number;
     cachedInputTokens?: number;
     reasoningTokens?: number;
+    billableInputTokens?: number;
+    billableOutputTokens?: number;
+    costUsd?: number;
+    providerCostUsd?: number;
+    veryfrontChargeUsd?: number;
+    costCredits?: number;
+    costSource?: unknown;
+    usageCaptureStatus?: unknown;
   };
+  const costSource = flatUsage.costSource;
+  const usageCaptureStatus = flatUsage.usageCaptureStatus;
 
   return {
     inputTokens: flatUsage.inputTokens,
@@ -308,6 +326,28 @@ function normalizeUsage(usage: unknown): DirectGenerateUsage | undefined {
       : {}),
     ...(typeof flatUsage.reasoningTokens === "number"
       ? { reasoningTokens: flatUsage.reasoningTokens }
+      : {}),
+    ...(typeof flatUsage.billableInputTokens === "number"
+      ? { billableInputTokens: flatUsage.billableInputTokens }
+      : {}),
+    ...(typeof flatUsage.billableOutputTokens === "number"
+      ? { billableOutputTokens: flatUsage.billableOutputTokens }
+      : {}),
+    ...(typeof flatUsage.costUsd === "number" ? { costUsd: flatUsage.costUsd } : {}),
+    ...(typeof flatUsage.providerCostUsd === "number"
+      ? { providerCostUsd: flatUsage.providerCostUsd }
+      : {}),
+    ...(typeof flatUsage.veryfrontChargeUsd === "number"
+      ? { veryfrontChargeUsd: flatUsage.veryfrontChargeUsd }
+      : {}),
+    ...(typeof flatUsage.costCredits === "number" ? { costCredits: flatUsage.costCredits } : {}),
+    ...(costSource === "gateway" || costSource === "missing" || costSource === "partial"
+      ? { costSource }
+      : {}),
+    ...(usageCaptureStatus === "complete" ||
+        usageCaptureStatus === "missing" ||
+        usageCaptureStatus === "partial"
+      ? { usageCaptureStatus }
       : {}),
   };
 }
@@ -555,6 +595,24 @@ function streamUsageToGenerateUsage(
     ...(totalUsage.reasoningTokens !== undefined
       ? { reasoningTokens: totalUsage.reasoningTokens }
       : {}),
+    ...(totalUsage.billableInputTokens !== undefined
+      ? { billableInputTokens: totalUsage.billableInputTokens }
+      : {}),
+    ...(totalUsage.billableOutputTokens !== undefined
+      ? { billableOutputTokens: totalUsage.billableOutputTokens }
+      : {}),
+    ...(totalUsage.costUsd !== undefined ? { costUsd: totalUsage.costUsd } : {}),
+    ...(totalUsage.providerCostUsd !== undefined
+      ? { providerCostUsd: totalUsage.providerCostUsd }
+      : {}),
+    ...(totalUsage.veryfrontChargeUsd !== undefined
+      ? { veryfrontChargeUsd: totalUsage.veryfrontChargeUsd }
+      : {}),
+    ...(totalUsage.costCredits !== undefined ? { costCredits: totalUsage.costCredits } : {}),
+    ...(totalUsage.costSource !== undefined ? { costSource: totalUsage.costSource } : {}),
+    ...(totalUsage.usageCaptureStatus !== undefined
+      ? { usageCaptureStatus: totalUsage.usageCaptureStatus }
+      : {}),
   };
 }
 
@@ -719,6 +777,24 @@ function normalizeStreamPart(part: unknown): unknown {
             : {}),
           ...(usage.reasoningTokens !== undefined
             ? { reasoningTokens: usage.reasoningTokens }
+            : {}),
+          ...(usage.billableInputTokens !== undefined
+            ? { billableInputTokens: usage.billableInputTokens }
+            : {}),
+          ...(usage.billableOutputTokens !== undefined
+            ? { billableOutputTokens: usage.billableOutputTokens }
+            : {}),
+          ...(usage.costUsd !== undefined ? { costUsd: usage.costUsd } : {}),
+          ...(usage.providerCostUsd !== undefined
+            ? { providerCostUsd: usage.providerCostUsd }
+            : {}),
+          ...(usage.veryfrontChargeUsd !== undefined
+            ? { veryfrontChargeUsd: usage.veryfrontChargeUsd }
+            : {}),
+          ...(usage.costCredits !== undefined ? { costCredits: usage.costCredits } : {}),
+          ...(usage.costSource !== undefined ? { costSource: usage.costSource } : {}),
+          ...(usage.usageCaptureStatus !== undefined
+            ? { usageCaptureStatus: usage.usageCaptureStatus }
             : {}),
         },
       }

@@ -31,6 +31,14 @@ export interface RuntimeGenerateUsage {
   cacheReadInputTokens?: number;
   cachedInputTokens?: number;
   reasoningTokens?: number;
+  billableInputTokens?: number;
+  billableOutputTokens?: number;
+  costUsd?: number;
+  providerCostUsd?: number;
+  veryfrontChargeUsd?: number;
+  costCredits?: number;
+  costSource?: "gateway" | "missing" | "partial";
+  usageCaptureStatus?: "complete" | "partial" | "missing";
 }
 
 export interface RuntimeGenerateTextResult {
@@ -137,6 +145,14 @@ export type RuntimeStreamPart =
       cacheReadInputTokens?: number;
       cachedInputTokens?: number;
       reasoningTokens?: number;
+      billableInputTokens?: number;
+      billableOutputTokens?: number;
+      costUsd?: number;
+      providerCostUsd?: number;
+      veryfrontChargeUsd?: number;
+      costCredits?: number;
+      costSource?: "gateway" | "missing" | "partial";
+      usageCaptureStatus?: "complete" | "partial" | "missing";
     } | null;
   }
   | { type: "error"; error: unknown };

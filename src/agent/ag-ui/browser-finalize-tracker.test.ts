@@ -9,20 +9,31 @@ describe("agent/ag-ui-browser-finalize-tracker", () => {
       usage?: {
         inputTokens?: number;
         outputTokens?: number;
+        billableInputTokens?: number;
+        billableOutputTokens?: number;
         cachedInputTokens?: number;
         cacheCreationInputTokens?: number;
         cacheReadInputTokens?: number;
         reasoningTokens?: number;
       };
+      providerCostUsd?: number;
+      veryfrontChargeUsd?: number;
+      costCredits?: number;
       finishReason?: string;
     }>({
       getMetadataFromChunk: (chunk) => ({
         inputTokens: chunk.usage?.inputTokens,
         outputTokens: chunk.usage?.outputTokens,
+        billableInputTokens: chunk.usage?.billableInputTokens,
+        billableOutputTokens: chunk.usage?.billableOutputTokens,
         cachedInputTokens: chunk.usage?.cachedInputTokens,
         cacheCreationInputTokens: chunk.usage?.cacheCreationInputTokens,
         cacheReadInputTokens: chunk.usage?.cacheReadInputTokens,
         reasoningTokens: chunk.usage?.reasoningTokens,
+        providerCostUsd: chunk.providerCostUsd,
+        veryfrontChargeUsd: chunk.veryfrontChargeUsd,
+        costCredits: chunk.costCredits,
+        costSource: "gateway",
         finishReason: chunk.finishReason,
       }),
     });
@@ -31,11 +42,16 @@ describe("agent/ag-ui-browser-finalize-tracker", () => {
       usage: {
         inputTokens: 3,
         outputTokens: 5,
+        billableInputTokens: 3,
+        billableOutputTokens: 6,
         cachedInputTokens: 2,
         cacheCreationInputTokens: 4,
         cacheReadInputTokens: 2,
         reasoningTokens: 1,
       },
+      providerCostUsd: 0.001,
+      veryfrontChargeUsd: 0.0025,
+      costCredits: 0.025,
       finishReason: "stop",
     });
 
@@ -54,11 +70,17 @@ describe("agent/ag-ui-browser-finalize-tracker", () => {
         reasoningTokens: 1,
       },
       metadata: {
+        billableInputTokens: 3,
+        billableOutputTokens: 6,
         cachedInputTokens: 2,
         cacheCreationInputTokens: 4,
         cacheReadInputTokens: 2,
+        costCredits: 0.025,
+        costSource: "gateway",
         finishReason: "stop",
+        providerCostUsd: 0.001,
         reasoningTokens: 1,
+        veryfrontChargeUsd: 0.0025,
       },
     });
   });

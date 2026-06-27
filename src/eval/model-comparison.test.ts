@@ -10,8 +10,17 @@ function createReport(
     runId?: string;
     passed?: number;
     failed?: number;
+    inputTokens?: number;
+    outputTokens?: number;
     totalTokens?: number;
+    billableInputTokens?: number;
+    billableOutputTokens?: number;
     costUsd?: number;
+    providerCostUsd?: number;
+    veryfrontChargeUsd?: number;
+    costCredits?: number;
+    costSource?: "gateway" | "missing" | "partial";
+    usageCaptureStatus?: "complete" | "partial" | "missing";
     p95Ms?: number;
     groundednessScore?: number;
     measureGroundedness?: boolean;
@@ -81,8 +90,17 @@ function createReport(
         p95Ms: overrides.p95Ms ?? 100,
       },
       usage: {
+        inputTokens: overrides.inputTokens,
+        outputTokens: overrides.outputTokens,
         totalTokens: overrides.totalTokens,
+        billableInputTokens: overrides.billableInputTokens,
+        billableOutputTokens: overrides.billableOutputTokens,
         costUsd: overrides.costUsd,
+        providerCostUsd: overrides.providerCostUsd,
+        veryfrontChargeUsd: overrides.veryfrontChargeUsd,
+        costCredits: overrides.costCredits,
+        costSource: overrides.costSource,
+        usageCaptureStatus: overrides.usageCaptureStatus,
       },
       gateFailures: failed === 0 ? [] : [
         {
@@ -344,6 +362,78 @@ describe("eval/model-comparison", () => {
     assertEquals(markdown.includes("## Candidates"), true);
     assertEquals(
       markdown.includes("p95Ms regressed by 150%, above the allowed 50%"),
+      true,
+    );
+  });
+
+  it("renders unmeasured cost cells explicitly", () => {
+    const comparison = compareEvalModelReports(
+      [
+        createReport("openai/gpt-5.2"),
+        createReport("moonshotai/kimi-k2.6"),
+      ],
+      { baselineModel: "openai/gpt-5.2" },
+    );
+
+    const markdown = createEvalModelComparisonMarkdown(comparison);
+
+    assertEquals(
+      markdown.includes("| not measured | not measured | - | - |"),
+      true,
+    );
+  });
+
+  it("uses gateway Veryfront charge for cost comparison and shows token/cost breakdowns", () => {
+    const comparison = compareEvalModelReports(
+      [
+        createReport("anthropic/claude-opus-4-6", {
+          inputTokens: 8_000,
+          outputTokens: 2_000,
+          totalTokens: 10_000,
+          billableInputTokens: 8_000,
+          billableOutputTokens: 2_000,
+          providerCostUsd: 0.4,
+          veryfrontChargeUsd: 1,
+          costCredits: 10,
+          costSource: "gateway",
+          usageCaptureStatus: "complete",
+        }),
+        createReport("moonshotai/kimi-k2.6", {
+          inputTokens: 7_000,
+          outputTokens: 2_000,
+          totalTokens: 9_000,
+          billableInputTokens: 7_000,
+          billableOutputTokens: 2_000,
+          providerCostUsd: 0.2,
+          veryfrontChargeUsd: 0.5,
+          costCredits: 5,
+          costSource: "gateway",
+          usageCaptureStatus: "complete",
+        }),
+      ],
+      { baselineModel: "anthropic/claude-opus-4-6" },
+    );
+
+    assertEquals(comparison.recommendation, {
+      decision: "promote-candidate",
+      model: "moonshotai/kimi-k2.6",
+      reasons: [
+        "candidate has no quality regressions",
+        "groundedness is at or above 0.8",
+        "Veryfront charge improved by 50%",
+      ],
+    });
+
+    const markdown = createEvalModelComparisonMarkdown(comparison);
+    assertEquals(
+      markdown.includes(
+        "| Model | Role | Passed | Failed | Pass rate | Groundedness | Input tok | Output tok | Total tok | Billable in | Billable out | Provider USD | Veryfront USD | Credits | Cost source | p95 ms |",
+      ),
+      true,
+    );
+    assertEquals(markdown.includes("| moonshotai/kimi-k2.6 | candidate |"), true);
+    assertEquals(
+      markdown.includes("| 7000 | 2000 | 9000 | 7000 | 2000 | 0.20 | 0.50 | 5.00 | gateway |"),
       true,
     );
   });

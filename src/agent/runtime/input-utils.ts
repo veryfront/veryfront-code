@@ -37,6 +37,14 @@ export function accumulateUsage(
     cacheCreationInputTokens?: number;
     cacheReadInputTokens?: number;
     reasoningTokens?: number;
+    billableInputTokens?: number;
+    billableOutputTokens?: number;
+    costUsd?: number;
+    providerCostUsd?: number;
+    veryfrontChargeUsd?: number;
+    costCredits?: number;
+    costSource?: "gateway" | "missing" | "partial";
+    usageCaptureStatus?: "complete" | "partial" | "missing";
   },
   usage: {
     promptTokens?: number;
@@ -46,6 +54,14 @@ export function accumulateUsage(
     cacheCreationInputTokens?: number;
     cacheReadInputTokens?: number;
     reasoningTokens?: number;
+    billableInputTokens?: number;
+    billableOutputTokens?: number;
+    costUsd?: number;
+    providerCostUsd?: number;
+    veryfrontChargeUsd?: number;
+    costCredits?: number;
+    costSource?: "gateway" | "missing" | "partial";
+    usageCaptureStatus?: "complete" | "partial" | "missing";
   },
 ): void {
   total.promptTokens += usage.promptTokens ?? 0;
@@ -63,6 +79,35 @@ export function accumulateUsage(
   }
   if (typeof usage.reasoningTokens === "number") {
     total.reasoningTokens = (total.reasoningTokens ?? 0) + usage.reasoningTokens;
+  }
+  if (typeof usage.billableInputTokens === "number") {
+    total.billableInputTokens = (total.billableInputTokens ?? 0) + usage.billableInputTokens;
+  }
+  if (typeof usage.billableOutputTokens === "number") {
+    total.billableOutputTokens = (total.billableOutputTokens ?? 0) + usage.billableOutputTokens;
+  }
+  if (typeof usage.costUsd === "number") {
+    total.costUsd = (total.costUsd ?? 0) + usage.costUsd;
+  }
+  if (typeof usage.providerCostUsd === "number") {
+    total.providerCostUsd = (total.providerCostUsd ?? 0) + usage.providerCostUsd;
+  }
+  if (typeof usage.veryfrontChargeUsd === "number") {
+    total.veryfrontChargeUsd = (total.veryfrontChargeUsd ?? 0) + usage.veryfrontChargeUsd;
+  }
+  if (typeof usage.costCredits === "number") {
+    total.costCredits = (total.costCredits ?? 0) + usage.costCredits;
+  }
+  if (usage.costSource) {
+    total.costSource = total.costSource && total.costSource !== usage.costSource
+      ? "partial"
+      : usage.costSource;
+  }
+  if (usage.usageCaptureStatus) {
+    total.usageCaptureStatus =
+      total.usageCaptureStatus && total.usageCaptureStatus !== usage.usageCaptureStatus
+        ? "partial"
+        : usage.usageCaptureStatus;
   }
 }
 

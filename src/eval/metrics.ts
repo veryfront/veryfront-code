@@ -791,7 +791,8 @@ export const metrics = {
 
     cost(options: { maxUsd: number }): EvalMetric {
       return createMetric("ops.cost", "ops", (record) => {
-        const costUsd = record.usage.costUsd ?? 0;
+        const costUsd = record.usage.veryfrontChargeUsd ?? record.usage.costUsd ??
+          record.usage.providerCostUsd ?? 0;
         const pass = costUsd <= options.maxUsd;
         return {
           name: "ops.cost",
@@ -799,7 +800,11 @@ export const metrics = {
           severity: "budget",
           score: pass ? 1 : 0,
           pass,
-          evidence: { costUsd, maxUsd: options.maxUsd },
+          evidence: {
+            costUsd,
+            maxUsd: options.maxUsd,
+            ...(record.usage.costSource ? { costSource: record.usage.costSource } : {}),
+          },
         };
       }, options);
     },

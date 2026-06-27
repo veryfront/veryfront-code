@@ -102,7 +102,18 @@ export const getEvalRunUsageSummarySchema = defineSchema((v) =>
     inputTokens: v.number().nonnegative().optional(),
     outputTokens: v.number().nonnegative().optional(),
     totalTokens: v.number().nonnegative().optional(),
+    billableInputTokens: v.number().nonnegative().optional(),
+    billableOutputTokens: v.number().nonnegative().optional(),
+    cachedInputTokens: v.number().nonnegative().optional(),
+    cacheCreationInputTokens: v.number().nonnegative().optional(),
+    cacheReadInputTokens: v.number().nonnegative().optional(),
+    reasoningTokens: v.number().nonnegative().optional(),
     costUsd: v.number().nonnegative().optional(),
+    providerCostUsd: v.number().nonnegative().optional(),
+    veryfrontChargeUsd: v.number().nonnegative().optional(),
+    costCredits: v.number().nonnegative().optional(),
+    costSource: v.enum(["gateway", "missing", "partial"] as const).optional(),
+    usageCaptureStatus: v.enum(["complete", "partial", "missing"] as const).optional(),
   })
 );
 

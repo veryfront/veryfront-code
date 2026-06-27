@@ -20,6 +20,14 @@ type RuntimeUsage = {
   cacheCreationInputTokens?: number;
   cacheReadInputTokens?: number;
   reasoningTokens?: number;
+  billableInputTokens?: number;
+  billableOutputTokens?: number;
+  costUsd?: number;
+  providerCostUsd?: number;
+  veryfrontChargeUsd?: number;
+  costCredits?: number;
+  costSource?: "gateway" | "missing" | "partial";
+  usageCaptureStatus?: "complete" | "partial" | "missing";
 };
 
 function normalizeOpenAIFinishReason(
@@ -54,6 +62,9 @@ function extractOpenAIUsage(payload: unknown): RuntimeUsage | undefined {
   const cachedTokens = promptTokensDetails?.cached_tokens;
   const completionTokensDetails = readRecord(usage.completion_tokens_details);
   const reasoningTokens = completionTokensDetails?.reasoning_tokens;
+  const veryfront = readRecord(usage.veryfront);
+  const costSource = veryfront?.cost_source;
+  const usageCaptureStatus = veryfront?.usage_capture_status;
 
   return {
     inputTokens: typeof inputTokens === "number" ? inputTokens : undefined,
@@ -61,6 +72,28 @@ function extractOpenAIUsage(payload: unknown): RuntimeUsage | undefined {
     totalTokens: typeof totalTokens === "number" ? totalTokens : undefined,
     ...(typeof cachedTokens === "number" ? { cacheReadInputTokens: cachedTokens } : {}),
     ...(typeof reasoningTokens === "number" ? { reasoningTokens } : {}),
+    ...(typeof veryfront?.billable_input_tokens === "number"
+      ? { billableInputTokens: veryfront.billable_input_tokens }
+      : {}),
+    ...(typeof veryfront?.billable_output_tokens === "number"
+      ? { billableOutputTokens: veryfront.billable_output_tokens }
+      : {}),
+    ...(typeof veryfront?.cost_usd === "number" ? { costUsd: veryfront.cost_usd } : {}),
+    ...(typeof veryfront?.provider_cost_usd === "number"
+      ? { providerCostUsd: veryfront.provider_cost_usd }
+      : {}),
+    ...(typeof veryfront?.veryfront_charge_usd === "number"
+      ? { veryfrontChargeUsd: veryfront.veryfront_charge_usd }
+      : {}),
+    ...(typeof veryfront?.cost_credits === "number" ? { costCredits: veryfront.cost_credits } : {}),
+    ...(costSource === "gateway" || costSource === "missing" || costSource === "partial"
+      ? { costSource }
+      : {}),
+    ...(usageCaptureStatus === "complete" ||
+        usageCaptureStatus === "missing" ||
+        usageCaptureStatus === "partial"
+      ? { usageCaptureStatus }
+      : {}),
   };
 }
 

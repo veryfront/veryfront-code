@@ -13,6 +13,22 @@ import type {
   EvalUsageSummary,
 } from "./types.ts";
 
+const USAGE_NUMERIC_KEYS = [
+  "inputTokens",
+  "outputTokens",
+  "totalTokens",
+  "billableInputTokens",
+  "billableOutputTokens",
+  "cachedInputTokens",
+  "cacheCreationInputTokens",
+  "cacheReadInputTokens",
+  "reasoningTokens",
+  "costUsd",
+  "providerCostUsd",
+  "veryfrontChargeUsd",
+  "costCredits",
+] as const satisfies ReadonlyArray<keyof EvalUsageSummary>;
+
 function isBlockingFailure(result: EvalMetricResult): boolean {
   return !result.skipped && result.pass === false &&
     (result.severity === "gate" || result.severity === "budget");
@@ -52,21 +68,45 @@ function summarizeDurations(records: EvalRecord[]): EvalDurationSummary {
 
 function addUsageValue(
   summary: EvalUsageSummary,
-  key: keyof EvalUsageSummary,
+  key: typeof USAGE_NUMERIC_KEYS[number],
   value: number | undefined,
 ): void {
   if (value === undefined) return;
   summary[key] = (summary[key] ?? 0) + value;
 }
 
+function summarizeUsageState<T extends "gateway" | "complete" | "missing" | "partial">(
+  values: T[],
+): T | undefined {
+  if (values.length === 0) return undefined;
+  const first = values[0];
+  return values.every((value) => value === first) ? first : "partial" as T;
+}
+
 function summarizeUsage(records: EvalRecord[]): EvalUsageSummary {
   const summary: EvalUsageSummary = {};
+  const costSources: Array<NonNullable<EvalUsageSummary["costSource"]>> = [];
+  const captureStatuses: Array<NonNullable<EvalUsageSummary["usageCaptureStatus"]>> = [];
+  let hasExplicitCostSource = false;
+  let hasExplicitCaptureStatus = false;
+
   for (const record of records) {
-    addUsageValue(summary, "inputTokens", record.usage.inputTokens);
-    addUsageValue(summary, "outputTokens", record.usage.outputTokens);
-    addUsageValue(summary, "totalTokens", record.usage.totalTokens);
-    addUsageValue(summary, "costUsd", record.usage.costUsd);
+    for (const key of USAGE_NUMERIC_KEYS) {
+      addUsageValue(summary, key, record.usage[key]);
+    }
+
+    if (record.usage.costSource !== undefined) hasExplicitCostSource = true;
+    if (record.usage.usageCaptureStatus !== undefined) hasExplicitCaptureStatus = true;
+    costSources.push(record.usage.costSource ?? "missing");
+    captureStatuses.push(record.usage.usageCaptureStatus ?? "missing");
   }
+
+  const costSource = hasExplicitCostSource ? summarizeUsageState(costSources) : undefined;
+  const usageCaptureStatus = hasExplicitCaptureStatus
+    ? summarizeUsageState(captureStatuses)
+    : undefined;
+  if (costSource) summary.costSource = costSource;
+  if (usageCaptureStatus) summary.usageCaptureStatus = usageCaptureStatus;
   return summary;
 }
 
