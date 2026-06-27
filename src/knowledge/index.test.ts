@@ -169,6 +169,41 @@ describe("projectKnowledge", () => {
     });
   });
 
+  it("returns document content for explicit local knowledge lookup targets", async () => {
+    await withTempDir(async (projectDir) => {
+      await mkdir(join(projectDir, "knowledge"), { recursive: true });
+      await writeTextFile(
+        join(projectDir, "knowledge", "login-troubleshooting.md"),
+        [
+          "---",
+          "type: runbook",
+          "title: Login troubleshooting",
+          "description: Diagnose SSO failures after releases.",
+          "---",
+          "",
+          "# Login troubleshooting",
+          "",
+          "Check identity provider metadata and callback URL changes.",
+        ].join("\n"),
+      );
+
+      const knowledge = projectKnowledge({ projectDir });
+      const searchResult = await knowledge.lookup({ query: "login troubleshooting" });
+      const lookupResult = await knowledge.lookup({
+        query: "login troubleshooting",
+        lookup_target: { path: "knowledge/login-troubleshooting.md" },
+      });
+
+      assertEquals(searchResult.data[0]?.content, undefined);
+      assertEquals(lookupResult.returned, 1);
+      assertEquals(lookupResult.data[0]?.path, "knowledge/login-troubleshooting.md");
+      assertStringIncludes(
+        lookupResult.data[0]?.content ?? "",
+        "Check identity provider metadata and callback URL changes.",
+      );
+    });
+  });
+
   it("falls back to browse order and paginates local knowledge lookups", async () => {
     await withTempDir(async (projectDir) => {
       await mkdir(join(projectDir, "knowledge"), { recursive: true });

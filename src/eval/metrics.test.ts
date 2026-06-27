@@ -395,4 +395,65 @@ describe("eval/metrics", () => {
       },
     );
   });
+
+  it("uses compact search_knowledge results as groundedness evidence", async () => {
+    const groundedness = metrics.answer.groundedness({
+      judge: async ({ evidence, output, sources }) => {
+        const joinedEvidence = evidence.join("\n");
+        const pass = joinedEvidence.includes("identity provider metadata") &&
+          joinedEvidence.includes("callback URL") &&
+          String(output.text).includes("SSO metadata") &&
+          sources.includes("knowledge/login-troubleshooting.md");
+
+        return {
+          score: pass ? 0.95 : 0.1,
+          pass,
+          explanation: "Compact knowledge result contains enough support for the answer.",
+        };
+      },
+    }).gate({ min: 0.8 });
+
+    assertEquals(
+      await groundedness.evaluate(createRecord({
+        output: { text: "Ask whether the SSO metadata or callback URL changed recently." },
+        trace: {
+          events: [],
+          toolCalls: [
+            {
+              name: "search_knowledge",
+              status: "ok",
+              output: {
+                data: [
+                  {
+                    path: "knowledge/login-troubleshooting.md",
+                    matched_fields: [
+                      "identity provider metadata",
+                      "callback URL",
+                    ],
+                    frontmatter: {
+                      title: "Login troubleshooting",
+                      summary: "Check SSO metadata, callback URL, and group mapping changes.",
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      })),
+      {
+        name: "answer.groundedness",
+        family: "answer",
+        severity: "gate",
+        score: 0.95,
+        pass: true,
+        explanation: "Compact knowledge result contains enough support for the answer.",
+        evidence: {
+          tool: "search_knowledge",
+          evidenceCount: 2,
+          sources: ["knowledge/login-troubleshooting.md"],
+        },
+      },
+    );
+  });
 });

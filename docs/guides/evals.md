@@ -232,11 +232,26 @@ Use `answer.groundedness` when the judge should compare the final answer against
 retrieved knowledge evidence:
 
 ```ts
+function simpleGroundingJudge(input: {
+  output: Record<string, unknown>;
+  evidence: string[];
+}) {
+  const answer = String(input.output.text ?? "").toLowerCase();
+  const evidence = input.evidence.join("\n").toLowerCase();
+  const pass = answer.length > 0 &&
+    answer.split(/\s+/).some((word) => word.length > 4 && evidence.includes(word));
+
+  return {
+    score: pass ? 1 : 0,
+    pass,
+    explanation: pass
+      ? "The answer overlaps with retrieved evidence."
+      : "The answer is not supported by retrieved evidence.",
+  };
+}
+
 metrics.answer.groundedness({
-  judge: async ({ output, evidence, sources }) => {
-    const score = await judgeGrounding({ output, evidence, sources });
-    return { score, pass: score >= 0.8 };
-  },
+  judge: async ({ output, evidence }) => simpleGroundingJudge({ output, evidence }),
 }).gate({ min: 0.8 });
 ```
 

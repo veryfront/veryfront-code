@@ -111,6 +111,7 @@ export interface ProjectKnowledgeLookupItem {
   path: string;
   matched_fields: string[];
   frontmatter: ProjectKnowledgeLookupFrontmatterField[];
+  content?: string;
 }
 
 export interface ProjectKnowledgeLookupPageInfo {
@@ -147,6 +148,7 @@ interface ProjectKnowledgeManifestEntry {
   path: string;
   frontmatter: ProjectKnowledgeLookupFrontmatterField[];
   searchableFrontmatter: ProjectKnowledgeLookupFrontmatterField[];
+  content?: string;
 }
 
 interface SearchableProjectKnowledgeManifestEntry extends ProjectKnowledgeManifestEntry {
@@ -197,7 +199,7 @@ const SEARCH_KNOWLEDGE_INPUT_SCHEMA: JsonSchema = {
     lookup_target: {
       type: "object",
       additionalProperties: true,
-      description: "Hosted lookup target accepted for API parity and ignored locally.",
+      description: "Optional target such as { path } for retrieving a specific knowledge document.",
     },
     limit: {
       type: "integer",
@@ -225,9 +227,10 @@ export interface ProjectKnowledge {
    */
   index(): Promise<void>;
   /**
-   * Search the local OKF knowledge manifest using the same compact
-   * frontmatter-only response shape as Veryfront Cloud's `search_knowledge`
-   * tool. This does not build or query the embedding index.
+   * Search the local OKF knowledge manifest using the same compact response
+   * shape as Veryfront Cloud's `search_knowledge` tool. Explicit
+   * `lookup_target` calls include document content. This does not build or
+   * query the embedding index.
    */
   lookup(input: ProjectKnowledgeLookupInput): Promise<ProjectKnowledgeLookupOutput>;
   retrieve(
@@ -252,6 +255,10 @@ function stripTrailingSlash(path: string): string {
 
 function trimLeadingSlash(path: string): string {
   return toPosixPath(path).replace(/^\/+/, "");
+}
+
+function normalizeManifestPath(path: string): string {
+  return trimLeadingSlash(path).replace(/^\.\//, "");
 }
 
 function buildHostedManifestPath(contentDir: string, filePath: string): string | null {
@@ -430,6 +437,36 @@ function toSearchableEntry(
   };
 }
 
+function getLookupTargetPath(lookupTarget: unknown): string | null {
+  if (typeof lookupTarget === "string" && lookupTarget.trim()) {
+    return normalizeManifestPath(lookupTarget);
+  }
+  if (!lookupTarget || typeof lookupTarget !== "object" || Array.isArray(lookupTarget)) {
+    return null;
+  }
+
+  const record = lookupTarget as Record<string, unknown>;
+  for (const key of ["path", "source", "id", "documentCode", "document_code"]) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) return normalizeManifestPath(value);
+  }
+
+  return null;
+}
+
+function createLookupItem(
+  entry: ProjectKnowledgeManifestEntry,
+  matchedFields: string[],
+  includeContent = false,
+): ProjectKnowledgeLookupItem {
+  return {
+    path: entry.path,
+    matched_fields: matchedFields,
+    frontmatter: entry.frontmatter,
+    ...(includeContent && entry.content ? { content: entry.content } : {}),
+  };
+}
+
 function encodeCursor(state: ProjectKnowledgeLookupCursorState): string {
   const bytes = new TextEncoder().encode(JSON.stringify(state));
   let binary = "";
@@ -552,7 +589,14 @@ async function getProjectKnowledgeManifest(
   for (const file of files) {
     let parsedFrontmatter: Record<string, unknown> = {};
     try {
-      parsedFrontmatter = extract<Record<string, unknown>>(await readTextFile(file)).attrs;
+      const content = await readTextFile(file);
+      parsedFrontmatter = extract<Record<string, unknown>>(content).attrs;
+      manifest.push({
+        path: buildManifestPath(config, file),
+        content,
+        ...sanitizeFrontmatter(parsedFrontmatter),
+      });
+      continue;
     } catch {
       parsedFrontmatter = {};
     }
@@ -659,6 +703,7 @@ async function getHostedProjectKnowledgeManifest(
 
     manifest.push({
       path: manifestPath,
+      content: file.content,
       ...sanitizeFrontmatter(parsedFrontmatter),
     });
   }
@@ -673,8 +718,9 @@ function lookupKnowledgeManifest(
   const cursorState = input.cursor ? decodeCursor(input.cursor) : null;
   const providedQuery = input.query?.trim() ?? "";
   const resolvedQuery = (cursorState?.query ?? providedQuery).trim();
+  const lookupTargetPath = cursorState ? null : getLookupTargetPath(input.lookup_target);
 
-  if (!resolvedQuery) {
+  if (!resolvedQuery && !lookupTargetPath) {
     throw new Error("search_knowledge requires a non-empty query");
   }
 
@@ -691,6 +737,29 @@ function lookupKnowledgeManifest(
 
   if (resolvedShardIndex < 0 || resolvedShardIndex >= resolvedShardCount) {
     throw new Error("search_knowledge shard_index must be within shard_count");
+  }
+
+  if (lookupTargetPath) {
+    const entry = manifest.find((item) => normalizeManifestPath(item.path) === lookupTargetPath);
+    const data = entry ? [createLookupItem(entry, ["path"], true)] : [];
+    return {
+      query: resolvedQuery || lookupTargetPath,
+      mode: "search",
+      data,
+      page_info: {
+        self: null,
+        first: null,
+        next: null,
+        prev: null,
+      },
+      returned: data.length,
+      total_matches: data.length,
+      shard: {
+        shard_index: resolvedShardIndex,
+        shard_count: resolvedShardCount,
+        total_items: manifest.length,
+      },
+    };
   }
 
   const resolvedLimit = Math.min(
@@ -736,11 +805,7 @@ function lookupKnowledgeManifest(
   return {
     query: resolvedQuery,
     mode,
-    data: pageEntries.map(({ entry, matchedFields }) => ({
-      path: entry.path,
-      matched_fields: matchedFields,
-      frontmatter: entry.frontmatter,
-    })),
+    data: pageEntries.map(({ entry, matchedFields }) => createLookupItem(entry, matchedFields)),
     page_info: {
       self: input.cursor ?? null,
       first: null,
@@ -815,7 +880,7 @@ export function createSearchKnowledgeTool(
   return tool<ProjectKnowledgeLookupInput, ProjectKnowledgeLookupOutput>({
     id,
     description: description ??
-      "Retrieve a compact, cursor-based slice of the project knowledge manifest.",
+      "Retrieve a compact, cursor-based slice of project knowledge, or a specific document by lookup target.",
     inputSchema: SEARCH_KNOWLEDGE_INPUT_SCHEMA,
     execute: (input, context) =>
       searchProjectKnowledge(coerceSearchKnowledgeInput(input), config, context),

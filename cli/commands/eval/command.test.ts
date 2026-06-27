@@ -1,7 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import type { AgentResponse } from "veryfront/agent";
 import { compareEvalReports, type DiscoveredEval, type EvalReport } from "veryfront/eval";
+import { saveToken } from "../../auth/token-store.ts";
 import {
   createDefaultEvalReportDir,
   createEvalArtifactPaths,
@@ -10,12 +12,38 @@ import {
   createResultsJsonl,
   createSummaryArtifact,
   findEvalForCliId,
+  hydrateEvalRuntimeAuth,
   normalizeEvalCliId,
   normalizeEvalInputForAgent,
+  normalizeToolCalls,
   summarizeReportForCli,
   writeEvalArtifacts,
 } from "./command.ts";
 import { parseEvalArgs } from "./handler.ts";
+
+const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+const originalProjectSlug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
+const originalXdgConfigHome = Deno.env.get("XDG_CONFIG_HOME");
+
+function restoreEnv(): void {
+  if (originalApiToken === undefined) {
+    Deno.env.delete("VERYFRONT_API_TOKEN");
+  } else {
+    Deno.env.set("VERYFRONT_API_TOKEN", originalApiToken);
+  }
+
+  if (originalProjectSlug === undefined) {
+    Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+  } else {
+    Deno.env.set("VERYFRONT_PROJECT_SLUG", originalProjectSlug);
+  }
+
+  if (originalXdgConfigHome === undefined) {
+    Deno.env.delete("XDG_CONFIG_HOME");
+  } else {
+    Deno.env.set("XDG_CONFIG_HOME", originalXdgConfigHome);
+  }
+}
 
 function createReport(): EvalReport {
   return {
@@ -98,6 +126,10 @@ function createReport(): EvalReport {
 }
 
 describe("eval CLI command helpers", () => {
+  afterEach(() => {
+    restoreEnv();
+  });
+
   it("parses eval command arguments", () => {
     const parsed = parseEvalArgs({
       _: ["eval", "deep-research"],
@@ -150,6 +182,83 @@ describe("eval CLI command helpers", () => {
       "What changed?",
     );
     assertEquals(normalizeEvalInputForAgent({ custom: true }), '{"custom":true}');
+  });
+
+  it("preserves agent tool input and output in eval traces", () => {
+    const response = {
+      text: "done",
+      messages: [],
+      status: "completed",
+      toolCalls: [
+        {
+          id: "call-1",
+          name: "search_knowledge",
+          args: { query: "sso login" },
+          status: "completed",
+          result: {
+            data: [
+              {
+                path: "knowledge/login-troubleshooting.md",
+                frontmatter: [{ key: "title", value: "Login troubleshooting" }],
+              },
+            ],
+          },
+        },
+        {
+          id: "call-2",
+          name: "execute_skill_script",
+          args: { script: "missing.sh" },
+          status: "error",
+          error: "File not found",
+        },
+      ],
+    } satisfies AgentResponse;
+
+    assertEquals(normalizeToolCalls(response), [
+      {
+        id: "call-1",
+        name: "search_knowledge",
+        status: "ok",
+        input: { query: "sso login" },
+        output: {
+          data: [
+            {
+              path: "knowledge/login-troubleshooting.md",
+              frontmatter: [{ key: "title", value: "Login troubleshooting" }],
+            },
+          ],
+        },
+      },
+      {
+        id: "call-2",
+        name: "execute_skill_script",
+        status: "error",
+        input: { script: "missing.sh" },
+        error: "File not found",
+      },
+    ]);
+  });
+
+  it("hydrates runtime auth from the stored login token and eval project config", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-eval-command-" });
+    const configHome = await Deno.makeTempDir({ prefix: "vf-eval-auth-" });
+
+    try {
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      Deno.env.set("XDG_CONFIG_HOME", configHome);
+      await saveToken("stored-token");
+
+      await hydrateEvalRuntimeAuth(projectDir, {
+        projectSlug: "configured-eval-project",
+      });
+
+      assertEquals(Deno.env.get("VERYFRONT_API_TOKEN"), "stored-token");
+      assertEquals(Deno.env.get("VERYFRONT_PROJECT_SLUG"), "configured-eval-project");
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(configHome, { recursive: true });
+    }
   });
 
   it("summarizes reports for JSON and human CLI output", () => {
