@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { AgentResponse } from "veryfront/agent";
 import { compareEvalReports, type DiscoveredEval, type EvalReport } from "veryfront/eval";
@@ -16,6 +16,7 @@ import {
   createSummaryArtifact,
   findEvalForCliId,
   hydrateEvalRuntimeAuth,
+  loadEvalModelComparisonPolicy,
   normalizeEvalCliId,
   normalizeEvalInputForAgent,
   normalizeToolCalls,
@@ -147,6 +148,7 @@ describe("eval CLI command helpers", () => {
       debug: true,
       "baseline-model": "anthropic/claude-opus-4-6",
       "candidate-model": ["moonshotai/kimi-k2.6"],
+      "comparison-policy": "evals/model-comparison.policy.json",
     });
 
     assertEquals(parsed.success, true);
@@ -162,6 +164,7 @@ describe("eval CLI command helpers", () => {
       assertEquals(parsed.data.debug, true);
       assertEquals(parsed.data.baselineModel, "anthropic/claude-opus-4-6");
       assertEquals(parsed.data.candidateModels, ["moonshotai/kimi-k2.6"]);
+      assertEquals(parsed.data.comparisonPolicy, "evals/model-comparison.policy.json");
     }
   });
 
@@ -369,32 +372,31 @@ describe("eval CLI command helpers", () => {
   });
 
   it("creates a model comparison artifact for JSON and report output", () => {
-    const baseline = {
-      ...createReport(),
+    const baseReport = createReport();
+    const groundednessMetric: EvalReport["summary"]["metrics"][number] = {
+      name: "answer.groundedness",
+      family: "answer",
+      severity: "gate",
+      passed: 2,
+      failed: 0,
+      skipped: 0,
+      passRate: 0.9,
+    };
+    const baseline: EvalReport = {
+      ...baseReport,
       runId: "evalrun_baseline",
       metadata: { model: "anthropic/claude-opus-4-6" },
       summary: {
-        ...createReport().summary,
+        ...baseReport.summary,
         passed: 2,
         failed: 0,
         passRate: 1,
         failedExamples: [],
-        metrics: [
-          ...createReport().summary.metrics,
-          {
-            name: "answer.groundedness",
-            family: "answer",
-            severity: "gate",
-            passed: 2,
-            failed: 0,
-            skipped: 0,
-            passRate: 0.9,
-          },
-        ],
+        metrics: [...baseReport.summary.metrics, groundednessMetric],
         usage: { totalTokens: 100, costUsd: 1 },
       },
     };
-    const candidate = {
+    const candidate: EvalReport = {
       ...baseline,
       runId: "evalrun_candidate",
       metadata: { model: "moonshotai/kimi-k2.6" },
@@ -413,6 +415,119 @@ describe("eval CLI command helpers", () => {
     assertEquals(artifact.baselineModel, "anthropic/claude-opus-4-6");
     assertEquals(artifact.candidateModels, ["moonshotai/kimi-k2.6"]);
     assertEquals(artifact.recommendation.decision, "promote-candidate");
+  });
+
+  it("applies model comparison policy when creating comparison artifacts", () => {
+    const baseReport = createReport();
+    const baseline: EvalReport = {
+      ...baseReport,
+      runId: "evalrun_baseline",
+      metadata: { model: "openai/gpt-5.2" },
+      summary: {
+        ...baseReport.summary,
+        passed: 2,
+        failed: 0,
+        passRate: 1,
+        failedExamples: [],
+        usage: { totalTokens: 100 },
+        duration: {
+          totalMs: 1000,
+          minMs: 100,
+          maxMs: 1000,
+          meanMs: 500,
+          p50Ms: 500,
+          p95Ms: 1000,
+        },
+      },
+    };
+    const candidate: EvalReport = {
+      ...baseline,
+      runId: "evalrun_candidate",
+      metadata: { model: "moonshotai/kimi-k2.6" },
+      summary: {
+        ...baseline.summary,
+        usage: { totalTokens: 70 },
+        duration: {
+          ...baseline.summary.duration!,
+          p95Ms: 2500,
+        },
+      },
+    };
+
+    const artifact = createEvalModelComparisonArtifact(
+      [baseline, candidate],
+      "openai/gpt-5.2",
+      {
+        constraints: {
+          p95Ms: { maxRegressionPct: 0.5 },
+        },
+      },
+    );
+
+    assertEquals(artifact.recommendation.decision, "keep-baseline");
+    assertEquals(artifact.candidates[0]?.constraintFailures, [
+      "p95Ms regressed by 150%, above the allowed 50%",
+    ]);
+  });
+
+  it("loads model comparison policy files relative to the project directory", async () => {
+    const projectDir = await Deno.makeTempDir();
+    try {
+      await Deno.mkdir(`${projectDir}/evals`);
+      await Deno.writeTextFile(
+        `${projectDir}/evals/model-comparison.policy.json`,
+        JSON.stringify({
+          constraints: {
+            p95Ms: { maxRegressionPct: 0.5 },
+          },
+          objectives: {
+            totalTokens: { weight: 0.8, direction: "minimize" },
+            p95Ms: { weight: 0.2, direction: "minimize" },
+          },
+        }),
+      );
+
+      const policy = await loadEvalModelComparisonPolicy(
+        projectDir,
+        "evals/model-comparison.policy.json",
+      );
+
+      assertEquals(policy, {
+        constraints: {
+          p95Ms: { maxRegressionPct: 0.5 },
+        },
+        objectives: {
+          totalTokens: { weight: 0.8, direction: "minimize" },
+          p95Ms: { weight: 0.2, direction: "minimize" },
+        },
+      });
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("rejects invalid model comparison policy objective weights", async () => {
+    const projectDir = await Deno.makeTempDir();
+    try {
+      await Deno.writeTextFile(
+        `${projectDir}/policy.json`,
+        JSON.stringify({
+          objectives: {
+            totalTokens: { weight: 0, direction: "minimize" },
+          },
+        }),
+      );
+
+      const error = await assertRejects(() =>
+        loadEvalModelComparisonPolicy(projectDir, "policy.json")
+      );
+      assertStringIncludes(
+        error instanceof Error ? error.message : String(error),
+        "objectives.totalTokens.weight must be greater than 0",
+      );
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
   });
 
   it("serializes eval reports to JUnit XML", () => {

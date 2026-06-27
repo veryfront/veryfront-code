@@ -448,6 +448,8 @@ export interface EvalModelCandidateComparison {
   costImprovementPct?: number;
   tokenImprovementPct?: number;
   latencyImprovementPct?: number;
+  constraintFailures?: string[];
+  objectiveScore?: number;
   decision: EvalModelComparisonDecision;
   reasons: string[];
 }
@@ -472,6 +474,29 @@ export interface EvalModelComparison {
   };
 }
 
+/** Metric names available to model comparison constraints and objectives. */
+export type EvalModelComparisonMetricName =
+  | "passRate"
+  | "failed"
+  | "gateFailures"
+  | "groundednessScore"
+  | "totalTokens"
+  | "costUsd"
+  | "p95Ms";
+
+/** Hard model comparison eligibility constraint. */
+export interface EvalModelComparisonConstraint {
+  min?: number;
+  max?: number;
+  maxRegressionPct?: number;
+}
+
+/** Weighted model comparison objective used to rank eligible candidates. */
+export interface EvalModelComparisonObjective {
+  weight: number;
+  direction: "minimize" | "maximize";
+}
+
 /** Promotion thresholds for model comparison. */
 export interface EvalModelComparisonOptions {
   baselineModel: string;
@@ -479,6 +504,8 @@ export interface EvalModelComparisonOptions {
   minCostImprovementPct?: number;
   minTokenImprovementPct?: number;
   minLatencyImprovementPct?: number;
+  constraints?: Partial<Record<EvalModelComparisonMetricName, EvalModelComparisonConstraint>>;
+  objectives?: Partial<Record<EvalModelComparisonMetricName, EvalModelComparisonObjective>>;
 }
 
 /** Aggregate pass/fail summary for one eval report. */

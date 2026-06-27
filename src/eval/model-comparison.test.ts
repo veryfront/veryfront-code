@@ -187,6 +187,67 @@ describe("eval/model-comparison", () => {
     assertEquals(comparison.recommendation.decision, "promote-candidate");
   });
 
+  it("keeps the baseline when a candidate violates a configured latency constraint", () => {
+    const comparison = compareEvalModelReports(
+      [
+        createReport("openai/gpt-5.2", { totalTokens: 10_000, p95Ms: 10_000 }),
+        createReport("moonshotai/kimi-k2.6", { totalTokens: 7_000, p95Ms: 25_000 }),
+      ],
+      {
+        baselineModel: "openai/gpt-5.2",
+        constraints: {
+          p95Ms: { maxRegressionPct: 0.5 },
+        },
+      },
+    );
+
+    assertEquals(comparison.candidates[0]?.decision, "keep-baseline");
+    assertEquals(comparison.candidates[0]?.constraintFailures, [
+      "p95Ms regressed by 150%, above the allowed 50%",
+    ]);
+    assertEquals(comparison.recommendation.decision, "keep-baseline");
+  });
+
+  it("keeps the baseline when weighted objectives favor latency over token reduction", () => {
+    const comparison = compareEvalModelReports(
+      [
+        createReport("openai/gpt-5.2", { totalTokens: 10_000, p95Ms: 10_000 }),
+        createReport("moonshotai/kimi-k2.6", { totalTokens: 7_000, p95Ms: 15_000 }),
+      ],
+      {
+        baselineModel: "openai/gpt-5.2",
+        objectives: {
+          totalTokens: { weight: 0.3, direction: "minimize" },
+          p95Ms: { weight: 0.7, direction: "minimize" },
+        },
+      },
+    );
+
+    assertEquals(comparison.candidates[0]?.decision, "keep-baseline");
+    assertEquals(comparison.candidates[0]?.objectiveScore, -0.26);
+    assertEquals(comparison.recommendation.decision, "keep-baseline");
+  });
+
+  it("promotes a candidate when weighted objectives favor token reduction over latency", () => {
+    const comparison = compareEvalModelReports(
+      [
+        createReport("openai/gpt-5.2", { totalTokens: 10_000, p95Ms: 10_000 }),
+        createReport("moonshotai/kimi-k2.6", { totalTokens: 7_000, p95Ms: 15_000 }),
+      ],
+      {
+        baselineModel: "openai/gpt-5.2",
+        objectives: {
+          totalTokens: { weight: 0.8, direction: "minimize" },
+          p95Ms: { weight: 0.2, direction: "minimize" },
+        },
+      },
+    );
+
+    assertEquals(comparison.candidates[0]?.decision, "promote-candidate");
+    assertEquals(comparison.candidates[0]?.objectiveScore, 0.14);
+    assertEquals(comparison.recommendation.decision, "promote-candidate");
+  });
+
   it("promotes cheaper candidates when deterministic evals do not measure groundedness", () => {
     const comparison = compareEvalModelReports(
       [
@@ -235,16 +296,33 @@ describe("eval/model-comparison", () => {
   it("renders a compact markdown report", () => {
     const comparison = compareEvalModelReports(
       [
-        createReport("anthropic/claude-opus-4-6", { totalTokens: 10_000, costUsd: 1 }),
-        createReport("moonshotai/kimi-k2.6", { totalTokens: 9_000, costUsd: 0.5 }),
+        createReport("anthropic/claude-opus-4-6", {
+          totalTokens: 10_000,
+          costUsd: 1,
+          p95Ms: 10_000,
+        }),
+        createReport("moonshotai/kimi-k2.6", {
+          totalTokens: 9_000,
+          costUsd: 0.5,
+          p95Ms: 25_000,
+        }),
       ],
-      { baselineModel: "anthropic/claude-opus-4-6" },
+      {
+        baselineModel: "anthropic/claude-opus-4-6",
+        constraints: {
+          p95Ms: { maxRegressionPct: 0.5 },
+        },
+      },
     );
+    const markdown = createEvalModelComparisonMarkdown(comparison);
 
     assertEquals(
-      createEvalModelComparisonMarkdown(comparison).includes(
-        "| moonshotai/kimi-k2.6 | candidate |",
-      ),
+      markdown.includes("| moonshotai/kimi-k2.6 | candidate |"),
+      true,
+    );
+    assertEquals(markdown.includes("## Candidates"), true);
+    assertEquals(
+      markdown.includes("p95Ms regressed by 150%, above the allowed 50%"),
       true,
     );
   });

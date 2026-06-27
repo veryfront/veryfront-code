@@ -3,6 +3,7 @@ import type {
   EvalMetricResult,
   EvalModelCandidateComparison,
   EvalModelComparison,
+  EvalModelComparisonMetricName,
   EvalModelComparisonOptions,
   EvalModelReportSummary,
   EvalReport,
@@ -10,6 +11,27 @@ import type {
 
 const DEFAULT_MIN_GROUNDEDNESS = 0.8;
 const DEFAULT_MIN_EFFICIENCY_IMPROVEMENT = 0.1;
+
+type NormalizedEvalModelComparisonOptions =
+  & Required<
+    Pick<
+      EvalModelComparisonOptions,
+      | "baselineModel"
+      | "minGroundedness"
+      | "minCostImprovementPct"
+      | "minTokenImprovementPct"
+      | "minLatencyImprovementPct"
+    >
+  >
+  & Pick<EvalModelComparisonOptions, "constraints" | "objectives">;
+
+const LOWER_IS_BETTER = new Set<EvalModelComparisonMetricName>([
+  "failed",
+  "gateFailures",
+  "totalTokens",
+  "costUsd",
+  "p95Ms",
+]);
 
 function reportModel(report: EvalReport): string {
   return report.metadata?.model ?? report.runId;
@@ -56,6 +78,145 @@ function formatPct(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
 
+function formatScore(value: number): number {
+  return Math.round(value * 100_000) / 100_000;
+}
+
+function metricValue(
+  summary: EvalModelReportSummary,
+  metric: EvalModelComparisonMetricName,
+): number | undefined {
+  switch (metric) {
+    case "passRate":
+      return summary.passRate;
+    case "failed":
+      return summary.failed;
+    case "gateFailures":
+      return summary.gateFailures;
+    case "groundednessScore":
+      return summary.groundednessScore;
+    case "totalTokens":
+      return summary.totalTokens;
+    case "costUsd":
+      return summary.costUsd;
+    case "p95Ms":
+      return summary.p95Ms;
+  }
+}
+
+function regressionPct(input: {
+  baseline: number;
+  candidate: number;
+  lowerIsBetter: boolean;
+}): number {
+  const worsenedBy = input.lowerIsBetter
+    ? input.candidate - input.baseline
+    : input.baseline - input.candidate;
+  if (worsenedBy <= 0) return 0;
+  if (input.baseline === 0) return Number.POSITIVE_INFINITY;
+  return worsenedBy / Math.abs(input.baseline);
+}
+
+function objectiveDelta(input: {
+  baseline: number;
+  candidate: number;
+  direction: "minimize" | "maximize";
+}): number {
+  const delta = input.direction === "minimize"
+    ? input.baseline - input.candidate
+    : input.candidate - input.baseline;
+  if (input.baseline === 0) {
+    if (delta === 0) return 0;
+    return delta > 0 ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY;
+  }
+  return delta / Math.abs(input.baseline);
+}
+
+function evaluateConstraints(input: {
+  baselineSummary: EvalModelReportSummary;
+  candidateSummary: EvalModelReportSummary;
+  options: NormalizedEvalModelComparisonOptions;
+}): string[] {
+  const failures: string[] = [];
+  for (
+    const [metric, constraint] of Object.entries(input.options.constraints ?? {}) as [
+      EvalModelComparisonMetricName,
+      NonNullable<EvalModelComparisonOptions["constraints"]>[EvalModelComparisonMetricName],
+    ][]
+  ) {
+    if (!constraint) continue;
+    const candidateValue = metricValue(input.candidateSummary, metric);
+    if (candidateValue === undefined) {
+      failures.push(`${metric} was not measured`);
+      continue;
+    }
+    if (constraint.min !== undefined && candidateValue < constraint.min) {
+      failures.push(`${metric} ${candidateValue} is below the required ${constraint.min}`);
+    }
+    if (constraint.max !== undefined && candidateValue > constraint.max) {
+      failures.push(`${metric} ${candidateValue} is above the allowed ${constraint.max}`);
+    }
+    if (constraint.maxRegressionPct !== undefined) {
+      const baselineValue = metricValue(input.baselineSummary, metric);
+      if (baselineValue === undefined) {
+        failures.push(`${metric} baseline was not measured`);
+        continue;
+      }
+      const regression = regressionPct({
+        baseline: baselineValue,
+        candidate: candidateValue,
+        lowerIsBetter: LOWER_IS_BETTER.has(metric),
+      });
+      if (regression > constraint.maxRegressionPct) {
+        failures.push(
+          `${metric} regressed by ${formatPct(regression)}, above the allowed ${
+            formatPct(constraint.maxRegressionPct)
+          }`,
+        );
+      }
+    }
+  }
+  return failures;
+}
+
+function evaluateObjectiveScore(input: {
+  baselineSummary: EvalModelReportSummary;
+  candidateSummary: EvalModelReportSummary;
+  options: NormalizedEvalModelComparisonOptions;
+}): { score?: number; missing: string[] } {
+  const objectives = Object.entries(input.options.objectives ?? {}) as [
+    EvalModelComparisonMetricName,
+    NonNullable<EvalModelComparisonOptions["objectives"]>[EvalModelComparisonMetricName],
+  ][];
+  if (objectives.length === 0) return { missing: [] };
+
+  const missing: string[] = [];
+  let weightedScore = 0;
+  let totalWeight = 0;
+
+  for (const [metric, objective] of objectives) {
+    if (!objective || objective.weight <= 0) continue;
+    const baselineValue = metricValue(input.baselineSummary, metric);
+    const candidateValue = metricValue(input.candidateSummary, metric);
+    if (baselineValue === undefined || candidateValue === undefined) {
+      missing.push(metric);
+      continue;
+    }
+    weightedScore += objective.weight *
+      objectiveDelta({
+        baseline: baselineValue,
+        candidate: candidateValue,
+        direction: objective.direction,
+      });
+    totalWeight += objective.weight;
+  }
+
+  if (missing.length > 0 || totalWeight === 0) {
+    return { missing };
+  }
+  return { score: formatScore(weightedScore / totalWeight), missing: [] };
+}
+
 function hasBlockingRegression(
   comparison: ReturnType<typeof compareEvalReports>,
 ): boolean {
@@ -95,8 +256,11 @@ function modelSummary(
 function createCandidateDecision(input: {
   candidate: EvalReport;
   baseline: EvalReport;
-  options: Required<EvalModelComparisonOptions>;
-}): Pick<EvalModelCandidateComparison, "decision" | "reasons"> {
+  options: NormalizedEvalModelComparisonOptions;
+}): Pick<
+  EvalModelCandidateComparison,
+  "constraintFailures" | "decision" | "objectiveScore" | "reasons"
+> {
   const baselineModel = input.options.baselineModel;
   const baselineSummary = modelSummary(input.baseline, baselineModel);
   const candidateSummary = modelSummary(input.candidate, baselineModel);
@@ -130,6 +294,36 @@ function createCandidateDecision(input: {
     reasons.push(`groundedness is at or above ${input.options.minGroundedness}`);
   }
 
+  const constraintFailures = evaluateConstraints({
+    baselineSummary,
+    candidateSummary,
+    options: input.options,
+  });
+  if (constraintFailures.length > 0) {
+    reasons.push("candidate failed configured constraints");
+    return { constraintFailures, decision: "keep-baseline", reasons };
+  }
+
+  if (Object.keys(input.options.objectives ?? {}).length > 0) {
+    const objective = evaluateObjectiveScore({
+      baselineSummary,
+      candidateSummary,
+      options: input.options,
+    });
+    if (objective.missing.length > 0 || objective.score === undefined) {
+      reasons.push(`objectives could not be measured: ${objective.missing.join(", ") || "none"}`);
+      return { decision: "needs-review", reasons };
+    }
+    reasons.push(`weighted objective score: ${objective.score}`);
+    if (objective.score > 0) {
+      return { decision: "promote-candidate", objectiveScore: objective.score, reasons };
+    }
+    if (objective.score < 0) {
+      return { decision: "keep-baseline", objectiveScore: objective.score, reasons };
+    }
+    return { decision: "needs-review", objectiveScore: objective.score, reasons };
+  }
+
   const costImprovement = improvementPct(baselineSummary.costUsd, candidateSummary.costUsd);
   const tokenImprovement = improvementPct(
     baselineSummary.totalTokens,
@@ -157,7 +351,7 @@ function createCandidateDecision(input: {
 function compareCandidate(
   candidate: EvalReport,
   baseline: EvalReport,
-  options: Required<EvalModelComparisonOptions>,
+  options: NormalizedEvalModelComparisonOptions,
 ): EvalModelCandidateComparison {
   const baselineComparison = compareEvalReports(candidate, baseline);
   const candidateSummary = modelSummary(candidate, options.baselineModel);
@@ -182,6 +376,10 @@ function compareCandidate(
     ...(costImprovement !== undefined ? { costImprovementPct: costImprovement } : {}),
     ...(tokenImprovement !== undefined ? { tokenImprovementPct: tokenImprovement } : {}),
     ...(latencyImprovement !== undefined ? { latencyImprovementPct: latencyImprovement } : {}),
+    ...(decision.constraintFailures && decision.constraintFailures.length > 0
+      ? { constraintFailures: decision.constraintFailures }
+      : {}),
+    ...(decision.objectiveScore !== undefined ? { objectiveScore: decision.objectiveScore } : {}),
     decision: decision.decision,
     reasons: decision.reasons,
   };
@@ -190,7 +388,9 @@ function compareCandidate(
 function pickRecommendation(
   candidates: EvalModelCandidateComparison[],
 ): EvalModelComparison["recommendation"] {
-  const promotable = candidates.find((candidate) => candidate.decision === "promote-candidate");
+  const promotable = candidates
+    .filter((candidate) => candidate.decision === "promote-candidate")
+    .sort((a, b) => (b.objectiveScore ?? 0) - (a.objectiveScore ?? 0))[0];
   if (promotable) {
     return {
       decision: "promote-candidate",
@@ -218,7 +418,7 @@ function pickRecommendation(
 
 function normalizeOptions(
   options: EvalModelComparisonOptions,
-): Required<EvalModelComparisonOptions> {
+): NormalizedEvalModelComparisonOptions {
   return {
     baselineModel: options.baselineModel,
     minGroundedness: options.minGroundedness ?? DEFAULT_MIN_GROUNDEDNESS,
@@ -226,6 +426,8 @@ function normalizeOptions(
     minTokenImprovementPct: options.minTokenImprovementPct ?? DEFAULT_MIN_EFFICIENCY_IMPROVEMENT,
     minLatencyImprovementPct: options.minLatencyImprovementPct ??
       DEFAULT_MIN_EFFICIENCY_IMPROVEMENT,
+    ...(options.constraints ? { constraints: options.constraints } : {}),
+    ...(options.objectives ? { objectives: options.objectives } : {}),
   };
 }
 
@@ -264,6 +466,10 @@ function decimalCell(value: number | undefined): string {
   return value === undefined ? "-" : value.toFixed(2);
 }
 
+function markdownCell(value: string): string {
+  return value.replaceAll("|", "\\|").replaceAll("\n", " ");
+}
+
 /** Render a human-reviewable markdown summary for a model comparison report. */
 export function createEvalModelComparisonMarkdown(comparison: EvalModelComparison): string {
   const lines = [
@@ -289,6 +495,26 @@ export function createEvalModelComparisonMarkdown(comparison: EvalModelCompariso
         decimalCell(model.costUsd)
       } | ${numberCell(model.p95Ms)} |`,
     );
+  }
+
+  if (comparison.candidates.length > 0) {
+    lines.push(
+      "",
+      "## Candidates",
+      "",
+      "| Model | Decision | Objective score | Constraint failures |",
+      "| --- | --- | ---: | --- |",
+    );
+    for (const candidate of comparison.candidates) {
+      const constraintFailures = candidate.constraintFailures?.length
+        ? candidate.constraintFailures.map(markdownCell).join("; ")
+        : "-";
+      lines.push(
+        `| ${markdownCell(candidate.model)} | ${candidate.decision} | ${
+          decimalCell(candidate.objectiveScore)
+        } | ${constraintFailures} |`,
+      );
+    }
   }
 
   lines.push("", "## Decision", "");

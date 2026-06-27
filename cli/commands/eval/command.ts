@@ -2,7 +2,7 @@
  * Eval command - Discover and run eval definitions from the evals/ directory.
  */
 
-import { dirname, join, relative } from "@std/path";
+import { dirname, isAbsolute, join, relative, resolve } from "@std/path";
 import type { Agent, AgentResponse } from "veryfront/agent";
 import type { VeryfrontConfig } from "veryfront/config";
 import type {
@@ -10,6 +10,8 @@ import type {
   EvalAgentAdapterContext,
   EvalMetricResult,
   EvalModelComparison,
+  EvalModelComparisonMetricName,
+  EvalModelComparisonOptions,
   EvalRecord,
   EvalReport,
   EvalReportComparison,
@@ -79,6 +81,21 @@ type EvalSummaryArtifact = {
   exports?: EvalReport["exports"];
   baseline?: EvalReportComparison;
 };
+
+type EvalModelComparisonPolicy = Omit<EvalModelComparisonOptions, "baselineModel">;
+
+const MODEL_COMPARISON_METRICS = [
+  "passRate",
+  "failed",
+  "gateFailures",
+  "groundednessScore",
+  "totalTokens",
+  "costUsd",
+  "p95Ms",
+] as const satisfies readonly EvalModelComparisonMetricName[];
+
+const MODEL_COMPARISON_METRIC_SET = new Set<string>(MODEL_COMPARISON_METRICS);
+const MODEL_COMPARISON_OBJECTIVE_DIRECTIONS = new Set(["minimize", "maximize"]);
 
 function xmlEscape(value: string): string {
   return value
@@ -234,11 +251,140 @@ export function createSummaryArtifact(
   };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function readNumberField(
+  record: Record<string, unknown>,
+  field: string,
+  path: string,
+): number | undefined {
+  const value = record[field];
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`Invalid --comparison-policy: ${path}.${field} must be a finite number.`);
+  }
+  return value;
+}
+
+function assertKnownComparisonMetric(metric: string, path: string): EvalModelComparisonMetricName {
+  if (MODEL_COMPARISON_METRIC_SET.has(metric)) return metric as EvalModelComparisonMetricName;
+  throw new Error(`Invalid --comparison-policy: ${path} uses unknown metric "${metric}".`);
+}
+
+function parseComparisonConstraints(
+  value: unknown,
+): EvalModelComparisonPolicy["constraints"] {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) {
+    throw new Error("Invalid --comparison-policy: constraints must be an object.");
+  }
+
+  const constraints: NonNullable<EvalModelComparisonPolicy["constraints"]> = {};
+  for (const [metricName, rawConstraint] of Object.entries(value)) {
+    const metric = assertKnownComparisonMetric(metricName, `constraints.${metricName}`);
+    if (!isRecord(rawConstraint)) {
+      throw new Error(`Invalid --comparison-policy: constraints.${metricName} must be an object.`);
+    }
+    const maxRegressionPct = readNumberField(
+      rawConstraint,
+      "maxRegressionPct",
+      `constraints.${metricName}`,
+    );
+    if (maxRegressionPct !== undefined && maxRegressionPct < 0) {
+      throw new Error(
+        `Invalid --comparison-policy: constraints.${metricName}.maxRegressionPct must be at least 0.`,
+      );
+    }
+    constraints[metric] = {
+      ...(rawConstraint.min !== undefined
+        ? { min: readNumberField(rawConstraint, "min", `constraints.${metricName}`) }
+        : {}),
+      ...(rawConstraint.max !== undefined
+        ? { max: readNumberField(rawConstraint, "max", `constraints.${metricName}`) }
+        : {}),
+      ...(maxRegressionPct !== undefined ? { maxRegressionPct } : {}),
+    };
+  }
+  return constraints;
+}
+
+function parseComparisonObjectives(value: unknown): EvalModelComparisonPolicy["objectives"] {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) {
+    throw new Error("Invalid --comparison-policy: objectives must be an object.");
+  }
+
+  const objectives: NonNullable<EvalModelComparisonPolicy["objectives"]> = {};
+  for (const [metricName, rawObjective] of Object.entries(value)) {
+    const metric = assertKnownComparisonMetric(metricName, `objectives.${metricName}`);
+    if (!isRecord(rawObjective)) {
+      throw new Error(`Invalid --comparison-policy: objectives.${metricName} must be an object.`);
+    }
+    const weight = readNumberField(rawObjective, "weight", `objectives.${metricName}`);
+    if (weight === undefined) {
+      throw new Error(`Invalid --comparison-policy: objectives.${metricName}.weight is required.`);
+    }
+    if (weight <= 0) {
+      throw new Error(
+        `Invalid --comparison-policy: objectives.${metricName}.weight must be greater than 0.`,
+      );
+    }
+    const direction = rawObjective.direction;
+    if (
+      typeof direction !== "string" || !MODEL_COMPARISON_OBJECTIVE_DIRECTIONS.has(direction)
+    ) {
+      throw new Error(
+        `Invalid --comparison-policy: objectives.${metricName}.direction must be "minimize" or "maximize".`,
+      );
+    }
+    objectives[metric] = {
+      weight,
+      direction: direction as "minimize" | "maximize",
+    };
+  }
+  return objectives;
+}
+
+export async function loadEvalModelComparisonPolicy(
+  projectDir: string,
+  policyPath?: string,
+): Promise<EvalModelComparisonPolicy> {
+  if (!policyPath) return {};
+  const resolvedPath = isAbsolute(policyPath) ? policyPath : resolve(projectDir, policyPath);
+  const policy = JSON.parse(await Deno.readTextFile(resolvedPath)) as unknown;
+  if (!isRecord(policy)) {
+    throw new Error("Invalid --comparison-policy: root value must be an object.");
+  }
+  return {
+    ...("minGroundedness" in policy
+      ? { minGroundedness: readNumberField(policy, "minGroundedness", "root") }
+      : {}),
+    ...("minCostImprovementPct" in policy
+      ? { minCostImprovementPct: readNumberField(policy, "minCostImprovementPct", "root") }
+      : {}),
+    ...("minTokenImprovementPct" in policy
+      ? { minTokenImprovementPct: readNumberField(policy, "minTokenImprovementPct", "root") }
+      : {}),
+    ...("minLatencyImprovementPct" in policy
+      ? { minLatencyImprovementPct: readNumberField(policy, "minLatencyImprovementPct", "root") }
+      : {}),
+    ...(policy.constraints !== undefined
+      ? { constraints: parseComparisonConstraints(policy.constraints) }
+      : {}),
+    ...(policy.objectives !== undefined
+      ? { objectives: parseComparisonObjectives(policy.objectives) }
+      : {}),
+  };
+}
+
 export function createEvalModelComparisonArtifact(
   reports: EvalReport[],
   baselineModel: string,
+  policy: EvalModelComparisonPolicy = {},
 ): EvalModelComparison {
-  return compareEvalModelReports(reports, { baselineModel });
+  return compareEvalModelReports(reports, { ...policy, baselineModel });
 }
 
 export function createEvalModelComparisonExitCode(reports: EvalReport[]): 0 | 1 {
@@ -468,6 +614,7 @@ function createEvalCliExportConfig(
 type EvalModelComparisonConfig = {
   baselineModel: string;
   candidateModels: string[];
+  comparisonPolicy?: string;
   models: string[];
 };
 
@@ -480,7 +627,12 @@ function resolveEvalModelComparisonConfig(
 ): EvalModelComparisonConfig | undefined {
   const candidateModels = uniqueValues(options.candidateModels);
   const baselineModel = options.baselineModel?.trim();
-  if (!baselineModel && candidateModels.length === 0) return undefined;
+  if (!baselineModel && candidateModels.length === 0) {
+    if (options.comparisonPolicy) {
+      throw new Error("--comparison-policy requires --baseline-model and --candidate-model.");
+    }
+    return undefined;
+  }
 
   if (!baselineModel) {
     throw new Error("--baseline-model is required when using --candidate-model.");
@@ -502,6 +654,7 @@ function resolveEvalModelComparisonConfig(
   return {
     baselineModel,
     candidateModels: candidateModels.filter((model) => model !== baselineModel),
+    ...(options.comparisonPolicy ? { comparisonPolicy: options.comparisonPolicy } : {}),
     models: uniqueValues([baselineModel, ...candidateModels]),
   };
 }
@@ -555,7 +708,15 @@ async function runEvalModelComparison(input: {
     await writeTextFileEnsuringDir(modelPaths.junit, createJunitXml(report));
   }
 
-  const comparison = createEvalModelComparisonArtifact(reports, input.config.baselineModel);
+  const policy = await loadEvalModelComparisonPolicy(
+    input.projectDir,
+    input.config.comparisonPolicy,
+  );
+  const comparison = createEvalModelComparisonArtifact(
+    reports,
+    input.config.baselineModel,
+    policy,
+  );
   await writeEvalModelComparisonArtifacts(comparison, paths);
   if (input.options.report) {
     await writeTextFileEnsuringDir(input.options.report, JSON.stringify(comparison, null, 2));

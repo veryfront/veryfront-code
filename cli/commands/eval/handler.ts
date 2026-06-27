@@ -18,6 +18,7 @@ const getEvalArgsSchema = defineSchema((v) =>
     model: v.string().optional(),
     baselineModel: v.string().optional(),
     candidateModels: v.array(v.string()).default([]),
+    comparisonPolicy: v.string().optional(),
     maxOutputTokens: v.number().int().positive().optional(),
   })
 );
@@ -40,6 +41,7 @@ export const parseEvalArgs = createArgParser(EvalArgsSchema, {
   model: { keys: ["model"], type: "string" },
   baselineModel: { keys: ["baseline-model"], type: "string" },
   candidateModels: { keys: ["candidate-model", "candidate-models"], type: "array" },
+  comparisonPolicy: { keys: ["comparison-policy"], type: "string" },
   maxOutputTokens: { keys: ["max-output-tokens"], type: "number" },
 });
 
