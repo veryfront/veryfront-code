@@ -129,6 +129,57 @@ describe("anthropic-provider", () => {
     });
   });
 
+  it("preserves Veryfront gateway billing metadata for generate usage", async () => {
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              content: [{ type: "text", text: "Done." }],
+              stop_reason: "end_turn",
+              usage: {
+                input_tokens: 8,
+                output_tokens: 2,
+                veryfront: {
+                  billable_input_tokens: 8,
+                  billable_output_tokens: 2,
+                  provider_cost_usd: 0.001,
+                  veryfront_charge_usd: 0.0025,
+                  cost_credits: 0.025,
+                  cost_source: "gateway",
+                  usage_capture_status: "complete",
+                },
+              },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        ),
+    }, "claude-sonnet-4-20250514");
+
+    const result = await runtime.doGenerate({
+      prompt: [{
+        role: "user",
+        content: [{ type: "text", text: "Triage this." }],
+      }],
+      maxOutputTokens: 64,
+    });
+
+    assertEquals(result.usage, {
+      inputTokens: 8,
+      outputTokens: 2,
+      totalTokens: 10,
+      billableInputTokens: 8,
+      billableOutputTokens: 2,
+      providerCostUsd: 0.001,
+      veryfrontChargeUsd: 0.0025,
+      costCredits: 0.025,
+      costSource: "gateway",
+      usageCaptureStatus: "complete",
+    });
+  });
+
   it("sends image URL user parts as Anthropic vision content", async () => {
     let requestedInit: RequestInit | undefined;
 

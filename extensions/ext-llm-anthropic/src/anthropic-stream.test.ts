@@ -111,6 +111,62 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
     ]);
   });
 
+  it("preserves Veryfront gateway billing metadata from usage envelopes", async () => {
+    const parts = await collectParts(streamFromText([
+      data({
+        type: "message_start",
+        message: {
+          usage: {
+            input_tokens: 8,
+            cache_read_input_tokens: 3,
+          },
+        },
+      }),
+      data({
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "text_delta", text: "Done." },
+      }),
+      data({
+        type: "message_delta",
+        delta: { stop_reason: "end_turn" },
+        usage: {
+          output_tokens: 5,
+          veryfront: {
+            billable_input_tokens: 8,
+            billable_output_tokens: 5,
+            provider_cost_usd: 0.001,
+            veryfront_charge_usd: 0.0025,
+            cost_credits: 0.025,
+            cost_source: "gateway",
+            usage_capture_status: "complete",
+          },
+        },
+      }),
+    ].join("")));
+
+    assertEquals(parts, [
+      { type: "text-delta", delta: "Done." },
+      {
+        type: "finish",
+        finishReason: { unified: "stop", raw: "end_turn" },
+        usage: {
+          inputTokens: 8,
+          outputTokens: 5,
+          totalTokens: 13,
+          cacheReadInputTokens: 3,
+          billableInputTokens: 8,
+          billableOutputTokens: 5,
+          providerCostUsd: 0.001,
+          veryfrontChargeUsd: 0.0025,
+          costCredits: 0.025,
+          costSource: "gateway",
+          usageCaptureStatus: "complete",
+        },
+      },
+    ]);
+  });
+
   it("emits zero-length reasoning blocks for redacted thinking", async () => {
     const parts = await collectParts(streamFromText([
       data({
