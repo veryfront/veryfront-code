@@ -127,7 +127,7 @@ function objectiveDelta(input: {
     : input.candidate - input.baseline;
   if (input.baseline === 0) {
     if (delta === 0) return 0;
-    return delta > 0 ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY;
+    return delta / Math.max(Math.abs(input.candidate), 1);
   }
   return delta / Math.abs(input.baseline);
 }

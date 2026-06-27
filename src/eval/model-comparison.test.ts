@@ -248,6 +248,27 @@ describe("eval/model-comparison", () => {
     assertEquals(comparison.recommendation.decision, "promote-candidate");
   });
 
+  it("keeps objective scores finite when the baseline metric is zero", () => {
+    const comparison = compareEvalModelReports(
+      [
+        createReport("openai/gpt-5.2", { passed: 0, failed: 4 }),
+        createReport("moonshotai/kimi-k2.6", { passed: 4, failed: 0 }),
+      ],
+      {
+        baselineModel: "openai/gpt-5.2",
+        objectives: {
+          passRate: { weight: 1, direction: "maximize" },
+        },
+      },
+    );
+
+    assertEquals(comparison.candidates[0]?.objectiveScore, 1);
+    assertEquals(
+      JSON.parse(JSON.stringify(comparison)).candidates[0].objectiveScore,
+      1,
+    );
+  });
+
   it("promotes cheaper candidates when deterministic evals do not measure groundedness", () => {
     const comparison = compareEvalModelReports(
       [

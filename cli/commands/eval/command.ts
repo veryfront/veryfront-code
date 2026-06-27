@@ -353,7 +353,22 @@ export async function loadEvalModelComparisonPolicy(
 ): Promise<EvalModelComparisonPolicy> {
   if (!policyPath) return {};
   const resolvedPath = isAbsolute(policyPath) ? policyPath : resolve(projectDir, policyPath);
-  const policy = JSON.parse(await Deno.readTextFile(resolvedPath)) as unknown;
+  let rawPolicy: string;
+  try {
+    rawPolicy = await Deno.readTextFile(resolvedPath);
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) {
+      throw new Error("Invalid --comparison-policy: file not found.");
+    }
+    throw error;
+  }
+
+  let policy: unknown;
+  try {
+    policy = JSON.parse(rawPolicy) as unknown;
+  } catch {
+    throw new Error("Invalid --comparison-policy: file must contain valid JSON.");
+  }
   if (!isRecord(policy)) {
     throw new Error("Invalid --comparison-policy: root value must be an object.");
   }
@@ -377,6 +392,16 @@ export async function loadEvalModelComparisonPolicy(
       ? { objectives: parseComparisonObjectives(policy.objectives) }
       : {}),
   };
+}
+
+export async function createResolvedEvalModelComparisonConfig(
+  projectDir: string,
+  options: EvalOptions,
+): Promise<ResolvedEvalModelComparisonConfig | undefined> {
+  const config = resolveEvalModelComparisonConfig(options);
+  if (!config) return undefined;
+  const policy = await loadEvalModelComparisonPolicy(projectDir, config.comparisonPolicy);
+  return { config, policy };
 }
 
 export function createEvalModelComparisonArtifact(
@@ -618,6 +643,11 @@ type EvalModelComparisonConfig = {
   models: string[];
 };
 
+type ResolvedEvalModelComparisonConfig = {
+  config: EvalModelComparisonConfig;
+  policy: EvalModelComparisonPolicy;
+};
+
 function uniqueValues(values: string[]): string[] {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
 }
@@ -678,6 +708,7 @@ async function runEvalModelComparison(input: {
   options: EvalOptions;
   projectDir: string;
   config: EvalModelComparisonConfig;
+  policy: EvalModelComparisonPolicy;
 }): Promise<void> {
   const runId = createCliRunId();
   const reportDir = input.options.reportDir ?? createDefaultEvalReportDir(runId);
@@ -708,14 +739,10 @@ async function runEvalModelComparison(input: {
     await writeTextFileEnsuringDir(modelPaths.junit, createJunitXml(report));
   }
 
-  const policy = await loadEvalModelComparisonPolicy(
-    input.projectDir,
-    input.config.comparisonPolicy,
-  );
   const comparison = createEvalModelComparisonArtifact(
     reports,
     input.config.baselineModel,
-    policy,
+    input.policy,
   );
   await writeEvalModelComparisonArtifacts(comparison, paths);
   if (input.options.report) {
@@ -851,6 +878,14 @@ export async function evalCommand(options: EvalOptions): Promise<void> {
       return;
     }
 
+    let modelComparisonConfig: ResolvedEvalModelComparisonConfig | undefined;
+    try {
+      modelComparisonConfig = await createResolvedEvalModelComparisonConfig(projectDir, options);
+    } catch (error) {
+      await outputEvalUsageError(error instanceof Error ? error.message : String(error));
+      return;
+    }
+
     const discoveryConfig = createProjectDiscoveryConfig({
       projectDir,
       config,
@@ -865,21 +900,14 @@ export async function evalCommand(options: EvalOptions): Promise<void> {
       return;
     }
 
-    let modelComparisonConfig: EvalModelComparisonConfig | undefined;
-    try {
-      modelComparisonConfig = resolveEvalModelComparisonConfig(options);
-    } catch (error) {
-      await outputEvalUsageError(error instanceof Error ? error.message : String(error));
-      return;
-    }
-
     if (modelComparisonConfig) {
       await runEvalModelComparison({
         evalItem,
         agent,
         options,
         projectDir,
-        config: modelComparisonConfig,
+        config: modelComparisonConfig.config,
+        policy: modelComparisonConfig.policy,
       });
       return;
     }

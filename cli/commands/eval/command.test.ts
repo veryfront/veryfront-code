@@ -12,6 +12,7 @@ import {
   createEvalModelComparisonArtifact,
   createEvalModelComparisonExitCode,
   createJunitXml,
+  createResolvedEvalModelComparisonConfig,
   createResultsJsonl,
   createSummaryArtifact,
   findEvalForCliId,
@@ -520,6 +521,69 @@ describe("eval CLI command helpers", () => {
 
       const error = await assertRejects(() =>
         loadEvalModelComparisonPolicy(projectDir, "policy.json")
+      );
+      assertStringIncludes(
+        error instanceof Error ? error.message : String(error),
+        "objectives.totalTokens.weight must be greater than 0",
+      );
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("reports missing model comparison policy files as usage errors", async () => {
+    const projectDir = await Deno.makeTempDir();
+    try {
+      const error = await assertRejects(() =>
+        loadEvalModelComparisonPolicy(projectDir, "missing-policy.json")
+      );
+      assertEquals(
+        error instanceof Error ? error.message : String(error),
+        "Invalid --comparison-policy: file not found.",
+      );
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("reports malformed model comparison policy JSON as a usage error", async () => {
+    const projectDir = await Deno.makeTempDir();
+    try {
+      await Deno.writeTextFile(`${projectDir}/policy.json`, "{not-json");
+
+      const error = await assertRejects(() =>
+        loadEvalModelComparisonPolicy(projectDir, "policy.json")
+      );
+      assertEquals(
+        error instanceof Error ? error.message : String(error),
+        "Invalid --comparison-policy: file must contain valid JSON.",
+      );
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("validates model comparison policy while preparing the comparison config", async () => {
+    const projectDir = await Deno.makeTempDir();
+    try {
+      await Deno.writeTextFile(
+        `${projectDir}/policy.json`,
+        JSON.stringify({
+          objectives: {
+            totalTokens: { weight: 0, direction: "minimize" },
+          },
+        }),
+      );
+
+      const error = await assertRejects(() =>
+        createResolvedEvalModelComparisonConfig(projectDir, {
+          ...parseEvalArgs({
+            _: ["eval", "support"],
+            "baseline-model": "openai/gpt-5.2",
+            "candidate-model": "moonshotai/kimi-k2.6",
+            "comparison-policy": "policy.json",
+          }).data!,
+        })
       );
       assertStringIncludes(
         error instanceof Error ? error.message : String(error),
