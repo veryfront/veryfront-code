@@ -110,6 +110,37 @@ failed runs, introduces no newly failed examples, satisfies the groundedness
 threshold when measured, and improves cost, token use, or p95 latency. Otherwise
 the comparison keeps the baseline or asks for review.
 
+Use a comparison policy when latency, cost, and quality tradeoffs depend on the
+product. Constraints are hard gates. Objectives rank candidates that pass those
+gates. Veryfront does not ship presets because each agent has different
+requirements.
+
+```json
+{
+  "constraints": {
+    "gateFailures": { "max": 0 },
+    "p95Ms": { "maxRegressionPct": 0.5 }
+  },
+  "objectives": {
+    "totalTokens": { "weight": 0.8, "direction": "minimize" },
+    "p95Ms": { "weight": 0.2, "direction": "minimize" }
+  }
+}
+```
+
+```bash
+veryfront eval deep-research \
+  --baseline-model anthropic/claude-sonnet-4-6 \
+  --candidate-model moonshotai/kimi-k2.6 \
+  --comparison-policy evals/model-comparison.policy.json \
+  --report-dir .veryfront/evals/deep-research-models
+```
+
+Policy metrics can reference `passRate`, `failed`, `gateFailures`,
+`groundednessScore`, `totalTokens`, `costUsd`, and `p95Ms`. Use `min`, `max`,
+and `maxRegressionPct` for constraints. Use `weight` with `direction` set to
+`"minimize"` or `"maximize"` for objectives.
+
 Each report includes provenance metadata. Local runs record git SHA, branch,
 dirty state, and a dirty hash. Cloud runs prefer release, deployment, or preview
 identity when those values are present.
