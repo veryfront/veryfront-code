@@ -110,6 +110,11 @@ failed runs, introduces no newly failed examples, satisfies the groundedness
 threshold when measured, and improves cost, token use, or p95 latency. Otherwise
 the comparison keeps the baseline or asks for review.
 
+Gateway-backed runs add split input/output tokens, billable input/output tokens,
+provider cost, Veryfront charge, credits, and cost source to the comparison
+report. Direct local runs do not estimate prices in the framework; their cost
+cells stay `not measured` unless a gateway supplies billing metadata.
+
 Use a comparison policy when latency, cost, and quality tradeoffs depend on the
 product. Constraints are hard gates. Objectives rank candidates that pass those
 gates. Veryfront does not ship presets because each agent has different
@@ -137,9 +142,12 @@ veryfront eval deep-research \
 ```
 
 Policy metrics can reference `passRate`, `failed`, `gateFailures`,
-`groundednessScore`, `totalTokens`, `costUsd`, and `p95Ms`. Use `min`, `max`,
-and `maxRegressionPct` for constraints. Use `weight` with `direction` set to
-`"minimize"` or `"maximize"` for objectives.
+`groundednessScore`, `inputTokens`, `outputTokens`, `totalTokens`,
+`billableInputTokens`, `billableOutputTokens`, `costUsd`, `providerCostUsd`,
+`veryfrontChargeUsd`, `costCredits`, and `p95Ms`. `costUsd` remains a
+backward-compatible cost objective and prefers gateway Veryfront charge when it
+is available. Use `min`, `max`, and `maxRegressionPct` for constraints. Use
+`weight` with `direction` set to `"minimize"` or `"maximize"` for objectives.
 
 Each report includes provenance metadata. Local runs record git SHA, branch,
 dirty state, and a dirty hash. Cloud runs prefer release, deployment, or preview
@@ -203,6 +211,10 @@ metrics.ops.latency({ maxMs: 10_000 }).budget();
 metrics.ops.tokens({ maxTotal: 4_000 }).budget();
 metrics.ops.cost({ maxUsd: 0.05 }).budget();
 ```
+
+`metrics.ops.cost` uses gateway `veryfrontChargeUsd` first, then legacy
+`costUsd`, then `providerCostUsd`. It does not maintain a separate pricing table
+inside the framework.
 
 Use `calledTool` when the agent must call a tool. Add `input` when the tool
 arguments must include specific fields. `match: "partial"` checks that the

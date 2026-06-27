@@ -57,12 +57,29 @@ export interface EvalDataset {
   load(context: EvalDatasetLoadContext): Promise<EvalExample[]>;
 }
 
+/** Source and completeness of cost data captured for eval usage. */
+export type EvalUsageCostSource = "gateway" | "missing" | "partial";
+
+/** Completeness of provider usage capture for eval usage. */
+export type EvalUsageCaptureStatus = "complete" | "partial" | "missing";
+
 /** Token and cost usage captured for one eval record. */
 export interface EvalUsage {
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
+  billableInputTokens?: number;
+  billableOutputTokens?: number;
+  cachedInputTokens?: number;
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
+  reasoningTokens?: number;
   costUsd?: number;
+  providerCostUsd?: number;
+  veryfrontChargeUsd?: number;
+  costCredits?: number;
+  costSource?: EvalUsageCostSource;
+  usageCaptureStatus?: EvalUsageCaptureStatus;
 }
 
 /** Normalized status for a tool call captured during an eval record. */
@@ -328,7 +345,18 @@ export interface EvalUsageSummary {
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
+  billableInputTokens?: number;
+  billableOutputTokens?: number;
+  cachedInputTokens?: number;
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
+  reasoningTokens?: number;
   costUsd?: number;
+  providerCostUsd?: number;
+  veryfrontChargeUsd?: number;
+  costCredits?: number;
+  costSource?: EvalUsageCostSource;
+  usageCaptureStatus?: EvalUsageCaptureStatus;
 }
 
 /** Blocking failure included in a report summary. */
@@ -431,8 +459,17 @@ export interface EvalModelReportSummary {
   passRate: number;
   failedExamples: string[];
   gateFailures: number;
+  inputTokens?: number;
+  outputTokens?: number;
   totalTokens?: number;
+  billableInputTokens?: number;
+  billableOutputTokens?: number;
   costUsd?: number;
+  providerCostUsd?: number;
+  veryfrontChargeUsd?: number;
+  costCredits?: number;
+  costSource?: EvalUsageCostSource;
+  usageCaptureStatus?: EvalUsageCaptureStatus;
   p95Ms?: number;
   groundednessScore?: number;
 }
@@ -480,8 +517,15 @@ export type EvalModelComparisonMetricName =
   | "failed"
   | "gateFailures"
   | "groundednessScore"
+  | "inputTokens"
+  | "outputTokens"
   | "totalTokens"
+  | "billableInputTokens"
+  | "billableOutputTokens"
   | "costUsd"
+  | "providerCostUsd"
+  | "veryfrontChargeUsd"
+  | "costCredits"
   | "p95Ms";
 
 /** Hard model comparison eligibility constraint. */

@@ -39,6 +39,34 @@ function mergeMetadata(
   if (typeof metadata.inputTokens === "number") target.inputTokens = metadata.inputTokens;
   if (typeof metadata.outputTokens === "number") target.outputTokens = metadata.outputTokens;
   if (typeof metadata.totalTokens === "number") target.totalTokens = metadata.totalTokens;
+  if (typeof metadata.cachedInputTokens === "number") {
+    target.cachedInputTokens = metadata.cachedInputTokens;
+  }
+  if (typeof metadata.cacheCreationInputTokens === "number") {
+    target.cacheCreationInputTokens = metadata.cacheCreationInputTokens;
+  }
+  if (typeof metadata.cacheReadInputTokens === "number") {
+    target.cacheReadInputTokens = metadata.cacheReadInputTokens;
+  }
+  if (typeof metadata.reasoningTokens === "number") {
+    target.reasoningTokens = metadata.reasoningTokens;
+  }
+  if (typeof metadata.billableInputTokens === "number") {
+    target.billableInputTokens = metadata.billableInputTokens;
+  }
+  if (typeof metadata.billableOutputTokens === "number") {
+    target.billableOutputTokens = metadata.billableOutputTokens;
+  }
+  if (typeof metadata.costUsd === "number") target.costUsd = metadata.costUsd;
+  if (typeof metadata.providerCostUsd === "number") {
+    target.providerCostUsd = metadata.providerCostUsd;
+  }
+  if (typeof metadata.veryfrontChargeUsd === "number") {
+    target.veryfrontChargeUsd = metadata.veryfrontChargeUsd;
+  }
+  if (typeof metadata.costCredits === "number") target.costCredits = metadata.costCredits;
+  if (metadata.costSource) target.costSource = metadata.costSource;
+  if (metadata.usageCaptureStatus) target.usageCaptureStatus = metadata.usageCaptureStatus;
   if (typeof metadata.finishReason === "string") target.finishReason = metadata.finishReason;
 }
 

@@ -14,7 +14,13 @@ export interface AgUiBrowserRunFinishedMetadata {
   cacheCreationInputTokens?: number;
   cacheReadInputTokens?: number;
   reasoningTokens?: number;
+  billableInputTokens?: number;
+  billableOutputTokens?: number;
   costUsd?: number;
+  providerCostUsd?: number;
+  veryfrontChargeUsd?: number;
+  costCredits?: number;
+  costSource?: "gateway" | "missing" | "partial";
   finishReason?: string;
   usageCaptureStatus?: "complete" | "partial" | "missing";
 }
@@ -194,6 +200,7 @@ function applyResponseMetadata(
     state.metadata.inputTokens = response.usage.promptTokens;
     state.metadata.outputTokens = response.usage.completionTokens;
     state.metadata.totalTokens = response.usage.totalTokens;
+    const usage = response.usage as typeof response.usage & AgUiBrowserRunFinishedMetadata;
     if (typeof response.usage.cachedInputTokens === "number") {
       state.metadata.cachedInputTokens = response.usage.cachedInputTokens;
     } else if (typeof response.usage.cacheReadInputTokens === "number") {
@@ -208,6 +215,30 @@ function applyResponseMetadata(
     if (typeof response.usage.reasoningTokens === "number") {
       state.metadata.reasoningTokens = response.usage.reasoningTokens;
     }
+    if (typeof usage.billableInputTokens === "number") {
+      state.metadata.billableInputTokens = usage.billableInputTokens;
+    }
+    if (typeof usage.billableOutputTokens === "number") {
+      state.metadata.billableOutputTokens = usage.billableOutputTokens;
+    }
+    if (typeof usage.costUsd === "number") {
+      state.metadata.costUsd = usage.costUsd;
+    }
+    if (typeof usage.providerCostUsd === "number") {
+      state.metadata.providerCostUsd = usage.providerCostUsd;
+    }
+    if (typeof usage.veryfrontChargeUsd === "number") {
+      state.metadata.veryfrontChargeUsd = usage.veryfrontChargeUsd;
+    }
+    if (typeof usage.costCredits === "number") {
+      state.metadata.costCredits = usage.costCredits;
+    }
+    if (usage.costSource) {
+      state.metadata.costSource = usage.costSource;
+    }
+    if (usage.usageCaptureStatus) {
+      state.metadata.usageCaptureStatus = usage.usageCaptureStatus;
+    }
   }
 
   const metadata = response.metadata && typeof response.metadata === "object"
@@ -220,6 +251,41 @@ function applyResponseMetadata(
   const costUsd = metadata?.costUsd;
   if (typeof costUsd === "number" && Number.isFinite(costUsd) && costUsd >= 0) {
     state.metadata.costUsd = costUsd;
+  }
+  const providerCostUsd = metadata?.providerCostUsd;
+  if (
+    typeof providerCostUsd === "number" && Number.isFinite(providerCostUsd) && providerCostUsd >= 0
+  ) {
+    state.metadata.providerCostUsd = providerCostUsd;
+  }
+  const veryfrontChargeUsd = metadata?.veryfrontChargeUsd;
+  if (
+    typeof veryfrontChargeUsd === "number" && Number.isFinite(veryfrontChargeUsd) &&
+    veryfrontChargeUsd >= 0
+  ) {
+    state.metadata.veryfrontChargeUsd = veryfrontChargeUsd;
+  }
+  const costCredits = metadata?.costCredits;
+  if (typeof costCredits === "number" && Number.isFinite(costCredits) && costCredits >= 0) {
+    state.metadata.costCredits = costCredits;
+  }
+  const billableInputTokens = metadata?.billableInputTokens;
+  if (
+    typeof billableInputTokens === "number" && Number.isFinite(billableInputTokens) &&
+    billableInputTokens >= 0
+  ) {
+    state.metadata.billableInputTokens = billableInputTokens;
+  }
+  const billableOutputTokens = metadata?.billableOutputTokens;
+  if (
+    typeof billableOutputTokens === "number" && Number.isFinite(billableOutputTokens) &&
+    billableOutputTokens >= 0
+  ) {
+    state.metadata.billableOutputTokens = billableOutputTokens;
+  }
+  const costSource = metadata?.costSource;
+  if (costSource === "gateway" || costSource === "missing" || costSource === "partial") {
+    state.metadata.costSource = costSource;
   }
   const usageCaptureStatus = metadata?.usageCaptureStatus;
   if (
@@ -251,8 +317,26 @@ export function buildAgUiBrowserFinalizeResponse(
   if (typeof metadata.reasoningTokens === "number") {
     responseMetadata.reasoningTokens = metadata.reasoningTokens;
   }
+  if (typeof metadata.billableInputTokens === "number") {
+    responseMetadata.billableInputTokens = metadata.billableInputTokens;
+  }
+  if (typeof metadata.billableOutputTokens === "number") {
+    responseMetadata.billableOutputTokens = metadata.billableOutputTokens;
+  }
   if (typeof metadata.costUsd === "number") {
     responseMetadata.costUsd = metadata.costUsd;
+  }
+  if (typeof metadata.providerCostUsd === "number") {
+    responseMetadata.providerCostUsd = metadata.providerCostUsd;
+  }
+  if (typeof metadata.veryfrontChargeUsd === "number") {
+    responseMetadata.veryfrontChargeUsd = metadata.veryfrontChargeUsd;
+  }
+  if (typeof metadata.costCredits === "number") {
+    responseMetadata.costCredits = metadata.costCredits;
+  }
+  if (metadata.costSource) {
+    responseMetadata.costSource = metadata.costSource;
   }
   if (metadata.usageCaptureStatus) {
     responseMetadata.usageCaptureStatus = metadata.usageCaptureStatus;

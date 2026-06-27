@@ -62,6 +62,36 @@ describe("eval/metrics", () => {
     assertEquals((await tokens.evaluate(createRecord())).pass, true);
   });
 
+  it("evaluates operation cost budgets with gateway Veryfront charge when present", async () => {
+    const cost = metrics.ops.cost({ maxUsd: 0.05 }).budget();
+
+    assertEquals(
+      await cost.evaluate(createRecord({
+        usage: {
+          inputTokens: 12,
+          outputTokens: 4,
+          totalTokens: 16,
+          costUsd: 0.01,
+          providerCostUsd: 0.01,
+          veryfrontChargeUsd: 0.08,
+          costSource: "gateway",
+        },
+      })),
+      {
+        name: "ops.cost",
+        family: "ops",
+        severity: "budget",
+        score: 0,
+        pass: false,
+        evidence: {
+          costUsd: 0.08,
+          maxUsd: 0.05,
+          costSource: "gateway",
+        },
+      },
+    );
+  });
+
   it("evaluates agent tool behavior metrics", async () => {
     const record = createRecord({
       trace: {

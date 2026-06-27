@@ -28,8 +28,15 @@ type NormalizedEvalModelComparisonOptions =
 const LOWER_IS_BETTER = new Set<EvalModelComparisonMetricName>([
   "failed",
   "gateFailures",
+  "inputTokens",
+  "outputTokens",
   "totalTokens",
+  "billableInputTokens",
+  "billableOutputTokens",
   "costUsd",
+  "providerCostUsd",
+  "veryfrontChargeUsd",
+  "costCredits",
   "p95Ms",
 ]);
 
@@ -82,6 +89,18 @@ function formatScore(value: number): number {
   return Math.round(value * 100_000) / 100_000;
 }
 
+function comparisonCost(summary: EvalModelReportSummary): number | undefined {
+  return summary.veryfrontChargeUsd ?? summary.costUsd ?? summary.providerCostUsd;
+}
+
+function hasGatewayChargeCost(
+  baselineSummary: EvalModelReportSummary,
+  candidateSummary: EvalModelReportSummary,
+): boolean {
+  return baselineSummary.veryfrontChargeUsd !== undefined &&
+    candidateSummary.veryfrontChargeUsd !== undefined;
+}
+
 function metricValue(
   summary: EvalModelReportSummary,
   metric: EvalModelComparisonMetricName,
@@ -95,10 +114,24 @@ function metricValue(
       return summary.gateFailures;
     case "groundednessScore":
       return summary.groundednessScore;
+    case "inputTokens":
+      return summary.inputTokens;
+    case "outputTokens":
+      return summary.outputTokens;
     case "totalTokens":
       return summary.totalTokens;
+    case "billableInputTokens":
+      return summary.billableInputTokens;
+    case "billableOutputTokens":
+      return summary.billableOutputTokens;
     case "costUsd":
-      return summary.costUsd;
+      return comparisonCost(summary);
+    case "providerCostUsd":
+      return summary.providerCostUsd;
+    case "veryfrontChargeUsd":
+      return summary.veryfrontChargeUsd;
+    case "costCredits":
+      return summary.costCredits;
     case "p95Ms":
       return summary.p95Ms;
   }
@@ -240,11 +273,38 @@ function modelSummary(
     passRate: report.summary.passRate,
     failedExamples: failedExampleIds(report),
     gateFailures: report.summary.gateFailures?.length ?? 0,
+    ...(report.summary.usage?.inputTokens !== undefined
+      ? { inputTokens: report.summary.usage.inputTokens }
+      : {}),
+    ...(report.summary.usage?.outputTokens !== undefined
+      ? { outputTokens: report.summary.usage.outputTokens }
+      : {}),
     ...(report.summary.usage?.totalTokens !== undefined
       ? { totalTokens: report.summary.usage.totalTokens }
       : {}),
+    ...(report.summary.usage?.billableInputTokens !== undefined
+      ? { billableInputTokens: report.summary.usage.billableInputTokens }
+      : {}),
+    ...(report.summary.usage?.billableOutputTokens !== undefined
+      ? { billableOutputTokens: report.summary.usage.billableOutputTokens }
+      : {}),
     ...(report.summary.usage?.costUsd !== undefined
       ? { costUsd: report.summary.usage.costUsd }
+      : {}),
+    ...(report.summary.usage?.providerCostUsd !== undefined
+      ? { providerCostUsd: report.summary.usage.providerCostUsd }
+      : {}),
+    ...(report.summary.usage?.veryfrontChargeUsd !== undefined
+      ? { veryfrontChargeUsd: report.summary.usage.veryfrontChargeUsd }
+      : {}),
+    ...(report.summary.usage?.costCredits !== undefined
+      ? { costCredits: report.summary.usage.costCredits }
+      : {}),
+    ...(report.summary.usage?.costSource !== undefined
+      ? { costSource: report.summary.usage.costSource }
+      : {}),
+    ...(report.summary.usage?.usageCaptureStatus !== undefined
+      ? { usageCaptureStatus: report.summary.usage.usageCaptureStatus }
       : {}),
     ...(report.summary.duration?.p95Ms !== undefined
       ? { p95Ms: report.summary.duration.p95Ms }
@@ -324,7 +384,10 @@ function createCandidateDecision(input: {
     return { decision: "needs-review", objectiveScore: objective.score, reasons };
   }
 
-  const costImprovement = improvementPct(baselineSummary.costUsd, candidateSummary.costUsd);
+  const costImprovement = improvementPct(
+    comparisonCost(baselineSummary),
+    comparisonCost(candidateSummary),
+  );
   const tokenImprovement = improvementPct(
     baselineSummary.totalTokens,
     candidateSummary.totalTokens,
@@ -332,7 +395,11 @@ function createCandidateDecision(input: {
   const latencyImprovement = improvementPct(baselineSummary.p95Ms, candidateSummary.p95Ms);
 
   if (meetsImprovement(costImprovement, input.options.minCostImprovementPct)) {
-    reasons.push(`cost improved by ${formatPct(costImprovement!)}`);
+    reasons.push(
+      hasGatewayChargeCost(baselineSummary, candidateSummary)
+        ? `Veryfront charge improved by ${formatPct(costImprovement!)}`
+        : `cost improved by ${formatPct(costImprovement!)}`,
+    );
     return { decision: "promote-candidate", reasons };
   }
   if (meetsImprovement(tokenImprovement, input.options.minTokenImprovementPct)) {
@@ -357,7 +424,10 @@ function compareCandidate(
   const candidateSummary = modelSummary(candidate, options.baselineModel);
   const baselineSummary = modelSummary(baseline, options.baselineModel);
   const decision = createCandidateDecision({ candidate, baseline, options });
-  const costImprovement = improvementPct(baselineSummary.costUsd, candidateSummary.costUsd);
+  const costImprovement = improvementPct(
+    comparisonCost(baselineSummary),
+    comparisonCost(candidateSummary),
+  );
   const tokenImprovement = improvementPct(
     baselineSummary.totalTokens,
     candidateSummary.totalTokens,
@@ -466,6 +536,14 @@ function decimalCell(value: number | undefined): string {
   return value === undefined ? "-" : value.toFixed(2);
 }
 
+function costCell(
+  value: number | undefined,
+  costSource: EvalModelReportSummary["costSource"],
+): string {
+  if (value !== undefined) return value.toFixed(2);
+  return costSource === "gateway" ? "-" : "not measured";
+}
+
 function markdownCell(value: string): string {
   return value.replaceAll("|", "\\|").replaceAll("\n", " ");
 }
@@ -483,17 +561,23 @@ export function createEvalModelComparisonMarkdown(comparison: EvalModelCompariso
     "",
     "## Models",
     "",
-    "| Model | Role | Passed | Failed | Pass rate | Groundedness | Tokens | Cost USD | p95 ms |",
-    "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    "| Model | Role | Passed | Failed | Pass rate | Groundedness | Input tok | Output tok | Total tok | Billable in | Billable out | Provider USD | Veryfront USD | Credits | Cost source | p95 ms |",
+    "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |",
   ];
 
   for (const model of comparison.models) {
     lines.push(
       `| ${model.model} | ${model.role} | ${model.passed} | ${model.failed} | ${
         Math.round(model.passRate * 100)
-      }% | ${decimalCell(model.groundednessScore)} | ${numberCell(model.totalTokens)} | ${
-        decimalCell(model.costUsd)
-      } | ${numberCell(model.p95Ms)} |`,
+      }% | ${decimalCell(model.groundednessScore)} | ${numberCell(model.inputTokens)} | ${
+        numberCell(model.outputTokens)
+      } | ${numberCell(model.totalTokens)} | ${numberCell(model.billableInputTokens)} | ${
+        numberCell(model.billableOutputTokens)
+      } | ${costCell(model.providerCostUsd ?? model.costUsd, model.costSource)} | ${
+        costCell(model.veryfrontChargeUsd, model.costSource)
+      } | ${decimalCell(model.costCredits)} | ${model.costSource ?? "-"} | ${
+        numberCell(model.p95Ms)
+      } |`,
     );
   }
 

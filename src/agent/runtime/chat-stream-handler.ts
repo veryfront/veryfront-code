@@ -77,6 +77,14 @@ export interface ChatStreamState {
     cacheCreationInputTokens?: number;
     cacheReadInputTokens?: number;
     reasoningTokens?: number;
+    billableInputTokens?: number;
+    billableOutputTokens?: number;
+    costUsd?: number;
+    providerCostUsd?: number;
+    veryfrontChargeUsd?: number;
+    costCredits?: number;
+    costSource?: "gateway" | "missing" | "partial";
+    usageCaptureStatus?: "complete" | "partial" | "missing";
   };
 }
 
@@ -90,6 +98,14 @@ export interface ChatStreamCallbacks {
     cacheCreationInputTokens?: number;
     cacheReadInputTokens?: number;
     reasoningTokens?: number;
+    billableInputTokens?: number;
+    billableOutputTokens?: number;
+    costUsd?: number;
+    providerCostUsd?: number;
+    veryfrontChargeUsd?: number;
+    costCredits?: number;
+    costSource?: "gateway" | "missing" | "partial";
+    usageCaptureStatus?: "complete" | "partial" | "missing";
   }) => void;
   providerExecutedToolNames?: readonly string[];
   availableToolNames?: readonly string[];
@@ -991,6 +1007,30 @@ export function processStream(
               ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
               ...(typedPart.totalUsage.reasoningTokens !== undefined
                 ? { reasoningTokens: typedPart.totalUsage.reasoningTokens }
+                : {}),
+              ...(typedPart.totalUsage.billableInputTokens !== undefined
+                ? { billableInputTokens: typedPart.totalUsage.billableInputTokens }
+                : {}),
+              ...(typedPart.totalUsage.billableOutputTokens !== undefined
+                ? { billableOutputTokens: typedPart.totalUsage.billableOutputTokens }
+                : {}),
+              ...(typedPart.totalUsage.costUsd !== undefined
+                ? { costUsd: typedPart.totalUsage.costUsd }
+                : {}),
+              ...(typedPart.totalUsage.providerCostUsd !== undefined
+                ? { providerCostUsd: typedPart.totalUsage.providerCostUsd }
+                : {}),
+              ...(typedPart.totalUsage.veryfrontChargeUsd !== undefined
+                ? { veryfrontChargeUsd: typedPart.totalUsage.veryfrontChargeUsd }
+                : {}),
+              ...(typedPart.totalUsage.costCredits !== undefined
+                ? { costCredits: typedPart.totalUsage.costCredits }
+                : {}),
+              ...(typedPart.totalUsage.costSource !== undefined
+                ? { costSource: typedPart.totalUsage.costSource }
+                : {}),
+              ...(typedPart.totalUsage.usageCaptureStatus !== undefined
+                ? { usageCaptureStatus: typedPart.totalUsage.usageCaptureStatus }
                 : {}),
             };
             callbacks?.onUsage?.(state.usage);

@@ -633,6 +633,14 @@ export class AgentRuntime {
             cacheCreationInputTokens: response.usage.cacheCreationInputTokens,
             cacheReadInputTokens: response.usage.cacheReadInputTokens,
             reasoningTokens: response.usage.reasoningTokens,
+            billableInputTokens: response.usage.billableInputTokens,
+            billableOutputTokens: response.usage.billableOutputTokens,
+            costUsd: response.usage.costUsd,
+            providerCostUsd: response.usage.providerCostUsd,
+            veryfrontChargeUsd: response.usage.veryfrontChargeUsd,
+            costCredits: response.usage.costCredits,
+            costSource: response.usage.costSource,
+            usageCaptureStatus: response.usage.usageCaptureStatus,
           });
         }
 

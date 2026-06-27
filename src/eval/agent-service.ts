@@ -125,6 +125,14 @@ function readNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+function readUsageCostSource(value: unknown): EvalUsage["costSource"] | undefined {
+  return value === "gateway" || value === "missing" || value === "partial" ? value : undefined;
+}
+
+function readUsageCaptureStatus(value: unknown): EvalUsage["usageCaptureStatus"] | undefined {
+  return value === "complete" || value === "missing" || value === "partial" ? value : undefined;
+}
+
 function readStringArray(value: unknown): string[] | undefined {
   return Array.isArray(value) && value.every((entry) => typeof entry === "string")
     ? [...value]
@@ -367,14 +375,48 @@ function createUsageFromRecord(record: Record<string, unknown>): EvalUsage | und
     (inputTokens !== undefined || outputTokens !== undefined
       ? (inputTokens ?? 0) + (outputTokens ?? 0)
       : undefined);
+  const billableInputTokens = readNumber(record.billableInputTokens) ??
+    readNumber(record.billable_input_tokens);
+  const billableOutputTokens = readNumber(record.billableOutputTokens) ??
+    readNumber(record.billable_output_tokens);
+  const cachedInputTokens = readNumber(record.cachedInputTokens) ??
+    readNumber(record.cached_input_tokens);
+  const cacheCreationInputTokens = readNumber(record.cacheCreationInputTokens) ??
+    readNumber(record.cacheCreationTokens) ??
+    readNumber(record.cache_creation_input_tokens);
+  const cacheReadInputTokens = readNumber(record.cacheReadInputTokens) ??
+    readNumber(record.cacheReadTokens) ??
+    readNumber(record.cache_read_input_tokens);
+  const reasoningTokens = readNumber(record.reasoningTokens) ?? readNumber(record.reasoning_tokens);
+  const providerCostUsd = readNumber(record.providerCostUsd) ??
+    readNumber(record.provider_cost_usd);
+  const veryfrontChargeUsd = readNumber(record.veryfrontChargeUsd) ??
+    readNumber(record.veryfront_charge_usd);
+  const costCredits = readNumber(record.costCredits) ?? readNumber(record.cost_credits);
   const costUsd = readNumber(record.costUsd) ?? readNumber(record.totalCostUsd) ??
-    readNumber(record.total_cost_usd);
+    readNumber(record.total_cost_usd) ??
+    providerCostUsd;
+  const costSource = readUsageCostSource(record.costSource ?? record.cost_source);
+  const usageCaptureStatus = readUsageCaptureStatus(
+    record.usageCaptureStatus ?? record.usage_capture_status,
+  );
 
   const usage: EvalUsage = {
     ...(inputTokens !== undefined ? { inputTokens } : {}),
     ...(outputTokens !== undefined ? { outputTokens } : {}),
     ...(totalTokens !== undefined ? { totalTokens } : {}),
+    ...(billableInputTokens !== undefined ? { billableInputTokens } : {}),
+    ...(billableOutputTokens !== undefined ? { billableOutputTokens } : {}),
+    ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+    ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
+    ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
     ...(costUsd !== undefined ? { costUsd } : {}),
+    ...(providerCostUsd !== undefined ? { providerCostUsd } : {}),
+    ...(veryfrontChargeUsd !== undefined ? { veryfrontChargeUsd } : {}),
+    ...(costCredits !== undefined ? { costCredits } : {}),
+    ...(costSource !== undefined ? { costSource } : {}),
+    ...(usageCaptureStatus !== undefined ? { usageCaptureStatus } : {}),
   };
 
   return Object.keys(usage).length > 0 ? usage : undefined;
