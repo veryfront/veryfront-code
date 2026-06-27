@@ -26,6 +26,8 @@ const DEFAULT_JUDGE_MODEL = "auto";
 const DEFAULT_THRESHOLD = 0.8;
 const DEFAULT_MAX_EVIDENCE_CHARS = 12_000;
 const DEFAULT_MAX_OUTPUT_TOKENS = 800;
+const MAX_SOURCE_CHARS = 2_000;
+const SOURCE_BUDGET_RATIO = 0.25;
 
 function asJson(value: unknown): string {
   try {
@@ -46,24 +48,34 @@ function resolveJudgeModel(model: string | ModelRuntime | undefined): ModelRunti
 }
 
 function truncate(value: string, maxChars: number): string {
+  if (maxChars <= 0) return "";
   if (value.length <= maxChars) return value;
-  return `${value.slice(0, Math.max(0, maxChars - 24))}\n[truncated]`;
+  const marker = "\n[truncated]";
+  if (maxChars <= marker.length) return value.slice(0, maxChars);
+  return `${value.slice(0, maxChars - marker.length)}${marker}`;
 }
 
 function buildEvidenceBlock(evidence: string[], sources: string[], maxChars: number): string {
   const entries = evidence.length > 0 ? evidence : ["No retrieved evidence was provided."];
-  const sourceBlock = sources.length > 0
-    ? sources.map((source, index) => `- [source ${index + 1}] ${source}`).join("\n")
-    : "- none";
   const evidenceBlock = entries.map((entry, index) => `[evidence ${index + 1}]\n${entry}`).join(
     "\n\n",
   );
-  const block = `Retrieved sources:
-${sourceBlock}
+  const sourceBlock = sources.length > 0
+    ? sources.map((source, index) => `- [source ${index + 1}] ${source}`).join("\n")
+    : "- none";
+  const sourceBudget = Math.min(
+    sourceBlock.length,
+    MAX_SOURCE_CHARS,
+    Math.floor(maxChars * SOURCE_BUDGET_RATIO),
+  );
+  const sectionOverhead = "Evidence snippets:\n\n\nRetrieved sources:\n".length;
+  const evidenceBudget = Math.max(0, maxChars - sectionOverhead - sourceBudget);
 
-Evidence snippets:
-${evidenceBlock}`;
-  return truncate(block, maxChars);
+  return `Evidence snippets:
+${truncate(evidenceBlock, evidenceBudget)}
+
+Retrieved sources:
+${truncate(sourceBlock, sourceBudget)}`;
 }
 
 function buildGroundednessPrompt(
@@ -177,8 +189,23 @@ function parseJudgeResponse(
 
   try {
     const parsed = JSON.parse(json) as Record<string, unknown>;
-    const score = clampScore(typeof parsed.score === "number" ? parsed.score : 0);
-    const modelPass = typeof parsed.pass === "boolean" ? parsed.pass : true;
+    if (typeof parsed.score !== "number" || !Number.isFinite(parsed.score)) {
+      return {
+        score: 0,
+        pass: false,
+        explanation: "LLM judge response did not include a finite numeric score.",
+      };
+    }
+    if (typeof parsed.pass !== "boolean") {
+      return {
+        score: 0,
+        pass: false,
+        explanation: "LLM judge response did not include a boolean pass field.",
+      };
+    }
+
+    const score = clampScore(parsed.score);
+    const modelPass = parsed.pass;
     const unsupportedClaims = stringList(parsed.unsupportedClaims);
     const missingEvidence = stringList(parsed.missingEvidence);
     const details = [

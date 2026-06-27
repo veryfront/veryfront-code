@@ -148,9 +148,66 @@ describe("eval/judges", () => {
       prompt: Array<{ content: Array<{ type: string; text: string }> }>;
     }>;
     const promptText = call.prompt[0]?.content[0]?.text ?? "";
-    assertStringIncludes(promptText, "Retrieved sources:");
     assertStringIncludes(promptText, "Evidence snippets:");
+    assertStringIncludes(promptText, "Retrieved sources:");
     assertEquals(promptText.includes("knowledge/a.md\nFirst evidence snippet"), false);
+  });
+
+  it("preserves evidence when source labels are long", async () => {
+    const calls: unknown[] = [];
+    const judge = judges.llm.groundedness({
+      maxEvidenceChars: 260,
+      model: createJudgeModel(
+        JSON.stringify({
+          score: 1,
+          pass: true,
+          explanation: "Supported.",
+        }),
+        calls,
+      ),
+    });
+
+    await judge({
+      rubric: "Grounded answer.",
+      input: "Question",
+      output: { text: "Answer" },
+      metadata: {},
+      evidence: ["Critical policy evidence that must reach the judge."],
+      sources: [`knowledge/${"very-long-source-name-".repeat(20)}.md`],
+    });
+
+    const [call] = calls as Array<{
+      prompt: Array<{ content: Array<{ type: string; text: string }> }>;
+    }>;
+    const promptText = call.prompt[0]?.content[0]?.text ?? "";
+    assertStringIncludes(promptText, "Critical policy evidence");
+    assertStringIncludes(promptText, "Retrieved sources:");
+  });
+
+  it("fails closed when the judge omits the pass field", async () => {
+    const calls: unknown[] = [];
+    const judge = judges.llm.groundedness({
+      model: createJudgeModel(
+        JSON.stringify({
+          score: 0.95,
+          explanation: "Looks supported.",
+        }),
+        calls,
+      ),
+    });
+
+    const result = await judge({
+      rubric: "Grounded answer.",
+      input: "Question",
+      output: { text: "Answer" },
+      metadata: {},
+      evidence: ["Evidence"],
+      sources: [],
+    });
+
+    assertEquals(result.score, 0);
+    assertEquals(result.pass, false);
+    assertStringIncludes(result.explanation ?? "", "boolean pass");
   });
 
   it("fails closed when the judge does not return valid JSON", async () => {
