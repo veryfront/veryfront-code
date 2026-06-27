@@ -104,19 +104,6 @@ function resolveVisibleSkillOrThrow(
   return skill;
 }
 
-function buildSkillAvailabilityNote(references: string[], scripts: string[]): string | undefined {
-  if (scripts.length === 0 && references.length === 0) {
-    return "This skill has no scripts or reference files. Do NOT call execute_skill_script or load_skill_reference.";
-  }
-  if (scripts.length === 0) {
-    return "This skill has no scripts. Do NOT call execute_skill_script.";
-  }
-  if (references.length === 0) {
-    return "This skill has no reference files. Do NOT call load_skill_reference.";
-  }
-  return undefined;
-}
-
 function hasRuntimeSkillBoundary(
   context: ToolExecutionContext | undefined,
 ): context is ToolExecutionContext {
@@ -215,7 +202,6 @@ export function createLoadSkillTool(): Tool {
         ),
       ]);
       const loadableReferences = [...references, ...resources, ...assets];
-      const note = buildSkillAvailabilityNote(loadableReferences, scripts);
 
       return {
         skillId: skill.id,
@@ -223,7 +209,6 @@ export function createLoadSkillTool(): Tool {
         allowedTools: skill.metadata.allowedTools,
         references: loadableReferences,
         scripts,
-        ...(note ? { note } : {}),
       };
     },
   });
