@@ -43,6 +43,7 @@ export interface RuntimeGenerateUsage {
   veryfrontBilledUsd?: number;
   costCredits?: number;
   costSource?: "gateway" | "missing" | "partial";
+  billingMode?: "direct" | "deferred";
   usageCaptureStatus?: "complete" | "partial" | "missing";
 }
 
@@ -162,6 +163,7 @@ export type RuntimeStreamPart =
       veryfrontBilledUsd?: number;
       costCredits?: number;
       costSource?: "gateway" | "missing" | "partial";
+      billingMode?: "direct" | "deferred";
       usageCaptureStatus?: "complete" | "partial" | "missing";
     } | null;
   }

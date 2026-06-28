@@ -63,6 +63,9 @@ export type EvalUsageCostSource = "gateway" | "missing" | "partial";
 /** Completeness of provider usage capture for eval usage. */
 export type EvalUsageCaptureStatus = "complete" | "partial" | "missing";
 
+/** Billing boundary for gateway-backed eval usage. */
+export type EvalUsageBillingMode = "direct" | "deferred";
+
 /** Token and cost usage captured for one eval record. */
 export interface EvalUsage {
   inputTokens?: number;
@@ -84,6 +87,7 @@ export interface EvalUsage {
   veryfrontBilledUsd?: number;
   costCredits?: number;
   costSource?: EvalUsageCostSource;
+  billingMode?: EvalUsageBillingMode;
   usageCaptureStatus?: EvalUsageCaptureStatus;
 }
 

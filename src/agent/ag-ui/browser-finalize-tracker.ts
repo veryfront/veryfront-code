@@ -96,6 +96,12 @@ export function createAgUiBrowserFinalizeTracker<TChunk>(
       if (nextMetadata.costSource) {
         metadata.costSource = nextMetadata.costSource;
       }
+      if (nextMetadata.billingMode) {
+        metadata.billingMode = metadata.billingMode === "deferred" ||
+            nextMetadata.billingMode === "deferred"
+          ? "deferred"
+          : nextMetadata.billingMode;
+      }
       if (nextMetadata.usageCaptureStatus) {
         metadata.usageCaptureStatus = nextMetadata.usageCaptureStatus;
       }

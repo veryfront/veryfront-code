@@ -81,6 +81,11 @@ function mergeMetadata(
   }
   if (typeof metadata.costCredits === "number") target.costCredits = metadata.costCredits;
   if (metadata.costSource) target.costSource = metadata.costSource;
+  if (metadata.billingMode) {
+    target.billingMode = target.billingMode === "deferred" || metadata.billingMode === "deferred"
+      ? "deferred"
+      : metadata.billingMode;
+  }
   if (metadata.usageCaptureStatus) target.usageCaptureStatus = metadata.usageCaptureStatus;
   if (typeof metadata.finishReason === "string") target.finishReason = metadata.finishReason;
 }

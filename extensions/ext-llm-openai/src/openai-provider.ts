@@ -25,6 +25,7 @@ import {
   ProviderQuotaError,
   ProviderRateLimitError,
   ProviderRequestError,
+  readGatewayBillingMode,
   readRecord,
   requestJson,
   requestStream,
@@ -91,6 +92,7 @@ type RuntimeUsage = {
   veryfrontBilledUsd?: number;
   costCredits?: number;
   costSource?: "gateway" | "missing" | "partial";
+  billingMode?: "direct" | "deferred";
   usageCaptureStatus?: "complete" | "partial" | "missing";
 };
 
@@ -164,6 +166,7 @@ function extractOpenAIUsage(payload: unknown): RuntimeUsage | undefined {
   const reasoningTokens = completionTokensDetails?.reasoning_tokens;
   const veryfront = readRecord(usage.veryfront);
   const costSource = veryfront?.cost_source;
+  const billingMode = readGatewayBillingMode(veryfront?.billing_mode);
   const usageCaptureStatus = veryfront?.usage_capture_status;
 
   return {
@@ -204,6 +207,7 @@ function extractOpenAIUsage(payload: unknown): RuntimeUsage | undefined {
     ...(costSource === "gateway" || costSource === "missing" || costSource === "partial"
       ? { costSource }
       : {}),
+    ...(billingMode !== undefined ? { billingMode } : {}),
     ...(usageCaptureStatus === "complete" ||
         usageCaptureStatus === "missing" ||
         usageCaptureStatus === "partial"

@@ -124,6 +124,7 @@ type DirectGenerateUsage = {
   veryfrontBilledUsd?: number;
   costCredits?: number;
   costSource?: "gateway" | "missing" | "partial";
+  billingMode?: "direct" | "deferred";
   usageCaptureStatus?: "complete" | "partial" | "missing";
 };
 
@@ -314,9 +315,11 @@ function normalizeUsage(usage: unknown): DirectGenerateUsage | undefined {
     veryfrontBilledUsd?: number;
     costCredits?: number;
     costSource?: unknown;
+    billingMode?: unknown;
     usageCaptureStatus?: unknown;
   };
   const costSource = flatUsage.costSource;
+  const billingMode = flatUsage.billingMode;
   const usageCaptureStatus = flatUsage.usageCaptureStatus;
 
   return {
@@ -369,6 +372,7 @@ function normalizeUsage(usage: unknown): DirectGenerateUsage | undefined {
     ...(costSource === "gateway" || costSource === "missing" || costSource === "partial"
       ? { costSource }
       : {}),
+    ...(billingMode === "direct" || billingMode === "deferred" ? { billingMode } : {}),
     ...(usageCaptureStatus === "complete" ||
         usageCaptureStatus === "missing" ||
         usageCaptureStatus === "partial"
@@ -650,6 +654,7 @@ function streamUsageToGenerateUsage(
       : {}),
     ...(totalUsage.costCredits !== undefined ? { costCredits: totalUsage.costCredits } : {}),
     ...(totalUsage.costSource !== undefined ? { costSource: totalUsage.costSource } : {}),
+    ...(totalUsage.billingMode !== undefined ? { billingMode: totalUsage.billingMode } : {}),
     ...(totalUsage.usageCaptureStatus !== undefined
       ? { usageCaptureStatus: totalUsage.usageCaptureStatus }
       : {}),
@@ -848,6 +853,7 @@ function normalizeStreamPart(part: unknown): unknown {
             : {}),
           ...(usage.costCredits !== undefined ? { costCredits: usage.costCredits } : {}),
           ...(usage.costSource !== undefined ? { costSource: usage.costSource } : {}),
+          ...(usage.billingMode !== undefined ? { billingMode: usage.billingMode } : {}),
           ...(usage.usageCaptureStatus !== undefined
             ? { usageCaptureStatus: usage.usageCaptureStatus }
             : {}),

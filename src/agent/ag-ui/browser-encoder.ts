@@ -26,6 +26,7 @@ export interface AgUiBrowserRunFinishedMetadata {
   veryfrontBilledUsd?: number;
   costCredits?: number;
   costSource?: "gateway" | "missing" | "partial";
+  billingMode?: "direct" | "deferred";
   finishReason?: string;
   usageCaptureStatus?: "complete" | "partial" | "missing";
 }
@@ -256,6 +257,9 @@ function applyResponseMetadata(
     if (usage.costSource) {
       state.metadata.costSource = usage.costSource;
     }
+    if (usage.billingMode) {
+      state.metadata.billingMode = usage.billingMode;
+    }
     if (usage.usageCaptureStatus) {
       state.metadata.usageCaptureStatus = usage.usageCaptureStatus;
     }
@@ -342,6 +346,10 @@ function applyResponseMetadata(
   if (costSource === "gateway" || costSource === "missing" || costSource === "partial") {
     state.metadata.costSource = costSource;
   }
+  const billingMode = metadata?.billingMode;
+  if (billingMode === "direct" || billingMode === "deferred") {
+    state.metadata.billingMode = billingMode;
+  }
   const usageCaptureStatus = metadata?.usageCaptureStatus;
   if (
     usageCaptureStatus === "complete" ||
@@ -408,6 +416,9 @@ export function buildAgUiBrowserFinalizeResponse(
   if (metadata.costSource) {
     responseMetadata.costSource = metadata.costSource;
   }
+  if (metadata.billingMode) {
+    responseMetadata.billingMode = metadata.billingMode;
+  }
   if (metadata.usageCaptureStatus) {
     responseMetadata.usageCaptureStatus = metadata.usageCaptureStatus;
   }
@@ -462,6 +473,7 @@ export function buildAgUiBrowserFinalizeResponse(
         : {}),
       ...(typeof metadata.costCredits === "number" ? { costCredits: metadata.costCredits } : {}),
       ...(metadata.costSource ? { costSource: metadata.costSource } : {}),
+      ...(metadata.billingMode ? { billingMode: metadata.billingMode } : {}),
       ...(metadata.usageCaptureStatus ? { usageCaptureStatus: metadata.usageCaptureStatus } : {}),
     }
     : undefined;
