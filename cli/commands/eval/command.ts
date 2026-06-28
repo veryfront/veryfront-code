@@ -497,6 +497,7 @@ function usageRows(usage: EvalUsage | undefined): Array<[string, string]> {
     ["Veryfront billed USD", usdCell(usage.veryfrontBilledUsd)],
     ["Cost credits", decimalCell(usage.costCredits)],
     ["Cost source", usage.costSource ?? "-"],
+    ["Billing mode", usage.billingMode ?? "-"],
     ["Usage capture status", usage.usageCaptureStatus ?? "-"],
   ];
   return rows.filter(([, value]) => value !== "-");
@@ -739,6 +740,9 @@ export function normalizeUsage(response: AgentResponse) {
         ? { costCredits: response.usage.costCredits }
         : {}),
       ...(response.usage.costSource !== undefined ? { costSource: response.usage.costSource } : {}),
+      ...(response.usage.billingMode !== undefined
+        ? { billingMode: response.usage.billingMode }
+        : {}),
       ...(response.usage.usageCaptureStatus !== undefined
         ? { usageCaptureStatus: response.usage.usageCaptureStatus }
         : {}),
