@@ -5,6 +5,7 @@ import type { AgentResponse } from "veryfront/agent";
 import { compareEvalReports, type DiscoveredEval, type EvalReport } from "veryfront/eval";
 import { saveToken } from "../../auth/token-store.ts";
 import {
+  applyGatewayBillingGroupFinalization,
   createDefaultEvalReportDir,
   createEvalArtifactPaths,
   createEvalExitCode,
@@ -436,6 +437,31 @@ describe("eval CLI command helpers", () => {
       JSON.parse(line) as { id: string }
     );
     assertEquals(lines.map((record) => record.id), ["q1:1", "q2:1"]);
+  });
+
+  it("applies gateway billing group finalization to eval summary usage", () => {
+    const report = createReport();
+
+    const finalized = applyGatewayBillingGroupFinalization(report, {
+      billing_group_id: "evalrun_test_anthropic__claude-sonnet-4-6",
+      charged_credits: 16,
+      target_credits: 1,
+      adjustment_credits: 15,
+      provider_cost_usd: 0.02465,
+      veryfront_charge_usd: 0.07395,
+      veryfront_billed_usd: 0.1,
+    });
+
+    assertEquals(finalized.summary.usage, {
+      ...report.summary.usage,
+      providerCostUsd: 0.02465,
+      veryfrontChargeUsd: 0.07395,
+      veryfrontBilledUsd: 0.1,
+      costCredits: 1,
+      costSource: "gateway",
+      billingMode: "direct",
+      usageCaptureStatus: "complete",
+    });
   });
 
   it("renders a markdown eval report", () => {

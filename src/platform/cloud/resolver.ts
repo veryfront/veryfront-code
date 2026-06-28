@@ -1,6 +1,9 @@
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
-import { getCurrentVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
+import {
+  getCurrentVeryfrontCloudContext,
+  type VeryfrontCloudContext,
+} from "#veryfront/provider/veryfront-cloud/context.ts";
 
 // ---------------------------------------------------------------------------
 // GlobalThis bridges — config/ is a middle layer, platform/ is bottom layer.
@@ -74,6 +77,12 @@ function normalizeServiceLayer(value: string | undefined): string | undefined {
   return normalized?.length ? normalized : undefined;
 }
 
+function hasScopedRuntimeContext(context: VeryfrontCloudContext | undefined): boolean {
+  return Boolean(
+    context?.apiBaseUrl || context?.apiToken || context?.projectSlug || context?.serviceLayer,
+  );
+}
+
 function getResolvedVeryfrontCloudContext(): Omit<VeryfrontCloudBootstrap, "apiBaseUrl"> {
   const requestContext = getCurrentRequestContext();
   const scopedContext = getCurrentVeryfrontCloudContext();
@@ -90,7 +99,7 @@ function getResolvedVeryfrontCloudContext(): Omit<VeryfrontCloudBootstrap, "apiB
       runtimeBootstrap.projectSlug,
     serviceLayer: normalizeServiceLayer(scopedContext?.serviceLayer) ??
       normalizeServiceLayer(getHostEnv("VERYFRONT_SERVICE_LAYER")),
-    hasRequestContext: requestContext !== null || scopedContext !== undefined,
+    hasRequestContext: requestContext !== null || hasScopedRuntimeContext(scopedContext),
     usesVeryfrontFs: runtimeBootstrap.usesVeryfrontFs,
   };
 }

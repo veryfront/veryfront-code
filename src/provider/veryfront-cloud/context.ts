@@ -4,6 +4,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 export interface VeryfrontCloudContext {
   apiBaseUrl?: string;
   apiToken?: string;
+  billingGroupId?: string;
   projectSlug?: string;
   serviceLayer?: string;
 }

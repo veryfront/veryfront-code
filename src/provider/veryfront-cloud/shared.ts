@@ -1,5 +1,6 @@
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { getVeryfrontCloudBootstrap } from "#veryfront/platform/cloud/resolver.ts";
+import { getCurrentVeryfrontCloudContext } from "./context.ts";
 import { isSupportedMistralModelId } from "./model-catalog.ts";
 
 /** Public API contract for Veryfront Cloud provider ID. */
@@ -149,6 +150,11 @@ export function createVeryfrontCloudFetch(
 
     if (projectSlug) {
       headers.set("x-veryfront-project-slug", projectSlug);
+    }
+
+    const billingGroupId = getCurrentVeryfrontCloudContext()?.billingGroupId?.trim();
+    if (billingGroupId) {
+      headers.set("x-veryfront-billing-group-id", billingGroupId);
     }
 
     return fetch(new Request(request, { headers }));
