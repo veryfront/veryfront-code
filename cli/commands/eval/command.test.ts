@@ -362,7 +362,15 @@ describe("eval CLI command helpers", () => {
       [
         ".veryfront",
         "evals",
-        "evalrun_20260621_010203000",
+        "20260621_010203000",
+      ].join("/"),
+    );
+    assertEquals(
+      createDefaultEvalReportDir("evalrun_20260621_010203000", "eval:support-triage"),
+      [
+        ".veryfront",
+        "evals",
+        "20260621_010203000-support-triage",
       ].join("/"),
     );
     assertEquals(createEvalArtifactPaths(".veryfront/evals/run-1"), {
@@ -423,6 +431,36 @@ describe("eval CLI command helpers", () => {
     assertStringIncludes(markdown, "| Veryfront billed USD | `$0.10` |");
     assertStringIncludes(markdown, "| `q1:1` | PASS | 0.012s | 12 | `$0.06` | 0.6 |");
     assertStringIncludes(markdown, "| `q2:1` | FAIL | 0.010s | 10 | `$0.04` | 0.4 |");
+  });
+
+  it("renders examples with only soft metric misses as passing", () => {
+    const report = createReport();
+    const softReport: EvalReport = {
+      ...report,
+      summary: {
+        ...report.summary,
+        passed: 2,
+        failed: 0,
+        passRate: 1,
+        metrics: report.summary.metrics.map((metric) => ({
+          ...metric,
+          severity: "soft",
+        })),
+        failedExamples: [],
+      },
+      records: report.records.map((record) => ({
+        ...record,
+        metrics: (record.metrics ?? []).map((metric) => ({
+          ...metric,
+          severity: "soft",
+        })),
+      })),
+    };
+
+    const markdown = createEvalMarkdownReport(softReport);
+
+    assertStringIncludes(markdown, "Result: `2/2 passed (100%)`");
+    assertStringIncludes(markdown, "| `q2:1` | PASS | 0.010s | 10 | `$0.04` | 0.4 |");
   });
 
   it("writes summary, JSONL, and markdown artifacts to the report directory", async () => {
