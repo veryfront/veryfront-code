@@ -95,7 +95,7 @@ function formatScore(value: number): number {
 }
 
 function comparisonCost(summary: EvalModelReportSummary): number | undefined {
-  return summary.veryfrontBilledUsd ?? summary.veryfrontChargeUsd ?? summary.costUsd ??
+  return summary.veryfrontChargeUsd ?? summary.veryfrontBilledUsd ?? summary.costUsd ??
     summary.providerCostUsd;
 }
 
@@ -104,16 +104,6 @@ function defaultCostComparison(
   candidateSummary: EvalModelReportSummary,
 ): { baseline: number; candidate: number; label: string } | undefined {
   if (
-    baselineSummary.veryfrontBilledUsd !== undefined &&
-    candidateSummary.veryfrontBilledUsd !== undefined
-  ) {
-    return {
-      baseline: baselineSummary.veryfrontBilledUsd,
-      candidate: candidateSummary.veryfrontBilledUsd,
-      label: "Veryfront billed cost",
-    };
-  }
-  if (
     baselineSummary.veryfrontChargeUsd !== undefined &&
     candidateSummary.veryfrontChargeUsd !== undefined
   ) {
@@ -121,6 +111,16 @@ function defaultCostComparison(
       baseline: baselineSummary.veryfrontChargeUsd,
       candidate: candidateSummary.veryfrontChargeUsd,
       label: "Veryfront metered cost",
+    };
+  }
+  if (
+    baselineSummary.veryfrontBilledUsd !== undefined &&
+    candidateSummary.veryfrontBilledUsd !== undefined
+  ) {
+    return {
+      baseline: baselineSummary.veryfrontBilledUsd,
+      candidate: candidateSummary.veryfrontBilledUsd,
+      label: "Veryfront billed cost",
     };
   }
   if (baselineSummary.costUsd !== undefined && candidateSummary.costUsd !== undefined) {
@@ -673,7 +673,7 @@ export function createEvalModelComparisonMarkdown(comparison: EvalModelCompariso
 
   lines.push(
     "",
-    "_Metered USD is the token-metered Veryfront charge before billing minimums. Billed USD and Credits include gateway request minimums and match the billed eval cost._",
+    "_Model optimization uses Metered USD by default: the token-metered Veryfront charge before billing minimums. Billed USD and Credits include gateway request minimums and show actual billed eval cost._",
   );
 
   if (comparison.candidates.length > 0) {
