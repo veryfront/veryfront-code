@@ -8,6 +8,7 @@ import {
   createDefaultEvalReportDir,
   createEvalArtifactPaths,
   createEvalExitCode,
+  createEvalMarkdownReport,
   createEvalModelArtifactPaths,
   createEvalModelComparisonArtifact,
   createEvalModelComparisonExitCode,
@@ -76,6 +77,19 @@ function createReport(): EvalReport {
           passRate: 0.5,
         },
       ],
+      usage: {
+        inputTokens: 100,
+        outputTokens: 20,
+        totalTokens: 120,
+        billableInputTokens: 90,
+        billableOutputTokens: 18,
+        providerCostUsd: 0.001,
+        veryfrontChargeUsd: 0.0025,
+        veryfrontBilledUsd: 0.1,
+        costCredits: 1,
+        costSource: "gateway",
+        usageCaptureStatus: "complete",
+      },
     },
     records: [
       {
@@ -88,7 +102,7 @@ function createReport(): EvalReport {
         reference: "Paris",
         metadata: {},
         trace: { events: [], toolCalls: [] },
-        usage: { totalTokens: 12 },
+        usage: { totalTokens: 12, veryfrontBilledUsd: 0.06, costCredits: 0.6 },
         durationMs: 12,
         completed: true,
         metrics: [
@@ -112,7 +126,7 @@ function createReport(): EvalReport {
         reference: "Paris",
         metadata: {},
         trace: { events: [], toolCalls: [] },
-        usage: { totalTokens: 10 },
+        usage: { totalTokens: 10, veryfrontBilledUsd: 0.04, costCredits: 0.4 },
         durationMs: 10,
         completed: true,
         metrics: [
@@ -355,6 +369,7 @@ describe("eval CLI command helpers", () => {
       directory: ".veryfront/evals/run-1",
       summary: ".veryfront/evals/run-1/summary.json",
       results: ".veryfront/evals/run-1/results.jsonl",
+      reportMarkdown: ".veryfront/evals/run-1/report.md",
     });
     assertEquals(
       createEvalModelArtifactPaths(".veryfront/evals/run-1", "anthropic/claude-opus-4-6"),
@@ -362,6 +377,7 @@ describe("eval CLI command helpers", () => {
         directory: ".veryfront/evals/run-1/models/anthropic__claude-opus-4-6",
         summary: ".veryfront/evals/run-1/models/anthropic__claude-opus-4-6/summary.json",
         results: ".veryfront/evals/run-1/models/anthropic__claude-opus-4-6/results.jsonl",
+        reportMarkdown: ".veryfront/evals/run-1/models/anthropic__claude-opus-4-6/report.md",
         junit: ".veryfront/evals/run-1/models/anthropic__claude-opus-4-6/junit.xml",
       },
     );
@@ -399,7 +415,17 @@ describe("eval CLI command helpers", () => {
     assertEquals(lines.map((record) => record.id), ["q1:1", "q2:1"]);
   });
 
-  it("writes summary and JSONL artifacts to the report directory", async () => {
+  it("renders a markdown eval report", () => {
+    const markdown = createEvalMarkdownReport(createReport());
+
+    assertStringIncludes(markdown, "# Eval report: eval:answers");
+    assertStringIncludes(markdown, "Result: `1/2 passed (50%)`");
+    assertStringIncludes(markdown, "| Veryfront billed USD | `$0.10` |");
+    assertStringIncludes(markdown, "| `q1:1` | PASS | 0.012s | 12 | `$0.06` | 0.6 |");
+    assertStringIncludes(markdown, "| `q2:1` | FAIL | 0.010s | 10 | `$0.04` | 0.4 |");
+  });
+
+  it("writes summary, JSONL, and markdown artifacts to the report directory", async () => {
     const tempDir = await Deno.makeTempDir();
     try {
       const paths = createEvalArtifactPaths(`${tempDir}/eval-report`);
@@ -410,10 +436,13 @@ describe("eval CLI command helpers", () => {
         summary: { records: number };
       };
       const results = (await Deno.readTextFile(paths.results)).trimEnd().split("\n");
+      const markdown = await Deno.readTextFile(paths.reportMarkdown);
 
       assertEquals(summary.kind, "eval-summary");
       assertEquals(summary.summary.records, 2);
       assertEquals(results.length, 2);
+      assertStringIncludes(markdown, "# Eval report: eval:answers");
+      assertStringIncludes(markdown, "| Veryfront billed USD | `$0.10` |");
     } finally {
       await Deno.remove(tempDir, { recursive: true });
     }

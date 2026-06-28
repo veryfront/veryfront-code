@@ -17,6 +17,7 @@ import type {
   EvalReportComparison,
   EvalReportExportConfig,
   EvalToolCall,
+  EvalUsage,
 } from "veryfront/eval";
 import { createProjectDiscoveryConfig, discoverAll } from "veryfront/discovery";
 import {
@@ -55,6 +56,7 @@ type EvalArtifactPaths = {
   directory: string;
   summary: string;
   results: string;
+  reportMarkdown: string;
 };
 
 type EvalModelArtifactPaths = EvalArtifactPaths & {
@@ -124,6 +126,7 @@ export function createEvalArtifactPaths(reportDir: string): EvalArtifactPaths {
     directory: reportDir,
     summary: join(reportDir, "summary.json"),
     results: join(reportDir, "results.jsonl"),
+    reportMarkdown: join(reportDir, "report.md"),
   };
 }
 
@@ -140,6 +143,7 @@ export function createEvalModelArtifactPaths(
     directory,
     summary: join(directory, "summary.json"),
     results: join(directory, "results.jsonl"),
+    reportMarkdown: join(directory, "report.md"),
     junit: join(directory, "junit.xml"),
   };
 }
@@ -421,6 +425,147 @@ export function createResultsJsonl(report: EvalReport): string {
   return `${report.records.map((record) => JSON.stringify(record)).join("\n")}\n`;
 }
 
+function markdownCell(value: string): string {
+  return value.replaceAll("|", "\\|").replaceAll("\n", " ");
+}
+
+function numberCell(value: number | undefined): string {
+  return value === undefined ? "-" : String(Math.round(value));
+}
+
+function decimalCell(value: number | undefined): string {
+  if (value === undefined) return "-";
+  if (Number.isInteger(value)) return String(value);
+  return value.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function percentCell(value: number): string {
+  return `${Math.round(value * 100)}%`;
+}
+
+function durationCell(valueMs: number | undefined): string {
+  return valueMs === undefined ? "-" : `${(valueMs / 1000).toFixed(3)}s`;
+}
+
+function usdCell(value: number | undefined): string {
+  if (value === undefined) return "-";
+  const absolute = Math.abs(value);
+  if (absolute >= 0.01) return `$${value.toFixed(2)}`;
+  return `$${value.toFixed(6).replace(/0+$/, "").replace(/\.$/, "")}`;
+}
+
+function examplePassed(record: EvalRecord): boolean {
+  return [...(record.metrics ?? []), ...(record.checks ?? [])].every((result) =>
+    result.skipped || result.pass !== false
+  );
+}
+
+function usageRows(usage: EvalUsage | undefined): Array<[string, string]> {
+  if (!usage) return [];
+  const rows: Array<[string, string]> = [
+    ["Input tokens", numberCell(usage.inputTokens)],
+    ["Output tokens", numberCell(usage.outputTokens)],
+    ["Total tokens", numberCell(usage.totalTokens)],
+    ["Billable input tokens", numberCell(usage.billableInputTokens)],
+    ["Billable output tokens", numberCell(usage.billableOutputTokens)],
+    ["Provider cost USD", usdCell(usage.providerCostUsd ?? usage.costUsd)],
+    ["Veryfront charge USD", usdCell(usage.veryfrontChargeUsd)],
+    ["Veryfront billed USD", usdCell(usage.veryfrontBilledUsd)],
+    ["Cost credits", decimalCell(usage.costCredits)],
+    ["Cost source", usage.costSource ?? "-"],
+    ["Usage capture status", usage.usageCaptureStatus ?? "-"],
+  ];
+  return rows.filter(([, value]) => value !== "-");
+}
+
+/** Render a human-reviewable markdown report for a single eval run. */
+export function createEvalMarkdownReport(
+  report: EvalReport,
+  baseline?: EvalReportComparison,
+): string {
+  const lines = [
+    `# Eval report: ${markdownCell(report.definitionId)}`,
+    "",
+    `Run: \`${markdownCell(report.runId)}\``,
+    `Target: \`${markdownCell(report.target)}\``,
+    ...(report.metadata?.model ? [`Model: \`${markdownCell(report.metadata.model)}\``] : []),
+    `Result: \`${report.summary.passed}/${report.summary.records} passed (${
+      percentCell(report.summary.passRate)
+    })\``,
+    "",
+    "## Metrics",
+    "",
+    "| Metric | Severity | Passed | Failed | Pass rate |",
+    "| --- | --- | ---: | ---: | ---: |",
+  ];
+
+  for (const metric of report.summary.metrics) {
+    lines.push(
+      `| \`${
+        markdownCell(metric.name)
+      }\` | ${metric.severity} | ${metric.passed} | ${metric.failed} | ${
+        percentCell(metric.passRate)
+      } |`,
+    );
+  }
+
+  const rows = usageRows(report.summary.usage);
+  if (rows.length > 0) {
+    lines.push("", "## Usage", "", "| Usage | Value |", "| --- | ---: |");
+    for (const [label, value] of rows) {
+      lines.push(`| ${label} | ${value.startsWith("$") ? `\`${value}\`` : value} |`);
+    }
+  }
+
+  lines.push(
+    "",
+    "## Examples",
+    "",
+    "| Example | Result | Duration | Tokens | Billed USD | Credits |",
+    "| --- | ---: | ---: | ---: | ---: | ---: |",
+  );
+
+  for (const record of report.records) {
+    lines.push(
+      `| \`${markdownCell(record.id)}\` | ${examplePassed(record) ? "PASS" : "FAIL"} | ${
+        durationCell(record.durationMs)
+      } | ${numberCell(record.usage.totalTokens)} | ${
+        record.usage.veryfrontBilledUsd === undefined
+          ? "-"
+          : `\`${usdCell(record.usage.veryfrontBilledUsd)}\``
+      } | ${decimalCell(record.usage.costCredits)} |`,
+    );
+  }
+
+  if (baseline) {
+    const direction = baseline.passRateDelta >= 0 ? "+" : "";
+    lines.push(
+      "",
+      "## Baseline",
+      "",
+      `Status: \`${baseline.regressed ? "regressed" : "ok"}\``,
+      `Pass rate delta: \`${direction}${Math.round(baseline.passRateDelta * 100)} pp\``,
+    );
+    if (baseline.newFailedExamples.length > 0) {
+      lines.push(`New failed examples: ${baseline.newFailedExamples.map(markdownCell).join(", ")}`);
+    }
+  }
+
+  if (report.exports?.length) {
+    lines.push("", "## Exports", "");
+    for (const result of report.exports) {
+      lines.push(
+        `- \`${markdownCell(result.exporterId)}\`: ${
+          result.ok ? "ok" : `failed, ${markdownCell(result.error)}`
+        }`,
+      );
+    }
+  }
+
+  lines.push("");
+  return lines.join("\n");
+}
+
 export function createJunitXml(report: EvalReport): string {
   const skipped = report.records.reduce(
     (count, record) => count + skippedResults(record).length,
@@ -482,6 +627,7 @@ export async function writeEvalArtifacts(
     JSON.stringify(createSummaryArtifact(report, baseline), null, 2),
   );
   await Deno.writeTextFile(paths.results, createResultsJsonl(report));
+  await Deno.writeTextFile(paths.reportMarkdown, createEvalMarkdownReport(report, baseline));
 }
 
 async function readEvalReport(path: string): Promise<EvalReport> {
@@ -993,6 +1139,7 @@ export async function evalCommand(options: EvalOptions): Promise<void> {
     } else {
       printReport(report, baseline);
       cliLogger.info(`Report directory: ${artifactPaths.directory}`);
+      cliLogger.info(`Report markdown: ${artifactPaths.reportMarkdown}`);
       if (options.report) cliLogger.info(`Report: ${options.report}`);
       if (options.junit) cliLogger.info(`JUnit: ${options.junit}`);
       if (options.writeBaseline) cliLogger.info(`Baseline written: ${options.writeBaseline}`);
