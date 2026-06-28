@@ -110,18 +110,6 @@ function defaultCostComparison(
     };
   }
   if (
-    baselineSummary.costSource === "gateway" &&
-    candidateSummary.costSource === "gateway" &&
-    baselineSummary.costCredits !== undefined &&
-    candidateSummary.costCredits !== undefined
-  ) {
-    return {
-      baseline: baselineSummary.costCredits,
-      candidate: candidateSummary.costCredits,
-      label: "Veryfront credits",
-    };
-  }
-  if (
     baselineSummary.veryfrontChargeUsd !== undefined &&
     candidateSummary.veryfrontChargeUsd !== undefined
   ) {
@@ -146,6 +134,18 @@ function defaultCostComparison(
       baseline: baselineSummary.providerCostUsd,
       candidate: candidateSummary.providerCostUsd,
       label: "provider cost",
+    };
+  }
+  if (
+    baselineSummary.costSource === "gateway" &&
+    candidateSummary.costSource === "gateway" &&
+    baselineSummary.costCredits !== undefined &&
+    candidateSummary.costCredits !== undefined
+  ) {
+    return {
+      baseline: baselineSummary.costCredits,
+      candidate: candidateSummary.costCredits,
+      label: "Veryfront credits",
     };
   }
   return undefined;
