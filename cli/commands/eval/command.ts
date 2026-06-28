@@ -550,6 +550,9 @@ export function normalizeUsage(response: AgentResponse) {
       ...(response.usage.veryfrontChargeUsd !== undefined
         ? { veryfrontChargeUsd: response.usage.veryfrontChargeUsd }
         : {}),
+      ...(response.usage.veryfrontBilledUsd !== undefined
+        ? { veryfrontBilledUsd: response.usage.veryfrontBilledUsd }
+        : {}),
       ...(response.usage.costCredits !== undefined
         ? { costCredits: response.usage.costCredits }
         : {}),
