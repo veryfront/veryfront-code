@@ -382,6 +382,9 @@ function modelSummary(
     ...(report.summary.usage?.costSource !== undefined
       ? { costSource: report.summary.usage.costSource }
       : {}),
+    ...(report.summary.usage?.billingMode !== undefined
+      ? { billingMode: report.summary.usage.billingMode }
+      : {}),
     ...(report.summary.usage?.usageCaptureStatus !== undefined
       ? { usageCaptureStatus: report.summary.usage.usageCaptureStatus }
       : {}),
@@ -647,8 +650,8 @@ export function createEvalModelComparisonMarkdown(comparison: EvalModelCompariso
     "",
     "## Models",
     "",
-    "| Model | Role | Passed | Failed | Pass rate | Groundedness | Input tok | Output tok | Total tok | Billable in | Billable out | Provider in USD | Provider out USD | Provider USD | Metered in USD | Metered out USD | Metered USD | Billed USD | Credits | Cost source | p95 ms |",
-    "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |",
+    "| Model | Role | Passed | Failed | Pass rate | Groundedness | Input tok | Output tok | Total tok | Billable in | Billable out | Provider in USD | Provider out USD | Provider USD | Metered in USD | Metered out USD | Metered USD | Billed USD | Credits | Cost source | Billing mode | p95 ms |",
+    "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | ---: |",
   ];
 
   for (const model of comparison.models) {
@@ -667,7 +670,7 @@ export function createEvalModelComparisonMarkdown(comparison: EvalModelCompariso
         costCell(model.veryfrontChargeUsd, model.costSource)
       } | ${costCell(model.veryfrontBilledUsd, model.costSource)} | ${
         decimalCell(model.costCredits)
-      } | ${model.costSource ?? "-"} | ${numberCell(model.p95Ms)} |`,
+      } | ${model.costSource ?? "-"} | ${model.billingMode ?? "-"} | ${numberCell(model.p95Ms)} |`,
     );
   }
 

@@ -370,6 +370,7 @@ export interface EvalUsageSummary {
   veryfrontBilledUsd?: number;
   costCredits?: number;
   costSource?: EvalUsageCostSource;
+  billingMode?: EvalUsageBillingMode;
   usageCaptureStatus?: EvalUsageCaptureStatus;
 }
 
@@ -488,6 +489,7 @@ export interface EvalModelReportSummary {
   veryfrontBilledUsd?: number;
   costCredits?: number;
   costSource?: EvalUsageCostSource;
+  billingMode?: EvalUsageBillingMode;
   usageCaptureStatus?: EvalUsageCaptureStatus;
   p95Ms?: number;
   groundednessScore?: number;

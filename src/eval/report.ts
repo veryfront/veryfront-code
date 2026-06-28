@@ -88,10 +88,19 @@ function summarizeUsageState<T extends "gateway" | "complete" | "missing" | "par
   return values.every((value) => value === first) ? first : "partial" as T;
 }
 
+function summarizeBillingMode(
+  values: Array<NonNullable<EvalUsageSummary["billingMode"]>>,
+): EvalUsageSummary["billingMode"] | undefined {
+  if (values.includes("deferred")) return "deferred";
+  if (values.includes("direct")) return "direct";
+  return undefined;
+}
+
 function summarizeUsage(records: EvalRecord[]): EvalUsageSummary {
   const summary: EvalUsageSummary = {};
   const costSources: Array<NonNullable<EvalUsageSummary["costSource"]>> = [];
   const captureStatuses: Array<NonNullable<EvalUsageSummary["usageCaptureStatus"]>> = [];
+  const billingModes: Array<NonNullable<EvalUsageSummary["billingMode"]>> = [];
   let hasExplicitCostSource = false;
   let hasExplicitCaptureStatus = false;
 
@@ -104,13 +113,18 @@ function summarizeUsage(records: EvalRecord[]): EvalUsageSummary {
     if (record.usage.usageCaptureStatus !== undefined) hasExplicitCaptureStatus = true;
     costSources.push(record.usage.costSource ?? "missing");
     captureStatuses.push(record.usage.usageCaptureStatus ?? "missing");
+    if (record.usage.billingMode !== undefined) {
+      billingModes.push(record.usage.billingMode);
+    }
   }
 
   const costSource = hasExplicitCostSource ? summarizeUsageState(costSources) : undefined;
   const usageCaptureStatus = hasExplicitCaptureStatus
     ? summarizeUsageState(captureStatuses)
     : undefined;
+  const billingMode = summarizeBillingMode(billingModes);
   if (costSource) summary.costSource = costSource;
+  if (billingMode) summary.billingMode = billingMode;
   if (usageCaptureStatus) summary.usageCaptureStatus = usageCaptureStatus;
   return summary;
 }

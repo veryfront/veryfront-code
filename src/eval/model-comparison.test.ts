@@ -25,6 +25,7 @@ function createReport(
     veryfrontBilledUsd?: number;
     costCredits?: number;
     costSource?: "gateway" | "missing" | "partial";
+    billingMode?: "direct" | "deferred";
     usageCaptureStatus?: "complete" | "partial" | "missing";
     p95Ms?: number;
     groundednessScore?: number;
@@ -110,6 +111,7 @@ function createReport(
         veryfrontBilledUsd: overrides.veryfrontBilledUsd,
         costCredits: overrides.costCredits,
         costSource: overrides.costSource,
+        billingMode: overrides.billingMode,
         usageCaptureStatus: overrides.usageCaptureStatus,
       },
       gateFailures: failed === 0 ? [] : [
@@ -518,6 +520,7 @@ describe("eval/model-comparison", () => {
           veryfrontBilledUsd: 1,
           costCredits: 10,
           costSource: "gateway",
+          billingMode: "deferred",
           usageCaptureStatus: "complete",
         }),
         createReport("moonshotai/kimi-k2.6", {
@@ -535,6 +538,7 @@ describe("eval/model-comparison", () => {
           veryfrontBilledUsd: 0.5,
           costCredits: 5,
           costSource: "gateway",
+          billingMode: "deferred",
           usageCaptureStatus: "complete",
         }),
       ],
@@ -554,7 +558,7 @@ describe("eval/model-comparison", () => {
     const markdown = createEvalModelComparisonMarkdown(comparison);
     assertEquals(
       markdown.includes(
-        "| Model | Role | Passed | Failed | Pass rate | Groundedness | Input tok | Output tok | Total tok | Billable in | Billable out | Provider in USD | Provider out USD | Provider USD | Metered in USD | Metered out USD | Metered USD | Billed USD | Credits | Cost source | p95 ms |",
+        "| Model | Role | Passed | Failed | Pass rate | Groundedness | Input tok | Output tok | Total tok | Billable in | Billable out | Provider in USD | Provider out USD | Provider USD | Metered in USD | Metered out USD | Metered USD | Billed USD | Credits | Cost source | Billing mode | p95 ms |",
       ),
       true,
     );
@@ -567,7 +571,7 @@ describe("eval/model-comparison", () => {
     );
     assertEquals(
       markdown.includes(
-        "| 7000 | 2000 | 9000 | 7000 | 2000 | 0.12 | 0.08 | 0.20 | 0.30 | 0.20 | 0.50 | 0.50 | 5.00 | gateway |",
+        "| 7000 | 2000 | 9000 | 7000 | 2000 | 0.12 | 0.08 | 0.20 | 0.30 | 0.20 | 0.50 | 0.50 | 5.00 | gateway | deferred |",
       ),
       true,
     );
