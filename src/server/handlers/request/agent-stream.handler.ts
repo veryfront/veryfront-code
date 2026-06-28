@@ -175,6 +175,33 @@ function getForwardedAllowedRemoteToolNames(
     : [];
 }
 
+function getForwardedIntegrationToolNames(
+  runtimeOverrides: Record<string, unknown>,
+): Set<string> {
+  const toolNames = new Set<string>();
+  const serverResolvedTools = runtimeOverrides.serverResolvedIntegrationTools;
+  if (Array.isArray(serverResolvedTools)) {
+    for (const toolName of serverResolvedTools) {
+      if (typeof toolName === "string" && toolName.length > 0) {
+        toolNames.add(toolName);
+      }
+    }
+  }
+
+  const definitions = runtimeOverrides.integrationToolDefinitions;
+  if (Array.isArray(definitions)) {
+    for (const definition of definitions) {
+      if (
+        isRecord(definition) && typeof definition.name === "string" && definition.name.length > 0
+      ) {
+        toolNames.add(definition.name);
+      }
+    }
+  }
+
+  return toolNames;
+}
+
 function getRequestedStudioToolNames(input: {
   forwardedProps?: Record<string, unknown>;
   availableToolNames?: string[];
@@ -213,12 +240,14 @@ function sanitizeForwardedRuntimeAllowedTools(input: {
   }
 
   const availableToolNames = new Set(input.availableToolNames);
+  const forwardedIntegrationToolNames = getForwardedIntegrationToolNames(runtimeOverrides);
   // Platform remote tools are gated separately by the child agent config in
   // withVeryfrontPlatformRemoteTools. The Studio path is the one that consumes
   // forwarded allowedTools, and Studio-only runtime tools are preserved only
   // for trusted Studio clients that can already attach the Studio MCP surface.
   const sanitizedAllowedTools = allowedTools.filter((toolName) =>
     availableToolNames.has(toolName) ||
+    forwardedIntegrationToolNames.has(toolName) ||
     (input.allowStudioRuntimeTools && STUDIO_RUNTIME_REMOTE_TOOL_NAMES.has(toolName))
   );
   if (sanitizedAllowedTools.length === allowedTools.length) {
