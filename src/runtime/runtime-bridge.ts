@@ -115,7 +115,11 @@ type DirectGenerateUsage = {
   billableInputTokens?: number;
   billableOutputTokens?: number;
   costUsd?: number;
+  providerInputCostUsd?: number;
+  providerOutputCostUsd?: number;
   providerCostUsd?: number;
+  veryfrontInputChargeUsd?: number;
+  veryfrontOutputChargeUsd?: number;
   veryfrontChargeUsd?: number;
   veryfrontBilledUsd?: number;
   costCredits?: number;
@@ -301,7 +305,11 @@ function normalizeUsage(usage: unknown): DirectGenerateUsage | undefined {
     billableInputTokens?: number;
     billableOutputTokens?: number;
     costUsd?: number;
+    providerInputCostUsd?: number;
+    providerOutputCostUsd?: number;
     providerCostUsd?: number;
+    veryfrontInputChargeUsd?: number;
+    veryfrontOutputChargeUsd?: number;
     veryfrontChargeUsd?: number;
     veryfrontBilledUsd?: number;
     costCredits?: number;
@@ -336,8 +344,20 @@ function normalizeUsage(usage: unknown): DirectGenerateUsage | undefined {
       ? { billableOutputTokens: flatUsage.billableOutputTokens }
       : {}),
     ...(typeof flatUsage.costUsd === "number" ? { costUsd: flatUsage.costUsd } : {}),
+    ...(typeof flatUsage.providerInputCostUsd === "number"
+      ? { providerInputCostUsd: flatUsage.providerInputCostUsd }
+      : {}),
+    ...(typeof flatUsage.providerOutputCostUsd === "number"
+      ? { providerOutputCostUsd: flatUsage.providerOutputCostUsd }
+      : {}),
     ...(typeof flatUsage.providerCostUsd === "number"
       ? { providerCostUsd: flatUsage.providerCostUsd }
+      : {}),
+    ...(typeof flatUsage.veryfrontInputChargeUsd === "number"
+      ? { veryfrontInputChargeUsd: flatUsage.veryfrontInputChargeUsd }
+      : {}),
+    ...(typeof flatUsage.veryfrontOutputChargeUsd === "number"
+      ? { veryfrontOutputChargeUsd: flatUsage.veryfrontOutputChargeUsd }
       : {}),
     ...(typeof flatUsage.veryfrontChargeUsd === "number"
       ? { veryfrontChargeUsd: flatUsage.veryfrontChargeUsd }
@@ -607,8 +627,20 @@ function streamUsageToGenerateUsage(
       ? { billableOutputTokens: totalUsage.billableOutputTokens }
       : {}),
     ...(totalUsage.costUsd !== undefined ? { costUsd: totalUsage.costUsd } : {}),
+    ...(totalUsage.providerInputCostUsd !== undefined
+      ? { providerInputCostUsd: totalUsage.providerInputCostUsd }
+      : {}),
+    ...(totalUsage.providerOutputCostUsd !== undefined
+      ? { providerOutputCostUsd: totalUsage.providerOutputCostUsd }
+      : {}),
     ...(totalUsage.providerCostUsd !== undefined
       ? { providerCostUsd: totalUsage.providerCostUsd }
+      : {}),
+    ...(totalUsage.veryfrontInputChargeUsd !== undefined
+      ? { veryfrontInputChargeUsd: totalUsage.veryfrontInputChargeUsd }
+      : {}),
+    ...(totalUsage.veryfrontOutputChargeUsd !== undefined
+      ? { veryfrontOutputChargeUsd: totalUsage.veryfrontOutputChargeUsd }
       : {}),
     ...(totalUsage.veryfrontChargeUsd !== undefined
       ? { veryfrontChargeUsd: totalUsage.veryfrontChargeUsd }
@@ -793,8 +825,20 @@ function normalizeStreamPart(part: unknown): unknown {
             ? { billableOutputTokens: usage.billableOutputTokens }
             : {}),
           ...(usage.costUsd !== undefined ? { costUsd: usage.costUsd } : {}),
+          ...(usage.providerInputCostUsd !== undefined
+            ? { providerInputCostUsd: usage.providerInputCostUsd }
+            : {}),
+          ...(usage.providerOutputCostUsd !== undefined
+            ? { providerOutputCostUsd: usage.providerOutputCostUsd }
+            : {}),
           ...(usage.providerCostUsd !== undefined
             ? { providerCostUsd: usage.providerCostUsd }
+            : {}),
+          ...(usage.veryfrontInputChargeUsd !== undefined
+            ? { veryfrontInputChargeUsd: usage.veryfrontInputChargeUsd }
+            : {}),
+          ...(usage.veryfrontOutputChargeUsd !== undefined
+            ? { veryfrontOutputChargeUsd: usage.veryfrontOutputChargeUsd }
             : {}),
           ...(usage.veryfrontChargeUsd !== undefined
             ? { veryfrontChargeUsd: usage.veryfrontChargeUsd }

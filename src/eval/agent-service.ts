@@ -388,8 +388,16 @@ function createUsageFromRecord(record: Record<string, unknown>): EvalUsage | und
     readNumber(record.cacheReadTokens) ??
     readNumber(record.cache_read_input_tokens);
   const reasoningTokens = readNumber(record.reasoningTokens) ?? readNumber(record.reasoning_tokens);
+  const providerInputCostUsd = readNumber(record.providerInputCostUsd) ??
+    readNumber(record.provider_input_cost_usd);
+  const providerOutputCostUsd = readNumber(record.providerOutputCostUsd) ??
+    readNumber(record.provider_output_cost_usd);
   const providerCostUsd = readNumber(record.providerCostUsd) ??
     readNumber(record.provider_cost_usd);
+  const veryfrontInputChargeUsd = readNumber(record.veryfrontInputChargeUsd) ??
+    readNumber(record.veryfront_input_charge_usd);
+  const veryfrontOutputChargeUsd = readNumber(record.veryfrontOutputChargeUsd) ??
+    readNumber(record.veryfront_output_charge_usd);
   const veryfrontChargeUsd = readNumber(record.veryfrontChargeUsd) ??
     readNumber(record.veryfront_charge_usd);
   const veryfrontBilledUsd = readNumber(record.veryfrontBilledUsd) ??
@@ -414,7 +422,11 @@ function createUsageFromRecord(record: Record<string, unknown>): EvalUsage | und
     ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
     ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
     ...(costUsd !== undefined ? { costUsd } : {}),
+    ...(providerInputCostUsd !== undefined ? { providerInputCostUsd } : {}),
+    ...(providerOutputCostUsd !== undefined ? { providerOutputCostUsd } : {}),
     ...(providerCostUsd !== undefined ? { providerCostUsd } : {}),
+    ...(veryfrontInputChargeUsd !== undefined ? { veryfrontInputChargeUsd } : {}),
+    ...(veryfrontOutputChargeUsd !== undefined ? { veryfrontOutputChargeUsd } : {}),
     ...(veryfrontChargeUsd !== undefined ? { veryfrontChargeUsd } : {}),
     ...(veryfrontBilledUsd !== undefined ? { veryfrontBilledUsd } : {}),
     ...(costCredits !== undefined ? { costCredits } : {}),

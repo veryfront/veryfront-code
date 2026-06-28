@@ -72,8 +72,20 @@ export function createAgUiBrowserFinalizeTracker<TChunk>(
       if (typeof nextMetadata.providerCostUsd === "number") {
         metadata.providerCostUsd = nextMetadata.providerCostUsd;
       }
+      if (typeof nextMetadata.providerInputCostUsd === "number") {
+        metadata.providerInputCostUsd = nextMetadata.providerInputCostUsd;
+      }
+      if (typeof nextMetadata.providerOutputCostUsd === "number") {
+        metadata.providerOutputCostUsd = nextMetadata.providerOutputCostUsd;
+      }
       if (typeof nextMetadata.veryfrontChargeUsd === "number") {
         metadata.veryfrontChargeUsd = nextMetadata.veryfrontChargeUsd;
+      }
+      if (typeof nextMetadata.veryfrontInputChargeUsd === "number") {
+        metadata.veryfrontInputChargeUsd = nextMetadata.veryfrontInputChargeUsd;
+      }
+      if (typeof nextMetadata.veryfrontOutputChargeUsd === "number") {
+        metadata.veryfrontOutputChargeUsd = nextMetadata.veryfrontOutputChargeUsd;
       }
       if (typeof nextMetadata.veryfrontBilledUsd === "number") {
         metadata.veryfrontBilledUsd = nextMetadata.veryfrontBilledUsd;

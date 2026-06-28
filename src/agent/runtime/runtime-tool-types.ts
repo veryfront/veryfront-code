@@ -34,7 +34,11 @@ export interface RuntimeGenerateUsage {
   billableInputTokens?: number;
   billableOutputTokens?: number;
   costUsd?: number;
+  providerInputCostUsd?: number;
+  providerOutputCostUsd?: number;
   providerCostUsd?: number;
+  veryfrontInputChargeUsd?: number;
+  veryfrontOutputChargeUsd?: number;
   veryfrontChargeUsd?: number;
   veryfrontBilledUsd?: number;
   costCredits?: number;
@@ -149,7 +153,11 @@ export type RuntimeStreamPart =
       billableInputTokens?: number;
       billableOutputTokens?: number;
       costUsd?: number;
+      providerInputCostUsd?: number;
+      providerOutputCostUsd?: number;
       providerCostUsd?: number;
+      veryfrontInputChargeUsd?: number;
+      veryfrontOutputChargeUsd?: number;
       veryfrontChargeUsd?: number;
       veryfrontBilledUsd?: number;
       costCredits?: number;

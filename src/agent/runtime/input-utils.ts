@@ -40,7 +40,11 @@ export function accumulateUsage(
     billableInputTokens?: number;
     billableOutputTokens?: number;
     costUsd?: number;
+    providerInputCostUsd?: number;
+    providerOutputCostUsd?: number;
     providerCostUsd?: number;
+    veryfrontInputChargeUsd?: number;
+    veryfrontOutputChargeUsd?: number;
     veryfrontChargeUsd?: number;
     veryfrontBilledUsd?: number;
     costCredits?: number;
@@ -58,7 +62,11 @@ export function accumulateUsage(
     billableInputTokens?: number;
     billableOutputTokens?: number;
     costUsd?: number;
+    providerInputCostUsd?: number;
+    providerOutputCostUsd?: number;
     providerCostUsd?: number;
+    veryfrontInputChargeUsd?: number;
+    veryfrontOutputChargeUsd?: number;
     veryfrontChargeUsd?: number;
     veryfrontBilledUsd?: number;
     costCredits?: number;
@@ -94,8 +102,22 @@ export function accumulateUsage(
   if (typeof usage.providerCostUsd === "number") {
     total.providerCostUsd = (total.providerCostUsd ?? 0) + usage.providerCostUsd;
   }
+  if (typeof usage.providerInputCostUsd === "number") {
+    total.providerInputCostUsd = (total.providerInputCostUsd ?? 0) + usage.providerInputCostUsd;
+  }
+  if (typeof usage.providerOutputCostUsd === "number") {
+    total.providerOutputCostUsd = (total.providerOutputCostUsd ?? 0) + usage.providerOutputCostUsd;
+  }
   if (typeof usage.veryfrontChargeUsd === "number") {
     total.veryfrontChargeUsd = (total.veryfrontChargeUsd ?? 0) + usage.veryfrontChargeUsd;
+  }
+  if (typeof usage.veryfrontInputChargeUsd === "number") {
+    total.veryfrontInputChargeUsd = (total.veryfrontInputChargeUsd ?? 0) +
+      usage.veryfrontInputChargeUsd;
+  }
+  if (typeof usage.veryfrontOutputChargeUsd === "number") {
+    total.veryfrontOutputChargeUsd = (total.veryfrontOutputChargeUsd ?? 0) +
+      usage.veryfrontOutputChargeUsd;
   }
   if (typeof usage.veryfrontBilledUsd === "number") {
     total.veryfrontBilledUsd = (total.veryfrontBilledUsd ?? 0) + usage.veryfrontBilledUsd;

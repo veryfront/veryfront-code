@@ -83,7 +83,11 @@ function createReport(): EvalReport {
         totalTokens: 120,
         billableInputTokens: 90,
         billableOutputTokens: 18,
+        providerInputCostUsd: 0.0004,
+        providerOutputCostUsd: 0.0006,
         providerCostUsd: 0.001,
+        veryfrontInputChargeUsd: 0.001,
+        veryfrontOutputChargeUsd: 0.0015,
         veryfrontChargeUsd: 0.0025,
         veryfrontBilledUsd: 0.1,
         costCredits: 1,
@@ -227,7 +231,11 @@ describe("eval CLI command helpers", () => {
         billableInputTokens: 10,
         billableOutputTokens: 5,
         costUsd: 0.001,
+        providerInputCostUsd: 0.0004,
+        providerOutputCostUsd: 0.0006,
         providerCostUsd: 0.001,
+        veryfrontInputChargeUsd: 0.001,
+        veryfrontOutputChargeUsd: 0.0015,
         veryfrontChargeUsd: 0.0025,
         veryfrontBilledUsd: 0.1,
         costCredits: 0.025,
@@ -247,7 +255,11 @@ describe("eval CLI command helpers", () => {
       billableInputTokens: 10,
       billableOutputTokens: 5,
       costUsd: 0.001,
+      providerInputCostUsd: 0.0004,
+      providerOutputCostUsd: 0.0006,
       providerCostUsd: 0.001,
+      veryfrontInputChargeUsd: 0.001,
+      veryfrontOutputChargeUsd: 0.0015,
       veryfrontChargeUsd: 0.0025,
       veryfrontBilledUsd: 0.1,
       costCredits: 0.025,
@@ -428,6 +440,10 @@ describe("eval CLI command helpers", () => {
 
     assertStringIncludes(markdown, "# Eval report: eval:answers");
     assertStringIncludes(markdown, "Result: `1/2 passed (50%)`");
+    assertStringIncludes(markdown, "| Provider input cost USD | `$0.0004` |");
+    assertStringIncludes(markdown, "| Provider output cost USD | `$0.0006` |");
+    assertStringIncludes(markdown, "| Veryfront input charge USD | `$0.001` |");
+    assertStringIncludes(markdown, "| Veryfront output charge USD | `$0.0015` |");
     assertStringIncludes(markdown, "| Veryfront billed USD | `$0.10` |");
     assertStringIncludes(markdown, "| `q1:1` | PASS | 0.012s | 12 | `$0.06` | 0.6 |");
     assertStringIncludes(markdown, "| `q2:1` | FAIL | 0.010s | 10 | `$0.04` | 0.4 |");

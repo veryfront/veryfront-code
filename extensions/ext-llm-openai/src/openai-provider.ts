@@ -82,7 +82,11 @@ type RuntimeUsage = {
   billableInputTokens?: number;
   billableOutputTokens?: number;
   costUsd?: number;
+  providerInputCostUsd?: number;
+  providerOutputCostUsd?: number;
   providerCostUsd?: number;
+  veryfrontInputChargeUsd?: number;
+  veryfrontOutputChargeUsd?: number;
   veryfrontChargeUsd?: number;
   veryfrontBilledUsd?: number;
   costCredits?: number;
@@ -175,8 +179,20 @@ function extractOpenAIUsage(payload: unknown): RuntimeUsage | undefined {
       ? { billableOutputTokens: veryfront.billable_output_tokens }
       : {}),
     ...(typeof veryfront?.cost_usd === "number" ? { costUsd: veryfront.cost_usd } : {}),
+    ...(typeof veryfront?.provider_input_cost_usd === "number"
+      ? { providerInputCostUsd: veryfront.provider_input_cost_usd }
+      : {}),
+    ...(typeof veryfront?.provider_output_cost_usd === "number"
+      ? { providerOutputCostUsd: veryfront.provider_output_cost_usd }
+      : {}),
     ...(typeof veryfront?.provider_cost_usd === "number"
       ? { providerCostUsd: veryfront.provider_cost_usd }
+      : {}),
+    ...(typeof veryfront?.veryfront_input_charge_usd === "number"
+      ? { veryfrontInputChargeUsd: veryfront.veryfront_input_charge_usd }
+      : {}),
+    ...(typeof veryfront?.veryfront_output_charge_usd === "number"
+      ? { veryfrontOutputChargeUsd: veryfront.veryfront_output_charge_usd }
       : {}),
     ...(typeof veryfront?.veryfront_charge_usd === "number"
       ? { veryfrontChargeUsd: veryfront.veryfront_charge_usd }

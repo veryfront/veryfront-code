@@ -7,6 +7,19 @@ type RuntimeUsage = {
   cacheCreationInputTokens?: number;
   cacheReadInputTokens?: number;
   reasoningTokens?: number;
+  billableInputTokens?: number;
+  billableOutputTokens?: number;
+  costUsd?: number;
+  providerInputCostUsd?: number;
+  providerOutputCostUsd?: number;
+  providerCostUsd?: number;
+  veryfrontInputChargeUsd?: number;
+  veryfrontOutputChargeUsd?: number;
+  veryfrontChargeUsd?: number;
+  veryfrontBilledUsd?: number;
+  costCredits?: number;
+  costSource?: "gateway" | "missing" | "partial";
+  usageCaptureStatus?: "complete" | "partial" | "missing";
 };
 
 type OpenAIResponsesStreamReasoningState = {
@@ -44,6 +57,9 @@ export function extractOpenAIResponsesUsage(payload: unknown): RuntimeUsage | un
   const cachedTokens = inputDetails?.cached_tokens;
   const outputDetails = readRecord(usage.output_tokens_details);
   const reasoningTokens = outputDetails?.reasoning_tokens;
+  const veryfront = readRecord(usage.veryfront);
+  const costSource = veryfront?.cost_source;
+  const usageCaptureStatus = veryfront?.usage_capture_status;
 
   return {
     inputTokens,
@@ -51,6 +67,43 @@ export function extractOpenAIResponsesUsage(payload: unknown): RuntimeUsage | un
     totalTokens,
     ...(typeof cachedTokens === "number" ? { cacheReadInputTokens: cachedTokens } : {}),
     ...(typeof reasoningTokens === "number" ? { reasoningTokens } : {}),
+    ...(typeof veryfront?.billable_input_tokens === "number"
+      ? { billableInputTokens: veryfront.billable_input_tokens }
+      : {}),
+    ...(typeof veryfront?.billable_output_tokens === "number"
+      ? { billableOutputTokens: veryfront.billable_output_tokens }
+      : {}),
+    ...(typeof veryfront?.cost_usd === "number" ? { costUsd: veryfront.cost_usd } : {}),
+    ...(typeof veryfront?.provider_input_cost_usd === "number"
+      ? { providerInputCostUsd: veryfront.provider_input_cost_usd }
+      : {}),
+    ...(typeof veryfront?.provider_output_cost_usd === "number"
+      ? { providerOutputCostUsd: veryfront.provider_output_cost_usd }
+      : {}),
+    ...(typeof veryfront?.provider_cost_usd === "number"
+      ? { providerCostUsd: veryfront.provider_cost_usd }
+      : {}),
+    ...(typeof veryfront?.veryfront_input_charge_usd === "number"
+      ? { veryfrontInputChargeUsd: veryfront.veryfront_input_charge_usd }
+      : {}),
+    ...(typeof veryfront?.veryfront_output_charge_usd === "number"
+      ? { veryfrontOutputChargeUsd: veryfront.veryfront_output_charge_usd }
+      : {}),
+    ...(typeof veryfront?.veryfront_charge_usd === "number"
+      ? { veryfrontChargeUsd: veryfront.veryfront_charge_usd }
+      : {}),
+    ...(typeof veryfront?.veryfront_billed_usd === "number"
+      ? { veryfrontBilledUsd: veryfront.veryfront_billed_usd }
+      : {}),
+    ...(typeof veryfront?.cost_credits === "number" ? { costCredits: veryfront.cost_credits } : {}),
+    ...(costSource === "gateway" || costSource === "missing" || costSource === "partial"
+      ? { costSource }
+      : {}),
+    ...(usageCaptureStatus === "complete" ||
+        usageCaptureStatus === "missing" ||
+        usageCaptureStatus === "partial"
+      ? { usageCaptureStatus }
+      : {}),
   };
 }
 

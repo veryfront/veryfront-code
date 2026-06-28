@@ -75,7 +75,11 @@ export interface EvalUsage {
   cacheReadInputTokens?: number;
   reasoningTokens?: number;
   costUsd?: number;
+  providerInputCostUsd?: number;
+  providerOutputCostUsd?: number;
   providerCostUsd?: number;
+  veryfrontInputChargeUsd?: number;
+  veryfrontOutputChargeUsd?: number;
   veryfrontChargeUsd?: number;
   veryfrontBilledUsd?: number;
   costCredits?: number;
@@ -353,7 +357,11 @@ export interface EvalUsageSummary {
   cacheReadInputTokens?: number;
   reasoningTokens?: number;
   costUsd?: number;
+  providerInputCostUsd?: number;
+  providerOutputCostUsd?: number;
   providerCostUsd?: number;
+  veryfrontInputChargeUsd?: number;
+  veryfrontOutputChargeUsd?: number;
   veryfrontChargeUsd?: number;
   veryfrontBilledUsd?: number;
   costCredits?: number;
@@ -467,7 +475,11 @@ export interface EvalModelReportSummary {
   billableInputTokens?: number;
   billableOutputTokens?: number;
   costUsd?: number;
+  providerInputCostUsd?: number;
+  providerOutputCostUsd?: number;
   providerCostUsd?: number;
+  veryfrontInputChargeUsd?: number;
+  veryfrontOutputChargeUsd?: number;
   veryfrontChargeUsd?: number;
   veryfrontBilledUsd?: number;
   costCredits?: number;
@@ -526,7 +538,11 @@ export type EvalModelComparisonMetricName =
   | "billableInputTokens"
   | "billableOutputTokens"
   | "costUsd"
+  | "providerInputCostUsd"
+  | "providerOutputCostUsd"
   | "providerCostUsd"
+  | "veryfrontInputChargeUsd"
+  | "veryfrontOutputChargeUsd"
   | "veryfrontChargeUsd"
   | "veryfrontBilledUsd"
   | "costCredits"

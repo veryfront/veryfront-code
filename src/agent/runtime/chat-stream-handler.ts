@@ -80,7 +80,11 @@ export interface ChatStreamState {
     billableInputTokens?: number;
     billableOutputTokens?: number;
     costUsd?: number;
+    providerInputCostUsd?: number;
+    providerOutputCostUsd?: number;
     providerCostUsd?: number;
+    veryfrontInputChargeUsd?: number;
+    veryfrontOutputChargeUsd?: number;
     veryfrontChargeUsd?: number;
     veryfrontBilledUsd?: number;
     costCredits?: number;
@@ -102,7 +106,11 @@ export interface ChatStreamCallbacks {
     billableInputTokens?: number;
     billableOutputTokens?: number;
     costUsd?: number;
+    providerInputCostUsd?: number;
+    providerOutputCostUsd?: number;
     providerCostUsd?: number;
+    veryfrontInputChargeUsd?: number;
+    veryfrontOutputChargeUsd?: number;
     veryfrontChargeUsd?: number;
     veryfrontBilledUsd?: number;
     costCredits?: number;
@@ -1019,8 +1027,20 @@ export function processStream(
               ...(typedPart.totalUsage.costUsd !== undefined
                 ? { costUsd: typedPart.totalUsage.costUsd }
                 : {}),
+              ...(typedPart.totalUsage.providerInputCostUsd !== undefined
+                ? { providerInputCostUsd: typedPart.totalUsage.providerInputCostUsd }
+                : {}),
+              ...(typedPart.totalUsage.providerOutputCostUsd !== undefined
+                ? { providerOutputCostUsd: typedPart.totalUsage.providerOutputCostUsd }
+                : {}),
               ...(typedPart.totalUsage.providerCostUsd !== undefined
                 ? { providerCostUsd: typedPart.totalUsage.providerCostUsd }
+                : {}),
+              ...(typedPart.totalUsage.veryfrontInputChargeUsd !== undefined
+                ? { veryfrontInputChargeUsd: typedPart.totalUsage.veryfrontInputChargeUsd }
+                : {}),
+              ...(typedPart.totalUsage.veryfrontOutputChargeUsd !== undefined
+                ? { veryfrontOutputChargeUsd: typedPart.totalUsage.veryfrontOutputChargeUsd }
                 : {}),
               ...(typedPart.totalUsage.veryfrontChargeUsd !== undefined
                 ? { veryfrontChargeUsd: typedPart.totalUsage.veryfrontChargeUsd }
