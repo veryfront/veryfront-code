@@ -221,4 +221,32 @@ describe("eval/report", () => {
       },
     });
   });
+
+  it("does not derive billed USD from gateway credits", () => {
+    const summary = summarizeEvalRecords([
+      createRecord({
+        id: "q1:1",
+        usage: {
+          inputTokens: 10,
+          outputTokens: 5,
+          veryfrontChargeUsd: 0.01,
+          costCredits: 4,
+          costSource: "gateway",
+        },
+      }),
+      createRecord({
+        id: "q2:1",
+        usage: {
+          inputTokens: 20,
+          outputTokens: 10,
+          veryfrontChargeUsd: 0.02,
+          costCredits: 16,
+          costSource: "gateway",
+        },
+      }),
+    ]);
+
+    assertEquals(summary.usage?.veryfrontBilledUsd, undefined);
+    assertEquals(summary.usage?.costCredits, 20);
+  });
 });

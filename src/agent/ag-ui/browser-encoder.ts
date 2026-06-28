@@ -376,6 +376,25 @@ export function buildAgUiBrowserFinalizeResponse(
       ...(typeof metadata.reasoningTokens === "number"
         ? { reasoningTokens: metadata.reasoningTokens }
         : {}),
+      ...(typeof metadata.billableInputTokens === "number"
+        ? { billableInputTokens: metadata.billableInputTokens }
+        : {}),
+      ...(typeof metadata.billableOutputTokens === "number"
+        ? { billableOutputTokens: metadata.billableOutputTokens }
+        : {}),
+      ...(typeof metadata.costUsd === "number" ? { costUsd: metadata.costUsd } : {}),
+      ...(typeof metadata.providerCostUsd === "number"
+        ? { providerCostUsd: metadata.providerCostUsd }
+        : {}),
+      ...(typeof metadata.veryfrontChargeUsd === "number"
+        ? { veryfrontChargeUsd: metadata.veryfrontChargeUsd }
+        : {}),
+      ...(typeof metadata.veryfrontBilledUsd === "number"
+        ? { veryfrontBilledUsd: metadata.veryfrontBilledUsd }
+        : {}),
+      ...(typeof metadata.costCredits === "number" ? { costCredits: metadata.costCredits } : {}),
+      ...(metadata.costSource ? { costSource: metadata.costSource } : {}),
+      ...(metadata.usageCaptureStatus ? { usageCaptureStatus: metadata.usageCaptureStatus } : {}),
     }
     : undefined;
 

@@ -95,20 +95,60 @@ function comparisonCost(summary: EvalModelReportSummary): number | undefined {
     summary.providerCostUsd;
 }
 
-function hasGatewayBilledCost(
+function defaultCostComparison(
   baselineSummary: EvalModelReportSummary,
   candidateSummary: EvalModelReportSummary,
-): boolean {
-  return baselineSummary.veryfrontBilledUsd !== undefined &&
-    candidateSummary.veryfrontBilledUsd !== undefined;
-}
-
-function hasGatewayMeteredCost(
-  baselineSummary: EvalModelReportSummary,
-  candidateSummary: EvalModelReportSummary,
-): boolean {
-  return baselineSummary.veryfrontChargeUsd !== undefined &&
-    candidateSummary.veryfrontChargeUsd !== undefined;
+): { baseline: number; candidate: number; label: string } | undefined {
+  if (
+    baselineSummary.veryfrontBilledUsd !== undefined &&
+    candidateSummary.veryfrontBilledUsd !== undefined
+  ) {
+    return {
+      baseline: baselineSummary.veryfrontBilledUsd,
+      candidate: candidateSummary.veryfrontBilledUsd,
+      label: "Veryfront billed cost",
+    };
+  }
+  if (
+    baselineSummary.costSource === "gateway" &&
+    candidateSummary.costSource === "gateway" &&
+    baselineSummary.costCredits !== undefined &&
+    candidateSummary.costCredits !== undefined
+  ) {
+    return {
+      baseline: baselineSummary.costCredits,
+      candidate: candidateSummary.costCredits,
+      label: "Veryfront credits",
+    };
+  }
+  if (
+    baselineSummary.veryfrontChargeUsd !== undefined &&
+    candidateSummary.veryfrontChargeUsd !== undefined
+  ) {
+    return {
+      baseline: baselineSummary.veryfrontChargeUsd,
+      candidate: candidateSummary.veryfrontChargeUsd,
+      label: "Veryfront metered cost",
+    };
+  }
+  if (baselineSummary.costUsd !== undefined && candidateSummary.costUsd !== undefined) {
+    return {
+      baseline: baselineSummary.costUsd,
+      candidate: candidateSummary.costUsd,
+      label: "cost",
+    };
+  }
+  if (
+    baselineSummary.providerCostUsd !== undefined &&
+    candidateSummary.providerCostUsd !== undefined
+  ) {
+    return {
+      baseline: baselineSummary.providerCostUsd,
+      candidate: candidateSummary.providerCostUsd,
+      label: "provider cost",
+    };
+  }
+  return undefined;
 }
 
 function metricValue(
@@ -399,24 +439,26 @@ function createCandidateDecision(input: {
     return { decision: "needs-review", objectiveScore: objective.score, reasons };
   }
 
-  const costImprovement = improvementPct(
-    comparisonCost(baselineSummary),
-    comparisonCost(candidateSummary),
-  );
+  const costComparison = defaultCostComparison(baselineSummary, candidateSummary);
+  const costImprovement = improvementPct(costComparison?.baseline, costComparison?.candidate);
   const tokenImprovement = improvementPct(
     baselineSummary.totalTokens,
     candidateSummary.totalTokens,
   );
   const latencyImprovement = improvementPct(baselineSummary.p95Ms, candidateSummary.p95Ms);
 
-  if (meetsImprovement(costImprovement, input.options.minCostImprovementPct)) {
-    const costLabel = hasGatewayBilledCost(baselineSummary, candidateSummary)
-      ? "Veryfront billed cost"
-      : hasGatewayMeteredCost(baselineSummary, candidateSummary)
-      ? "Veryfront metered cost"
-      : "cost";
+  if (
+    costComparison !== undefined && costImprovement !== undefined && costImprovement < 0
+  ) {
     reasons.push(
-      `${costLabel} improved by ${formatPct(costImprovement!)}`,
+      `${costComparison.label} regressed by ${formatPct(Math.abs(costImprovement))}`,
+    );
+    return { decision: "needs-review", reasons };
+  }
+
+  if (meetsImprovement(costImprovement, input.options.minCostImprovementPct)) {
+    reasons.push(
+      `${costComparison!.label} improved by ${formatPct(costImprovement!)}`,
     );
     return { decision: "promote-candidate", reasons };
   }
@@ -442,10 +484,8 @@ function compareCandidate(
   const candidateSummary = modelSummary(candidate, options.baselineModel);
   const baselineSummary = modelSummary(baseline, options.baselineModel);
   const decision = createCandidateDecision({ candidate, baseline, options });
-  const costImprovement = improvementPct(
-    comparisonCost(baselineSummary),
-    comparisonCost(candidateSummary),
-  );
+  const costComparison = defaultCostComparison(baselineSummary, candidateSummary);
+  const costImprovement = improvementPct(costComparison?.baseline, costComparison?.candidate);
   const tokenImprovement = improvementPct(
     baselineSummary.totalTokens,
     candidateSummary.totalTokens,
