@@ -215,7 +215,7 @@ describe("eval/model-comparison", () => {
     assertEquals(comparison.recommendation.decision, "promote-candidate");
   });
 
-  it("uses billed Veryfront cost before metered gateway charge for cost decisions", () => {
+  it("uses metered Veryfront cost before billed gateway cost for optimization decisions", () => {
     const comparison = compareEvalModelReports(
       [
         createReport("anthropic/claude-sonnet-4-6", {
@@ -234,10 +234,14 @@ describe("eval/model-comparison", () => {
       { baselineModel: "anthropic/claude-sonnet-4-6" },
     );
 
-    assertEquals(comparison.candidates[0]?.decision, "needs-review");
-    assertEquals(comparison.candidates[0]?.costImprovementPct, -2.75);
+    assertEquals(comparison.candidates[0]?.decision, "promote-candidate");
+    assertEquals(comparison.candidates[0]?.costImprovementPct, 0.4285714285714286);
     assertEquals(comparison.models[0]?.veryfrontBilledUsd, 0.4);
     assertEquals(comparison.models[1]?.veryfrontBilledUsd, 1.5);
+    assertEquals(
+      comparison.candidates[0]?.reasons.includes("Veryfront metered cost improved by 43%"),
+      true,
+    );
   });
 
   it("uses metered gateway cost before credits when billed USD is omitted", () => {
@@ -289,17 +293,19 @@ describe("eval/model-comparison", () => {
     );
   });
 
-  it("does not promote token savings when billed Veryfront cost regresses", () => {
+  it("does not promote token savings when metered Veryfront cost regresses", () => {
     const comparison = compareEvalModelReports(
       [
         createReport("anthropic/claude-sonnet-4-6", {
           totalTokens: 10_000,
+          veryfrontChargeUsd: 0.4,
           veryfrontBilledUsd: 0.4,
           costCredits: 4,
           costSource: "gateway",
         }),
         createReport("moonshotai/kimi-k2.6", {
           totalTokens: 6_000,
+          veryfrontChargeUsd: 1.6,
           veryfrontBilledUsd: 1.6,
           costCredits: 16,
           costSource: "gateway",
@@ -311,7 +317,7 @@ describe("eval/model-comparison", () => {
     assertEquals(comparison.candidates[0]?.decision, "needs-review");
     assertEquals(comparison.recommendation.decision, "needs-review");
     assertEquals(
-      comparison.candidates[0]?.reasons.includes("Veryfront billed cost regressed by 300%"),
+      comparison.candidates[0]?.reasons.includes("Veryfront metered cost regressed by 300%"),
       true,
     );
   });
@@ -494,7 +500,7 @@ describe("eval/model-comparison", () => {
     );
   });
 
-  it("derives billed gateway cost for comparison and shows token/cost breakdowns", () => {
+  it("uses metered gateway cost for comparison and shows token/cost breakdowns", () => {
     const comparison = compareEvalModelReports(
       [
         createReport("anthropic/claude-opus-4-6", {
@@ -541,7 +547,7 @@ describe("eval/model-comparison", () => {
       reasons: [
         "candidate has no quality regressions",
         "groundedness is at or above 0.8",
-        "Veryfront billed cost improved by 50%",
+        "Veryfront metered cost improved by 50%",
       ],
     });
 
@@ -555,7 +561,7 @@ describe("eval/model-comparison", () => {
     assertEquals(markdown.includes("| moonshotai/kimi-k2.6 | candidate |"), true);
     assertEquals(
       markdown.includes(
-        "Metered USD is the token-metered Veryfront charge before billing minimums.",
+        "Model optimization uses Metered USD by default: the token-metered Veryfront charge before billing minimums.",
       ),
       true,
     );
