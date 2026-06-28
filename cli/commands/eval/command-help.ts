@@ -20,7 +20,7 @@ export const evalHelp: CommandHelp = {
     },
     {
       flag: "--report-dir <path>",
-      description: "Write summary.json and results.jsonl artifacts to a directory",
+      description: "Write summary.json, results.jsonl, and report.md artifacts to a directory",
     },
     {
       flag: "--junit <path>",
