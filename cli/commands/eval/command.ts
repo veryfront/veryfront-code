@@ -488,7 +488,11 @@ function usageRows(usage: EvalUsage | undefined): Array<[string, string]> {
     ["Total tokens", numberCell(usage.totalTokens)],
     ["Billable input tokens", numberCell(usage.billableInputTokens)],
     ["Billable output tokens", numberCell(usage.billableOutputTokens)],
+    ["Provider input cost USD", usdCell(usage.providerInputCostUsd)],
+    ["Provider output cost USD", usdCell(usage.providerOutputCostUsd)],
     ["Provider cost USD", usdCell(usage.providerCostUsd ?? usage.costUsd)],
+    ["Veryfront input charge USD", usdCell(usage.veryfrontInputChargeUsd)],
+    ["Veryfront output charge USD", usdCell(usage.veryfrontOutputChargeUsd)],
     ["Veryfront charge USD", usdCell(usage.veryfrontChargeUsd)],
     ["Veryfront billed USD", usdCell(usage.veryfrontBilledUsd)],
     ["Cost credits", decimalCell(usage.costCredits)],
@@ -710,8 +714,20 @@ export function normalizeUsage(response: AgentResponse) {
         ? { billableOutputTokens: response.usage.billableOutputTokens }
         : {}),
       ...(response.usage.costUsd !== undefined ? { costUsd: response.usage.costUsd } : {}),
+      ...(response.usage.providerInputCostUsd !== undefined
+        ? { providerInputCostUsd: response.usage.providerInputCostUsd }
+        : {}),
+      ...(response.usage.providerOutputCostUsd !== undefined
+        ? { providerOutputCostUsd: response.usage.providerOutputCostUsd }
+        : {}),
       ...(response.usage.providerCostUsd !== undefined
         ? { providerCostUsd: response.usage.providerCostUsd }
+        : {}),
+      ...(response.usage.veryfrontInputChargeUsd !== undefined
+        ? { veryfrontInputChargeUsd: response.usage.veryfrontInputChargeUsd }
+        : {}),
+      ...(response.usage.veryfrontOutputChargeUsd !== undefined
+        ? { veryfrontOutputChargeUsd: response.usage.veryfrontOutputChargeUsd }
         : {}),
       ...(response.usage.veryfrontChargeUsd !== undefined
         ? { veryfrontChargeUsd: response.usage.veryfrontChargeUsd }

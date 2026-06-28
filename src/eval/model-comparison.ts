@@ -34,7 +34,11 @@ const LOWER_IS_BETTER = new Set<EvalModelComparisonMetricName>([
   "billableInputTokens",
   "billableOutputTokens",
   "costUsd",
+  "providerInputCostUsd",
+  "providerOutputCostUsd",
   "providerCostUsd",
+  "veryfrontInputChargeUsd",
+  "veryfrontOutputChargeUsd",
   "veryfrontChargeUsd",
   "veryfrontBilledUsd",
   "costCredits",
@@ -176,8 +180,16 @@ function metricValue(
       return summary.billableOutputTokens;
     case "costUsd":
       return comparisonCost(summary);
+    case "providerInputCostUsd":
+      return summary.providerInputCostUsd;
+    case "providerOutputCostUsd":
+      return summary.providerOutputCostUsd;
     case "providerCostUsd":
       return summary.providerCostUsd;
+    case "veryfrontInputChargeUsd":
+      return summary.veryfrontInputChargeUsd;
+    case "veryfrontOutputChargeUsd":
+      return summary.veryfrontOutputChargeUsd;
     case "veryfrontChargeUsd":
       return summary.veryfrontChargeUsd;
     case "veryfrontBilledUsd":
@@ -343,8 +355,20 @@ function modelSummary(
     ...(report.summary.usage?.costUsd !== undefined
       ? { costUsd: report.summary.usage.costUsd }
       : {}),
+    ...(report.summary.usage?.providerInputCostUsd !== undefined
+      ? { providerInputCostUsd: report.summary.usage.providerInputCostUsd }
+      : {}),
+    ...(report.summary.usage?.providerOutputCostUsd !== undefined
+      ? { providerOutputCostUsd: report.summary.usage.providerOutputCostUsd }
+      : {}),
     ...(report.summary.usage?.providerCostUsd !== undefined
       ? { providerCostUsd: report.summary.usage.providerCostUsd }
+      : {}),
+    ...(report.summary.usage?.veryfrontInputChargeUsd !== undefined
+      ? { veryfrontInputChargeUsd: report.summary.usage.veryfrontInputChargeUsd }
+      : {}),
+    ...(report.summary.usage?.veryfrontOutputChargeUsd !== undefined
+      ? { veryfrontOutputChargeUsd: report.summary.usage.veryfrontOutputChargeUsd }
       : {}),
     ...(report.summary.usage?.veryfrontChargeUsd !== undefined
       ? { veryfrontChargeUsd: report.summary.usage.veryfrontChargeUsd }
@@ -598,7 +622,11 @@ function costCell(
   value: number | undefined,
   costSource: EvalModelReportSummary["costSource"],
 ): string {
-  if (value !== undefined) return value.toFixed(2);
+  if (value !== undefined) {
+    const absolute = Math.abs(value);
+    if (absolute >= 0.01) return value.toFixed(2);
+    return value.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
+  }
   return costSource === "gateway" ? "-" : "not measured";
 }
 
@@ -619,8 +647,8 @@ export function createEvalModelComparisonMarkdown(comparison: EvalModelCompariso
     "",
     "## Models",
     "",
-    "| Model | Role | Passed | Failed | Pass rate | Groundedness | Input tok | Output tok | Total tok | Billable in | Billable out | Provider USD | Metered USD | Billed USD | Credits | Cost source | p95 ms |",
-    "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |",
+    "| Model | Role | Passed | Failed | Pass rate | Groundedness | Input tok | Output tok | Total tok | Billable in | Billable out | Provider in USD | Provider out USD | Provider USD | Metered in USD | Metered out USD | Metered USD | Billed USD | Credits | Cost source | p95 ms |",
+    "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |",
   ];
 
   for (const model of comparison.models) {
@@ -631,7 +659,11 @@ export function createEvalModelComparisonMarkdown(comparison: EvalModelCompariso
         numberCell(model.outputTokens)
       } | ${numberCell(model.totalTokens)} | ${numberCell(model.billableInputTokens)} | ${
         numberCell(model.billableOutputTokens)
+      } | ${costCell(model.providerInputCostUsd, model.costSource)} | ${
+        costCell(model.providerOutputCostUsd, model.costSource)
       } | ${costCell(model.providerCostUsd ?? model.costUsd, model.costSource)} | ${
+        costCell(model.veryfrontInputChargeUsd, model.costSource)
+      } | ${costCell(model.veryfrontOutputChargeUsd, model.costSource)} | ${
         costCell(model.veryfrontChargeUsd, model.costSource)
       } | ${costCell(model.veryfrontBilledUsd, model.costSource)} | ${
         decimalCell(model.costCredits)

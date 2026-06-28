@@ -17,7 +17,11 @@ describe("agent/ag-ui-browser-finalize-tracker", () => {
         reasoningTokens?: number;
       };
       providerCostUsd?: number;
+      providerInputCostUsd?: number;
+      providerOutputCostUsd?: number;
       veryfrontChargeUsd?: number;
+      veryfrontInputChargeUsd?: number;
+      veryfrontOutputChargeUsd?: number;
       veryfrontBilledUsd?: number;
       costCredits?: number;
       finishReason?: string;
@@ -32,7 +36,11 @@ describe("agent/ag-ui-browser-finalize-tracker", () => {
         cacheReadInputTokens: chunk.usage?.cacheReadInputTokens,
         reasoningTokens: chunk.usage?.reasoningTokens,
         providerCostUsd: chunk.providerCostUsd,
+        providerInputCostUsd: chunk.providerInputCostUsd,
+        providerOutputCostUsd: chunk.providerOutputCostUsd,
         veryfrontChargeUsd: chunk.veryfrontChargeUsd,
+        veryfrontInputChargeUsd: chunk.veryfrontInputChargeUsd,
+        veryfrontOutputChargeUsd: chunk.veryfrontOutputChargeUsd,
         veryfrontBilledUsd: chunk.veryfrontBilledUsd,
         costCredits: chunk.costCredits,
         costSource: "gateway",
@@ -52,7 +60,11 @@ describe("agent/ag-ui-browser-finalize-tracker", () => {
         reasoningTokens: 1,
       },
       providerCostUsd: 0.001,
+      providerInputCostUsd: 0.0004,
+      providerOutputCostUsd: 0.0006,
       veryfrontChargeUsd: 0.0025,
+      veryfrontInputChargeUsd: 0.001,
+      veryfrontOutputChargeUsd: 0.0015,
       veryfrontBilledUsd: 0.1,
       costCredits: 1,
       finishReason: "stop",
@@ -73,7 +85,11 @@ describe("agent/ag-ui-browser-finalize-tracker", () => {
         cacheCreationInputTokens: 4,
         cacheReadInputTokens: 2,
         reasoningTokens: 1,
+        providerInputCostUsd: 0.0004,
+        providerOutputCostUsd: 0.0006,
         providerCostUsd: 0.001,
+        veryfrontInputChargeUsd: 0.001,
+        veryfrontOutputChargeUsd: 0.0015,
         veryfrontChargeUsd: 0.0025,
         veryfrontBilledUsd: 0.1,
         costCredits: 1,
@@ -88,9 +104,13 @@ describe("agent/ag-ui-browser-finalize-tracker", () => {
         costCredits: 1,
         costSource: "gateway",
         finishReason: "stop",
+        providerInputCostUsd: 0.0004,
+        providerOutputCostUsd: 0.0006,
         providerCostUsd: 0.001,
         reasoningTokens: 1,
         veryfrontBilledUsd: 0.1,
+        veryfrontInputChargeUsd: 0.001,
+        veryfrontOutputChargeUsd: 0.0015,
         veryfrontChargeUsd: 0.0025,
       },
     });

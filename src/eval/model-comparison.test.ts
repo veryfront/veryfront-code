@@ -16,7 +16,11 @@ function createReport(
     billableInputTokens?: number;
     billableOutputTokens?: number;
     costUsd?: number;
+    providerInputCostUsd?: number;
+    providerOutputCostUsd?: number;
     providerCostUsd?: number;
+    veryfrontInputChargeUsd?: number;
+    veryfrontOutputChargeUsd?: number;
     veryfrontChargeUsd?: number;
     veryfrontBilledUsd?: number;
     costCredits?: number;
@@ -97,7 +101,11 @@ function createReport(
         billableInputTokens: overrides.billableInputTokens,
         billableOutputTokens: overrides.billableOutputTokens,
         costUsd: overrides.costUsd,
+        providerInputCostUsd: overrides.providerInputCostUsd,
+        providerOutputCostUsd: overrides.providerOutputCostUsd,
         providerCostUsd: overrides.providerCostUsd,
+        veryfrontInputChargeUsd: overrides.veryfrontInputChargeUsd,
+        veryfrontOutputChargeUsd: overrides.veryfrontOutputChargeUsd,
         veryfrontChargeUsd: overrides.veryfrontChargeUsd,
         veryfrontBilledUsd: overrides.veryfrontBilledUsd,
         costCredits: overrides.costCredits,
@@ -495,7 +503,11 @@ describe("eval/model-comparison", () => {
           totalTokens: 10_000,
           billableInputTokens: 8_000,
           billableOutputTokens: 2_000,
+          providerInputCostUsd: 0.3,
+          providerOutputCostUsd: 0.1,
           providerCostUsd: 0.4,
+          veryfrontInputChargeUsd: 0.75,
+          veryfrontOutputChargeUsd: 0.25,
           veryfrontChargeUsd: 1,
           veryfrontBilledUsd: 1,
           costCredits: 10,
@@ -508,7 +520,11 @@ describe("eval/model-comparison", () => {
           totalTokens: 9_000,
           billableInputTokens: 7_000,
           billableOutputTokens: 2_000,
+          providerInputCostUsd: 0.12,
+          providerOutputCostUsd: 0.08,
           providerCostUsd: 0.2,
+          veryfrontInputChargeUsd: 0.3,
+          veryfrontOutputChargeUsd: 0.2,
           veryfrontChargeUsd: 0.5,
           veryfrontBilledUsd: 0.5,
           costCredits: 5,
@@ -532,14 +548,14 @@ describe("eval/model-comparison", () => {
     const markdown = createEvalModelComparisonMarkdown(comparison);
     assertEquals(
       markdown.includes(
-        "| Model | Role | Passed | Failed | Pass rate | Groundedness | Input tok | Output tok | Total tok | Billable in | Billable out | Provider USD | Metered USD | Billed USD | Credits | Cost source | p95 ms |",
+        "| Model | Role | Passed | Failed | Pass rate | Groundedness | Input tok | Output tok | Total tok | Billable in | Billable out | Provider in USD | Provider out USD | Provider USD | Metered in USD | Metered out USD | Metered USD | Billed USD | Credits | Cost source | p95 ms |",
       ),
       true,
     );
     assertEquals(markdown.includes("| moonshotai/kimi-k2.6 | candidate |"), true);
     assertEquals(
       markdown.includes(
-        "| 7000 | 2000 | 9000 | 7000 | 2000 | 0.20 | 0.50 | 0.50 | 5.00 | gateway |",
+        "| 7000 | 2000 | 9000 | 7000 | 2000 | 0.12 | 0.08 | 0.20 | 0.30 | 0.20 | 0.50 | 0.50 | 5.00 | gateway |",
       ),
       true,
     );

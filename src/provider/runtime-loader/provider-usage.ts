@@ -11,7 +11,11 @@ export type RuntimeUsage = {
   billableInputTokens?: number;
   billableOutputTokens?: number;
   providerCostUsd?: number;
+  providerInputCostUsd?: number;
+  providerOutputCostUsd?: number;
   veryfrontChargeUsd?: number;
+  veryfrontInputChargeUsd?: number;
+  veryfrontOutputChargeUsd?: number;
   veryfrontBilledUsd?: number;
   costCredits?: number;
   costSource?: "gateway" | "missing" | "partial";
@@ -147,7 +151,12 @@ export function mergeUsage(
   const billableInputTokens = next.billableInputTokens ?? current.billableInputTokens;
   const billableOutputTokens = next.billableOutputTokens ?? current.billableOutputTokens;
   const providerCostUsd = next.providerCostUsd ?? current.providerCostUsd;
+  const providerInputCostUsd = next.providerInputCostUsd ?? current.providerInputCostUsd;
+  const providerOutputCostUsd = next.providerOutputCostUsd ?? current.providerOutputCostUsd;
   const veryfrontChargeUsd = next.veryfrontChargeUsd ?? current.veryfrontChargeUsd;
+  const veryfrontInputChargeUsd = next.veryfrontInputChargeUsd ?? current.veryfrontInputChargeUsd;
+  const veryfrontOutputChargeUsd = next.veryfrontOutputChargeUsd ??
+    current.veryfrontOutputChargeUsd;
   const veryfrontBilledUsd = next.veryfrontBilledUsd ?? current.veryfrontBilledUsd;
   const costCredits = next.costCredits ?? current.costCredits;
   const costSource = next.costSource ?? current.costSource;
@@ -175,7 +184,11 @@ export function mergeUsage(
     ...(billableInputTokens !== undefined ? { billableInputTokens } : {}),
     ...(billableOutputTokens !== undefined ? { billableOutputTokens } : {}),
     ...(providerCostUsd !== undefined ? { providerCostUsd } : {}),
+    ...(providerInputCostUsd !== undefined ? { providerInputCostUsd } : {}),
+    ...(providerOutputCostUsd !== undefined ? { providerOutputCostUsd } : {}),
     ...(veryfrontChargeUsd !== undefined ? { veryfrontChargeUsd } : {}),
+    ...(veryfrontInputChargeUsd !== undefined ? { veryfrontInputChargeUsd } : {}),
+    ...(veryfrontOutputChargeUsd !== undefined ? { veryfrontOutputChargeUsd } : {}),
     ...(veryfrontBilledUsd !== undefined ? { veryfrontBilledUsd } : {}),
     ...(costCredits !== undefined ? { costCredits } : {}),
     ...(costSource !== undefined ? { costSource } : {}),

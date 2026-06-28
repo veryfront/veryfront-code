@@ -17,7 +17,11 @@ export interface AgUiBrowserRunFinishedMetadata {
   billableInputTokens?: number;
   billableOutputTokens?: number;
   costUsd?: number;
+  providerInputCostUsd?: number;
+  providerOutputCostUsd?: number;
   providerCostUsd?: number;
+  veryfrontInputChargeUsd?: number;
+  veryfrontOutputChargeUsd?: number;
   veryfrontChargeUsd?: number;
   veryfrontBilledUsd?: number;
   costCredits?: number;
@@ -225,8 +229,20 @@ function applyResponseMetadata(
     if (typeof usage.costUsd === "number") {
       state.metadata.costUsd = usage.costUsd;
     }
+    if (typeof usage.providerInputCostUsd === "number") {
+      state.metadata.providerInputCostUsd = usage.providerInputCostUsd;
+    }
+    if (typeof usage.providerOutputCostUsd === "number") {
+      state.metadata.providerOutputCostUsd = usage.providerOutputCostUsd;
+    }
     if (typeof usage.providerCostUsd === "number") {
       state.metadata.providerCostUsd = usage.providerCostUsd;
+    }
+    if (typeof usage.veryfrontInputChargeUsd === "number") {
+      state.metadata.veryfrontInputChargeUsd = usage.veryfrontInputChargeUsd;
+    }
+    if (typeof usage.veryfrontOutputChargeUsd === "number") {
+      state.metadata.veryfrontOutputChargeUsd = usage.veryfrontOutputChargeUsd;
     }
     if (typeof usage.veryfrontChargeUsd === "number") {
       state.metadata.veryfrontChargeUsd = usage.veryfrontChargeUsd;
@@ -262,12 +278,40 @@ function applyResponseMetadata(
   ) {
     state.metadata.providerCostUsd = providerCostUsd;
   }
+  const providerInputCostUsd = metadata?.providerInputCostUsd;
+  if (
+    typeof providerInputCostUsd === "number" && Number.isFinite(providerInputCostUsd) &&
+    providerInputCostUsd >= 0
+  ) {
+    state.metadata.providerInputCostUsd = providerInputCostUsd;
+  }
+  const providerOutputCostUsd = metadata?.providerOutputCostUsd;
+  if (
+    typeof providerOutputCostUsd === "number" && Number.isFinite(providerOutputCostUsd) &&
+    providerOutputCostUsd >= 0
+  ) {
+    state.metadata.providerOutputCostUsd = providerOutputCostUsd;
+  }
   const veryfrontChargeUsd = metadata?.veryfrontChargeUsd;
   if (
     typeof veryfrontChargeUsd === "number" && Number.isFinite(veryfrontChargeUsd) &&
     veryfrontChargeUsd >= 0
   ) {
     state.metadata.veryfrontChargeUsd = veryfrontChargeUsd;
+  }
+  const veryfrontInputChargeUsd = metadata?.veryfrontInputChargeUsd;
+  if (
+    typeof veryfrontInputChargeUsd === "number" && Number.isFinite(veryfrontInputChargeUsd) &&
+    veryfrontInputChargeUsd >= 0
+  ) {
+    state.metadata.veryfrontInputChargeUsd = veryfrontInputChargeUsd;
+  }
+  const veryfrontOutputChargeUsd = metadata?.veryfrontOutputChargeUsd;
+  if (
+    typeof veryfrontOutputChargeUsd === "number" && Number.isFinite(veryfrontOutputChargeUsd) &&
+    veryfrontOutputChargeUsd >= 0
+  ) {
+    state.metadata.veryfrontOutputChargeUsd = veryfrontOutputChargeUsd;
   }
   const veryfrontBilledUsd = metadata?.veryfrontBilledUsd;
   if (
@@ -340,8 +384,20 @@ export function buildAgUiBrowserFinalizeResponse(
   if (typeof metadata.providerCostUsd === "number") {
     responseMetadata.providerCostUsd = metadata.providerCostUsd;
   }
+  if (typeof metadata.providerInputCostUsd === "number") {
+    responseMetadata.providerInputCostUsd = metadata.providerInputCostUsd;
+  }
+  if (typeof metadata.providerOutputCostUsd === "number") {
+    responseMetadata.providerOutputCostUsd = metadata.providerOutputCostUsd;
+  }
   if (typeof metadata.veryfrontChargeUsd === "number") {
     responseMetadata.veryfrontChargeUsd = metadata.veryfrontChargeUsd;
+  }
+  if (typeof metadata.veryfrontInputChargeUsd === "number") {
+    responseMetadata.veryfrontInputChargeUsd = metadata.veryfrontInputChargeUsd;
+  }
+  if (typeof metadata.veryfrontOutputChargeUsd === "number") {
+    responseMetadata.veryfrontOutputChargeUsd = metadata.veryfrontOutputChargeUsd;
   }
   if (typeof metadata.veryfrontBilledUsd === "number") {
     responseMetadata.veryfrontBilledUsd = metadata.veryfrontBilledUsd;
@@ -383,8 +439,20 @@ export function buildAgUiBrowserFinalizeResponse(
         ? { billableOutputTokens: metadata.billableOutputTokens }
         : {}),
       ...(typeof metadata.costUsd === "number" ? { costUsd: metadata.costUsd } : {}),
+      ...(typeof metadata.providerInputCostUsd === "number"
+        ? { providerInputCostUsd: metadata.providerInputCostUsd }
+        : {}),
+      ...(typeof metadata.providerOutputCostUsd === "number"
+        ? { providerOutputCostUsd: metadata.providerOutputCostUsd }
+        : {}),
       ...(typeof metadata.providerCostUsd === "number"
         ? { providerCostUsd: metadata.providerCostUsd }
+        : {}),
+      ...(typeof metadata.veryfrontInputChargeUsd === "number"
+        ? { veryfrontInputChargeUsd: metadata.veryfrontInputChargeUsd }
+        : {}),
+      ...(typeof metadata.veryfrontOutputChargeUsd === "number"
+        ? { veryfrontOutputChargeUsd: metadata.veryfrontOutputChargeUsd }
         : {}),
       ...(typeof metadata.veryfrontChargeUsd === "number"
         ? { veryfrontChargeUsd: metadata.veryfrontChargeUsd }

@@ -58,8 +58,20 @@ function mergeMetadata(
     target.billableOutputTokens = metadata.billableOutputTokens;
   }
   if (typeof metadata.costUsd === "number") target.costUsd = metadata.costUsd;
+  if (typeof metadata.providerInputCostUsd === "number") {
+    target.providerInputCostUsd = metadata.providerInputCostUsd;
+  }
+  if (typeof metadata.providerOutputCostUsd === "number") {
+    target.providerOutputCostUsd = metadata.providerOutputCostUsd;
+  }
   if (typeof metadata.providerCostUsd === "number") {
     target.providerCostUsd = metadata.providerCostUsd;
+  }
+  if (typeof metadata.veryfrontInputChargeUsd === "number") {
+    target.veryfrontInputChargeUsd = metadata.veryfrontInputChargeUsd;
+  }
+  if (typeof metadata.veryfrontOutputChargeUsd === "number") {
+    target.veryfrontOutputChargeUsd = metadata.veryfrontOutputChargeUsd;
   }
   if (typeof metadata.veryfrontChargeUsd === "number") {
     target.veryfrontChargeUsd = metadata.veryfrontChargeUsd;
