@@ -3,11 +3,22 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { streamAnthropicCompatibleParts } from "./anthropic-stream.ts";
 
 function streamFromText(text: string): ReadableStream<Uint8Array> {
+  return streamFromChunks([text], { close: true });
+}
+
+function streamFromChunks(
+  chunks: string[],
+  options: { close: boolean },
+): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   return new ReadableStream({
     start(controller) {
-      controller.enqueue(encoder.encode(text));
-      controller.close();
+      for (const chunk of chunks) {
+        controller.enqueue(encoder.encode(chunk));
+      }
+      if (options.close) {
+        controller.close();
+      }
     },
   });
 }
@@ -18,6 +29,47 @@ async function collectParts(stream: ReadableStream<Uint8Array>): Promise<unknown
     parts.push(part);
   }
   return parts;
+}
+
+async function collectFirstParts(
+  stream: ReadableStream<Uint8Array>,
+  count: number,
+): Promise<unknown[]> {
+  const parts: unknown[] = [];
+  const iterator = streamAnthropicCompatibleParts(stream)[Symbol.asyncIterator]();
+  try {
+    for (let index = 0; index < count; index++) {
+      const next = await nextWithTimeout(iterator, 500);
+      if (next.done) {
+        break;
+      }
+      parts.push(next.value);
+    }
+  } finally {
+    await iterator.return?.();
+  }
+  return parts;
+}
+
+async function nextWithTimeout<T>(
+  iterator: AsyncIterator<T>,
+  timeoutMs: number,
+): Promise<IteratorResult<T>> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      iterator.next(),
+      new Promise<IteratorResult<T>>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(new Error(`timed out after ${timeoutMs}ms waiting for stream part`));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
 }
 
 function data(payload: unknown): string {
@@ -186,24 +238,26 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
   });
 
   it("preserves gateway billing metadata appended after a client tool-use step", async () => {
-    const parts = await collectParts(streamFromText([
-      data({
-        type: "content_block_start",
-        index: 0,
-        content_block: { type: "tool_use", id: "toolu_1", name: "bash" },
-      }),
-      data({
-        type: "content_block_delta",
-        index: 0,
-        delta: { type: "input_json_delta", partial_json: '{"command":"pwd"}' },
-      }),
-      data({ type: "content_block_stop", index: 0 }),
-      data({
-        type: "message_delta",
-        delta: { stop_reason: "tool_use" },
-        usage: { output_tokens: 4 },
-      }),
-      data({ type: "message_stop" }),
+    const parts = await collectParts(streamFromChunks([
+      [
+        data({
+          type: "content_block_start",
+          index: 0,
+          content_block: { type: "tool_use", id: "toolu_1", name: "bash" },
+        }),
+        data({
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "input_json_delta", partial_json: '{"command":"pwd"}' },
+        }),
+        data({ type: "content_block_stop", index: 0 }),
+        data({
+          type: "message_delta",
+          delta: { stop_reason: "tool_use" },
+          usage: { output_tokens: 4 },
+        }),
+        data({ type: "message_stop" }),
+      ].join(""),
       data({
         type: "message_delta",
         delta: {},
@@ -222,7 +276,7 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
           },
         },
       }),
-    ].join("")));
+    ], { close: true }));
 
     assertEquals(parts, [
       { type: "tool-input-start", id: "toolu_1", toolName: "bash" },
@@ -248,6 +302,54 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
           costCredits: 1,
           costSource: "gateway",
           usageCaptureStatus: "complete",
+        },
+      },
+    ]);
+  });
+
+  it("finishes a client tool-use step when trailing metadata never arrives", async () => {
+    const parts = await collectFirstParts(
+      streamFromChunks(
+        [
+          data({
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: "tool_use", id: "toolu_1", name: "bash" },
+          }),
+          data({
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "input_json_delta", partial_json: '{"command":"pwd"}' },
+          }),
+          data({ type: "content_block_stop", index: 0 }),
+          data({
+            type: "message_delta",
+            delta: { stop_reason: "tool_use" },
+            usage: { output_tokens: 4 },
+          }),
+          data({ type: "message_stop" }),
+        ].join(""),
+        { close: false },
+      ),
+      4,
+    );
+
+    assertEquals(parts, [
+      { type: "tool-input-start", id: "toolu_1", toolName: "bash" },
+      { type: "tool-input-delta", id: "toolu_1", delta: '{"command":"pwd"}' },
+      {
+        type: "tool-call",
+        toolCallId: "toolu_1",
+        toolName: "bash",
+        input: '{"command":"pwd"}',
+      },
+      {
+        type: "finish",
+        finishReason: { unified: "tool-calls", raw: "tool_use" },
+        usage: {
+          inputTokens: undefined,
+          outputTokens: 4,
+          totalTokens: 4,
         },
       },
     ]);
