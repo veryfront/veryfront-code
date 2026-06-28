@@ -232,7 +232,7 @@ describe("eval/model-comparison", () => {
     assertEquals(comparison.models[1]?.veryfrontBilledUsd, 1.5);
   });
 
-  it("uses gateway credits for comparison when billed USD is omitted", () => {
+  it("uses metered gateway cost before credits when billed USD is omitted", () => {
     const comparison = compareEvalModelReports(
       [
         createReport("anthropic/claude-sonnet-4-6", {
@@ -249,9 +249,32 @@ describe("eval/model-comparison", () => {
       { baselineModel: "anthropic/claude-sonnet-4-6" },
     );
 
-    assertEquals(comparison.candidates[0]?.decision, "needs-review");
+    assertEquals(comparison.candidates[0]?.decision, "promote-candidate");
+    assertEquals(comparison.candidates[0]?.costImprovementPct, 0.4285714285714286);
     assertEquals(comparison.models[0]?.veryfrontBilledUsd, undefined);
     assertEquals(comparison.models[1]?.veryfrontBilledUsd, undefined);
+    assertEquals(
+      comparison.candidates[0]?.reasons.includes("Veryfront metered cost improved by 43%"),
+      true,
+    );
+  });
+
+  it("uses gateway credits for comparison only when USD costs are omitted", () => {
+    const comparison = compareEvalModelReports(
+      [
+        createReport("anthropic/claude-sonnet-4-6", {
+          costCredits: 4,
+          costSource: "gateway",
+        }),
+        createReport("moonshotai/kimi-k2.6", {
+          costCredits: 16,
+          costSource: "gateway",
+        }),
+      ],
+      { baselineModel: "anthropic/claude-sonnet-4-6" },
+    );
+
+    assertEquals(comparison.candidates[0]?.decision, "needs-review");
     assertEquals(
       comparison.candidates[0]?.reasons.includes("Veryfront credits regressed by 300%"),
       true,
