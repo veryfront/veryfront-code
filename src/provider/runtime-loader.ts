@@ -1,5 +1,9 @@
 import { isNumberArray } from "./runtime-loader/provider-embedding-responses.ts";
-import { mergeUsage, type RuntimeUsage } from "./runtime-loader/provider-usage.ts";
+import {
+  mergeUsage,
+  readGatewayBillingMode,
+  type RuntimeUsage,
+} from "./runtime-loader/provider-usage.ts";
 import type { ProviderKind } from "./runtime-loader/provider-http.ts";
 import {
   buildProviderError,
@@ -26,6 +30,7 @@ export {
   isNumberArray,
   mergeUsage,
   parseRetryAfterMs,
+  readGatewayBillingMode,
   readRecord,
   requestJson,
   requestStream,

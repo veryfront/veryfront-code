@@ -106,4 +106,13 @@ describe("provider/runtime-loader/provider-usage mergeUsage", () => {
       usageCaptureStatus: "complete",
     });
   });
+
+  it("keeps deferred billing when merging internal gateway turns", () => {
+    const merged = mergeUsage(
+      { inputTokens: 10, billingMode: "direct" },
+      { outputTokens: 5, billingMode: "deferred" },
+    );
+
+    assertEquals(merged?.billingMode, "deferred");
+  });
 });

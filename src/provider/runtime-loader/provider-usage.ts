@@ -1,5 +1,13 @@
 import { readRecord } from "./provider-records.ts";
 
+/** Gateway billing mode attached by Veryfront Cloud usage envelopes. */
+export type GatewayBillingMode = "direct" | "deferred";
+
+/** Read a trusted gateway billing mode from provider metadata. */
+export function readGatewayBillingMode(value: unknown): GatewayBillingMode | undefined {
+  return value === "direct" || value === "deferred" ? value : undefined;
+}
+
 /** Public API contract for runtime usage. */
 export type RuntimeUsage = {
   inputTokens?: number;
@@ -19,6 +27,7 @@ export type RuntimeUsage = {
   veryfrontBilledUsd?: number;
   costCredits?: number;
   costSource?: "gateway" | "missing" | "partial";
+  billingMode?: GatewayBillingMode;
   usageCaptureStatus?: "complete" | "partial" | "missing";
 };
 
@@ -160,6 +169,9 @@ export function mergeUsage(
   const veryfrontBilledUsd = next.veryfrontBilledUsd ?? current.veryfrontBilledUsd;
   const costCredits = next.costCredits ?? current.costCredits;
   const costSource = next.costSource ?? current.costSource;
+  const billingMode = next.billingMode === "deferred" || current.billingMode === "deferred"
+    ? "deferred"
+    : next.billingMode ?? current.billingMode;
   const usageCaptureStatus = next.usageCaptureStatus ?? current.usageCaptureStatus;
 
   // Prefer the provider-reported total (latest non-undefined wins, matching the
@@ -192,6 +204,7 @@ export function mergeUsage(
     ...(veryfrontBilledUsd !== undefined ? { veryfrontBilledUsd } : {}),
     ...(costCredits !== undefined ? { costCredits } : {}),
     ...(costSource !== undefined ? { costSource } : {}),
+    ...(billingMode !== undefined ? { billingMode } : {}),
     ...(usageCaptureStatus !== undefined ? { usageCaptureStatus } : {}),
   };
 }

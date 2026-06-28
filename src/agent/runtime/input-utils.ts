@@ -49,6 +49,7 @@ export function accumulateUsage(
     veryfrontBilledUsd?: number;
     costCredits?: number;
     costSource?: "gateway" | "missing" | "partial";
+    billingMode?: "direct" | "deferred";
     usageCaptureStatus?: "complete" | "partial" | "missing";
   },
   usage: {
@@ -71,6 +72,7 @@ export function accumulateUsage(
     veryfrontBilledUsd?: number;
     costCredits?: number;
     costSource?: "gateway" | "missing" | "partial";
+    billingMode?: "direct" | "deferred";
     usageCaptureStatus?: "complete" | "partial" | "missing";
   },
 ): void {
@@ -129,6 +131,11 @@ export function accumulateUsage(
     total.costSource = total.costSource && total.costSource !== usage.costSource
       ? "partial"
       : usage.costSource;
+  }
+  if (usage.billingMode) {
+    total.billingMode = total.billingMode === "deferred" || usage.billingMode === "deferred"
+      ? "deferred"
+      : usage.billingMode;
   }
   if (usage.usageCaptureStatus) {
     total.usageCaptureStatus =

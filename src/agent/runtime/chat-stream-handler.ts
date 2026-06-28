@@ -89,6 +89,7 @@ export interface ChatStreamState {
     veryfrontBilledUsd?: number;
     costCredits?: number;
     costSource?: "gateway" | "missing" | "partial";
+    billingMode?: "direct" | "deferred";
     usageCaptureStatus?: "complete" | "partial" | "missing";
   };
 }
@@ -115,6 +116,7 @@ export interface ChatStreamCallbacks {
     veryfrontBilledUsd?: number;
     costCredits?: number;
     costSource?: "gateway" | "missing" | "partial";
+    billingMode?: "direct" | "deferred";
     usageCaptureStatus?: "complete" | "partial" | "missing";
   }) => void;
   providerExecutedToolNames?: readonly string[];
@@ -1053,6 +1055,9 @@ export function processStream(
                 : {}),
               ...(typedPart.totalUsage.costSource !== undefined
                 ? { costSource: typedPart.totalUsage.costSource }
+                : {}),
+              ...(typedPart.totalUsage.billingMode !== undefined
+                ? { billingMode: typedPart.totalUsage.billingMode }
                 : {}),
               ...(typedPart.totalUsage.usageCaptureStatus !== undefined
                 ? { usageCaptureStatus: typedPart.totalUsage.usageCaptureStatus }

@@ -1,6 +1,7 @@
 import {
   mergeUsage,
   parseSseChunk,
+  readGatewayBillingMode,
   readRecord,
   stringifyJsonValue,
 } from "veryfront/provider/shared";
@@ -74,6 +75,7 @@ export function extractAnthropicUsage(payload: unknown): RuntimeUsage | undefine
   const cacheReadInputTokens = usage.cache_read_input_tokens;
   const veryfront = readRecord(usage.veryfront);
   const costSource = veryfront?.cost_source;
+  const billingMode = readGatewayBillingMode(veryfront?.billing_mode);
   const usageCaptureStatus = veryfront?.usage_capture_status;
 
   return {
@@ -116,6 +118,7 @@ export function extractAnthropicUsage(payload: unknown): RuntimeUsage | undefine
     ...(costSource === "gateway" || costSource === "missing" || costSource === "partial"
       ? { costSource }
       : {}),
+    ...(billingMode !== undefined ? { billingMode } : {}),
     ...(usageCaptureStatus === "complete" ||
         usageCaptureStatus === "missing" ||
         usageCaptureStatus === "partial"
@@ -143,6 +146,7 @@ function hasGatewayUsageMetadata(usage: RuntimeUsage | undefined): boolean {
     usage?.veryfrontBilledUsd !== undefined ||
     usage?.costCredits !== undefined ||
     usage?.costSource !== undefined ||
+    usage?.billingMode !== undefined ||
     usage?.usageCaptureStatus !== undefined;
 }
 

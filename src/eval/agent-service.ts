@@ -133,6 +133,10 @@ function readUsageCaptureStatus(value: unknown): EvalUsage["usageCaptureStatus"]
   return value === "complete" || value === "missing" || value === "partial" ? value : undefined;
 }
 
+function readUsageBillingMode(value: unknown): EvalUsage["billingMode"] | undefined {
+  return value === "direct" || value === "deferred" ? value : undefined;
+}
+
 function readStringArray(value: unknown): string[] | undefined {
   return Array.isArray(value) && value.every((entry) => typeof entry === "string")
     ? [...value]
@@ -407,6 +411,7 @@ function createUsageFromRecord(record: Record<string, unknown>): EvalUsage | und
     readNumber(record.total_cost_usd) ??
     providerCostUsd;
   const costSource = readUsageCostSource(record.costSource ?? record.cost_source);
+  const billingMode = readUsageBillingMode(record.billingMode ?? record.billing_mode);
   const usageCaptureStatus = readUsageCaptureStatus(
     record.usageCaptureStatus ?? record.usage_capture_status,
   );
@@ -431,6 +436,7 @@ function createUsageFromRecord(record: Record<string, unknown>): EvalUsage | und
     ...(veryfrontBilledUsd !== undefined ? { veryfrontBilledUsd } : {}),
     ...(costCredits !== undefined ? { costCredits } : {}),
     ...(costSource !== undefined ? { costSource } : {}),
+    ...(billingMode !== undefined ? { billingMode } : {}),
     ...(usageCaptureStatus !== undefined ? { usageCaptureStatus } : {}),
   };
 

@@ -184,9 +184,8 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
             veryfront_input_charge_usd: 0.001,
             veryfront_output_charge_usd: 0.0015,
             veryfront_charge_usd: 0.0025,
-            veryfront_billed_usd: 0.1,
-            cost_credits: 1,
             cost_source: "gateway",
+            billing_mode: "deferred",
             usage_capture_status: "complete",
           },
         },
@@ -211,9 +210,8 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
           veryfrontInputChargeUsd: 0.001,
           veryfrontOutputChargeUsd: 0.0015,
           veryfrontChargeUsd: 0.0025,
-          veryfrontBilledUsd: 0.1,
-          costCredits: 1,
           costSource: "gateway",
+          billingMode: "deferred",
           usageCaptureStatus: "complete",
         },
       },
@@ -310,7 +308,7 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
   it("finishes a client tool-use step when trailing metadata never arrives", async () => {
     const parts = await collectFirstParts(
       streamFromChunks(
-        [
+        [[
           data({
             type: "content_block_start",
             index: 0,
@@ -328,7 +326,7 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
             usage: { output_tokens: 4 },
           }),
           data({ type: "message_stop" }),
-        ].join(""),
+        ].join("")],
         { close: false },
       ),
       4,

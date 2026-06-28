@@ -1,4 +1,5 @@
-import { parseSseChunk, readRecord } from "veryfront/provider/shared";
+import { parseSseChunk, readGatewayBillingMode, readRecord } from "veryfront/provider/shared";
+import type { RuntimeUsage } from "veryfront/provider/shared";
 
 type OpenAICompatibleChoice = {
   message?: unknown;
@@ -11,28 +12,6 @@ type OpenAIStreamToolCallState = {
   name: string;
   arguments: string;
   started: boolean;
-};
-
-type RuntimeUsage = {
-  inputTokens?: number;
-  outputTokens?: number;
-  totalTokens?: number;
-  cacheCreationInputTokens?: number;
-  cacheReadInputTokens?: number;
-  reasoningTokens?: number;
-  billableInputTokens?: number;
-  billableOutputTokens?: number;
-  costUsd?: number;
-  providerInputCostUsd?: number;
-  providerOutputCostUsd?: number;
-  providerCostUsd?: number;
-  veryfrontInputChargeUsd?: number;
-  veryfrontOutputChargeUsd?: number;
-  veryfrontChargeUsd?: number;
-  veryfrontBilledUsd?: number;
-  costCredits?: number;
-  costSource?: "gateway" | "missing" | "partial";
-  usageCaptureStatus?: "complete" | "partial" | "missing";
 };
 
 function normalizeOpenAIFinishReason(
@@ -69,6 +48,7 @@ function extractOpenAIUsage(payload: unknown): RuntimeUsage | undefined {
   const reasoningTokens = completionTokensDetails?.reasoning_tokens;
   const veryfront = readRecord(usage.veryfront);
   const costSource = veryfront?.cost_source;
+  const billingMode = readGatewayBillingMode(veryfront?.billing_mode);
   const usageCaptureStatus = veryfront?.usage_capture_status;
 
   return {
@@ -109,6 +89,7 @@ function extractOpenAIUsage(payload: unknown): RuntimeUsage | undefined {
     ...(costSource === "gateway" || costSource === "missing" || costSource === "partial"
       ? { costSource }
       : {}),
+    ...(billingMode !== undefined ? { billingMode } : {}),
     ...(usageCaptureStatus === "complete" ||
         usageCaptureStatus === "missing" ||
         usageCaptureStatus === "partial"

@@ -183,6 +183,7 @@ export const getAgentResponseSchema = defineSchema((v) =>
         veryfrontBilledUsd: v.number().nonnegative().optional(),
         costCredits: v.number().nonnegative().optional(),
         costSource: v.enum(["gateway", "missing", "partial"] as const).optional(),
+        billingMode: v.enum(["direct", "deferred"] as const).optional(),
         usageCaptureStatus: v.enum(["complete", "partial", "missing"] as const).optional(),
       })
       .optional(),

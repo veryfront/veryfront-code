@@ -645,6 +645,7 @@ export class AgentRuntime {
             veryfrontBilledUsd: response.usage.veryfrontBilledUsd,
             costCredits: response.usage.costCredits,
             costSource: response.usage.costSource,
+            billingMode: response.usage.billingMode,
             usageCaptureStatus: response.usage.usageCaptureStatus,
           });
         }

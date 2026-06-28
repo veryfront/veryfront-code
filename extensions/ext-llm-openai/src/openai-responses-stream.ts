@@ -1,26 +1,5 @@
-import { parseSseChunk, readRecord } from "veryfront/provider/shared";
-
-type RuntimeUsage = {
-  inputTokens?: number;
-  outputTokens?: number;
-  totalTokens?: number;
-  cacheCreationInputTokens?: number;
-  cacheReadInputTokens?: number;
-  reasoningTokens?: number;
-  billableInputTokens?: number;
-  billableOutputTokens?: number;
-  costUsd?: number;
-  providerInputCostUsd?: number;
-  providerOutputCostUsd?: number;
-  providerCostUsd?: number;
-  veryfrontInputChargeUsd?: number;
-  veryfrontOutputChargeUsd?: number;
-  veryfrontChargeUsd?: number;
-  veryfrontBilledUsd?: number;
-  costCredits?: number;
-  costSource?: "gateway" | "missing" | "partial";
-  usageCaptureStatus?: "complete" | "partial" | "missing";
-};
+import { parseSseChunk, readGatewayBillingMode, readRecord } from "veryfront/provider/shared";
+import type { RuntimeUsage } from "veryfront/provider/shared";
 
 type OpenAIResponsesStreamReasoningState = {
   id: string;
@@ -59,6 +38,7 @@ export function extractOpenAIResponsesUsage(payload: unknown): RuntimeUsage | un
   const reasoningTokens = outputDetails?.reasoning_tokens;
   const veryfront = readRecord(usage.veryfront);
   const costSource = veryfront?.cost_source;
+  const billingMode = readGatewayBillingMode(veryfront?.billing_mode);
   const usageCaptureStatus = veryfront?.usage_capture_status;
 
   return {
@@ -99,6 +79,7 @@ export function extractOpenAIResponsesUsage(payload: unknown): RuntimeUsage | un
     ...(costSource === "gateway" || costSource === "missing" || costSource === "partial"
       ? { costSource }
       : {}),
+    ...(billingMode !== undefined ? { billingMode } : {}),
     ...(usageCaptureStatus === "complete" ||
         usageCaptureStatus === "missing" ||
         usageCaptureStatus === "partial"
