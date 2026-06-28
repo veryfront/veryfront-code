@@ -117,8 +117,22 @@ function createCliRunId(now = new Date()): string {
   return `evalrun_${now.toISOString().replace(/[-:.]/g, "").replace("T", "_").replace("Z", "")}`;
 }
 
-export function createDefaultEvalReportDir(runId: string): string {
-  return join(".veryfront", "evals", runId);
+function createEvalReportDirTimestamp(runId: string): string {
+  return runId.startsWith("evalrun_") ? runId.slice("evalrun_".length) : runId;
+}
+
+function sanitizeEvalReportDirLabel(label: string): string {
+  const normalized = label.startsWith("eval:") ? label.slice("eval:".length) : label;
+  return normalized.trim().replace(/[^A-Za-z0-9._-]+/g, "-").replace(/-+/g, "-").replace(
+    /^[-._]+|[-._]+$/g,
+    "",
+  );
+}
+
+export function createDefaultEvalReportDir(runId: string, label?: string): string {
+  const timestamp = createEvalReportDirTimestamp(runId);
+  const suffix = label ? sanitizeEvalReportDirLabel(label) : "";
+  return join(".veryfront", "evals", suffix ? `${timestamp}-${suffix}` : timestamp);
 }
 
 export function createEvalArtifactPaths(reportDir: string): EvalArtifactPaths {
@@ -454,9 +468,15 @@ function usdCell(value: number | undefined): string {
   return `$${value.toFixed(6).replace(/0+$/, "").replace(/\.$/, "")}`;
 }
 
+function isBlockingEvalResultFailure(result: EvalMetricResult): boolean {
+  return !result.skipped && result.pass === false &&
+    (result.severity === "gate" || result.severity === "budget");
+}
+
 function examplePassed(record: EvalRecord): boolean {
+  if (!record.completed || record.error) return false;
   return [...(record.metrics ?? []), ...(record.checks ?? [])].every((result) =>
-    result.skipped || result.pass !== false
+    !isBlockingEvalResultFailure(result)
   );
 }
 
@@ -892,7 +912,8 @@ async function runEvalModelComparison(input: {
   policy: EvalModelComparisonPolicy;
 }): Promise<void> {
   const runId = createCliRunId();
-  const reportDir = input.options.reportDir ?? createDefaultEvalReportDir(runId);
+  const reportDir = input.options.reportDir ??
+    createDefaultEvalReportDir(runId, input.evalItem.id);
   const paths = createEvalModelComparisonArtifactPaths(reportDir, input.config.models);
   const provenance = await resolveEvalRunProvenance({
     projectDir: input.projectDir,
@@ -1095,7 +1116,7 @@ export async function evalCommand(options: EvalOptions): Promise<void> {
 
     const runId = createCliRunId();
     const artifactPaths = createEvalArtifactPaths(
-      options.reportDir ?? createDefaultEvalReportDir(runId),
+      options.reportDir ?? createDefaultEvalReportDir(runId, evalItem.id),
     );
     const provenance = await resolveEvalRunProvenance({
       projectDir,
