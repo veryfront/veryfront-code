@@ -555,6 +555,12 @@ describe("eval/model-comparison", () => {
     assertEquals(markdown.includes("| moonshotai/kimi-k2.6 | candidate |"), true);
     assertEquals(
       markdown.includes(
+        "Metered USD is the token-metered Veryfront charge before billing minimums.",
+      ),
+      true,
+    );
+    assertEquals(
+      markdown.includes(
         "| 7000 | 2000 | 9000 | 7000 | 2000 | 0.12 | 0.08 | 0.20 | 0.30 | 0.20 | 0.50 | 0.50 | 5.00 | gateway |",
       ),
       true,

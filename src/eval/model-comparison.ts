@@ -671,6 +671,11 @@ export function createEvalModelComparisonMarkdown(comparison: EvalModelCompariso
     );
   }
 
+  lines.push(
+    "",
+    "_Metered USD is the token-metered Veryfront charge before billing minimums. Billed USD and Credits include gateway request minimums and match the billed eval cost._",
+  );
+
   if (comparison.candidates.length > 0) {
     lines.push(
       "",
