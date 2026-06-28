@@ -92,6 +92,7 @@ function createReport(): EvalReport {
         veryfrontBilledUsd: 0.1,
         costCredits: 1,
         costSource: "gateway",
+        billingMode: "deferred",
         usageCaptureStatus: "complete",
       },
     },
@@ -240,6 +241,7 @@ describe("eval CLI command helpers", () => {
         veryfrontBilledUsd: 0.1,
         costCredits: 0.025,
         costSource: "gateway",
+        billingMode: "deferred",
         usageCaptureStatus: "complete",
       },
     } satisfies AgentResponse;
@@ -264,6 +266,7 @@ describe("eval CLI command helpers", () => {
       veryfrontBilledUsd: 0.1,
       costCredits: 0.025,
       costSource: "gateway",
+      billingMode: "deferred",
       usageCaptureStatus: "complete",
     });
   });
@@ -445,6 +448,7 @@ describe("eval CLI command helpers", () => {
     assertStringIncludes(markdown, "| Veryfront input charge USD | `$0.001` |");
     assertStringIncludes(markdown, "| Veryfront output charge USD | `$0.0015` |");
     assertStringIncludes(markdown, "| Veryfront billed USD | `$0.10` |");
+    assertStringIncludes(markdown, "| Billing mode | deferred |");
     assertStringIncludes(markdown, "| `q1:1` | PASS | 0.012s | 12 | `$0.06` | 0.6 |");
     assertStringIncludes(markdown, "| `q2:1` | FAIL | 0.010s | 10 | `$0.04` | 0.4 |");
   });
