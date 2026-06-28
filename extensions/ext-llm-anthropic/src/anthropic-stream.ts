@@ -20,6 +20,18 @@ type AnthropicStreamReasoningState = {
   redactedData?: string;
 };
 
+type AnthropicStreamOptions = {
+  clientToolUseTrailingUsageGraceMs?: number;
+};
+
+type AnthropicStreamReadResult =
+  | { kind: "chunk"; chunk: Uint8Array }
+  | { kind: "done" }
+  | { kind: "timeout" };
+
+const CLIENT_TOOL_USE_FINISH_REASON = { unified: "tool-calls", raw: "tool_use" } as const;
+const DEFAULT_CLIENT_TOOL_USE_TRAILING_USAGE_GRACE_MS = 100;
+
 function isEmptyRecord(value: unknown): value is Record<string, never> {
   return Boolean(
     value &&
@@ -112,271 +124,397 @@ export function extractAnthropicUsage(payload: unknown): RuntimeUsage | undefine
   };
 }
 
+function isToolCallsFinishReason(
+  finishReason: string | { unified: string; raw: string } | null,
+): boolean {
+  return finishReason === "tool-calls" ||
+    (typeof finishReason === "object" && finishReason?.unified === "tool-calls");
+}
+
+function hasGatewayUsageMetadata(usage: RuntimeUsage | undefined): boolean {
+  return usage?.billableInputTokens !== undefined ||
+    usage?.billableOutputTokens !== undefined ||
+    usage?.providerInputCostUsd !== undefined ||
+    usage?.providerOutputCostUsd !== undefined ||
+    usage?.providerCostUsd !== undefined ||
+    usage?.veryfrontInputChargeUsd !== undefined ||
+    usage?.veryfrontOutputChargeUsd !== undefined ||
+    usage?.veryfrontChargeUsd !== undefined ||
+    usage?.veryfrontBilledUsd !== undefined ||
+    usage?.costCredits !== undefined ||
+    usage?.costSource !== undefined ||
+    usage?.usageCaptureStatus !== undefined;
+}
+
+async function readStreamChunk(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  timeoutMs?: number,
+): Promise<AnthropicStreamReadResult> {
+  if (timeoutMs === undefined) {
+    const read = await reader.read();
+    return read.done ? { kind: "done" } : { kind: "chunk", chunk: read.value };
+  }
+
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const readPromise = reader.read().then((read): AnthropicStreamReadResult =>
+    read.done ? { kind: "done" } : { kind: "chunk", chunk: read.value }
+  );
+  const timeoutPromise = new Promise<AnthropicStreamReadResult>((resolve) => {
+    timeoutId = setTimeout(() => resolve({ kind: "timeout" }), Math.max(1, timeoutMs));
+  });
+
+  try {
+    const result = await Promise.race([readPromise, timeoutPromise]);
+    if (result.kind === "timeout") {
+      await cancelStreamReader(
+        reader,
+        "Timed out waiting for trailing Anthropic tool-use usage metadata",
+      );
+    }
+    return result;
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
+async function cancelStreamReader(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  reason: string,
+): Promise<void> {
+  try {
+    await reader.cancel(reason);
+  } catch {
+    // The upstream body may already be closed or canceled by the runtime.
+  }
+}
+
 export async function* streamAnthropicCompatibleParts(
   stream: ReadableStream<Uint8Array>,
+  options: AnthropicStreamOptions = {},
 ): AsyncIterable<unknown> {
   const decoder = new TextDecoder();
+  const reader = stream.getReader();
+  const trailingUsageGraceMs = options.clientToolUseTrailingUsageGraceMs ??
+    DEFAULT_CLIENT_TOOL_USE_TRAILING_USAGE_GRACE_MS;
   let buffer = "";
   const toolCalls = new Map<number, AnthropicStreamToolCallState>();
   const reasoningBlocks = new Map<number, AnthropicStreamReasoningState>();
   let finishReason: string | { unified: string; raw: string } | null = null;
   let usage: RuntimeUsage | undefined;
   let completedClientToolUseStep = false;
+  let clientToolUseIdleDeadlineMs: number | null = null;
+  let clientToolUseTerminalDeadlineMs: number | null = null;
 
-  for await (const chunk of stream) {
-    buffer += decoder.decode(chunk, { stream: true });
-    const parsed = parseSseChunk(buffer);
+  const mergeTrailingBufferUsage = () => {
+    if (buffer.trim().length === 0) {
+      return;
+    }
+
+    const parsed = parseSseChunk(`${buffer}\n\n`);
     buffer = parsed.remainder;
-
     for (const event of parsed.events) {
       if (event === "[DONE]") {
         continue;
       }
-
       const record = readRecord(event);
-      const eventType = typeof record?.type === "string" ? record.type : undefined;
       usage = mergeUsage(usage, extractAnthropicUsage(record));
+    }
+  };
 
-      if (eventType === "message_start") {
-        usage = mergeUsage(usage, extractAnthropicUsage(record?.message));
-        continue;
+  const getClientToolUseReadTimeoutMs = () => {
+    if (!completedClientToolUseStep || toolCalls.size > 0) {
+      return undefined;
+    }
+
+    const deadline = isToolCallsFinishReason(finishReason)
+      ? clientToolUseTerminalDeadlineMs
+      : clientToolUseIdleDeadlineMs;
+    return deadline === null ? undefined : Math.max(1, deadline - Date.now());
+  };
+
+  const buildFinishPart = () => ({
+    type: "finish",
+    finishReason: finishReason ??
+      (completedClientToolUseStep ? CLIENT_TOOL_USE_FINISH_REASON : null),
+    ...(usage ? { usage } : {}),
+  });
+
+  try {
+    while (true) {
+      const read = await readStreamChunk(reader, getClientToolUseReadTimeoutMs());
+      if (read.kind === "timeout") {
+        mergeTrailingBufferUsage();
+        finishReason ??= CLIENT_TOOL_USE_FINISH_REASON;
+        yield buildFinishPart();
+        return;
       }
 
-      if (eventType === "content_block_start") {
-        const index = typeof record?.index === "number" ? record.index : 0;
-        const contentBlock = readRecord(record?.content_block);
-        const blockType = typeof contentBlock?.type === "string" ? contentBlock.type : undefined;
-
-        if (
-          blockType === "text" && typeof contentBlock?.text === "string" &&
-          contentBlock.text.length > 0
-        ) {
-          yield { type: "text-delta", delta: contentBlock.text };
-          continue;
-        }
-
-        if (blockType === "thinking") {
-          const reasoningId = `thinking-${index}`;
-          reasoningBlocks.set(index, { id: reasoningId, text: "" });
-          yield {
-            type: "reasoning-start",
-            id: reasoningId,
-          };
-
-          if (typeof contentBlock?.thinking === "string" && contentBlock.thinking.length > 0) {
-            const current = reasoningBlocks.get(index);
-            if (current) {
-              current.text += contentBlock.thinking;
-            }
-            yield {
-              type: "reasoning-delta",
-              id: reasoningId,
-              delta: contentBlock.thinking,
-            };
-          }
-          continue;
-        }
-
-        // Redacted thinking blocks arrive as opaque encrypted payloads when
-        // Claude's safety classifier flags the reasoning trace. Surface them
-        // as a zero-length reasoning block so callers know thinking happened
-        // without leaking the (legitimately hidden) contents.
-        if (blockType === "redacted_thinking") {
-          const reasoningId = `thinking-${index}`;
-          reasoningBlocks.set(index, {
-            id: reasoningId,
-            text: "",
-            ...(typeof contentBlock?.data === "string" ? { redactedData: contentBlock.data } : {}),
-          });
-          yield {
-            type: "reasoning-start",
-            id: reasoningId,
-          };
-          continue;
-        }
-
-        if (
-          (blockType === "tool_use" || blockType === "server_tool_use") &&
-          typeof contentBlock?.id === "string" &&
-          typeof contentBlock?.name === "string"
-        ) {
-          const providerExecuted = blockType === "server_tool_use" ? true : undefined;
-          const current: AnthropicStreamToolCallState = {
-            id: contentBlock.id,
-            name: contentBlock.name,
-            input: "",
-            ...(providerExecuted ? { providerExecuted } : {}),
-          };
-
-          toolCalls.set(index, current);
-          yield {
-            type: "tool-input-start",
-            id: current.id,
-            toolName: current.name,
-            ...(providerExecuted ? { providerExecuted } : {}),
-          };
-
-          const initialInput = contentBlock.input;
-          if (initialInput !== undefined && !isEmptyRecord(initialInput)) {
-            const serializedInput = stringifyJsonValue(initialInput);
-            current.input += serializedInput;
-            yield {
-              type: "tool-input-delta",
-              id: current.id,
-              delta: serializedInput,
-            };
-          }
-          continue;
-        }
-
-        if (
-          blockType === "web_search_tool_result" &&
-          typeof contentBlock?.tool_use_id === "string" &&
-          Array.isArray(contentBlock?.content)
-        ) {
-          yield {
-            type: "tool-result",
-            toolCallId: contentBlock.tool_use_id,
-            toolName: "web_search",
-            result: contentBlock.content,
-            providerExecuted: true,
-          };
-        }
-
-        if (
-          blockType === "web_fetch_tool_result" &&
-          typeof contentBlock?.tool_use_id === "string" &&
-          readRecord(contentBlock?.content)
-        ) {
-          yield {
-            type: "tool-result",
-            toolCallId: contentBlock.tool_use_id,
-            toolName: "web_fetch",
-            result: contentBlock.content,
-            providerExecuted: true,
-          };
-        }
-
-        continue;
+      if (read.kind === "done") {
+        break;
       }
 
-      if (eventType === "content_block_delta") {
-        const index = typeof record?.index === "number" ? record.index : 0;
-        const delta = readRecord(record?.delta);
-        const deltaType = typeof delta?.type === "string" ? delta.type : undefined;
+      buffer += decoder.decode(read.chunk, { stream: true });
+      const parsed = parseSseChunk(buffer);
+      buffer = parsed.remainder;
 
-        if (
-          deltaType === "text_delta" && typeof delta?.text === "string" && delta.text.length > 0
-        ) {
-          yield { type: "text-delta", delta: delta.text };
+      for (const event of parsed.events) {
+        if (event === "[DONE]") {
           continue;
         }
 
-        if (
-          deltaType === "thinking_delta" && typeof delta?.thinking === "string" &&
-          delta.thinking.length > 0
-        ) {
-          const current = reasoningBlocks.get(index);
-          if (!current) {
+        const record = readRecord(event);
+        const eventType = typeof record?.type === "string" ? record.type : undefined;
+        usage = mergeUsage(usage, extractAnthropicUsage(record));
+
+        if (eventType === "message_start") {
+          usage = mergeUsage(usage, extractAnthropicUsage(record?.message));
+          continue;
+        }
+
+        if (eventType === "content_block_start") {
+          const index = typeof record?.index === "number" ? record.index : 0;
+          const contentBlock = readRecord(record?.content_block);
+          const blockType = typeof contentBlock?.type === "string" ? contentBlock.type : undefined;
+
+          if (
+            blockType === "text" && typeof contentBlock?.text === "string" &&
+            contentBlock.text.length > 0
+          ) {
+            yield { type: "text-delta", delta: contentBlock.text };
             continue;
           }
 
-          current.text += delta.thinking;
-          yield {
-            type: "reasoning-delta",
-            id: current.id,
-            delta: delta.thinking,
-          };
-          continue;
-        }
+          if (blockType === "thinking") {
+            const reasoningId = `thinking-${index}`;
+            reasoningBlocks.set(index, { id: reasoningId, text: "" });
+            yield {
+              type: "reasoning-start",
+              id: reasoningId,
+            };
 
-        if (deltaType === "signature_delta" && typeof delta?.signature === "string") {
-          const current = reasoningBlocks.get(index);
-          if (current) {
-            current.signature = delta.signature;
+            if (typeof contentBlock?.thinking === "string" && contentBlock.thinking.length > 0) {
+              const current = reasoningBlocks.get(index);
+              if (current) {
+                current.text += contentBlock.thinking;
+              }
+              yield {
+                type: "reasoning-delta",
+                id: reasoningId,
+                delta: contentBlock.thinking,
+              };
+            }
+            continue;
           }
+
+          // Redacted thinking blocks arrive as opaque encrypted payloads when
+          // Claude's safety classifier flags the reasoning trace. Surface them
+          // as a zero-length reasoning block so callers know thinking happened
+          // without leaking the (legitimately hidden) contents.
+          if (blockType === "redacted_thinking") {
+            const reasoningId = `thinking-${index}`;
+            reasoningBlocks.set(index, {
+              id: reasoningId,
+              text: "",
+              ...(typeof contentBlock?.data === "string"
+                ? { redactedData: contentBlock.data }
+                : {}),
+            });
+            yield {
+              type: "reasoning-start",
+              id: reasoningId,
+            };
+            continue;
+          }
+
+          if (
+            (blockType === "tool_use" || blockType === "server_tool_use") &&
+            typeof contentBlock?.id === "string" &&
+            typeof contentBlock?.name === "string"
+          ) {
+            const providerExecuted = blockType === "server_tool_use" ? true : undefined;
+            const current: AnthropicStreamToolCallState = {
+              id: contentBlock.id,
+              name: contentBlock.name,
+              input: "",
+              ...(providerExecuted ? { providerExecuted } : {}),
+            };
+
+            toolCalls.set(index, current);
+            clientToolUseIdleDeadlineMs = null;
+            clientToolUseTerminalDeadlineMs = null;
+            yield {
+              type: "tool-input-start",
+              id: current.id,
+              toolName: current.name,
+              ...(providerExecuted ? { providerExecuted } : {}),
+            };
+
+            const initialInput = contentBlock.input;
+            if (initialInput !== undefined && !isEmptyRecord(initialInput)) {
+              const serializedInput = stringifyJsonValue(initialInput);
+              current.input += serializedInput;
+              yield {
+                type: "tool-input-delta",
+                id: current.id,
+                delta: serializedInput,
+              };
+            }
+            continue;
+          }
+
+          if (
+            blockType === "web_search_tool_result" &&
+            typeof contentBlock?.tool_use_id === "string" &&
+            Array.isArray(contentBlock?.content)
+          ) {
+            yield {
+              type: "tool-result",
+              toolCallId: contentBlock.tool_use_id,
+              toolName: "web_search",
+              result: contentBlock.content,
+              providerExecuted: true,
+            };
+          }
+
+          if (
+            blockType === "web_fetch_tool_result" &&
+            typeof contentBlock?.tool_use_id === "string" &&
+            readRecord(contentBlock?.content)
+          ) {
+            yield {
+              type: "tool-result",
+              toolCallId: contentBlock.tool_use_id,
+              toolName: "web_fetch",
+              result: contentBlock.content,
+              providerExecuted: true,
+            };
+          }
+
           continue;
         }
 
-        if (deltaType === "input_json_delta" && typeof delta?.partial_json === "string") {
+        if (eventType === "content_block_delta") {
+          const index = typeof record?.index === "number" ? record.index : 0;
+          const delta = readRecord(record?.delta);
+          const deltaType = typeof delta?.type === "string" ? delta.type : undefined;
+
+          if (
+            deltaType === "text_delta" && typeof delta?.text === "string" && delta.text.length > 0
+          ) {
+            yield { type: "text-delta", delta: delta.text };
+            continue;
+          }
+
+          if (
+            deltaType === "thinking_delta" && typeof delta?.thinking === "string" &&
+            delta.thinking.length > 0
+          ) {
+            const current = reasoningBlocks.get(index);
+            if (!current) {
+              continue;
+            }
+
+            current.text += delta.thinking;
+            yield {
+              type: "reasoning-delta",
+              id: current.id,
+              delta: delta.thinking,
+            };
+            continue;
+          }
+
+          if (deltaType === "signature_delta" && typeof delta?.signature === "string") {
+            const current = reasoningBlocks.get(index);
+            if (current) {
+              current.signature = delta.signature;
+            }
+            continue;
+          }
+
+          if (deltaType === "input_json_delta" && typeof delta?.partial_json === "string") {
+            const current = toolCalls.get(index);
+            if (!current) {
+              continue;
+            }
+
+            current.input += delta.partial_json;
+            yield {
+              type: "tool-input-delta",
+              id: current.id,
+              delta: delta.partial_json,
+            };
+          }
+
+          continue;
+        }
+
+        if (eventType === "content_block_stop") {
+          const index = typeof record?.index === "number" ? record.index : 0;
+          const reasoning = reasoningBlocks.get(index);
+          if (reasoning) {
+            yield {
+              type: "reasoning-end",
+              id: reasoning.id,
+              ...(reasoning.signature ? { signature: reasoning.signature } : {}),
+              ...(reasoning.redactedData ? { redactedData: reasoning.redactedData } : {}),
+            };
+            reasoningBlocks.delete(index);
+            continue;
+          }
+
           const current = toolCalls.get(index);
           if (!current) {
             continue;
           }
 
-          current.input += delta.partial_json;
           yield {
-            type: "tool-input-delta",
-            id: current.id,
-            delta: delta.partial_json,
+            type: "tool-call",
+            toolCallId: current.id,
+            toolName: current.name,
+            input: current.input.length > 0 ? current.input : "{}",
+            ...(current.providerExecuted ? { providerExecuted: true } : {}),
           };
-        }
-
-        continue;
-      }
-
-      if (eventType === "content_block_stop") {
-        const index = typeof record?.index === "number" ? record.index : 0;
-        const reasoning = reasoningBlocks.get(index);
-        if (reasoning) {
-          yield {
-            type: "reasoning-end",
-            id: reasoning.id,
-            ...(reasoning.signature ? { signature: reasoning.signature } : {}),
-            ...(reasoning.redactedData ? { redactedData: reasoning.redactedData } : {}),
-          };
-          reasoningBlocks.delete(index);
+          if (!current.providerExecuted) {
+            completedClientToolUseStep = true;
+            clientToolUseIdleDeadlineMs = null;
+          }
+          toolCalls.delete(index);
           continue;
         }
 
-        const current = toolCalls.get(index);
-        if (!current) {
-          continue;
+        if (eventType === "message_delta") {
+          const delta = readRecord(record?.delta);
+          const normalizedFinishReason = normalizeAnthropicFinishReason(delta?.stop_reason);
+          if (normalizedFinishReason) {
+            finishReason = normalizedFinishReason;
+          }
         }
-
-        yield {
-          type: "tool-call",
-          toolCallId: current.id,
-          toolName: current.name,
-          input: current.input.length > 0 ? current.input : "{}",
-          ...(current.providerExecuted ? { providerExecuted: true } : {}),
-        };
-        if (!current.providerExecuted) {
-          completedClientToolUseStep = true;
-        }
-        toolCalls.delete(index);
-        continue;
       }
 
-      if (eventType === "message_delta") {
-        const delta = readRecord(record?.delta);
-        const normalizedFinishReason = normalizeAnthropicFinishReason(delta?.stop_reason);
-        if (normalizedFinishReason) {
-          finishReason = normalizedFinishReason;
+      if (completedClientToolUseStep && toolCalls.size === 0) {
+        if (isToolCallsFinishReason(finishReason)) {
+          clientToolUseIdleDeadlineMs = null;
+          clientToolUseTerminalDeadlineMs ??= Date.now() + trailingUsageGraceMs;
+          if (hasGatewayUsageMetadata(usage)) {
+            await cancelStreamReader(
+              reader,
+              "Finished Anthropic tool-use turn after gateway usage metadata",
+            );
+            yield buildFinishPart();
+            return;
+          }
+        } else {
+          clientToolUseIdleDeadlineMs ??= Date.now() + trailingUsageGraceMs;
         }
       }
     }
-
-    if (completedClientToolUseStep && toolCalls.size === 0) {
-      finishReason ??= { unified: "tool-calls", raw: "tool_use" };
-    }
+  } finally {
+    reader.releaseLock();
   }
 
-  if (buffer.trim().length > 0) {
-    const parsed = parseSseChunk(`${buffer}\n\n`);
-    for (const event of parsed.events) {
-      if (event === "[DONE]") {
-        continue;
-      }
-      const record = readRecord(event);
-      usage = mergeUsage(usage, extractAnthropicUsage(record));
-    }
-  }
+  mergeTrailingBufferUsage();
 
-  yield {
-    type: "finish",
-    finishReason: finishReason ??
-      (completedClientToolUseStep ? { unified: "tool-calls", raw: "tool_use" } : null),
-    ...(usage ? { usage } : {}),
-  };
+  yield buildFinishPart();
 }
