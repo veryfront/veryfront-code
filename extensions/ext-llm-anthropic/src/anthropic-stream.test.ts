@@ -12,15 +12,6 @@ function streamFromText(text: string): ReadableStream<Uint8Array> {
   });
 }
 
-function hangingStreamFromText(text: string): ReadableStream<Uint8Array> {
-  const encoder = new TextEncoder();
-  return new ReadableStream({
-    start(controller) {
-      controller.enqueue(encoder.encode(text));
-    },
-  });
-}
-
 async function collectParts(stream: ReadableStream<Uint8Array>): Promise<unknown[]> {
   const parts: unknown[] = [];
   for await (const part of streamAnthropicCompatibleParts(stream)) {
@@ -194,30 +185,44 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
     ]);
   });
 
-  it("ends a client tool-use step once the tool call is complete", async () => {
-    let timeoutId: number | undefined;
-    const parts = await Promise.race([
-      collectParts(hangingStreamFromText([
-        data({
-          type: "content_block_start",
-          index: 0,
-          content_block: { type: "tool_use", id: "toolu_1", name: "bash" },
-        }),
-        data({
-          type: "content_block_delta",
-          index: 0,
-          delta: { type: "input_json_delta", partial_json: '{"command":"pwd"}' },
-        }),
-        data({ type: "content_block_stop", index: 0 }),
-      ].join(""))),
-      new Promise<"timeout">((resolve) => {
-        timeoutId = setTimeout(() => resolve("timeout"), 50);
+  it("preserves gateway billing metadata appended after a client tool-use step", async () => {
+    const parts = await collectParts(streamFromText([
+      data({
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "tool_use", id: "toolu_1", name: "bash" },
       }),
-    ]).finally(() => {
-      if (timeoutId !== undefined) {
-        clearTimeout(timeoutId);
-      }
-    });
+      data({
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "input_json_delta", partial_json: '{"command":"pwd"}' },
+      }),
+      data({ type: "content_block_stop", index: 0 }),
+      data({
+        type: "message_delta",
+        delta: { stop_reason: "tool_use" },
+        usage: { output_tokens: 4 },
+      }),
+      data({ type: "message_stop" }),
+      data({
+        type: "message_delta",
+        delta: {},
+        usage: {
+          input_tokens: 10,
+          output_tokens: 4,
+          veryfront: {
+            billable_input_tokens: 10,
+            billable_output_tokens: 4,
+            provider_cost_usd: 0.001,
+            veryfront_charge_usd: 0.0025,
+            veryfront_billed_usd: 0.1,
+            cost_credits: 1,
+            cost_source: "gateway",
+            usage_capture_status: "complete",
+          },
+        },
+      }),
+    ].join("")));
 
     assertEquals(parts, [
       { type: "tool-input-start", id: "toolu_1", toolName: "bash" },
@@ -231,6 +236,19 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
       {
         type: "finish",
         finishReason: { unified: "tool-calls", raw: "tool_use" },
+        usage: {
+          inputTokens: 10,
+          outputTokens: 4,
+          totalTokens: 14,
+          billableInputTokens: 10,
+          billableOutputTokens: 4,
+          providerCostUsd: 0.001,
+          veryfrontChargeUsd: 0.0025,
+          veryfrontBilledUsd: 0.1,
+          costCredits: 1,
+          costSource: "gateway",
+          usageCaptureStatus: "complete",
+        },
       },
     ]);
   });

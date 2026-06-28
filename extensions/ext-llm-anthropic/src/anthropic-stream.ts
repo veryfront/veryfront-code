@@ -358,12 +358,7 @@ export async function* streamAnthropicCompatibleParts(
     }
 
     if (completedClientToolUseStep && toolCalls.size === 0) {
-      yield {
-        type: "finish",
-        finishReason: { unified: "tool-calls", raw: "tool_use" },
-        ...(usage ? { usage } : {}),
-      };
-      return;
+      finishReason ??= { unified: "tool-calls", raw: "tool_use" };
     }
   }
 
@@ -380,7 +375,8 @@ export async function* streamAnthropicCompatibleParts(
 
   yield {
     type: "finish",
-    finishReason,
+    finishReason: finishReason ??
+      (completedClientToolUseStep ? { unified: "tool-calls", raw: "tool_use" } : null),
     ...(usage ? { usage } : {}),
   };
 }
