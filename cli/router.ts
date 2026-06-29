@@ -27,6 +27,8 @@ import { handleUploadsCommand } from "./commands/uploads/index.ts";
 import { handleFilesCommand } from "./commands/files/index.ts";
 import { handleKnowledgeCommand } from "./commands/knowledge/index.ts";
 import { handleRoutesCommand } from "./commands/routes/handler.ts";
+import { handleScheduleCommand } from "./commands/schedule/handler.ts";
+import { handleSchedulesCommand } from "./commands/schedules/handler.ts";
 import { handleServeCommand } from "./commands/serve/handler.ts";
 import { handleStartCommand } from "./commands/start/handler.ts";
 import { handleStudioCommand } from "./commands/studio/handler.ts";
@@ -43,6 +45,8 @@ import { handleSkillsCommand } from "./commands/skills/handler.ts";
 import { handleConfigCommand } from "./commands/config/handler.ts";
 import { handleOpenCommand } from "./commands/open/handler.ts";
 import { handleCompletionsCommand } from "./commands/completions/handler.ts";
+import { handleWebhookCommand } from "./commands/webhook/handler.ts";
+import { handleWebhooksCommand } from "./commands/webhooks/handler.ts";
 import { login, logout, whoami } from "./auth/index.ts";
 import { parseLoginMethod } from "./auth/utils.ts";
 import { showCommandHelp, showMainHelp } from "./help/index.ts";
@@ -86,6 +90,8 @@ const commands: Record<string, (args: ParsedArgs) => Promise<void>> = {
   "merge": handleMergeCommand,
   "deploy": handleDeployCommand,
   "up": handleUpCommand,
+  "schedule": handleScheduleCommand,
+  "schedules": handleSchedulesCommand,
   "login": async (args) => {
     const { parseProvider } = await import("./auth/utils.ts");
     const provider = parseProvider(args);
@@ -136,6 +142,8 @@ const commands: Record<string, (args: ParsedArgs) => Promise<void>> = {
   "config": handleConfigCommand,
   "open": handleOpenCommand,
   "completions": handleCompletionsCommand,
+  "webhook": handleWebhookCommand,
+  "webhooks": handleWebhooksCommand,
 };
 
 /**

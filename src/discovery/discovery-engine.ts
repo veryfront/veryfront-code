@@ -23,8 +23,10 @@ import {
   evalHandler,
   promptHandler,
   resourceHandler,
+  scheduleHandler,
   taskHandler,
   toolHandler,
+  webhookHandler,
   workflowHandler,
   workHandler,
 } from "./handlers/index.ts";
@@ -171,6 +173,8 @@ export async function discoverAll(config: DiscoveryConfig): Promise<DiscoveryRes
     workflows: new Map(),
     works: new Map(),
     tasks: new Map(),
+    schedules: new Map(),
+    webhooks: new Map(),
     evals: new Map(),
     errors: [],
   };
@@ -236,6 +240,16 @@ export async function discoverAll(config: DiscoveryConfig): Promise<DiscoveryRes
   // Discover tasks
   for (const dir of config.taskDirs ?? ["tasks"]) {
     await discoverItems(`${baseDir}/${dir}`, result, context, taskHandler, config.verbose);
+  }
+
+  // Discover schedules
+  for (const dir of config.scheduleDirs ?? ["schedules"]) {
+    await discoverItems(`${baseDir}/${dir}`, result, context, scheduleHandler, config.verbose);
+  }
+
+  // Discover webhooks
+  for (const dir of config.webhookDirs ?? ["webhooks"]) {
+    await discoverItems(`${baseDir}/${dir}`, result, context, webhookHandler, config.verbose);
   }
 
   // Discover eval definitions
