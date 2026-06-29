@@ -12,7 +12,7 @@ isolated. Configure `memory` on the agent to persist history across calls, and
 use `createAgUiHandler` to stream the response back.
 
 Memory configuration is independent of model selection, so these examples omit
-`model` and follow the runtime default.
+`model` and use `openai/gpt-5.4-nano`.
 
 ## Prerequisites
 

@@ -78,8 +78,9 @@ export default agent({
 });
 ```
 
-In most projects, you can omit `model` and let runtime defaults choose local
-or Veryfront Cloud inference automatically.
+In most projects, you can omit `model` and use `openai/gpt-5.4-nano`. Set
+`model: "auto"` when you want runtime defaults to choose local or Veryfront
+Cloud inference automatically.
 
 When a user asks "What's the weather in Tokyo?", the agent:
 

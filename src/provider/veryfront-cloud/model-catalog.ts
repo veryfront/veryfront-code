@@ -17,7 +17,7 @@ export type VeryfrontCloudChatModel = {
 };
 
 /** Default value for Veryfront Cloud model ID. */
-export const DEFAULT_VERYFRONT_CLOUD_MODEL_ID = "opus";
+export const DEFAULT_VERYFRONT_CLOUD_MODEL_ID = "gpt-5.4-nano";
 /** Shared Veryfront Cloud model prefix value. */
 export const VERYFRONT_CLOUD_MODEL_PREFIX = "veryfront-cloud/";
 
@@ -69,6 +69,13 @@ export const VERYFRONT_CLOUD_CHAT_MODELS: VeryfrontCloudChatModel[] = [
     provider: "openai",
     name: "GPT-5.5",
     description: "Most capable OpenAI model",
+  },
+  {
+    id: "gpt-5.4-nano",
+    modelId: "openai/gpt-5.4-nano",
+    provider: "openai",
+    name: "GPT-5.4 Nano",
+    description: "Default model for fast everyday tasks",
   },
   {
     id: "gemini-3.1-pro-preview",

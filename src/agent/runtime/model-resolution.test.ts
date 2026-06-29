@@ -4,6 +4,7 @@ import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   AUTO_AGENT_MODEL,
+  DEFAULT_AGENT_MODEL,
   normalizeAgentModelConfig,
   resolveConfiguredAgentModel,
   resolveRuntimeModel,
@@ -36,8 +37,8 @@ describe("agent/runtime/model-resolution", () => {
     clearModelEnv();
   });
 
-  it("normalizes missing models to auto", () => {
-    assertEquals(normalizeAgentModelConfig(), AUTO_AGENT_MODEL);
+  it("normalizes omitted models to the default and blank models to auto", () => {
+    assertEquals(normalizeAgentModelConfig(), DEFAULT_AGENT_MODEL);
     assertEquals(normalizeAgentModelConfig("   "), AUTO_AGENT_MODEL);
   });
 
@@ -48,14 +49,14 @@ describe("agent/runtime/model-resolution", () => {
     );
   });
 
-  it("resolves auto to the default Veryfront Cloud model string", () => {
+  it("resolves omitted and auto model config separately", () => {
     assertEquals(
       resolveConfiguredAgentModel(),
-      "veryfront-cloud/anthropic/claude-sonnet-4-6",
+      "openai/gpt-5.4-nano",
     );
     assertEquals(
       resolveConfiguredAgentModel("auto"),
-      "veryfront-cloud/anthropic/claude-sonnet-4-6",
+      "veryfront-cloud/openai/gpt-5.4-nano",
     );
   });
 
@@ -101,22 +102,22 @@ describe("agent/runtime/model-resolution", () => {
     );
   });
 
-  it("uses the default Veryfront Cloud model for auto runtime resolution", () => {
+  it("uses the default model through Veryfront Cloud when cloud bootstrap is available", () => {
     setEnv("VERYFRONT_API_TOKEN", "vf_test_runtime");
     setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
 
     assertEquals(
       resolveRuntimeModel(),
-      "veryfront-cloud/anthropic/claude-sonnet-4-6",
+      "veryfront-cloud/openai/gpt-5.4-nano",
     );
   });
 
-  it("uses direct OpenAI credentials for auto runtime resolution without cloud bootstrap", () => {
+  it("uses direct OpenAI credentials for omitted model resolution without cloud bootstrap", () => {
     setEnv("OPENAI_API_KEY", "sk-test");
 
     assertEquals(
       resolveRuntimeModel(),
-      "openai/gpt-5.5",
+      "openai/gpt-5.4-nano",
     );
   });
 
@@ -136,8 +137,8 @@ describe("agent/runtime/model-resolution", () => {
     setEnv("OPENAI_API_KEY", "sk-test");
 
     assertEquals(
-      resolveRuntimeModel(),
-      "veryfront-cloud/anthropic/claude-sonnet-4-6",
+      resolveRuntimeModel("auto"),
+      "veryfront-cloud/openai/gpt-5.4-nano",
     );
   });
 

@@ -11,7 +11,7 @@ Veryfront supports two agent composition patterns:
 
 Use agent-as-tool when the parent should choose the order at runtime. Use a workflow when the order is known in advance.
 
-Each agent can omit `model` and inherit the runtime default, or set an explicit `provider/model` override when you need one.
+Each agent can omit `model` and use `openai/gpt-5.4-nano`, set `"auto"` for runtime selection, or set an explicit `provider/model` override when you need one.
 
 ## Prerequisites
 

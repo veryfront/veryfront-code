@@ -317,7 +317,7 @@ export default agent({
 | `id`                  | `string`                                                                                               | Unique identifier used with `getAgent()`                                     |
 | `name`                | `string`                                                                                               | Human-readable display name for listings                                     |
 | `description`         | `string`                                                                                               | Optional summary for listings                                                |
-| `model`               | `string`                                                                                               | Optional provider/model override. Omit or use `"auto"` for runtime defaults. |
+| `model`               | `string`                                                                                               | Optional provider/model override. Omit for `openai/gpt-5.4-nano`; use `"auto"` for runtime selection. |
 | `system`              | `string \| () => string \| Promise<string>`                                                            | System prompt                                                                |
 | `resolveRuntimeState` | `(request: RuntimeStateRequest) => ResolvedRuntimeState \| Promise<ResolvedRuntimeState \| undefined>` | Refresh system/context before later model steps in the same run              |
 | `tools`               | `Record<string, boolean \| Tool>`                                                                      | Tools the agent can use                                                      |
