@@ -11,7 +11,7 @@ export function InferenceBadge({ inferenceMode }: InferenceBadgeProps): React.Re
   if (inferenceMode === "cloud") return null;
 
   return (
-    <div className="flex items-center gap-1.5 px-3 py-1 text-xs text-[var(--muted-foreground)]">
+    <div className="flex items-center gap-1.5 px-3 py-1 text-xs text-[var(--faint)]">
       <span className="size-1.5 rounded-full bg-green-500" />
       <span>Running locally</span>
     </div>

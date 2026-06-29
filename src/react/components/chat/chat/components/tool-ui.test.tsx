@@ -19,6 +19,8 @@ describe("ToolCallCard", () => {
 
     assertStringIncludes(html, "web_search");
     assertStringIncludes(html, "Completed");
+    assertStringIncludes(html, "rounded-[var(--radius-md)]");
+    assertStringIncludes(html, "border-[var(--outline-border)]");
     assertEquals(html.includes("Parameters"), false);
     assertEquals(html.includes("Result"), false);
   });

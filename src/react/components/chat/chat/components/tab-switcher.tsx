@@ -56,7 +56,7 @@ export function TabSwitcher({
               }}
               className={cn(
                 "inline-flex items-center h-full px-5 text-sm font-medium rounded-full transition-colors cursor-pointer",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)]",
                 isActive
                   ? "bg-[var(--tab-active-background)] text-[var(--tab-active-foreground)]"
                   : "text-[var(--tab-foreground)]",

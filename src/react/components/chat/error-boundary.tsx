@@ -46,7 +46,7 @@ export class ChatErrorBoundary extends React.Component<
 
     return (
       <div
-        className="border border-[var(--destructive)]/20 bg-[var(--destructive)]/5 rounded-2xl p-6"
+        className="rounded-[var(--radius-lg)] border border-[var(--destructive)]/20 bg-[var(--destructive)]/5 p-6"
         role="alert"
       >
         <div className="flex items-start gap-4">
@@ -78,7 +78,7 @@ export class ChatErrorBoundary extends React.Component<
             <button
               type="button"
               onClick={this.reset}
-              className="mt-4 px-5 py-2.5 text-sm font-medium bg-[var(--destructive)] text-[var(--destructive-foreground)] hover:opacity-90 active:scale-[0.98] rounded-full transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2"
+              className="mt-4 rounded-full bg-[var(--destructive)] px-5 py-2.5 text-sm font-medium text-[var(--destructive-foreground)] transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--background)]"
             >
               Try Again
             </button>

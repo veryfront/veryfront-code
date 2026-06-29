@@ -58,7 +58,7 @@ const PROVIDER_STYLES = {
   anthropic: "bg-[#181818]",
   openai: "bg-[var(--foreground)]",
   google: "bg-[var(--foreground)]",
-  unknown: "bg-[var(--muted-foreground)]",
+  unknown: "bg-[var(--faint)]",
 } as const;
 
 /** Render model avatar. */

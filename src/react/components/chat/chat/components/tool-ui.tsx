@@ -17,9 +17,18 @@ import type { ChatDynamicToolPart, ChatToolPart } from "#veryfront/agent/react";
 import { escapeHtml } from "#veryfront/utils/html-escape.ts";
 
 /** Tool status configuration mapping state to label and icon */
-const TOOL_STATUS_CONFIG: Record<string, { label: string; icon: React.ReactNode }> = {
-  "input-streaming": { label: "Pending", icon: <CircleIcon className="size-3.5" /> },
-  "input-available": { label: "Running", icon: <ClockIcon className="size-3.5 animate-pulse" /> },
+const TOOL_STATUS_CONFIG: Record<
+  string,
+  { label: string; icon: React.ReactNode }
+> = {
+  "input-streaming": {
+    label: "Pending",
+    icon: <CircleIcon className="size-3.5" />,
+  },
+  "input-available": {
+    label: "Running",
+    icon: <ClockIcon className="size-3.5 animate-pulse" />,
+  },
   "approval-requested": {
     label: "Awaiting Approval",
     icon: <ClockIcon className="size-3.5 text-yellow-600" />,
@@ -32,21 +41,41 @@ const TOOL_STATUS_CONFIG: Record<string, { label: string; icon: React.ReactNode 
     label: "Completed",
     icon: <CheckCircleIcon className="size-3.5 text-green-600" />,
   },
-  "output-error": { label: "Error", icon: <XCircleIcon className="size-3.5 text-red-600" /> },
-  "output-denied": { label: "Denied", icon: <XCircleIcon className="size-3.5 text-orange-600" /> },
+  "output-error": {
+    label: "Error",
+    icon: <XCircleIcon className="size-3.5 text-red-600" />,
+  },
+  "output-denied": {
+    label: "Denied",
+    icon: <XCircleIcon className="size-3.5 text-orange-600" />,
+  },
   // Legacy states
-  call: { label: "Running", icon: <ClockIcon className="size-3.5 animate-pulse" /> },
-  "partial-call": { label: "Running", icon: <ClockIcon className="size-3.5 animate-pulse" /> },
-  result: { label: "Completed", icon: <CheckCircleIcon className="size-3.5 text-green-600" /> },
-  error: { label: "Error", icon: <XCircleIcon className="size-3.5 text-red-600" /> },
+  call: {
+    label: "Running",
+    icon: <ClockIcon className="size-3.5 animate-pulse" />,
+  },
+  "partial-call": {
+    label: "Running",
+    icon: <ClockIcon className="size-3.5 animate-pulse" />,
+  },
+  result: {
+    label: "Completed",
+    icon: <CheckCircleIcon className="size-3.5 text-green-600" />,
+  },
+  error: {
+    label: "Error",
+    icon: <XCircleIcon className="size-3.5 text-red-600" />,
+  },
 };
 
 /** Render tool status badge. */
-export function ToolStatusBadge({ state }: { state: string }): React.JSX.Element {
+export function ToolStatusBadge(
+  { state }: { state: string },
+): React.JSX.Element {
   const config = TOOL_STATUS_CONFIG[state];
 
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--accent)] px-2.5 py-0.5 text-xs font-medium text-[var(--foreground)] border border-[var(--border)]">
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--outline-border)] px-2 py-0.5 text-[11px] font-medium leading-none text-[var(--foreground)]">
       {config?.icon ?? <CircleIcon className="size-3.5" />}
       {config?.label ?? state}
     </span>
@@ -79,7 +108,7 @@ function formatJsonWithHighlight(obj: unknown): React.ReactNode {
 
   return (
     <pre
-      className="text-sm font-mono whitespace-pre-wrap"
+      className="whitespace-pre-wrap font-mono text-sm"
       dangerouslySetInnerHTML={{ __html: highlighted }}
     />
   );
@@ -98,13 +127,16 @@ function renderOutputAsTable(output: unknown): React.ReactNode | null {
     <div className="overflow-x-auto">
       <table className="min-w-full text-sm">
         <thead>
-          <tr className="border-b border-[var(--border)]">
+          <tr className="border-b border-[var(--edge)]">
             {keys.map((key) => (
               <th
                 key={key}
-                className="px-4 py-2 text-left font-semibold text-[var(--foreground)]"
+                className="px-4 py-2 text-left font-medium text-[var(--foreground)]"
               >
-                {key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+                {key.replace(/_/g, " ").replace(
+                  /\b\w/g,
+                  (c) => c.toUpperCase(),
+                )}
               </th>
             ))}
           </tr>
@@ -114,9 +146,12 @@ function renderOutputAsTable(output: unknown): React.ReactNode | null {
             const record = row as Record<string, unknown> | null;
 
             return (
-              <tr key={i} className="border-b border-[var(--border)]">
+              <tr key={i} className="border-b border-[var(--edge)]">
                 {keys.map((key) => (
-                  <td key={key} className="px-4 py-2 text-[var(--card-foreground)]">
+                  <td
+                    key={key}
+                    className="px-4 py-2 text-[var(--foreground)]"
+                  >
                     {String(record?.[key] ?? "")}
                   </td>
                 ))}
@@ -144,64 +179,73 @@ export function ToolCallCard({
 }): React.JSX.Element {
   const hasOutput = hasVisibleToolOutput(tool.output);
   const hasError = Boolean(tool.errorText);
-  const shouldExpandByDefault = tool.state !== "output-available" || hasOutput || hasError;
+  const shouldExpandByDefault = tool.state !== "output-available" ||
+    hasOutput || hasError;
   const [isExpanded, setIsExpanded] = React.useState(shouldExpandByDefault);
   const tableOutput = hasOutput ? renderOutputAsTable(tool.output) : null;
 
   return (
-    <div className="not-prose w-full rounded-xl border border-[var(--border)] bg-[var(--card)]">
+    <div className="not-prose mb-2 w-full overflow-hidden rounded-[var(--radius-md)] border border-[var(--outline-border)] bg-transparent p-4">
       <button
         type="button"
         onClick={() => setIsExpanded((v) => !v)}
-        className="group flex w-full items-center justify-between gap-4 p-3 hover:bg-[var(--accent)] transition-all rounded-t-xl"
+        className="group flex w-full items-center justify-between gap-3 text-left transition-colors hover:text-[var(--foreground)]"
       >
-        <div className="flex items-center gap-2">
-          <WrenchIcon className="size-4 text-[var(--muted-foreground)]" />
-          <span className="font-medium text-sm text-[var(--foreground)]">{tool.toolName}</span>
+        <div className="flex min-w-0 items-center gap-2">
+          <WrenchIcon className="size-3.5 shrink-0 text-[var(--foreground)]" />
+          <span className="min-w-0 truncate text-sm font-medium leading-tight text-[var(--foreground)]">
+            {tool.toolName}
+          </span>
           <ToolStatusBadge state={tool.state} />
         </div>
         <ChevronDownIcon
           className={cn(
-            "size-4 text-[var(--muted-foreground)] transition-transform",
+            "size-3.5 shrink-0 text-[var(--faint)] transition-transform",
             isExpanded && "rotate-180",
           )}
         />
       </button>
 
       {!isExpanded ? null : (
-        <div className="border-t border-[var(--border)]">
+        <div className="mt-3 border-t border-[var(--edge)] pt-3">
           {tool.input === undefined ? null : (
-            <div className="space-y-2 overflow-hidden p-4">
-              <h4 className="font-medium text-[var(--muted-foreground)] text-xs uppercase tracking-wide">
+            <div className="space-y-2 overflow-hidden">
+              <h4 className="text-xs font-medium text-[var(--faint)]">
                 Parameters
               </h4>
-              <div className="rounded-lg bg-[var(--accent)] p-3">
+              <div className="rounded-[var(--radius-md)] bg-[var(--secondary)] p-3">
                 {formatJsonWithHighlight(tool.input)}
               </div>
             </div>
           )}
 
           {!hasOutput ? null : (
-            <div className="space-y-2 p-4 border-t border-[var(--border)]">
-              <h4 className="font-medium text-[var(--muted-foreground)] text-xs uppercase tracking-wide">
+            <div className="mt-3 space-y-2 border-t border-[var(--edge)] pt-3">
+              <h4 className="text-xs font-medium text-[var(--faint)]">
                 Result
               </h4>
-              <div className="overflow-x-auto rounded-lg bg-[var(--accent)] text-[var(--foreground)]">
-                {tableOutput ?? <div className="p-3">{formatJsonWithHighlight(tool.output)}</div>}
+              <div className="overflow-x-auto rounded-[var(--radius-md)] bg-[var(--secondary)] text-[var(--foreground)]">
+                {tableOutput ?? (
+                  <div className="p-3">
+                    {formatJsonWithHighlight(tool.output)}
+                  </div>
+                )}
               </div>
             </div>
           )}
 
-          {!tool.errorText ? null : (
-            <div className="space-y-2 p-4 border-t border-[var(--border)]">
-              <h4 className="font-medium text-[var(--destructive)] text-xs uppercase tracking-wide">
-                Error
-              </h4>
-              <div className="rounded-lg bg-[var(--destructive)]/10 text-[var(--destructive)] p-3 text-sm">
-                {tool.errorText}
+          {!tool.errorText
+            ? null
+            : (
+              <div className="mt-3 space-y-2 border-t border-[var(--edge)] pt-3">
+                <h4 className="text-xs font-medium text-[var(--destructive)]">
+                  Error
+                </h4>
+                <div className="rounded-[var(--radius-md)] bg-[var(--destructive)]/10 p-3 text-sm text-[var(--destructive)]">
+                  {tool.errorText}
+                </div>
               </div>
-            </div>
-          )}
+            )}
         </div>
       )}
     </div>

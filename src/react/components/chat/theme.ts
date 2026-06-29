@@ -14,74 +14,88 @@ import { type ClassValue, clsx } from "#veryfront/utils/clsx.ts";
 // ---------------------------------------------------------------------------
 
 /**
- * Light-mode defaults that match the Veryfront Studio `:root` values.
- * Uses OKLch for perceptual uniformity.
+ * Light-mode defaults copied from Veryfront Studio `styles/styles.css`.
+ * Keep these values aligned with Studio so standalone chat renders with the
+ * same surface, edge, and text hierarchy before a host app provides tokens.
  */
 const TOKENS_LIGHT = {
-  "--background": "oklch(0.9512 0.008 98.88)",
-  "--foreground": "oklch(0.2768 0 0)",
-  "--card": "oklch(1 0 0)",
-  "--card-foreground": "oklch(0.2768 0 0)",
-  "--popover": "oklch(1 0 0)",
-  "--popover-foreground": "oklch(0.2768 0 0)",
-  "--primary": "oklch(0.2768 0 0)",
-  "--primary-foreground": "oklch(1 0 0)",
-  "--muted": "oklch(0.9422 0.0081 98.88)",
-  "--muted-foreground": "oklch(0.55 0.005 95.11)",
-  "--accent": "oklch(0.93 0 0)",
-  "--accent-foreground": "oklch(0.15 0 0)",
-  "--destructive": "oklch(0.55 0.22 27)",
-  "--destructive-foreground": "oklch(1 0 0)",
-  "--border": "oklch(0.84 0.0055 95.11)",
-  "--input": "oklch(1 0 0)",
-  "--input-border": "oklch(0.88 0 0)",
-  "--input-placeholder": "oklch(0.7025 0 0)",
-  "--ring": "oklch(0.2768 0 0 / 0.3)",
-  "--success": "oklch(0.52 0.15 145)",
-  "--chat-bubble": "oklch(0.2768 0 0)",
-  "--chat-bubble-foreground": "oklch(1 0 0)",
-  "--tab-background": "oklch(1 0 0)",
-  "--tab-foreground": "oklch(0.7025 0 0)",
-  "--tab-active-background": "oklch(0.9422 0.0081 98.88)",
-  "--tab-active-foreground": "oklch(0.2768 0 0)",
-  "--sidebar-background": "oklch(0.9512 0.008 98.88)",
-  "--sidebar-foreground": "oklch(0.07 0 0)",
-  "--sidebar-border": "oklch(0.9 0.006 98.88)",
+  "--background": "#F0EFE9",
+  "--foreground": "#010101",
+  "--primary": "#282828",
+  "--secondary": "#FFFFFF",
+  "--tertiary": "#F0EFE9",
+  "--accent": "#E8E6DB",
+  "--muted": "#F7F6F4",
+  "--destructive": "#D40C1A",
+  "--outline-border": "#DCDAD0",
+  "--status-neutral": "#9F9F9F",
+  "--status-info": "#0071DF",
+  "--status-success": "#098926",
+  "--status-warning": "#F99100",
+  "--status-error": "#D40924",
+  "--faint": "oklch(from var(--foreground) l c h / 0.25)",
+  "--soft": "oklch(from var(--foreground) l c h / 0.7)",
+  "--tint": "oklch(from var(--foreground) l c h / 0.04)",
+  "--edge": "oklch(from var(--foreground) l c h / 0.06)",
+  "--edge-medium": "oklch(from var(--foreground) l c h / 0.1)",
+  "--separator": "#EEEEED",
+  "--shadow-sm": "0 1.5px 3px rgba(0, 0, 0, 0.08)",
+  "--code-bg": "var(--secondary)",
+  "--input-bg": "var(--secondary)",
+  "--popover": "var(--secondary)",
+  "--dialog": "var(--background)",
+  "--drawer": "var(--background)",
+  "--overlay": "rgba(0, 0, 0, 0.5)",
+  "--card": "var(--secondary)",
+  "--card-foreground": "var(--foreground)",
+  "--popover-foreground": "var(--foreground)",
+  "--primary-foreground": "var(--secondary)",
+  "--muted-foreground": "var(--faint)",
+  "--accent-foreground": "var(--foreground)",
+  "--destructive-foreground": "#FFFFFF",
+  "--border": "var(--outline-border)",
+  "--input": "var(--input-bg)",
+  "--input-border": "var(--edge-medium)",
+  "--input-placeholder": "var(--faint)",
+  "--ring": "var(--edge-medium)",
+  "--success": "var(--status-success)",
+  "--chat-bubble": "var(--primary)",
+  "--chat-bubble-foreground": "var(--secondary)",
+  "--tab-background": "var(--secondary)",
+  "--tab-foreground": "var(--faint)",
+  "--tab-active-background": "var(--accent)",
+  "--tab-active-foreground": "var(--foreground)",
+  "--sidebar-background": "var(--background)",
+  "--sidebar-foreground": "var(--foreground)",
+  "--sidebar-border": "var(--edge-medium)",
+  "--radius-xs": "4px",
+  "--radius-sm": "8px",
+  "--radius-md": "12px",
+  "--radius-lg": "20px",
+  "--radius-xl": "35px",
+  "--font-weight-normal": "400",
+  "--font-weight-medium": "500",
 } as const;
 
 /**
- * Dark-mode defaults that match the Studio `[data-theme="dark"]` values.
+ * Dark-mode defaults copied from Studio `[data-theme="dark"]`.
  */
 const TOKENS_DARK = {
-  "--background": "oklch(0.2768 0 0)",
-  "--foreground": "oklch(0.9512 0.008 98.88)",
-  "--card": "oklch(0.3211 0 0)",
-  "--card-foreground": "oklch(0.9512 0.008 98.88)",
-  "--popover": "oklch(0.21 0.01 220)",
-  "--popover-foreground": "oklch(0.9512 0.008 98.88)",
-  "--primary": "oklch(0.9512 0.008 98.88)",
-  "--primary-foreground": "oklch(0.2768 0 0)",
-  "--muted": "oklch(0.5338 0.0046 106.55)",
-  "--muted-foreground": "oklch(0.9512 0.008 98.88)",
-  "--accent": "oklch(0.25 0.01 220)",
-  "--accent-foreground": "oklch(1 0 0)",
-  "--destructive": "oklch(0.55 0.22 27)",
-  "--destructive-foreground": "oklch(1 0 0)",
-  "--border": "oklch(0.42 0.0017 106.48)",
-  "--input": "oklch(0.3211 0 0)",
-  "--input-border": "oklch(0.38 0.01 220)",
-  "--input-placeholder": "oklch(0.8975 0 0)",
-  "--ring": "oklch(0.6 0.01 220 / 0.5)",
-  "--success": "oklch(0.52 0.14 143)",
-  "--chat-bubble": "oklch(0.9512 0.008 98.88)",
-  "--chat-bubble-foreground": "oklch(0.2768 0 0)",
-  "--tab-background": "oklch(0.3211 0 0)",
-  "--tab-foreground": "oklch(0.8975 0 0)",
-  "--tab-active-background": "oklch(0.5338 0.0046 106.55)",
-  "--tab-active-foreground": "oklch(0.9512 0.008 98.88)",
-  "--sidebar-background": "oklch(0.18 0.01 220)",
-  "--sidebar-foreground": "oklch(0.9512 0.008 98.88)",
-  "--sidebar-border": "oklch(0.3 0.01 220)",
+  ...TOKENS_LIGHT,
+  "--background": "#282828",
+  "--foreground": "#F0EFE9",
+  "--primary": "#F1F0EA",
+  "--secondary": "#333333",
+  "--tertiary": "#262626",
+  "--accent": "#303030",
+  "--muted": "#0D1315",
+  "--outline-border": "#3A3A3A",
+  "--separator": "oklch(from var(--foreground) l c h / 0.06)",
+  "--code-bg": "oklch(0.08 0.005 280)",
+  "--input-bg": "#40403F",
+  "--primary-foreground": "var(--secondary)",
+  "--chat-bubble": "var(--primary)",
+  "--chat-bubble-foreground": "var(--secondary)",
 } as const;
 
 function tokensToCSS(tokens: Record<string, string>): string {
@@ -105,8 +119,7 @@ export function generateTokenCSS(): string {
   const dark = tokensToCSS(TOKENS_DARK);
 
   return [
-    `@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');`,
-    `[data-vf-chat]{font-family:'Inter',ui-sans-serif,system-ui,sans-serif;${light}}`,
+    `[data-vf-chat]{font-family:Inter,ui-sans-serif,system-ui,sans-serif;font-weight:var(--font-weight-normal);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;${light}}`,
     `[data-vf-chat] button{cursor:pointer;}`,
     `@media(prefers-color-scheme:dark){[data-vf-chat]:not([data-vf-theme]){${dark}}}`,
     `.dark [data-vf-chat]:not([data-vf-theme]),[data-theme="dark"] [data-vf-chat]:not([data-vf-theme]){${dark}}`,
@@ -140,20 +153,20 @@ export interface ChatTheme {
  * Default theme using CSS custom properties from the design system.
  */
 export const defaultChatTheme: ChatTheme = {
-  container: "flex flex-col h-full overflow-hidden bg-[var(--background)]",
+  container: "flex flex-col h-full overflow-hidden bg-[var(--background)] text-[var(--foreground)]",
   message: {
     user:
-      "bg-[var(--chat-bubble)] text-[var(--chat-bubble-foreground)] rounded-[22px] px-5 py-3 max-w-[80%] shadow-sm",
-    assistant: "text-[var(--card-foreground)] max-w-none",
-    system: "text-[var(--muted-foreground)] text-sm mx-auto text-center py-2",
+      "max-w-[80%] rounded-[var(--radius-lg)] bg-[var(--chat-bubble)] px-4 py-3 text-base leading-relaxed text-[var(--chat-bubble-foreground)] shadow-sm",
+    assistant: "max-w-none text-[var(--foreground)] [overflow-wrap:anywhere]",
+    system: "text-[var(--faint)] text-sm mx-auto text-center py-2",
     tool:
-      "bg-[var(--card)] text-[var(--card-foreground)] rounded-xl px-3 py-2 text-sm font-mono border border-[var(--border)]",
+      "rounded-[var(--radius-md)] border border-[var(--outline-border)] bg-transparent px-4 py-3 text-sm font-mono text-[var(--foreground)]",
   },
   input:
-    "w-full bg-transparent border-none focus:outline-none focus:ring-0 text-[var(--foreground)] placeholder:text-[var(--input-placeholder)] text-[15px] leading-normal",
+    "w-full bg-transparent border-none text-[15px] leading-6 text-[var(--foreground)] placeholder:text-[var(--faint)] focus:outline-none focus:ring-0",
   button:
-    "size-9 shrink-0 flex items-center justify-center rounded-full transition-all bg-[var(--foreground)] text-[var(--background)] hover:bg-[var(--card)] hover:text-[var(--foreground)] active:scale-95 disabled:opacity-100",
-  loading: "size-2 bg-[var(--border)] rounded-full animate-pulse",
+    "flex size-8 shrink-0 items-center justify-center rounded-full bg-[var(--primary)] text-[var(--secondary)] transition-[background-color,color] hover:bg-[var(--secondary)] hover:text-[var(--foreground)] disabled:opacity-60",
+  loading: "size-2 bg-[var(--edge-medium)] rounded-full animate-pulse",
 };
 
 /** Public API contract for agent theme. */
@@ -166,12 +179,14 @@ export interface AgentTheme {
 }
 
 export const defaultAgentTheme: AgentTheme = {
-  container: "border border-[var(--border)] rounded-2xl p-6 space-y-4 bg-[var(--card)]",
-  status: "inline-flex items-center px-3 py-1.5 rounded-full text-sm font-medium",
+  container:
+    "space-y-4 rounded-[var(--radius-lg)] bg-[var(--secondary)] p-5 text-[var(--foreground)]",
+  status: "inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium",
   thinking:
-    "bg-amber-500/10 rounded-xl px-4 py-3 italic text-[var(--foreground)] border border-amber-500/20",
-  tool: "rounded-xl px-4 py-3 bg-blue-500/10 border border-blue-500/20",
-  toolResult: "mt-2 p-3 bg-[var(--accent)] rounded-xl font-mono text-sm overflow-x-auto",
+    "rounded-[var(--radius-md)] border border-[var(--outline-border)] bg-transparent px-4 py-3 text-sm text-[var(--foreground)]",
+  tool: "rounded-[var(--radius-md)] border border-[var(--outline-border)] bg-transparent px-4 py-3",
+  toolResult:
+    "mt-2 overflow-x-auto rounded-[var(--radius-sm)] bg-[var(--tertiary)] p-3 font-mono text-xs",
 };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -248,7 +263,9 @@ function variantClasses<TVariants extends VariantMap>(
   return (options = {}) => {
     const classes: ClassValue[] = [base];
 
-    for (const [variantName, variantValues] of Object.entries(config.variants)) {
+    for (
+      const [variantName, variantValues] of Object.entries(config.variants)
+    ) {
       const option = options[variantName];
       const selected = Object.hasOwn(options, variantName) && option !== undefined
         ? option
@@ -266,11 +283,11 @@ export const messageVariants = variantClasses("", {
   variants: {
     role: {
       user:
-        "bg-[var(--chat-bubble)] text-[var(--chat-bubble-foreground)] rounded-[22px] px-5 py-3 max-w-[80%] shadow-sm",
-      assistant: "text-[var(--card-foreground)] max-w-none",
-      system: "text-[var(--muted-foreground)] text-sm mx-auto text-center py-2",
+        "max-w-[80%] rounded-[var(--radius-lg)] bg-[var(--chat-bubble)] px-4 py-3 text-base leading-relaxed text-[var(--chat-bubble-foreground)] shadow-sm",
+      assistant: "max-w-none text-[var(--foreground)] [overflow-wrap:anywhere]",
+      system: "text-[var(--faint)] text-sm mx-auto text-center py-2",
       tool:
-        "bg-[var(--card)] text-[var(--card-foreground)] rounded-xl px-3 py-2 text-sm font-mono border border-[var(--border)]",
+        "rounded-[var(--radius-md)] border border-[var(--outline-border)] bg-transparent px-4 py-3 text-sm font-mono text-[var(--foreground)]",
     },
   },
   defaultVariants: {
@@ -280,29 +297,31 @@ export const messageVariants = variantClasses("", {
 
 export const chatButtonVariants = variantClasses(
   [
+    "relative",
     "inline-flex items-center justify-center gap-2 whitespace-nowrap",
-    "font-medium rounded-full transition-all duration-150",
-    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2",
-    "disabled:pointer-events-none disabled:opacity-50",
+    "font-normal rounded-full transition-[background-color,color,border-color] duration-150 ease-in",
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--background)]",
+    "disabled:pointer-events-none disabled:opacity-60",
     "[&_svg]:shrink-0",
   ],
   {
     variants: {
       variant: {
         primary:
-          "bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90 active:scale-95",
-        ghost: "bg-transparent text-[var(--foreground)] hover:bg-[var(--foreground)]/5",
+          "bg-[var(--primary)] text-[var(--secondary)] shadow-sm hover:bg-[var(--secondary)] hover:text-[var(--foreground)]",
+        ghost: "bg-transparent text-[var(--foreground)] hover:bg-[var(--accent)]",
         outline:
-          "border border-[var(--border)] bg-transparent text-[var(--foreground)] hover:bg-[var(--foreground)]/5",
+          "border border-[var(--outline-border)] bg-transparent text-[var(--foreground)] hover:border-transparent hover:bg-[var(--accent)]",
         "icon-ghost":
-          "bg-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--foreground)]/5 !p-0 !gap-0",
+          "bg-transparent text-[var(--foreground)] hover:bg-[var(--accent)] !p-0 !gap-0",
       },
       size: {
-        sm: "h-[38px] px-4 text-sm [&_svg]:size-4",
-        default: "h-[42px] px-5 text-base [&_svg]:size-5",
+        sm: "h-[32px] px-3.5 text-sm [&_svg]:size-4",
+        default: "h-[38px] px-[1.125rem] text-base [&_svg]:size-4",
         "icon-xs": "size-7 [&_svg]:size-4",
-        "icon-sm": "size-9 [&_svg]:size-5",
-        "icon-default": "size-10 [&_svg]:size-5",
+        "icon-sm": "size-7 [&_svg]:size-4",
+        "icon-default": "size-8 [&_svg]:size-[1.125rem]",
+        "icon-lg": "size-9 [&_svg]:size-5",
       },
     },
     defaultVariants: {
@@ -312,16 +331,19 @@ export const chatButtonVariants = variantClasses(
   },
 );
 
-export const chatContainerVariants = variantClasses("flex flex-col overflow-hidden", {
-  variants: {
-    variant: {
-      default: "h-full bg-[var(--background)]",
-      embedded: "h-full bg-transparent",
-      floating:
-        "h-[600px] w-[400px] rounded-2xl border border-[var(--border)] bg-[var(--background)] shadow-xl",
+export const chatContainerVariants = variantClasses(
+  "flex flex-col overflow-hidden",
+  {
+    variants: {
+      variant: {
+        default: "h-full bg-[var(--background)]",
+        embedded: "h-full bg-transparent",
+        floating:
+          "h-[600px] w-[400px] rounded-[var(--radius-lg)] border border-[var(--outline-border)] bg-[var(--background)] shadow-sm",
+      },
+    },
+    defaultVariants: {
+      variant: "default",
     },
   },
-  defaultVariants: {
-    variant: "default",
-  },
-});
+);

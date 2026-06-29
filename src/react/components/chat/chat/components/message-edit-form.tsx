@@ -59,10 +59,9 @@ export function MessageEditForm({
         onKeyDown={handleKeyDown}
         rows={1}
         className={cn(
-          "w-full resize-none rounded-xl px-4 py-3 text-[15px] leading-relaxed",
-          "bg-[var(--accent)]",
-          "border border-[var(--border)]",
-          "focus:outline-none focus-visible:border-[var(--ring)]",
+          "w-full resize-none rounded-[var(--radius-lg)] px-4 py-3 text-[15px] leading-relaxed",
+          "border border-[var(--outline-border)] bg-[var(--secondary)]",
+          "focus:outline-none focus-visible:border-[var(--edge-medium)]",
           "text-[var(--foreground)]",
         )}
       />
@@ -76,9 +75,9 @@ export function MessageEditForm({
           disabled={!content.trim()}
           className={cn(
             "px-3 py-1.5 text-xs font-medium rounded-full transition-all",
-            "bg-[var(--primary)] text-[var(--primary-foreground)]",
-            "hover:opacity-90",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2",
+            "bg-[var(--primary)] text-[var(--secondary)]",
+            "hover:bg-[var(--secondary)] hover:text-[var(--foreground)]",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--background)]",
             "disabled:opacity-50 disabled:pointer-events-none",
           )}
         >
@@ -87,7 +86,7 @@ export function MessageEditForm({
         <button
           type="button"
           onClick={onCancel}
-          className="px-3 py-1.5 text-xs font-medium rounded-full text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--foreground)]/5 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2"
+          className="px-3 py-1.5 text-xs font-medium rounded-full text-[var(--faint)] hover:bg-[var(--tertiary)] hover:text-[var(--foreground)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--background)]"
         >
           Cancel
         </button>

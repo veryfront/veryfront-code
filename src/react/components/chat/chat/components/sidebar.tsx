@@ -87,10 +87,10 @@ function ThreadItem({
   return (
     <div
       className={cn(
-        "group/thread flex items-center gap-2.5 px-3 py-2.5 rounded-xl cursor-pointer transition-all",
+        "group/thread flex cursor-pointer items-center gap-2.5 rounded-[var(--radius-md)] px-3 py-2.5 transition-colors",
         isActive
-          ? "bg-[var(--foreground)]/[0.05] text-[var(--foreground)]"
-          : "text-[var(--muted-foreground)] hover:bg-[var(--foreground)]/[0.03] hover:text-[var(--foreground)]",
+          ? "bg-[var(--secondary)] text-[var(--foreground)]"
+          : "text-[var(--faint)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)]",
       )}
       onClick={!editing ? onSelect : undefined}
       onDoubleClick={handleDoubleClick}
@@ -107,7 +107,7 @@ function ThreadItem({
               if (e.key === "Enter") commitRename();
               if (e.key === "Escape") setEditing(false);
             }}
-            className="flex-1 min-w-0 bg-transparent text-sm outline-none border-b border-[var(--input-border)]"
+            className="min-w-0 flex-1 border-b border-[var(--edge-medium)] bg-transparent text-sm outline-none"
           />
         )
         : (
@@ -122,7 +122,7 @@ function ThreadItem({
             e.stopPropagation();
             onDelete();
           }}
-          className="shrink-0 opacity-0 group-hover/thread:opacity-100 p-0.5 text-[var(--muted-foreground)] hover:text-[var(--destructive)] transition-all rounded"
+          className="shrink-0 rounded p-0.5 text-[var(--faint)] opacity-0 transition-all hover:text-[var(--destructive)] group-hover/thread:opacity-100"
           aria-label="Delete thread"
         >
           <TrashIcon className="size-3.5" />
@@ -147,7 +147,9 @@ export function ChatSidebar({
     () => threads.filter((t) => t.messages.length > 0 || t.id === activeThreadId),
     [threads, activeThreadId],
   );
-  const grouped = React.useMemo(() => groupThreads(visibleThreads), [visibleThreads]);
+  const grouped = React.useMemo(() => groupThreads(visibleThreads), [
+    visibleThreads,
+  ]);
   const hasThreads = visibleThreads.length > 0;
 
   if (!isOpen) return null;
@@ -165,10 +167,10 @@ export function ChatSidebar({
           <button
             type="button"
             onClick={onNewThread}
-            className="w-full inline-flex items-center justify-center gap-1.5 h-9 px-4 rounded-full text-sm font-medium text-[var(--foreground)] bg-[var(--card)] hover:opacity-80 transition-all"
+            className="inline-flex h-[38px] w-full items-center justify-center gap-1.5 rounded-full bg-[var(--secondary)] px-4 text-sm font-normal text-[var(--foreground)] shadow-sm transition-colors hover:bg-[var(--primary)] hover:text-[var(--secondary)]"
           >
             <PlusIcon className="size-4" />
-            <span>New Chat</span>
+            <span>New chat</span>
           </button>
         </div>
       )}
@@ -176,7 +178,7 @@ export function ChatSidebar({
         {hasThreads
           ? Array.from(grouped.entries()).map(([label, items]) => (
             <div key={label}>
-              <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--input-placeholder)]">
+              <div className="px-3 py-1.5 text-[11px] font-medium uppercase tracking-wider text-[var(--faint)]">
                 {label}
               </div>
               <div className="space-y-1">
@@ -196,7 +198,7 @@ export function ChatSidebar({
             </div>
           ))
           : (
-            <div className="flex flex-col items-center justify-center h-full px-4 text-center text-[var(--muted-foreground)]">
+            <div className="flex h-full flex-col items-center justify-center px-4 text-center text-[var(--faint)]">
               <p className="text-sm">No chats yet</p>
             </div>
           )}

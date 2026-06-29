@@ -352,7 +352,7 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
             <button
               type="button"
               onClick={toggleSidebar}
-              className="size-8 inline-flex items-center justify-center rounded-full text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--foreground)]/5 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2"
+              className="size-8 inline-flex items-center justify-center rounded-full text-[var(--faint)] transition-colors hover:bg-[var(--tertiary)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--background)]"
               aria-label={sidebarOpen ? "Close sidebar" : "Open sidebar"}
             >
               <PanelLeftIcon className="size-[18px]" />

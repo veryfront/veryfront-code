@@ -19,7 +19,7 @@ export function BranchPicker({
   if (total <= 1) return null;
 
   return (
-    <div className="inline-flex items-center gap-1 text-xs text-[var(--input-placeholder)]">
+    <div className="inline-flex items-center gap-1 text-xs text-[var(--faint)]">
       <button
         type="button"
         onClick={onPrev}

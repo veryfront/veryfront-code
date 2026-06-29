@@ -4993,7 +4993,8 @@
       "jsr:@std/fs@1.0.23",
       "jsr:@std/path@1.1.4",
       "jsr:@std/testing@1.0.17",
-      "jsr:@std/yaml@1.1.0"
+      "jsr:@std/yaml@1.1.0",
+      "npm:jsdom@28.0.0"
     ],
     "members": {
       "extensions/ext-auth-jwt": {

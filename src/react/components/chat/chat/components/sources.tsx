@@ -24,10 +24,9 @@ export const Sources = React.forwardRef<HTMLDivElement, SourcesProps>(
     return (
       <div
         ref={ref}
-        className={cn("mt-3 pt-3 border-t border-[var(--border)]", className)}
+        className={cn("mt-1", className)}
       >
-        <p className="text-xs font-medium text-[var(--muted-foreground)] mb-2">Sources</p>
-        <div className="flex flex-wrap gap-1.5">
+        <div className="flex flex-wrap gap-2">
           {sources.map((source, index) => (
             <SourcePill
               key={`${source.title}-${index}`}
@@ -49,7 +48,9 @@ interface SourcePillProps {
   onClick?: () => void;
 }
 
-function SourcePill({ source, index, onClick }: SourcePillProps): React.ReactElement {
+function SourcePill(
+  { source, index, onClick }: SourcePillProps,
+): React.ReactElement {
   const [showPreview, setShowPreview] = React.useState(false);
 
   return (
@@ -60,18 +61,18 @@ function SourcePill({ source, index, onClick }: SourcePillProps): React.ReactEle
         onMouseEnter={() => setShowPreview(true)}
         onMouseLeave={() => setShowPreview(false)}
         className={cn(
-          "inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-xs",
-          "bg-[var(--accent)] text-[var(--card-foreground)]",
-          "hover:bg-[var(--accent)] transition-colors",
+          "inline-flex max-w-full items-center gap-1 rounded-full border border-[var(--outline-border)] py-1 pl-1 pr-2 text-xs no-underline",
+          "bg-transparent text-[var(--foreground)]",
+          "transition-colors hover:bg-[var(--tertiary)]",
           onClick ? "cursor-pointer" : "cursor-default",
         )}
       >
-        <span className="flex items-center justify-center size-4 rounded bg-[var(--border)] text-[10px] font-medium text-[var(--card-foreground)]">
+        <span className="flex size-4 shrink-0 items-center justify-center rounded-full border border-[var(--outline-border)] text-xs font-medium">
           {index + 1}
         </span>
-        <span className="truncate max-w-[160px]">{source.title}</span>
+        <span className="ml-0.5 max-w-[150px] truncate">{source.title}</span>
         {source.score != null && (
-          <span className="flex items-center gap-1 shrink-0 ml-0.5">
+          <span className="ml-0.5 flex shrink-0 items-center gap-1">
             <span
               className={cn(
                 "size-1.5 rounded-full",
@@ -89,8 +90,8 @@ function SourcePill({ source, index, onClick }: SourcePillProps): React.ReactEle
       {/* Hover preview */}
       {showPreview && source.snippet && (
         <div className="absolute bottom-full left-0 mb-2 z-50 w-60 pointer-events-none">
-          <div className="bg-[var(--card)] border border-[var(--border)] rounded-xl shadow-lg p-2.5 text-left">
-            <p className="text-xs text-[var(--card-foreground)] line-clamp-3 leading-relaxed">
+          <div className="rounded-[var(--radius-md)] border border-[var(--outline-border)] bg-[var(--secondary)] p-2.5 text-left shadow-sm">
+            <p className="text-xs text-[var(--foreground)] line-clamp-3 leading-relaxed">
               {source.snippet.slice(0, 150)}
               {source.snippet.length > 150 ? "..." : ""}
             </p>

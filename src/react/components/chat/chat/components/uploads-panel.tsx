@@ -42,19 +42,19 @@ export function UploadsPanel({
         {uploads.length === 0
           ? (
             <div className="flex flex-col items-center justify-center h-full text-center">
-              <h1 className="text-2xl font-medium text-[var(--foreground)] tracking-tight">
+              <h1 className="text-base font-medium text-[var(--foreground)]">
                 No files uploaded
               </h1>
-              <p className="mt-2 max-w-sm text-sm text-[var(--muted-foreground)] leading-relaxed">
+              <p className="mt-1 max-w-sm text-sm leading-6 text-[var(--faint)]">
                 Upload files to start asking questions
               </p>
               {onAttach && (
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  className="mt-4 px-4 py-2 text-sm font-medium rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2"
+                  className="mt-4 h-[38px] rounded-full bg-[var(--primary)] px-4 text-sm font-normal text-[var(--secondary)] shadow-sm transition-colors hover:bg-[var(--secondary)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--background)]"
                 >
-                  Upload Files
+                  Upload files
                 </button>
               )}
             </div>
@@ -64,9 +64,9 @@ export function UploadsPanel({
               {uploads.map((doc) => (
                 <div
                   key={doc.id}
-                  className="flex items-center gap-3 rounded-lg px-3 py-2.5 group hover:bg-[var(--accent)] transition-colors"
+                  className="group flex items-center gap-3 rounded-[var(--radius-md)] px-3 py-2.5 transition-colors hover:bg-[var(--secondary)]"
                 >
-                  <div className="shrink-0 size-8 rounded-lg bg-[var(--accent)] flex items-center justify-center text-[var(--muted-foreground)]">
+                  <div className="flex size-8 shrink-0 items-center justify-center rounded-[var(--radius-md)] bg-[var(--secondary)] text-[var(--faint)]">
                     <FileTextIcon className="size-4" />
                   </div>
                   <div className="flex-1 min-w-0">
@@ -76,18 +76,18 @@ export function UploadsPanel({
                           href={doc.url}
                           target="_blank"
                           rel="noreferrer"
-                          className="block truncate text-sm text-[var(--card-foreground)] hover:underline"
+                          className="block truncate text-sm text-[var(--foreground)] hover:underline"
                         >
                           {doc.name}
                         </a>
                       )
                       : (
-                        <p className="text-sm text-[var(--card-foreground)] truncate">
+                        <p className="truncate text-sm text-[var(--foreground)]">
                           {doc.name}
                         </p>
                       )}
                     {doc.size != null && (
-                      <p className="text-xs text-[var(--muted-foreground)]">
+                      <p className="text-xs text-[var(--faint)]">
                         {formatFileSize(doc.size)}
                       </p>
                     )}
@@ -96,7 +96,7 @@ export function UploadsPanel({
                     <button
                       type="button"
                       onClick={() => onRemoveUpload(doc.id)}
-                      className="shrink-0 p-1.5 rounded-md text-[var(--muted-foreground)] hover:text-[var(--destructive)] hover:bg-[var(--destructive)]/10 transition-colors opacity-0 group-hover:opacity-100"
+                      className="shrink-0 rounded-[var(--radius-md)] p-1.5 text-[var(--faint)] opacity-0 transition-colors hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)] group-hover:opacity-100"
                       aria-label={`Remove ${doc.name}`}
                     >
                       <TrashIcon className="size-4" />
@@ -108,7 +108,7 @@ export function UploadsPanel({
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  className="w-full flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm text-[var(--muted-foreground)] hover:bg-[var(--accent)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2"
+                  className="flex w-full items-center justify-center gap-2 rounded-[var(--radius-md)] px-3 py-2.5 text-sm text-[var(--faint)] transition-colors hover:bg-[var(--secondary)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--background)]"
                 >
                   <span className="text-xs">+</span>
                   Upload more files

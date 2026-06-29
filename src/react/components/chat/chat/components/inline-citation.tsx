@@ -61,9 +61,9 @@ export function InlineCitation({
           onMouseLeave={hide}
           className={cn(
             "inline-flex items-center justify-center",
-            "size-4 rounded text-[10px] font-medium leading-none",
-            "bg-[var(--border)] text-[var(--card-foreground)]",
-            "hover:bg-[var(--accent)] transition-colors",
+            "size-4 rounded-full border border-[var(--outline-border)] text-[10px] font-medium leading-none",
+            "bg-transparent text-[var(--foreground)]",
+            "hover:bg-[var(--tertiary)] transition-colors",
             "align-super -translate-y-0.5 mx-0.5",
             className,
           )}
@@ -79,10 +79,10 @@ export function InlineCitation({
           onMouseEnter={show}
           onMouseLeave={hide}
         >
-          <div className="bg-[var(--card)] border border-[var(--border)] rounded-xl shadow-xl p-3.5 text-left">
+          <div className="rounded-[var(--radius-lg)] border border-[var(--outline-border)] bg-[var(--secondary)] p-3.5 text-left shadow-sm">
             {/* Title */}
             <div className="flex items-start gap-2">
-              <span className="flex-shrink-0 flex items-center justify-center size-5 rounded bg-[var(--border)] text-[10px] font-bold text-[var(--card-foreground)] mt-0.5">
+              <span className="mt-0.5 flex size-5 flex-shrink-0 items-center justify-center rounded-full border border-[var(--outline-border)] text-[10px] font-medium text-[var(--foreground)]">
                 {index + 1}
               </span>
               <div className="min-w-0 flex-1">
@@ -90,7 +90,7 @@ export function InlineCitation({
                   {source.title}
                 </p>
                 {source.url && (
-                  <p className="text-[10px] text-[var(--muted-foreground)] truncate mt-0.5 flex items-center gap-1">
+                  <p className="text-[10px] text-[var(--faint)] truncate mt-0.5 flex items-center gap-1">
                     <svg
                       className="size-2.5 shrink-0"
                       viewBox="0 0 24 24"
@@ -112,8 +112,8 @@ export function InlineCitation({
 
             {/* Snippet as blockquote */}
             {source.snippet && (
-              <div className="mt-2.5 pl-3 border-l-2 border-[var(--border)]">
-                <p className="text-xs text-[var(--card-foreground)] line-clamp-4 leading-relaxed italic">
+              <div className="mt-2.5 border-l-2 border-[var(--outline-border)] pl-3">
+                <p className="text-xs text-[var(--foreground)] line-clamp-4 leading-relaxed italic">
                   {source.snippet}
                 </p>
               </div>
@@ -122,10 +122,10 @@ export function InlineCitation({
             {/* Score bar */}
             {source.score != null && (
               <div className="mt-2.5 flex items-center gap-2">
-                <span className="text-[10px] text-[var(--input-placeholder)] shrink-0">
+                <span className="text-[10px] text-[var(--faint)] shrink-0">
                   Relevance
                 </span>
-                <div className="flex-1 h-1 rounded-full bg-[var(--border)] overflow-hidden">
+                <div className="flex-1 h-1 rounded-full bg-[var(--edge-medium)] overflow-hidden">
                   <div
                     className={cn(
                       "h-full rounded-full transition-all",
@@ -138,7 +138,7 @@ export function InlineCitation({
                     style={{ width: `${Math.round(source.score * 100)}%` }}
                   />
                 </div>
-                <span className="text-[10px] tabular-nums text-[var(--input-placeholder)]">
+                <span className="text-[10px] tabular-nums text-[var(--faint)]">
                   {Math.round(source.score * 100)}%
                 </span>
               </div>

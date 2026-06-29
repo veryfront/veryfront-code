@@ -18,7 +18,9 @@ import type { ChatMessage } from "#veryfront/agent/react";
 /** Props accepted by chat composer. */
 export interface ChatComposerProps {
   input: string;
-  onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
+  onChange: (
+    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
+  ) => void;
   onSubmit?: (e?: React.FormEvent) => void;
   isLoading?: boolean;
   placeholder?: string;
@@ -96,7 +98,7 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
             </div>
           )}
           {attachments && attachments.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 px-2 pb-2">
+            <div className="flex flex-wrap items-center gap-2 pb-4">
               {attachments.map((file) => (
                 <AttachmentPill
                   key={file.id}
@@ -112,8 +114,8 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
               onSubmit?.(e);
             }}
           >
-            <div className="relative rounded-full border border-[var(--input-border)] bg-[var(--card)] px-3 py-1.5 shadow-sm transition-[border-color,box-shadow] focus-within:border-[var(--foreground)] focus-within:shadow-md">
-              <div className="flex min-h-[42px] items-end gap-2">
+            <div className="relative overflow-hidden rounded-[var(--radius-lg)] border border-transparent bg-[var(--secondary)] px-3 pt-3 pb-2 shadow-sm transition-all md:px-4 md:pt-4 md:pb-3">
+              <div className="flex min-h-[44px] items-end gap-1.5 md:gap-2">
                 {(onAttach || onSelectAttachment) && (
                   <div className="relative flex shrink-0 items-center">
                     {onAttach && (
@@ -124,7 +126,9 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
                         multiple
                         aria-label="Upload file"
                         onChange={(e) => {
-                          if (e.target.files?.length) onAttach(e.target.files);
+                          if (e.target.files?.length) {
+                            onAttach(e.target.files);
+                          }
                           e.target.value = "";
                         }}
                         style={{
@@ -149,23 +153,23 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
                         }
                         setAttachmentMenuOpen((open) => !open);
                       }}
-                      className="size-9 flex items-center justify-center rounded-full text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--foreground)]/5 transition-colors shrink-0"
+                      className="flex size-8 shrink-0 items-center justify-center rounded-full bg-transparent text-[var(--foreground)] transition-colors hover:bg-[var(--tertiary)]"
                       aria-label="Add document"
                       aria-expanded={attachmentMenuOpen}
                     >
-                      <PlusIcon className="size-5" />
+                      <PlusIcon className="size-4" />
                     </button>
                     {attachmentMenuOpen && (
                       <div
                         role="menu"
-                        className="absolute bottom-11 left-0 z-20 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-lg"
+                        className="absolute bottom-11 left-0 z-20 overflow-hidden rounded-[var(--radius-lg)] border border-[var(--outline-border)] bg-[var(--popover)] shadow-sm"
                         style={{ minWidth: 224 }}
                       >
                         {onAttach && (
                           <button
                             type="button"
                             role="menuitem"
-                            className="block w-full whitespace-nowrap px-4 py-3 text-left text-sm text-[var(--foreground)] transition-colors hover:bg-[var(--foreground)]/5"
+                            className="block w-full whitespace-nowrap px-3 py-2.5 text-left text-sm text-[var(--foreground)] transition-colors hover:bg-[var(--tertiary)]"
                             onClick={() => {
                               setAttachmentMenuOpen(false);
                               fileInputRef.current?.click();
@@ -178,7 +182,7 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
                           <button
                             type="button"
                             role="menuitem"
-                            className="block w-full whitespace-nowrap px-4 py-3 text-left text-sm text-[var(--foreground)] transition-colors hover:bg-[var(--foreground)]/5"
+                            className="block w-full whitespace-nowrap px-3 py-2.5 text-left text-sm text-[var(--foreground)] transition-colors hover:bg-[var(--tertiary)]"
                             onClick={() => {
                               setAttachmentMenuOpen(false);
                               onSelectAttachment();
@@ -200,7 +204,7 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
                   disabled={isLoading || isListening}
                   multiline
                   className={cn(
-                    "min-h-9 min-w-0 flex-1 py-2 text-[15px] leading-normal text-[var(--foreground)] placeholder:text-[var(--input-placeholder)]",
+                    "min-h-9 min-w-0 flex-1 py-1.5 text-base leading-6 text-[var(--foreground)] placeholder:text-[var(--faint)]",
                     theme?.input,
                   )}
                 />
@@ -217,7 +221,7 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
                     <button
                       type="button"
                       onClick={() => downloadMarkdown(messages)}
-                      className="size-9 flex items-center justify-center rounded-full text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--foreground)]/5 transition-colors shrink-0"
+                      className="flex size-8 shrink-0 items-center justify-center rounded-full bg-transparent text-[var(--foreground)] transition-colors hover:bg-[var(--tertiary)]"
                       aria-label="Export conversation"
                       title="Export as Markdown"
                     >
@@ -243,7 +247,7 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
                     onVoice={onVoice}
                     disabled={!input.trim()}
                     className={cn(
-                      "size-9 shrink-0 rounded-full bg-[var(--foreground)] text-[var(--background)] transition-[background-color,color,box-shadow] hover:bg-[var(--card)] hover:text-[var(--foreground)] hover:shadow-[inset_0_0_0_1px_var(--foreground)] disabled:opacity-100",
+                      "size-8 shrink-0 rounded-full bg-[var(--primary)] text-[var(--secondary)] shadow-sm transition-[background-color,color] hover:bg-[var(--secondary)] hover:text-[var(--foreground)] disabled:opacity-60",
                       theme?.button,
                     )}
                   />
