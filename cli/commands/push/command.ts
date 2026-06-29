@@ -21,11 +21,11 @@ import {
   writeProjectSlug,
 } from "#cli/shared/config";
 import { reserveProjectSlug } from "#cli/shared/reserve-slug";
-import { confirmPrompt, logError, logInfo, logSuccess, logWarning } from "#cli/utils";
+import { confirmPrompt, logInfo, logSuccess, logWarning } from "#cli/utils";
 import { createNoopSpinner, createSpinner } from "#cli/ui";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { createIgnoreChecker, type IgnoreChecker, loadIgnorePatterns } from "../../sync/ignore.ts";
-import { listAllFiles } from "../pull/index.ts";
+import { listAllFiles, type PullSource } from "../pull/index.ts";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 
 /**
@@ -94,6 +94,22 @@ export interface BranchResponse {
   projectId: string;
 }
 
+interface BranchListItem {
+  id: string;
+  name: string;
+}
+
+interface ListBranchesResponse {
+  data: BranchListItem[];
+  page_info?: {
+    next?: string;
+  };
+}
+
+interface RemoteFile {
+  path: string;
+}
+
 async function scanLocalFiles(
   projectDir: string,
   ignoreChecker: IgnoreChecker,
@@ -137,6 +153,74 @@ export function createBranch(
   branchName: string,
 ): Promise<BranchResponse> {
   return client.post<BranchResponse>(`/projects/${projectSlug}/branches`, { name: branchName });
+}
+
+function getErrorStatus(error: unknown): number | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  const status = (error as { status?: unknown }).status;
+  return typeof status === "number" ? status : undefined;
+}
+
+async function getBranchByName(
+  client: ApiClient,
+  projectSlug: string,
+  branchName: string,
+): Promise<BranchListItem | null> {
+  let cursor: string | undefined;
+
+  do {
+    const params: Record<string, string> = {
+      search: branchName,
+      limit: "100",
+      ...(cursor ? { cursor } : {}),
+    };
+
+    const response = await client.get<ListBranchesResponse>(
+      `/projects/${projectSlug}/branches`,
+      params,
+    );
+
+    const branch = response.data.find((candidate) => candidate.name === branchName);
+    if (branch) return branch;
+
+    cursor = response.page_info?.next;
+  } while (cursor);
+
+  return null;
+}
+
+export async function ensureBranch(
+  client: ApiClient,
+  projectSlug: string,
+  branchName: string,
+): Promise<BranchListItem> {
+  try {
+    return await createBranch(client, projectSlug, branchName);
+  } catch (error) {
+    if (getErrorStatus(error) !== 409) throw error;
+
+    const existingBranch = await getBranchByName(client, projectSlug, branchName);
+    if (existingBranch) return existingBranch;
+
+    throw error;
+  }
+}
+
+export async function resolvePushRemoteFiles(
+  client: ApiClient,
+  projectSlug: string,
+  branchName: string,
+  mainFiles: RemoteFile[],
+): Promise<{ branchId: string | null; remoteFiles: RemoteFile[]; source: PullSource }> {
+  const mainSource = { type: "main" } satisfies PullSource;
+  if (branchName === "main") return { branchId: null, remoteFiles: mainFiles, source: mainSource };
+
+  const existingBranch = await getBranchByName(client, projectSlug, branchName);
+  if (!existingBranch) return { branchId: null, remoteFiles: mainFiles, source: mainSource };
+
+  const branchSource = { type: "branch", name: branchName } satisfies PullSource;
+  const remoteFiles = await listAllFiles(client, projectSlug, branchSource);
+  return { branchId: existingBranch.id, remoteFiles, source: branchSource };
 }
 
 function buildFileUrl(projectSlug: string, path: string, branchId: string | null): string {
@@ -268,15 +352,16 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
 
       spinner.update("Fetching remote files...");
       const client = createApiClient(config);
+      const branchName = branch || generateBranchName();
+      const isMainBranch = branchName === "main";
 
       // First-push: If project doesn't exist on server yet, create it
-      let remoteFiles: { path: string }[] = [];
+      let mainFiles: RemoteFile[] = [];
       try {
-        remoteFiles = await listAllFiles(client, config.projectSlug, { type: "main" });
+        mainFiles = await listAllFiles(client, config.projectSlug, { type: "main" });
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
         // Project doesn't exist yet - create it on first push
-        if (message.includes("404") || message.includes("not found")) {
+        if (getErrorStatus(error) === 404) {
           spinner.update("Creating project...");
           const reserveResult = await reserveProjectSlug(config.projectSlug, config.apiToken);
           if (reserveResult.slug !== config.projectSlug) {
@@ -286,16 +371,23 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           config = { ...config, projectSlug: reserveResult.slug };
           // Now try to get files again (should be empty for new project)
           try {
-            remoteFiles = await listAllFiles(client, config.projectSlug, { type: "main" });
+            mainFiles = await listAllFiles(client, config.projectSlug, { type: "main" });
           } catch {
             // Project just created, no files yet
-            remoteFiles = [];
+            mainFiles = [];
           }
         } else {
           throw error;
         }
       }
-      const toDelete = remoteFiles.map((f) => f.path).filter((p) => !localPaths.has(p));
+
+      const target = await resolvePushRemoteFiles(
+        client,
+        config.projectSlug,
+        branchName,
+        mainFiles,
+      );
+      const toDelete = target.remoteFiles.map((f) => f.path).filter((p) => !localPaths.has(p));
 
       if (ops.length === 0 && toDelete.length === 0) {
         spinner.stop();
@@ -304,9 +396,6 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       }
 
       spinner.stop();
-
-      const branchName = branch || generateBranchName();
-      const isMainBranch = branchName === "main";
 
       if (!quiet) {
         const parts = buildSummaryParts(ops, toDelete);
@@ -319,6 +408,8 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         const parts = buildConfirmParts(ops, toDelete);
         const confirmMessage = isMainBranch
           ? `Push to main (${parts.join(", ")} files)?`
+          : target.branchId
+          ? `Push to branch "${branchName}" and ${parts.join(", ")} files?`
           : `Create branch "${branchName}" and ${parts.join(", ")} files?`;
 
         const confirmed = await confirmPrompt(confirmMessage, true);
@@ -329,9 +420,11 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       }
 
       if (dryRun) {
-        if (ops.length > 0) await uploadFiles(client, config.projectSlug, null, ops, true);
+        if (ops.length > 0) {
+          await uploadFiles(client, config.projectSlug, target.branchId, ops, true);
+        }
         if (toDelete.length > 0) {
-          await deleteFiles(client, config.projectSlug, null, toDelete, true);
+          await deleteFiles(client, config.projectSlug, target.branchId, toDelete, true);
         }
 
         if (!quiet) {
@@ -341,26 +434,22 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         return;
       }
 
-      let branchId: string | null = null;
-      const uploadMsg = isMainBranch ? "Pushing to main..." : `Creating branch "${branchName}"...`;
+      let branchId = target.branchId;
+      const uploadMsg = isMainBranch
+        ? "Pushing to main..."
+        : branchId
+        ? `Pushing to branch "${branchName}"...`
+        : `Creating branch "${branchName}"...`;
       spinner = quiet ? createNoopSpinner() : createSpinner(uploadMsg);
 
-      if (!isMainBranch) {
+      if (!isMainBranch && !branchId) {
         try {
-          const createdBranch = await createBranch(client, config.projectSlug, branchName);
-          branchId = createdBranch.id;
+          const preparedBranch = await ensureBranch(client, config.projectSlug, branchName);
+          branchId = preparedBranch.id;
         } catch (error) {
           spinner.stop();
           const message = error instanceof Error ? error.message : String(error);
-
-          if (message.includes("already exists")) {
-            logError(
-              `Branch "${branchName}" already exists. Use --branch to specify a different name.`,
-            );
-          } else {
-            logError(`Failed to create branch: ${message}`);
-          }
-          return;
+          throw new Error(`Failed to prepare branch "${branchName}": ${message}`);
         }
       }
 
