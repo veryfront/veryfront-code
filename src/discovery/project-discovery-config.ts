@@ -11,6 +11,8 @@ export const DEFAULT_PROJECT_DISCOVERY_DIRS = {
   workflowDirs: ["workflows"],
   workDirs: ["work"],
   taskDirs: ["tasks"],
+  scheduleDirs: ["schedules"],
+  webhookDirs: ["webhooks"],
   evalDirs: ["evals"],
 };
 
@@ -35,6 +37,8 @@ export type ProjectDiscoveryConfig = DiscoveryConfig & {
   workflowDirs: string[];
   workDirs: string[];
   taskDirs: string[];
+  scheduleDirs: string[];
+  webhookDirs: string[];
   evalDirs: string[];
 };
 
@@ -90,6 +94,14 @@ export function createProjectDiscoveryConfig(
     taskDirs: resolveDiscoveryPaths(
       aiConfig?.tasks?.discovery,
       DEFAULT_PROJECT_DISCOVERY_DIRS.taskDirs,
+    ),
+    scheduleDirs: resolveDiscoveryPaths(
+      aiConfig?.schedules?.discovery,
+      DEFAULT_PROJECT_DISCOVERY_DIRS.scheduleDirs,
+    ),
+    webhookDirs: resolveDiscoveryPaths(
+      aiConfig?.webhooks?.discovery,
+      DEFAULT_PROJECT_DISCOVERY_DIRS.webhookDirs,
     ),
     evalDirs: resolveDiscoveryPaths(
       aiConfig?.evals?.discovery,

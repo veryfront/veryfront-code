@@ -497,6 +497,30 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
             })
             .partial()
             .optional(),
+          schedules: v
+            .object({
+              discovery: v
+                .object({
+                  enabled: v.boolean().optional(),
+                  paths: v.array(v.string()).optional(),
+                })
+                .partial()
+                .optional(),
+            })
+            .partial()
+            .optional(),
+          webhooks: v
+            .object({
+              discovery: v
+                .object({
+                  enabled: v.boolean().optional(),
+                  paths: v.array(v.string()).optional(),
+                })
+                .partial()
+                .optional(),
+            })
+            .partial()
+            .optional(),
           evals: v
             .object({
               discovery: v

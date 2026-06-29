@@ -46,6 +46,8 @@ describe("src/discovery/index", () => {
         workflowDirs: ["workflows"],
         workDirs: ["work"],
         verbose: true,
+        scheduleDirs: ["schedules"],
+        webhookDirs: ["webhooks"],
       };
 
       assertEquals(config.toolDirs?.length, 2);
@@ -64,6 +66,9 @@ describe("src/discovery/index", () => {
         workflows: new Map(),
         works: new Map(),
         tasks: new Map(),
+        schedules: new Map(),
+        webhooks: new Map(),
+        evals: new Map(),
         errors: [],
       };
 
@@ -74,6 +79,9 @@ describe("src/discovery/index", () => {
       assertEquals(result.workflows.size, 0);
       assertEquals(result.works.size, 0);
       assertEquals(result.tasks.size, 0);
+      assertEquals(result.schedules.size, 0);
+      assertEquals(result.webhooks.size, 0);
+      assertEquals(result.evals.size, 0);
       assertEquals(result.errors.length, 0);
     });
   });
