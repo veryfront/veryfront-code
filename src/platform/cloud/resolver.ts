@@ -36,7 +36,7 @@ function getApiBaseUrlEnv(): string {
     getHostEnv("VERYFRONT_API_URL")?.replace("/graphql", "/api") ?? DEFAULT_API_BASE_URL;
 }
 
-export const DEFAULT_VERYFRONT_CLOUD_MODEL = "veryfront-cloud/anthropic/claude-sonnet-4-6";
+export const DEFAULT_VERYFRONT_CLOUD_MODEL = "veryfront-cloud/openai/gpt-5.4-nano";
 export const DEFAULT_VERYFRONT_CLOUD_EMBEDDING_MODEL =
   "veryfront-cloud/openai/text-embedding-3-small";
 

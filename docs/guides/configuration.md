@@ -202,7 +202,7 @@ defineConfig({
   ai: {
     providers: {
       openai: {
-        defaultModel: "gpt-4o-mini",
+        defaultModel: "gpt-5.4-nano",
       },
     },
     mcp: {

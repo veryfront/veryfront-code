@@ -44,7 +44,7 @@ describe("provider/veryfront-cloud", () => {
   it("resolves veryfront-cloud openai models without project ext-llm-openai installed", () => {
     setCloudBootstrap();
 
-    const model = resolveModel("veryfront-cloud/openai/gpt-5.2") as Record<string, unknown>;
+    const model = resolveModel("veryfront-cloud/openai/gpt-5.4-nano") as Record<string, unknown>;
 
     assertEquals(typeof model.doGenerate, "function");
     assertEquals(typeof model.doStream, "function");
