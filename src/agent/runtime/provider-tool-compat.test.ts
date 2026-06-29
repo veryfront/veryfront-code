@@ -154,6 +154,76 @@ describe("provider-tool-compat", () => {
     assertEquals(sanitized.properties?.labelIds?.items, {});
   });
 
+  it("normalizes Moonshot tool schemas to use $defs references", () => {
+    const sanitized = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        properties: {
+          acceptance_criteria: {
+            $ref: "#/definitions/acceptanceCriteria",
+          },
+        },
+        definitions: {
+          acceptanceCriteria: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                label: { type: "string" },
+              },
+              required: ["label"],
+            },
+          },
+        },
+      } as never,
+      { model: "veryfront-cloud/moonshotai/kimi-k2.6" },
+    );
+    const sanitizedRecord = sanitized as Record<string, Record<string, unknown> | undefined>;
+    const properties = sanitizedRecord.properties as Record<string, Record<string, unknown>>;
+    const defs = sanitizedRecord.$defs as Record<string, Record<string, unknown>>;
+
+    assertEquals(properties.acceptance_criteria?.$ref, "#/$defs/acceptanceCriteria");
+    assertEquals(sanitizedRecord.definitions, undefined);
+    assertEquals(defs.acceptanceCriteria?.type, "array");
+  });
+
+  it("preserves Moonshot tool properties named definitions", () => {
+    const sanitized = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        properties: {
+          definitions: {
+            type: "string",
+            description: "User-provided glossary text.",
+          },
+          nested: {
+            type: "object",
+            properties: {
+              definitions: {
+                type: "number",
+              },
+            },
+            required: ["definitions"],
+          },
+        },
+        required: ["definitions", "nested"],
+      } as never,
+      { model: "veryfront-cloud/moonshotai/kimi-k2.6" },
+    );
+    const sanitizedRecord = sanitized as Record<string, unknown>;
+    const properties = sanitizedRecord.properties as Record<string, Record<string, unknown>>;
+    const nested = properties.nested as {
+      properties?: Record<string, unknown>;
+      required?: string[];
+    };
+
+    assertEquals(properties.definitions?.type, "string");
+    assertEquals(nested.properties?.definitions, { type: "number" });
+    assertEquals(nested.required, ["definitions"]);
+    assertEquals(sanitizedRecord.required, ["definitions", "nested"]);
+    assertEquals(sanitizedRecord.$defs, undefined);
+  });
+
   it("removes Anthropic-incompatible property keys and matching required entries", () => {
     const sanitized = sanitizeProviderToolSchema(
       {

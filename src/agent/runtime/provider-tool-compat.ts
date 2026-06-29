@@ -65,8 +65,8 @@ export function getProviderToolProfile(model?: string): ProviderToolProfile {
     return { provider: "anthropic", sanitizeSchema: true };
   }
 
-  if (provider === "moonshot") {
-    return { provider: "moonshot", sanitizeSchema: false };
+  if (provider === "moonshot" || provider === "moonshotai") {
+    return { provider: "moonshot", sanitizeSchema: true };
   }
 
   return { provider: "unknown", sanitizeSchema: false };
@@ -298,6 +298,44 @@ function sanitizeGoogleSchemaValue(value: unknown): unknown {
   return sanitized;
 }
 
+function sanitizeMoonshotSchemaValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeMoonshotSchemaValue(item));
+  }
+
+  if (!isPlainRecord(value)) {
+    return value;
+  }
+
+  const sanitized: Record<string, unknown> = {};
+
+  for (const [key, child] of Object.entries(value)) {
+    if (key === "$ref" && typeof child === "string") {
+      sanitized.$ref = child.replace(/^#\/definitions\//, "#/$defs/");
+      continue;
+    }
+
+    if (key === "definitions") {
+      sanitized.$defs = sanitizeMoonshotSchemaValue(child);
+      continue;
+    }
+
+    if (key === "properties" && isPlainRecord(child)) {
+      sanitized.properties = Object.fromEntries(
+        Object.entries(child).map(([propertyName, propertySchema]) => [
+          propertyName,
+          sanitizeMoonshotSchemaValue(propertySchema),
+        ]),
+      );
+      continue;
+    }
+
+    sanitized[key] = sanitizeMoonshotSchemaValue(child);
+  }
+
+  return sanitized;
+}
+
 /**
  * Normalize a provider tool input schema so every function tool has a
  * provider-safe JSON Schema object at the root. Remote/MCP tools can omit the
@@ -330,6 +368,10 @@ export function sanitizeProviderToolSchema(
 
   if (profile.provider === "google") {
     return sanitizeGoogleSchemaValue(propertyKeySafeSchema) as JsonSchema;
+  }
+
+  if (profile.provider === "moonshot") {
+    return sanitizeMoonshotSchemaValue(propertyKeySafeSchema) as JsonSchema;
   }
 
   return propertyKeySafeSchema as JsonSchema;
