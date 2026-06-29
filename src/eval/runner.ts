@@ -1,5 +1,6 @@
 import { createEvalCheckContext } from "./expect.ts";
 import { createEvalReport } from "./report.ts";
+import { createEvalRunId } from "./run-id.ts";
 import { metrics as runtimeMetrics } from "#veryfront/metrics";
 import {
   createEvalReportExporterRegistry,
@@ -21,10 +22,6 @@ import type {
   EvalUsage,
   RunEvalOptions,
 } from "./types.ts";
-
-function createRunId(now: Date): string {
-  return `evalrun_${now.toISOString().replace(/[-:.]/g, "").replace("T", "_").replace("Z", "")}`;
-}
 
 function normalizeTrace(trace?: Partial<EvalTrace>): EvalTrace {
   return {
@@ -299,7 +296,7 @@ export async function runEval(
   const report = createEvalReport({
     definition,
     records,
-    runId: options.runId ?? createRunId(startedAt),
+    runId: options.runId ?? createEvalRunId(startedAt),
     startedAt,
     endedAt,
     metadata: options.metadata,

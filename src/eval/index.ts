@@ -51,6 +51,7 @@ export { createEvalReport, summarizeEvalRecords } from "./report.ts";
 export { compareEvalReports } from "./baseline.ts";
 export { compareEvalModelReports, createEvalModelComparisonMarkdown } from "./model-comparison.ts";
 export { createEvalRunProvenance, resolveEvalRunProvenance } from "./provenance.ts";
+export { createEvalRunId } from "./run-id.ts";
 export { exportEvalReport, runEval } from "./runner.ts";
 export { deriveEvalId, discoverEvals, findEvalById } from "./discovery.ts";
 export {

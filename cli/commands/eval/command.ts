@@ -24,6 +24,7 @@ import {
   compareEvalModelReports,
   compareEvalReports,
   createEvalModelComparisonMarkdown,
+  createEvalRunId,
   discoverEvals,
   exportEvalReport,
   resolveEvalRunProvenance,
@@ -127,10 +128,6 @@ function xmlEscape(value: string): string {
 function stripFileProtocol(path: string): string {
   if (!path.startsWith("file://")) return path;
   return decodeURIComponent(new URL(path).pathname);
-}
-
-function createCliRunId(now = new Date()): string {
-  return `evalrun_${now.toISOString().replace(/[-:.]/g, "").replace("T", "_").replace("Z", "")}`;
 }
 
 function createEvalReportDirTimestamp(runId: string): string {
@@ -1094,7 +1091,7 @@ async function runEvalModelComparison(input: {
   config: EvalModelComparisonConfig;
   policy: EvalModelComparisonPolicy;
 }): Promise<void> {
-  const runId = createCliRunId();
+  const runId = createEvalRunId();
   const reportDir = input.options.reportDir ??
     createDefaultEvalReportDir(runId, input.evalItem.id);
   const paths = createEvalModelComparisonArtifactPaths(reportDir, input.config.models);
@@ -1308,7 +1305,7 @@ export async function evalCommand(options: EvalOptions): Promise<void> {
       return;
     }
 
-    const runId = createCliRunId();
+    const runId = createEvalRunId();
     const artifactPaths = createEvalArtifactPaths(
       options.reportDir ?? createDefaultEvalReportDir(runId, evalItem.id),
     );
