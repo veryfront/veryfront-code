@@ -47,7 +47,7 @@ const STALE_DEV_DEPENDENCIES = [
 ] as const;
 
 const REQUIRED_NPM_OVERRIDES = {
-	protobufjs: "8.2.0",
+	protobufjs: "8.6.5",
 } as const;
 
 export function normalizeNpmPackageMetadata(pkg: PackageJson): PackageJson {

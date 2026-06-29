@@ -143,7 +143,7 @@ await build({
 			"@types/react-dom": npmDependencyRange(denoConfigSet, "@types/react-dom"),
 			// Root deno.json intentionally rejects core npm imports; ws is a
 			// Node-only dynamic import used by the npm server/HMR path.
-			"ws": "8.18.0",
+			"ws": "8.21.0",
 			"@kreuzberg/node": npmDependencyRange(denoConfigSet, "@kreuzberg/node"),
 		},
 		// Native binary deps that should not block install if they fail
