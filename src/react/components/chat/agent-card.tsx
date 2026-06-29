@@ -62,7 +62,7 @@ export const AgentCard = React.forwardRef<HTMLDivElement, AgentCardProps>(
 
           {tool.error
             ? (
-              <div className="mt-2 p-3 bg-red-50 text-red-900 rounded-xl text-sm border border-red-200">
+              <div className="mt-2 rounded-[var(--radius-md)] border border-red-200 bg-red-50 p-3 text-sm text-red-900">
                 Error: {tool.error}
               </div>
             )
@@ -92,7 +92,7 @@ export const AgentCard = React.forwardRef<HTMLDivElement, AgentCardProps>(
         {hasToolCalls
           ? (
             <div className="space-y-3">
-              <h3 className="text-sm font-semibold text-[var(--card-foreground)]">
+              <h3 className="text-sm font-medium text-[var(--foreground)]">
                 Tool Calls
               </h3>
               <div className="space-y-3">
@@ -109,7 +109,7 @@ export const AgentCard = React.forwardRef<HTMLDivElement, AgentCardProps>(
         {hasMessages
           ? (
             <div className="space-y-3">
-              <h3 className="text-sm font-semibold text-[var(--card-foreground)]">
+              <h3 className="text-sm font-medium text-[var(--foreground)]">
                 Messages
               </h3>
               <div className="space-y-2 max-h-96 overflow-y-auto">
@@ -121,12 +121,12 @@ export const AgentCard = React.forwardRef<HTMLDivElement, AgentCardProps>(
                   return (
                     <div
                       key={msg.id}
-                      className="text-sm p-3 rounded-xl bg-[var(--accent)]"
+                      className="rounded-[var(--radius-md)] bg-[var(--tertiary)] p-3 text-sm"
                     >
-                      <span className="font-semibold capitalize text-[var(--foreground)]">
+                      <span className="font-medium capitalize text-[var(--foreground)]">
                         {msg.role}:
                       </span>
-                      <span className="text-[var(--card-foreground)] ml-1">
+                      <span className="ml-1 text-[var(--foreground)]">
                         {text.substring(0, 200)}
                         {text.length > 200 ? "..." : ""}
                       </span>
@@ -147,7 +147,7 @@ AgentCard.displayName = "AgentCard";
 function getStatusColor(status: AgentStatus): string {
   switch (status) {
     case "idle":
-      return "bg-[var(--accent)] text-[var(--card-foreground)]";
+      return "bg-[var(--tertiary)] text-[var(--foreground)]";
     case "thinking":
       return "bg-blue-100 text-blue-700";
     case "tool_execution":
@@ -159,6 +159,6 @@ function getStatusColor(status: AgentStatus): string {
     case "error":
       return "bg-red-100 text-red-700";
     default:
-      return "bg-[var(--accent)] text-[var(--card-foreground)]";
+      return "bg-[var(--tertiary)] text-[var(--foreground)]";
   }
 }

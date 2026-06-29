@@ -40,7 +40,7 @@ export function SkillBadge({ tool, className }: SkillBadgeProps): React.JSX.Elem
     <span
       className={cn(
         "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium",
-        "bg-[var(--accent)] text-[var(--muted-foreground)] border border-[var(--border)]",
+        "border border-[var(--outline-border)] bg-transparent text-[var(--faint)]",
         className,
       )}
     >

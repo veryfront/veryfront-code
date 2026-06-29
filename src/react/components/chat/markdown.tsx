@@ -29,7 +29,7 @@ const ESM_REMARK_GFM = "https://esm.sh/remark-gfm@4.0.1?target=es2022&pin=v135";
 const ESM_REHYPE_HIGHLIGHT = "https://esm.sh/rehype-highlight@7.0.2?target=es2022&pin=v135";
 const ESM_MERMAID = "https://esm.sh/mermaid@11.4.1?pin=v135";
 const MARKDOWN_CONTAINER_CLASS =
-  "prose prose-sm max-w-none min-w-0 overflow-hidden break-words [overflow-wrap:anywhere] [&_*]:max-w-full";
+  "prose max-w-none min-w-0 overflow-hidden break-words text-base leading-relaxed text-[var(--foreground)] [overflow-wrap:anywhere] prose-headings:font-medium prose-strong:font-medium prose-a:text-[var(--foreground)] prose-a:underline prose-a:underline-offset-4 hover:prose-a:no-underline prose-inline-code:rounded-[var(--radius-xs)] prose-inline-code:bg-[var(--accent)] prose-inline-code:px-1 prose-inline-code:py-0.5 prose-inline-code:font-mono prose-inline-code:font-medium prose-inline-code:text-[var(--foreground)] prose-pre:rounded-[var(--radius-lg)] prose-pre:bg-[var(--secondary)] prose-pre:text-[var(--foreground)] prose-hr:border-[var(--edge-medium)] [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_*]:max-w-full";
 
 type DefaultModule<T> = { default: T };
 
@@ -140,7 +140,7 @@ function MermaidDiagram({ code }: { code: string }): React.ReactElement {
 
   if (!isBrowserEnvironment()) {
     return (
-      <pre className="my-4 p-4 bg-[var(--accent)] rounded-lg overflow-auto">
+      <pre className="my-4 overflow-auto rounded-[var(--radius-lg)] bg-[var(--secondary)] p-4">
         <code>{code}</code>
       </pre>
     );
@@ -148,7 +148,7 @@ function MermaidDiagram({ code }: { code: string }): React.ReactElement {
 
   if (error) {
     return (
-      <div className="my-4 p-4 bg-red-50 rounded-lg text-red-600 text-sm">
+      <div className="my-4 rounded-[var(--radius-lg)] bg-red-50 p-4 text-sm text-red-600">
         <p className="font-medium">Mermaid Error</p>
         <p>{error}</p>
         <pre className="mt-2 text-xs overflow-auto">{code}</pre>
@@ -158,8 +158,8 @@ function MermaidDiagram({ code }: { code: string }): React.ReactElement {
 
   if (!svg) {
     return (
-      <div className="my-4 p-4 bg-[var(--accent)] rounded-lg animate-pulse">
-        <div className="h-32 flex items-center justify-center text-[var(--muted-foreground)]">
+      <div className="my-4 animate-pulse rounded-[var(--radius-lg)] bg-[var(--secondary)] p-4">
+        <div className="flex h-32 items-center justify-center text-[var(--faint)]">
           Loading diagram...
         </div>
       </div>
@@ -190,7 +190,7 @@ function CodeBlock({
 
   if (inline) {
     return (
-      <code className="bg-[var(--accent)] px-1.5 py-0.5 rounded text-sm font-mono">
+      <code className="rounded-[var(--radius-xs)] bg-[var(--accent)] px-1 py-0.5 font-mono text-sm font-medium">
         {code}
       </code>
     );
@@ -279,8 +279,8 @@ export function Markdown({
           },
           table(props: BlockRendererProps) {
             return (
-              <div className="my-4 max-w-full overflow-x-auto rounded-md border border-[var(--border)]">
-                <table className="w-full divide-y divide-[var(--border)]">
+              <div className="my-4 max-w-full overflow-x-auto rounded-[var(--radius-md)] border border-[var(--outline-border)]">
+                <table className="w-full divide-y divide-[var(--outline-border)]">
                   {props.children}
                 </table>
               </div>
@@ -300,7 +300,7 @@ export function Markdown({
           },
           blockquote(props: BlockRendererProps) {
             return (
-              <blockquote className="border-l-4 border-[var(--border)] pl-4 my-4 text-[var(--card-foreground)] italic">
+              <blockquote className="border-l-4 border-[var(--outline-border)] pl-4 my-4 text-[var(--foreground)] italic">
                 {props.children}
               </blockquote>
             );

@@ -18,18 +18,18 @@ export function StepIndicator({
   return (
     <div
       className={cn(
-        "flex items-center gap-3 py-3 text-xs text-[var(--muted-foreground)]",
+        "flex items-center gap-3 py-3 text-xs text-[var(--faint)]",
         className,
       )}
     >
-      <div className="flex-1 h-px bg-[var(--border)]" />
-      <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-[var(--border)] bg-[var(--accent)]">
+      <div className="flex-1 h-px bg-[var(--edge)]" />
+      <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-[var(--outline-border)] bg-transparent">
         {isComplete
           ? <CheckCircleIcon className="size-3.5 text-[var(--success)]" />
-          : <span className="size-2 rounded-full bg-[var(--muted-foreground)] animate-pulse" />}
+          : <span className="size-2 rounded-full bg-[var(--faint)] animate-pulse" />}
         <span className="font-medium">Step {stepIndex + 1}</span>
       </div>
-      <div className="flex-1 h-px bg-[var(--border)]" />
+      <div className="flex-1 h-px bg-[var(--edge)]" />
     </div>
   );
 }

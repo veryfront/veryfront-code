@@ -1,6 +1,6 @@
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
-import { JSDOM } from "npm:jsdom@28.0.0";
+import { JSDOM } from "jsdom";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ChatComposer } from "./chat-composer.tsx";
@@ -163,7 +163,11 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
         reactPropsKey
       ] as {
         onKeyDown?: (
-          event: { key: string; shiftKey?: boolean; preventDefault: () => void },
+          event: {
+            key: string;
+            shiftKey?: boolean;
+            preventDefault: () => void;
+          },
         ) => void;
       };
       assert(reactProps.onKeyDown, "Expected input keydown handler to exist");
@@ -194,7 +198,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
     }
   });
 
-  it("uses the shared rounded prompt shell and non-scaling primary submit button", () => {
+  it("uses the copied Studio prompt shell and non-scaling primary submit button", () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/" },
@@ -223,9 +227,19 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       assert(composer, "Expected composer shell to render");
       assert(submitButton, "Expected submit button to render");
 
-      assert((composer as HTMLElement).className.includes("rounded-full"));
-      assert((composer as HTMLElement).className.includes("focus-within:border"));
-      assert(submitButton.className.includes("hover:shadow"));
+      assert(
+        (composer as HTMLElement).className.includes(
+          "rounded-[var(--radius-lg)]",
+        ),
+      );
+      assert(
+        (composer as HTMLElement).className.includes("bg-[var(--secondary)]"),
+      );
+      assertEquals(
+        (composer as HTMLElement).className.includes("focus-within:border"),
+        false,
+      );
+      assert(submitButton.className.includes("hover:bg-[var(--secondary)]"));
       assertEquals(submitButton.className.includes("active:scale"), false);
       root.unmount();
     } finally {

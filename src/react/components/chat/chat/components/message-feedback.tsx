@@ -13,7 +13,7 @@ export interface MessageFeedbackProps {
 }
 
 const BUTTON_BASE =
-  "inline-flex items-center justify-center size-7 rounded-full transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2";
+  "inline-flex items-center justify-center size-7 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--background)]";
 
 /** Render message feedback. */
 export const MessageFeedback = React.forwardRef<HTMLDivElement, MessageFeedbackProps>(
@@ -27,7 +27,7 @@ export const MessageFeedback = React.forwardRef<HTMLDivElement, MessageFeedbackP
             BUTTON_BASE,
             feedback === "positive"
               ? "text-emerald-500 bg-emerald-500/10"
-              : "text-[var(--input-placeholder)] hover:text-emerald-500 hover:bg-[var(--accent)]",
+              : "text-[var(--faint)] hover:bg-[var(--tertiary)] hover:text-emerald-500",
           )}
           title="Helpful"
         >
@@ -51,7 +51,7 @@ export const MessageFeedback = React.forwardRef<HTMLDivElement, MessageFeedbackP
             BUTTON_BASE,
             feedback === "negative"
               ? "text-red-500 bg-red-500/10"
-              : "text-[var(--input-placeholder)] hover:text-[var(--destructive)] hover:bg-[var(--accent)]",
+              : "text-[var(--faint)] hover:bg-[var(--tertiary)] hover:text-[var(--destructive)]",
           )}
           title="Not helpful"
         >

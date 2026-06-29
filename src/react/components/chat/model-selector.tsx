@@ -64,7 +64,9 @@ export function ModelSelector({
   const [open, setOpen] = React.useState(false);
   const triggerRef = React.useRef<HTMLButtonElement>(null);
   const dropdownRef = React.useRef<HTMLDivElement>(null);
-  const [pos, setPos] = React.useState<{ bottom: number; right: number } | null>(null);
+  const [pos, setPos] = React.useState<
+    { bottom: number; right: number } | null
+  >(null);
   const [focusedIndex, setFocusedIndex] = React.useState(-1);
 
   const selected = models.find((m) => m.value === value) ?? models[0];
@@ -147,7 +149,9 @@ export function ModelSelector({
   // Scroll focused item into view
   React.useEffect(() => {
     if (!open || focusedIndex < 0) return;
-    const option = dropdownRef.current?.querySelector(`[data-index="${focusedIndex}"]`);
+    const option = dropdownRef.current?.querySelector(
+      `[data-index="${focusedIndex}"]`,
+    );
     option?.scrollIntoView({ block: "nearest" });
   }, [open, focusedIndex]);
 
@@ -160,7 +164,10 @@ export function ModelSelector({
     triggerRef.current?.focus();
   }
 
-  function renderItem(model: ModelOption, flatIndex: number): React.ReactElement {
+  function renderItem(
+    model: ModelOption,
+    flatIndex: number,
+  ): React.ReactElement {
     const isActive = model.value === (value ?? selected?.value);
     const isFocused = flatIndex === focusedIndex;
 
@@ -173,23 +180,23 @@ export function ModelSelector({
         onClick={() => handleSelect(model)}
         onMouseEnter={() => setFocusedIndex(flatIndex)}
         className={cn(
-          "w-full text-left px-3 py-2 text-sm transition-all rounded-lg cursor-pointer",
+          "w-full cursor-pointer rounded-[var(--radius-md)] px-3 py-2 text-left text-sm transition-colors",
           isActive
-            ? "bg-[var(--foreground)]/[0.05] text-[var(--foreground)]"
-            : "text-[var(--card-foreground)] hover:bg-[var(--foreground)]/[0.05] hover:text-[var(--foreground)]",
-          isFocused && !isActive && "bg-[var(--foreground)]/[0.05]",
+            ? "bg-[var(--tertiary)] text-[var(--foreground)]"
+            : "text-[var(--foreground)] hover:bg-[var(--tertiary)]",
+          isFocused && !isActive && "bg-[var(--tertiary)]",
         )}
       >
         <div className="flex items-center gap-2">
           <span className="font-medium">{model.label}</span>
           {model.badge && (
-            <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-[var(--foreground)]/[0.07] text-[var(--muted-foreground)]">
+            <span className="rounded-full border border-[var(--outline-border)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--faint)]">
               {model.badge}
             </span>
           )}
         </div>
         {model.description && (
-          <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
+          <p className="mt-0.5 text-xs text-[var(--faint)]">
             {model.description}
           </p>
         )}
@@ -201,16 +208,18 @@ export function ModelSelector({
   let flatIndex = 0;
   const dropdownContent = groups
     ? Array.from(groups.entries()).map(([provider, items], groupIndex) => (
-      <div key={provider || "__ungrouped"} role="group" aria-label={provider || undefined}>
-        {groupIndex > 0 && <div className="h-px bg-[var(--border)] my-1" />}
+      <div
+        key={provider || "__ungrouped"}
+        role="group"
+        aria-label={provider || undefined}
+      >
+        {groupIndex > 0 && <div className="my-1 h-px bg-[var(--edge)]" />}
         {provider && (
-          <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--input-placeholder)]">
+          <div className="px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider text-[var(--faint)]">
             {provider}
           </div>
         )}
-        {items.map((item) =>
-          renderItem(item, flatIndex++)
-        )}
+        {items.map((item) => renderItem(item, flatIndex++))}
       </div>
     ))
     : models.map((item) => renderItem(item, flatIndex++));
@@ -226,18 +235,21 @@ export function ModelSelector({
         aria-expanded={open}
         aria-controls={open ? listboxId : undefined}
         className={cn(
-          "inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full",
-          "border border-[var(--border)]",
-          "bg-[var(--card)]",
-          "text-[var(--card-foreground)]",
-          "hover:bg-[var(--foreground)]/[0.05] hover:text-[var(--foreground)]",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2",
+          "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-xs",
+          "border border-[var(--outline-border)]",
+          "bg-transparent",
+          "text-[var(--foreground)]",
+          "hover:bg-[var(--tertiary)]",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--background)]",
           "transition-all disabled:opacity-50 disabled:cursor-not-allowed",
         )}
       >
         <span>{selected?.label ?? "Select model"}</span>
         <ChevronDownIcon
-          className={cn("size-3 transition-transform rotate-180", open && "rotate-0")}
+          className={cn(
+            "size-3 transition-transform rotate-180",
+            open && "rotate-0",
+          )}
         />
       </button>
 
@@ -247,7 +259,7 @@ export function ModelSelector({
           id={listboxId}
           role="listbox"
           aria-label="Select model"
-          className="min-w-[220px] max-h-[320px] overflow-auto rounded-xl border border-[var(--border)] bg-[var(--card)] shadow-xl p-1"
+          className="max-h-[320px] min-w-[220px] overflow-auto rounded-[var(--radius-lg)] border border-[var(--outline-border)] bg-[var(--popover)] p-1 shadow-sm"
           style={{
             position: "fixed",
             bottom: pos.bottom,

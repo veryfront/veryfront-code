@@ -18,12 +18,12 @@ export interface AttachmentPillProps {
 }
 
 const FILE_TYPE_COLORS: Record<string, string> = {
-  pdf: "text-red-500 bg-red-500/10",
-  docx: "text-blue-500 bg-blue-500/10",
-  csv: "text-emerald-500 bg-emerald-500/10",
-  txt: "text-neutral-500 bg-neutral-500/10",
-  md: "text-purple-500 bg-purple-500/10",
-  mdx: "text-purple-500 bg-purple-500/10",
+  pdf: "text-red-700 bg-red-100",
+  docx: "text-blue-700 bg-blue-100",
+  csv: "text-emerald-700 bg-emerald-100",
+  txt: "text-[var(--faint)] bg-[var(--tertiary)]",
+  md: "text-purple-700 bg-purple-100",
+  mdx: "text-purple-700 bg-purple-100",
 };
 
 function getExtension(name: string): string {
@@ -37,49 +37,90 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function getTypeLabel(
+  attachment: AttachmentInfo,
+  ext: string,
+  mediaType: string,
+): string {
+  if (attachment.status === "uploading") return "Uploading";
+  if (attachment.size != null) return formatSize(attachment.size);
+  return mediaType || ext.toUpperCase() || "File";
+}
+
 /** Render attachment pill. */
 export function AttachmentPill({
   attachment,
   onRemove,
 }: AttachmentPillProps): React.ReactElement {
   const [showPreview, setShowPreview] = React.useState(false);
-  const ext = attachment.type ?? getExtension(attachment.name);
-  const colorClass = FILE_TYPE_COLORS[ext] ?? "text-neutral-400 bg-neutral-400/10";
+  const mediaType = attachment.type ?? "";
+  const ext = getExtension(attachment.name) ||
+    mediaType.split("/").pop()?.toLowerCase() || "";
+  const colorClass = FILE_TYPE_COLORS[ext] ??
+    "text-[var(--faint)] bg-[var(--tertiary)]";
+  const isImage = mediaType.startsWith("image/") ||
+    /\.(avif|gif|jpe?g|png|webp)$/i.test(attachment.name);
+  const typeLabel = getTypeLabel(attachment, ext, mediaType);
 
   return (
-    <span
-      className="relative inline-flex items-center gap-1.5 rounded-lg bg-[var(--card)] py-1 pl-2.5 pr-1.5 text-xs text-[var(--card-foreground)] shadow-sm"
+    <div
+      className={cn(
+        "group relative flex w-[200px] items-center gap-3 rounded-[var(--radius-md)] border border-[var(--edge-medium)] bg-[var(--secondary)] py-1 pl-1 pr-2 text-[var(--foreground)]",
+        attachment.status === "uploading" && "opacity-70",
+      )}
       onMouseEnter={() => setShowPreview(true)}
       onMouseLeave={() => setShowPreview(false)}
     >
-      {/* File type badge */}
-      <span
-        className={cn(
-          "inline-flex items-center justify-center rounded px-1 py-0.5 text-[9px] font-bold uppercase leading-none",
-          colorClass,
+      {isImage && attachment.preview
+        ? (
+          <div className="relative size-10 shrink-0 overflow-hidden rounded-[var(--radius-md)] bg-[var(--tertiary)]">
+            <img
+              alt=""
+              className="size-full object-cover"
+              src={attachment.preview}
+            />
+            {attachment.status === "uploading" && (
+              <div className="absolute inset-0 flex items-center justify-center rounded-[var(--radius-md)] bg-[var(--overlay)]">
+                <span className="size-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+              </div>
+            )}
+          </div>
+        )
+        : (
+          <div
+            className={cn(
+              "relative flex size-10 shrink-0 items-center justify-center rounded-[var(--radius-md)] text-[10px] font-medium uppercase leading-none",
+              colorClass,
+            )}
+          >
+            {ext || "file"}
+            {attachment.status === "uploading" && (
+              <div className="absolute inset-0 flex items-center justify-center rounded-[var(--radius-md)] bg-[var(--overlay)]">
+                <span className="size-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+              </div>
+            )}
+          </div>
         )}
-      >
-        {ext || "?"}
-      </span>
 
-      <span className="truncate max-w-[120px]">{attachment.name}</span>
-
-      {attachment.size != null && (
-        <span className="text-[10px] text-[var(--input-placeholder)] shrink-0">
-          {formatSize(attachment.size)}
-        </span>
-      )}
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium leading-tight">
+          {attachment.name || "Attachment"}
+        </p>
+        <p className="truncate text-xs leading-tight text-[var(--faint)]">
+          {typeLabel}
+        </p>
+      </div>
 
       {attachment.status === "uploading"
         ? (
-          <span className="size-3 shrink-0 rounded-full border-2 border-neutral-400 border-t-transparent animate-spin" />
+          <span className="size-4 shrink-0 rounded-full border-2 border-[var(--faint)] border-t-transparent animate-spin" />
         )
         : onRemove && (
           <button
             type="button"
             onClick={() => onRemove(attachment.id)}
             aria-label={`Remove ${attachment.name}`}
-            className="size-4 shrink-0 flex items-center justify-center rounded-full hover:bg-[var(--accent)] text-[var(--input-placeholder)] hover:text-[var(--foreground)] transition-colors"
+            className="flex size-5 shrink-0 items-center justify-center rounded-full text-[var(--foreground)] opacity-100 transition-colors hover:bg-[var(--tertiary)] md:opacity-0 md:group-hover:opacity-100"
           >
             <svg
               className="size-3"
@@ -98,16 +139,16 @@ export function AttachmentPill({
       {/* Hover preview */}
       {showPreview && attachment.preview && (
         <div className="absolute bottom-full left-0 mb-2 z-50 w-64 pointer-events-none">
-          <div className="bg-[var(--card)] border border-[var(--border)] rounded-xl shadow-lg p-3 text-left">
-            <p className="text-[10px] font-medium text-[var(--muted-foreground)] uppercase mb-1">
+          <div className="rounded-[var(--radius-md)] border border-[var(--outline-border)] bg-[var(--secondary)] p-3 text-left shadow-sm">
+            <p className="mb-1 text-[10px] font-medium uppercase text-[var(--faint)]">
               Preview
             </p>
-            <p className="text-xs text-[var(--card-foreground)] line-clamp-4 whitespace-pre-wrap">
+            <p className="text-xs text-[var(--foreground)] line-clamp-4 whitespace-pre-wrap">
               {attachment.preview}
             </p>
           </div>
         </div>
       )}
-    </span>
+    </div>
   );
 }
