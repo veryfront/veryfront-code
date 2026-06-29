@@ -153,4 +153,13 @@ describe("platform/cloud/resolver", () => {
       assertEquals(getVeryfrontCloudAuthToken(), "vf_scoped_token");
     });
   });
+
+  it("does not treat a billing group id as cloud runtime context", () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_host_token");
+
+    runWithVeryfrontCloudContext({ billingGroupId: "evalrun_20260628_kimi" }, () => {
+      assertEquals(isVeryfrontCloudEnabled(), false);
+      assertEquals(getVeryfrontCloudAuthToken(), "vf_host_token");
+    });
+  });
 });

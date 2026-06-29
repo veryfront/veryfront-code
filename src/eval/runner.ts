@@ -195,7 +195,7 @@ async function exportWithSelectedExporter(
   };
 }
 
-async function exportEvalReport(
+export async function exportEvalReport(
   report: ReturnType<typeof createEvalReport>,
   config?: EvalReportExportConfig,
 ): Promise<EvalReportExportResult[] | undefined> {

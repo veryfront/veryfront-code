@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { runWithVeryfrontCloudContext } from "#veryfront/provider";
 import {
   createVeryfrontCloudFetch,
   getVeryfrontCloudGatewayBaseUrl,
@@ -82,5 +83,26 @@ describe("provider/veryfront-cloud/shared", () => {
     assertEquals(capturedRequest?.headers.get("x-api-key"), null);
     assertEquals(capturedRequest?.headers.get("x-goog-api-key"), null);
     assertEquals(capturedRequest?.headers.get("x-extra-header"), "kept");
+    assertEquals(capturedRequest?.headers.get("x-veryfront-billing-group-id"), null);
+  });
+
+  it("forwards the request-scoped billing group id to the gateway", async () => {
+    let capturedRequest: Request | undefined;
+    globalThis.fetch = ((input: URL | Request | string, init?: RequestInit) => {
+      capturedRequest = new Request(input, init);
+      return Promise.resolve(new Response(null, { status: 204 }));
+    }) as typeof fetch;
+
+    const wrappedFetch = createVeryfrontCloudFetch("vf_test_provider");
+
+    await runWithVeryfrontCloudContext(
+      { billingGroupId: "evalrun_20260628_kimi" },
+      () => wrappedFetch("https://api.veryfront.com/ai/gateway/openai/v1/chat/completions"),
+    );
+
+    assertEquals(
+      capturedRequest?.headers.get("x-veryfront-billing-group-id"),
+      "evalrun_20260628_kimi",
+    );
   });
 });

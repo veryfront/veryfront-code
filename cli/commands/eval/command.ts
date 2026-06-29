@@ -25,9 +25,15 @@ import {
   compareEvalReports,
   createEvalModelComparisonMarkdown,
   discoverEvals,
+  exportEvalReport,
   resolveEvalRunProvenance,
   runEval,
 } from "veryfront/eval";
+import {
+  getCurrentVeryfrontCloudContext,
+  getVeryfrontCloudBootstrap,
+  runWithVeryfrontCloudContextAsync,
+} from "veryfront/provider";
 import { applyRuntimeAuthContext } from "#cli/shared/runtime-auth";
 import { cliLogger, exitProcess, VERSION } from "#cli/utils";
 import {
@@ -82,6 +88,16 @@ type EvalSummaryArtifact = {
   metadata?: EvalReport["metadata"];
   exports?: EvalReport["exports"];
   baseline?: EvalReportComparison;
+};
+
+type GatewayBillingGroupFinalization = {
+  billing_group_id: string;
+  charged_credits: number;
+  target_credits: number;
+  adjustment_credits: number;
+  provider_cost_usd: number;
+  veryfront_charge_usd: number;
+  veryfront_billed_usd: number;
 };
 
 type EvalModelComparisonPolicy = Omit<EvalModelComparisonOptions, "baselineModel">;
@@ -271,6 +287,153 @@ export function createSummaryArtifact(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function joinApiUrl(baseUrl: string, path: string): string {
+  return `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+}
+
+function readFiniteNumber(
+  record: Record<string, unknown>,
+  field: keyof GatewayBillingGroupFinalization,
+): number | undefined {
+  const value = record[field];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function parseGatewayBillingGroupFinalization(
+  payload: unknown,
+): GatewayBillingGroupFinalization | undefined {
+  if (!isRecord(payload) || typeof payload.billing_group_id !== "string") return undefined;
+  const chargedCredits = readFiniteNumber(payload, "charged_credits");
+  const targetCredits = readFiniteNumber(payload, "target_credits");
+  const adjustmentCredits = readFiniteNumber(payload, "adjustment_credits");
+  const providerCostUsd = readFiniteNumber(payload, "provider_cost_usd");
+  const veryfrontChargeUsd = readFiniteNumber(payload, "veryfront_charge_usd");
+  const veryfrontBilledUsd = readFiniteNumber(payload, "veryfront_billed_usd");
+
+  if (
+    chargedCredits === undefined ||
+    targetCredits === undefined ||
+    adjustmentCredits === undefined ||
+    providerCostUsd === undefined ||
+    veryfrontChargeUsd === undefined ||
+    veryfrontBilledUsd === undefined
+  ) {
+    return undefined;
+  }
+
+  return {
+    billing_group_id: payload.billing_group_id,
+    charged_credits: chargedCredits,
+    target_credits: targetCredits,
+    adjustment_credits: adjustmentCredits,
+    provider_cost_usd: providerCostUsd,
+    veryfront_charge_usd: veryfrontChargeUsd,
+    veryfront_billed_usd: veryfrontBilledUsd,
+  };
+}
+
+export function applyGatewayBillingGroupFinalization(
+  report: EvalReport,
+  finalization: GatewayBillingGroupFinalization,
+): EvalReport {
+  return {
+    ...report,
+    summary: {
+      ...report.summary,
+      usage: {
+        ...(report.summary.usage ?? {}),
+        providerCostUsd: finalization.provider_cost_usd,
+        veryfrontChargeUsd: finalization.veryfront_charge_usd,
+        veryfrontBilledUsd: finalization.veryfront_billed_usd,
+        costCredits: finalization.target_credits,
+        costSource: "gateway",
+        billingMode: "direct",
+        usageCaptureStatus: "complete",
+      },
+    },
+  };
+}
+
+function hasGatewayUsage(report: EvalReport): boolean {
+  const usage = report.summary.usage;
+  return Boolean(
+    usage?.costSource === "gateway" ||
+      usage?.veryfrontChargeUsd !== undefined ||
+      usage?.veryfrontBilledUsd !== undefined,
+  );
+}
+
+async function finalizeGatewayBillingGroup(
+  billingGroupId: string,
+): Promise<GatewayBillingGroupFinalization | undefined> {
+  const bootstrap = getVeryfrontCloudBootstrap();
+  if (!bootstrap.apiToken) return undefined;
+
+  let response: Response;
+  try {
+    response = await fetch(joinApiUrl(bootstrap.apiBaseUrl, "ai/gateway/billing/finalize"), {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${bootstrap.apiToken}`,
+        "Content-Type": "application/json",
+        ...(bootstrap.projectSlug ? { "x-veryfront-project-slug": bootstrap.projectSlug } : {}),
+      },
+      body: JSON.stringify({ billing_group_id: billingGroupId }),
+    });
+  } catch (error) {
+    cliLogger.warn(
+      `Gateway billing finalization skipped for ${billingGroupId}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return undefined;
+  }
+
+  if (!response.ok) {
+    const message = await response.text().catch(() => "");
+    cliLogger.warn(
+      `Gateway billing finalization skipped for ${billingGroupId}: ${response.status}${
+        message ? ` ${message}` : ""
+      }`,
+    );
+    return undefined;
+  }
+
+  const finalization = parseGatewayBillingGroupFinalization(await response.json());
+  if (!finalization) {
+    cliLogger.warn(`Gateway billing finalization skipped for ${billingGroupId}: invalid response`);
+  }
+  return finalization;
+}
+
+export async function runEvalWithGatewayBillingGroup(
+  billingGroupId: string,
+  operation: () => Promise<EvalReport>,
+): Promise<EvalReport> {
+  const currentContext = getCurrentVeryfrontCloudContext();
+  const billingContext = { ...(currentContext ?? {}), billingGroupId };
+  let report: EvalReport;
+  try {
+    report = await runWithVeryfrontCloudContextAsync(billingContext, operation);
+  } catch (error) {
+    if (billingContext.billingGroupUsed) {
+      await finalizeGatewayBillingGroup(billingGroupId);
+    }
+    throw error;
+  }
+  if (!billingContext.billingGroupUsed && !hasGatewayUsage(report)) return report;
+  const finalization = await finalizeGatewayBillingGroup(billingGroupId);
+  return finalization ? applyGatewayBillingGroupFinalization(report, finalization) : report;
+}
+
+export async function exportEvalReportForCli(
+  report: EvalReport,
+  config?: EvalReportExportConfig,
+): Promise<EvalReport> {
+  const exports = await exportEvalReport(report, config);
+  return exports === undefined ? report : { ...report, exports };
 }
 
 function readNumberField(
@@ -944,18 +1107,29 @@ async function runEvalModelComparison(input: {
   for (const model of input.config.models) {
     const modelPaths = paths.models[model]!;
     const modelOptions = { ...input.options, model, report: undefined };
-    const report = await runEval(input.evalItem.definition, {
-      baseDir: input.options.datasetBase ?? input.projectDir,
-      runId: `${runId}_${sanitizeModelIdForPath(model)}`,
-      adapters: {
-        agent: createAgentAdapterForModel(input.agent, input.options, model),
-      },
-      metadata: {
-        model,
-        provenance,
-      },
-      export: createEvalCliExportConfig(input.evalItem, modelOptions, input.projectDir, modelPaths),
-    });
+    const modelRunId = `${runId}_${sanitizeModelIdForPath(model)}`;
+    const exportConfig = createEvalCliExportConfig(
+      input.evalItem,
+      modelOptions,
+      input.projectDir,
+      modelPaths,
+    );
+    const finalizedReport = await runEvalWithGatewayBillingGroup(
+      modelRunId,
+      () =>
+        runEval(input.evalItem.definition, {
+          baseDir: input.options.datasetBase ?? input.projectDir,
+          runId: modelRunId,
+          adapters: {
+            agent: createAgentAdapterForModel(input.agent, input.options, model),
+          },
+          metadata: {
+            model,
+            provenance,
+          },
+        }),
+    );
+    const report = await exportEvalReportForCli(finalizedReport, exportConfig);
     reports.push(report);
     await writeEvalArtifacts(report, modelPaths);
     await writeTextFileEnsuringDir(modelPaths.junit, createJunitXml(report));
@@ -1142,18 +1316,26 @@ export async function evalCommand(options: EvalOptions): Promise<void> {
       projectDir,
       frameworkVersion: VERSION,
     });
-    const report = await runEval(evalItem.definition, {
-      baseDir: options.datasetBase ?? projectDir,
-      runId,
-      adapters: {
-        agent: createAgentAdapter(agent, options),
-      },
-      metadata: {
-        provenance,
-        ...(options.model ? { model: options.model } : {}),
-      },
-      export: createEvalCliExportConfig(evalItem, options, projectDir, artifactPaths),
-    });
+    const billingGroupId = options.model
+      ? `${runId}_${sanitizeModelIdForPath(options.model)}`
+      : runId;
+    const exportConfig = createEvalCliExportConfig(evalItem, options, projectDir, artifactPaths);
+    const finalizedReport = await runEvalWithGatewayBillingGroup(
+      billingGroupId,
+      () =>
+        runEval(evalItem.definition, {
+          baseDir: options.datasetBase ?? projectDir,
+          runId,
+          adapters: {
+            agent: createAgentAdapter(agent, options),
+          },
+          metadata: {
+            provenance,
+            ...(options.model ? { model: options.model } : {}),
+          },
+        }),
+    );
+    const report = await exportEvalReportForCli(finalizedReport, exportConfig);
 
     const baseline = options.baseline
       ? compareEvalReports(report, await readEvalReport(options.baseline))

@@ -3,8 +3,11 @@ import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/te
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { AgentResponse } from "veryfront/agent";
 import { compareEvalReports, type DiscoveredEval, type EvalReport } from "veryfront/eval";
+import { createEvalReportExporterRegistry } from "veryfront/extensions/eval";
+import { markCurrentVeryfrontCloudBillingGroupUsed } from "veryfront/provider";
 import { saveToken } from "../../auth/token-store.ts";
 import {
+  applyGatewayBillingGroupFinalization,
   createDefaultEvalReportDir,
   createEvalArtifactPaths,
   createEvalExitCode,
@@ -16,6 +19,7 @@ import {
   createResolvedEvalModelComparisonConfig,
   createResultsJsonl,
   createSummaryArtifact,
+  exportEvalReportForCli,
   findEvalForCliId,
   hydrateEvalRuntimeAuth,
   loadEvalModelComparisonPolicy,
@@ -23,14 +27,17 @@ import {
   normalizeEvalInputForAgent,
   normalizeToolCalls,
   normalizeUsage,
+  runEvalWithGatewayBillingGroup,
   summarizeReportForCli,
   writeEvalArtifacts,
 } from "./command.ts";
 import { parseEvalArgs } from "./handler.ts";
 
 const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
 const originalProjectSlug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
 const originalXdgConfigHome = Deno.env.get("XDG_CONFIG_HOME");
+const originalFetch = globalThis.fetch;
 
 function restoreEnv(): void {
   if (originalApiToken === undefined) {
@@ -45,11 +52,19 @@ function restoreEnv(): void {
     Deno.env.set("VERYFRONT_PROJECT_SLUG", originalProjectSlug);
   }
 
+  if (originalApiBaseUrl === undefined) {
+    Deno.env.delete("VERYFRONT_API_BASE_URL");
+  } else {
+    Deno.env.set("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
+  }
+
   if (originalXdgConfigHome === undefined) {
     Deno.env.delete("XDG_CONFIG_HOME");
   } else {
     Deno.env.set("XDG_CONFIG_HOME", originalXdgConfigHome);
   }
+
+  globalThis.fetch = originalFetch;
 }
 
 function createReport(): EvalReport {
@@ -436,6 +451,116 @@ describe("eval CLI command helpers", () => {
       JSON.parse(line) as { id: string }
     );
     assertEquals(lines.map((record) => record.id), ["q1:1", "q2:1"]);
+  });
+
+  it("applies gateway billing group finalization to eval summary usage", () => {
+    const report = createReport();
+
+    const finalized = applyGatewayBillingGroupFinalization(report, {
+      billing_group_id: "evalrun_test_anthropic__claude-sonnet-4-6",
+      charged_credits: 16,
+      target_credits: 1,
+      adjustment_credits: 15,
+      provider_cost_usd: 0.02465,
+      veryfront_charge_usd: 0.07395,
+      veryfront_billed_usd: 0.1,
+    });
+
+    assertEquals(finalized.summary.usage, {
+      ...report.summary.usage,
+      providerCostUsd: 0.02465,
+      veryfrontChargeUsd: 0.07395,
+      veryfrontBilledUsd: 0.1,
+      costCredits: 1,
+      costSource: "gateway",
+      billingMode: "direct",
+      usageCaptureStatus: "complete",
+    });
+  });
+
+  it("finalizes a gateway billing group when an eval throws after gateway usage", async () => {
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.test");
+    const requests: Request[] = [];
+    globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            billing_group_id: "evalrun_test_model",
+            already_finalized: false,
+            request_count: 1,
+            charged_credits: 4,
+            target_credits: 1,
+            adjustment_credits: 3,
+            adjustment: "refund",
+            provider_cost_usd: 0.01,
+            veryfront_charge_usd: 0.03,
+            veryfront_billed_usd: 0.4,
+            usage_capture_status: "complete",
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      );
+    };
+
+    await assertRejects(
+      () =>
+        runEvalWithGatewayBillingGroup("evalrun_test_model", async () => {
+          markCurrentVeryfrontCloudBillingGroupUsed();
+          throw new Error("custom metric failed");
+        }),
+      Error,
+      "custom metric failed",
+    );
+
+    assertEquals(requests.length, 1);
+    const request = requests[0];
+    if (!request) throw new Error("Expected billing finalization request.");
+    assertEquals(request.url, "https://api.test/ai/gateway/billing/finalize");
+    assertEquals(request.headers.get("Authorization"), "Bearer test-token");
+    assertEquals(await request.json(), { billing_group_id: "evalrun_test_model" });
+  });
+
+  it("exports CLI eval reports after gateway billing finalization", async () => {
+    const registry = createEvalReportExporterRegistry();
+    const finalized = applyGatewayBillingGroupFinalization(createReport(), {
+      billing_group_id: "evalrun_test_model",
+      charged_credits: 4,
+      target_credits: 1,
+      adjustment_credits: 3,
+      provider_cost_usd: 0.02465,
+      veryfront_charge_usd: 0.07395,
+      veryfront_billed_usd: 0.4,
+    });
+    let exportedUsage: EvalReport["summary"]["usage"] | undefined;
+
+    registry.register({
+      id: "capture",
+      export(report) {
+        exportedUsage = report.summary.usage;
+        return { externalRunId: report.runId };
+      },
+    });
+
+    const exported = await exportEvalReportForCli(finalized, {
+      registry,
+      exporterIds: ["capture"],
+    });
+
+    assertEquals(exportedUsage, finalized.summary.usage);
+    assertEquals(exported.exports, [
+      {
+        exporterId: "capture",
+        ok: true,
+        receipt: { externalRunId: finalized.runId },
+      },
+    ]);
   });
 
   it("renders a markdown eval report", () => {
