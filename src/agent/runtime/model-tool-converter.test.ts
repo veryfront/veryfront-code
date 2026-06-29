@@ -382,4 +382,37 @@ describe("model-tool-converter", () => {
     assertEquals(schema.definitions, undefined);
     assertEquals(defs.acceptanceCriteria?.type, "array");
   });
+
+  it("normalizes short Kimi alias runtime tool schemas", () => {
+    const result = convertToolsToRuntimeTools([
+      {
+        name: "form_input",
+        description: "Collect structured form input",
+        parameters: {
+          type: "object",
+          properties: {
+            acceptance_criteria: {
+              $ref: "#/definitions/acceptanceCriteria",
+            },
+          },
+          definitions: {
+            acceptanceCriteria: {
+              type: "array",
+              items: { type: "string" },
+            },
+          },
+        },
+      },
+    ] as never, {
+      model: "kimi-k2.6",
+    });
+
+    const schema = getRuntimeToolSchema(result?.form_input) as Record<string, unknown>;
+    const properties = schema.properties as Record<string, Record<string, unknown>>;
+    const defs = schema.$defs as Record<string, Record<string, unknown>>;
+
+    assertEquals(properties.acceptance_criteria?.$ref, "#/$defs/acceptanceCriteria");
+    assertEquals(schema.definitions, undefined);
+    assertEquals(defs.acceptanceCriteria?.type, "array");
+  });
 });

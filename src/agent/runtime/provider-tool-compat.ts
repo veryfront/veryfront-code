@@ -52,6 +52,7 @@ export function getProviderToolProfile(model?: string): ProviderToolProfile {
   const normalized = normalizeModel(model);
   const parts = normalized.split("/").filter(Boolean);
   const provider = parts[0] === "veryfront-cloud" ? parts[1] : parts[0];
+  const modelName = parts.at(-1);
 
   if (provider === "openai") {
     return { provider: "openai", maxTools: OPENAI_MAX_TOOLS, sanitizeSchema: false };
@@ -65,7 +66,7 @@ export function getProviderToolProfile(model?: string): ProviderToolProfile {
     return { provider: "anthropic", sanitizeSchema: true };
   }
 
-  if (provider === "moonshot" || provider === "moonshotai") {
+  if (provider === "moonshot" || provider === "moonshotai" || modelName?.startsWith("kimi-")) {
     return { provider: "moonshot", sanitizeSchema: true };
   }
 
