@@ -22,10 +22,14 @@ export {
 export type { ModelProviderFactory } from "./model-registry.ts";
 export type { ModelRuntime } from "./types.ts";
 export {
+  getCurrentVeryfrontCloudContext,
+  markCurrentVeryfrontCloudBillingGroupUsed,
   runWithVeryfrontCloudContext,
   runWithVeryfrontCloudContextAsync,
 } from "./veryfront-cloud/context.ts";
 export type { VeryfrontCloudContext } from "./veryfront-cloud/context.ts";
+export { getVeryfrontCloudBootstrap } from "../platform/cloud/resolver.ts";
+export type { VeryfrontCloudBootstrap } from "../platform/cloud/resolver.ts";
 export type { VeryfrontCloudProviderId } from "./veryfront-cloud/shared.ts";
 export {
   DEFAULT_VERYFRONT_CLOUD_MODEL_ID,

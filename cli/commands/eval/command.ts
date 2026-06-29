@@ -25,16 +25,17 @@ import {
   compareEvalReports,
   createEvalModelComparisonMarkdown,
   discoverEvals,
+  exportEvalReport,
   resolveEvalRunProvenance,
   runEval,
 } from "veryfront/eval";
-import { applyRuntimeAuthContext } from "#cli/shared/runtime-auth";
-import { cliLogger, exitProcess, VERSION } from "#cli/utils";
-import { getVeryfrontCloudBootstrap } from "#veryfront/platform/cloud/resolver.ts";
 import {
   getCurrentVeryfrontCloudContext,
+  getVeryfrontCloudBootstrap,
   runWithVeryfrontCloudContextAsync,
-} from "#veryfront/provider/veryfront-cloud/context.ts";
+} from "veryfront/provider";
+import { applyRuntimeAuthContext } from "#cli/shared/runtime-auth";
+import { cliLogger, exitProcess, VERSION } from "#cli/utils";
 import {
   createErrorEnvelope,
   createSuccessEnvelope,
@@ -407,18 +408,32 @@ async function finalizeGatewayBillingGroup(
   return finalization;
 }
 
-async function runEvalWithGatewayBillingGroup(
+export async function runEvalWithGatewayBillingGroup(
   billingGroupId: string,
   operation: () => Promise<EvalReport>,
 ): Promise<EvalReport> {
   const currentContext = getCurrentVeryfrontCloudContext();
-  const report = await runWithVeryfrontCloudContextAsync(
-    { ...(currentContext ?? {}), billingGroupId },
-    operation,
-  );
-  if (!hasGatewayUsage(report)) return report;
+  const billingContext = { ...(currentContext ?? {}), billingGroupId };
+  let report: EvalReport;
+  try {
+    report = await runWithVeryfrontCloudContextAsync(billingContext, operation);
+  } catch (error) {
+    if (billingContext.billingGroupUsed) {
+      await finalizeGatewayBillingGroup(billingGroupId);
+    }
+    throw error;
+  }
+  if (!billingContext.billingGroupUsed && !hasGatewayUsage(report)) return report;
   const finalization = await finalizeGatewayBillingGroup(billingGroupId);
   return finalization ? applyGatewayBillingGroupFinalization(report, finalization) : report;
+}
+
+export async function exportEvalReportForCli(
+  report: EvalReport,
+  config?: EvalReportExportConfig,
+): Promise<EvalReport> {
+  const exports = await exportEvalReport(report, config);
+  return exports === undefined ? report : { ...report, exports };
 }
 
 function readNumberField(
@@ -1093,7 +1108,13 @@ async function runEvalModelComparison(input: {
     const modelPaths = paths.models[model]!;
     const modelOptions = { ...input.options, model, report: undefined };
     const modelRunId = `${runId}_${sanitizeModelIdForPath(model)}`;
-    const report = await runEvalWithGatewayBillingGroup(
+    const exportConfig = createEvalCliExportConfig(
+      input.evalItem,
+      modelOptions,
+      input.projectDir,
+      modelPaths,
+    );
+    const finalizedReport = await runEvalWithGatewayBillingGroup(
       modelRunId,
       () =>
         runEval(input.evalItem.definition, {
@@ -1106,14 +1127,9 @@ async function runEvalModelComparison(input: {
             model,
             provenance,
           },
-          export: createEvalCliExportConfig(
-            input.evalItem,
-            modelOptions,
-            input.projectDir,
-            modelPaths,
-          ),
         }),
     );
+    const report = await exportEvalReportForCli(finalizedReport, exportConfig);
     reports.push(report);
     await writeEvalArtifacts(report, modelPaths);
     await writeTextFileEnsuringDir(modelPaths.junit, createJunitXml(report));
@@ -1303,7 +1319,8 @@ export async function evalCommand(options: EvalOptions): Promise<void> {
     const billingGroupId = options.model
       ? `${runId}_${sanitizeModelIdForPath(options.model)}`
       : runId;
-    const report = await runEvalWithGatewayBillingGroup(
+    const exportConfig = createEvalCliExportConfig(evalItem, options, projectDir, artifactPaths);
+    const finalizedReport = await runEvalWithGatewayBillingGroup(
       billingGroupId,
       () =>
         runEval(evalItem.definition, {
@@ -1316,9 +1333,9 @@ export async function evalCommand(options: EvalOptions): Promise<void> {
             provenance,
             ...(options.model ? { model: options.model } : {}),
           },
-          export: createEvalCliExportConfig(evalItem, options, projectDir, artifactPaths),
         }),
     );
+    const report = await exportEvalReportForCli(finalizedReport, exportConfig);
 
     const baseline = options.baseline
       ? compareEvalReports(report, await readEvalReport(options.baseline))

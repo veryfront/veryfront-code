@@ -5,6 +5,7 @@ export interface VeryfrontCloudContext {
   apiBaseUrl?: string;
   apiToken?: string;
   billingGroupId?: string;
+  billingGroupUsed?: boolean;
   projectSlug?: string;
   serviceLayer?: string;
 }
@@ -29,4 +30,11 @@ export function runWithVeryfrontCloudContextAsync<T>(
 
 export function getCurrentVeryfrontCloudContext(): VeryfrontCloudContext | undefined {
   return veryfrontCloudContextStorage.getStore();
+}
+
+export function markCurrentVeryfrontCloudBillingGroupUsed(): void {
+  const context = veryfrontCloudContextStorage.getStore();
+  if (context?.billingGroupId) {
+    context.billingGroupUsed = true;
+  }
 }
