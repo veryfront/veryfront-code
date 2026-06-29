@@ -217,6 +217,37 @@ describe("provider-tool-compat", () => {
     assertEquals(defs.acceptanceCriteria?.type, "array");
   });
 
+  it("inlines Moonshot tool refs that point outside $defs", () => {
+    const sanitized = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        properties: {
+          expectations: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "string" },
+                description: { type: "string" },
+              },
+              required: ["id", "description"],
+            },
+          },
+          acceptance_criteria: {
+            $ref: "#/properties/expectations",
+          },
+        },
+      } as never,
+      { model: "veryfront-cloud/moonshotai/kimi-k2.6" },
+    );
+    const sanitizedRecord = sanitized as Record<string, Record<string, unknown> | undefined>;
+    const properties = sanitizedRecord.properties as Record<string, Record<string, unknown>>;
+
+    assertEquals(properties.acceptance_criteria?.$ref, undefined);
+    assertEquals(properties.acceptance_criteria?.type, "array");
+    assertEquals(JSON.stringify(sanitized).includes("#/properties/"), false);
+  });
+
   it("preserves Moonshot tool properties named definitions", () => {
     const sanitized = sanitizeProviderToolSchema(
       {
