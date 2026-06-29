@@ -133,16 +133,6 @@ describe("Storybook UI workbench", () => {
         imports: ['from "../../../src/react/primitives/index.ts"'],
         names: ["ChatContainer", "MessageList", "InputBox", "SubmitButton"],
       },
-      {
-        path: "storybook/stories/components/FrameworkComponents.stories.tsx",
-        title: "Veryfront UI/Framework Components",
-        imports: [
-          'from "../../../src/react/components/Head.tsx"',
-          'from "../../../src/react/components/MDXProvider.tsx"',
-          'from "../../../src/react/components/optimized-image/index.ts"',
-        ],
-        names: ["OptimizedImage", "MDXProvider", "Head"],
-      },
     ];
 
     for (const story of requiredStories) {

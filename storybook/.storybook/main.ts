@@ -10,6 +10,11 @@ import {
 const config: StorybookConfig = {
   stories: ["../stories/**/*.stories.@(ts|tsx|mdx)"],
   addons: ["@storybook/addon-docs"],
+  staticDirs: ["./static"],
+  core: {
+    disableTelemetry: true,
+    disableWhatsNewNotifications: true,
+  },
   framework: {
     name: "@storybook/react-vite",
     options: {},
