@@ -16,6 +16,15 @@ import {
   UploadsPanel,
 } from "veryfront/chat";
 import {
+  DocsCode,
+  DocsComposition,
+  DocsExampleAuto,
+  DocsHero,
+  DocsPage,
+  DocsPropsTable,
+  DocsSection,
+} from "../../.storybook/docs";
+import {
   attachments,
   completedToolPart,
   erroredToolPart,
@@ -25,11 +34,125 @@ import {
   uploads,
 } from "../fixtures/chat";
 
+const importCode =
+  `import { ToolCallCard, Sources, ReasoningCard, MessageActions } from "veryfront/chat"`;
+
+const compositionTree = `Message.Content  <- composes the subcomponents per message
+  +-- ReasoningCard  <- collapsible reasoning / thinking trace
+  +-- ToolCallCard  <- tool invocation with input + output
+  +-- Sources  <- source pills (with InlineCitation in body text)
+  +-- MessageActions  <- copy / edit controls on hover`;
+
+function ChatSubcomponentsDocsPage() {
+  return (
+    <DocsPage>
+      <DocsHero
+        title="Composition — Subcomponents"
+        lead="The standalone pieces a message is built from — `ToolCallCard`, `Sources`, `ReasoningCard`, and `MessageActions` — plus the supporting badges and selectors."
+      />
+
+      <DocsSection
+        title="Component gallery"
+        description="Each exported subcomponent rendered in isolation."
+      >
+        <DocsExampleAuto of={ComponentGallery} />
+      </DocsSection>
+
+      <DocsSection title="Import">
+        <DocsCode code={importCode} />
+      </DocsSection>
+
+      <DocsSection title="Composition">
+        <DocsComposition>{compositionTree}</DocsComposition>
+      </DocsSection>
+
+      <DocsSection title="API Reference">
+        <DocsPropsTable
+          component="ToolCallCard"
+          description="Renders a tool invocation with parameters and results"
+          props={[
+            {
+              name: "tool",
+              type: "ChatToolPart | ChatDynamicToolPart",
+              description: "The tool-call part to render",
+            },
+          ]}
+        />
+        <DocsPropsTable
+          component="Sources"
+          description="Source citation pills"
+          props={[
+            {
+              name: "sources",
+              type: "Source[]",
+              description: "Sources to render as pills",
+            },
+            {
+              name: "onSourceClick",
+              type: "(source: Source, index: number) => void",
+              description: "Called when a source pill is clicked",
+            },
+            {
+              name: "className",
+              type: "string",
+              description: "Additional class names",
+            },
+          ]}
+        />
+        <DocsPropsTable
+          component="ReasoningCard"
+          description="Collapsible reasoning / thinking trace"
+          props={[
+            {
+              name: "text",
+              type: "string",
+              description: "Reasoning text to render as markdown",
+            },
+            {
+              name: "isStreaming",
+              type: "boolean",
+              default: "false",
+              description: "Show the live shimmer while streaming",
+            },
+            {
+              name: "className",
+              type: "string",
+              description: "Additional class names",
+            },
+          ]}
+        />
+        <DocsPropsTable
+          component="MessageActions"
+          description="Copy / edit controls shown on a message"
+          props={[
+            {
+              name: "content",
+              type: "string",
+              description: "Text copied / edited by the actions",
+            },
+            {
+              name: "onEdit",
+              type: "(content: string) => void",
+              description: "When provided, renders an edit button",
+            },
+            {
+              name: "className",
+              type: "string",
+              description: "Additional class names",
+            },
+          ]}
+        />
+      </DocsSection>
+    </DocsPage>
+  );
+}
+
 const meta = {
-  title: "Veryfront UI/Chat/Subcomponents",
+  title: "Chat/Composition/Subcomponents",
   tags: ["autodocs"],
   parameters: {
     layout: "fullscreen",
+    docs: { page: ChatSubcomponentsDocsPage },
   },
 } satisfies Meta;
 
@@ -37,6 +160,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const ComponentGallery: Story = {
+  tags: ["!dev"],
   render: () => {
     const [model, setModel] = React.useState(modelOptions[0]?.value ?? "");
 

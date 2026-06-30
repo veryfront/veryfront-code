@@ -39,8 +39,17 @@ export function transformVeryfrontStorySource(code: string): string {
 const HARNESS_TAG_RE =
   /<\/?(?:StoryFrame|ReviewSurface)\b[^>]*>/g
 
+// Wrapper `<div className="...">` elements that are pure story scaffolding —
+// removed (opening + depth-matched closing tag) so the Code panel shows the
+// component usage, not the review-canvas chrome.
+const HARNESS_DIV_CLASSES = ['vf-story-canvas']
+
 function stripReviewHarness(code: string): string {
-  const withoutTags = code
+  let stripped = code
+  for (const cls of HARNESS_DIV_CLASSES) {
+    stripped = stripWrapperDivByClass(stripped, cls)
+  }
+  const withoutTags = stripped
     .replace(HARNESS_TAG_RE, '')
     // After removing an opening tag that followed `return`, pull the first
     // child back onto the `return` line so ASI doesn't turn it into `return;`.
@@ -49,6 +58,46 @@ function stripReviewHarness(code: string): string {
     .split('\n')
     .filter((line) => line.trim().length > 0 && line.trim() !== ';')
   return dedentAll(lines.join('\n')).replace(/\n{3,}/g, '\n\n').trim()
+}
+
+/**
+ * Remove `<div className="<cls>"> … </div>` wrapper elements — the opening tag
+ * and its depth-matched closing `</div>` — keeping the inner content. Counts
+ * nested `<div>`/`</div>` so the correct closing tag is removed.
+ */
+function stripWrapperDivByClass(code: string, cls: string): string {
+  const openRe = new RegExp(`<div\\s+className="${cls}"[^>]*>`)
+  let result = code
+  let guard = 0
+  while (guard++ < 50) {
+    const m = openRe.exec(result)
+    if (!m) break
+    const openStart = m.index
+    const openEnd = m.index + m[0].length
+    const tagRe = /<div\b[^>]*>|<\/div>/g
+    tagRe.lastIndex = openEnd
+    let depth = 1
+    let closeStart = -1
+    let closeEnd = -1
+    let t: RegExpExecArray | null
+    while ((t = tagRe.exec(result)) !== null) {
+      if (t[0] === '</div>') {
+        depth--
+        if (depth === 0) {
+          closeStart = t.index
+          closeEnd = t.index + t[0].length
+          break
+        }
+      } else {
+        depth++
+      }
+    }
+    if (closeStart === -1) break // unbalanced — leave as-is
+    result = result.slice(0, openStart) +
+      result.slice(openEnd, closeStart) +
+      result.slice(closeEnd)
+  }
+  return result
 }
 
 /** Dedent by the smallest indent across ALL non-empty lines (unlike `dedent`,

@@ -16,7 +16,10 @@ addons.setConfig({
       return defaultValue;
     },
   },
+  // One top-level menu — "Chat" — expanded by default, mirroring the Studio
+  // workbench where the active section's tree is open. Sub-groups (Components,
+  // Composition, Primitives) collapse/expand individually.
   sidebar: {
-    collapsedRoots: ["chat", "components", "primitives", "support"],
+    collapsedRoots: [],
   },
 });

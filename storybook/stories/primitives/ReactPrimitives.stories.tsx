@@ -16,13 +16,152 @@ import {
   ToolList,
   ToolResult,
 } from "../../../src/react/primitives/index.ts";
+import {
+  DocsCode,
+  DocsComposition,
+  DocsExampleAuto,
+  DocsHero,
+  DocsPage,
+  DocsPropsTable,
+  DocsSection,
+} from "../../.storybook/docs";
 import { completedToolPart, erroredToolPart } from "../fixtures/chat";
 
+const importCode =
+  `import { ChatContainer, MessageList, InputBox, SubmitButton } from "veryfront/react/primitives"`;
+
+const compositionTree = `ChatContainer  <- unstyled wrapper (data-chat-container)
+  +-- MessageList  <- role="log" region of turns
+  |     +-- MessageItem  <- one turn (role)
+  |           +-- MessageRole  <- role label
+  |           +-- MessageContent  <- body
+  +-- InputBox  <- controlled input / textarea
+  +-- SubmitButton  <- submit / stop / voice states`;
+
+function ReactPrimitivesDocsPage() {
+  return (
+    <DocsPage>
+      <DocsHero
+        title="Composition — React Primitives"
+        lead="Unstyled, fully composable primitives — `ChatContainer`, `MessageList`, `InputBox`, and `SubmitButton` — for building a chat UI from scratch with your own styling."
+      />
+
+      <DocsSection
+        title="Primitive gallery"
+        description="The primitives stay unstyled; every class name here is supplied by the consumer."
+      >
+        <DocsExampleAuto of={PrimitiveGallery} />
+      </DocsSection>
+
+      <DocsSection title="Import">
+        <DocsCode code={importCode} />
+      </DocsSection>
+
+      <DocsSection title="Composition">
+        <DocsComposition>{compositionTree}</DocsComposition>
+      </DocsSection>
+
+      <DocsSection title="API Reference">
+        <DocsPropsTable
+          component="ChatContainer"
+          description="Unstyled wrapper element (data-chat-container). Forwards all div attributes."
+          props={[
+            {
+              name: "children",
+              type: "ReactNode",
+              description: "Container content",
+            },
+            {
+              name: "className",
+              type: "string",
+              description: "Class names applied to the wrapper div",
+            },
+          ]}
+        />
+        <DocsPropsTable
+          component="MessageList"
+          description="Live region (role=log, aria-live=polite) wrapping the turns. Forwards all div attributes."
+          props={[
+            {
+              name: "children",
+              type: "ReactNode",
+              description: "Message items to render",
+            },
+            {
+              name: "className",
+              type: "string",
+              description: "Class names applied to the list div",
+            },
+          ]}
+        />
+        <DocsPropsTable
+          component="InputBox"
+          description="Controlled input / textarea. Submits on Enter (Shift+Enter for newline)."
+          props={[
+            {
+              name: "value",
+              type: "string",
+              description: "Controlled input value",
+            },
+            {
+              name: "onChange",
+              type: "(e: ChangeEvent) => void",
+              description: "Called when the value changes",
+            },
+            {
+              name: "onSubmit",
+              type: "() => void",
+              description: "Called on Enter (when not multiline-shifted)",
+            },
+            {
+              name: "multiline",
+              type: "boolean",
+              description: "Render an auto-resizing textarea instead of an input",
+            },
+          ]}
+        />
+        <DocsPropsTable
+          component="SubmitButton"
+          description="Submit / stop / voice button that swaps icon and behavior by state."
+          props={[
+            {
+              name: "hasInput",
+              type: "boolean",
+              description: "Whether the composer currently has input",
+            },
+            {
+              name: "isLoading",
+              type: "boolean",
+              description: "Show the stop state while generating",
+            },
+            {
+              name: "onStop",
+              type: "() => void",
+              description: "Called when stop is pressed during loading",
+            },
+            {
+              name: "onVoice",
+              type: "() => void",
+              description: "Called when the voice control is pressed",
+            },
+            {
+              name: "icons",
+              type: "{ submit?; stop?; voice? }",
+              description: "Override the default submit / stop / voice icons",
+            },
+          ]}
+        />
+      </DocsSection>
+    </DocsPage>
+  );
+}
+
 const meta = {
-  title: "Veryfront UI/React Primitives",
+  title: "Chat/Composition/React Primitives",
   tags: ["autodocs"],
   parameters: {
     layout: "fullscreen",
+    docs: { page: ReactPrimitivesDocsPage },
   },
 } satisfies Meta;
 
@@ -30,6 +169,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const PrimitiveGallery: Story = {
+  tags: ["!dev"],
   render: () => {
     const [input, setInput] = React.useState("Primitive input");
 

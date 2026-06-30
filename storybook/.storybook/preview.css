@@ -1,6 +1,37 @@
 @import "tailwindcss";
 @source "../../src/**/*.{ts,tsx}";
 @source "../stories/**/*.{ts,tsx}";
+@source "./**/*.{ts,tsx}";
+
+/* Tailwind v4 token bridge for the Studio docs kit. The docs primitives use
+   semantic utilities (bg-background, text-foreground, border-edge, bg-card,
+   border-outline-border, text-muted-foreground, bg-tint, bg-surface-soft,
+   text-destructive, rounded-md). The underlying CSS vars are defined in :root /
+   [data-theme="dark"] below; this @theme inline block maps each to the Tailwind
+   utility namespace (--color-* / --radius-*) so the utilities resolve. */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-edge: var(--edge);
+  --color-outline-border: var(--outline-border);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-tint: var(--tint);
+  --color-destructive: var(--destructive);
+  --color-surface-soft: var(--surface-soft);
+  --color-secondary: var(--secondary);
+  --color-faint: var(--faint);
+  /* NOTE: deliberately NO --color-card. Studio never defines it, so `bg-card`
+     is an inert utility there and every docs surface (DocsSurface, the
+     DocsExampleAuto toolbar, DocsComposition nodes, DocsPropsTable) renders
+     flat against the page background. Defining it whitens those surfaces and
+     diverges from Studio — do not add it back. */
+
+  --radius-xs: var(--radius-xs);
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+}
 
 :root {
   color-scheme: light;
@@ -19,6 +50,7 @@
   --faint: oklch(from var(--foreground) l c h / 0.25);
   --soft: oklch(from var(--foreground) l c h / 0.7);
   --tint: oklch(from var(--foreground) l c h / 0.04);
+  --surface-soft: var(--muted);
   --edge: oklch(from var(--foreground) l c h / 0.06);
   --edge-medium: oklch(from var(--foreground) l c h / 0.1);
   --separator: #eeeeed;
@@ -33,7 +65,12 @@
   --card-foreground: var(--foreground);
   --popover-foreground: var(--foreground);
   --primary-foreground: var(--secondary);
-  --muted-foreground: var(--faint);
+  /* Studio leaves --muted-foreground undefined, so `text-muted-foreground` and
+     the code-panel line numbers inherit the full foreground and are dimmed only
+     by their own `opacity` (line numbers use 0.4). Pointing this at --faint
+     (foreground @ 25%) double-dimmed them to ~10% — far too light. Match Studio
+     by resolving to the full foreground. */
+  --muted-foreground: var(--foreground);
   --accent-foreground: var(--foreground);
   --destructive-foreground: #ffffff;
   --border: var(--outline-border);
