@@ -385,6 +385,44 @@ describe("eval/model-comparison", () => {
     assertEquals(comparison.recommendation.decision, "promote-candidate");
   });
 
+  it("does not rank multiple default-promotable candidates by insertion order", () => {
+    const comparison = compareEvalModelReports(
+      [
+        createReport("anthropic/claude-sonnet-4-6", {
+          veryfrontChargeUsd: 0.34,
+          p95Ms: 22_000,
+          totalTokens: 33_000,
+          costSource: "gateway",
+        }),
+        createReport("moonshotai/kimi-k2.6", {
+          veryfrontChargeUsd: 0.08,
+          p95Ms: 44_000,
+          totalTokens: 21_000,
+          costSource: "gateway",
+        }),
+        createReport("openai/gpt-5.4-nano", {
+          veryfrontChargeUsd: 0.02,
+          p95Ms: 8_000,
+          totalTokens: 20_000,
+          costSource: "gateway",
+        }),
+      ],
+      { baselineModel: "anthropic/claude-sonnet-4-6" },
+    );
+
+    assertEquals(
+      comparison.candidates.map((candidate) => candidate.decision),
+      ["promote-candidate", "promote-candidate"],
+    );
+    assertEquals(comparison.recommendation, {
+      decision: "promote-candidate",
+      reasons: [
+        "multiple candidate models are promotable: moonshotai/kimi-k2.6, openai/gpt-5.4-nano",
+        "configure --comparison-policy objectives to rank candidates by your product requirements",
+      ],
+    });
+  });
+
   it("keeps objective scores finite when the baseline metric is zero", () => {
     const comparison = compareEvalModelReports(
       [
