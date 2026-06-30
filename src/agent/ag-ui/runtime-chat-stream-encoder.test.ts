@@ -92,6 +92,44 @@ describe("agent/ag-ui-runtime-chat-stream-encoder", () => {
     assertEquals(encoder.state.finishReason, "error");
   });
 
+  it("captures finish reason and usage from message-finish events", () => {
+    const encoder = createAgUiRuntimeChatStreamEncoder({
+      responseMessageId: "msg-1",
+    });
+
+    assertEquals(
+      encoder.encode({
+        type: "message-finish",
+        finishReason: "max_tokens",
+        totalUsage: {
+          inputTokens: 12,
+          outputTokens: 8,
+          totalTokens: 20,
+          cacheReadInputTokens: 3,
+          cacheCreationInputTokens: 4,
+          reasoningTokens: 2,
+          costCredits: 0.25,
+        },
+      }),
+      [],
+    );
+
+    assertEquals(encoder.state.finishReason, "length");
+    assertEquals(encoder.state.totalUsage, {
+      inputTokens: 12,
+      outputTokens: 8,
+      totalTokens: 20,
+      inputTokenDetails: {
+        cacheReadTokens: 3,
+        cacheWriteTokens: 4,
+      },
+      outputTokenDetails: {
+        reasoningTokens: 2,
+      },
+      costCredits: 0.25,
+    });
+  });
+
   it("can suppress reasoning deltas while preserving reasoning lifecycle markers", () => {
     const encoder = createAgUiRuntimeChatStreamEncoder({
       responseMessageId: "msg-1",

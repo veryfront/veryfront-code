@@ -84,6 +84,8 @@ describe("chat/chat-ui-message-helpers", () => {
             outputTokenDetails: {
               reasoningTokens: 1,
             },
+            costCredits: 0.123,
+            costSource: "gateway",
           },
         },
       }),
@@ -100,6 +102,8 @@ describe("chat/chat-ui-message-helpers", () => {
           cacheCreationInputTokens: 2,
           cacheReadInputTokens: 3,
         },
+        costCredits: 0.123,
+        costSource: "gateway",
       },
     );
   });

@@ -76,6 +76,8 @@ describe("agent/ag-ui-chat-ui-chunk-browser-encoder", () => {
           cacheReadInputTokens: 1,
           reasoningTokens: 4,
         },
+        costCredits: 0.25,
+        costSource: "gateway",
       },
     };
 
@@ -93,6 +95,8 @@ describe("agent/ag-ui-chat-ui-chunk-browser-encoder", () => {
         cacheCreationInputTokens: 2,
         cacheReadInputTokens: 1,
         reasoningTokens: 4,
+        costCredits: 0.25,
+        costSource: "gateway",
         finishReason: "stop",
       },
     );
@@ -244,6 +248,7 @@ describe("agent/ag-ui-chat-ui-chunk-browser-encoder", () => {
                   cacheReadInputTokens: 1,
                   reasoningTokens: 4,
                 },
+                costCredits: 0.25,
               },
             };
           },
@@ -258,6 +263,7 @@ describe("agent/ag-ui-chat-ui-chunk-browser-encoder", () => {
     assertStringIncludes(text, "event: TextMessageContent");
     assertStringIncludes(text, '"model":"custom/model"');
     assertStringIncludes(text, '"provider":"custom-provider"');
+    assertStringIncludes(text, '"costCredits":0.25');
     assertStringIncludes(text, '"inputTokens":2');
     assertStringIncludes(text, '"outputTokens":3');
     assertStringIncludes(text, '"totalTokens":5');
