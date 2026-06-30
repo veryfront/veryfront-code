@@ -1,0 +1,97 @@
+/**
+ * UserAvatar — ported 1:1 from Veryfront Studio. Shows an image when available,
+ * else initials (two-letter for `primary` tone, single capital for `muted`).
+ * Studio's `vf-avatar-initial` container-query sizing is simplified to a fixed
+ * `text-xs` for v1. Private to the chat module.
+ *
+ * @module react/components/chat/ui/user-avatar
+ */
+import * as React from "react";
+import { cn } from "../theme.ts";
+
+function getInitials(name: string): string {
+  if (!name) return "?";
+  const [firstName, lastName] = name.split(" ");
+  return [firstName?.charAt(0), lastName?.charAt(0)].filter(Boolean).join("");
+}
+
+function getSingleInitial(name: string): string {
+  const trimmed = name?.trim?.() ?? "";
+  return trimmed.length > 0 ? trimmed.charAt(0).toUpperCase() : "?";
+}
+
+/** Props accepted by `<UserAvatar>`. */
+export interface UserAvatarProps extends React.HTMLAttributes<HTMLDivElement> {
+  name: string;
+  avatarSrc?: string;
+  accentColor?: string;
+  /** `filled` fills with accent (default); `bordered` shows an accent ring. */
+  variant?: "filled" | "bordered";
+  /** `primary` brand bg + two-letter initials; `muted` grey bg + one letter. */
+  tone?: "primary" | "muted";
+  ref?: React.Ref<HTMLDivElement>;
+}
+
+/** Render a user / entity avatar. */
+export function UserAvatar({
+  className,
+  style,
+  name,
+  avatarSrc,
+  accentColor,
+  variant = "filled",
+  tone = "primary",
+  ref,
+  ...props
+}: UserAvatarProps): React.ReactElement {
+  const isBordered = variant === "bordered";
+  const isMuted = tone === "muted" && !accentColor;
+  const [imageFailed, setImageFailed] = React.useState(false);
+
+  React.useEffect(() => {
+    setImageFailed(false);
+  }, [avatarSrc]);
+
+  const showImage = Boolean(avatarSrc) && !imageFailed;
+
+  const accentStyle: React.CSSProperties | undefined = accentColor
+    ? isBordered
+      ? { borderColor: accentColor }
+      : { backgroundColor: accentColor, borderColor: accentColor }
+    : undefined;
+
+  return (
+    <div
+      ref={ref}
+      className={cn(
+        "rounded-full size-8 shrink-0 flex items-center justify-center overflow-hidden",
+        isMuted ? "bg-[var(--accent)]" : "bg-[var(--primary)]",
+        accentColor && "border",
+        className,
+      )}
+      style={{ ...accentStyle, ...style }}
+      {...props}
+    >
+      {showImage
+        ? (
+          <img
+            src={avatarSrc}
+            alt={name}
+            referrerPolicy="no-referrer"
+            onError={() => setImageFailed(true)}
+            className="w-full h-full rounded-full object-cover"
+          />
+        )
+        : (
+          <span
+            className={cn(
+              "w-full h-full flex items-center justify-center text-xs font-medium capitalize",
+              isMuted ? "text-[var(--foreground)]" : "text-white",
+            )}
+          >
+            {isMuted ? getSingleInitial(name) : getInitials(name)}
+          </span>
+        )}
+    </div>
+  );
+}
