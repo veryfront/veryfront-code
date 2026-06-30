@@ -101,7 +101,20 @@ type GatewayBillingGroupFinalization = {
   veryfront_billed_usd: number;
 };
 
+type GatewayBillingFinalizeError = {
+  bodyText: string;
+  code?: string;
+};
+
+type GatewayBillingFinalizeOptions = {
+  retryDelaysMs?: readonly number[];
+  sleep?: (ms: number) => Promise<void>;
+};
+
 type EvalModelComparisonPolicy = Omit<EvalModelComparisonOptions, "baselineModel">;
+
+const GATEWAY_BILLING_GROUP_USAGE_NOT_READY_CODE = "gateway_billing_group_usage_not_ready";
+const DEFAULT_GATEWAY_BILLING_FINALIZE_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 4_000] as const;
 
 const MODEL_COMPARISON_METRICS = [
   "passRate",
@@ -331,6 +344,45 @@ function parseGatewayBillingGroupFinalization(
   };
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function readGatewayBillingFinalizeError(
+  response: Response,
+): Promise<GatewayBillingFinalizeError> {
+  const bodyText = await response.text().catch(() => "");
+  if (!bodyText) return { bodyText };
+
+  try {
+    const payload = JSON.parse(bodyText) as unknown;
+    if (isRecord(payload) && typeof payload.code === "string") {
+      return { bodyText, code: payload.code };
+    }
+  } catch {
+    // Keep the raw body text for the warning below.
+  }
+
+  return { bodyText };
+}
+
+function isGatewayBillingUsageNotReady(
+  response: Response,
+  error: GatewayBillingFinalizeError,
+): boolean {
+  if (response.status !== 409) return false;
+  return error.code === GATEWAY_BILLING_GROUP_USAGE_NOT_READY_CODE;
+}
+
+function formatGatewayBillingFinalizeWarning(
+  billingGroupId: string,
+  response: Response,
+  error: GatewayBillingFinalizeError,
+): string {
+  const body = error.bodyText ? ` ${error.bodyText}` : "";
+  return `Gateway billing finalization skipped for ${billingGroupId}: ${response.status}${body}`;
+}
+
 export function applyGatewayBillingGroupFinalization(
   report: EvalReport,
   finalization: GatewayBillingGroupFinalization,
@@ -362,47 +414,57 @@ function hasGatewayUsage(report: EvalReport): boolean {
   );
 }
 
-async function finalizeGatewayBillingGroup(
+export async function finalizeGatewayBillingGroup(
   billingGroupId: string,
+  options: GatewayBillingFinalizeOptions = {},
 ): Promise<GatewayBillingGroupFinalization | undefined> {
   const bootstrap = getVeryfrontCloudBootstrap();
   if (!bootstrap.apiToken) return undefined;
 
-  let response: Response;
-  try {
-    response = await fetch(joinApiUrl(bootstrap.apiBaseUrl, "ai/gateway/billing/finalize"), {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${bootstrap.apiToken}`,
-        "Content-Type": "application/json",
-        ...(bootstrap.projectSlug ? { "x-veryfront-project-slug": bootstrap.projectSlug } : {}),
-      },
-      body: JSON.stringify({ billing_group_id: billingGroupId }),
-    });
-  } catch (error) {
-    cliLogger.warn(
-      `Gateway billing finalization skipped for ${billingGroupId}: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-    return undefined;
-  }
+  const retryDelaysMs = options.retryDelaysMs ?? DEFAULT_GATEWAY_BILLING_FINALIZE_RETRY_DELAYS_MS;
+  const sleepFn = options.sleep ?? sleep;
 
-  if (!response.ok) {
-    const message = await response.text().catch(() => "");
-    cliLogger.warn(
-      `Gateway billing finalization skipped for ${billingGroupId}: ${response.status}${
-        message ? ` ${message}` : ""
-      }`,
-    );
-    return undefined;
-  }
+  for (let attempt = 0;; attempt += 1) {
+    let response: Response;
+    try {
+      response = await fetch(joinApiUrl(bootstrap.apiBaseUrl, "ai/gateway/billing/finalize"), {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${bootstrap.apiToken}`,
+          "Content-Type": "application/json",
+          ...(bootstrap.projectSlug ? { "x-veryfront-project-slug": bootstrap.projectSlug } : {}),
+        },
+        body: JSON.stringify({ billing_group_id: billingGroupId }),
+      });
+    } catch (error) {
+      cliLogger.warn(
+        `Gateway billing finalization skipped for ${billingGroupId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return undefined;
+    }
 
-  const finalization = parseGatewayBillingGroupFinalization(await response.json());
-  if (!finalization) {
-    cliLogger.warn(`Gateway billing finalization skipped for ${billingGroupId}: invalid response`);
+    if (!response.ok) {
+      const error = await readGatewayBillingFinalizeError(response);
+      const retryDelayMs = retryDelaysMs[attempt];
+      if (isGatewayBillingUsageNotReady(response, error) && retryDelayMs !== undefined) {
+        await sleepFn(retryDelayMs);
+        continue;
+      }
+
+      cliLogger.warn(formatGatewayBillingFinalizeWarning(billingGroupId, response, error));
+      return undefined;
+    }
+
+    const finalization = parseGatewayBillingGroupFinalization(await response.json());
+    if (!finalization) {
+      cliLogger.warn(
+        `Gateway billing finalization skipped for ${billingGroupId}: invalid response`,
+      );
+    }
+    return finalization;
   }
-  return finalization;
 }
 
 export async function runEvalWithGatewayBillingGroup(
