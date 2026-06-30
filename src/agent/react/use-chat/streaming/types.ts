@@ -3,7 +3,11 @@ import type { ChatMessage, ChatMessagePart, ChatToolState, OnToolCallArg } from 
 export interface StreamingCallbacks {
   onMessage: (message: ChatMessage) => void;
   onData: (data: unknown) => void;
-  onUpdate?: (parts: ChatMessagePart[], messageId: string) => void;
+  onUpdate?: (
+    parts: ChatMessagePart[],
+    messageId: string,
+    metadata?: ChatMessage["metadata"],
+  ) => void;
   onToolCall?: (arg: OnToolCallArg) => void;
 }
 

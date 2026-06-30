@@ -138,6 +138,7 @@ export interface ChatMessageMetadata {
   completedAt?: string;
   agentId?: string;
   agentName?: string;
+  agentAvatarUrl?: string;
   conversationId?: string;
   modelId?: string;
   runId?: string;

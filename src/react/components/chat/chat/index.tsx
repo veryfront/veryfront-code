@@ -148,6 +148,8 @@ export { downloadMarkdown, exportAsMarkdown } from "./utils/export.ts";
 
 // Re-exports — composition
 export {
+  AgentAvatar,
+  type AgentAvatarProps,
   ChatComposer,
   type ChatComposerProps,
   ChatEmpty,

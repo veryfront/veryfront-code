@@ -41,7 +41,7 @@ import { ToolCallCard } from "../components/tool-ui.tsx";
 import { StepIndicator } from "../components/step-indicator.tsx";
 import { Sources as SourcesImpl } from "../components/sources.tsx";
 import type { Source } from "../components/sources.tsx";
-import { ModelAvatar as AvatarImpl } from "./model-avatar.tsx";
+import { AgentAvatar as AvatarImpl } from "./agent-avatar.tsx";
 import {
   extractSourcesFromParts,
   getAnswerPartsForRendering,
@@ -53,6 +53,14 @@ import {
 // ---------------------------------------------------------------------------
 // Message.Root
 // ---------------------------------------------------------------------------
+
+function metadataString(
+  metadata: ChatMessage["metadata"] | undefined,
+  key: string,
+): string | undefined {
+  const value = metadata?.[key];
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
 
 /** Props accepted by message root. */
 export interface MessageRootProps {
@@ -183,7 +191,10 @@ function MessageAvatar({ className }: MessageAvatarProps): React.ReactElement | 
   if (role === "user") return null;
   return (
     <AvatarImpl
-      model={(message.metadata?.model as string) || undefined}
+      name={metadataString(message.metadata, "agentName") ??
+        metadataString(message.metadata, "agentId")}
+      avatarUrl={metadataString(message.metadata, "agentAvatarUrl")}
+      model={metadataString(message.metadata, "model")}
       className={className}
     />
   );

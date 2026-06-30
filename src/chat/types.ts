@@ -400,6 +400,7 @@ export const getMessageMetadataSchema = defineSchema((v) =>
     completedAt: v.string().optional(),
     agentId: v.string().optional(),
     agentName: v.string().optional(),
+    agentAvatarUrl: v.string().url().optional(),
     conversationId: v.string().optional(),
     modelId: v.string().optional(),
     runId: v.string().optional(),

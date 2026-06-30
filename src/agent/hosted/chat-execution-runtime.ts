@@ -107,6 +107,8 @@ export interface CreateHostedChatExecutionRuntimeBootstrapInput {
 /** Input payload for create hosted chat execution runtime. */
 export interface CreateHostedChatExecutionRuntimeInput {
   agentId: string;
+  agentName?: string;
+  agentAvatarUrl?: string;
   modelId: string;
   originalMessages: ChatUiMessage[];
   responseMessageId?: string;
@@ -123,6 +125,8 @@ export interface CreateBootstrappedHostedChatExecutionRuntimeInput {
   apiUrl: string;
   agent: HostedChatRuntimeAgent;
   agentId: string;
+  agentName?: string;
+  agentAvatarUrl?: string;
   modelId: string;
   cleanup: () => Promise<void>;
   messages: ChatUiMessage[];
@@ -305,6 +309,8 @@ async function createBootstrappedHostedChatRuntime(
 
   return createHostedChatExecutionRuntime({
     agentId: input.agentId,
+    ...(input.agentName ? { agentName: input.agentName } : {}),
+    ...(input.agentAvatarUrl ? { agentAvatarUrl: input.agentAvatarUrl } : {}),
     modelId: input.modelId,
     originalMessages: input.messages,
     responseMessageId: input.responseMessageId,
@@ -485,6 +491,8 @@ async function finalizeExecutionFailure(input: {
 
 function createStreamMessageMetadataBuilder(input: {
   agentId: string;
+  agentName?: string;
+  agentAvatarUrl?: string;
   modelId: string;
   lifecycleAdapter: HostedChatExecutionLifecycleAdapter;
   streamingMessageId: string | null;
@@ -493,6 +501,8 @@ function createStreamMessageMetadataBuilder(input: {
     buildChatStreamChunkMessageMetadata(
       {
         agentId: input.agentId,
+        ...(input.agentName ? { agentName: input.agentName } : {}),
+        ...(input.agentAvatarUrl ? { agentAvatarUrl: input.agentAvatarUrl } : {}),
         modelId: input.modelId,
         ...(input.lifecycleAdapter.durableRootRun
           ? { runId: input.lifecycleAdapter.durableRootRun.runId }
@@ -693,6 +703,8 @@ export function createHostedChatExecutionRuntime(
     },
     messageMetadata: createStreamMessageMetadataBuilder({
       agentId: input.agentId,
+      ...(input.agentName ? { agentName: input.agentName } : {}),
+      ...(input.agentAvatarUrl ? { agentAvatarUrl: input.agentAvatarUrl } : {}),
       modelId: input.modelId,
       lifecycleAdapter: input.bootstrap.lifecycleAdapter,
       streamingMessageId,

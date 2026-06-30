@@ -10,6 +10,7 @@ export { ChatMessageList, type ChatMessageListProps } from "./chat-message-list.
 export { ChatComposer, type ChatComposerProps } from "./chat-composer.tsx";
 export { ChatEmpty, type ChatEmptyProps } from "./chat-empty.tsx";
 export { ChatIf, type ChatIfProps } from "./chat-if.tsx";
+export { AgentAvatar, type AgentAvatarProps } from "./agent-avatar.tsx";
 export { ModelAvatar, type ModelAvatarProps } from "./model-avatar.tsx";
 export { ErrorBanner, type ErrorBannerProps } from "./error-banner.tsx";
 

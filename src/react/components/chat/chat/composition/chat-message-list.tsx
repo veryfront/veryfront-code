@@ -38,7 +38,31 @@ import { BranchPicker } from "../components/branch-picker.tsx";
 import { MessageFeedback } from "../components/message-feedback.tsx";
 import type { FeedbackValue } from "../components/message-feedback.tsx";
 import { StepIndicator } from "../components/step-indicator.tsx";
+import { AgentAvatar } from "./agent-avatar.tsx";
 import { ModelAvatar } from "./model-avatar.tsx";
+
+type AssistantIdentity = {
+  model?: string;
+  agentName?: string;
+  agentAvatarUrl?: string;
+};
+
+function metadataString(
+  metadata: ChatMessage["metadata"] | undefined,
+  key: string,
+): string | undefined {
+  const value = metadata?.[key];
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
+function getAssistantIdentity(message: ChatMessage): AssistantIdentity {
+  return {
+    model: metadataString(message.metadata, "model"),
+    agentName: metadataString(message.metadata, "agentName") ??
+      metadataString(message.metadata, "agentId"),
+    agentAvatarUrl: metadataString(message.metadata, "agentAvatarUrl"),
+  };
+}
 
 /** Props accepted by chat message list. */
 export interface ChatMessageListProps {
@@ -272,14 +296,24 @@ function AssistantMessage({
   const stepCount = partGroups.filter((g) => g.type === "step").length;
   const textContent = getTextContent(msg);
   const messageSources = showSources ? extractSourcesFromParts(msg.parts) : [];
+  const identity = getAssistantIdentity(msg);
 
   return (
     <MessageItem
       role={msg.role}
       className={cn("flex items-start gap-3", "justify-start", "group/msg")}
     >
-      <ModelAvatar model={(msg.metadata?.model as string) || undefined} />
+      <AgentAvatar
+        name={identity.agentName}
+        avatarUrl={identity.agentAvatarUrl}
+        model={identity.model}
+      />
       <div className={cn(theme?.message?.assistant, "flex-1 min-w-0")}>
+        {identity.agentName && (
+          <div className="mb-1 text-xs font-medium text-[var(--muted-foreground)]">
+            {identity.agentName}
+          </div>
+        )}
         {partGroups.map((group, index) => {
           if (group.type === "text") {
             return (
