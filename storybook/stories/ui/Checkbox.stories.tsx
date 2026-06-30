@@ -1,11 +1,11 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import {
   Checkbox,
-  CheckboxField,
-  CheckboxGroup,
+  Label,
 } from "../../../src/react/components/chat/ui/index.ts";
 import {
   DocsCode,
+  DocsComposition,
   DocsExampleAuto,
   DocsHero,
   DocsPage,
@@ -13,28 +13,43 @@ import {
   DocsSection,
 } from "../../.storybook/docs";
 
+const importCode = `import { Checkbox } from "veryfront/chat/ui"`;
+
 function CheckboxDocsPage() {
   return (
     <DocsPage>
       <DocsHero
         title="Checkbox"
-        lead="A checkbox built on a native checkbox input (full a11y) with an overlaid check. `CheckboxField` adds a label; `CheckboxGroup` stacks them."
+        lead="Boolean toggle for forms and multi-select."
       />
-      <DocsSection title="States">
-        <DocsExampleAuto of={States} />
+      <DocsSection title="Default">
+        <DocsExampleAuto of={Default} />
       </DocsSection>
-      <DocsSection title="Group" description="Fields stacked in a group.">
-        <DocsExampleAuto of={Group} />
+      <DocsSection title="Checked">
+        <DocsExampleAuto of={Checked} />
+      </DocsSection>
+      <DocsSection title="Disabled">
+        <DocsExampleAuto of={Disabled} />
+      </DocsSection>
+      <DocsSection
+        title="With Label"
+        description="Always pair via matching id / htmlFor."
+      >
+        <DocsExampleAuto of={WithLabel} />
+      </DocsSection>
+      <DocsSection title="Environment Selector">
+        <DocsExampleAuto of={EnvironmentSelector} />
       </DocsSection>
       <DocsSection title="Import">
-        <DocsCode
-          code={`import { Checkbox, CheckboxField, CheckboxGroup } from "veryfront/chat/ui"`}
-        />
+        <DocsCode code={importCode} />
+      </DocsSection>
+      <DocsSection title="Composition">
+        <DocsComposition>Checkbox</DocsComposition>
       </DocsSection>
       <DocsSection title="API Reference">
         <DocsPropsTable
           component="Checkbox"
-          description="Extends native checkbox input"
+          description="Boolean toggle control (native checkbox input)"
           props={[
             { name: "checked / defaultChecked", type: "boolean", description: "Controlled / uncontrolled state" },
             { name: "onCheckedChange", type: "(checked) => void", description: "Convenience callback" },
@@ -56,27 +71,57 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const States: Story = {
+export const Default: Story = {
+  tags: ["!dev"],
+  render: () => <Checkbox />,
+};
+
+export const Checked: Story = {
+  tags: ["!dev"],
+  render: () => <Checkbox defaultChecked />,
+};
+
+export const Disabled: Story = {
   tags: ["!dev"],
   render: () => (
-    <div className="flex items-center gap-6">
-      <Checkbox defaultChecked />
-      <Checkbox />
-      <Checkbox defaultChecked disabled />
+    <div className="flex items-center gap-3">
       <Checkbox disabled />
+      <Checkbox disabled defaultChecked />
+    </div>
+  ),
+  parameters: { docs: { source: { code: `<Checkbox disabled />` } } },
+};
+
+export const WithLabel: Story = {
+  name: "With Label",
+  tags: ["!dev"],
+  render: () => (
+    <div className="flex items-center gap-2">
+      <Checkbox id="auto-deploy" />
+      <Label htmlFor="auto-deploy" size="sm">
+        Auto-deploy on push
+      </Label>
     </div>
   ),
 };
-export const Group: Story = {
+
+export const EnvironmentSelector: Story = {
+  name: "Environment Selector",
   tags: ["!dev"],
   render: () => (
-    <CheckboxGroup>
-      <CheckboxField label="Production" defaultChecked />
-      <CheckboxField
-        label="Staging"
-        description="Deploy a preview before promoting."
-      />
-      <CheckboxField label="Local" disabled />
-    </CheckboxGroup>
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center gap-2">
+        <Checkbox id="env-production" defaultChecked />
+        <Label htmlFor="env-production" size="sm">Production</Label>
+      </div>
+      <div className="flex items-center gap-2">
+        <Checkbox id="env-staging" />
+        <Label htmlFor="env-staging" size="sm">Staging</Label>
+      </div>
+      <div className="flex items-center gap-2">
+        <Checkbox id="env-preview" />
+        <Label htmlFor="env-preview" size="sm">Preview</Label>
+      </div>
+    </div>
   ),
 };

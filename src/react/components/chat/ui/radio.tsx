@@ -26,10 +26,10 @@ export function Radio(
       type="radio"
       className={cn(
         "size-5 shrink-0 appearance-none rounded-full border border-[var(--outline-border)]",
-        "bg-[var(--input-bg)] cursor-pointer",
+        "bg-[var(--input-bg)]",
         "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--edge-medium)]",
         "disabled:cursor-not-allowed disabled:opacity-50",
-        "checked:border-[var(--primary)] checked:bg-[var(--primary)] checked:shadow-[inset_0_0_0_4px] checked:shadow-[var(--secondary)]",
+        "checked:border-[var(--primary)] checked:bg-[var(--primary)] checked:shadow-[inset_0_0_0_4px_var(--secondary)]",
         "transition-colors",
         className,
       )}

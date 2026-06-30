@@ -315,6 +315,21 @@ body {
   color: var(--foreground);
 }
 
+/* Render the workbench in Inter — the chat library's own font (loaded via
+   preview-head.html) — instead of Storybook's default Nunito Sans, which ships
+   ONLY 400/700, so font-medium (500) / font-semibold (600) had no matching face
+   and collapsed to regular. The `html` prefix outranks Storybook's own
+   `.sb-show-main` / `.sbdocs` rules by specificity (0,1,1 > 0,1,0), so no
+   `!important` is needed; descendants inherit, and code blocks keep their
+   monospace via the `.vf-code` rule above. */
+html .sb-show-main,
+html .docs-story,
+html .sbdocs {
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+}
+
 .vf-story-canvas {
   min-height: 100%;
   padding: 32px;
