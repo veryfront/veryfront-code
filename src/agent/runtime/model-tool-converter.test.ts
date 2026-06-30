@@ -382,4 +382,76 @@ describe("model-tool-converter", () => {
     assertEquals(schema.definitions, undefined);
     assertEquals(defs.acceptanceCriteria?.type, "array");
   });
+
+  it("normalizes short Kimi alias runtime tool schemas", () => {
+    const result = convertToolsToRuntimeTools([
+      {
+        name: "form_input",
+        description: "Collect structured form input",
+        parameters: {
+          type: "object",
+          properties: {
+            acceptance_criteria: {
+              $ref: "#/definitions/acceptanceCriteria",
+            },
+          },
+          definitions: {
+            acceptanceCriteria: {
+              type: "array",
+              items: { type: "string" },
+            },
+          },
+        },
+      },
+    ] as never, {
+      model: "kimi-k2.6",
+    });
+
+    const schema = getRuntimeToolSchema(result?.form_input) as Record<string, unknown>;
+    const properties = schema.properties as Record<string, Record<string, unknown>>;
+    const defs = schema.$defs as Record<string, Record<string, unknown>>;
+
+    assertEquals(properties.acceptance_criteria?.$ref, "#/$defs/acceptanceCriteria");
+    assertEquals(schema.definitions, undefined);
+    assertEquals(defs.acceptanceCriteria?.type, "array");
+  });
+
+  it("inlines Moonshot runtime tool refs that point outside $defs", () => {
+    const result = convertToolsToRuntimeTools([
+      {
+        name: "create_work",
+        description: "Create work with expectations",
+        parameters: {
+          type: "object",
+          properties: {
+            project_reference: { type: "string" },
+            expectations: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                  description: { type: "string" },
+                },
+                required: ["id", "description"],
+              },
+            },
+            acceptance_criteria: {
+              $ref: "#/properties/expectations",
+            },
+          },
+          required: ["project_reference", "expectations"],
+        },
+      },
+    ] as never, {
+      model: "moonshotai/kimi-k2.6",
+    });
+
+    const schema = getRuntimeToolSchema(result?.create_work) as Record<string, unknown>;
+    const properties = schema.properties as Record<string, Record<string, unknown>>;
+
+    assertEquals(properties.acceptance_criteria?.$ref, undefined);
+    assertEquals(properties.acceptance_criteria?.type, "array");
+    assertEquals(JSON.stringify(schema).includes("#/properties/"), false);
+  });
 });

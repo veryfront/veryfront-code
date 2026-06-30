@@ -44,14 +44,18 @@ interface Recorder {
   messages: ChatMessage[];
   data: unknown[];
   toolCalls: OnToolCallArg[];
-  updates: { parts: ChatMessagePart[]; messageId: string }[];
+  updates: { parts: ChatMessagePart[]; messageId: string; metadata?: ChatMessage["metadata"] }[];
 }
 
 function recorder(): Recorder {
   const messages: ChatMessage[] = [];
   const data: unknown[] = [];
   const toolCalls: OnToolCallArg[] = [];
-  const updates: { parts: ChatMessagePart[]; messageId: string }[] = [];
+  const updates: {
+    parts: ChatMessagePart[];
+    messageId: string;
+    metadata?: ChatMessage["metadata"];
+  }[] = [];
   return {
     messages,
     data,
@@ -60,7 +64,7 @@ function recorder(): Recorder {
     callbacks: {
       onMessage: (m) => messages.push(m),
       onData: (d) => data.push(d),
-      onUpdate: (parts, messageId) => updates.push({ parts, messageId }),
+      onUpdate: (parts, messageId, metadata) => updates.push({ parts, messageId, metadata }),
       onToolCall: (arg) => toolCalls.push(arg),
     },
   };
@@ -301,6 +305,51 @@ describe("use-chat streaming handler", () => {
         errorText: undefined,
       },
     ]);
+  });
+
+  it("attaches AG-UI run metadata to the assistant message", async () => {
+    const rec = recorder();
+    await handleAgUiStreamingResponse(
+      agUiSseStream([
+        {
+          event: "RunStarted",
+          data: {
+            runId: "run-1",
+            agentId: "support-agent",
+            agentName: "Support Agent",
+            agent_avatar_url: "https://cdn.example.com/agents/support.svg",
+          },
+        },
+        {
+          event: "TextMessageStart",
+          data: { messageId: "agui-msg", contentId: "text:0", role: "assistant" },
+        },
+        {
+          event: "TextMessageContent",
+          data: { messageId: "agui-msg", contentId: "text:0", delta: "Hello" },
+        },
+        {
+          event: "TextMessageEnd",
+          data: { messageId: "agui-msg", contentId: "text:0" },
+        },
+        { event: "RunFinished", data: {} },
+      ]),
+      rec.callbacks,
+    );
+
+    assertEquals(rec.messages.length, 1);
+    assertEquals(rec.messages[0]!.metadata, {
+      agentId: "support-agent",
+      agentName: "Support Agent",
+      agentAvatarUrl: "https://cdn.example.com/agents/support.svg",
+      runId: "run-1",
+    });
+    assertEquals(rec.updates.at(-1)?.metadata, {
+      agentId: "support-agent",
+      agentName: "Support Agent",
+      agentAvatarUrl: "https://cdn.example.com/agents/support.svg",
+      runId: "run-1",
+    });
   });
 
   it("flushes AG-UI events split across chunk boundaries", async () => {

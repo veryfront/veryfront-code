@@ -5,7 +5,12 @@ import { type ModelRuntime, registerModelProvider } from "#veryfront/provider";
 import { agent } from "../factory.ts";
 import type { ModelTransportRequest } from "../types.ts";
 
-function createTextStream(parts: Array<{ type: "text-delta"; text: string } | { type: "finish" }>) {
+function createTextStream(
+  parts: Array<
+    | { type: "text-delta"; text: string }
+    | { type: "finish"; finishReason?: string; totalUsage?: Record<string, unknown> }
+  >,
+) {
   return new ReadableStream<unknown>({
     start(controller) {
       for (const part of parts) {
@@ -188,6 +193,53 @@ describe("agent provider transport hooks", () => {
     assertStringIncludes(body, "opus stream");
     assertExists(captured.streamOptions);
     assertEquals("temperature" in captured.streamOptions, false);
+  });
+
+  it("emits accumulated usage on stream message-finish events", async () => {
+    const transportModel: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/gateway-model",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        return {
+          stream: createTextStream([
+            { type: "text-delta", text: "usage stream" },
+            {
+              type: "finish",
+              finishReason: "stop",
+              totalUsage: {
+                inputTokens: 12,
+                outputTokens: 8,
+                totalTokens: 20,
+                costCredits: 0.25,
+              },
+            },
+          ]),
+        };
+      },
+    };
+
+    const assistant = agent({
+      model: "host/test-model",
+      system: "You are a helpful assistant.",
+      resolveModelTransport: () => ({ model: transportModel }),
+    });
+
+    const response = (await assistant.stream({ input: "Hello" })).toDataStreamResponse();
+    const body = await response.text();
+
+    assertStringIncludes(body, '"type":"message-finish"');
+    assertStringIncludes(body, '"finishReason":"stop"');
+    assertStringIncludes(body, '"inputTokens":12');
+    assertStringIncludes(body, '"outputTokens":8');
+    assertStringIncludes(body, '"totalTokens":20');
+    assertStringIncludes(body, '"costCredits":0.25');
   });
 
   it("omits temperature for Veryfront Cloud Claude Opus 4.8 generate requests", async () => {

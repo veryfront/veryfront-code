@@ -5,11 +5,43 @@ import {
 } from "../streaming/data-stream.ts";
 import type { AgUiRuntimeStreamEvent } from "./browser-encoder.ts";
 import type { ChatFinishReason, ChatStreamEvent } from "#veryfront/chat/protocol.ts";
+import { mapFinishReason } from "../../chat/ag-ui-helpers.ts";
+
+/** Usage metadata captured from an AG-UI runtime finish event. */
+export type AgUiRuntimeChatStreamUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  inputTokenDetails: {
+    noCacheTokens?: number;
+    cacheReadTokens?: number;
+    cacheWriteTokens?: number;
+  };
+  outputTokenDetails: {
+    textTokens?: number;
+    reasoningTokens?: number;
+  };
+  billableInputTokens?: number;
+  billableOutputTokens?: number;
+  costUsd?: number;
+  providerInputCostUsd?: number;
+  providerOutputCostUsd?: number;
+  providerCostUsd?: number;
+  veryfrontInputChargeUsd?: number;
+  veryfrontOutputChargeUsd?: number;
+  veryfrontChargeUsd?: number;
+  veryfrontBilledUsd?: number;
+  costCredits?: number;
+  costSource?: "gateway" | "missing" | "partial";
+  billingMode?: "direct" | "deferred";
+  usageCaptureStatus?: "complete" | "partial" | "missing";
+};
 
 /** State for AG-UI runtime chat stream encoder. */
 export interface AgUiRuntimeChatStreamEncoderState {
   isStepOpen: boolean;
   finishReason: ChatFinishReason;
+  totalUsage: AgUiRuntimeChatStreamUsage | null;
 }
 
 /** Public API contract for AG-UI runtime chat stream encoder. */
@@ -70,6 +102,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function getNumberField(value: Record<string, unknown>, key: string): number | undefined {
+  const field = value[key];
+  return typeof field === "number" && Number.isFinite(field) ? field : undefined;
+}
+
 function getDataRecord(event: AgUiRuntimeStreamEvent): Record<string, unknown> | undefined {
   return isRecord(event.data) ? event.data : undefined;
 }
@@ -100,6 +137,113 @@ function formatErrorText(error: unknown, onError?: (error: unknown) => string): 
   return onError ? onError(error) : error instanceof Error ? error.message : String(error);
 }
 
+function getFinishUsage(event: AgUiRuntimeStreamEvent): AgUiRuntimeChatStreamUsage | null {
+  const usage = isRecord(event.totalUsage)
+    ? event.totalUsage
+    : isRecord(event.usage)
+    ? event.usage
+    : null;
+  if (!usage) {
+    return null;
+  }
+
+  const inputTokenDetails = isRecord(usage.inputTokenDetails) ? usage.inputTokenDetails : {};
+  const outputTokenDetails = isRecord(usage.outputTokenDetails) ? usage.outputTokenDetails : {};
+  const inputTokens = getNumberField(usage, "inputTokens") ??
+    getNumberField(usage, "promptTokens") ??
+    0;
+  const outputTokens = getNumberField(usage, "outputTokens") ??
+    getNumberField(usage, "completionTokens") ??
+    0;
+  const cacheReadTokens = getNumberField(inputTokenDetails, "cacheReadTokens") ??
+    getNumberField(usage, "cacheReadInputTokens") ??
+    getNumberField(usage, "cachedInputTokens");
+  const cacheWriteTokens = getNumberField(inputTokenDetails, "cacheWriteTokens") ??
+    getNumberField(usage, "cacheCreationInputTokens");
+  const reasoningTokens = getNumberField(outputTokenDetails, "reasoningTokens") ??
+    getNumberField(usage, "reasoningTokens");
+
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens: getNumberField(usage, "totalTokens") ?? inputTokens + outputTokens,
+    inputTokenDetails: {
+      ...(getNumberField(inputTokenDetails, "noCacheTokens") !== undefined
+        ? { noCacheTokens: getNumberField(inputTokenDetails, "noCacheTokens") }
+        : {}),
+      ...(cacheReadTokens !== undefined ? { cacheReadTokens } : {}),
+      ...(cacheWriteTokens !== undefined ? { cacheWriteTokens } : {}),
+    },
+    outputTokenDetails: {
+      ...(getNumberField(outputTokenDetails, "textTokens") !== undefined
+        ? { textTokens: getNumberField(outputTokenDetails, "textTokens") }
+        : {}),
+      ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
+    },
+    ...(getNumberField(usage, "billableInputTokens") !== undefined
+      ? { billableInputTokens: getNumberField(usage, "billableInputTokens") }
+      : {}),
+    ...(getNumberField(usage, "billableOutputTokens") !== undefined
+      ? { billableOutputTokens: getNumberField(usage, "billableOutputTokens") }
+      : {}),
+    ...(getNumberField(usage, "costUsd") !== undefined
+      ? { costUsd: getNumberField(usage, "costUsd") }
+      : {}),
+    ...(getNumberField(usage, "providerInputCostUsd") !== undefined
+      ? { providerInputCostUsd: getNumberField(usage, "providerInputCostUsd") }
+      : {}),
+    ...(getNumberField(usage, "providerOutputCostUsd") !== undefined
+      ? { providerOutputCostUsd: getNumberField(usage, "providerOutputCostUsd") }
+      : {}),
+    ...(getNumberField(usage, "providerCostUsd") !== undefined
+      ? { providerCostUsd: getNumberField(usage, "providerCostUsd") }
+      : {}),
+    ...(getNumberField(usage, "veryfrontInputChargeUsd") !== undefined
+      ? { veryfrontInputChargeUsd: getNumberField(usage, "veryfrontInputChargeUsd") }
+      : {}),
+    ...(getNumberField(usage, "veryfrontOutputChargeUsd") !== undefined
+      ? { veryfrontOutputChargeUsd: getNumberField(usage, "veryfrontOutputChargeUsd") }
+      : {}),
+    ...(getNumberField(usage, "veryfrontChargeUsd") !== undefined
+      ? { veryfrontChargeUsd: getNumberField(usage, "veryfrontChargeUsd") }
+      : {}),
+    ...(getNumberField(usage, "veryfrontBilledUsd") !== undefined
+      ? { veryfrontBilledUsd: getNumberField(usage, "veryfrontBilledUsd") }
+      : {}),
+    ...(getNumberField(usage, "costCredits") !== undefined
+      ? { costCredits: getNumberField(usage, "costCredits") }
+      : {}),
+    ...(usage.costSource === "gateway" || usage.costSource === "missing" ||
+        usage.costSource === "partial"
+      ? { costSource: usage.costSource }
+      : {}),
+    ...(usage.billingMode === "direct" || usage.billingMode === "deferred"
+      ? { billingMode: usage.billingMode }
+      : {}),
+    ...(usage.usageCaptureStatus === "complete" || usage.usageCaptureStatus === "partial" ||
+        usage.usageCaptureStatus === "missing"
+      ? { usageCaptureStatus: usage.usageCaptureStatus }
+      : {}),
+  };
+}
+
+function observeFinishEvent(
+  state: AgUiRuntimeChatStreamEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): void {
+  const finishReason = typeof event.finishReason === "string"
+    ? mapFinishReason(event.finishReason)
+    : undefined;
+  if (finishReason) {
+    state.finishReason = finishReason;
+  }
+
+  const usage = getFinishUsage(event);
+  if (usage) {
+    state.totalUsage = usage;
+  }
+}
+
 /** Create AG-UI runtime chat stream encoder. */
 export function createAgUiRuntimeChatStreamEncoder(
   options: CreateAgUiRuntimeChatStreamEncoderOptions,
@@ -107,6 +251,7 @@ export function createAgUiRuntimeChatStreamEncoder(
   const state: AgUiRuntimeChatStreamEncoderState = {
     isStepOpen: false,
     finishReason: "stop",
+    totalUsage: null,
   };
   const startedTextBlockIds = new Set<string>();
   const seenTextBlockIds = new Set<string>();
@@ -156,7 +301,10 @@ export function createAgUiRuntimeChatStreamEncoder(
 
       switch (event.type) {
         case "message-start":
+          return events;
         case "message-finish":
+        case "finish":
+          observeFinishEvent(state, event);
           return events;
         case "step-start":
           ensureStepStarted(events);

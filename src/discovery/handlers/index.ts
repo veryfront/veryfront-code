@@ -11,5 +11,7 @@ export { promptHandler } from "./prompt-handler.ts";
 export { workflowHandler } from "./workflow-handler.ts";
 export { workHandler } from "./work-handler.ts";
 export { taskHandler } from "./task-handler.ts";
+export { scheduleHandler } from "./schedule-handler.ts";
+export { webhookHandler } from "./webhook-handler.ts";
 export { evalHandler } from "./eval-handler.ts";
 export { discoverSkills } from "./skill-handler.ts";

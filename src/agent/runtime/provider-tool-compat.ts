@@ -52,6 +52,7 @@ export function getProviderToolProfile(model?: string): ProviderToolProfile {
   const normalized = normalizeModel(model);
   const parts = normalized.split("/").filter(Boolean);
   const provider = parts[0] === "veryfront-cloud" ? parts[1] : parts[0];
+  const modelName = parts.at(-1);
 
   if (provider === "openai") {
     return { provider: "openai", maxTools: OPENAI_MAX_TOOLS, sanitizeSchema: false };
@@ -65,7 +66,7 @@ export function getProviderToolProfile(model?: string): ProviderToolProfile {
     return { provider: "anthropic", sanitizeSchema: true };
   }
 
-  if (provider === "moonshot" || provider === "moonshotai") {
+  if (provider === "moonshot" || provider === "moonshotai" || modelName?.startsWith("kimi-")) {
     return { provider: "moonshot", sanitizeSchema: true };
   }
 
@@ -298,13 +299,61 @@ function sanitizeGoogleSchemaValue(value: unknown): unknown {
   return sanitized;
 }
 
-function sanitizeMoonshotSchemaValue(value: unknown): unknown {
+function decodeJsonPointerSegment(segment: string): string {
+  return segment.replaceAll("~1", "/").replaceAll("~0", "~");
+}
+
+function resolveLocalJsonPointer(root: unknown, ref: string): unknown {
+  if (!ref.startsWith("#/")) {
+    return undefined;
+  }
+
+  let current = root;
+  for (const rawSegment of ref.slice(2).split("/")) {
+    if (!isPlainRecord(current) && !Array.isArray(current)) {
+      return undefined;
+    }
+
+    const segment = decodeJsonPointerSegment(rawSegment);
+    current = Reflect.get(current, segment);
+  }
+
+  return current;
+}
+
+function sanitizeMoonshotSchemaValue(
+  value: unknown,
+  root: unknown = value,
+  seenRefs: ReadonlySet<string> = new Set(),
+): unknown {
   if (Array.isArray(value)) {
-    return value.map((item) => sanitizeMoonshotSchemaValue(item));
+    return value.map((item) => sanitizeMoonshotSchemaValue(item, root, seenRefs));
   }
 
   if (!isPlainRecord(value)) {
     return value;
+  }
+
+  if (
+    typeof value.$ref === "string" &&
+    !value.$ref.startsWith("#/$defs/") &&
+    !value.$ref.startsWith("#/definitions/") &&
+    !seenRefs.has(value.$ref)
+  ) {
+    const resolved = resolveLocalJsonPointer(root, value.$ref);
+    if (resolved !== undefined && resolved !== value) {
+      const nextSeenRefs = new Set(seenRefs);
+      nextSeenRefs.add(value.$ref);
+      const sanitizedResolved = sanitizeMoonshotSchemaValue(resolved, root, nextSeenRefs);
+      const { $ref: _ref, ...siblings } = value;
+      const sanitizedSiblings = Object.keys(siblings).length > 0
+        ? sanitizeMoonshotSchemaValue(siblings, root, nextSeenRefs)
+        : undefined;
+
+      return isPlainRecord(sanitizedResolved) && isPlainRecord(sanitizedSiblings)
+        ? { ...sanitizedResolved, ...sanitizedSiblings }
+        : sanitizedResolved;
+    }
   }
 
   const sanitized: Record<string, unknown> = {};
@@ -316,7 +365,7 @@ function sanitizeMoonshotSchemaValue(value: unknown): unknown {
     }
 
     if (key === "definitions") {
-      sanitized.$defs = sanitizeMoonshotSchemaValue(child);
+      sanitized.$defs = sanitizeMoonshotSchemaValue(child, root, seenRefs);
       continue;
     }
 
@@ -324,13 +373,13 @@ function sanitizeMoonshotSchemaValue(value: unknown): unknown {
       sanitized.properties = Object.fromEntries(
         Object.entries(child).map(([propertyName, propertySchema]) => [
           propertyName,
-          sanitizeMoonshotSchemaValue(propertySchema),
+          sanitizeMoonshotSchemaValue(propertySchema, root, seenRefs),
         ]),
       );
       continue;
     }
 
-    sanitized[key] = sanitizeMoonshotSchemaValue(child);
+    sanitized[key] = sanitizeMoonshotSchemaValue(child, root, seenRefs);
   }
 
   return sanitized;

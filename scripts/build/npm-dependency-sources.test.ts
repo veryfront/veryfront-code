@@ -8,9 +8,9 @@ import {
 
 describe("npm dependency source helpers", () => {
 	it("parses npm import map entries", () => {
-		assertEquals(parseNpmImport("npm:ws@8.18.0"), {
+		assertEquals(parseNpmImport("npm:ws@8.21.0"), {
 			name: "ws",
-			version: "8.18.0",
+			version: "8.21.0",
 		});
 		assertEquals(parseNpmImport("npm:@kreuzberg/wasm@4.5.2/dist/pkg/kreuzberg_wasm.js"), {
 			name: "@kreuzberg/wasm",
@@ -32,12 +32,12 @@ describe("npm dependency source helpers", () => {
 	it("derives npm ranges from import maps", () => {
 		const configs = [{
 			imports: {
-				ws: "npm:ws@8.18.0",
+				ws: "npm:ws@8.21.0",
 				react: "https://esm.sh/react@19.2.4?target=es2022",
 			},
 		}];
 
-		assertEquals(npmDependencyRange(configs, "ws"), "8.18.0");
+		assertEquals(npmDependencyRange(configs, "ws"), "8.21.0");
 		assertEquals(npmDependencyRange(configs, "react", ""), "19.2.4");
 	});
 

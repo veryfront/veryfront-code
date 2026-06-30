@@ -11,6 +11,7 @@ import {
 } from "#veryfront/platform/cloud/resolver.ts";
 
 export const AUTO_AGENT_MODEL = "auto";
+export const DEFAULT_AGENT_MODEL = "openai/gpt-5.4-nano";
 
 const HOSTED_PROVIDER_NAMES = new Set([
   "anthropic",
@@ -27,7 +28,7 @@ const DIRECT_RUNTIME_PROVIDER_ALIASES: Record<string, string> = {
   "google-ai-studio": "google",
 };
 const DIRECT_AUTO_MODEL_DEFAULTS: Array<{ provider: string; modelId: string }> = [
-  { provider: "openai", modelId: "gpt-5.5" },
+  { provider: "openai", modelId: "gpt-5.4-nano" },
   { provider: "anthropic", modelId: "claude-sonnet-4-6" },
   { provider: "google-ai-studio", modelId: "gemini-3.5-flash" },
   { provider: "mistral", modelId: "mistral-large-2512" },
@@ -61,6 +62,8 @@ const LEGACY_MODEL_ALIASES: Record<string, string> = {
 };
 
 export function normalizeAgentModelConfig(model?: string): string {
+  if (model === undefined) return DEFAULT_AGENT_MODEL;
+
   const normalized = model?.trim();
   return normalized && normalized.length > 0 ? normalized : AUTO_AGENT_MODEL;
 }

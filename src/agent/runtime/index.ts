@@ -159,6 +159,67 @@ import { resolveAgentModelTransport, type ResolvedModelTransport } from "./model
 
 const logger = serverLogger.component("agent");
 
+function buildStreamFinishUsage(
+  usage: AgentResponse["usage"],
+): Record<string, unknown> | undefined {
+  if (!usage) {
+    return undefined;
+  }
+
+  return {
+    inputTokens: usage.promptTokens,
+    outputTokens: usage.completionTokens,
+    totalTokens: usage.totalTokens,
+    ...(usage.cachedInputTokens !== undefined
+      ? { cachedInputTokens: usage.cachedInputTokens }
+      : {}),
+    ...(usage.cacheCreationInputTokens !== undefined
+      ? { cacheCreationInputTokens: usage.cacheCreationInputTokens }
+      : {}),
+    ...(usage.cacheReadInputTokens !== undefined
+      ? { cacheReadInputTokens: usage.cacheReadInputTokens }
+      : {}),
+    ...(usage.reasoningTokens !== undefined ? { reasoningTokens: usage.reasoningTokens } : {}),
+    ...(usage.billableInputTokens !== undefined
+      ? { billableInputTokens: usage.billableInputTokens }
+      : {}),
+    ...(usage.billableOutputTokens !== undefined
+      ? { billableOutputTokens: usage.billableOutputTokens }
+      : {}),
+    ...(usage.costUsd !== undefined ? { costUsd: usage.costUsd } : {}),
+    ...(usage.providerInputCostUsd !== undefined
+      ? { providerInputCostUsd: usage.providerInputCostUsd }
+      : {}),
+    ...(usage.providerOutputCostUsd !== undefined
+      ? { providerOutputCostUsd: usage.providerOutputCostUsd }
+      : {}),
+    ...(usage.providerCostUsd !== undefined ? { providerCostUsd: usage.providerCostUsd } : {}),
+    ...(usage.veryfrontInputChargeUsd !== undefined
+      ? { veryfrontInputChargeUsd: usage.veryfrontInputChargeUsd }
+      : {}),
+    ...(usage.veryfrontOutputChargeUsd !== undefined
+      ? { veryfrontOutputChargeUsd: usage.veryfrontOutputChargeUsd }
+      : {}),
+    ...(usage.veryfrontChargeUsd !== undefined
+      ? { veryfrontChargeUsd: usage.veryfrontChargeUsd }
+      : {}),
+    ...(usage.veryfrontBilledUsd !== undefined
+      ? { veryfrontBilledUsd: usage.veryfrontBilledUsd }
+      : {}),
+    ...(usage.costCredits !== undefined ? { costCredits: usage.costCredits } : {}),
+    ...(usage.costSource !== undefined ? { costSource: usage.costSource } : {}),
+    ...(usage.billingMode !== undefined ? { billingMode: usage.billingMode } : {}),
+    ...(usage.usageCaptureStatus !== undefined
+      ? { usageCaptureStatus: usage.usageCaptureStatus }
+      : {}),
+  };
+}
+
+function getResponseFinishReason(response: AgentResponse): string | undefined {
+  const finishReason = response.metadata?.finishReason;
+  return typeof finishReason === "string" && finishReason.length > 0 ? finishReason : undefined;
+}
+
 function shouldHideProjectToolAfterAgentWriteSuccess(toolName: string): boolean {
   return toolName === "create_agent" || toolName === "update_agent";
 }
@@ -482,7 +543,13 @@ export class AgentRuntime {
           callbacks?.onFinish?.(response);
           throwIfAborted(streamAbortSignal);
 
-          sendSSE(controller, encoder, { type: "message-finish" });
+          const finishUsage = buildStreamFinishUsage(response.usage);
+          const finishReason = getResponseFinishReason(response);
+          sendSSE(controller, encoder, {
+            type: "message-finish",
+            ...(finishReason ? { finishReason } : {}),
+            ...(finishUsage ? { totalUsage: finishUsage } : {}),
+          });
           closeSSEStream(controller);
         } catch (error) {
           if (isAbortError(error, streamAbortSignal)) {

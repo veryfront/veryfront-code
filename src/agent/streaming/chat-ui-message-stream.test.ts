@@ -86,7 +86,7 @@ describe("createChatUiMessageStreamFromDataStream", () => {
       { type: "tool-output-available", toolCallId: "tool-1", output: { matches: 2 } },
       { type: "finish-step" },
       { type: "text-end", id: "assistant-message", contentId: "text-1" },
-      { type: "finish", finishReason: "stop" },
+      { type: "finish", finishReason: "stop", messageMetadata: { modelId: "anthropic/claude" } },
     ]);
 
     assertEquals(finish, {
@@ -128,6 +128,114 @@ describe("createChatUiMessageStreamFromDataStream", () => {
       isAborted: false,
       finishReason: "stop",
     });
+  });
+
+  it("carries runtime finish usage into final message metadata", async () => {
+    let finish:
+      | ChatUiMessageStreamFinish<{
+        modelId: string;
+        usage: {
+          inputTokens: number;
+          outputTokens: number;
+          cachedInputTokens?: number;
+          cacheCreationInputTokens?: number;
+          cacheReadInputTokens?: number;
+          reasoningTokens?: number;
+        };
+        costCredits?: number;
+      }>
+      | undefined;
+    let observedFinishPart:
+      | Parameters<
+        NonNullable<
+          Parameters<typeof createChatUiMessageStreamFromDataStream>[1]
+        >["messageMetadata"]
+      >[0]["part"]
+      | undefined;
+
+    const chunks = await collectChunks(
+      createChatUiMessageStreamFromDataStream(
+        {
+          stream: createSseStream([
+            { type: "message-start", messageId: "framework-message" },
+            { type: "text-start", id: "text-1" },
+            { type: "text-delta", id: "text-1", delta: "Hello" },
+            { type: "text-end", id: "text-1" },
+            {
+              type: "message-finish",
+              finishReason: "stop",
+              totalUsage: {
+                inputTokens: 123,
+                outputTokens: 45,
+                totalTokens: 170,
+                inputTokenDetails: {
+                  cacheReadTokens: 20,
+                  cacheWriteTokens: 7,
+                },
+                outputTokenDetails: {
+                  reasoningTokens: 2,
+                },
+                costCredits: 0.098,
+              },
+            },
+          ]),
+        },
+        {
+          generateMessageId: () => "assistant-message",
+          messageMetadata: ({ part }) => {
+            observedFinishPart = part;
+            return {
+              modelId: "veryfront-cloud/moonshotai/kimi-k2.6",
+              usage: {
+                inputTokens: part.totalUsage.inputTokens,
+                outputTokens: part.totalUsage.outputTokens,
+                cachedInputTokens: part.totalUsage.inputTokenDetails.cacheReadTokens,
+                cacheCreationInputTokens: part.totalUsage.inputTokenDetails.cacheWriteTokens,
+                cacheReadInputTokens: part.totalUsage.inputTokenDetails.cacheReadTokens,
+                reasoningTokens: part.totalUsage.outputTokenDetails.reasoningTokens,
+              },
+              costCredits: part.totalUsage.costCredits,
+            };
+          },
+          onFinish: (value) => {
+            finish = value;
+          },
+        },
+      ),
+    );
+
+    const expectedMetadata = {
+      modelId: "veryfront-cloud/moonshotai/kimi-k2.6",
+      usage: {
+        inputTokens: 123,
+        outputTokens: 45,
+        cachedInputTokens: 20,
+        cacheCreationInputTokens: 7,
+        cacheReadInputTokens: 20,
+        reasoningTokens: 2,
+      },
+      costCredits: 0.098,
+    };
+
+    assertEquals(observedFinishPart?.totalUsage, {
+      inputTokens: 123,
+      outputTokens: 45,
+      totalTokens: 170,
+      inputTokenDetails: {
+        cacheReadTokens: 20,
+        cacheWriteTokens: 7,
+      },
+      outputTokenDetails: {
+        reasoningTokens: 2,
+      },
+      costCredits: 0.098,
+    });
+    assertEquals(chunks.at(-1), {
+      type: "finish",
+      finishReason: "stop",
+      messageMetadata: expectedMetadata,
+    });
+    assertEquals(finish?.responseMessage.metadata, expectedMetadata);
   });
 
   it("surfaces orphaned tool input deltas as tool input errors", async () => {

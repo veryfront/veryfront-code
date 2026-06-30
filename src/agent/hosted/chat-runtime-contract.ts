@@ -30,6 +30,20 @@ export type HostedChatRuntimeFinishPart = {
       textTokens?: number;
       reasoningTokens?: number;
     };
+    billableInputTokens?: number;
+    billableOutputTokens?: number;
+    costUsd?: number;
+    providerInputCostUsd?: number;
+    providerOutputCostUsd?: number;
+    providerCostUsd?: number;
+    veryfrontInputChargeUsd?: number;
+    veryfrontOutputChargeUsd?: number;
+    veryfrontChargeUsd?: number;
+    veryfrontBilledUsd?: number;
+    costCredits?: number;
+    costSource?: "gateway" | "missing" | "partial";
+    billingMode?: "direct" | "deferred";
+    usageCaptureStatus?: "complete" | "partial" | "missing";
   };
 };
 

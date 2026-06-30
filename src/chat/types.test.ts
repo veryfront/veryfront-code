@@ -36,6 +36,8 @@ describe("chat/types", () => {
         metadata: {
           agentName: "Veryfront",
           usage: { inputTokens: 1, outputTokens: 2 },
+          costCredits: 0.25,
+          costSource: "gateway",
         },
       }),
       {
@@ -45,6 +47,8 @@ describe("chat/types", () => {
         metadata: {
           agentName: "Veryfront",
           usage: { inputTokens: 1, outputTokens: 2 },
+          costCredits: 0.25,
+          costSource: "gateway",
         },
       },
     );
@@ -57,12 +61,14 @@ describe("chat/types", () => {
           status: "completed",
           toolCalls: [{ toolName: "read_file", toolCallId: "tool-1" }],
         },
+        costCredits: 0.25,
       }),
       {
         childRunAudit: {
           status: "completed",
           toolCalls: [{ toolName: "read_file", toolCallId: "tool-1" }],
         },
+        costCredits: 0.25,
       },
     );
 

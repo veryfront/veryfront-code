@@ -28,6 +28,8 @@ import { knowledgeHelp } from "../commands/knowledge/command-help.ts";
 import { mergeHelp } from "../commands/merge/command-help.ts";
 import { deployHelp } from "../commands/deploy/command-help.ts";
 import { upHelp } from "../commands/up/command-help.ts";
+import { scheduleHelp } from "../commands/schedule/command-help.ts";
+import { schedulesHelp } from "../commands/schedules/command-help.ts";
 import { loginHelp } from "../commands/login/command-help.ts";
 import { logoutHelp } from "../commands/logout/command-help.ts";
 import { whoamiHelp } from "../commands/whoami/command-help.ts";
@@ -48,6 +50,8 @@ import { configHelp } from "../commands/config/command-help.ts";
 import { openHelp } from "../commands/open/command-help.ts";
 import { completionsHelp } from "../commands/completions/command-help.ts";
 import { extensionHelp } from "../commands/extension/command-help.ts";
+import { webhookHelp } from "../commands/webhook/command-help.ts";
+import { webhooksHelp } from "../commands/webhooks/command-help.ts";
 
 /**
  * Central registry of all command help definitions.
@@ -74,6 +78,8 @@ export const COMMANDS: CommandRegistry = {
   merge: mergeHelp,
   deploy: deployHelp,
   up: upHelp,
+  schedule: scheduleHelp,
+  schedules: schedulesHelp,
   login: loginHelp,
   logout: logoutHelp,
   whoami: whoamiHelp,
@@ -95,4 +101,6 @@ export const COMMANDS: CommandRegistry = {
   open: openHelp,
   completions: completionsHelp,
   extension: extensionHelp,
+  webhook: webhookHelp,
+  webhooks: webhooksHelp,
 };

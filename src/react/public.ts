@@ -246,6 +246,20 @@ export type { ChatFinishReason, ChatStreamEvent } from "#veryfront/agent/react/u
 export { useAgent } from "#veryfront/agent/react/use-agent.ts";
 export type { UseAgentOptions, UseAgentResult } from "#veryfront/agent/react/use-agent.ts";
 
+export {
+  getAgentPromptSuggestions,
+  normalizeAgentMetadataResponse,
+  useAgentMetadata,
+} from "#veryfront/agent/react/use-agent-metadata.ts";
+export type {
+  AgentMetadata,
+  AgentMetadataPromptSuggestion,
+  AgentMetadataSuggestion,
+  AgentMetadataSuggestions,
+  AgentMetadataTaskSuggestion,
+  UseAgentMetadataResult,
+} from "#veryfront/agent/react/use-agent-metadata.ts";
+
 export { useCompletion } from "#veryfront/agent/react/use-completion.ts";
 export type {
   UseCompletionOptions,

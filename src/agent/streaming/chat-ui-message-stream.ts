@@ -5,7 +5,10 @@ import type {
   ChatUiMessageChunk,
   MessageMetadata,
 } from "../../chat/types.ts";
-import { createAgUiRuntimeChatStreamEncoder } from "../ag-ui/runtime-chat-stream-encoder.ts";
+import {
+  type AgUiRuntimeChatStreamUsage,
+  createAgUiRuntimeChatStreamEncoder,
+} from "../ag-ui/runtime-chat-stream-encoder.ts";
 import {
   mergeToolInputDelta,
   parseToolInputObject,
@@ -35,6 +38,20 @@ export type ChatUiMessageStreamFinishPart = {
       textTokens?: number;
       reasoningTokens?: number;
     };
+    billableInputTokens?: number;
+    billableOutputTokens?: number;
+    costUsd?: number;
+    providerInputCostUsd?: number;
+    providerOutputCostUsd?: number;
+    providerCostUsd?: number;
+    veryfrontInputChargeUsd?: number;
+    veryfrontOutputChargeUsd?: number;
+    veryfrontChargeUsd?: number;
+    veryfrontBilledUsd?: number;
+    costCredits?: number;
+    costSource?: "gateway" | "missing" | "partial";
+    billingMode?: "direct" | "deferred";
+    usageCaptureStatus?: "complete" | "partial" | "missing";
   };
 };
 
@@ -448,12 +465,15 @@ function buildResponseMessageParts(state: FrameworkUiMessageState): ChatUiMessag
   return orderedParts.sort((left, right) => left.order - right.order).map((entry) => entry.part);
 }
 
-function buildFinishPart(finishReason: ChatFinishReason): ChatUiMessageStreamFinishPart {
+function buildFinishPart(
+  finishReason: ChatFinishReason,
+  totalUsage?: AgUiRuntimeChatStreamUsage | null,
+): ChatUiMessageStreamFinishPart {
   return {
     type: "finish",
     finishReason,
     rawFinishReason: finishReason,
-    totalUsage: {
+    totalUsage: totalUsage ?? {
       inputTokens: 0,
       outputTokens: 0,
       totalTokens: 0,
@@ -484,6 +504,9 @@ function toUiChunk(event: ChatStreamEvent): ChatUiMessageChunk<MessageMetadata> 
       return {
         type: "finish",
         ...(event.finishReason ? { finishReason: event.finishReason } : {}),
+        ...(event.messageMetadata !== undefined
+          ? { messageMetadata: normalizeChatMessageMetadata(event.messageMetadata) }
+          : {}),
       };
     case "message-metadata":
       return {
@@ -573,7 +596,7 @@ export function createChatUiMessageStreamFromDataStream<TMessageMetadata = Messa
       }
       state.pendingToolDeltas.clear();
 
-      const finishPart = buildFinishPart(finishReason);
+      const finishPart = buildFinishPart(finishReason, chatEventEncoder.state.totalUsage);
       const messageMetadata = options.messageMetadata?.({ part: finishPart });
       const responseMessage: ChatUiMessage<TMessageMetadata> = {
         id: responseMessageId,
@@ -593,6 +616,9 @@ export function createChatUiMessageStreamFromDataStream<TMessageMetadata = Messa
       yield {
         type: "finish",
         finishReason,
+        ...(messageMetadata !== undefined
+          ? { messageMetadata: normalizeChatMessageMetadata(messageMetadata) }
+          : {}),
       };
     })(),
   );

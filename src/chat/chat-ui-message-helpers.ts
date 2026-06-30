@@ -12,6 +12,8 @@ export interface BuildChatStreamChunkMessageMetadataInput {
   runId?: string;
   streamingMessageId?: string;
   part: StreamChunkMetadataPart;
+  agentName?: string;
+  agentAvatarUrl?: string;
 }
 
 type ReplayState = {
@@ -65,6 +67,72 @@ function normalizeUsageMetadata(value: unknown): ChatMessageMetadata["usage"] | 
   return Object.keys(usage).length > 0 ? usage : undefined;
 }
 
+function normalizeBillingMetadata(
+  value: unknown,
+): Omit<
+  ChatMessageMetadata,
+  | "createdAt"
+  | "isStopped"
+  | "isCompleted"
+  | "completedAt"
+  | "agentId"
+  | "agentName"
+  | "agentAvatarUrl"
+  | "conversationId"
+  | "modelId"
+  | "runId"
+  | "streamingMessageId"
+  | "childRunAudit"
+  | "usage"
+> {
+  if (!isRecord(value)) {
+    return {};
+  }
+
+  return {
+    ...(typeof value.billableInputTokens === "number"
+      ? { billableInputTokens: value.billableInputTokens }
+      : {}),
+    ...(typeof value.billableOutputTokens === "number"
+      ? { billableOutputTokens: value.billableOutputTokens }
+      : {}),
+    ...(typeof value.costUsd === "number" ? { costUsd: value.costUsd } : {}),
+    ...(typeof value.providerInputCostUsd === "number"
+      ? { providerInputCostUsd: value.providerInputCostUsd }
+      : {}),
+    ...(typeof value.providerOutputCostUsd === "number"
+      ? { providerOutputCostUsd: value.providerOutputCostUsd }
+      : {}),
+    ...(typeof value.providerCostUsd === "number"
+      ? { providerCostUsd: value.providerCostUsd }
+      : {}),
+    ...(typeof value.veryfrontInputChargeUsd === "number"
+      ? { veryfrontInputChargeUsd: value.veryfrontInputChargeUsd }
+      : {}),
+    ...(typeof value.veryfrontOutputChargeUsd === "number"
+      ? { veryfrontOutputChargeUsd: value.veryfrontOutputChargeUsd }
+      : {}),
+    ...(typeof value.veryfrontChargeUsd === "number"
+      ? { veryfrontChargeUsd: value.veryfrontChargeUsd }
+      : {}),
+    ...(typeof value.veryfrontBilledUsd === "number"
+      ? { veryfrontBilledUsd: value.veryfrontBilledUsd }
+      : {}),
+    ...(typeof value.costCredits === "number" ? { costCredits: value.costCredits } : {}),
+    ...(value.costSource === "gateway" || value.costSource === "missing" ||
+        value.costSource === "partial"
+      ? { costSource: value.costSource }
+      : {}),
+    ...(value.billingMode === "direct" || value.billingMode === "deferred"
+      ? { billingMode: value.billingMode }
+      : {}),
+    ...(value.usageCaptureStatus === "complete" || value.usageCaptureStatus === "partial" ||
+        value.usageCaptureStatus === "missing"
+      ? { usageCaptureStatus: value.usageCaptureStatus }
+      : {}),
+  };
+}
+
 function splitReplayDelta(
   existing: string,
   replayOffset: number,
@@ -107,6 +175,19 @@ function getReplayState(stateMap: Map<string, ReplayState>, id: string): ReplayS
   return created;
 }
 
+function firstStringField(
+  value: Record<string, unknown>,
+  keys: readonly string[],
+): string | undefined {
+  for (const key of keys) {
+    const candidate = value[key];
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
 /** Normalizes chat message metadata. */
 export function normalizeChatMessageMetadata(value: unknown): ChatMessageMetadata {
   if (!isRecord(value)) {
@@ -114,6 +195,14 @@ export function normalizeChatMessageMetadata(value: unknown): ChatMessageMetadat
   }
 
   const usage = normalizeUsageMetadata(value.usage);
+  const billingMetadata = normalizeBillingMetadata(value);
+  const agentName = firstStringField(value, ["agentName", "agent_name"]);
+  const agentAvatarUrl = firstStringField(value, [
+    "agentAvatarUrl",
+    "agent_avatar_url",
+    "avatar_url",
+    "avatarUrl",
+  ]);
 
   return {
     ...(typeof value.createdAt === "string" ? { createdAt: value.createdAt } : {}),
@@ -121,7 +210,8 @@ export function normalizeChatMessageMetadata(value: unknown): ChatMessageMetadat
     ...(typeof value.isCompleted === "boolean" ? { isCompleted: value.isCompleted } : {}),
     ...(typeof value.completedAt === "string" ? { completedAt: value.completedAt } : {}),
     ...(typeof value.agentId === "string" ? { agentId: value.agentId } : {}),
-    ...(typeof value.agentName === "string" ? { agentName: value.agentName } : {}),
+    ...(agentName ? { agentName } : {}),
+    ...(agentAvatarUrl ? { agentAvatarUrl } : {}),
     ...(typeof value.conversationId === "string" ? { conversationId: value.conversationId } : {}),
     ...(typeof value.modelId === "string" ? { modelId: value.modelId } : {}),
     ...(typeof value.runId === "string" ? { runId: value.runId } : {}),
@@ -129,6 +219,7 @@ export function normalizeChatMessageMetadata(value: unknown): ChatMessageMetadat
       ? { streamingMessageId: value.streamingMessageId }
       : {}),
     ...(usage ? { usage } : {}),
+    ...billingMetadata,
   };
 }
 
@@ -144,6 +235,8 @@ export function buildChatStreamChunkMessageMetadata(
 ): ChatMessageMetadata {
   const baseMetadata: ChatMessageMetadata = {
     agentId: input.agentId,
+    ...(input.agentName ? { agentName: input.agentName } : {}),
+    ...(input.agentAvatarUrl ? { agentAvatarUrl: input.agentAvatarUrl } : {}),
     modelId: input.modelId,
     ...(input.runId ? { runId: input.runId } : {}),
     ...(input.streamingMessageId ? { streamingMessageId: input.streamingMessageId } : {}),
@@ -154,7 +247,10 @@ export function buildChatStreamChunkMessageMetadata(
   }
 
   const usage = normalizeUsageMetadata(input.part.totalUsage);
-  return usage ? { ...baseMetadata, usage } : baseMetadata;
+  const billingMetadata = normalizeBillingMetadata(input.part.totalUsage);
+  return usage || Object.keys(billingMetadata).length > 0
+    ? { ...baseMetadata, ...(usage ? { usage } : {}), ...billingMetadata }
+    : baseMetadata;
 }
 
 /** Normalizes chat UI message chunk. */

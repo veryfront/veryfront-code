@@ -130,12 +130,16 @@ export interface AgentConfig {
   id?: string;
   /** Human-readable display name for registry and control-plane listings. */
   name?: string;
+  /** Absolute avatar URL for registry, Studio, and chat identity surfaces. */
+  avatarUrl?: string;
+  /** @deprecated Use `avatarUrl`. Serialized wire payloads use `avatar_url`. */
+  avatar_url?: string;
   /** Optional summary shown in registry and control-plane listings. */
   description?: string;
   /**
    * Optional model string in "provider/model" format.
    *
-   * When omitted or set to `"auto"`, Veryfront chooses the runtime default:
+   * When omitted, Veryfront uses `openai/gpt-5.4-nano`. Set `"auto"` to choose
    * Veryfront Cloud when bootstrap credentials are present, otherwise a
    * configured direct provider key when one exists.
    */

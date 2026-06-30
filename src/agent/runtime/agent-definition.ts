@@ -31,6 +31,7 @@ export const getRuntimeAgentMarkdownDefinitionSchema = defineSchema((v) =>
     id: v.string().min(1),
     name: v.string().min(1),
     description: v.string(),
+    avatarUrl: v.string().url().optional(),
     instructions: v.string(),
     thinking: getRuntimeAgentThinkingConfigSchema().optional(),
     model: v.string().min(1).optional(),
@@ -156,6 +157,13 @@ export function parseRuntimeAgentMarkdownDefinition(
   const { attrs, body } = extract<Record<string, unknown>>(parsedInput.content);
   const name = typeof attrs.name === "string" && attrs.name.trim() ? attrs.name : parsedInput.id;
   const description = typeof attrs.description === "string" ? attrs.description : "";
+  const avatarUrl = typeof attrs["avatar-url"] === "string" && attrs["avatar-url"].trim()
+    ? attrs["avatar-url"]
+    : typeof attrs.avatarUrl === "string" && attrs.avatarUrl.trim()
+    ? attrs.avatarUrl
+    : typeof attrs.avatar_url === "string" && attrs.avatar_url.trim()
+    ? attrs.avatar_url
+    : undefined;
   const model = typeof attrs.model === "string" && attrs.model.trim() ? attrs.model : undefined;
   const thinking = parseThinking(attrs.thinking);
   const temperature = typeof attrs.temperature === "number" ? attrs.temperature : undefined;
@@ -170,6 +178,7 @@ export function parseRuntimeAgentMarkdownDefinition(
     id: parsedInput.id,
     name,
     description,
+    ...(avatarUrl ? { avatarUrl } : {}),
     instructions: body.trim(),
     ...(model ? { model } : {}),
     ...(thinking ? { thinking } : {}),

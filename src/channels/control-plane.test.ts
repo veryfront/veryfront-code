@@ -89,6 +89,8 @@ function createHandlerContext(): HandlerContext {
 function createAgent(overrides: {
   id?: string;
   name?: string;
+  avatarUrl?: string;
+  avatar_url?: string;
   description?: string;
   model?: string;
   version?: string;
@@ -101,6 +103,8 @@ function createAgent(overrides: {
       system: "You are helpful.",
       model: overrides.model ?? "anthropic/claude-sonnet-4-6",
       name: overrides.name ?? "Support",
+      avatarUrl: overrides.avatarUrl,
+      avatar_url: overrides.avatar_url,
       description: overrides.description ?? "Helps with support questions",
       version: overrides.version ?? "2.0.0",
       skills: overrides.skills,
@@ -434,6 +438,37 @@ describe("channels/control-plane", () => {
                 },
               ],
             },
+          }],
+        }),
+      );
+    });
+
+    it("serializes a source avatarUrl as control-plane avatar_url", async () => {
+      const avatarUrl = "https://cdn.example.com/agents/support.svg";
+      const response = await listRuntimeAgents(createHandlerContext(), {
+        ensureProjectDiscovery: async () => {},
+        getAgent: (id) =>
+          id === "assistant"
+            ? createAgent({
+              id,
+              avatarUrl,
+            })
+            : undefined,
+        getAllAgentIds: () => ["assistant"],
+      });
+
+      assertEquals(response.agents[0]?.avatar_url, avatarUrl);
+      assertEquals(
+        response,
+        RuntimeAgentListResponseSchema.parse({
+          agents: [{
+            id: "assistant",
+            name: "Support",
+            avatar_url: avatarUrl,
+            description: "Helps with support questions",
+            model: "anthropic/claude-sonnet-4-6",
+            version: "2.0.0",
+            skills: [],
           }],
         }),
       );

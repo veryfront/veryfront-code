@@ -34,7 +34,7 @@ describe("chat/ag-ui", () => {
       [
         "id: 1",
         "event: RunStarted",
-        'data: {"runId":"run-1","threadId":"thread-1","agentId":"veryfront"}',
+        'data: {"runId":"run-1","threadId":"thread-1","agentId":"veryfront","agentName":"Veryfront","agent_avatar_url":"https://cdn.example.com/agents/veryfront.svg"}',
         "",
         "id: 2",
         "event: TextMessageStart",
@@ -84,7 +84,13 @@ describe("chat/ag-ui", () => {
     assertEquals(chatEvents, [
       {
         type: "start",
-        messageMetadata: { agentId: "veryfront", runId: "run-1", threadId: "thread-1" },
+        messageMetadata: {
+          agentId: "veryfront",
+          agentName: "Veryfront",
+          agent_avatar_url: "https://cdn.example.com/agents/veryfront.svg",
+          runId: "run-1",
+          threadId: "thread-1",
+        },
       },
       { type: "text-start", id: "msg-1", contentId: "text:0" },
       { type: "text-delta", id: "msg-1", contentId: "text:0", delta: "Hello" },

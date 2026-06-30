@@ -94,6 +94,7 @@ export const getRuntimeAgentSchema = defineSchema((v) =>
     id: v.string().min(1),
     name: v.string().min(1),
     description: v.string().nullable().optional(),
+    avatar_url: v.string().url().nullable().optional(),
     model: v.string().nullable().optional(),
     version: v.string().nullable().optional(),
     skills: v.array(getRuntimeAgentSkillSchema()).optional(),
@@ -160,6 +161,11 @@ export type RuntimeSuggestions = InferSchema<
 >;
 /** Public API contract for runtime agent. */
 export type RuntimeAgent = InferSchema<ReturnType<typeof getRuntimeAgentSchema>>;
+/** Public API contract for browser-safe runtime agent metadata. */
+export type RuntimeAgentPublicMetadata = Pick<
+  RuntimeAgent,
+  "id" | "name" | "description" | "avatar_url" | "suggestions"
+>;
 /** Response payload for runtime agent list. */
 export type RuntimeAgentListResponse = InferSchema<
   ReturnType<typeof getRuntimeAgentListResponseSchema>
@@ -335,23 +341,42 @@ export function resolveAgentSkills(agent: Agent): RuntimeAgentSkill[] {
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
-function getRuntimeAgentMetadata(id: string, agent: Agent): RuntimeAgent {
+/** Get browser-safe runtime metadata for an agent. */
+export function getRuntimeAgentPublicMetadata(
+  id: string,
+  agent: Agent,
+): RuntimeAgentPublicMetadata {
   const rawConfig = agent.config as unknown as Record<string, unknown>;
   const suggestionsParseResult = rawConfig.suggestions === undefined
     ? null
     : RuntimeSuggestionsSchema.safeParse(rawConfig.suggestions);
   const suggestions = suggestionsParseResult?.success ? suggestionsParseResult.data : undefined;
+  const avatarUrl = typeof rawConfig.avatarUrl === "string" && rawConfig.avatarUrl.trim().length > 0
+    ? rawConfig.avatarUrl
+    : typeof rawConfig.avatar_url === "string" && rawConfig.avatar_url.trim().length > 0
+    ? rawConfig.avatar_url
+    : undefined;
 
-  return RuntimeAgentSchema.parse({
+  return {
     id,
     name: typeof rawConfig.name === "string" && rawConfig.name.trim().length > 0
       ? rawConfig.name
       : id,
     description: typeof rawConfig.description === "string" ? rawConfig.description : null,
+    ...(avatarUrl ? { avatar_url: avatarUrl } : {}),
+    ...(suggestions === undefined ? {} : { suggestions }),
+  };
+}
+
+function getRuntimeAgentMetadata(id: string, agent: Agent): RuntimeAgent {
+  const rawConfig = agent.config as unknown as Record<string, unknown>;
+  const publicMetadata = getRuntimeAgentPublicMetadata(id, agent);
+
+  return RuntimeAgentSchema.parse({
+    ...publicMetadata,
     model: agent.config.model ?? null,
     version: typeof rawConfig.version === "string" ? rawConfig.version : null,
     skills: resolveAgentSkills(agent),
-    ...(suggestions === undefined ? {} : { suggestions }),
   });
 }
 

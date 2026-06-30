@@ -2,6 +2,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ToolDefinition } from "#veryfront/tool";
 import {
+  getProviderToolProfile,
   sanitizeProviderToolSchema,
   selectProviderCompatibleToolNames,
   selectProviderCompatibleTools,
@@ -185,6 +186,66 @@ describe("provider-tool-compat", () => {
     assertEquals(properties.acceptance_criteria?.$ref, "#/$defs/acceptanceCriteria");
     assertEquals(sanitizedRecord.definitions, undefined);
     assertEquals(defs.acceptanceCriteria?.type, "array");
+  });
+
+  it("normalizes short Kimi aliases as Moonshot tool schemas", () => {
+    const profile = getProviderToolProfile("kimi-k2.6");
+    const sanitized = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        properties: {
+          acceptance_criteria: {
+            $ref: "#/definitions/acceptanceCriteria",
+          },
+        },
+        definitions: {
+          acceptanceCriteria: {
+            type: "array",
+            items: { type: "string" },
+          },
+        },
+      } as never,
+      { model: "kimi-k2.6" },
+    );
+    const sanitizedRecord = sanitized as Record<string, Record<string, unknown> | undefined>;
+    const properties = sanitizedRecord.properties as Record<string, Record<string, unknown>>;
+    const defs = sanitizedRecord.$defs as Record<string, Record<string, unknown>>;
+
+    assertEquals(profile, { provider: "moonshot", sanitizeSchema: true });
+    assertEquals(properties.acceptance_criteria?.$ref, "#/$defs/acceptanceCriteria");
+    assertEquals(sanitizedRecord.definitions, undefined);
+    assertEquals(defs.acceptanceCriteria?.type, "array");
+  });
+
+  it("inlines Moonshot tool refs that point outside $defs", () => {
+    const sanitized = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        properties: {
+          expectations: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "string" },
+                description: { type: "string" },
+              },
+              required: ["id", "description"],
+            },
+          },
+          acceptance_criteria: {
+            $ref: "#/properties/expectations",
+          },
+        },
+      } as never,
+      { model: "veryfront-cloud/moonshotai/kimi-k2.6" },
+    );
+    const sanitizedRecord = sanitized as Record<string, Record<string, unknown> | undefined>;
+    const properties = sanitizedRecord.properties as Record<string, Record<string, unknown>>;
+
+    assertEquals(properties.acceptance_criteria?.$ref, undefined);
+    assertEquals(properties.acceptance_criteria?.type, "array");
+    assertEquals(JSON.stringify(sanitized).includes("#/properties/"), false);
   });
 
   it("preserves Moonshot tool properties named definitions", () => {

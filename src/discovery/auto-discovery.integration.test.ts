@@ -5,14 +5,19 @@ import "#veryfront/schemas/_test-setup.ts";
  */
 
 import { assertEquals, assertExists } from "#veryfront/testing/assert";
-import { beforeEach, describe, it } from "#veryfront/testing/bdd";
+import { afterAll, afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { toolRegistry } from "#veryfront/tool";
 import { promptRegistry } from "#veryfront/prompt";
 import { workRegistry } from "#veryfront/work";
 import { resourceRegistry } from "#veryfront/resource";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
+import { createMockAdapter } from "#veryfront/platform";
+import { discoverSchedules } from "#veryfront/schedule";
+import { discoverWebhooks } from "#veryfront/webhook";
 import { join, resolve } from "#veryfront/compat/path";
 import { cwd } from "#veryfront/compat/process.ts";
+import { clearTranspileCache } from "#veryfront/discovery/transpiler.ts";
+import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import { discoverAll } from "./index.ts";
 
 function getFixturePath(): string {
@@ -29,6 +34,14 @@ describe(
       promptRegistry.clear();
       workRegistry.clear();
       agentRegistry.clear();
+    });
+
+    afterEach(() => {
+      clearTranspileCache();
+    });
+
+    afterAll(async () => {
+      await stopEsbuild();
     });
 
     it("should discover tools from tools/ directory", async () => {
@@ -156,6 +169,116 @@ describe(
 
       assertExists(result);
       assertExists(result.errors);
+    });
+
+    it("discovers source-defined schedules and webhooks", async () => {
+      const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-triggers-" });
+
+      try {
+        await Deno.mkdir(`${tempDir}/schedules`, { recursive: true });
+        await Deno.mkdir(`${tempDir}/webhooks`, { recursive: true });
+        await Deno.writeTextFile(
+          `${tempDir}/schedules/daily-triage.ts`,
+          [
+            'import { schedule } from "veryfront/schedule";',
+            "",
+            "export default schedule({",
+            '  id: "daily-triage",',
+            '  cron: "0 8 * * 1-5",',
+            '  target: { kind: "workflow", id: "escalate-ticket" },',
+            "});",
+          ].join("\n"),
+        );
+        await Deno.writeTextFile(
+          `${tempDir}/webhooks/ticket-created.ts`,
+          [
+            'import { webhook } from "veryfront/webhook";',
+            "",
+            "export default webhook({",
+            '  id: "ticket-created",',
+            '  target: { kind: "workflow", id: "escalate-ticket" },',
+            "});",
+          ].join("\n"),
+        );
+
+        const result = await discoverAll({
+          baseDir: tempDir,
+          verbose: false,
+          toolDirs: [],
+          agentDirs: [],
+          resourceDirs: [],
+          promptDirs: [],
+          workflowDirs: [],
+          workDirs: [],
+          taskDirs: [],
+          evalDirs: [],
+          skillDirs: [],
+        });
+
+        assertEquals(result.errors, []);
+        assertEquals(result.schedules.get("daily-triage")?.target, {
+          kind: "workflow",
+          id: "escalate-ticket",
+        });
+        assertEquals(result.webhooks.get("ticket-created")?.target, {
+          kind: "workflow",
+          id: "escalate-ticket",
+        });
+      } finally {
+        await Deno.remove(tempDir, { recursive: true });
+      }
+    });
+
+    it("reports invalid source-defined schedule files", async () => {
+      const adapter = createMockAdapter();
+      await adapter.fs.mkdir("/project/schedules", { recursive: true });
+      await adapter.fs.writeFile(
+        "/project/schedules/daily.ts",
+        [
+          'import { schedule } from "veryfront/schedule";',
+          "",
+          "export default schedule({",
+          '  id: "daily-triage",',
+          '  cron: "0 8 * * 1-5",',
+          '  target: { kind: "workflow", id: "escalate-ticket" },',
+          "});",
+        ].join("\n"),
+      );
+      await adapter.fs.writeFile(
+        "/project/schedules/not-a-schedule.ts",
+        "export default { id: 'not-a-schedule' };",
+      );
+
+      const result = await discoverSchedules({ projectDir: "/project", adapter });
+
+      assertEquals(result.items.map((item) => item.id), ["daily-triage"]);
+      assertEquals(result.errors.length, 1);
+      assertEquals(result.errors[0]?.code, "invalid_definition");
+      assertEquals(result.errors[0]?.sourceKind, "schedule");
+    });
+
+    it("reports duplicate source-defined webhook ids", async () => {
+      const adapter = createMockAdapter();
+      const webhookSource = (id: string) =>
+        [
+          'import { webhook } from "veryfront/webhook";',
+          "",
+          "export default webhook({",
+          `  id: "${id}",`,
+          '  target: { kind: "workflow", id: "escalate-ticket" },',
+          "});",
+        ].join("\n");
+
+      await adapter.fs.mkdir("/project/webhooks", { recursive: true });
+      await adapter.fs.writeFile("/project/webhooks/first.ts", webhookSource("ticket-created"));
+      await adapter.fs.writeFile("/project/webhooks/second.ts", webhookSource("ticket-created"));
+
+      const result = await discoverWebhooks({ projectDir: "/project", adapter });
+
+      assertEquals(result.items.map((item) => item.id), ["ticket-created"]);
+      assertEquals(result.errors.length, 1);
+      assertEquals(result.errors[0]?.code, "duplicate_source_id");
+      assertEquals(result.errors[0]?.sourceId, "ticket-created");
     });
 
     it("should discover all valid named exports from a single tool file", async () => {

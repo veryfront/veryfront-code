@@ -149,6 +149,9 @@ describe("normalizeNpmPackageMetadata", () => {
 			react: "^19.0.0",
 			"better-sqlite3": ">=9.0.0",
 		});
+		assertEquals(pkg.overrides, {
+			protobufjs: "8.6.5",
+		});
 	});
 });
 

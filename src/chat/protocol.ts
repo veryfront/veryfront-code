@@ -138,12 +138,27 @@ export interface ChatMessageMetadata {
   completedAt?: string;
   agentId?: string;
   agentName?: string;
+  agentAvatarUrl?: string;
   conversationId?: string;
   modelId?: string;
   runId?: string;
   streamingMessageId?: string;
   childRunAudit?: ChildRunAudit;
   usage?: ChatMessageMetadataUsage;
+  billableInputTokens?: number;
+  billableOutputTokens?: number;
+  costUsd?: number;
+  providerInputCostUsd?: number;
+  providerOutputCostUsd?: number;
+  providerCostUsd?: number;
+  veryfrontInputChargeUsd?: number;
+  veryfrontOutputChargeUsd?: number;
+  veryfrontChargeUsd?: number;
+  veryfrontBilledUsd?: number;
+  costCredits?: number;
+  costSource?: "gateway" | "missing" | "partial";
+  billingMode?: "direct" | "deferred";
+  usageCaptureStatus?: "complete" | "partial" | "missing";
 }
 
 /** Public API contract for chat finish reason. */
@@ -280,6 +295,7 @@ export type ChatStreamEvent =
   | {
     type: "finish";
     finishReason?: ChatFinishReason;
+    messageMetadata?: unknown;
   }
   | {
     type: "abort";

@@ -106,6 +106,9 @@ export async function createRuntimeAgentDefinitionFromAgent(
     id: runtimeAgent.id,
     name: runtimeAgent.config.name ?? runtimeAgent.id,
     description: runtimeAgent.config.description ?? "",
+    ...(runtimeAgent.config.avatarUrl ?? runtimeAgent.config.avatar_url
+      ? { avatarUrl: runtimeAgent.config.avatarUrl ?? runtimeAgent.config.avatar_url }
+      : {}),
     instructions: await resolveAgentSystem(runtimeAgent.config.system),
     model: runtimeAgent.config.model,
     ...(runtimeAgent.config.temperature === undefined

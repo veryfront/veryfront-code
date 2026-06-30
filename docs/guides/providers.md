@@ -13,7 +13,7 @@ The provider registry resolves each string to one runtime:
 - an OpenAI-compatible service such as OpenRouter
 - a local model
 
-Omit `model` in most agents and let runtime conventions pick the backend.
+Omit `model` in most agents to use `openai/gpt-5.4-nano`.
 
 ## Prerequisites
 
@@ -27,8 +27,8 @@ Omit `model` in most agents and let runtime conventions pick the backend.
 
 ## Runtime conventions (recommended)
 
-For most projects, omit `model` entirely and let runtime defaults choose the
-right backend:
+For most projects, omit `model` entirely to use `openai/gpt-5.4-nano`. Set
+`model: "auto"` only when you want runtime conventions to choose the backend:
 
 ```ts
 import { agent } from "veryfront/agent";
@@ -49,7 +49,7 @@ curl -N http://localhost:3000/api/ag-ui \
 In a client UI, `useChat()` also exposes `inferenceMode` so you can confirm
 whether the response used cloud or server-local inference.
 
-By convention:
+For `model: "auto"`, runtime conventions are:
 
 - local development without cloud bootstrap uses explicit provider env vars or
   an explicit `local/*` model

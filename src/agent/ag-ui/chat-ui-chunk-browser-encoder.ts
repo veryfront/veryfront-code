@@ -82,6 +82,49 @@ export function getAgUiChatUiMessageUsageMetadata(
   };
 }
 
+function getAgUiChatUiMessageBillingMetadata(
+  messageMetadata: ChatMessageMetadata | undefined,
+): Pick<
+  AgUiBrowserRunFinishedMetadata,
+  | "billableInputTokens"
+  | "billableOutputTokens"
+  | "costUsd"
+  | "providerInputCostUsd"
+  | "providerOutputCostUsd"
+  | "providerCostUsd"
+  | "veryfrontInputChargeUsd"
+  | "veryfrontOutputChargeUsd"
+  | "veryfrontChargeUsd"
+  | "veryfrontBilledUsd"
+  | "costCredits"
+  | "costSource"
+  | "billingMode"
+  | "usageCaptureStatus"
+> {
+  return {
+    billableInputTokens: messageMetadata?.billableInputTokens,
+    billableOutputTokens: messageMetadata?.billableOutputTokens,
+    costUsd: messageMetadata?.costUsd,
+    providerInputCostUsd: messageMetadata?.providerInputCostUsd,
+    providerOutputCostUsd: messageMetadata?.providerOutputCostUsd,
+    providerCostUsd: messageMetadata?.providerCostUsd,
+    veryfrontInputChargeUsd: messageMetadata?.veryfrontInputChargeUsd,
+    veryfrontOutputChargeUsd: messageMetadata?.veryfrontOutputChargeUsd,
+    veryfrontChargeUsd: messageMetadata?.veryfrontChargeUsd,
+    veryfrontBilledUsd: messageMetadata?.veryfrontBilledUsd,
+    costCredits: messageMetadata?.costCredits,
+    costSource: messageMetadata?.costSource,
+    billingMode: messageMetadata?.billingMode,
+    usageCaptureStatus: messageMetadata?.usageCaptureStatus,
+  };
+}
+
+function hasAgUiChatUiMessageBillingMetadata(
+  metadata: ReturnType<typeof getAgUiChatUiMessageBillingMetadata>,
+): boolean {
+  return Object.values(metadata).some((value) => value !== undefined);
+}
+
 /** Return AG-UI chat UI message chunk metadata. */
 export function getAgUiChatUiMessageChunkMetadata(
   chunk: ChatUiMessageChunk<ChatMessageMetadata>,
@@ -93,12 +136,14 @@ export function getAgUiChatUiMessageChunkMetadata(
     ? (options.resolveProvider ?? tryGetVeryfrontCloudProviderFromModelId)(modelId)
     : undefined;
   const usageMetadata = getAgUiChatUiMessageUsageMetadata(messageMetadata);
+  const billingMetadata = getAgUiChatUiMessageBillingMetadata(messageMetadata);
 
   if (
     !provider &&
     !modelId &&
     typeof usageMetadata.inputTokens !== "number" &&
     typeof usageMetadata.outputTokens !== "number" &&
+    !hasAgUiChatUiMessageBillingMetadata(billingMetadata) &&
     chunk.type !== "finish"
   ) {
     return null;
@@ -127,6 +172,42 @@ export function getAgUiChatUiMessageChunkMetadata(
       : {}),
     ...(typeof usageMetadata.reasoningTokens === "number"
       ? { reasoningTokens: usageMetadata.reasoningTokens }
+      : {}),
+    ...(typeof billingMetadata.billableInputTokens === "number"
+      ? { billableInputTokens: billingMetadata.billableInputTokens }
+      : {}),
+    ...(typeof billingMetadata.billableOutputTokens === "number"
+      ? { billableOutputTokens: billingMetadata.billableOutputTokens }
+      : {}),
+    ...(typeof billingMetadata.costUsd === "number" ? { costUsd: billingMetadata.costUsd } : {}),
+    ...(typeof billingMetadata.providerInputCostUsd === "number"
+      ? { providerInputCostUsd: billingMetadata.providerInputCostUsd }
+      : {}),
+    ...(typeof billingMetadata.providerOutputCostUsd === "number"
+      ? { providerOutputCostUsd: billingMetadata.providerOutputCostUsd }
+      : {}),
+    ...(typeof billingMetadata.providerCostUsd === "number"
+      ? { providerCostUsd: billingMetadata.providerCostUsd }
+      : {}),
+    ...(typeof billingMetadata.veryfrontInputChargeUsd === "number"
+      ? { veryfrontInputChargeUsd: billingMetadata.veryfrontInputChargeUsd }
+      : {}),
+    ...(typeof billingMetadata.veryfrontOutputChargeUsd === "number"
+      ? { veryfrontOutputChargeUsd: billingMetadata.veryfrontOutputChargeUsd }
+      : {}),
+    ...(typeof billingMetadata.veryfrontChargeUsd === "number"
+      ? { veryfrontChargeUsd: billingMetadata.veryfrontChargeUsd }
+      : {}),
+    ...(typeof billingMetadata.veryfrontBilledUsd === "number"
+      ? { veryfrontBilledUsd: billingMetadata.veryfrontBilledUsd }
+      : {}),
+    ...(typeof billingMetadata.costCredits === "number"
+      ? { costCredits: billingMetadata.costCredits }
+      : {}),
+    ...(billingMetadata.costSource ? { costSource: billingMetadata.costSource } : {}),
+    ...(billingMetadata.billingMode ? { billingMode: billingMetadata.billingMode } : {}),
+    ...(billingMetadata.usageCaptureStatus
+      ? { usageCaptureStatus: billingMetadata.usageCaptureStatus }
       : {}),
     ...(chunk.type === "finish" && chunk.finishReason ? { finishReason: chunk.finishReason } : {}),
   };

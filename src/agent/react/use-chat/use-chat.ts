@@ -239,15 +239,22 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
               }
             }
           },
-          onUpdate: (parts, messageId) => {
+          onUpdate: (parts, messageId, messageMetadata) => {
             const id = messageId ?? streamingMessageId;
+            const metadata = { ...messageMetadata, model: serverModel };
 
             if (messageId && messageId !== currentMessageIdRef.current) {
               const oldId = currentMessageIdRef.current;
               currentMessageIdRef.current = messageId;
 
               if (hasAddedStreamingMessage) {
-                setMessages((prev) => prev.map((m) => (m.id === oldId ? { ...m, id, parts } : m)));
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === oldId
+                      ? { ...m, id, parts, metadata: { ...m.metadata, ...metadata } }
+                      : m
+                  )
+                );
                 return;
               }
             }
@@ -256,12 +263,16 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
               hasAddedStreamingMessage = true;
               setMessages((
                 prev,
-              ) => [...prev, { id, role: "assistant", parts, metadata: { model: serverModel } }]);
+              ) => [...prev, { id, role: "assistant", parts, metadata }]);
               return;
             }
 
             setMessages((prev) =>
-              prev.map((m) => (m.id === currentMessageIdRef.current ? { ...m, parts } : m))
+              prev.map((m) =>
+                m.id === currentMessageIdRef.current
+                  ? { ...m, parts, metadata: { ...m.metadata, ...metadata } }
+                  : m
+              )
             );
           },
           onToolCall: options.onToolCall,

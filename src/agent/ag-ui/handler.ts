@@ -142,6 +142,8 @@ function enqueueEvent(
 async function createAgUiStreamResponse(
   options: {
     agentId: string;
+    agentName?: string;
+    agentAvatarUrl?: string;
     request: AgUiRequest;
     runId: string;
     threadId: string;
@@ -156,6 +158,8 @@ async function createAgUiStreamResponse(
 ): Promise<Response> {
   const {
     agentId,
+    agentName,
+    agentAvatarUrl,
     request,
     runId,
     threadId,
@@ -185,7 +189,15 @@ async function createAgUiStreamResponse(
         }
       };
 
-      if (!enqueueEvent(controller, "RunStarted", { runId, threadId, agentId })) {
+      if (
+        !enqueueEvent(controller, "RunStarted", {
+          runId,
+          threadId,
+          agentId,
+          ...(agentName ? { agentName } : {}),
+          ...(agentAvatarUrl ? { agent_avatar_url: agentAvatarUrl } : {}),
+        })
+      ) {
         return;
       }
       if (!enqueueEvent(controller, "StateSnapshot", { snapshot: {} })) {
@@ -288,6 +300,8 @@ async function createAgUiDirectStreamResponse(
   const upstreamBody = upstream.body ? toolDataEvents.wrapStream(upstream.body) : upstream.body;
   return await createAgUiStreamResponse({
     agentId: agent.id,
+    agentName: agent.config.name ?? agent.id,
+    agentAvatarUrl: agent.config.avatarUrl ?? agent.config.avatar_url,
     request,
     runId,
     threadId,
@@ -364,6 +378,8 @@ async function createAgUiInjectedToolsStreamResponse(
 
   return await createAgUiStreamResponse({
     agentId: agent.id,
+    agentName: agent.config.name ?? agent.id,
+    agentAvatarUrl: agent.config.avatarUrl ?? agent.config.avatar_url,
     request,
     runId,
     threadId,
