@@ -76,7 +76,7 @@ export function DocsCode(
             isSingleLine ? "top-1/2 -translate-y-1/2" : "top-1.5",
           )}
         >
-          {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
         </button>
         {highlighted
           ? (
