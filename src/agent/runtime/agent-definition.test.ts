@@ -12,6 +12,7 @@ Deno.test("parseRuntimeAgentMarkdownDefinition normalizes frontmatter and instru
 name: Support Agent
 description: Helps users resolve issues
 model: gpt-5.4
+avatar-url: https://cdn.example.com/agents/support.svg
 temperature: 0.2
 thinking: 1200
 max-steps: 8
@@ -29,6 +30,7 @@ Follow the support runbook.
     name: "Support Agent",
     description: "Helps users resolve issues",
     model: "gpt-5.4",
+    avatarUrl: "https://cdn.example.com/agents/support.svg",
     temperature: 0.2,
     thinking: { enabled: true, budgetTokens: 1200 },
     maxSteps: 8,

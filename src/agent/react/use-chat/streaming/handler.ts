@@ -3,6 +3,7 @@ import {
   decodeAgUiSseChunk,
   flushAgUiSseChunk,
 } from "../../../../chat/ag-ui.ts";
+import { normalizeChatMessageMetadata } from "../../../../chat/chat-ui-message-helpers.ts";
 import type { ChatStreamEvent } from "../../../../chat/protocol.ts";
 import type { ChatMessagePart, ChatToolPart } from "#veryfront/agent/react/use-chat/types.ts";
 import { createAssistantMessage, generateClientId } from "#veryfront/agent/react/use-chat/utils.ts";
@@ -25,6 +26,7 @@ interface StreamingState {
   dataParts: OrderedMessagePart[];
   currentTextId: string;
   messageId: string;
+  messageMetadata: Record<string, unknown>;
   partOrderCounter: number;
   currentStep: number;
 }
@@ -39,6 +41,7 @@ function createStreamingState(): StreamingState {
     dataParts: [],
     currentTextId: "",
     messageId: "",
+    messageMetadata: {},
     partOrderCounter: 0,
     currentStep: 0,
   };
@@ -165,7 +168,7 @@ function processStreamEvent(
 
   switch (parsed.type) {
     case "message-start":
-      handleStart(parsed, state);
+      handleStart(parsed, state, callbacks.onUpdate, getBuildParts);
       return;
 
     case "step-start":
@@ -253,10 +256,14 @@ function processChatStreamEvent(
 
   switch (event.type) {
     case "start":
-      handleStart(event, state);
+      handleStart(event, state, callbacks.onUpdate, getBuildParts);
       return;
 
     case "message-metadata":
+      mergeMessageMetadata(state, event.messageMetadata);
+      if (state.messageId) {
+        emitUpdate(state, onUpdate, getBuildParts);
+      }
       onData(event.messageMetadata);
       return;
 
@@ -333,13 +340,43 @@ function processChatStreamEvent(
   }
 }
 
-function handleStart(parsed: Record<string, unknown>, state: StreamingState): void {
+function mergeMessageMetadata(state: StreamingState, value: unknown): void {
+  state.messageMetadata = {
+    ...state.messageMetadata,
+    ...normalizeChatMessageMetadata(value),
+  };
+}
+
+function emitUpdate(
+  state: StreamingState,
+  onUpdate: StreamingCallbacks["onUpdate"],
+  getBuildParts: () => ChatMessagePart[],
+): void {
+  if (!state.messageId) {
+    return;
+  }
+  onUpdate?.(getBuildParts(), state.messageId, state.messageMetadata);
+}
+
+function handleStart(
+  parsed: Record<string, unknown>,
+  state: StreamingState,
+  onUpdate: StreamingCallbacks["onUpdate"],
+  getBuildParts: () => ChatMessagePart[],
+): void {
   state.messageId = typeof parsed.messageId === "string" ? parsed.messageId : "";
   state.textBlocks.clear();
   state.toolCalls.clear();
   state.reasoningBlocks.clear();
   state.messageParts.length = 0;
   state.dataParts.length = 0;
+  state.messageMetadata = {};
+  if ("messageMetadata" in parsed) {
+    mergeMessageMetadata(state, parsed.messageMetadata);
+  }
+  if (state.messageId && Object.keys(state.messageMetadata).length > 0) {
+    emitUpdate(state, onUpdate, getBuildParts);
+  }
 }
 
 function handleTextStart(parsed: Record<string, unknown>, state: StreamingState): void {
@@ -376,7 +413,7 @@ function handleTextDelta(
     block.order = state.partOrderCounter++;
   }
 
-  onUpdate?.(getBuildParts(), state.messageId);
+  emitUpdate(state, onUpdate, getBuildParts);
 }
 
 function handleTextEnd(parsed: Record<string, unknown>, state: StreamingState): void {
@@ -412,7 +449,7 @@ function handleDataPart(
     },
   });
 
-  onUpdate?.(getBuildParts(), state.messageId);
+  emitUpdate(state, onUpdate, getBuildParts);
 }
 
 function isRenderableDataPartType(type: string): boolean {
@@ -442,7 +479,7 @@ function handleToolInputStart(
   };
 
   state.toolCalls.set(toolCallId, toolCall);
-  onUpdate?.(getBuildParts(), state.messageId);
+  emitUpdate(state, onUpdate, getBuildParts);
 }
 
 function handleToolInputDelta(
@@ -456,7 +493,7 @@ function handleToolInputDelta(
   if (!toolCall) return;
 
   toolCall.inputText += (parsed.inputTextDelta ?? parsed.delta ?? "") as string;
-  onUpdate?.(getBuildParts(), state.messageId);
+  emitUpdate(state, onUpdate, getBuildParts);
 }
 
 function handleToolInputAvailable(
@@ -517,7 +554,7 @@ function handleToolInputAvailable(
     } as ChatToolPart);
   }
 
-  onUpdate?.(getBuildParts(), state.messageId);
+  emitUpdate(state, onUpdate, getBuildParts);
 }
 
 function handleToolOutputAvailable(
@@ -540,7 +577,7 @@ function handleToolOutputAvailable(
     result: toolCall.output,
   });
 
-  onUpdate?.(getBuildParts(), state.messageId);
+  emitUpdate(state, onUpdate, getBuildParts);
 }
 
 function handleToolError(
@@ -557,7 +594,7 @@ function handleToolError(
   toolCall.error = parsed.errorText as string;
   if (parsed.dynamic === true) toolCall.dynamic = true;
 
-  onUpdate?.(getBuildParts(), state.messageId);
+  emitUpdate(state, onUpdate, getBuildParts);
 }
 
 function handleReasoningStart(
@@ -579,7 +616,7 @@ function handleReasoningStart(
   };
 
   state.reasoningBlocks.set(reasoningId, reasoning);
-  onUpdate?.(getBuildParts(), state.messageId);
+  emitUpdate(state, onUpdate, getBuildParts);
 }
 
 function handleReasoningDelta(
@@ -593,7 +630,7 @@ function handleReasoningDelta(
   if (!reasoning) return;
 
   reasoning.text += (parsed.delta ?? "") as string;
-  onUpdate?.(getBuildParts(), state.messageId);
+  emitUpdate(state, onUpdate, getBuildParts);
 }
 
 function handleReasoningEnd(
@@ -621,7 +658,7 @@ function handleReasoningEnd(
     state: "done",
   });
 
-  onUpdate?.(getBuildParts(), state.messageId);
+  emitUpdate(state, onUpdate, getBuildParts);
 }
 
 function handleStepStart(
@@ -637,7 +674,7 @@ function handleStepStart(
     order: state.partOrderCounter++,
   };
   state.steps.set(stepIndex, step);
-  onUpdate?.(getBuildParts(), state.messageId);
+  emitUpdate(state, onUpdate, getBuildParts);
 }
 
 function handleStepEnd(
@@ -653,7 +690,7 @@ function handleStepEnd(
     step.order = state.partOrderCounter++;
   }
   state.currentStep++;
-  onUpdate?.(getBuildParts(), state.messageId);
+  emitUpdate(state, onUpdate, getBuildParts);
 }
 
 function handleFinish(
@@ -663,6 +700,6 @@ function handleFinish(
 ): void {
   const finalParts = getBuildParts();
   if (finalParts.length > 0) {
-    onMessage(createAssistantMessage(state.messageId, finalParts));
+    onMessage(createAssistantMessage(state.messageId, finalParts, state.messageMetadata));
   }
 }

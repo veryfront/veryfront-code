@@ -411,6 +411,8 @@ export const getAgUiWireEventSchema = defineSchema((v) =>
         runId: v.string().optional(),
         threadId: v.string().optional(),
         agentId: v.string().optional(),
+        agentName: v.string().optional(),
+        agent_avatar_url: v.string().url().optional(),
       }),
     }),
     v.object({
@@ -583,7 +585,9 @@ function isValidAgUiPayload(
     case "RunStarted":
       return hasOptionalStringField(payload, "runId") &&
         hasOptionalStringField(payload, "threadId") &&
-        hasOptionalStringField(payload, "agentId");
+        hasOptionalStringField(payload, "agentId") &&
+        hasOptionalStringField(payload, "agentName") &&
+        hasOptionalStringField(payload, "agent_avatar_url");
 
     case "Custom":
       return hasStringField(payload, "name") && "value" in payload;

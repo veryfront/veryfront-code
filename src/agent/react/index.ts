@@ -28,6 +28,20 @@ export type {
 export { useAgent } from "./use-agent.ts";
 export type { UseAgentOptions, UseAgentResult } from "./use-agent.ts";
 
+export {
+  getAgentPromptSuggestions,
+  normalizeAgentMetadataResponse,
+  useAgentMetadata,
+} from "./use-agent-metadata.ts";
+export type {
+  AgentMetadata,
+  AgentMetadataPromptSuggestion,
+  AgentMetadataSuggestion,
+  AgentMetadataSuggestions,
+  AgentMetadataTaskSuggestion,
+  UseAgentMetadataResult,
+} from "./use-agent-metadata.ts";
+
 export { useCompletion } from "./use-completion.ts";
 export type { UseCompletionOptions, UseCompletionResult } from "./use-completion.ts";
 

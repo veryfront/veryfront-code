@@ -30,6 +30,8 @@ describe("chat/chat-ui-message-helpers", () => {
       normalizeChatMessageMetadata({
         createdAt: "2026-04-23T00:00:00Z",
         agentId: "agent-1",
+        agentName: "Support Agent",
+        agent_avatar_url: "https://cdn.example.com/agents/support.svg",
         modelId: "openai/gpt-5.4",
         runId: "run-1",
         usage: {
@@ -46,6 +48,8 @@ describe("chat/chat-ui-message-helpers", () => {
       {
         createdAt: "2026-04-23T00:00:00Z",
         agentId: "agent-1",
+        agentName: "Support Agent",
+        agentAvatarUrl: "https://cdn.example.com/agents/support.svg",
         modelId: "openai/gpt-5.4",
         runId: "run-1",
         usage: {
@@ -69,6 +73,8 @@ describe("chat/chat-ui-message-helpers", () => {
     assertEquals(
       buildChatStreamChunkMessageMetadata({
         agentId: "agent-1",
+        agentName: "Support Agent",
+        agentAvatarUrl: "https://cdn.example.com/agents/support.svg",
         modelId: "openai/gpt-5.4",
         runId: "run-1",
         streamingMessageId: "msg-1",
@@ -91,6 +97,8 @@ describe("chat/chat-ui-message-helpers", () => {
       }),
       {
         agentId: "agent-1",
+        agentName: "Support Agent",
+        agentAvatarUrl: "https://cdn.example.com/agents/support.svg",
         modelId: "openai/gpt-5.4",
         runId: "run-1",
         streamingMessageId: "msg-1",

@@ -12,6 +12,8 @@ export interface BuildChatStreamChunkMessageMetadataInput {
   runId?: string;
   streamingMessageId?: string;
   part: StreamChunkMetadataPart;
+  agentName?: string;
+  agentAvatarUrl?: string;
 }
 
 type ReplayState = {
@@ -75,6 +77,7 @@ function normalizeBillingMetadata(
   | "completedAt"
   | "agentId"
   | "agentName"
+  | "agentAvatarUrl"
   | "conversationId"
   | "modelId"
   | "runId"
@@ -172,6 +175,19 @@ function getReplayState(stateMap: Map<string, ReplayState>, id: string): ReplayS
   return created;
 }
 
+function firstStringField(
+  value: Record<string, unknown>,
+  keys: readonly string[],
+): string | undefined {
+  for (const key of keys) {
+    const candidate = value[key];
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
 /** Normalizes chat message metadata. */
 export function normalizeChatMessageMetadata(value: unknown): ChatMessageMetadata {
   if (!isRecord(value)) {
@@ -180,6 +196,13 @@ export function normalizeChatMessageMetadata(value: unknown): ChatMessageMetadat
 
   const usage = normalizeUsageMetadata(value.usage);
   const billingMetadata = normalizeBillingMetadata(value);
+  const agentName = firstStringField(value, ["agentName", "agent_name"]);
+  const agentAvatarUrl = firstStringField(value, [
+    "agentAvatarUrl",
+    "agent_avatar_url",
+    "avatar_url",
+    "avatarUrl",
+  ]);
 
   return {
     ...(typeof value.createdAt === "string" ? { createdAt: value.createdAt } : {}),
@@ -187,7 +210,8 @@ export function normalizeChatMessageMetadata(value: unknown): ChatMessageMetadat
     ...(typeof value.isCompleted === "boolean" ? { isCompleted: value.isCompleted } : {}),
     ...(typeof value.completedAt === "string" ? { completedAt: value.completedAt } : {}),
     ...(typeof value.agentId === "string" ? { agentId: value.agentId } : {}),
-    ...(typeof value.agentName === "string" ? { agentName: value.agentName } : {}),
+    ...(agentName ? { agentName } : {}),
+    ...(agentAvatarUrl ? { agentAvatarUrl } : {}),
     ...(typeof value.conversationId === "string" ? { conversationId: value.conversationId } : {}),
     ...(typeof value.modelId === "string" ? { modelId: value.modelId } : {}),
     ...(typeof value.runId === "string" ? { runId: value.runId } : {}),
@@ -211,6 +235,8 @@ export function buildChatStreamChunkMessageMetadata(
 ): ChatMessageMetadata {
   const baseMetadata: ChatMessageMetadata = {
     agentId: input.agentId,
+    ...(input.agentName ? { agentName: input.agentName } : {}),
+    ...(input.agentAvatarUrl ? { agentAvatarUrl: input.agentAvatarUrl } : {}),
     modelId: input.modelId,
     ...(input.runId ? { runId: input.runId } : {}),
     ...(input.streamingMessageId ? { streamingMessageId: input.streamingMessageId } : {}),

@@ -223,6 +223,18 @@ export {
 } from "#veryfront/agent/react/use-agent.ts";
 
 export {
+  type AgentMetadata,
+  type AgentMetadataPromptSuggestion,
+  type AgentMetadataSuggestion,
+  type AgentMetadataSuggestions,
+  type AgentMetadataTaskSuggestion,
+  getAgentPromptSuggestions,
+  normalizeAgentMetadataResponse,
+  useAgentMetadata,
+  type UseAgentMetadataResult,
+} from "#veryfront/agent/react/use-agent-metadata.ts";
+
+export {
   buildChatStreamChunkMessageMetadata,
   type BuildChatStreamChunkMessageMetadataInput,
   dedupeChatUiMessageChunks,

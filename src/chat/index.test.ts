@@ -8,6 +8,7 @@ import * as agentCardModule from "#veryfront/react/components/chat/agent-card.ts
 import * as errorBoundaryModule from "#veryfront/react/components/chat/error-boundary.tsx";
 import * as useChatModule from "#veryfront/agent/react/use-chat/index.ts";
 import * as useAgentModule from "#veryfront/agent/react/use-agent.ts";
+import * as useAgentMetadataModule from "#veryfront/agent/react/use-agent-metadata.ts";
 import * as useCompletionModule from "#veryfront/agent/react/use-completion.ts";
 import * as useStreamingModule from "#veryfront/agent/react/use-streaming.ts";
 import * as useVoiceInputModule from "#veryfront/agent/react/use-voice-input.ts";
@@ -66,6 +67,7 @@ const expectedRuntimeExports = [
   "isLongRunningToolRunning",
   "isHeartbeatOnlyMetadataChunk",
   "getNextChatStreamWatchdogState",
+  "getAgentPromptSuggestions",
   "createChatStreamWatchdogState",
   "createChatStreamWatchdog",
   "dedupeChatUiMessageChunks",
@@ -80,9 +82,11 @@ const expectedRuntimeExports = [
   "isSkillToolPart",
   "isToolPart",
   "normalizeChatMessageMetadata",
+  "normalizeAgentMetadataResponse",
   "normalizeChatUiMessageChunk",
   "normalizeChatUiMessageStream",
   "useAgent",
+  "useAgentMetadata",
   "useChat",
   "useChatErrorHandler",
   "useChatContext",
@@ -109,6 +113,11 @@ describe("chat/index.ts exports", () => {
     assertEquals(chatModule.ChatWithSidebar, chatUI.ChatWithSidebar);
     assertEquals(chatModule.useChat, useChatModule.useChat);
     assertEquals(chatModule.useAgent, useAgentModule.useAgent);
+    assertEquals(chatModule.useAgentMetadata, useAgentMetadataModule.useAgentMetadata);
+    assertEquals(
+      chatModule.getAgentPromptSuggestions,
+      useAgentMetadataModule.getAgentPromptSuggestions,
+    );
     assertEquals(chatModule.useCompletion, useCompletionModule.useCompletion);
     assertEquals(chatModule.useStreaming, useStreamingModule.useStreaming);
     assertEquals(chatModule.useVoiceInput, useVoiceInputModule.useVoiceInput);

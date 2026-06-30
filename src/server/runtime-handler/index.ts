@@ -62,6 +62,7 @@ import { MarkdownPreviewHandler } from "../handlers/preview/markdown-preview.han
 import { OpenAPIHandler } from "../handlers/request/openapi.handler.ts";
 import { OpenAPIDocsHandler } from "../handlers/request/openapi-docs.handler.ts";
 import { InternalAgentsListHandler } from "../handlers/request/internal-agents-list.handler.ts";
+import { PublicAgentMetadataHandler } from "../handlers/request/public-agent-metadata.handler.ts";
 import { AgentStreamHandler } from "../handlers/request/agent-stream.handler.ts";
 import { AgentRunResumeHandler } from "../handlers/request/agent-run-resume.handler.ts";
 import { AgentRunCancelHandler } from "../handlers/request/agent-run-cancel.handler.ts";
@@ -142,6 +143,7 @@ export const HANDLER_NAMES = [
   "OpenAPIHandler",
   "OpenAPIDocsHandler",
   "InternalAgentsListHandler",
+  "PublicAgentMetadataHandler",
   "AgentStreamHandler",
   "AgentRunResumeHandler",
   "AgentRunCancelHandler",
@@ -198,6 +200,7 @@ const handlerFactories: Record<
   OpenAPIHandler: () => new OpenAPIHandler(),
   OpenAPIDocsHandler: () => new OpenAPIDocsHandler(),
   InternalAgentsListHandler: () => new InternalAgentsListHandler(),
+  PublicAgentMetadataHandler: () => new PublicAgentMetadataHandler(),
   AgentStreamHandler: () => new AgentStreamHandler(),
   AgentRunResumeHandler: () => new AgentRunResumeHandler(),
   AgentRunCancelHandler: () => new AgentRunCancelHandler(),

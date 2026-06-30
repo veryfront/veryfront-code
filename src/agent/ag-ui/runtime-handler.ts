@@ -105,6 +105,8 @@ function enqueueEvent(
 async function createAgUiRuntimeStreamResponse(
   options: {
     agentId: string;
+    agentName?: string;
+    agentAvatarUrl?: string;
     request: AgUiRuntimeRequest;
     upstreamBody: ReadableStream<Uint8Array> | null;
     upstreamStatus: number;
@@ -117,6 +119,8 @@ async function createAgUiRuntimeStreamResponse(
 ): Promise<Response> {
   const {
     agentId,
+    agentName,
+    agentAvatarUrl,
     request,
     upstreamBody,
     upstreamStatus,
@@ -149,6 +153,8 @@ async function createAgUiRuntimeStreamResponse(
           runId: request.runId,
           threadId: request.threadId,
           agentId,
+          ...(agentName ? { agentName } : {}),
+          ...(agentAvatarUrl ? { agent_avatar_url: agentAvatarUrl } : {}),
         })
       ) {
         return;
@@ -239,6 +245,8 @@ async function createAgUiRuntimeDirectStreamResponse(
   const upstream = result.toDataStreamResponse();
   return await createAgUiRuntimeStreamResponse({
     agentId: agent.id,
+    agentName: agent.config.name ?? agent.id,
+    agentAvatarUrl: agent.config.avatarUrl ?? agent.config.avatar_url,
     request,
     upstreamBody: upstream.body,
     upstreamStatus: upstream.status,
@@ -304,6 +312,8 @@ async function createAgUiRuntimeInjectedToolsStreamResponse(
 
   return await createAgUiRuntimeStreamResponse({
     agentId: agent.id,
+    agentName: agent.config.name ?? agent.id,
+    agentAvatarUrl: agent.config.avatarUrl ?? agent.config.avatar_url,
     request,
     upstreamBody,
     upstreamStatus: 200,

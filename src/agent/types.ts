@@ -130,6 +130,10 @@ export interface AgentConfig {
   id?: string;
   /** Human-readable display name for registry and control-plane listings. */
   name?: string;
+  /** Absolute avatar URL for registry, Studio, and chat identity surfaces. */
+  avatarUrl?: string;
+  /** @deprecated Use `avatarUrl`. Serialized wire payloads use `avatar_url`. */
+  avatar_url?: string;
   /** Optional summary shown in registry and control-plane listings. */
   description?: string;
   /**
