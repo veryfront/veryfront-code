@@ -114,7 +114,15 @@ type GatewayBillingFinalizeOptions = {
 type EvalModelComparisonPolicy = Omit<EvalModelComparisonOptions, "baselineModel">;
 
 const GATEWAY_BILLING_GROUP_USAGE_NOT_READY_CODE = "gateway_billing_group_usage_not_ready";
-const DEFAULT_GATEWAY_BILLING_FINALIZE_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 4_000] as const;
+// Gateway usage capture is eventually consistent after model streams close.
+const DEFAULT_GATEWAY_BILLING_FINALIZE_RETRY_DELAYS_MS = [
+  500,
+  1_000,
+  2_000,
+  4_000,
+  8_000,
+  15_000,
+] as const;
 
 const MODEL_COMPARISON_METRICS = [
   "passRate",

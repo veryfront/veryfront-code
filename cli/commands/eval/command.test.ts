@@ -589,6 +589,66 @@ describe("eval CLI command helpers", () => {
     assertEquals(finalization?.veryfront_billed_usd, 0.4);
   });
 
+  it("retries default gateway billing finalization long enough for delayed usage capture", async () => {
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.test");
+    const requests: Request[] = [];
+    const sleeps: number[] = [];
+    globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      if (requests.length <= 6) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              error: "Gateway billing group usage is not ready to finalize",
+              code: "gateway_billing_group_usage_not_ready",
+            }),
+            {
+              status: 409,
+              headers: { "Content-Type": "application/json" },
+            },
+          ),
+        );
+      }
+
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            billing_group_id: "evalrun_test_model",
+            already_finalized: false,
+            request_count: 1,
+            charged_credits: 4,
+            target_credits: 1,
+            adjustment_credits: 3,
+            adjustment: "refund",
+            provider_cost_usd: 0.01,
+            veryfront_charge_usd: 0.03,
+            veryfront_billed_usd: 0.4,
+            usage_capture_status: "complete",
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      );
+    };
+
+    const finalization = await finalizeGatewayBillingGroup("evalrun_test_model", {
+      sleep: (ms) => {
+        sleeps.push(ms);
+        return Promise.resolve();
+      },
+    });
+
+    assertEquals(requests.length, 7);
+    assertEquals(sleeps.length, 6);
+    assertEquals(finalization?.target_credits, 1);
+    assertEquals(finalization?.veryfront_billed_usd, 0.4);
+  });
+
   it("exports CLI eval reports after gateway billing finalization", async () => {
     const registry = createEvalReportExporterRegistry();
     const finalized = applyGatewayBillingGroupFinalization(createReport(), {
