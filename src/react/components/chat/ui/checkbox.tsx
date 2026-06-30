@@ -48,7 +48,7 @@ export function Checkbox({
         }}
         {...props}
       />
-      <CheckIcon className="pointer-events-none absolute inset-0 m-auto size-3 text-[var(--secondary)] opacity-0 peer-checked:opacity-100" />
+      <CheckIcon className="pointer-events-none absolute inset-0 m-auto size-3! text-[var(--secondary)] opacity-0 peer-checked:opacity-100" />
     </span>
   );
 }

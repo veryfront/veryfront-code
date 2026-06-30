@@ -1,11 +1,8 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import {
-  Radio,
-  RadioField,
-  RadioGroup,
-} from "../../../src/react/components/chat/ui/index.ts";
+import { Radio } from "../../../src/react/components/chat/ui/index.ts";
 import {
   DocsCode,
+  DocsComposition,
   DocsExampleAuto,
   DocsHero,
   DocsPage,
@@ -13,31 +10,35 @@ import {
   DocsSection,
 } from "../../.storybook/docs";
 
+const importCode = `import { Radio } from "veryfront/chat/ui"`;
+const compositionTree = `Radio`;
+
 function RadioDocsPage() {
   return (
     <DocsPage>
       <DocsHero
         title="Radio"
-        lead="A radio built on a native radio input (full a11y). `RadioField` adds a label; `RadioGroup` stacks a set sharing a `name`."
+        lead="Single-choice control. Group via shared name."
       />
-      <DocsSection title="States">
-        <DocsExampleAuto of={States} />
-      </DocsSection>
       <DocsSection
-        title="Group"
-        description="Fields sharing a `name` form one choice."
+        title="Default"
+        description="Group via shared name attribute."
       >
-        <DocsExampleAuto of={Group} />
+        <DocsExampleAuto of={Default} />
+      </DocsSection>
+      <DocsSection title="Disabled">
+        <DocsExampleAuto of={Disabled} />
       </DocsSection>
       <DocsSection title="Import">
-        <DocsCode
-          code={`import { Radio, RadioField, RadioGroup } from "veryfront/chat/ui"`}
-        />
+        <DocsCode code={importCode} />
+      </DocsSection>
+      <DocsSection title="Composition">
+        <DocsComposition>{compositionTree}</DocsComposition>
       </DocsSection>
       <DocsSection title="API Reference">
         <DocsPropsTable
           component="Radio"
-          description="Extends native radio input"
+          description="Native input[type=radio] with custom styling"
           props={[
             { name: "name", type: "string", description: "Shared name groups radios into one choice" },
             { name: "checked / defaultChecked", type: "boolean", description: "Controlled / uncontrolled state" },
@@ -59,28 +60,51 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const States: Story = {
+export const Default: Story = {
   tags: ["!dev"],
   render: () => (
-    <div className="flex items-center gap-6">
-      <Radio name="s" defaultChecked />
-      <Radio name="s" />
-      <Radio name="d" defaultChecked disabled />
-      <Radio name="d2" disabled />
+    <div className="flex flex-col gap-3">
+      <label
+        htmlFor="story-default-selected"
+        className="flex items-center gap-2 text-sm"
+      >
+        <Radio id="story-default-selected" name="story-default" defaultChecked />
+        Selected
+      </label>
+      <label
+        htmlFor="story-default-unselected"
+        className="flex items-center gap-2 text-sm"
+      >
+        <Radio id="story-default-unselected" name="story-default" />
+        Unselected
+      </label>
     </div>
   ),
 };
-export const Group: Story = {
+
+export const Disabled: Story = {
   tags: ["!dev"],
   render: () => (
-    <RadioGroup>
-      <RadioField name="model" label="Claude Opus" defaultChecked />
-      <RadioField
-        name="model"
-        label="Claude Sonnet"
-        description="Faster, lighter."
-      />
-      <RadioField name="model" label="Claude Haiku" />
-    </RadioGroup>
+    <div className="flex flex-col gap-3">
+      <label
+        htmlFor="story-disabled-selected"
+        className="flex items-center gap-2 text-sm"
+      >
+        <Radio
+          id="story-disabled-selected"
+          name="story-disabled"
+          defaultChecked
+          disabled
+        />
+        Selected (disabled)
+      </label>
+      <label
+        htmlFor="story-disabled-unselected"
+        className="flex items-center gap-2 text-sm"
+      >
+        <Radio id="story-disabled-unselected" name="story-disabled" disabled />
+        Unselected (disabled)
+      </label>
+    </div>
   ),
 };

@@ -132,14 +132,18 @@ export function DialogHeader(
   );
 }
 
-/** Dialog title — Studio Heading level 2 (20px medium). */
+/** Dialog title — Studio Heading level 2 (20px). Semibold so Inter reads at
+ * Studio's medium-on-Söhne weight (workbench heading convention). */
 export function DialogTitle({
   className,
   ...props
 }: React.HTMLAttributes<HTMLHeadingElement>): React.ReactElement {
   return (
     <h2
-      className={cn("text-xl font-medium text-[var(--foreground)]", className)}
+      className={cn(
+        "text-xl font-semibold text-[var(--foreground)]",
+        className,
+      )}
       {...props}
     />
   );

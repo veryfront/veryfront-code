@@ -79,7 +79,8 @@ export function TooltipContent(
     <div
       role="tooltip"
       className={cn(
-        "absolute z-50 whitespace-nowrap rounded-md bg-[var(--primary)] px-2 py-1 text-xs text-[var(--secondary)] shadow-sm pointer-events-none",
+        "absolute z-50 whitespace-nowrap rounded-md bg-[var(--primary)] px-2.5 py-1 text-xs font-medium text-[var(--secondary)] shadow-sm pointer-events-none",
+        "dark:bg-[var(--secondary)] dark:text-[var(--foreground)]",
         sideClasses[side],
         className,
       )}

@@ -21,7 +21,7 @@ const badgeVariants = cva(
         warning:
           "bg-[var(--alert-warning-bg)] text-[var(--status-warning)]",
         destructive:
-          "bg-[var(--alert-error-bg)] text-[var(--destructive)]",
+          "bg-[var(--alert-error-bg)] text-[var(--status-error)]",
         outline:
           "border border-[var(--outline-border)] text-[var(--foreground)]",
       },
