@@ -1,13 +1,88 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { ReasoningCard } from "veryfront/chat";
+import {
+  DocsCode,
+  DocsComposition,
+  DocsExampleAuto,
+  DocsHero,
+  DocsPage,
+  DocsPropsTable,
+  DocsSection,
+} from "../../.storybook/docs";
 import { ReviewSurface, StoryFrame } from "../support/StoryFrame";
 
+const importCode = `import { ReasoningCard } from "veryfront/chat"`;
+
+const compositionTree = `ReasoningCard  <- collapsible disclosure for model thinking
+  +-- toggle button  <- "Thinking..." shimmer or "Thought process"
+  +-- Markdown  <- reasoning text body when expanded`;
+
+function ReasoningCardDocsPage() {
+  return (
+    <DocsPage>
+      <DocsHero
+        title="ReasoningCard"
+        lead="A collapsible disclosure for a model's reasoning — shimmers while streaming, then auto-collapses once the thought is complete."
+      />
+
+      <DocsSection
+        title="Streaming"
+        description="With `isStreaming`, the card stays open and shows a shimmering 'Thinking...' label while tokens arrive."
+      >
+        <DocsExampleAuto of={Streaming} />
+      </DocsSection>
+
+      <DocsSection
+        title="Complete"
+        description="Once streaming ends the card auto-collapses after a beat; clicking the toggle re-opens the rendered reasoning."
+      >
+        <DocsExampleAuto of={Complete} />
+      </DocsSection>
+
+      <DocsSection title="Import">
+        <DocsCode code={importCode} />
+      </DocsSection>
+
+      <DocsSection title="Composition">
+        <DocsComposition>{compositionTree}</DocsComposition>
+      </DocsSection>
+
+      <DocsSection title="API Reference">
+        <DocsPropsTable
+          component="ReasoningCard"
+          description="Collapsible reasoning disclosure"
+          props={[
+            {
+              name: "text",
+              type: "string",
+              description: "Reasoning content, rendered as markdown",
+            },
+            {
+              name: "isStreaming",
+              type: "boolean",
+              default: "false",
+              description:
+                "Keep the card open with a shimmer label while tokens stream in",
+            },
+            {
+              name: "className",
+              type: "string",
+              description: "Additional class names for the container",
+            },
+          ]}
+        />
+      </DocsSection>
+    </DocsPage>
+  );
+}
+
 const meta = {
-  title: "Veryfront UI/Chat/ReasoningCard",
+  title: "Chat/Components/ReasoningCard",
   component: ReasoningCard,
   tags: ["autodocs"],
   parameters: {
     layout: "fullscreen",
+    docs: { page: ReasoningCardDocsPage },
   },
 } satisfies Meta<typeof ReasoningCard>;
 
@@ -15,6 +90,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Streaming: Story = {
+  tags: ["!dev"],
   render: () => (
     <StoryFrame maxWidth="640px">
       <ReviewSurface label="Streaming reasoning">
@@ -28,6 +104,7 @@ export const Streaming: Story = {
 };
 
 export const Complete: Story = {
+  tags: ["!dev"],
   render: () => (
     <StoryFrame maxWidth="640px">
       <ReviewSurface label="Collapsed after completion">

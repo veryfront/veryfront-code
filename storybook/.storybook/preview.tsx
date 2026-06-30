@@ -1,6 +1,6 @@
 import type { Decorator, Preview } from "@storybook/react-vite";
 import * as React from "react";
-import { DocsPage } from "./docs/DocsPage";
+import { DocsAutodocsPage } from "./docs/DocsPage";
 import { transformVeryfrontStorySource } from "./docs/transformStorySource";
 import "./preview.css";
 
@@ -50,7 +50,7 @@ const preview: Preview = {
     },
     docs: {
       toc: false,
-      page: DocsPage,
+      page: DocsAutodocsPage,
       source: { transform: transformVeryfrontStorySource },
     },
     layout: "fullscreen",
@@ -59,8 +59,8 @@ const preview: Preview = {
       // statically evaluates this function, so it must stay plain JS (no TS
       // annotations).
       storySort: (a, b) => {
-        const aOverview = a.title === "Veryfront UI/Overview";
-        const bOverview = b.title === "Veryfront UI/Overview";
+        const aOverview = a.title === "Chat/Overview";
+        const bOverview = b.title === "Chat/Overview";
         if (aOverview && !bOverview) return -1;
         if (bOverview && !aOverview) return 1;
         return a.title.localeCompare(b.title, undefined, { numeric: true });

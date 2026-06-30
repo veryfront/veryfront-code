@@ -9,7 +9,7 @@ import {
 
 const config: StorybookConfig = {
   stories: ["../stories/**/*.stories.@(ts|tsx|mdx)"],
-  addons: ["@storybook/addon-docs"],
+  addons: ["@storybook/addon-docs", "@storybook/addon-links"],
   staticDirs: ["./static"],
   core: {
     disableTelemetry: true,

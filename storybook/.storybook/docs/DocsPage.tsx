@@ -5,14 +5,14 @@ import {
   Title,
 } from "@storybook/addon-docs/blocks";
 import * as React from "react";
-import { DocsExample } from "./DocsExample";
+import { DocsAutodocsExample } from "./DocsAutodocsExample";
 
 // Custom autodocs template. Mirrors the Veryfront Studio docs layout: a title,
 // description, one Preview/Code example per story, then the controls table —
 // rendered full width (no right-hand table of contents). Story enumeration
 // follows Storybook's own `Stories` block: `componentStories()` filtered to
 // autodocs entries that do not mount themselves.
-export function DocsPage(): React.ReactElement {
+export function DocsAutodocsPage(): React.ReactElement {
   const context = React.useContext(DocsContext);
   const stories = context.componentStories().filter(
     (story) =>
@@ -48,7 +48,7 @@ export function DocsPage(): React.ReactElement {
             >
               {story.name}
             </h3>
-            <DocsExample of={story.moduleExport} />
+            <DocsAutodocsExample of={story.moduleExport} />
           </section>
         ))}
       </div>

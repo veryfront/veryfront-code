@@ -1,15 +1,115 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import * as React from "react";
 import { ChatSidebar } from "veryfront/chat";
+import {
+  DocsCode,
+  DocsComposition,
+  DocsExampleAuto,
+  DocsHero,
+  DocsPage,
+  DocsPropsTable,
+  DocsSection,
+} from "../../.storybook/docs";
 import { threads } from "../fixtures/chat";
 import { ReviewSurface, StoryFrame } from "../support/StoryFrame";
 
+const importCode = `import { ChatSidebar } from "veryfront/chat"`;
+
+const compositionTree =
+  `ChatSidebar  <- thread list rail, grouped by recency (Today / Yesterday / ...)
+  +-- New thread button  <- onNewThread
+  +-- Thread item  <- onSelectThread / onDeleteThread / onRenameThread
+  +-- Empty state  <- shown when threads is empty`;
+
+function ChatSidebarDocsPage() {
+  return (
+    <DocsPage>
+      <DocsHero
+        title="ChatSidebar"
+        lead="A conversation rail for `ChatWithSidebar` — lists threads grouped by recency, with select, rename, delete, and new-thread actions."
+      />
+
+      <DocsSection
+        title="Default"
+        description="A populated rail with an active thread. Selecting, renaming, and deleting are wired to local state in this example."
+      >
+        <DocsExampleAuto of={Default} />
+      </DocsSection>
+
+      <DocsSection
+        title="Empty"
+        description="With no threads, the sidebar renders its empty state."
+      >
+        <DocsExampleAuto of={Empty} />
+      </DocsSection>
+
+      <DocsSection title="Import">
+        <DocsCode code={importCode} />
+      </DocsSection>
+
+      <DocsSection title="Composition">
+        <DocsComposition>{compositionTree}</DocsComposition>
+      </DocsSection>
+
+      <DocsSection title="API Reference">
+        <DocsPropsTable
+          component="ChatSidebar"
+          description="Thread list rail"
+          props={[
+            {
+              name: "threads",
+              type: "Thread[]",
+              description: "Conversation threads to list, newest first",
+            },
+            {
+              name: "activeThreadId",
+              type: "string | null",
+              description: "The currently selected thread, or null",
+            },
+            {
+              name: "onSelectThread",
+              type: "(id: string) => void",
+              description: "Called when a thread is chosen",
+            },
+            {
+              name: "onDeleteThread",
+              type: "(id: string) => void",
+              description: "Called when a thread is deleted",
+            },
+            {
+              name: "onRenameThread",
+              type: "(id: string, title: string) => void",
+              description: "Called when a thread title is edited",
+            },
+            {
+              name: "onNewThread",
+              type: "() => void",
+              description: "Called to start a new conversation",
+            },
+            {
+              name: "isOpen",
+              type: "boolean",
+              description: "Whether the rail is currently shown",
+            },
+            {
+              name: "className",
+              type: "string",
+              description: "Extra classes for the root element",
+            },
+          ]}
+        />
+      </DocsSection>
+    </DocsPage>
+  );
+}
+
 const meta = {
-  title: "Veryfront UI/Chat/ChatSidebar",
+  title: "Chat/Components/ChatSidebar",
   component: ChatSidebar,
   tags: ["autodocs"],
   parameters: {
     layout: "fullscreen",
+    docs: { page: ChatSidebarDocsPage },
   },
 } satisfies Meta<typeof ChatSidebar>;
 
@@ -17,6 +117,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Default: Story = {
+  tags: ["!dev"],
   render: () => {
     const [activeThreadId, setActiveThreadId] = React.useState(
       threads[0]?.id ?? null,
@@ -49,6 +150,7 @@ export const Default: Story = {
 };
 
 export const Empty: Story = {
+  tags: ["!dev"],
   render: () => (
     <StoryFrame maxWidth="360px">
       <ReviewSurface label="No conversations">

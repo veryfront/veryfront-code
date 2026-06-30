@@ -3,6 +3,15 @@ import * as React from "react";
 import { ChatWithSidebar } from "veryfront/chat";
 import type { ChatMessage } from "veryfront/chat";
 import {
+  DocsCode,
+  DocsComposition,
+  DocsExampleAuto,
+  DocsHero,
+  DocsPage,
+  DocsPropsTable,
+  DocsSection,
+} from "../../.storybook/docs";
+import {
   attachments,
   chatMessages,
   createChangeHandler,
@@ -11,12 +20,130 @@ import {
   uploads,
 } from "../fixtures/chat";
 
+const importCode = `import { ChatWithSidebar } from "veryfront/chat"`;
+
+const compositionTree =
+  `ChatWithSidebar  <- assembly: thread rail + the Chat preset, with thread persistence
+  +-- ChatSidebar  <- thread list rail (managed via useThreads)
+  +-- TabSwitcher  <- chat / uploads tabs (when features.tabs)
+  +-- Chat  <- the preset conversation UI, driven by the chat controller`;
+
+function ChatWithSidebarDocsPage() {
+  return (
+    <DocsPage>
+      <DocsHero
+        title="ChatWithSidebar"
+        lead="The `ChatWithSidebar` assembly — pairs a thread rail with the `Chat` preset and manages thread persistence. Configuration is grouped into `chat`, `sidebar`, `models`, `attachments`, `quickActions`, `features`, and `tabs`."
+      />
+
+      <DocsSection
+        title="Default"
+        description="The full assembly with an open sidebar, model selector, attachments, uploads, quick actions, and chat / uploads tabs."
+      >
+        <DocsExampleAuto of={Default} />
+      </DocsSection>
+
+      <DocsSection title="Import">
+        <DocsCode code={importCode} />
+      </DocsSection>
+
+      <DocsSection title="Composition">
+        <DocsComposition>{compositionTree}</DocsComposition>
+      </DocsSection>
+
+      <DocsSection title="API Reference">
+        <DocsPropsTable
+          component="ChatWithSidebar"
+          description="Grouped configuration props"
+          props={[
+            {
+              name: "chat",
+              type: "ChatWithSidebarChatController",
+              description:
+                "Conversation state and handlers: messages, input, onChange, onSubmit, reload, stop, setMessages, model, etc.",
+            },
+            {
+              name: "sidebar",
+              type: "ChatWithSidebarSidebarConfig",
+              description: "Rail open state, onToggle, storageKey, visible",
+            },
+            {
+              name: "models",
+              type: "ChatWithSidebarModelConfig",
+              description: "{ options } for the model selector",
+            },
+            {
+              name: "attachments",
+              type: "ChatWithSidebarAttachmentConfig",
+              description:
+                "accept, items, uploads, onAttach, onDrop, onRemoveItem, onRemoveUpload",
+            },
+            {
+              name: "quickActions",
+              type: "ChatWithSidebarQuickActionsConfig",
+              description:
+                "suggestions, onSuggestionClick, actions, onAction",
+            },
+            {
+              name: "message",
+              type: "ChatWithSidebarMessageConfig",
+              description: "render, renderTool, onFeedback, onSourceClick",
+            },
+            {
+              name: "features",
+              type: "ChatWithSidebarFeatureConfig",
+              description:
+                "Toggles: steps, tabs, sources, export, scrollButton, messageActions",
+            },
+            {
+              name: "tabs",
+              type: "ChatWithSidebarTabsConfig",
+              description: "{ active, onChange } for the chat / uploads tabs",
+            },
+            {
+              name: "voice",
+              type: "ChatWithSidebarVoiceConfig",
+              description: "{ enabled, onVoice } for voice input",
+            },
+            {
+              name: "maxHeight",
+              type: "string",
+              description: "Max height of the assembly",
+            },
+            {
+              name: "placeholder",
+              type: "string",
+              description: "Composer placeholder text",
+            },
+            {
+              name: "theme",
+              type: "Partial<ChatTheme>",
+              description: "Theme token overrides",
+            },
+            {
+              name: "emptyState",
+              type: "{ icon?, title?, description? }",
+              description: "Custom empty-state content",
+            },
+            {
+              name: "className",
+              type: "string",
+              description: "Extra classes for the root element",
+            },
+          ]}
+        />
+      </DocsSection>
+    </DocsPage>
+  );
+}
+
 const meta = {
-  title: "Veryfront UI/Chat/With Sidebar",
+  title: "Chat/Composition/With Sidebar",
   component: ChatWithSidebar,
   tags: ["autodocs"],
   parameters: {
     layout: "fullscreen",
+    docs: { page: ChatWithSidebarDocsPage },
   },
 } satisfies Meta<typeof ChatWithSidebar>;
 
@@ -108,5 +235,6 @@ function SidebarReview(): React.ReactElement {
 }
 
 export const Default: Story = {
+  tags: ["!dev"],
   render: () => <SidebarReview />,
 };
