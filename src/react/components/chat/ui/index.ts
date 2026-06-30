@@ -10,8 +10,24 @@ export { cva, cx, type VariantProps } from "./cva.ts";
 export { Slot, type SlotProps } from "./slot.tsx";
 export { Button, type ButtonProps, buttonVariants, LoadingButton } from "./button.tsx";
 export { Badge, type BadgeProps, badgeVariants } from "./badge.tsx";
+export { Pill, type PillProps, pillVariants } from "./pill.tsx";
+export { Tag, TagButton, TagGroup, TagLink, type TagLinkProps } from "./tag.tsx";
+export {
+  StatusBadge,
+  type StatusBadgeColor,
+  type StatusBadgeProps,
+} from "./status-badge.tsx";
 export { Label, type LabelProps, labelVariants } from "./label.tsx";
 export { Skeleton, type SkeletonProps } from "./skeleton.tsx";
+export { Spinner, type SpinnerProps } from "./spinner.tsx";
+export { Shimmer, type ShimmerProps } from "./shimmer.tsx";
+export { ProgressBar, type ProgressBarProps } from "./progress-bar.tsx";
+export {
+  FileTypeBadge,
+  type FileTypeBadgeProps,
+  FileTypeThumb,
+  getFileTypeLabel,
+} from "./file-type-badge.tsx";
 export { Textarea, type TextareaProps, textareaVariants } from "./textarea.tsx";
 export {
   Tooltip,
@@ -42,6 +58,73 @@ export {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "./dropdown-menu.tsx";
+export {
+  Checkbox,
+  CheckboxField,
+  type CheckboxFieldProps,
+  CheckboxGroup,
+  type CheckboxProps,
+} from "./checkbox.tsx";
+export {
+  Radio,
+  RadioField,
+  type RadioFieldProps,
+  RadioGroup,
+  type RadioProps,
+} from "./radio.tsx";
+export {
+  Switch,
+  SwitchField,
+  type SwitchFieldProps,
+  type SwitchProps,
+  switchTrackVariants,
+} from "./switch.tsx";
+export {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  type SelectItemProps,
+  SelectLabel,
+  type SelectProps,
+  SelectSeparator,
+  SelectTrigger,
+  type SelectTriggerProps,
+  selectTriggerVariants,
+  SelectValue,
+} from "./select.tsx";
+export { ScrollFade, type ScrollFadeProps } from "./scroll-fade.tsx";
+export {
+  Dialog,
+  DialogAction,
+  type DialogActionProps,
+  DialogBody,
+  DialogCancel,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogForm,
+  DialogHeader,
+  type DialogProps,
+  DialogTitle,
+  DialogTrigger,
+} from "./dialog.tsx";
+export {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  type CommandInputProps,
+  CommandItem,
+  CommandItemContent,
+  CommandItemDescription,
+  type CommandItemProps,
+  CommandItemTitle,
+  CommandList,
+  CommandSeparator,
+  CommandShortcut,
+} from "./command.tsx";
 export {
   Popover,
   PopoverActions,

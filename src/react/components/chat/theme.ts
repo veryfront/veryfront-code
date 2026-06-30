@@ -33,6 +33,10 @@ const TOKENS_LIGHT = {
   "--status-success": "#098926",
   "--status-warning": "#F99100",
   "--status-error": "#D40924",
+  "--alert-warning-bg": "#F1E3CD",
+  "--alert-error-bg": "#ECD3D1",
+  "--alert-success-bg": "#D4E2D2",
+  "--alert-info-bg": "#E6E6E0",
   "--faint": "oklch(from var(--foreground) l c h / 0.25)",
   "--soft": "oklch(from var(--foreground) l c h / 0.7)",
   "--tint": "oklch(from var(--foreground) l c h / 0.04)",
@@ -114,6 +118,25 @@ function tokensToCSS(tokens: Record<string, string>): string {
  *
  * Dark mode: supports prefers-color-scheme, .dark, and [data-theme="dark"].
  */
+/**
+ * Animation CSS for the chat UI primitives (Spinner, Shimmer, ProgressBar,
+ * LoadingButton). Copied from Studio `styles/animations.css`. Since
+ * `veryfront/chat` ships as a self-contained npm package, it carries both the
+ * `@keyframes` AND the named `animate-*` utility classes itself — components
+ * use Studio's clean class names (`animate-bounce-spin`) without requiring the
+ * consumer's Tailwind to register them. `shimmer-sweep` stays an arbitrary
+ * `animate-[…]` utility (its duration is set inline), so only its keyframes are
+ * needed here. Keep in sync with `storybook/.storybook/preview.css`.
+ */
+const ANIMATION_CSS =
+  "@keyframes bounce-spin{0%,100%{transform:translateY(0) rotate(0deg);animation-timing-function:ease-in-out}25%{transform:translateY(-30%) rotate(90deg);animation-timing-function:ease-in}50%{transform:translateY(0) rotate(180deg);animation-timing-function:ease-out}75%{transform:translateY(-15%) rotate(270deg);animation-timing-function:ease-in}}" +
+  "@keyframes button-loading{0%,100%{opacity:1}50%{opacity:.55}}" +
+  "@keyframes shimmer-sweep{0%{background-position:100% center}100%{background-position:0% center}}" +
+  "@keyframes progress-indeterminate{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}" +
+  ".animate-bounce-spin{animation:bounce-spin 2.5s cubic-bezier(0.25,1,0.5,1) infinite}" +
+  ".animate-button-loading{animation:button-loading 1.4s cubic-bezier(0.4,0,0.2,1) infinite}" +
+  ".animate-progress-indeterminate{animation:progress-indeterminate 1.2s ease-in-out infinite}";
+
 export function generateTokenCSS(): string {
   const light = tokensToCSS(TOKENS_LIGHT);
   const dark = tokensToCSS(TOKENS_DARK);
@@ -123,6 +146,7 @@ export function generateTokenCSS(): string {
     `[data-vf-chat] button{cursor:pointer;}`,
     `@media(prefers-color-scheme:dark){[data-vf-chat]:not([data-vf-theme]){${dark}}}`,
     `.dark [data-vf-chat]:not([data-vf-theme]),[data-theme="dark"] [data-vf-chat]:not([data-vf-theme]){${dark}}`,
+    ANIMATION_CSS,
   ].join("");
 }
 

@@ -267,6 +267,24 @@ export function PlusIcon({ className }: IconProps): React.ReactElement {
   return renderIcon(className, PLUS_ICON_ELEMENTS);
 }
 
+const SEARCH_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
+  { type: "circle", props: { cx: "11", cy: "11", r: "8" } },
+  { type: "line", props: { x1: "21", y1: "21", x2: "16.65", y2: "16.65" } },
+];
+
+export function SearchIcon({ className }: IconProps): React.ReactElement {
+  return renderIcon(className, SEARCH_ICON_ELEMENTS);
+}
+
+const X_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
+  { type: "line", props: { x1: "18", y1: "6", x2: "6", y2: "18" } },
+  { type: "line", props: { x1: "6", y1: "6", x2: "18", y2: "18" } },
+];
+
+export function XIcon({ className }: IconProps): React.ReactElement {
+  return renderIcon(className, X_ICON_ELEMENTS);
+}
+
 export function TrashIcon({ className }: IconProps): React.ReactElement {
   return renderIcon(className, TRASH_ICON_ELEMENTS);
 }

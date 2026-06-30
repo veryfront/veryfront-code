@@ -1,9 +1,8 @@
 /**
  * Badge — ported 1:1 from Veryfront Studio, semantic classes remapped to
- * veryfront's `[var(--token)]` vocabulary. Note: veryfront does not yet define
- * the status background tokens (`--alert-*-bg`, `--status-error/warning`); the
- * affected variants degrade gracefully (text colour applies, fill stays
- * transparent) until those tokens land. Private to the chat module.
+ * veryfront's `[var(--token)]` vocabulary. The status fill tokens
+ * (`--alert-*-bg`) and `--status-*` text tokens are defined in `theme.ts`, so
+ * every variant renders with its proper fill. Private to the chat module.
  *
  * @module react/components/chat/ui/badge
  */
@@ -12,7 +11,7 @@ import { cn } from "../theme.ts";
 import { cva, type VariantProps } from "./cva.ts";
 
 const badgeVariants = cva(
-  "inline-flex items-center px-1.5 py-0.5 text-xs font-medium rounded-full",
+  "inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full",
   {
     variants: {
       variant: {

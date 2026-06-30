@@ -24,7 +24,7 @@ function BadgeDocsPage() {
       </DocsSection>
       <DocsSection
         title="Status"
-        description="`success` / `warning` / `destructive` — status fill tokens are not yet defined in veryfront, so the fill is currently transparent."
+        description="`success` / `warning` / `destructive` — tinted fills from the `--alert-*-bg` tokens with `--status-*` text."
       >
         <DocsExampleAuto of={Status} />
       </DocsSection>
