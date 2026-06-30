@@ -47,6 +47,15 @@
   --muted: #f7f6f4;
   --destructive: #d40c1a;
   --outline-border: #dcdad0;
+  --status-neutral: #9f9f9f;
+  --status-info: #0071df;
+  --status-success: #098926;
+  --status-warning: #f99100;
+  --status-error: #d40924;
+  --alert-warning-bg: #f1e3cd;
+  --alert-error-bg: #ecd3d1;
+  --alert-success-bg: #d4e2d2;
+  --alert-info-bg: #e6e6e0;
   --faint: oklch(from var(--foreground) l c h / 0.25);
   --soft: oklch(from var(--foreground) l c h / 0.7);
   --tint: oklch(from var(--foreground) l c h / 0.04);
@@ -105,6 +114,65 @@
   --border: var(--outline-border);
   --chat-bubble: var(--primary);
   --chat-bubble-foreground: var(--secondary);
+}
+
+/* Keyframes for the chat UI primitives (Spinner, Shimmer, ProgressBar,
+   LoadingButton). Mirrors the KEYFRAMES injected by chat `theme.ts` so stories
+   animate identically to the shipped package. */
+@keyframes bounce-spin {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+    animation-timing-function: ease-in-out;
+  }
+  25% {
+    transform: translateY(-30%) rotate(90deg);
+    animation-timing-function: ease-in;
+  }
+  50% {
+    transform: translateY(0) rotate(180deg);
+    animation-timing-function: ease-out;
+  }
+  75% {
+    transform: translateY(-15%) rotate(270deg);
+    animation-timing-function: ease-in;
+  }
+}
+@keyframes button-loading {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+@keyframes shimmer-sweep {
+  0% {
+    background-position: 100% center;
+  }
+  100% {
+    background-position: 0% center;
+  }
+}
+@keyframes progress-indeterminate {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+/* Named animation utilities — mirror the self-contained set the npm package
+   injects via chat `theme.ts`, so components use Studio's clean class names. */
+.animate-bounce-spin {
+  animation: bounce-spin 2.5s cubic-bezier(0.25, 1, 0.5, 1) infinite;
+}
+.animate-button-loading {
+  animation: button-loading 1.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+.animate-progress-indeterminate {
+  animation: progress-indeterminate 1.2s ease-in-out infinite;
 }
 
 html,
