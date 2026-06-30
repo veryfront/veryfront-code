@@ -543,14 +543,36 @@ function compareCandidate(
 function pickRecommendation(
   candidates: EvalModelCandidateComparison[],
 ): EvalModelComparison["recommendation"] {
-  const promotable = candidates
-    .filter((candidate) => candidate.decision === "promote-candidate")
-    .sort((a, b) => (b.objectiveScore ?? 0) - (a.objectiveScore ?? 0))[0];
-  if (promotable) {
+  const promotable = candidates.filter((candidate) => candidate.decision === "promote-candidate");
+  if (promotable.length === 1) {
+    const candidate = promotable[0];
+    if (candidate) {
+      return {
+        decision: "promote-candidate",
+        model: candidate.model,
+        reasons: candidate.reasons,
+      };
+    }
+  }
+  if (promotable.length > 1) {
+    const scoredPromotable = promotable
+      .filter((candidate) => candidate.objectiveScore !== undefined)
+      .sort((a, b) => (b.objectiveScore ?? 0) - (a.objectiveScore ?? 0))[0];
+    if (scoredPromotable) {
+      return {
+        decision: "promote-candidate",
+        model: scoredPromotable.model,
+        reasons: scoredPromotable.reasons,
+      };
+    }
     return {
       decision: "promote-candidate",
-      model: promotable.model,
-      reasons: promotable.reasons,
+      reasons: [
+        `multiple candidate models are promotable: ${
+          promotable.map((candidate) => candidate.model).join(", ")
+        }`,
+        "configure --comparison-policy objectives to rank candidates by your product requirements",
+      ],
     };
   }
 
