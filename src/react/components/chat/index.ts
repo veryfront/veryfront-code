@@ -34,7 +34,10 @@ export {
 // Design Tokens
 // ---------------------------------------------------------------------------
 export { chatTokens, getChatTokensCSS } from "./chat-tokens.ts";
-export { ChatStyleProvider, type ChatStyleProviderProps } from "./chat-style-provider.tsx";
+export {
+  ChatStyleProvider,
+  type ChatStyleProviderProps,
+} from "./chat-style-provider.tsx";
 
 // ---------------------------------------------------------------------------
 // Chat — Core preset + compound
@@ -132,6 +135,7 @@ export {
   ToolStatusBadge,
   UploadsPanel,
   useThreads,
+  useUpload,
 } from "./chat.tsx";
 export type {
   AttachmentInfo,
@@ -176,6 +180,8 @@ export type {
   UploadsPanelProps,
   UseThreadsOptions,
   UseThreadsResult,
+  UseUploadOptions,
+  UseUploadResult,
 } from "./chat.tsx";
 
 // ---------------------------------------------------------------------------

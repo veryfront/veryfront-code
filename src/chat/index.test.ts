@@ -111,6 +111,7 @@ const expectedRuntimeExports = [
   "useThreadListContext",
   "useThreadListContextOptional",
   "useThreads",
+  "useUpload",
   "useVoiceInput",
 ].sort();
 

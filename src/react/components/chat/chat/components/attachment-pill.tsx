@@ -1,6 +1,11 @@
 import * as React from "react";
 import { cn } from "../../theme.ts";
-import { CheckIcon, ClockIcon, FileTextIcon, RefreshCwIcon } from "../../icons/index.ts";
+import {
+  CheckIcon,
+  ClockIcon,
+  FileTextIcon,
+  RefreshCwIcon,
+} from "../../icons/index.ts";
 import { Button } from "../../ui/button.tsx";
 import { Shimmer } from "./animations.tsx";
 
@@ -25,6 +30,8 @@ export interface AttachmentInfo {
   type?: string;
   size?: number;
   preview?: string;
+  /** Resolved URL once the file has finished uploading. */
+  url?: string;
 }
 
 /** Props accepted by attachment pill. */
@@ -81,7 +88,9 @@ function getStateLabel(
     case "processing":
       return "Processing document";
     case "uploaded":
-      return attachment.size != null ? `Uploaded · ${formatSize(attachment.size)}` : "Uploaded";
+      return attachment.size != null
+        ? `Uploaded · ${formatSize(attachment.size)}`
+        : "Uploaded";
     case "error":
       return "Upload failed. Try again.";
     default:

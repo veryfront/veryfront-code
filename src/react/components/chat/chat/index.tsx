@@ -173,6 +173,11 @@ export {
   type UseThreadsOptions,
   type UseThreadsResult,
 } from "./hooks/use-threads.ts";
+export {
+  useUpload,
+  type UseUploadOptions,
+  type UseUploadResult,
+} from "./hooks/use-upload.ts";
 
 // Re-exports — utils
 export {
