@@ -121,16 +121,14 @@ const arrowClasses: Record<Side, string> = {
 };
 
 /** Props accepted by `<TooltipContent>`. */
-export interface TooltipContentProps
-  extends React.HTMLAttributes<HTMLDivElement> {
+export interface TooltipContentProps extends React.HTMLAttributes<HTMLDivElement> {
   side?: Side;
   sideOffset?: number;
 }
 
 /** Tooltip content — portalled + positioned while hovered/focused. */
 export function TooltipContent(
-  { side = "top", sideOffset = 6, className, children, style, ...props }:
-    TooltipContentProps,
+  { side = "top", sideOffset = 6, className, children, style, ...props }: TooltipContentProps,
 ): React.ReactElement | null {
   const ctx = React.useContext(TooltipContext);
   const ref = React.useRef<HTMLDivElement>(null);
