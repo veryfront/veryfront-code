@@ -7,18 +7,23 @@ import { type ChatTab, TabSwitcher } from "./chat/components/tab-switcher.tsx";
 import { useThreads } from "./chat/hooks/use-threads.ts";
 import { PanelLeftIcon } from "./icons/index.ts";
 
-type ChatMessageSetter = (messages: ChatProps["messages"]) => void;
+type ChatMessageSetter = (messages: NonNullable<ChatProps["messages"]>) => void;
 type ChatWithSidebarPassthroughProps = Omit<
   ChatProps,
-  "messages" | "model" | "onModelChange" | "activeTab" | "onTabChange" | "className"
+  | "messages"
+  | "model"
+  | "onModelChange"
+  | "activeTab"
+  | "onTabChange"
+  | "className"
 >;
 type TabChangeHandler = NonNullable<ChatProps["onTabChange"]>;
 
 /** Public API contract for chat with sidebar chat controller. */
 export interface ChatWithSidebarChatController {
-  messages: ChatProps["messages"];
-  input: ChatProps["input"];
-  onChange: ChatProps["onChange"];
+  messages: NonNullable<ChatProps["messages"]>;
+  input: NonNullable<ChatProps["input"]>;
+  onChange: NonNullable<ChatProps["onChange"]>;
   onSubmit?: ChatProps["onSubmit"];
   stop?: ChatProps["stop"];
   reload?: ChatProps["reload"];
@@ -133,7 +138,10 @@ export interface ChatWithSidebarGroupedProps {
 export type ChatWithSidebarProps = ChatWithSidebarGroupedProps;
 
 /** Render chat with sidebar. */
-export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarProps>(
+export const ChatWithSidebar = React.forwardRef<
+  HTMLDivElement,
+  ChatWithSidebarProps
+>(
   function ChatWithSidebar(
     {
       chat,
@@ -264,7 +272,9 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
       if (messages.length > 0) {
         // Auto-title from first user message — combine with message sync
         // into a single updateThread call to avoid racing setThreads batches
-        const activeThread = threadsRef.current.find((t) => t.id === currentActiveId);
+        const activeThread = threadsRef.current.find((t) =>
+          t.id === currentActiveId
+        );
         let title: string | undefined;
         if (activeThread?.title === "New Chat") {
           const firstUserMsg = messages.find((m) => m.role === "user");
@@ -278,7 +288,10 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
           }
         }
 
-        updateThread(currentActiveId, title ? { messages, title } : { messages });
+        updateThread(
+          currentActiveId,
+          title ? { messages, title } : { messages },
+        );
       }
     }, [messages, updateThread]);
 
@@ -359,7 +372,11 @@ export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarP
             </button>
             {showTabs && (
               <div className="flex-1 flex justify-center">
-                <TabSwitcher activeTab={activeTab} onTabChange={handleTabChange} className="py-0" />
+                <TabSwitcher
+                  activeTab={activeTab}
+                  onTabChange={handleTabChange}
+                  className="py-0"
+                />
               </div>
             )}
             {showTabs && <div className="size-8 shrink-0" />}
