@@ -59,8 +59,7 @@ export function Command({
     });
   }, []);
   const matches = React.useCallback(
-    (text: string) =>
-      !search || text.toLowerCase().includes(search.toLowerCase()),
+    (text: string) => !search || text.toLowerCase().includes(search.toLowerCase()),
     [search],
   );
   const anyVisible = React.useMemo(
@@ -159,8 +158,7 @@ export function CommandList({
   className,
   variant = "default",
   ...props
-}: React.HTMLAttributes<HTMLDivElement> & { variant?: "default" | "flush" }):
-  React.ReactElement {
+}: React.HTMLAttributes<HTMLDivElement> & { variant?: "default" | "flush" }): React.ReactElement {
   return (
     <div
       className={cn(
@@ -197,8 +195,7 @@ export function CommandGroup({
   heading,
   children,
   ...props
-}: React.HTMLAttributes<HTMLDivElement> & { heading?: React.ReactNode }):
-  React.ReactElement {
+}: React.HTMLAttributes<HTMLDivElement> & { heading?: React.ReactNode }): React.ReactElement {
   return (
     <div
       className={cn(
@@ -221,14 +218,11 @@ export function CommandGroup({
 export function CommandSeparator(
   { className }: { className?: string },
 ): React.ReactElement {
-  return (
-    <div className={cn("-mx-2.5 my-2 h-px bg-[var(--separator)]", className)} />
-  );
+  return <div className={cn("-mx-2.5 my-2 h-px bg-[var(--separator)]", className)} />;
 }
 
 /** Props accepted by `<CommandItem>`. */
-export interface CommandItemProps
-  extends Omit<React.HTMLAttributes<HTMLDivElement>, "onSelect"> {
+export interface CommandItemProps extends Omit<React.HTMLAttributes<HTMLDivElement>, "onSelect"> {
   /** Searchable text for filtering (falls back to nothing → always visible). */
   value?: string;
   /** Top-align the icon for two-line items. */
@@ -294,9 +288,7 @@ export function CommandItemContent(
 export function CommandItemTitle(
   { className, ...props }: React.HTMLAttributes<HTMLDivElement>,
 ): React.ReactElement {
-  return (
-    <div className={cn("text-sm font-medium", className)} {...props} />
-  );
+  return <div className={cn("text-sm font-medium", className)} {...props} />;
 }
 
 /** Item secondary text. */

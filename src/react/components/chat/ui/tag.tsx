@@ -24,8 +24,7 @@ export function Tag(
 }
 
 /** Props accepted by `<TagLink>`. */
-export interface TagLinkProps
-  extends React.AnchorHTMLAttributes<HTMLAnchorElement> {
+export interface TagLinkProps extends React.AnchorHTMLAttributes<HTMLAnchorElement> {
   href: string;
 }
 

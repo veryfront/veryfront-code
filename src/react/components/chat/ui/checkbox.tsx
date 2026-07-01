@@ -13,8 +13,7 @@ import { CheckIcon } from "../icons/index.ts";
 import { Label } from "./label.tsx";
 
 /** Props accepted by `<Checkbox>`. */
-export interface CheckboxProps
-  extends Omit<React.InputHTMLAttributes<HTMLInputElement>, "type"> {
+export interface CheckboxProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, "type"> {
   /** Radix-style convenience callback fired with the next checked state. */
   onCheckedChange?: (checked: boolean) => void;
   ref?: React.Ref<HTMLInputElement>;
@@ -92,7 +91,5 @@ export function CheckboxField({
 export function CheckboxGroup(
   { className, ...props }: React.HTMLAttributes<HTMLDivElement>,
 ): React.ReactElement {
-  return (
-    <div className={cn("flex flex-col gap-2", className)} {...props} />
-  );
+  return <div className={cn("flex flex-col gap-2", className)} {...props} />;
 }

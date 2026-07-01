@@ -35,9 +35,7 @@ const textareaVariants = cva(
 
 /** Props accepted by `<Textarea>`. */
 export interface TextareaProps
-  extends
-    Omit<React.ComponentProps<"textarea">, "size">,
-    VariantProps<typeof textareaVariants> {
+  extends Omit<React.ComponentProps<"textarea">, "size">, VariantProps<typeof textareaVariants> {
   ref?: React.Ref<HTMLTextAreaElement>;
 }
 

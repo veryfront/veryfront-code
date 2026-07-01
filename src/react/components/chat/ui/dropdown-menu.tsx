@@ -62,8 +62,7 @@ export function DropdownMenuTrigger({
   asChild,
   onClick,
   ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean }):
-  React.ReactElement {
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean }): React.ReactElement {
   const ctx = React.useContext(MenuContext);
   const Comp = asChild ? Slot : "button";
   return (
@@ -83,8 +82,7 @@ export function DropdownMenuTrigger({
 }
 
 /** Props accepted by `<DropdownMenuContent>`. */
-export interface DropdownMenuContentProps
-  extends React.HTMLAttributes<HTMLDivElement> {
+export interface DropdownMenuContentProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Horizontal alignment relative to the trigger. */
   align?: "start" | "end";
 }
@@ -128,8 +126,7 @@ export function DropdownMenuGroup(
 }
 
 /** Props accepted by `<DropdownMenuItem>`. */
-export interface DropdownMenuItemProps
-  extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+export interface DropdownMenuItemProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   /** Called when the item is chosen (also closes the menu). */
   onSelect?: () => void;
   /** `asChild` merges item styling onto your own element. */
@@ -196,9 +193,7 @@ export function DropdownMenuItemMeta({
 export function DropdownMenuSeparator(
   { className }: { className?: string },
 ): React.ReactElement {
-  return (
-    <div className={cn("-mx-2.5 my-2 h-px bg-[var(--separator)]", className)} />
-  );
+  return <div className={cn("-mx-2.5 my-2 h-px bg-[var(--separator)]", className)} />;
 }
 
 /** Non-interactive section label — full-strength foreground (Studio). */

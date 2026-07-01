@@ -59,8 +59,7 @@ export function DrawerTrigger({
   asChild,
   onClick,
   ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean }):
-  React.ReactElement {
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean }): React.ReactElement {
   const ctx = useDrawer();
   const Comp = asChild ? Slot : "button";
   return (
@@ -144,9 +143,7 @@ export function DrawerTitle({
 export function DrawerHeader(
   { className, ...props }: React.HTMLAttributes<HTMLDivElement>,
 ): React.ReactElement {
-  return (
-    <div className={cn("flex flex-col px-4.5 pt-1 pb-2 shrink-0", className)} {...props} />
-  );
+  return <div className={cn("flex flex-col px-4.5 pt-1 pb-2 shrink-0", className)} {...props} />;
 }
 
 /** Scrollable body area. */
@@ -182,8 +179,7 @@ export function DrawerClose({
   asChild,
   onClick,
   ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean }):
-  React.ReactElement {
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean }): React.ReactElement {
   const ctx = useDrawer();
   const Comp = asChild ? Slot : "button";
   return (

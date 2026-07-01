@@ -61,8 +61,7 @@ export function DialogTrigger({
   asChild,
   onClick,
   ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean }):
-  React.ReactElement {
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean }): React.ReactElement {
   const ctx = useDialog();
   const Comp = asChild ? Slot : "button";
   return (
@@ -133,9 +132,7 @@ export function DialogContent({
 export function DialogHeader(
   { className, ...props }: React.HTMLAttributes<HTMLDivElement>,
 ): React.ReactElement {
-  return (
-    <div className={cn("flex flex-col px-6 pt-6 shrink-0", className)} {...props} />
-  );
+  return <div className={cn("flex flex-col px-6 pt-6 shrink-0", className)} {...props} />;
 }
 
 /** Dialog title — Studio Heading level 2 (20px). Semibold so Inter reads at
@@ -192,9 +189,7 @@ export function DialogBody({
 export function DialogFooter(
   { className, ...props }: React.HTMLAttributes<HTMLDivElement>,
 ): React.ReactElement {
-  return (
-    <div className={cn("p-6 flex justify-start gap-3 shrink-0", className)} {...props} />
-  );
+  return <div className={cn("p-6 flex justify-start gap-3 shrink-0", className)} {...props} />;
 }
 
 /** Layout-neutral `<form>` shell (`display: contents`) wrapping header/body/footer. */
@@ -257,8 +252,7 @@ export function DialogClose({
   asChild,
   onClick,
   ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean }):
-  React.ReactElement {
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean }): React.ReactElement {
   const ctx = useDialog();
   const Comp = asChild ? Slot : "button";
   return (

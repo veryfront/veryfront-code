@@ -82,9 +82,7 @@ function Item({ value, href, children }: TabsItemProps): React.ReactElement {
       onClick={() => ctx.onValueChange(value)}
       className={cn(
         "relative inline-flex items-center h-full rounded-full font-normal transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)]",
-        ctx.size === "sm"
-          ? "px-3 text-sm"
-          : "px-5 md:px-6 text-sm md:text-base",
+        ctx.size === "sm" ? "px-3 text-sm" : "px-5 md:px-6 text-sm md:text-base",
         isActive
           ? cn(
             "text-[var(--foreground)]",

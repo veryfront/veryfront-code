@@ -11,8 +11,7 @@ import { cn } from "../theme.ts";
 import { Label } from "./label.tsx";
 
 /** Props accepted by `<Radio>`. */
-export interface RadioProps
-  extends Omit<React.InputHTMLAttributes<HTMLInputElement>, "type"> {
+export interface RadioProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, "type"> {
   ref?: React.Ref<HTMLInputElement>;
 }
 

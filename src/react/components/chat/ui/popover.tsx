@@ -62,8 +62,7 @@ export function PopoverTrigger({
   asChild,
   onClick,
   ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean }):
-  React.ReactElement {
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean }): React.ReactElement {
   const ctx = React.useContext(PopoverContext);
   const Comp = asChild ? Slot : "button";
   return (
@@ -83,8 +82,7 @@ export function PopoverTrigger({
 }
 
 /** Props accepted by `<PopoverContent>`. */
-export interface PopoverContentProps
-  extends React.HTMLAttributes<HTMLDivElement> {
+export interface PopoverContentProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Horizontal alignment relative to the trigger. */
   align?: "start" | "end";
 }
@@ -172,8 +170,7 @@ export function PopoverFooter({
   className,
   bordered,
   ...props
-}: React.HTMLAttributes<HTMLDivElement> & { bordered?: boolean }):
-  React.ReactElement {
+}: React.HTMLAttributes<HTMLDivElement> & { bordered?: boolean }): React.ReactElement {
   return (
     <div
       className={cn(
