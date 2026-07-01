@@ -28,7 +28,8 @@ confirmation is on you (HMR); I verify types + driver + build.
 
 ## 🔧 Pending — small / medium
 
-- **Markdown code blocks BROKEN** (1uaxQz) — fenced code renders as `[object Object], run = ,…` instead of the source. The markdown `code` renderer isn't extracting the fence text as a string (stringifying React child nodes). Fix the code-text extraction in `markdown.tsx` before the `CodeBlock` call. **High priority — regression-looking.**
+- **Markdown code blocks BROKEN** (1uaxQz) — fenced code renders as `[object Object], run = ,…`. Cause: `markdown.tsx:269` does `String(codeChildren)` but rehype-highlight has already wrapped the code in span element nodes, so it stringifies to `[object Object]`. Fix: extract text recursively (flatten children to text) + drop the now-redundant `rehypeHighlight` (CodeBlock does its own shiki). **High priority.**
+- **Markdown prose styling → Studio parity** — the text formatting must match Studio: **lists** (ul/ol markers, spacing), **inline code**, **hr**, **headings** (sizes/weights), blockquote, links, paragraph spacing. Audit `MARKDOWN_CONTAINER_CLASS` (the big `prose-*` string) against Studio's `ChatMessageText`/markdown styles and align.
 - **RichCodeBlock** — mark **deprecated** (Markdown now uses the extracted `CodeBlock`); add `@deprecated` JSDoc, keep the export for back-compat, retire later.
 - **ChatActions Settings submenu** (uCs0o7) — can't move the mouse into the submenu; the parent dropdown closes before you reach it (missing hover-bridge / safe-triangle + the submenu isn't kept open on pointer transit). Fix the submenu hover handling in `chat-actions.tsx` / `dropdown-menu.tsx`.
 - **CodeBlock** — copy button should be icon-only (drop the "Copy" text); add a file-type icon next to the language label (see Studio's ChatCodeBlock).
