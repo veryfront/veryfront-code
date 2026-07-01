@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import * as chatModule from "./index.ts";
 import * as chatUI from "#veryfront/react/components/chat/chat.tsx";
@@ -124,7 +124,10 @@ describe("chat/index.ts exports", () => {
     assertEquals(chatModule.ChatWithSidebar, chatUI.ChatWithSidebar);
     assertEquals(chatModule.useChat, useChatModule.useChat);
     assertEquals(chatModule.useAgent, useAgentModule.useAgent);
-    assertEquals(chatModule.useAgentMetadata, useAgentMetadataModule.useAgentMetadata);
+    assertEquals(
+      chatModule.useAgentMetadata,
+      useAgentMetadataModule.useAgentMetadata,
+    );
     assertEquals(
       chatModule.getAgentPromptSuggestions,
       useAgentMetadataModule.getAgentPromptSuggestions,
@@ -133,12 +136,21 @@ describe("chat/index.ts exports", () => {
     assertEquals(chatModule.useStreaming, useStreamingModule.useStreaming);
     assertEquals(chatModule.useVoiceInput, useVoiceInputModule.useVoiceInput);
     assertEquals(chatModule.AgentCard, agentCardModule.AgentCard);
-    assertEquals(chatModule.ChatErrorBoundary, errorBoundaryModule.ChatErrorBoundary);
+    assertEquals(
+      chatModule.ChatErrorBoundary,
+      errorBoundaryModule.ChatErrorBoundary,
+    );
   });
 
   it("keeps standalone message aliases separate from the chat compound export", () => {
     assertEquals(chatModule.Message, chatUI.Message);
-    assertEquals(chatModule.StandaloneMessage, messageModule.Message);
+    // StandaloneMessage is the Studio-anatomy wrapper (assembled from the
+    // Message.* compound parts), NOT the old monolithic `message.tsx` renderer.
+    assertEquals(chatModule.StandaloneMessage, chatUI.StandaloneMessage);
+    assertNotEquals(
+      chatModule.StandaloneMessage as unknown,
+      chatModule.Message as unknown,
+    );
     assertEquals(chatModule.StreamingMessage, messageModule.StreamingMessage);
   });
 

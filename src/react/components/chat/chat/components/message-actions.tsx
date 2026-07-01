@@ -1,6 +1,6 @@
 import * as React from "react";
 import { cn } from "../../theme.ts";
-import { CheckIcon, CopyIcon } from "../../icons/index.ts";
+import { CheckIcon, CopyIcon, RefreshCwIcon } from "../../icons/index.ts";
 
 const ACTION_BUTTON =
   "inline-flex items-center justify-center size-7 rounded-full text-[var(--faint)] transition-colors hover:bg-[var(--tertiary)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--background)]";
@@ -11,11 +11,16 @@ export interface MessageActionsProps {
   className?: string;
   /** When provided, renders an edit button that calls this handler */
   onEdit?: (content: string) => void;
+  /** When provided, renders a regenerate button that calls this handler */
+  onRegenerate?: () => void;
 }
 
 /** Render message actions. */
-export const MessageActions = React.forwardRef<HTMLDivElement, MessageActionsProps>(
-  function MessageActions({ content, className, onEdit }, ref) {
+export const MessageActions = React.forwardRef<
+  HTMLDivElement,
+  MessageActionsProps
+>(
+  function MessageActions({ content, className, onEdit, onRegenerate }, ref) {
     const [copied, setCopied] = React.useState(false);
 
     const setCopiedWithTimeout = React.useCallback((): void => {
@@ -60,6 +65,17 @@ export const MessageActions = React.forwardRef<HTMLDivElement, MessageActionsPro
         >
           {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
         </button>
+        {onRegenerate && (
+          <button
+            type="button"
+            onClick={onRegenerate}
+            className={ACTION_BUTTON}
+            title="Regenerate response"
+            aria-label="Regenerate response"
+          >
+            <RefreshCwIcon className="size-3.5" />
+          </button>
+        )}
         {onEdit && (
           <button
             type="button"

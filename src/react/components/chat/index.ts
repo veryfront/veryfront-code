@@ -187,8 +187,9 @@ export type { AgentCardProps } from "./agent-card.tsx";
 // ---------------------------------------------------------------------------
 // Message (standalone bubble component — not the chat compound)
 // ---------------------------------------------------------------------------
-export { Message as StandaloneMessage, StreamingMessage } from "./message.tsx";
+export { StreamingMessage } from "./message.tsx";
 export type { MessageProps, StreamingMessageProps } from "./message.tsx";
+export { StandaloneMessage, type StandaloneMessageProps } from "./chat.tsx";
 
 // ---------------------------------------------------------------------------
 // Markdown

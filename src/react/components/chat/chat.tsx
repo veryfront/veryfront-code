@@ -35,6 +35,8 @@ export {
   type MessageRootProps,
   ModelAvatar,
   type ModelAvatarProps,
+  StandaloneMessage,
+  type StandaloneMessageProps,
 } from "./chat/index.tsx";
 
 // ---------------------------------------------------------------------------
