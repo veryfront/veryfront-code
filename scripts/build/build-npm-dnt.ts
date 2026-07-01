@@ -128,10 +128,10 @@ await build({
 		author: "Veryfront",
 		repository: {
 			type: "git",
-			url: "git+https://github.com/veryfront/veryfront.git",
+			url: "git+https://github.com/veryfront/veryfront-code.git",
 		},
 		bugs: {
-			url: "https://github.com/veryfront/veryfront/issues",
+			url: "https://github.com/veryfront/veryfront-code/issues",
 		},
 		homepage: "https://veryfront.com",
 		engines: {
@@ -182,10 +182,11 @@ await build({
 		normalizeNpmPackageMetadata(initialPkg);
 		await Deno.writeTextFile(pkgPath, JSON.stringify(initialPkg, null, 2));
 
-		// Run npm install with --legacy-peer-deps to avoid peer dep conflicts
+		// Run npm install with scripts disabled to avoid supply-chain install hooks.
+		// Keep --legacy-peer-deps to avoid peer dep conflicts
 		// (e.g., @ai-sdk/react requires react ~19.1.2 but framework uses 19.1.1)
 		const npmInstall = new Deno.Command("npm", {
-			args: ["install", "--legacy-peer-deps"],
+			args: ["install", "--ignore-scripts", "--legacy-peer-deps"],
 			cwd: "./npm",
 			stdout: "inherit",
 			stderr: "inherit",

@@ -1,0 +1,17 @@
+# Default maintainers for the public repository.
+* @kojiwakayama @kwakayama
+
+# Repository governance and security surfaces.
+/.github/ @kojiwakayama @kwakayama
+/.github/CODEOWNERS @kojiwakayama @kwakayama
+/SECURITY.md @kojiwakayama @kwakayama
+/CONTRIBUTING.md @kojiwakayama @kwakayama
+/CLA.md @kojiwakayama @kwakayama
+/CLA-CORPORATE.md @kojiwakayama @kwakayama
+/LICENSE @kojiwakayama @kwakayama
+
+# Release, dependency, and security-sensitive code.
+/deno.json @kojiwakayama @kwakayama
+/deno.lock @kojiwakayama @kwakayama
+/scripts/ @kojiwakayama @kwakayama
+/src/security/ @kojiwakayama @kwakayama

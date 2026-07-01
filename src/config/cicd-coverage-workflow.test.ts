@@ -24,7 +24,10 @@ Deno.test("CI keeps the required coverage gate as a fast merge job", () => {
   assertStringIncludes(workflow, "coverage:");
   assertStringIncludes(workflow, "name: coverage gate");
   assertStringIncludes(workflow, "needs: [coverage-shards]");
-  assertStringIncludes(workflow, "if: ${{ always() }}");
+  assertStringIncludes(
+    workflow,
+    "if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}",
+  );
   assertStringIncludes(workflow, "timeout-minutes: 5");
   assertStringIncludes(workflow, "actions/download-artifact");
   assertStringIncludes(workflow, "Download unit coverage lcov files");

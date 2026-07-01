@@ -15,6 +15,14 @@ Deno.test("exports agent skill helpers as a public package subpath", async () =>
 	assertEquals(imports["veryfront/skill"], "./src/skill/index.ts");
 });
 
+Deno.test("npm package provenance metadata points at veryfront-code", async () => {
+	const source = await Deno.readTextFile("scripts/build/build-npm-dnt.ts");
+
+	assertStringIncludes(source, 'url: "git+https://github.com/veryfront/veryfront-code.git"');
+	assertStringIncludes(source, 'url: "https://github.com/veryfront/veryfront-code/issues"');
+	assertEquals(source.includes("github.com/veryfront/veryfront.git"), false);
+});
+
 describe("normalizeNpmPackageMetadata", () => {
 	it("removes source files from the published npm file list", () => {
 		const pkg = normalizeNpmPackageMetadata({
