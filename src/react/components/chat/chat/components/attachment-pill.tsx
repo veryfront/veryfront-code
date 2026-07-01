@@ -1,11 +1,6 @@
 import * as React from "react";
 import { cn } from "../../theme.ts";
-import {
-  CheckIcon,
-  ClockIcon,
-  FileTextIcon,
-  RefreshCwIcon,
-} from "../../icons/index.ts";
+import { CheckIcon, ClockIcon, FileTextIcon, RefreshCwIcon } from "../../icons/index.ts";
 import { Button } from "../../ui/button.tsx";
 import { Shimmer } from "./animations.tsx";
 
@@ -86,9 +81,7 @@ function getStateLabel(
     case "processing":
       return "Processing document";
     case "uploaded":
-      return attachment.size != null
-        ? `Uploaded · ${formatSize(attachment.size)}`
-        : "Uploaded";
+      return attachment.size != null ? `Uploaded · ${formatSize(attachment.size)}` : "Uploaded";
     case "error":
       return "Upload failed. Try again.";
     default:
