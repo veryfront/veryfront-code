@@ -96,41 +96,19 @@ export {
   Suggestions,
   type SuggestionsProps,
 } from "./components/empty-state.tsx";
-export {
-  MessageActions,
-  type MessageActionsProps,
-} from "./components/message-actions.tsx";
-export {
-  MessageEditForm,
-  type MessageEditFormProps,
-} from "./components/message-edit-form.tsx";
-export {
-  BranchPicker,
-  type BranchPickerProps,
-} from "./components/branch-picker.tsx";
-export {
-  DropZoneOverlay,
-  type DropZoneOverlayProps,
-} from "./components/drop-zone.tsx";
+export { MessageActions, type MessageActionsProps } from "./components/message-actions.tsx";
+export { MessageEditForm, type MessageEditFormProps } from "./components/message-edit-form.tsx";
+export { BranchPicker, type BranchPickerProps } from "./components/branch-picker.tsx";
+export { DropZoneOverlay, type DropZoneOverlayProps } from "./components/drop-zone.tsx";
 export {
   ChatMessagesSkeleton,
   type ChatMessagesSkeletonProps,
 } from "./components/chat-messages-skeleton.tsx";
 export { SkillBadge, type SkillBadgeProps } from "./components/skill-badge.tsx";
 export { ToolCallCard, ToolStatusBadge } from "./components/tool-ui.tsx";
-export {
-  InferenceBadge,
-  type InferenceBadgeProps,
-} from "./components/inference-badge.tsx";
-export {
-  type Source,
-  Sources,
-  type SourcesProps,
-} from "./components/sources.tsx";
-export {
-  InlineCitation,
-  type InlineCitationProps,
-} from "./components/inline-citation.tsx";
+export { InferenceBadge, type InferenceBadgeProps } from "./components/inference-badge.tsx";
+export { type Source, Sources, type SourcesProps } from "./components/sources.tsx";
+export { InlineCitation, type InlineCitationProps } from "./components/inline-citation.tsx";
 export {
   type FeedbackValue,
   MessageFeedback,
@@ -141,20 +119,10 @@ export {
   AttachmentPill,
   type AttachmentPillProps,
 } from "./components/attachment-pill.tsx";
-export {
-  type CodeBlockProps,
-  RichCodeBlock,
-} from "./components/code-block.tsx";
-export {
-  StepIndicator,
-  type StepIndicatorProps,
-} from "./components/step-indicator.tsx";
+export { type CodeBlockProps, RichCodeBlock } from "./components/code-block.tsx";
+export { StepIndicator, type StepIndicatorProps } from "./components/step-indicator.tsx";
 export { ChatSidebar, type ChatSidebarProps } from "./components/sidebar.tsx";
-export {
-  type ChatTab,
-  TabSwitcher,
-  type TabSwitcherProps,
-} from "./components/tab-switcher.tsx";
+export { type ChatTab, TabSwitcher, type TabSwitcherProps } from "./components/tab-switcher.tsx";
 export {
   type QuickAction,
   QuickActions,
@@ -173,11 +141,7 @@ export {
   type UseThreadsOptions,
   type UseThreadsResult,
 } from "./hooks/use-threads.ts";
-export {
-  useUpload,
-  type UseUploadOptions,
-  type UseUploadResult,
-} from "./hooks/use-upload.ts";
+export { useUpload, type UseUploadOptions, type UseUploadResult } from "./hooks/use-upload.ts";
 
 // Re-exports — utils
 export {
@@ -491,9 +455,7 @@ const ControlledChat = React.forwardRef<HTMLDivElement, ChatProps>(
         className={className}
         {...dragProps}
       >
-        {dropHandler && (
-          <DropZoneOverlay visible={dragOver} accept={attachAccept} />
-        )}
+        {dropHandler && <DropZoneOverlay visible={dragOver} accept={attachAccept} />}
 
         {showTabs && !hideTabSwitcher && (
           <TabSwitcher activeTab={currentTab} onTabChange={handleTabChange} />

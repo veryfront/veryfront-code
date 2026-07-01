@@ -232,6 +232,7 @@ function ComposerReview({
           isLoading={isLoading}
           placeholder="Type a prompt or a question..."
           stop={() => undefined}
+          onVoice={() => undefined}
           models={modelOptions}
           model={model}
           onModelChange={setModel}

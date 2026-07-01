@@ -7,7 +7,13 @@
 import * as React from "react";
 import { InputBox } from "#veryfront/react/primitives/index.ts";
 import { cn } from "../../theme.ts";
-import { ArrowUpIcon, FileTextIcon, PaperclipIcon, PlusIcon, StopIcon } from "../../icons/index.ts";
+import {
+  ArrowUpIcon,
+  FileTextIcon,
+  PaperclipIcon,
+  PlusIcon,
+  StopIcon,
+} from "../../icons/index.ts";
 import { Button } from "../../ui/button.tsx";
 import { IconButton } from "../../ui/icon-button.tsx";
 import {
@@ -22,6 +28,25 @@ import { AttachmentPill } from "../components/attachment-pill.tsx";
 import type { AttachmentInfo } from "../components/attachment-pill.tsx";
 import { downloadMarkdown } from "../utils/export.ts";
 import type { ChatMessage } from "#veryfront/agent/react";
+
+/** Microphone glyph for the idle-composer voice button (not in the barrel). */
+function MicGlyph(): React.ReactElement {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+      <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+      <line x1="12" x2="12" y1="19" y2="22" />
+    </svg>
+  );
+}
 
 /** Props accepted by chat composer. */
 export interface ChatComposerProps {
@@ -75,6 +100,7 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
       placeholder = "Type a message...",
       theme,
       stop,
+      onVoice,
       isListening = false,
       transcript,
       models,
@@ -265,6 +291,10 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
                       </svg>
                     </IconButton>
                   )}
+                  {
+                    /* Streaming → Stop · empty (+voice) → Mic · value → Send
+                      (Studio PromptFormActions). */
+                  }
                   {isLoading
                     ? (
                       <Button
@@ -276,6 +306,25 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
                         className="shrink-0"
                       >
                         <StopIcon />
+                      </Button>
+                    )
+                    : !input.trim() && onVoice
+                    ? (
+                      <Button
+                        type="button"
+                        variant="icon-ghost"
+                        on="card"
+                        size="icon-lg"
+                        aria-label="Voice input"
+                        aria-pressed={isListening}
+                        onClick={() => onVoice()}
+                        className={cn(
+                          "shrink-0",
+                          isListening &&
+                            "bg-[var(--primary)] text-[var(--secondary)]",
+                        )}
+                      >
+                        <MicGlyph />
                       </Button>
                     )
                     : (
