@@ -139,7 +139,7 @@ export const Secondary: Story = {
     <IconButton
       tooltip="Copy to clipboard"
       variant="icon-secondary"
-      size="icon-lg"
+      size="icon-sm"
     >
       <CopyIcon />
     </IconButton>
