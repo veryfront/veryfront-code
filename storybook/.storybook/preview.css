@@ -315,16 +315,16 @@ body {
   color: var(--foreground);
 }
 
-/* Render the workbench in Inter — the chat library's own font (loaded via
-   preview-head.html) — instead of Storybook's default Nunito Sans, which ships
-   ONLY 400/700, so font-medium (500) / font-semibold (600) had no matching face
-   and collapsed to regular. The `html` prefix outranks Storybook's own
-   `.sb-show-main` / `.sbdocs` rules by specificity (0,1,1 > 0,1,0), so no
-   `!important` is needed; descendants inherit, and code blocks keep their
-   monospace via the `.vf-code` rule above. */
-html .sb-show-main,
-html .docs-story,
-html .sbdocs {
+/* Every story renders inside `.vf-story-shell` (our own wrapper, in both the
+   canvas and the docs preview). Setting the chat library's font (Inter, loaded
+   via preview-head.html) on that wrapper establishes the font context the way a
+   consuming app would — descendants inherit it from this nearest setter, which
+   sits BELOW Storybook's runtime-injected Nunito Sans (Nunito ships only
+   400/700, so font-medium=500 collapsed to regular). No `!important`, no
+   universal selector — and code blocks are outside `.vf-story-shell`, so they
+   keep their monospace. This mirrors how Studio's own component context carries
+   the font. */
+.vf-story-shell {
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
     "Segoe UI", sans-serif;

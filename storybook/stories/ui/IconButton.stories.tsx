@@ -1,8 +1,12 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { IconButton } from "../../../src/react/components/chat/ui/index.ts";
 import {
-  PaperclipIcon,
+  IconButton,
+  TooltipProvider,
+} from "../../../src/react/components/chat/ui/index.ts";
+import {
+  CopyIcon,
   PlusIcon,
+  RefreshCwIcon,
   TrashIcon,
 } from "../../../src/react/components/chat/icons/index.ts";
 import {
@@ -15,37 +19,58 @@ import {
   DocsSection,
 } from "../../.storybook/docs";
 
-const compositionTree =
-  `IconButton  <- Button (icon size) wrapped in a Tooltip
-  +-- Tooltip       <- hover/focus label (basic; a11y TODO)
-  +-- Button        <- icon-only variant`;
+// NOTE: Studio's `Plus`/`Copy`/`RefreshCw`/`Trash2` icons are substituted with
+// our `PlusIcon`/`CopyIcon`/`RefreshCwIcon`/`TrashIcon`.
+
+const importCode = `import { IconButton } from "veryfront/chat/ui"`;
+
+const compositionTree = `IconButton
++-- Tooltip
+    +-- TooltipTrigger -> Button
+    +-- TooltipContent`;
 
 function IconButtonDocsPage() {
   return (
     <DocsPage>
       <DocsHero
         title="IconButton"
-        lead="Icon-only button with a built-in hover tooltip — hover the examples to see it."
+        lead="Icon-only button with a built-in tooltip."
       />
-      <DocsSection title="Variants">
-        <DocsExampleAuto of={Variants} />
+
+      <DocsSection title="Default">
+        <DocsExampleAuto of={Default} />
       </DocsSection>
+
+      <DocsSection
+        title="Secondary"
+        description="Higher-emphasis actions like copy."
+      >
+        <DocsExampleAuto of={Secondary} />
+      </DocsSection>
+
       <DocsSection
         title="Disabled"
-        description="A disabled IconButton renders without the tooltip."
+        description="Tooltip is suppressed when disabled."
       >
         <DocsExampleAuto of={Disabled} />
       </DocsSection>
-      <DocsSection title="Import">
-        <DocsCode code={`import { IconButton } from "veryfront/chat/ui"`} />
+
+      <DocsSection title="Toolbar Row">
+        <DocsExampleAuto of={ToolbarRow} />
       </DocsSection>
+
+      <DocsSection title="Import">
+        <DocsCode code={importCode} />
+      </DocsSection>
+
       <DocsSection title="Composition">
         <DocsComposition>{compositionTree}</DocsComposition>
       </DocsSection>
+
       <DocsSection title="API Reference">
         <DocsPropsTable
           component="IconButton"
-          description="Extends ButtonProps"
+          description="Icon button with built-in tooltip (extends ButtonProps)"
           props={[
             {
               name: "tooltip",
@@ -63,6 +88,12 @@ function IconButtonDocsPage() {
               type: "'icon-primary' | 'icon-secondary' | 'icon-ghost' | …",
               description: "Button icon variant",
             },
+            {
+              name: "disabled",
+              type: "boolean",
+              default: "false",
+              description: "Disable the button (tooltip is suppressed)",
+            },
           ]}
         />
       </DocsSection>
@@ -74,37 +105,67 @@ const meta = {
   title: "Chat/UI/IconButton",
   component: IconButton,
   tags: ["autodocs"],
-  parameters: { layout: "centered", docs: { page: IconButtonDocsPage } },
+  args: {
+    tooltip: "Tooltip",
+  },
+  parameters: {
+    layout: "centered",
+    docs: { page: IconButtonDocsPage },
+  },
+  decorators: [
+    (Story) => (
+      <TooltipProvider>
+        <Story />
+      </TooltipProvider>
+    ),
+  ],
 } satisfies Meta<typeof IconButton>;
 
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const Variants: Story = {
+export const Default: Story = {
   tags: ["!dev"],
   render: () => (
-    <div className="flex items-center gap-3 py-6">
-      <IconButton tooltip="Add" variant="icon-primary" aria-label="Add">
-        <PlusIcon />
-      </IconButton>
-      <IconButton
-        tooltip="Attach a file"
-        variant="icon-secondary"
-        aria-label="Attach"
-      >
-        <PaperclipIcon />
-      </IconButton>
-      <IconButton tooltip="Delete" variant="icon-ghost" aria-label="Delete">
-        <TrashIcon />
-      </IconButton>
-    </div>
+    <IconButton tooltip="Add item" variant="icon-ghost" size="icon-sm">
+      <PlusIcon />
+    </IconButton>
   ),
 };
+
+export const Secondary: Story = {
+  tags: ["!dev"],
+  render: () => (
+    <IconButton
+      tooltip="Copy to clipboard"
+      variant="icon-secondary"
+      size="icon-lg"
+    >
+      <CopyIcon />
+    </IconButton>
+  ),
+};
+
 export const Disabled: Story = {
   tags: ["!dev"],
   render: () => (
-    <IconButton tooltip="Unavailable" disabled aria-label="Unavailable">
-      <PlusIcon />
+    <IconButton tooltip="Refresh" variant="icon-ghost" size="icon-sm" disabled>
+      <RefreshCwIcon />
     </IconButton>
+  ),
+};
+
+export const ToolbarRow: Story = {
+  name: "Toolbar Row",
+  tags: ["!dev"],
+  render: () => (
+    <div className="flex items-center gap-1">
+      <IconButton tooltip="Refresh" variant="icon-ghost" size="icon-sm">
+        <RefreshCwIcon />
+      </IconButton>
+      <IconButton tooltip="Delete" variant="icon-ghost" size="icon-sm">
+        <TrashIcon />
+      </IconButton>
+    </div>
   ),
 };
