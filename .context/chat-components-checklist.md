@@ -169,6 +169,13 @@ passed while components were un-ported, invented, doubled, or visually broken.
 
 ## Outstanding fidelity fixes (from the 2026-07-01 review — all must pass rule 1)
 
+> **⚠️ This section is now superseded by the live trackers — use those, not this:**
+> - **`.context/chat-review.md`** — the current review tracker (every outstanding
+>   item + status, kept up to date).
+> - **`.context/chat-integration-plan.md`** — the plan to integrate the components
+>   into a batteries-included `<Chat>` (the 12 requirements).
+> The list below is the earlier snapshot, kept for history.
+
 > **Status (addressed in the follow-up round, pending Matt's visual confirmation):**
 > P0 duplicates retired · P1 ChatInput rebuilt to Studio `PromptForm` two-row
 > layout (editor top; footer `+`·agent·model·mic) · ChatActions `+` = `icon-tertiary`

@@ -40,13 +40,14 @@ confirmation is on you (HMR); I verify types + driver + build.
 
 ## 🔧 Pending — bigger per-component rebuilds (Studio parity)
 
-- **AgentCard** — currently a bespoke card (Thinking / Tool Calls / Messages boxes). Rebuild to **render like a usual Message**, composing the real parts:
-  - agent **Avatar + name** (copied from Studio)
-  - **Status** top-right via `<Status>`
-  - thinking block → **Reasoning** component
-  - tool calls → **ToolCall** card
-  - message text → **Markdown**
-  - "etc etc" — mirror Studio's agent/message anatomy.
+- **AgentCard** — currently a bespoke card (Thinking / Tool Calls / Messages boxes). Rebuild so it's a **`Card`** wrapper with **`Message` components inside**, composing the real parts (use the **primitives** throughout — no raw `<button>`/`<div>` where a primitive exists):
+  - **`Card`** container (Card primitive) holding the message anatomy.
+  - **Header row**: agent **Avatar** + **name** on the left, **`<Status>`** on the right, e.g. `[avatar]  Whatever Agent            ● Running`.
+  - agent **Avatar + name** (copied from Studio).
+  - thinking block → **Reasoning** component.
+  - tool calls → **ToolCall** card.
+  - message text → **Markdown**.
+  - Mirror Studio's agent/message anatomy; it should read like a `Message` inside a card.
 - **Message** (chat-components-message) — looks unchanged; needs the Studio-parity pass: header (Avatar + name + timestamp), Status top-right, Reasoning toggle, Markdown content, actions (copy / regenerate), token usage. (Was a 🟡 row, out of the original red scope.)
 - **ChatSidebar** — "looks totally broken"; make it resemble Studio's chat sidebar (M2PPf6): **slimmer list items**, a per-row **context menu** (rename/delete via DropdownMenu), tighter spacing. Reference Studio `ConversationsPanel`.
 
