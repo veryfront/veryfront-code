@@ -1,7 +1,10 @@
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import { SandboxShellToolsProviderName } from "veryfront/extensions/sandbox";
-import extSandboxShellTools, { createSandboxShellToolsProvider } from "./index.ts";
+import extSandboxShellTools, {
+  createLazyBashSandboxShellToolsProvider,
+  createSandboxShellToolsProvider,
+} from "./index.ts";
 
 describe("ext-sandbox-shell-tools", () => {
   it("declares the sandbox shell tools contract", () => {
@@ -60,5 +63,31 @@ describe("ext-sandbox-shell-tools", () => {
       promptOptions: { toolPrompt: "tools" },
     });
     assertEquals(result, { tools: { bash: { description: "Run commands" } } });
+  });
+
+  it("reports missing opt-in shell dependencies with an actionable error", async () => {
+    const provider = createLazyBashSandboxShellToolsProvider(async () => {
+      throw Object.assign(new Error("Cannot find package 'bash-tool'"), {
+        code: "ERR_MODULE_NOT_FOUND",
+      });
+    });
+    const sandbox = {
+      executeCommand: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
+    };
+
+    const error = await assertRejects(
+      () =>
+        provider({
+          sandbox,
+          destination: "/workspace",
+          promptOptions: { toolPrompt: "tools" },
+        }),
+      Error,
+      "Sandbox shell tools require optional peer dependencies",
+    );
+
+    assertStringIncludes(error.message, "bash-tool");
+    assertStringIncludes(error.message, "just-bash");
+    assertStringIncludes(error.message, "pass createBashTool explicitly");
   });
 });

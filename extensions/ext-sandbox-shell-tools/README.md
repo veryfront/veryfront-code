@@ -15,6 +15,10 @@ This extension is a sensitive sandbox execution boundary. Keep `bash-tool`,
 `just-bash`, and related shell execution dependencies in this extension instead
 of importing them from core, CLI, React, or unrelated extensions.
 
+Npm installs of `veryfront` do not install `bash-tool` or `just-bash` by
+default. Apps that expose sandbox bash must install them in the app package or
+pass `createBashTool` explicitly.
+
 ## Capabilities
 
 - **sandbox `bash`:** Creates shell tools that execute commands through the

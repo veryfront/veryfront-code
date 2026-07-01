@@ -15,16 +15,60 @@ type BashToolFactory = (
   input: CreateSandboxShellToolsInput,
 ) => Promise<{ tools: Record<string, unknown> }>;
 
+type BashToolModule = {
+  createBashTool: BashToolFactory;
+};
+
+type BashToolModuleLoader = () => Promise<BashToolModule>;
+
 export function createSandboxShellToolsProvider(
   createBashToolImpl: BashToolFactory,
 ): SandboxShellToolsProvider {
   return async (input) => await createBashToolImpl(input);
 }
 
-const provider = createSandboxShellToolsProvider(async (input) => {
+async function loadDefaultBashToolModule(): Promise<BashToolModule> {
   const { createBashTool: createBashToolImpl } = await import("bash-tool");
-  return await createBashToolImpl(input);
-});
+  return { createBashTool: createBashToolImpl as BashToolFactory };
+}
+
+function isMissingOptionalPackageError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  const code = typeof error === "object" && error !== null && "code" in error
+    ? String((error as { code?: unknown }).code)
+    : "";
+  return code === "ERR_MODULE_NOT_FOUND" ||
+    message.includes("Cannot find package") ||
+    message.includes("Cannot find module") ||
+    message.includes("Module not found");
+}
+
+function createMissingSandboxShellDependencyError(cause: unknown): Error {
+  const error = new Error(
+    'Sandbox shell tools require optional peer dependencies "bash-tool" and "just-bash". Install them in the application package or pass createBashTool explicitly.',
+  );
+  (error as { cause?: unknown }).cause = cause;
+  return error;
+}
+
+export function createLazyBashSandboxShellToolsProvider(
+  loadBashToolModule: BashToolModuleLoader = loadDefaultBashToolModule,
+): SandboxShellToolsProvider {
+  return createSandboxShellToolsProvider(async (input) => {
+    let bashToolModule: BashToolModule;
+    try {
+      bashToolModule = await loadBashToolModule();
+    } catch (error) {
+      if (isMissingOptionalPackageError(error)) {
+        throw createMissingSandboxShellDependencyError(error);
+      }
+      throw error;
+    }
+    return await bashToolModule.createBashTool(input);
+  });
+}
+
+const provider = createLazyBashSandboxShellToolsProvider();
 
 const extSandboxShellTools: ExtensionFactory = () => ({
   name: "ext-sandbox-shell-tools",
