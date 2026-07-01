@@ -4,8 +4,8 @@ import { bold, cyan, dim, green, yellow } from "#cli/ui";
 import { join } from "veryfront/platform/path";
 import { cliLogger } from "#cli/utils";
 import { cwd } from "veryfront/platform";
-import { buildCommand } from "./command.ts";
 import { CommonArgs, createArgParser, parseArgsOrThrow } from "#cli/shared/args";
+import { ensureCliBundlerContracts } from "#cli/shared/default-contracts";
 import { exitProcess, showLogo } from "#cli/utils";
 import type { ParsedArgs } from "#cli/shared/types";
 
@@ -53,6 +53,7 @@ export const parseBuildArgs = createArgParser(BuildArgsSchema, {
 export async function handleBuildCommand(args: ParsedArgs): Promise<void> {
   showLogo();
   const opts = parseArgsOrThrow(parseBuildArgs, "build", args);
+  await ensureCliBundlerContracts();
   const projectDir = cwd();
   const preset = opts.preset?.toLowerCase();
 
@@ -61,6 +62,7 @@ export async function handleBuildCommand(args: ParsedArgs): Promise<void> {
     return;
   }
 
+  const { buildCommand } = await import("./command.ts");
   await buildCommand({
     projectDir,
     outputDir: opts.output,

@@ -1,7 +1,11 @@
 import { tryResolve } from "veryfront/extensions";
 import { register } from "../../src/extensions/contracts.ts";
 import type { ContentProcessor } from "veryfront/extensions/content";
-import { MdxContentProcessor } from "../../extensions/ext-content-mdx/src/index.ts";
+import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
+
+type ContentMdxExtensionModule = {
+  MdxContentProcessor: new () => ContentProcessor;
+};
 
 /**
  * The CLI ships ext-mdx baked in so the compiled binary can render MDX/Markdown
@@ -11,7 +15,11 @@ import { MdxContentProcessor } from "../../extensions/ext-content-mdx/src/index.
  * must run *after* the server-start (or `getConfig`) call returns. We skip
  * registration when a user-provided extension already supplied the contract.
  */
-export function ensureBuiltinContentProcessor(): void {
+export async function ensureBuiltinContentProcessor(): Promise<void> {
   if (tryResolve<ContentProcessor>("ContentProcessor")) return;
+  const { MdxContentProcessor } = await importFirstPartyExtensionModule<ContentMdxExtensionModule>(
+    "ext-content-mdx",
+    "@veryfront/ext-content-mdx",
+  );
   register<ContentProcessor>("ContentProcessor", new MdxContentProcessor());
 }

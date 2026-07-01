@@ -11,13 +11,25 @@ type PackageJson = {
 	overrides?: Record<string, string>;
 };
 
-const OPTIONAL_NATIVE_PEERS = {
-	"better-sqlite3": ">=9.0.0",
-} as const;
+const ROOT_OPTIONAL_RUNTIME_PEERS = [
+	"@huggingface/transformers",
+	"redis",
+] as const;
 
-const OPTIONAL_FEATURE_PEERS = [
+const EXTENSION_OWNED_DEPENDENCIES = [
+	"@babel/generator",
+	"@babel/parser",
+	"@babel/traverse",
+	"@babel/types",
+	"@types/better-sqlite3",
+	"@types/hast",
+	"@types/mdast",
+	"@types/unist",
+	"better-sqlite3",
 	"@kreuzberg/node",
 	"@kreuzberg/wasm",
+	"@mdx-js/mdx",
+	"@mdx-js/react",
 	"@opentelemetry/api",
 	"@opentelemetry/auto-instrumentations-node",
 	"@opentelemetry/context-async-hooks",
@@ -29,11 +41,27 @@ const OPTIONAL_FEATURE_PEERS = [
 	"@opentelemetry/sdk-node",
 	"@opentelemetry/sdk-trace-base",
 	"@opentelemetry/semantic-conventions",
-] as const;
-
-const AUTO_ENABLED_EXTENSION_OPTIONAL_DEPENDENCIES = [
 	"bash-tool",
+	"es-module-lexer",
+	"esbuild",
+	"github-slugger",
+	"jose",
 	"just-bash",
+	"mdast-util-to-string",
+	"rehype-highlight",
+	"rehype-raw",
+	"rehype-sanitize",
+	"rehype-slug",
+	"rehype-starry-night",
+	"rehype-stringify",
+	"remark-frontmatter",
+	"remark-gfm",
+	"remark-parse",
+	"remark-rehype",
+	"tailwindcss",
+	"unified",
+	"unist-util-visit",
+	"vfile",
 ] as const;
 
 const STALE_DIRECT_DEPENDENCIES = [
@@ -55,22 +83,13 @@ export function normalizeNpmPackageMetadata(pkg: PackageJson): PackageJson {
 		pkg.files = pkg.files.filter((entry) => entry !== "src" && entry !== "/src");
 	}
 
-	for (const [name, range] of Object.entries(OPTIONAL_NATIVE_PEERS)) {
-		delete pkg.dependencies?.[name];
-
-		pkg.peerDependencies ??= {};
-		pkg.peerDependencies[name] = range;
-
-		pkg.peerDependenciesMeta ??= {};
-		pkg.peerDependenciesMeta[name] = { optional: true };
-	}
-
-	for (const name of OPTIONAL_FEATURE_PEERS) {
+	for (const name of ROOT_OPTIONAL_RUNTIME_PEERS) {
 		movePackageToOptionalPeer(pkg, name);
 	}
 
-	for (const name of AUTO_ENABLED_EXTENSION_OPTIONAL_DEPENDENCIES) {
-		movePackageToOptionalDependency(pkg, name);
+	for (const name of EXTENSION_OWNED_DEPENDENCIES) {
+		delete pkg.dependencies?.[name];
+		delete pkg.optionalDependencies?.[name];
 	}
 
 	for (const name of STALE_DIRECT_DEPENDENCIES) {
@@ -122,18 +141,6 @@ function movePackageToOptionalPeer(pkg: PackageJson, name: string): void {
 
 	pkg.peerDependenciesMeta ??= {};
 	pkg.peerDependenciesMeta[name] = { optional: true };
-}
-
-function movePackageToOptionalDependency(pkg: PackageJson, name: string): void {
-	const range = pkg.dependencies?.[name] ?? pkg.optionalDependencies?.[name];
-	if (!range) return;
-
-	delete pkg.dependencies?.[name];
-	delete pkg.peerDependencies?.[name];
-	delete pkg.peerDependenciesMeta?.[name];
-
-	pkg.optionalDependencies ??= {};
-	pkg.optionalDependencies[name] = range;
 }
 
 function deleteIfEmpty(

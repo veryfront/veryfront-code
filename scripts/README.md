@@ -22,8 +22,15 @@ Cross-runtime (Node/Bun) test infrastructure lives in `tests/node/` and
 | `generate-templates-manifest.ts` | `build`     | Generates template manifest for CLI scaffolding     |
 | `generate-dev-ui-manifest.ts`    | `build`     | Generates dev UI asset manifest                     |
 | `prepare-framework-sources.ts`   | `build`     | Prepares framework `.src` files for SSR transforms  |
-| `build-all.js`                   | —           | Cross-compiles CLI binary for all platforms         |
-| `build-npm-dnt.ts`               | `build:npm` | Builds npm package via dnt (Deno-to-Node transform) |
+| `build-all.js`                   | n/a         | Cross-compiles CLI binary for all platforms         |
+| `build-npm-dnt.ts`               | `build:npm` | Builds the root npm package via dnt and emits generated extension packages |
+| `build-npm-extension-packages.ts` | `build:npm` | Builds one publishable npm package for each first-party extension manifest |
+
+`deno task build:npm` writes the root package to `npm/` and first-party
+extension packages to `npm/extensions/<extension-name>/`. The root `veryfront`
+package must stay free of feature-specific implementation dependencies. Each
+generated `@veryfront/ext-*` package owns the dependencies declared by its
+extension manifest and peers on the matching `veryfront` version.
 
 ## lint/
 
@@ -74,6 +81,6 @@ explicit capability metadata for sensitive extension boundaries.
 | `release.ts`                 | `release`   | Automated release workflow                     |
 | `setup.ts`                   | `setup`     | Project setup and initialization               |
 | `server.ts`                  | `typecheck` | Entry point for typecheck                      |
-| `install.sh` / `install.ps1` | —           | Binary installer (curl/PowerShell)             |
-| `postinstall.js`             | —           | npm postinstall hook (copied into npm package) |
-| `update-homebrew-formula.sh` | —           | Updates Homebrew formula after release         |
+| `install.sh` / `install.ps1` | n/a         | Binary installer (curl/PowerShell)             |
+| `postinstall.js`             | n/a         | npm postinstall hook (copied into npm package) |
+| `update-homebrew-formula.sh` | n/a         | Updates Homebrew formula after release         |

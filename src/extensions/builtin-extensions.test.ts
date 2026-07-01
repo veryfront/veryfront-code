@@ -6,6 +6,7 @@ import { EvalReportExporterRegistryName } from "./eval/index.ts";
 import type { SchemaValidator } from "./schema/index.ts";
 import {
   createBuiltinExtensions,
+  createOptionalBuiltinExtension,
   ensureBuiltinEvalReportExporterRegistry,
   ensureBuiltinSchemaValidator,
 } from "./builtin-extensions.ts";
@@ -83,15 +84,15 @@ describe("ensureBuiltinEvalReportExporterRegistry", () => {
 });
 
 describe("createBuiltinExtensions", () => {
-  it("includes the built-in AuthProvider extension", () => {
+  it("declares the built-in AuthProvider extension contract", () => {
     const authExtension = createBuiltinExtensions().find((entry) =>
       entry.extension.name === "ext-auth-jwt"
     );
 
-    assertEquals(authExtension?.extension.provides?.AuthProvider !== undefined, true);
+    assertEquals(authExtension?.extension.contracts?.provides?.includes("AuthProvider"), true);
   });
 
-  it("includes the OpenTelemetry observability extension for runtime metrics", () => {
+  it("declares the OpenTelemetry observability extension contracts", () => {
     const otelExtension = createBuiltinExtensions().find((entry) =>
       entry.extension.name === "ext-observability-opentelemetry"
     );
@@ -101,5 +102,50 @@ describe("createBuiltinExtensions", () => {
       otelExtension?.extension.contracts?.provides?.includes("NodeTelemetryProvider"),
       true,
     );
+  });
+
+  it("does not statically import optional implementation extensions", async () => {
+    const source = await Deno.readTextFile("src/extensions/builtin-extensions.ts");
+
+    assertEquals(source.includes('from "../../extensions/ext-auth-jwt/src/index.ts"'), false);
+    assertEquals(
+      source.includes('from "../../extensions/ext-bundler-esbuild/src/index.ts"'),
+      false,
+    );
+    assertEquals(source.includes('from "../../extensions/ext-content-mdx/src/index.ts"'), false);
+    assertEquals(
+      source.includes('from "../../extensions/ext-sandbox-shell-tools/src/index.ts"'),
+      false,
+    );
+  });
+
+  it("skips unavailable optional built-in implementations", async () => {
+    const extension = createOptionalBuiltinExtension({
+      name: "ext-missing",
+      origin: "veryfront/ext-missing",
+      sourceDirectory: "ext-missing",
+      contracts: { provides: ["MissingContract"] },
+      capabilities: [],
+    }).extension;
+
+    const logs: string[] = [];
+    await extension.setup?.({
+      get: () => undefined,
+      require: () => {
+        throw new Error("not used");
+      },
+      provide: () => {
+        throw new Error("should not provide when implementation is missing");
+      },
+      config: {},
+      logger: {
+        debug: (message) => logs.push(message),
+        info: () => {},
+        warn: () => {},
+        error: () => {},
+      },
+    });
+
+    assertEquals(logs.some((message) => message.includes("ext-missing")), true);
   });
 });

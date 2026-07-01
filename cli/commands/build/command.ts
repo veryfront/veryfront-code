@@ -27,7 +27,7 @@ export function buildCommand(options: BuildOptions): Promise<void> {
 
         const adapter = await runtime.get();
         await getConfig(options.projectDir, adapter);
-        ensureBuiltinContentProcessor();
+        await ensureBuiltinContentProcessor();
 
         if (isJsonMode()) {
           streamJsonLine({ type: "step", name: "config", status: "completed" });

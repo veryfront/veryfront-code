@@ -60,7 +60,7 @@ export async function startCliProxyModeServer(
     defaultProjectId: options.defaultProjectId,
     discoveryConfig: buildDiscoveryConfig(options),
   });
-  ensureBuiltinContentProcessor();
+  await ensureBuiltinContentProcessor();
   return result;
 }
 
@@ -83,7 +83,7 @@ export async function startCliDevServer(
     signal: options.signal,
   };
   const result = await startDevServer(devOptions);
-  ensureBuiltinContentProcessor();
+  await ensureBuiltinContentProcessor();
   return result;
 }
 
@@ -140,7 +140,7 @@ export async function startCliProductionServer(
     // `localProjects` entry is required for the compiled binary to work.
   };
   const result = await startProductionServer(serverOptions);
-  ensureBuiltinContentProcessor();
+  await ensureBuiltinContentProcessor();
   return {
     ...result,
     stop: async () => {

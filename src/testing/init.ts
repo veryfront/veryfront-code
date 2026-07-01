@@ -10,8 +10,11 @@
  * @module
  */
 
-import { EsbuildBundler, EsModuleLexer } from "@veryfront/ext-bundler-esbuild";
-import { register as registerContract } from "#veryfront/extensions/contracts.ts";
+import { register as registerContract, tryResolve } from "#veryfront/extensions/contracts.ts";
+import {
+  importFirstPartyExtensionModule,
+  isMissingFirstPartyExtensionModule,
+} from "#veryfront/extensions/first-party-import.ts";
 
 const g = globalThis as Record<string, unknown>;
 
@@ -24,5 +27,20 @@ g.__vfTestEnvMask = {
 // Tests don't run the extension orchestrator; prime the Bundler + ModuleLexer
 // contracts here so transforms that depend on them (lexer.ts, parse-cache.ts,
 // the platform/compat/esbuild shim, and bundler call-sites) work in tests.
-registerContract("Bundler", new EsbuildBundler());
-registerContract("ModuleLexer", new EsModuleLexer());
+await registerDefaultBundlerContracts();
+
+async function registerDefaultBundlerContracts(): Promise<void> {
+  if (tryResolve("Bundler") && tryResolve("ModuleLexer")) return;
+
+  try {
+    const { EsbuildBundler, EsModuleLexer } = await importFirstPartyExtensionModule<{
+      EsbuildBundler: new () => unknown;
+      EsModuleLexer: new () => unknown;
+    }>("ext-bundler-esbuild", "@veryfront/ext-bundler-esbuild");
+
+    if (!tryResolve("Bundler")) registerContract("Bundler", new EsbuildBundler());
+    if (!tryResolve("ModuleLexer")) registerContract("ModuleLexer", new EsModuleLexer());
+  } catch (error) {
+    if (!isMissingFirstPartyExtensionModule(error)) throw error;
+  }
+}

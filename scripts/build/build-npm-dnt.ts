@@ -21,9 +21,9 @@ import {
 	npmDependencyRange,
 	readDenoConfigSet,
 } from "./npm-dependency-sources.ts";
+import { buildExtensionPackages } from "./build-npm-extension-packages.ts";
 import { normalizeNpmPackageMetadata } from "./npm-package-metadata.ts";
 import { normalizeEsmShReactNpmShims } from "./npm-react-shims.ts";
-import { OPAQUE_DEPENDENCY_VERSIONS } from "../../src/platform/compat/opaque-dependency-versions.ts";
 
 const denoJson = JSON.parse(await Deno.readTextFile("./deno.json"));
 const version = denoJson.version;
@@ -103,19 +103,6 @@ await build({
 
 	// Map Deno std and type packages to npm equivalents
 	mappings: {
-		// Type-only packages - map to @types versions
-		"npm:@types/mdast@4.0.3": {
-			name: "@types/mdast",
-			version: "^4.0.3",
-		},
-		"npm:@types/hast@3.0.3": {
-			name: "@types/hast",
-			version: "^3.0.3",
-		},
-		"npm:@types/unist@3.0.2": {
-			name: "@types/unist",
-			version: "^3.0.2",
-		},
 		// esm.sh URLs - derived from deno.json imports
 		...esmShMappings,
 	},
@@ -144,15 +131,6 @@ await build({
 			// Root deno.json intentionally rejects core npm imports; ws is a
 			// Node-only dynamic import used by the npm server/HMR path.
 			"ws": "8.21.0",
-			"@kreuzberg/node": npmDependencyRange(denoConfigSet, "@kreuzberg/node"),
-		},
-		// Native binary deps that should not block install if they fail
-		optionalDependencies: {
-			"@huggingface/transformers": OPAQUE_DEPENDENCY_VERSIONS["@huggingface/transformers"],
-			// ext-sandbox-shell-tools is auto-enabled by the hosted agent service,
-			// so its runtime implementation must be installable with the npm package.
-			"bash-tool": npmDependencyRange(denoConfigSet, "bash-tool"),
-			"just-bash": npmDependencyRange(denoConfigSet, "just-bash"),
 		},
 		keywords: [
 			"react",
@@ -165,13 +143,6 @@ await build({
 			"rsc",
 			"typescript",
 		],
-		// Optional peer dependencies for platform-specific features
-		peerDependencies: {
-			"better-sqlite3": ">=9.0.0",
-		},
-		peerDependenciesMeta: {
-			"better-sqlite3": { optional: true },
-		},
 		// postinstall added in postBuild after files are copied
 	},
 
@@ -206,31 +177,6 @@ await build({
 			await Deno.copyFile(`${rscSrc}/${file}`, `${rscDest}/${file}`);
 		}
 		console.log(`📝 Copied ${rscClientFiles.length} RSC client files`);
-
-		// Transpile the kreuzberg upload-extraction worker into the npm package.
-		// It is spawned via `new Worker(new URL("./upload-extraction-worker.js"))`
-		// (see extensions/ext-document-kreuzberg/src/index.ts), so dnt never traces
-		// it as a static import and would otherwise omit it from the build. Strip
-		// the TypeScript types and rewrite the sibling `./kreuzberg.ts` import to the
-		// transpiled `./kreuzberg.js` that dnt emits next to it.
-		const esbuild = await import("npm:esbuild@0.28.1");
-		try {
-			const workerSrc = "./extensions/ext-document-kreuzberg/src/upload-extraction-worker.ts";
-			const workerDest =
-				"./npm/esm/extensions/ext-document-kreuzberg/src/upload-extraction-worker.js";
-			const transpiled = await esbuild.transform(await Deno.readTextFile(workerSrc), {
-				loader: "ts",
-				format: "esm",
-				target: "esnext",
-			});
-			await Deno.writeTextFile(
-				workerDest,
-				transpiled.code.replaceAll("./kreuzberg.ts", "./kreuzberg.js"),
-			);
-			console.log("📝 Transpiled ext-document-kreuzberg upload-extraction worker");
-		} finally {
-			await esbuild.stop();
-		}
 
 		// Fix dnt polyfill bug: process.argv[1] can be undefined in dynamic imports
 		patchFile(
@@ -316,6 +262,14 @@ await build({
 		normalizeNpmPackageMetadata(pkg);
 		await Deno.writeTextFile(pkgPath, JSON.stringify(pkg, null, 2));
 	},
+});
+
+await buildExtensionPackages({
+	rootDir: Deno.cwd(),
+	outDir: `${Deno.cwd()}/npm/extensions`,
+	rootConfig: denoJson,
+	version,
+	license,
 });
 
 function addTypesExportEntries(
@@ -438,6 +392,7 @@ console.log(`
 ✅ Build complete!
 
 📦 Output: ./npm/
+📦 Extension packages: ./npm/extensions/
 
 📋 Test locally:
    cd npm && npm link

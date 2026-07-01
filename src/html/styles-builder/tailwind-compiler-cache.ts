@@ -18,6 +18,8 @@ import {
   register as registerContract,
   tryResolve as tryResolveContract,
 } from "#veryfront/extensions/contracts.ts";
+import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
+import type { ExtensionFactory } from "veryfront/extensions";
 import type { CSSCompiler, CSSProcessor } from "#veryfront/extensions/css/index.ts";
 import { serverLogger } from "#veryfront/utils";
 import { DEPENDENCY_MISSING, NETWORK_ERROR } from "#veryfront/errors";
@@ -27,6 +29,10 @@ import { hashString } from "./candidate-extractor.ts";
 import { loadPlugin } from "./plugin-loader.ts";
 
 const logger = serverLogger.component("tailwind");
+
+type CssTailwindExtensionModule = {
+  default: ExtensionFactory;
+};
 
 /**
  * LRU cache for Tailwind compilers, keyed by stylesheet hash.
@@ -79,8 +85,11 @@ async function resolveCSSProcessor(): Promise<CSSProcessor | undefined> {
   if (registeredProcessor) return registeredProcessor;
 
   try {
-    const { default: createTailwindExtension } = await import(
-      "../../../extensions/ext-css-tailwind/src/index.ts"
+    const { default: createTailwindExtension } = await importFirstPartyExtensionModule<
+      CssTailwindExtensionModule
+    >(
+      "ext-css-tailwind",
+      "@veryfront/ext-css-tailwind",
     );
     const extension = createTailwindExtension();
     await extension.setup?.({

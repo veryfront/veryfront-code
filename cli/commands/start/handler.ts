@@ -1,6 +1,6 @@
 import { defineSchema, lazySchema } from "veryfront/schemas";
-import { startCommand } from "./command.ts";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
+import { ensureCliBundlerContracts } from "#cli/shared/default-contracts";
 import type { ParsedArgs } from "#cli/shared/types";
 
 const DEFAULT_START_PORT = 8080;
@@ -23,6 +23,8 @@ export const parseStartArgs = createArgParser(StartArgsSchema, {
 
 export async function handleStartCommand(args: ParsedArgs): Promise<void> {
   const opts = parseArgsOrThrow(parseStartArgs, "start", args);
+  await ensureCliBundlerContracts();
+  const { startCommand } = await import("./command.ts");
   await startCommand({
     port: opts.port,
     projectPath: opts.project ?? null,

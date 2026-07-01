@@ -7,9 +7,9 @@ import { isAbsolute, join } from "veryfront/platform/path";
 import { cwd, setEnv } from "veryfront/platform";
 import { createFileSystem } from "veryfront/platform";
 import { cliLogger, DEFAULT_DEV_SERVER_PORT } from "#cli/utils";
-import { devCommand } from "./index.ts";
 import { clearAllLocalCaches } from "veryfront/transforms/mdx-cache";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
+import { ensureCliBundlerContracts } from "#cli/shared/default-contracts";
 import type { ParsedArgs } from "#cli/shared/types";
 
 const getDevArgsSchema = defineSchema((v) =>
@@ -54,6 +54,7 @@ async function resolveProjectDir(projectArg: string | undefined): Promise<string
 
 export async function handleDevCommand(args: ParsedArgs): Promise<void> {
   const opts = parseArgsOrThrow(parseDevArgs, "dev", args);
+  await ensureCliBundlerContracts();
   const projectDir = await resolveProjectDir(opts.project);
 
   // Enable verbose logging when --debug flag is passed
@@ -64,6 +65,7 @@ export async function handleDevCommand(args: ParsedArgs): Promise<void> {
   // Clear stale ESM caches to prevent module resolution issues from previous runs
   await clearAllLocalCaches();
 
+  const { devCommand } = await import("./index.ts");
   const { done } = await devCommand({
     port: opts.port,
     projectDir,

@@ -1,5 +1,5 @@
 import { basename, extname, join } from "veryfront/platform/path";
-import { KreuzbergDocumentExtractor } from "../../../extensions/ext-document-kreuzberg/src/index.ts";
+import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
 
 export interface KnowledgeParserResult {
   success: true;
@@ -26,6 +26,12 @@ export interface KnowledgeParserInput {
 export type ExtractDocumentText = (
   input: { filePath: string; mimeType: string },
 ) => Promise<string>;
+
+type DocumentKreuzbergExtensionModule = {
+  KreuzbergDocumentExtractor: new () => {
+    extractInWorker(buffer: ArrayBuffer, mimeType: string): Promise<string>;
+  };
+};
 
 export interface RunKnowledgeParsersDeps {
   extractDocumentText?: ExtractDocumentText;
@@ -356,6 +362,12 @@ async function defaultExtractDocumentText(
   input: { filePath: string; mimeType: string },
 ): Promise<string> {
   const bytes = await Deno.readFile(input.filePath);
+  const { KreuzbergDocumentExtractor } = await importFirstPartyExtensionModule<
+    DocumentKreuzbergExtensionModule
+  >(
+    "ext-document-kreuzberg",
+    "@veryfront/ext-document-kreuzberg",
+  );
   const extractor = new KreuzbergDocumentExtractor();
   return await extractor.extractInWorker(
     bytes.buffer.slice(
