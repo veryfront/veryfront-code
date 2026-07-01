@@ -15,6 +15,7 @@ import {
   StopIcon,
 } from "../../icons/index.ts";
 import { Button } from "../../ui/button.tsx";
+import { IconButton } from "../../ui/icon-button.tsx";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -245,15 +246,18 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
                     />
                   )}
                   {showExport && messages && messages.length > 0 && (
-                    <button
+                    <IconButton
                       type="button"
+                      variant="icon-ghost"
+                      size="icon-lg"
+                      on="card"
                       onClick={() => downloadMarkdown(messages)}
-                      className="flex size-9 shrink-0 items-center justify-center rounded-full bg-transparent text-[var(--foreground)] transition-colors hover:bg-[var(--tertiary)]"
                       aria-label="Export conversation"
-                      title="Export as Markdown"
+                      tooltip="Export as Markdown"
+                      tooltipSide="top"
+                      className="shrink-0"
                     >
                       <svg
-                        className="size-4.5"
                         viewBox="0 0 24 24"
                         fill="none"
                         stroke="currentColor"
@@ -265,7 +269,7 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
                         <polyline points="7 10 12 15 17 10" />
                         <line x1="12" y1="15" x2="12" y2="3" />
                       </svg>
-                    </button>
+                    </IconButton>
                   )}
                   {isLoading
                     ? (
