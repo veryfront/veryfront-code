@@ -37,7 +37,7 @@ function AttachmentPillDocsPage() {
 
       <DocsSection
         title="Uploading"
-        description="An `uploading` status dims the pill and swaps the remove control for a spinner."
+        description="An `uploading` status dims the pill and shows a spinner over the thumbnail."
       >
         <DocsExampleAuto of={Uploading} />
       </DocsSection>

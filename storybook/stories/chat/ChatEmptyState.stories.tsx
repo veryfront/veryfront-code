@@ -46,13 +46,6 @@ function ChatEmptyStateDocsPage() {
         <DocsExampleAuto of={CustomAgent} />
       </DocsSection>
 
-      <DocsSection
-        title="Creating"
-        description="The avatar pulses while an agent is being provisioned."
-      >
-        <DocsExampleAuto of={Creating} />
-      </DocsSection>
-
       <DocsSection title="Import">
         <DocsCode code={importCode} />
       </DocsSection>
@@ -166,20 +159,6 @@ export const CustomAgent: Story = {
             <ChatEmptyState.Suggestion>Draft a reply</ChatEmptyState.Suggestion>
             <ChatEmptyState.Suggestion>Find an attachment</ChatEmptyState.Suggestion>
           </ChatEmptyState.Suggestions>
-        </ChatEmptyState.Root>
-      </div>
-    </StoryFrame>
-  ),
-};
-
-export const Creating: Story = {
-  tags: ["!dev"],
-  render: () => (
-    <StoryFrame maxWidth="820px">
-      <div className="flex min-h-[360px] flex-col">
-        <ChatEmptyState.Root>
-          <ChatEmptyState.Avatar alt="Veryfront Agent" isCreating />
-          <ChatEmptyState.Heading>Creating agent…</ChatEmptyState.Heading>
         </ChatEmptyState.Root>
       </div>
     </StoryFrame>
