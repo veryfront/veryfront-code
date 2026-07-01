@@ -14,37 +14,38 @@ import { StoryFrame } from "../support/StoryFrame";
 
 const importCode = `import { AgentCard } from "veryfront/chat"`;
 
-const compositionTree = `AgentCard
-  +-- AgentStatus  <- status pill (idle / thinking / streaming / completed / error)
-  +-- ThinkingIndicator  <- reasoning text, shown when 'thinking' is set
-  +-- Tool Calls  <- ToolInvocation + ToolResult per tool call
-  +-- Messages  <- scrollable transcript of agent messages`;
+const compositionTree =
+  `AgentCard  <- Card (outline) wrapping the Message anatomy
+  +-- Header  <- Avatar + name (left) · Status dot + label (right)
+  +-- Reasoning  <- thinking text (shown when 'thinking' is set)
+  +-- ToolCall  <- one ToolCall card per tool call
+  +-- Markdown  <- the agent's message text`;
 
 function AgentCardDocsPage() {
   return (
     <DocsPage>
       <DocsHero
         title="AgentCard"
-        lead="A self-contained view of an agent turn — status, reasoning, tool calls, and the message transcript in one card."
+        lead="An agent turn rendered as a `Card` wrapping the `Message` anatomy — a header (avatar + name + status) over reasoning, tool calls, and the message text."
       />
 
       <DocsSection
         title="Thinking"
-        description={"An in-progress agent with `status=\"thinking\"`, reasoning text, tool calls, and messages."}
+        description={'An in-progress agent with `status="thinking"`, reasoning text, tool calls, and messages.'}
       >
         <DocsExampleAuto of={Thinking} />
       </DocsSection>
 
       <DocsSection
         title="Completed"
-        description={"A finished turn with `status=\"completed\"`, a single resolved tool call, and the transcript."}
+        description={'A finished turn with `status="completed"`, a single resolved tool call, and the transcript.'}
       >
         <DocsExampleAuto of={Completed} />
       </DocsSection>
 
       <DocsSection
         title="Error"
-        description={"A failed tool call renders inline with `status=\"error\"` and the error message."}
+        description={'A failed tool call renders inline with `status="error"` and the error message.'}
       >
         <DocsExampleAuto of={Error} />
       </DocsSection>
@@ -63,9 +64,22 @@ function AgentCardDocsPage() {
           description={"Self-contained agent turn"}
           props={[
             {
+              name: "name",
+              type: "string",
+              default: '"Agent"',
+              description: "Agent display name shown in the header",
+            },
+            {
+              name: "avatarUrl",
+              type: "string",
+              description: "Agent avatar image; falls back to an initial",
+            },
+            {
               name: "status",
-              type: "'idle' | 'thinking' | 'tool_execution' | 'streaming' | 'completed' | 'error'",
-              description: "Current agent status, rendered as a status pill",
+              type:
+                "'idle' | 'thinking' | 'tool_execution' | 'streaming' | 'completed' | 'error'",
+              description:
+                "Current agent status, rendered as a header Status dot + label",
             },
             {
               name: "messages",
@@ -82,11 +96,6 @@ function AgentCardDocsPage() {
               name: "thinking",
               type: "string",
               description: "Reasoning text shown in the thinking indicator",
-            },
-            {
-              name: "theme",
-              type: "Partial<AgentTheme>",
-              description: "Theme overrides merged over the default agent theme",
             },
             {
               name: "renderTool",
@@ -123,6 +132,7 @@ export const Thinking: Story = {
   render: () => (
     <StoryFrame maxWidth="720px">
       <AgentCard
+        name="Release Agent"
         status="thinking"
         thinking="Checking run state, recent tool calls, and release blockers."
         toolCalls={agentCardTools}
@@ -137,6 +147,7 @@ export const Completed: Story = {
   render: () => (
     <StoryFrame maxWidth="720px">
       <AgentCard
+        name="Release Agent"
         status="completed"
         toolCalls={agentCardTools.slice(0, 1)}
         messages={agentCardMessages}
@@ -150,6 +161,7 @@ export const Error: Story = {
   render: () => (
     <StoryFrame maxWidth="720px">
       <AgentCard
+        name="Deploy Agent"
         status="error"
         toolCalls={[
           {
