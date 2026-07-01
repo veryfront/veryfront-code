@@ -74,6 +74,7 @@ import { ChatIf } from "./composition/chat-if.tsx";
 import { ErrorBanner } from "./composition/error-banner.tsx";
 import { Message } from "./composition/message.tsx";
 import { DropZoneOverlay } from "./components/drop-zone.tsx";
+import { ChatMessagesSkeleton } from "./components/chat-messages-skeleton.tsx";
 import { TabSwitcher } from "./components/tab-switcher.tsx";
 import { UploadsPanel } from "./components/uploads-panel.tsx";
 import { InferenceBadge } from "./components/inference-badge.tsx";
@@ -111,6 +112,10 @@ export {
   DropZoneOverlay,
   type DropZoneOverlayProps,
 } from "./components/drop-zone.tsx";
+export {
+  ChatMessagesSkeleton,
+  type ChatMessagesSkeletonProps,
+} from "./components/chat-messages-skeleton.tsx";
 export { SkillBadge, type SkillBadgeProps } from "./components/skill-badge.tsx";
 export { ToolCallCard, ToolStatusBadge } from "./components/tool-ui.tsx";
 export {
@@ -499,6 +504,9 @@ const ControlledChat = React.forwardRef<HTMLDivElement, ChatProps>(
               className="flex-1 min-h-0"
             />
           )
+          : isEmpty && isLoading
+          // Thread still loading its history → skeleton, not the idle state.
+          ? <ChatMessagesSkeleton />
           : isEmpty
           ? (
             <ChatEmpty

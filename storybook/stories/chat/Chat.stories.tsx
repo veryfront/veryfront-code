@@ -343,6 +343,11 @@ export const Loading: Story = {
   render: () => <ChatReview initialMessages={loadingMessages} isLoading />,
 };
 
+export const Skeleton: Story = {
+  tags: ["!dev"],
+  render: () => <ChatReview initialMessages={[]} initialInput="" isLoading />,
+};
+
 export const ErrorState: Story = {
   name: "Error",
   tags: ["!dev"],
