@@ -42,9 +42,7 @@ const cardVariants = cva("w-full overflow-hidden", {
 
 /** Props accepted by `<Card>`. */
 export interface CardProps
-  extends
-    React.HTMLAttributes<HTMLDivElement>,
-    VariantProps<typeof cardVariants> {
+  extends React.HTMLAttributes<HTMLDivElement>, VariantProps<typeof cardVariants> {
   ref?: React.Ref<HTMLDivElement>;
 }
 

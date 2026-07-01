@@ -1,7 +1,30 @@
 import * as React from "react";
 import { cn } from "../../theme.ts";
-import { MessageSquareIcon, PlusIcon, TrashIcon } from "../../icons/index.ts";
+import { PencilIcon, PlusIcon, TrashIcon } from "../../icons/index.ts";
+import { Button } from "../../ui/button.tsx";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../../ui/dropdown-menu.tsx";
 import type { Thread } from "../hooks/use-threads.ts";
+
+/** Three-dots "more actions" glyph (not in the shared icons barrel). */
+function MoreGlyph({ className }: { className?: string }): React.ReactElement {
+  return (
+    <svg
+      className={cn("size-3.5", className)}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <circle cx="5" cy="12" r="1.6" />
+      <circle cx="12" cy="12" r="1.6" />
+      <circle cx="19" cy="12" r="1.6" />
+    </svg>
+  );
+}
 
 /** Props accepted by chat sidebar. */
 export interface ChatSidebarProps {
@@ -64,13 +87,14 @@ function ThreadItem({
 }): React.ReactElement {
   const [editing, setEditing] = React.useState(false);
   const [editValue, setEditValue] = React.useState(thread.title);
+  const [menuOpen, setMenuOpen] = React.useState(false);
   const inputRef = React.useRef<HTMLInputElement>(null);
 
   React.useEffect(() => {
-    if (editing) inputRef.current?.focus();
+    if (editing) inputRef.current?.select();
   }, [editing]);
 
-  function handleDoubleClick(): void {
+  function startRename(): void {
     if (!onRename) return;
     setEditValue(thread.title);
     setEditing(true);
@@ -84,50 +108,74 @@ function ThreadItem({
     }
   }
 
+  if (editing) {
+    return (
+      <div className="flex items-center rounded-[var(--radius-md)] bg-[var(--secondary)] px-2.5 py-1.5">
+        <input
+          ref={inputRef}
+          value={editValue}
+          onChange={(e) => setEditValue(e.target.value)}
+          onBlur={commitRename}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commitRename();
+            if (e.key === "Escape") setEditing(false);
+          }}
+          className="min-w-0 flex-1 bg-transparent text-[13px] leading-snug outline-none"
+        />
+      </div>
+    );
+  }
+
   return (
     <div
       className={cn(
-        "group/thread flex cursor-pointer items-center gap-2.5 rounded-[var(--radius-md)] px-3 py-2.5 transition-colors",
-        isActive
+        // Slimmer row (Studio conversation list): tighter padding, title-first.
+        "group/thread flex cursor-pointer items-center gap-1 rounded-[var(--radius-md)] px-2.5 py-1.5 transition-colors",
+        isActive || menuOpen
           ? "bg-[var(--secondary)] text-[var(--foreground)]"
-          : "text-[var(--faint)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)]",
+          : "text-[var(--soft)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)]",
       )}
-      onClick={!editing ? onSelect : undefined}
-      onDoubleClick={handleDoubleClick}
+      onClick={onSelect}
     >
-      <MessageSquareIcon className="size-4 shrink-0 opacity-50" />
-      {editing
-        ? (
-          <input
-            ref={inputRef}
-            value={editValue}
-            onChange={(e) => setEditValue(e.target.value)}
-            onBlur={commitRename}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") commitRename();
-              if (e.key === "Escape") setEditing(false);
-            }}
-            className="min-w-0 flex-1 border-b border-[var(--edge-medium)] bg-transparent text-sm outline-none"
-          />
-        )
-        : (
-          <span className="flex-1 min-w-0 truncate text-[13px] leading-snug">
-            {thread.title}
-          </span>
+      <span className="min-w-0 flex-1 truncate text-[13px] leading-snug">
+        {thread.title}
+      </span>
+      <div
+        className={cn(
+          "shrink-0 transition-opacity",
+          menuOpen ? "opacity-100" : "opacity-0 group-hover/thread:opacity-100",
         )}
-      {!editing && (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete();
-          }}
-          className="shrink-0 rounded p-0.5 text-[var(--faint)] opacity-0 transition-all hover:text-[var(--destructive)] group-hover/thread:opacity-100"
-          aria-label="Delete thread"
-        >
-          <TrashIcon className="size-3.5" />
-        </button>
-      )}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="icon-ghost"
+              size="icon-xs"
+              on="card"
+              aria-label={`More actions for ${thread.title}`}
+            >
+              <MoreGlyph />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-[160px]">
+            {onRename && (
+              <DropdownMenuItem onSelect={startRename}>
+                <PencilIcon />
+                Rename
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem
+              onSelect={onDelete}
+              className="text-[var(--destructive)] hover:bg-[color-mix(in_oklch,var(--destructive),transparent_92%)]"
+            >
+              <TrashIcon />
+              Delete
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
     </div>
   );
 }
@@ -144,7 +192,8 @@ export function ChatSidebar({
   isOpen = true,
 }: ChatSidebarProps): React.ReactElement | null {
   const visibleThreads = React.useMemo(
-    () => threads.filter((t) => t.messages.length > 0 || t.id === activeThreadId),
+    () =>
+      threads.filter((t) => t.messages.length > 0 || t.id === activeThreadId),
     [threads, activeThreadId],
   );
   const grouped = React.useMemo(() => groupThreads(visibleThreads), [
@@ -174,21 +223,22 @@ export function ChatSidebar({
           </button>
         </div>
       )}
-      <div className="flex-1 overflow-y-auto px-2 pt-2 pb-3 space-y-4">
+      <div className="flex-1 overflow-y-auto px-2 pt-2 pb-3 space-y-3">
         {hasThreads
           ? Array.from(grouped.entries()).map(([label, items]) => (
             <div key={label}>
-              <div className="px-3 py-1.5 text-[11px] font-medium uppercase tracking-wider text-[var(--faint)]">
+              <div className="px-2.5 py-1 text-[11px] font-medium uppercase tracking-wider text-[var(--faint)]">
                 {label}
               </div>
-              <div className="space-y-1">
+              <div className="space-y-0.5">
                 {items.map((thread) => (
                   <ThreadItem
                     key={thread.id}
                     thread={thread}
                     isActive={thread.id === activeThreadId}
                     onSelect={() => onSelectThread(thread.id)}
-                    onDelete={() => onDeleteThread(thread.id)}
+                    onDelete={() =>
+                      onDeleteThread(thread.id)}
                     onRename={onRenameThread
                       ? (title) => onRenameThread(thread.id, title)
                       : undefined}
