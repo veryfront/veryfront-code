@@ -38,33 +38,64 @@ async function* storyFiles(dir: string): AsyncGenerator<string> {
 }
 
 describe("Storybook UI workbench", () => {
-  it("Overview nav cards link to stories that exist", async () => {
+  it("Overview links every UI/Component/Composition story exactly once, in the right section", async () => {
     const overview = await readText("storybook/stories/Overview.stories.tsx");
-    const navIds = [
-      ...overview.matchAll(/id:\s*"([a-z0-9-]+--[a-z0-9-]+)"/g),
-    ].map((m) => m[1]);
-    assert(navIds.length > 0, "expected NavGrid ids in the Overview");
 
-    // Every title Storybook will generate a story id from.
-    const titleSlugs = new Set<string>();
+    // All nav ids in order, plus a duplicate check (one link per story).
+    const navIds = [...overview.matchAll(/id:\s*"([a-z0-9-]+--docs)"/g)].map(
+      (m) => m[1],
+    );
+    assert(navIds.length > 0, "expected NavGrid ids in the Overview");
+    const dupes = [...new Set(navIds.filter((id, i) => navIds.indexOf(id) !== i))];
+    assertEquals(dupes, [], `duplicate Overview links: ${dupes.join(", ")}`);
+
+    // Every linkable docs page: an autodocs story titled under one of the three
+    // linked sections. (`Chat/Overview` and any non-autodocs story are excluded.)
+    const expected = new Set<string>();
     for await (const path of storyFiles("storybook/stories")) {
       const src = await readText(path);
-      for (const m of src.matchAll(/title:\s*"([^"]+)"/g)) {
-        titleSlugs.add(toStorybookId(m[1]));
+      const title = src.match(
+        /title:\s*"(Chat\/(?:UI|Components|Composition)\/[^"]+)"/,
+      )?.[1];
+      if (title && /tags:\s*\[[^\]]*"autodocs"/.test(src)) {
+        expected.add(`${toStorybookId(title)}--docs`);
       }
     }
 
-    // Each nav id is `<title-slug>--<story>`; strip the story to check the slug.
-    const missing = navIds.filter((id) =>
-      !titleSlugs.has(id.replace(/--[a-z0-9-]+$/, ""))
-    );
+    const navSet = new Set(navIds);
+    const missing = [...expected].filter((id) => !navSet.has(id)).sort();
+    const extra = [...navSet].filter((id) => !expected.has(id)).sort();
+    assertEquals(missing, [], `components with no Overview link: ${missing.join(", ")}`);
     assertEquals(
-      missing,
+      extra,
       [],
-      `Overview nav cards point at stories that don't exist: ${
-        missing.join(", ")
-      }`,
+      `Overview links a non-existent / non-linkable story: ${extra.join(", ")}`,
     );
+
+    // Section correctness: each section array only holds ids with its prefix.
+    for (
+      const [name, prefix] of [
+        ["COMPONENTS", "chat-components-"],
+        ["COMPOSITION", "chat-composition-"],
+        ["UI", "chat-ui-"],
+      ] as const
+    ) {
+      const block = overview.match(
+        new RegExp(`const ${name}[^=]*=\\s*\\[([\\s\\S]*?)\\];`),
+      )?.[1] ?? "";
+      const ids = [...block.matchAll(/id:\s*"([a-z0-9-]+--docs)"/g)].map((m) =>
+        m[1]
+      );
+      assert(ids.length > 0, `Overview ${name} section not found`);
+      const wrong = ids.filter((id) => !id.startsWith(prefix));
+      assertEquals(
+        wrong,
+        [],
+        `Overview ${name} section has ids not under ${prefix}: ${
+          wrong.join(", ")
+        }`,
+      );
+    }
   });
 
   it("keeps Storybook isolated from framework exports and browser-safe runtime patches", async () => {
