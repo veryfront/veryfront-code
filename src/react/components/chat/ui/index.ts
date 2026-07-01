@@ -112,6 +112,8 @@ export {
 } from "./dialog.tsx";
 export {
   Command,
+  CommandDialog,
+  type CommandDialogProps,
   CommandEmpty,
   CommandGroup,
   CommandInput,
