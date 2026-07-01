@@ -10,7 +10,15 @@ export interface CodeBlockProps {
   className?: string;
 }
 
-/** Render rich code block. */
+/**
+ * Render rich code block.
+ *
+ * @deprecated Use the shared `CodeBlock` primitive (`chat/ui/code-block.tsx`)
+ * instead — it does real shiki syntax highlighting, an icon-only copy button
+ * with tooltip, a file-type/language label, collapsible + mermaid support. This
+ * plain `<pre>` fork (no highlighting) is kept only for back-compat and will be
+ * removed. `Markdown` already renders fenced blocks through `CodeBlock`.
+ */
 export const RichCodeBlock = React.forwardRef<HTMLDivElement, CodeBlockProps>(
   function RichCodeBlock({ language, code, inline, className }, ref) {
     const [copied, setCopied] = React.useState(false);
