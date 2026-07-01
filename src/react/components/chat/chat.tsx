@@ -130,12 +130,19 @@ export {
   useThreads,
   type UseThreadsOptions,
   type UseThreadsResult,
+  useUpload,
+  type UseUploadOptions,
+  type UseUploadResult,
 } from "./chat/index.tsx";
 
 // ---------------------------------------------------------------------------
 // Adjacent components
 // ---------------------------------------------------------------------------
-export { type ModelOption, ModelSelector, type ModelSelectorProps } from "./model-selector.tsx";
+export {
+  type ModelOption,
+  ModelSelector,
+  type ModelSelectorProps,
+} from "./model-selector.tsx";
 export {
   ChatWithSidebar,
   type ChatWithSidebarAttachmentConfig,

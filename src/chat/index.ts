@@ -48,7 +48,11 @@
  * ```
  */
 
-export { Chat, ChatComponents, type ChatProps } from "#veryfront/react/components/chat/chat.tsx";
+export {
+  Chat,
+  ChatComponents,
+  type ChatProps,
+} from "#veryfront/react/components/chat/chat.tsx";
 
 export {
   ChatComposer,
@@ -175,6 +179,9 @@ export {
   useThreads,
   type UseThreadsOptions,
   type UseThreadsResult,
+  useUpload,
+  type UseUploadOptions,
+  type UseUploadResult,
 } from "#veryfront/react/components/chat/chat.tsx";
 
 export {
@@ -200,7 +207,10 @@ export {
   ReasoningCard as Reasoning,
   ToolCallCard as ToolCall,
 } from "#veryfront/react/components/chat/chat.tsx";
-export { Markdown, type MarkdownProps } from "#veryfront/react/components/chat/markdown.tsx";
+export {
+  Markdown,
+  type MarkdownProps,
+} from "#veryfront/react/components/chat/markdown.tsx";
 
 // New target components (Studio 1:1, dependency-light forks).
 export {
@@ -222,13 +232,19 @@ export {
 // the Markdown code-block props, so only the runtime `CodeBlock` is re-exported).
 export { CodeBlock } from "#veryfront/react/components/chat/ui/code-block.tsx";
 
-export { AgentCard, type AgentCardProps } from "#veryfront/react/components/chat/agent-card.tsx";
+export {
+  AgentCard,
+  type AgentCardProps,
+} from "#veryfront/react/components/chat/agent-card.tsx";
 export {
   ChatErrorBoundary,
   type ChatErrorBoundaryProps,
   useChatErrorHandler,
 } from "#veryfront/react/components/chat/error-boundary.tsx";
-export type { AgentTheme, ChatTheme } from "#veryfront/react/components/chat/theme.ts";
+export type {
+  AgentTheme,
+  ChatTheme,
+} from "#veryfront/react/components/chat/theme.ts";
 
 export {
   type BranchInfo,
