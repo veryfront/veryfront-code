@@ -34,10 +34,7 @@ export {
 // Design Tokens
 // ---------------------------------------------------------------------------
 export { chatTokens, getChatTokensCSS } from "./chat-tokens.ts";
-export {
-  ChatStyleProvider,
-  type ChatStyleProviderProps,
-} from "./chat-style-provider.tsx";
+export { ChatStyleProvider, type ChatStyleProviderProps } from "./chat-style-provider.tsx";
 
 // ---------------------------------------------------------------------------
 // Chat — Core preset + compound

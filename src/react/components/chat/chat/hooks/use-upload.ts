@@ -67,9 +67,7 @@ export function useUpload(
   const patch = React.useCallback(
     (id: string, next: Partial<AttachmentInfo>) => {
       setTracked((prev) =>
-        prev.map((t) =>
-          t.info.id === id ? { ...t, info: { ...t.info, ...next } } : t
-        )
+        prev.map((t) => t.info.id === id ? { ...t, info: { ...t.info, ...next } } : t)
       );
     },
     [],

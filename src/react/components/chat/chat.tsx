@@ -138,11 +138,7 @@ export {
 // ---------------------------------------------------------------------------
 // Adjacent components
 // ---------------------------------------------------------------------------
-export {
-  type ModelOption,
-  ModelSelector,
-  type ModelSelectorProps,
-} from "./model-selector.tsx";
+export { type ModelOption, ModelSelector, type ModelSelectorProps } from "./model-selector.tsx";
 export {
   ChatWithSidebar,
   type ChatWithSidebarAttachmentConfig,
