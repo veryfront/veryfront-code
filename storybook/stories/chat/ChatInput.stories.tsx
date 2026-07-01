@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import * as React from "react";
-import { AttachmentPill, ChatComposer, ModelSelector } from "veryfront/chat";
-import type { ChatMessage } from "veryfront/chat";
+import { AgentPicker, ChatInput } from "veryfront/chat";
+import type { AgentOption } from "veryfront/chat";
 import {
   DocsCode,
   DocsComposition,
@@ -13,32 +13,38 @@ import {
 } from "../../.storybook/docs";
 import {
   attachments,
-  chatMessages,
   createChangeHandler,
   modelOptions,
 } from "../fixtures/chat";
 import { ReviewSurface, StoryFrame } from "../support/StoryFrame";
 
-const importCode = `import { ChatComposer } from "veryfront/chat"`;
+const importCode = `import { ChatInput } from "veryfront/chat"`;
 
-const compositionTree = `ChatComposer  <- input form (forwardRef to the outer div)
-  +-- AttachmentPill  <- one per attachments[] entry
+const agentOptions: AgentOption[] = [
+  { id: "veryfront", name: "Veryfront Agent" },
+  { id: "inbox-helper", name: "Inbox Helper" },
+  { id: "researcher", name: "Research Agent" },
+];
+
+const compositionTree = `ChatInput  <- input form (forwardRef to the outer div)
   +-- InputBox  <- multiline message input
-  +-- ModelSelector  <- shown when models + onModelChange are set
-  +-- Export button  <- shown when showExport + messages are set
-  +-- SubmitButton  <- send / stop / voice`;
+  +-- footer toolbar
+      +-- + menu  <- attach files
+      +-- AgentPicker  <- agent selector pill (agentSelector slot)
+      +-- ModelSelector  <- shown when models + onModelChange are set
+      +-- submit  <- send / stop`;
 
-function ChatComposerDocsPage() {
+function ChatInputDocsPage() {
   return (
     <DocsPage>
       <DocsHero
-        title="ChatComposer"
-        lead="The chat input area — message field, attachments, model selector, export, and submit, wired through controlled props."
+        title="ChatInput"
+        lead="The chat input area — message field, attachments, agent + model selectors, and submit, wired through controlled props (Studio `PromptInput`)."
       />
 
       <DocsSection
         title="Default"
-        description="A controlled composer with a model selector and export action."
+        description="A controlled composer with the `+` menu, agent pill, model selector, and submit."
       >
         <DocsExampleAuto of={Default} />
       </DocsSection>
@@ -57,13 +63,6 @@ function ChatComposerDocsPage() {
         <DocsExampleAuto of={Streaming} />
       </DocsSection>
 
-      <DocsSection
-        title="Model only"
-        description="`ModelSelector` as it appears inside the composer toolbar."
-      >
-        <DocsExampleAuto of={ModelOnly} />
-      </DocsSection>
-
       <DocsSection title="Import">
         <DocsCode code={importCode} />
       </DocsSection>
@@ -74,7 +73,7 @@ function ChatComposerDocsPage() {
 
       <DocsSection title="API Reference">
         <DocsPropsTable
-          component="ChatComposer"
+          component="ChatInput"
           description="Controlled input area for a chat thread"
           props={[
             {
@@ -198,14 +197,14 @@ function ChatComposerDocsPage() {
 }
 
 const meta = {
-  title: "Chat/Components/ChatComposer",
-  component: ChatComposer,
+  title: "Chat/Components/ChatInput",
+  component: ChatInput,
   tags: ["autodocs"],
   parameters: {
     layout: "fullscreen",
-    docs: { page: ChatComposerDocsPage },
+    docs: { page: ChatInputDocsPage },
   },
-} satisfies Meta<typeof ChatComposer>;
+} satisfies Meta<typeof ChatInput>;
 
 export default meta;
 type Story = StoryObj<typeof meta>;
@@ -221,34 +220,34 @@ function ComposerReview({
 }): React.ReactElement {
   const [input, setInput] = React.useState(initialInput);
   const [model, setModel] = React.useState(modelOptions[0]?.value);
-  const [messages] = React.useState<ChatMessage[]>(chatMessages);
+  const [agent, setAgent] = React.useState(agentOptions[0].id);
 
   return (
     <StoryFrame maxWidth="820px">
       <ReviewSurface label="Composer">
-        <ChatComposer
+        <ChatInput
           input={input}
           onChange={createChangeHandler(setInput)}
           onSubmit={() => undefined}
           isLoading={isLoading}
+          placeholder="Type a prompt or a question..."
           stop={() => undefined}
           models={modelOptions}
           model={model}
           onModelChange={setModel}
+          agentSelector={
+            <AgentPicker
+              agents={agentOptions}
+              value={agent}
+              onValueChange={setAgent}
+            />
+          }
           onAttach={() => undefined}
           onSelectAttachment={() => undefined}
           attachments={withAttachments ? attachments : undefined}
           onRemoveAttachment={() => undefined}
-          showExport
-          messages={messages}
           className="pb-0"
-        >
-          {withAttachments
-            ? attachments.map((attachment) => (
-              <AttachmentPill key={attachment.id} attachment={attachment} />
-            ))
-            : null}
-        </ChatComposer>
+        />
       </ReviewSurface>
     </StoryFrame>
   );
@@ -256,7 +255,7 @@ function ComposerReview({
 
 export const Default: Story = {
   tags: ["!dev"],
-  render: () => <ComposerReview />,
+  render: () => <ComposerReview initialInput="" />,
 };
 
 export const WithAttachments: Story = {
@@ -274,25 +273,4 @@ export const Streaming: Story = {
       initialInput="Stop after this step"
     />
   ),
-};
-
-export const ModelOnly: Story = {
-  tags: ["!dev"],
-  render: () => {
-    const [model, setModel] = React.useState(modelOptions[0]?.value);
-
-    return (
-      <StoryFrame maxWidth="420px">
-        <ReviewSurface label="ModelSelector inside composer toolbar">
-          <div className="flex justify-end">
-            <ModelSelector
-              models={modelOptions}
-              value={model}
-              onChange={setModel}
-            />
-          </div>
-        </ReviewSurface>
-      </StoryFrame>
-    );
-  },
 };

@@ -15,29 +15,37 @@ import { ReviewSurface, StoryFrame } from "../support/StoryFrame";
 
 const importCode = `import { ModelSelector } from "veryfront/chat"`;
 
-const compositionTree = `ModelSelector  <- trigger button (shows selected label)
-  +-- Listbox  <- fixed-position popover, opens upward
-  +-- Group  <- one per provider when models have a provider
-  +-- Option  <- label, optional badge + description`;
+const compositionTree = `ModelSelector  <- icon trigger (provider logo) or pill (logo + label)
+  +-- Popover  <- portals via Floating so it never clips
+  +-- Command  <- searchable list (search past 6 models)
+      +-- CommandGroup  <- one per provider (real models.dev logos)
+          +-- CommandItem  <- logo + label + Check on the selection`;
 
 function ModelSelectorDocsPage() {
   return (
     <DocsPage>
       <DocsHero
         title="ModelSelector"
-        lead="A WAI-ARIA listbox for switching models at runtime — keyboard-navigable, grouped by provider, and positioned above its trigger."
+        lead="A Popover + Command combobox for switching models — grouped by provider with real models.dev logos. The `icon` trigger (provider logo only) matches Studio's desktop picker; `pill` adds the label."
       />
 
       <DocsSection
-        title="Default"
-        description="A closed selector; click or use the keyboard to open the listbox and pick a model."
+        title="Default (icon)"
+        description="The icon trigger shows just the selected provider's logo, like Studio's desktop picker. Click to open the grouped model list."
       >
         <DocsExampleAuto of={Default} />
       </DocsSection>
 
       <DocsSection
+        title="Pill"
+        description="The `pill` variant adds the model label + chevron next to the logo."
+      >
+        <DocsExampleAuto of={Pill} />
+      </DocsSection>
+
+      <DocsSection
         title="Disabled"
-        description="`disabled` dims the trigger and prevents opening the listbox."
+        description="`disabled` dims the trigger and prevents opening the list."
       >
         <DocsExampleAuto of={Disabled} />
       </DocsSection>
@@ -138,7 +146,27 @@ export const Default: Story = {
 
     return (
       <StoryFrame maxWidth="420px">
-        <ReviewSurface label="Closed">
+        <ReviewSurface label="Icon trigger">
+          <ModelSelector
+            variant="icon"
+            models={modelOptions}
+            value={model}
+            onChange={setModel}
+          />
+        </ReviewSurface>
+      </StoryFrame>
+    );
+  },
+};
+
+export const Pill: Story = {
+  tags: ["!dev"],
+  render: () => {
+    const [model, setModel] = React.useState(modelOptions[0]?.value);
+
+    return (
+      <StoryFrame maxWidth="420px">
+        <ReviewSurface label="Pill trigger">
           <ModelSelector
             models={modelOptions}
             value={model}

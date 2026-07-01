@@ -90,7 +90,7 @@ function SourcePill(
       {/* Hover preview */}
       {showPreview && source.snippet && (
         <div className="absolute bottom-full left-0 mb-2 z-50 w-60 pointer-events-none">
-          <div className="rounded-[var(--radius-md)] border border-[var(--outline-border)] bg-[var(--secondary)] p-2.5 text-left shadow-sm">
+          <div className="rounded-md bg-[var(--popover)] px-2.5 py-1 text-left">
             <p className="text-xs text-[var(--foreground)] line-clamp-3 leading-relaxed">
               {source.snippet.slice(0, 150)}
               {source.snippet.length > 150 ? "..." : ""}

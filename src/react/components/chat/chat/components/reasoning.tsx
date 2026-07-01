@@ -36,13 +36,13 @@ export const ReasoningCard = React.forwardRef<
             userToggledRef.current = true;
             setIsOpen((open) => !open);
           }}
-          className="flex w-full items-center gap-2 rounded-sm text-sm text-[var(--faint)] outline-none transition-colors hover:text-[var(--foreground)] focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)] focus-visible:ring-offset-0"
+          className="flex w-full items-center gap-2 rounded-sm text-sm text-[var(--foreground)] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)] focus-visible:ring-offset-0"
         >
           {label}
           <ChevronDownIcon
             className={cn(
               "size-3.5 shrink-0 transition-transform duration-200",
-              isOpen && "rotate-90",
+              !isOpen && "-rotate-90",
             )}
           />
         </button>

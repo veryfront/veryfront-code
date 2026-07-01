@@ -184,6 +184,41 @@ export {
   type StreamingMessageProps,
 } from "#veryfront/react/components/chat/message.tsx";
 
+// ---------------------------------------------------------------------------
+// Target component names — the renamed public API (see
+// .context/chat-components-checklist.md). The v1 names above stay exported as
+// back-compat aliases; these are the names the component set is standardizing on.
+// ---------------------------------------------------------------------------
+export {
+  AttachmentPill as Attachment,
+  type AttachmentPillProps as AttachmentProps,
+  ChatComposer as ChatInput,
+  type ChatComposerProps as ChatInputProps,
+  ReasoningCard as Reasoning,
+  ToolCallCard as ToolCall,
+} from "#veryfront/react/components/chat/chat.tsx";
+export { Markdown, type MarkdownProps } from "#veryfront/react/components/chat/markdown.tsx";
+
+// New target components (Studio 1:1, dependency-light forks).
+export {
+  type AgentOption,
+  AgentPicker,
+  type AgentPickerProps,
+  type AgentPickerSection,
+} from "#veryfront/react/components/chat/agent-picker.tsx";
+export {
+  ChatActions,
+  type ChatActionsProps,
+  type ChatActionsSettings,
+} from "#veryfront/react/components/chat/chat-actions.tsx";
+export {
+  SkillTool,
+  type SkillToolProps,
+} from "#veryfront/react/components/chat/chat/components/skill-tool.tsx";
+// Shared syntax-highlight primitive (`CodeBlockProps` name is already taken by
+// the Markdown code-block props, so only the runtime `CodeBlock` is re-exported).
+export { CodeBlock } from "#veryfront/react/components/chat/ui/code-block.tsx";
+
 export { AgentCard, type AgentCardProps } from "#veryfront/react/components/chat/agent-card.tsx";
 export {
   ChatErrorBoundary,

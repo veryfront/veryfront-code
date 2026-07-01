@@ -12,16 +12,15 @@ import type {
 
 export const modelOptions: ModelOption[] = [
   {
-    value: "veryfront/default",
-    label: "Default",
-    provider: "Veryfront",
-    badge: "Default",
-  },
-  { value: "openai/gpt-4.1", label: "OpenAI GPT-4.1", provider: "OpenAI" },
-  {
     value: "anthropic/claude-sonnet-4",
     label: "Claude Sonnet 4",
     provider: "Anthropic",
+  },
+  { value: "openai/gpt-4.1", label: "GPT-4.1", provider: "OpenAI" },
+  {
+    value: "google/gemini-2.5-pro",
+    label: "Gemini 2.5 Pro",
+    provider: "Google",
   },
 ];
 
@@ -88,6 +87,14 @@ export const erroredToolPart: ChatToolPart<"trigger_deploy"> = {
   state: "output-error",
   input: { project: "demo" },
   errorText: "Missing deploy token",
+};
+
+export const runningToolPart: ChatToolPart<"search_docs"> = {
+  type: "tool-search_docs",
+  toolCallId: "tool-search-docs-running",
+  toolName: "search_docs",
+  state: "input-available",
+  input: { query: "agent run persistence" },
 };
 
 export const chatMessages: ChatMessage[] = [

@@ -1,15 +1,57 @@
 /**
- * ModelSelector - Dropdown for switching models at runtime
+ * ModelSelector — Popover + Command combobox for switching models at runtime.
  *
- * Opens upward from the trigger using fixed positioning
- * so it never affects the surrounding layout.
+ * Built on the same primitives as `AgentPicker` (Popover → Command), so the
+ * dropdown portals via `Floating` (never clips in the composer/iframe) and gets
+ * keyboard nav + search for free. Rows show the real provider logo from
+ * models.dev. Two trigger styles via `variant`: `pill` (logo + label + chevron)
+ * or `icon` (logo only, like Studio's desktop picker).
  *
- * Implements WAI-ARIA listbox pattern with full keyboard navigation.
+ * @module react/components/chat/model-selector
  */
 
 import * as React from "react";
 import { cn } from "./theme.ts";
-import { ChevronDownIcon } from "./icons/index.ts";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "./ui/command.tsx";
+import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover.tsx";
+import { Pill } from "./ui/pill.tsx";
+import { CheckIcon, ChevronDownIcon, SparklesIcon } from "./icons/index.ts";
+
+/** Provider slug for a model (explicit `provider`, else the `value` prefix). */
+function providerOf(model: ModelOption | undefined): string | undefined {
+  return model?.provider ?? model?.value.split("/")[0];
+}
+
+/**
+ * Real provider logo from models.dev (`dark:invert` for dark mode, same source
+ * as Studio). Falls back to a generic glyph if the slug has no logo.
+ */
+function ProviderLogo(
+  { provider, className }: { provider?: string; className?: string },
+): React.ReactElement {
+  const [failed, setFailed] = React.useState(false);
+  const key = provider?.toLowerCase();
+  if (!key || failed) {
+    return <SparklesIcon className={cn("size-4.5 text-[var(--faint)]", className)} />;
+  }
+  return (
+    <img
+      alt=""
+      aria-hidden="true"
+      referrerPolicy="no-referrer"
+      onError={() => setFailed(true)}
+      className={cn("size-5 shrink-0 object-contain dark:invert", className)}
+      src={`https://models.dev/logos/${key}.svg`}
+    />
+  );
+}
 
 /** A "provider/model" value and its display label. */
 export interface ModelOption {
@@ -17,7 +59,7 @@ export interface ModelOption {
   value: string;
   /** Display label (e.g. "GPT-4o") */
   label: string;
-  /** Provider name for grouping (e.g. "openai") */
+  /** Provider name for grouping + logo (e.g. "openai") */
   provider?: string;
   /** Short description shown beneath the label */
   description?: string;
@@ -33,11 +75,19 @@ export interface ModelSelectorProps {
   value?: string;
   /** Called when user selects a model */
   onChange: (model: string) => void;
-  /** Additional class names */
+  /** Additional class names for the trigger */
   className?: string;
   /** Disabled state */
   disabled?: boolean;
+  /**
+   * Trigger style: `pill` (logo + label + chevron) or `icon` (provider logo
+   * only, like Studio's desktop picker). @default "pill"
+   */
+  variant?: "pill" | "icon";
 }
+
+/** Search box appears once the model count crosses this. */
+const SEARCH_THRESHOLD = 6;
 
 function groupByProvider(models: ModelOption[]): Map<string, ModelOption[]> {
   const groups = new Map<string, ModelOption[]>();
@@ -53,6 +103,32 @@ function groupByProvider(models: ModelOption[]): Map<string, ModelOption[]> {
   return groups;
 }
 
+function ModelRow({
+  model,
+  selected,
+  onSelect,
+}: {
+  model: ModelOption;
+  selected: boolean;
+  onSelect: (value: string) => void;
+}): React.ReactElement {
+  return (
+    <CommandItem
+      value={model.label}
+      onSelect={() => onSelect(model.value)}
+    >
+      <ProviderLogo provider={providerOf(model)} className="size-4.5" />
+      <span className="min-w-0 flex-1 truncate">{model.label}</span>
+      {model.badge && (
+        <span className="rounded-full border border-[var(--outline-border)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--faint)]">
+          {model.badge}
+        </span>
+      )}
+      {selected && <CheckIcon className="ml-auto opacity-70" />}
+    </CommandItem>
+  );
+}
+
 /** Render model selector. */
 export function ModelSelector({
   models,
@@ -60,216 +136,89 @@ export function ModelSelector({
   onChange,
   className,
   disabled,
+  variant = "pill",
 }: ModelSelectorProps): React.ReactElement {
   const [open, setOpen] = React.useState(false);
-  const triggerRef = React.useRef<HTMLButtonElement>(null);
-  const dropdownRef = React.useRef<HTMLDivElement>(null);
-  const [pos, setPos] = React.useState<
-    { bottom: number; right: number } | null
-  >(null);
-  const [focusedIndex, setFocusedIndex] = React.useState(-1);
-
   const selected = models.find((m) => m.value === value) ?? models[0];
-  const listboxId = React.useId();
-
-  // Measure trigger and position dropdown above it, right-aligned
-  React.useEffect(() => {
-    if (!open || !triggerRef.current) return;
-    const r = triggerRef.current.getBoundingClientRect();
-    setPos({
-      bottom: globalThis.innerHeight - r.top + 6,
-      right: globalThis.innerWidth - r.right,
-    });
-    // Focus the selected item when opening
-    const selectedIdx = models.findIndex((m) => m.value === (value ?? selected?.value));
-    setFocusedIndex(selectedIdx >= 0 ? selectedIdx : 0);
-  }, [open, models, value, selected?.value]);
-
-  // Close on outside click
-  React.useEffect(() => {
-    if (!open) return;
-
-    function handleMouseDown(e: MouseEvent): void {
-      const target = e.target as Node;
-      if (
-        triggerRef.current?.contains(target) ||
-        dropdownRef.current?.contains(target)
-      ) {
-        return;
-      }
-      setOpen(false);
-    }
-
-    document.addEventListener("mousedown", handleMouseDown);
-    return () => document.removeEventListener("mousedown", handleMouseDown);
-  }, [open]);
-
-  // Keyboard navigation
-  React.useEffect(() => {
-    if (!open) return;
-
-    function handleKeyDown(e: KeyboardEvent): void {
-      switch (e.key) {
-        case "Escape":
-          setOpen(false);
-          triggerRef.current?.focus();
-          break;
-        case "ArrowDown":
-          e.preventDefault();
-          setFocusedIndex((prev) => (prev + 1) % models.length);
-          break;
-        case "ArrowUp":
-          e.preventDefault();
-          setFocusedIndex((prev) => (prev - 1 + models.length) % models.length);
-          break;
-        case "Home":
-          e.preventDefault();
-          setFocusedIndex(0);
-          break;
-        case "End":
-          e.preventDefault();
-          setFocusedIndex(models.length - 1);
-          break;
-        case "Enter":
-        case " ":
-          e.preventDefault();
-          if (focusedIndex >= 0 && focusedIndex < models.length) {
-            onChange(models[focusedIndex]!.value);
-            setOpen(false);
-            triggerRef.current?.focus();
-          }
-          break;
-      }
-    }
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [open, focusedIndex, models, onChange]);
-
-  // Scroll focused item into view
-  React.useEffect(() => {
-    if (!open || focusedIndex < 0) return;
-    const option = dropdownRef.current?.querySelector(
-      `[data-index="${focusedIndex}"]`,
-    );
-    option?.scrollIntoView({ block: "nearest" });
-  }, [open, focusedIndex]);
-
+  const selectedValue = value ?? selected?.value;
+  const showSearch = models.length > SEARCH_THRESHOLD;
   const hasGroups = models.some((m) => m.provider);
   const groups = hasGroups ? groupByProvider(models) : null;
 
-  function handleSelect(model: ModelOption): void {
-    onChange(model.value);
+  function handleSelect(modelValue: string): void {
     setOpen(false);
-    triggerRef.current?.focus();
+    onChange(modelValue);
   }
 
-  function renderItem(
-    model: ModelOption,
-    flatIndex: number,
-  ): React.ReactElement {
-    const isActive = model.value === (value ?? selected?.value);
-    const isFocused = flatIndex === focusedIndex;
-
-    return (
-      <div
-        key={model.value}
-        role="option"
-        aria-selected={isActive}
-        data-index={flatIndex}
-        onClick={() => handleSelect(model)}
-        onMouseEnter={() => setFocusedIndex(flatIndex)}
+  const trigger = variant === "icon"
+    ? (
+      <button
+        type="button"
+        disabled={disabled}
+        aria-label={selected?.label ?? "Select model"}
         className={cn(
-          "w-full cursor-pointer rounded-[var(--radius-md)] px-3 py-2 text-left text-sm transition-colors",
-          isActive
-            ? "bg-[var(--tertiary)] text-[var(--foreground)]"
-            : "text-[var(--foreground)] hover:bg-[var(--tertiary)]",
-          isFocused && !isActive && "bg-[var(--tertiary)]",
+          "flex size-9 items-center justify-center rounded-full text-[var(--foreground)] transition-colors hover:bg-[var(--tertiary)]",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)]",
+          "disabled:opacity-50 disabled:cursor-not-allowed",
+          className,
         )}
       >
-        <div className="flex items-center gap-2">
-          <span className="font-medium">{model.label}</span>
-          {model.badge && (
-            <span className="rounded-full border border-[var(--outline-border)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--faint)]">
-              {model.badge}
-            </span>
-          )}
-        </div>
-        {model.description && (
-          <p className="mt-0.5 text-xs text-[var(--faint)]">
-            {model.description}
-          </p>
+        <ProviderLogo provider={providerOf(selected)} className="size-5" />
+      </button>
+    )
+    : (
+      <Pill
+        className={cn(
+          "min-w-0 max-w-full",
+          disabled && "opacity-50 pointer-events-none",
+          className,
         )}
-      </div>
+      >
+        <ProviderLogo provider={providerOf(selected)} className="size-4" />
+        <span className="min-w-0 truncate">{selected?.label ?? "Select model"}</span>
+        <ChevronDownIcon className="ml-auto" />
+      </Pill>
     );
-  }
-
-  // Build flat index mapping for grouped layout
-  let flatIndex = 0;
-  const dropdownContent = groups
-    ? Array.from(groups.entries()).map(([provider, items], groupIndex) => (
-      <div
-        key={provider || "__ungrouped"}
-        role="group"
-        aria-label={provider || undefined}
-      >
-        {groupIndex > 0 && <div className="my-1 h-px bg-[var(--edge)]" />}
-        {provider && (
-          <div className="px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider text-[var(--faint)]">
-            {provider}
-          </div>
-        )}
-        {items.map((item) => renderItem(item, flatIndex++))}
-      </div>
-    ))
-    : models.map((item) => renderItem(item, flatIndex++));
 
   return (
-    <div className={cn("inline-block", className)}>
-      <button
-        ref={triggerRef}
-        type="button"
-        onClick={() => !disabled && setOpen((prev) => !prev)}
-        disabled={disabled}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-controls={open ? listboxId : undefined}
-        className={cn(
-          "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-xs",
-          "border border-[var(--outline-border)]",
-          "bg-transparent",
-          "text-[var(--foreground)]",
-          "hover:bg-[var(--tertiary)]",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--background)]",
-          "transition-all disabled:opacity-50 disabled:cursor-not-allowed",
-        )}
-      >
-        <span>{selected?.label ?? "Select model"}</span>
-        <ChevronDownIcon
-          className={cn(
-            "size-3 transition-transform rotate-180",
-            open && "rotate-0",
-          )}
-        />
-      </button>
-
-      {open && pos && (
-        <div
-          ref={dropdownRef}
-          id={listboxId}
-          role="listbox"
-          aria-label="Select model"
-          className="max-h-[320px] min-w-[220px] overflow-auto rounded-[var(--radius-lg)] border border-[var(--outline-border)] bg-[var(--popover)] p-1 shadow-sm"
-          style={{
-            position: "fixed",
-            bottom: pos.bottom,
-            right: pos.right,
-            zIndex: 9999,
-          }}
-        >
-          {dropdownContent}
-        </div>
-      )}
-    </div>
+    <Popover open={open} onOpenChange={disabled ? undefined : setOpen}>
+      <PopoverTrigger asChild>{trigger}</PopoverTrigger>
+      <PopoverContent align="start" className="min-w-[260px] p-0! rounded-lg">
+        <Command className="bg-transparent">
+          {showSearch && <CommandInput placeholder="Search models..." />}
+          <CommandList className="max-h-[320px]">
+            <CommandEmpty>No models found.</CommandEmpty>
+            {groups
+              ? Array.from(groups.entries()).map(([provider, items]) => (
+                <CommandGroup
+                  key={provider || "__ungrouped"}
+                  heading={provider || undefined}
+                >
+                  {items.map((model) => (
+                    <ModelRow
+                      key={model.value}
+                      model={model}
+                      selected={model.value === selectedValue}
+                      onSelect={handleSelect}
+                    />
+                  ))}
+                </CommandGroup>
+              ))
+              : (
+                <CommandGroup>
+                  {models.map((model) => (
+                    <ModelRow
+                      key={model.value}
+                      model={model}
+                      selected={model.value === selectedValue}
+                      onSelect={handleSelect}
+                    />
+                  ))}
+                </CommandGroup>
+              )}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
   );
 }

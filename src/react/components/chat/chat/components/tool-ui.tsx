@@ -13,6 +13,7 @@ import {
   WrenchIcon,
   XCircleIcon,
 } from "../../icons/index.ts";
+import { Alert, AlertContent, AlertIcon } from "../../ui/alert.tsx";
 import type { ChatDynamicToolPart, ChatToolPart } from "#veryfront/agent/react";
 import { escapeHtml } from "#veryfront/utils/html-escape.ts";
 
@@ -234,18 +235,16 @@ export function ToolCallCard({
             </div>
           )}
 
-          {!tool.errorText
-            ? null
-            : (
-              <div className="mt-3 space-y-2 border-t border-[var(--edge)] pt-3">
-                <h4 className="text-xs font-medium text-[var(--destructive)]">
-                  Error
-                </h4>
-                <div className="rounded-[var(--radius-md)] bg-[var(--destructive)]/10 p-3 text-sm text-[var(--destructive)]">
-                  {tool.errorText}
-                </div>
-              </div>
-            )}
+          {!tool.errorText ? null : (
+            <div className="mt-3 border-t border-[var(--edge)] pt-3">
+              <Alert variant="error">
+                <AlertIcon>
+                  <XCircleIcon className="size-4" />
+                </AlertIcon>
+                <AlertContent>{tool.errorText}</AlertContent>
+              </Alert>
+            </div>
+          )}
         </div>
       )}
     </div>

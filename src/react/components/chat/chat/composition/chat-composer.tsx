@@ -5,9 +5,10 @@
  */
 
 import * as React from "react";
-import { InputBox, SubmitButton } from "#veryfront/react/primitives/index.ts";
+import { InputBox } from "#veryfront/react/primitives/index.ts";
 import { cn } from "../../theme.ts";
-import { PlusIcon } from "../../icons/index.ts";
+import { ArrowUpIcon, PlusIcon, StopIcon } from "../../icons/index.ts";
+import { Button } from "../../ui/button.tsx";
 import { type ModelOption, ModelSelector } from "../../model-selector.tsx";
 import type { ChatTheme } from "../../theme.ts";
 import { AttachmentPill } from "../components/attachment-pill.tsx";
@@ -37,6 +38,10 @@ export interface ChatComposerProps {
   model?: string;
   onModelChange?: (model: string) => void;
 
+  // Agent selector — rendered in the footer toolbar between the `+` and left
+  // actions (Studio PromptForm `agentSelector` slot). Pass an `<AgentPicker>`.
+  agentSelector?: React.ReactNode;
+
   // Attachments
   onAttach?: (files: FileList) => void;
   onSelectAttachment?: () => void;
@@ -63,12 +68,12 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
       placeholder = "Type a message...",
       theme,
       stop,
-      onVoice,
       isListening = false,
       transcript,
       models,
       model,
       onModelChange,
+      agentSelector,
       onAttach,
       onSelectAttachment,
       attachAccept,
@@ -114,103 +119,111 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
               onSubmit?.(e);
             }}
           >
-            <div className="relative overflow-hidden rounded-[var(--radius-lg)] border border-transparent bg-[var(--secondary)] px-3 pt-3 pb-2 shadow-sm transition-all md:px-4 md:pt-4 md:pb-3">
-              <div className="flex min-h-[44px] items-end gap-1.5 md:gap-2">
-                {(onAttach || onSelectAttachment) && (
-                  <div className="relative flex shrink-0 items-center">
-                    {onAttach && (
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept={attachAccept}
-                        multiple
-                        aria-label="Upload file"
-                        onChange={(e) => {
-                          if (e.target.files?.length) {
-                            onAttach(e.target.files);
-                          }
-                          e.target.value = "";
-                        }}
-                        style={{
-                          position: "absolute",
-                          width: 1,
-                          height: 1,
-                          padding: 0,
-                          margin: -1,
-                          overflow: "hidden",
-                          clip: "rect(0,0,0,0)",
-                          whiteSpace: "nowrap",
-                          border: 0,
-                        }}
-                      />
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (onAttach && !onSelectAttachment) {
-                          fileInputRef.current?.click();
-                          return;
-                        }
-                        setAttachmentMenuOpen((open) => !open);
-                      }}
-                      className="flex size-8 shrink-0 items-center justify-center rounded-full bg-transparent text-[var(--foreground)] transition-colors hover:bg-[var(--tertiary)]"
-                      aria-label="Add document"
-                      aria-expanded={attachmentMenuOpen}
-                    >
-                      <PlusIcon className="size-4" />
-                    </button>
-                    {attachmentMenuOpen && (
-                      <div
-                        role="menu"
-                        className="absolute bottom-11 left-0 z-20 overflow-hidden rounded-[var(--radius-lg)] border border-[var(--outline-border)] bg-[var(--popover)] shadow-sm"
-                        style={{ minWidth: 224 }}
-                      >
-                        {onAttach && (
-                          <button
-                            type="button"
-                            role="menuitem"
-                            className="block w-full whitespace-nowrap px-3 py-2.5 text-left text-sm text-[var(--foreground)] transition-colors hover:bg-[var(--tertiary)]"
-                            onClick={() => {
-                              setAttachmentMenuOpen(false);
-                              fileInputRef.current?.click();
-                            }}
-                          >
-                            Upload document
-                          </button>
-                        )}
-                        {onSelectAttachment && (
-                          <button
-                            type="button"
-                            role="menuitem"
-                            className="block w-full whitespace-nowrap px-3 py-2.5 text-left text-sm text-[var(--foreground)] transition-colors hover:bg-[var(--tertiary)]"
-                            onClick={() => {
-                              setAttachmentMenuOpen(false);
-                              onSelectAttachment();
-                            }}
-                          >
-                            Select document
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
+            <div className="relative overflow-hidden rounded-[var(--radius-lg)] border border-transparent bg-[var(--secondary)] px-3 pt-2 pb-2 shadow-sm transition-all md:px-4 md:pt-3 md:pb-3">
+              {/* Editor — occupies the top of the card (Studio PromptForm) */}
+              <InputBox
+                value={isListening ? transcript || input : input}
+                onChange={onChange}
+                onSubmit={() => onSubmit?.()}
+                placeholder={inputPlaceholder}
+                aria-label={inputLabel}
+                disabled={isLoading || isListening}
+                multiline
+                className={cn(
+                  "min-h-9 w-full min-w-0 py-1.5 text-base leading-6 text-[var(--foreground)] placeholder:text-[var(--faint)]",
+                  theme?.input,
                 )}
-                <InputBox
-                  value={isListening ? transcript || input : input}
-                  onChange={onChange}
-                  onSubmit={() => onSubmit?.()}
-                  placeholder={inputPlaceholder}
-                  aria-label={inputLabel}
-                  disabled={isLoading || isListening}
-                  multiline
-                  className={cn(
-                    "min-h-9 min-w-0 flex-1 py-1.5 text-base leading-6 text-[var(--foreground)] placeholder:text-[var(--faint)]",
-                    theme?.input,
+              />
+
+              {/* Footer toolbar — left: + menu + agent selector; right: model + submit */}
+              <div className="mt-2.5 flex min-h-[44px] items-center justify-between gap-1.5 md:gap-2">
+                <div className="flex min-w-0 items-center gap-1.5 md:gap-2">
+                  {(onAttach || onSelectAttachment) && (
+                    <div className="relative flex shrink-0 items-center">
+                      {onAttach && (
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          accept={attachAccept}
+                          multiple
+                          aria-label="Upload file"
+                          onChange={(e) => {
+                            if (e.target.files?.length) {
+                              onAttach(e.target.files);
+                            }
+                            e.target.value = "";
+                          }}
+                          style={{
+                            position: "absolute",
+                            width: 1,
+                            height: 1,
+                            padding: 0,
+                            margin: -1,
+                            overflow: "hidden",
+                            clip: "rect(0,0,0,0)",
+                            whiteSpace: "nowrap",
+                            border: 0,
+                          }}
+                        />
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (onAttach && !onSelectAttachment) {
+                            fileInputRef.current?.click();
+                            return;
+                          }
+                          setAttachmentMenuOpen((open) => !open);
+                        }}
+                        className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[var(--accent)] text-[var(--foreground)] transition-colors hover:bg-[var(--primary)] hover:text-[var(--secondary)]"
+                        aria-label="Add document"
+                        aria-expanded={attachmentMenuOpen}
+                      >
+                        <PlusIcon className="size-4.5" />
+                      </button>
+                      {attachmentMenuOpen && (
+                        <div
+                          role="menu"
+                          className="absolute bottom-full left-0 z-20 mb-2 overflow-hidden rounded-[var(--radius-lg)] bg-[var(--popover)] shadow-sm"
+                          style={{ minWidth: 224 }}
+                        >
+                          {onAttach && (
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="block w-full whitespace-nowrap px-3 py-2.5 text-left text-sm text-[var(--foreground)] transition-colors hover:bg-[var(--tertiary)]"
+                              onClick={() => {
+                                setAttachmentMenuOpen(false);
+                                fileInputRef.current?.click();
+                              }}
+                            >
+                              Upload document
+                            </button>
+                          )}
+                          {onSelectAttachment && (
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="block w-full whitespace-nowrap px-3 py-2.5 text-left text-sm text-[var(--foreground)] transition-colors hover:bg-[var(--tertiary)]"
+                              onClick={() => {
+                                setAttachmentMenuOpen(false);
+                                onSelectAttachment();
+                              }}
+                            >
+                              Select document
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   )}
-                />
-                <div className="flex items-center gap-2">
+                  {agentSelector}
+                </div>
+
+                <div className="flex shrink-0 items-center gap-1.5 md:gap-2">
                   {models && models.length > 0 && onModelChange && (
                     <ModelSelector
+                      variant="icon"
                       models={models}
                       value={model}
                       onChange={onModelChange}
@@ -221,12 +234,12 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
                     <button
                       type="button"
                       onClick={() => downloadMarkdown(messages)}
-                      className="flex size-8 shrink-0 items-center justify-center rounded-full bg-transparent text-[var(--foreground)] transition-colors hover:bg-[var(--tertiary)]"
+                      className="flex size-9 shrink-0 items-center justify-center rounded-full bg-transparent text-[var(--foreground)] transition-colors hover:bg-[var(--tertiary)]"
                       aria-label="Export conversation"
                       title="Export as Markdown"
                     >
                       <svg
-                        className="size-5"
+                        className="size-4.5"
                         viewBox="0 0 24 24"
                         fill="none"
                         stroke="currentColor"
@@ -240,17 +253,33 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
                       </svg>
                     </button>
                   )}
-                  <SubmitButton
-                    isLoading={isLoading || isListening}
-                    hasInput={!!input.trim()}
-                    onStop={isListening ? undefined : stop}
-                    onVoice={onVoice}
-                    disabled={!input.trim()}
-                    className={cn(
-                      "size-8 shrink-0 rounded-full bg-[var(--primary)] text-[var(--secondary)] shadow-sm transition-[background-color,color] hover:bg-[var(--secondary)] hover:text-[var(--foreground)] disabled:opacity-60",
-                      theme?.button,
+                  {isLoading
+                    ? (
+                      <Button
+                        type="button"
+                        variant="icon-ghost"
+                        size="icon-lg"
+                        aria-label="Stop"
+                        onClick={() => stop?.()}
+                        className="shrink-0"
+                      >
+                        <StopIcon />
+                      </Button>
+                    )
+                    : (
+                      <Button
+                        type="button"
+                        variant="icon-primary"
+                        on="card"
+                        size="icon-lg"
+                        aria-label="Send"
+                        disabled={!input.trim()}
+                        onClick={() => onSubmit?.()}
+                        className={cn("shrink-0", theme?.button)}
+                      >
+                        <ArrowUpIcon />
+                      </Button>
                     )}
-                  />
                 </div>
               </div>
             </div>

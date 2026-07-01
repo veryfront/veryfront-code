@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { AttachmentPill } from "veryfront/chat";
+import { Attachment } from "veryfront/chat";
 import {
   DocsCode,
   DocsComposition,
@@ -12,19 +12,19 @@ import {
 import { attachments } from "../fixtures/chat";
 import { ReviewSurface, StoryFrame } from "../support/StoryFrame";
 
-const importCode = `import { AttachmentPill } from "veryfront/chat"`;
+const importCode = `import { Attachment } from "veryfront/chat"`;
 
-const compositionTree = `AttachmentPill  <- context: a single AttachmentInfo
+const compositionTree = `Attachment  <- context: a single AttachmentInfo
   +-- Thumbnail  <- image preview or file-type glyph
   +-- Label  <- file name + size / status
   +-- Remove button  <- shown when onRemove is set
   +-- Hover preview  <- shown when attachment.preview is set`;
 
-function AttachmentPillDocsPage() {
+function AttachmentDocsPage() {
   return (
     <DocsPage>
       <DocsHero
-        title="AttachmentPill"
+        title="Attachment"
         lead="A compact chip representing one chat attachment — file glyph, name, size, and an optional remove control."
       />
 
@@ -59,7 +59,7 @@ function AttachmentPillDocsPage() {
 
       <DocsSection title="API Reference">
         <DocsPropsTable
-          component="AttachmentPill"
+          component="Attachment"
           description="Renders a single attachment chip"
           props={[
             {
@@ -116,14 +116,14 @@ function AttachmentPillDocsPage() {
 }
 
 const meta = {
-  title: "Chat/Components/AttachmentPill",
-  component: AttachmentPill,
+  title: "Chat/Components/Attachment",
+  component: Attachment,
   tags: ["autodocs"],
   parameters: {
     layout: "fullscreen",
-    docs: { page: AttachmentPillDocsPage },
+    docs: { page: AttachmentDocsPage },
   },
-} satisfies Meta<typeof AttachmentPill>;
+} satisfies Meta<typeof Attachment>;
 
 export default meta;
 type Story = StoryObj<typeof meta>;
@@ -135,7 +135,7 @@ export const Ready: Story = {
       <ReviewSurface label="Ready attachments">
         <div className="flex flex-wrap gap-2">
           {attachments.map((attachment) => (
-            <AttachmentPill
+            <Attachment
               key={attachment.id}
               attachment={attachment}
               onRemove={() => undefined}
@@ -152,7 +152,7 @@ export const Uploading: Story = {
   render: () => (
     <StoryFrame maxWidth="560px">
       <ReviewSurface label="Uploading">
-        <AttachmentPill
+        <Attachment
           attachment={{
             id: "uploading",
             name: "run-export.csv",
@@ -171,7 +171,7 @@ export const WithPreview: Story = {
   render: () => (
     <StoryFrame maxWidth="560px">
       <ReviewSurface label="Preview on hover">
-        <AttachmentPill
+        <Attachment
           attachment={{
             id: "preview",
             name: "handoff-notes.md",

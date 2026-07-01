@@ -14,6 +14,16 @@ import * as useStreamingModule from "#veryfront/agent/react/use-streaming.ts";
 import * as useVoiceInputModule from "#veryfront/agent/react/use-voice-input.ts";
 
 const expectedRuntimeExports = [
+  // Target component names (renamed public API; v1 aliases retained below).
+  "Attachment",
+  "Reasoning",
+  "ToolCall",
+  "ChatInput",
+  "SkillTool",
+  "AgentPicker",
+  "ChatActions",
+  "CodeBlock",
+  "Markdown",
   "AgentCard",
   "AttachmentPill",
   "BranchPicker",
@@ -23,6 +33,7 @@ const expectedRuntimeExports = [
   "ChatComposer",
   "ChatContextProvider",
   "ChatEmpty",
+  "ChatEmptyState",
   "ChatIf",
   "ChatMessageList",
   "ChatRoot",
@@ -132,7 +143,8 @@ describe("chat/index.ts exports", () => {
   });
 
   it("does not widen the barrel with react-only non-chat exports", () => {
-    assertEquals("Markdown" in chatModule, false);
+    // `Markdown` is intentionally part of the chat public API (message body renderer).
+    assertEquals("Markdown" in chatModule, true);
     assertEquals("chatTokens" in chatModule, false);
     assertEquals("getChatTokensCSS" in chatModule, false);
     assertEquals("ColorModeProvider" in chatModule, false);
