@@ -52,7 +52,7 @@ We are working to make the framework's supply chain auditable and tamper-evident
 
 - **SBOM:** `deno task sbom` generates a CycloneDX 1.5 SBOM (`dist/sbom.json`) from the npm and `esm.sh` imports declared in `deno.json`. Coverage of transitive dependencies is in progress.
 - **Continuous scanning:** CodeQL (`security-and-quality` queries) and an `npm audit` job run weekly and on same-repository pull requests that touch `deno.json` (see `.github/workflows/codeql.yml`, `.github/workflows/security-audit.yml`). External fork pull requests do not run code-checking CI. Socket.dev is configured via `socket.yml` and reviews pull requests as a GitHub App.
-- **Release publishing:** npm releases use GitHub Actions OIDC trusted publishing with npm provenance. Release jobs do not use a long-lived npm publish token.
+- **Release publishing:** npm releases use GitHub Actions OIDC trusted publishing with npm provenance. Release jobs do not use a long-lived npm publish token. GitHub release and deploy automation uses short-lived GitHub App installation tokens instead of user PATs.
 - **Pinned dependencies:** all `npm:` and `esm.sh` imports are required to declare exact `x.y.z` versions, enforced by `scripts/lint/audit-deps.ts` (`deno task lint:deps`). Git URL and tarball imports are rejected outright.
 - **Install-script suppression:** npm package assembly runs dependency installation with npm lifecycle scripts disabled.
 - **Capability descriptors:** each first-party extension declares the capabilities it requires (e.g. `net`, `fs`, `env`) in its `deno.json`. These are descriptive today; runtime enforcement is on the roadmap.
