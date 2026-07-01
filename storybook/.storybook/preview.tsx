@@ -1,16 +1,36 @@
 import type { Decorator, Preview } from "@storybook/react-vite";
 import * as React from "react";
+import { addons } from "storybook/internal/preview-api";
+import { GLOBALS_UPDATED, SET_GLOBALS } from "storybook/internal/core-events";
 import { DocsAutodocsPage } from "./docs/DocsPage";
 import { transformVeryfrontStorySource } from "./docs/transformStorySource";
 import "./preview.css";
 
-// Apply the selected preview color mode to <html data-theme> — the same
-// attribute the framework's chat tokens and preview.css read.
+// Apply the selected colour mode to <html data-theme> — the attribute the chat
+// tokens and preview.css read.
+function applyTheme(globals?: { theme?: unknown }): void {
+  if (typeof document === "undefined") return;
+  document.documentElement.setAttribute(
+    "data-theme",
+    globals?.theme === "dark" ? "dark" : "light",
+  );
+}
+
+// The decorator only runs for CANVAS stories. Docs-page previews render via a
+// direct call (see DocsExampleAuto) and bypass decorators, so the toggle
+// wouldn't apply there. Listen on the addons channel instead — event-driven,
+// no polling — which fires for both: SET_GLOBALS on init, GLOBALS_UPDATED on
+// every toggle, everywhere in the preview iframe.
+if (typeof document !== "undefined") {
+  const channel = addons.getChannel();
+  channel.on(SET_GLOBALS, (p: { globals?: { theme?: unknown } }) =>
+    applyTheme(p?.globals));
+  channel.on(GLOBALS_UPDATED, (p: { globals?: { theme?: unknown } }) =>
+    applyTheme(p?.globals));
+}
+
 const withTheme: Decorator = (Story, context) => {
-  const theme = context.globals.theme === "dark" ? "dark" : "light";
-  if (typeof document !== "undefined") {
-    document.documentElement.setAttribute("data-theme", theme);
-  }
+  applyTheme(context.globals);
   return <Story />;
 };
 
