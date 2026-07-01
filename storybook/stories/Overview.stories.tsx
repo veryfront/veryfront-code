@@ -23,19 +23,18 @@ const COMPONENTS: NavGridEntry[] = [
   { title: "ChatEmptyState", id: "chat-components-chatemptystate--docs" },
   { title: "Message", id: "chat-components-message--docs" },
   { title: "AgentCard", id: "chat-components-agentcard--docs" },
-  { title: "ChatComposer", id: "chat-components-chatcomposer--docs" },
+  { title: "ChatInput", id: "chat-components-chatinput--docs" },
+  { title: "ChatActions", id: "chat-components-chatactions--docs" },
   { title: "ChatSidebar", id: "chat-components-chatsidebar--docs" },
   { title: "ModelSelector", id: "chat-components-modelselector--docs" },
-  { title: "AttachmentPill", id: "chat-components-attachmentpill--docs" },
+  { title: "AgentPicker", id: "chat-components-agentpicker--docs" },
+  { title: "Attachment", id: "chat-components-attachment--docs" },
   { title: "UploadsPanel", id: "chat-components-uploadspanel--docs" },
   { title: "Sources", id: "chat-components-sources--docs" },
-  { title: "ReasoningCard", id: "chat-components-reasoningcard--docs" },
-  { title: "ToolCallCard", id: "chat-components-toolcallcard--docs" },
+  { title: "Reasoning", id: "chat-components-reasoning--docs" },
+  { title: "ToolCall", id: "chat-components-toolcall--docs" },
+  { title: "SkillTool", id: "chat-components-skilltool--docs" },
   { title: "Markdown", id: "chat-components-markdown--docs" },
-  {
-    title: "Action Components",
-    id: "chat-components-action-components--docs",
-  },
 ];
 
 const COMPOSITION: NavGridEntry[] = [
@@ -69,6 +68,7 @@ const UI: NavGridEntry[] = [
   { title: "Tooltip", id: "chat-ui-tooltip--docs" },
   { title: "Collapsible", id: "chat-ui-collapsible--docs" },
   { title: "Badge", id: "chat-ui-badge--docs" },
+  { title: "Alert", id: "chat-ui-alert--docs" },
   { title: "Status", id: "chat-ui-status--docs" },
   { title: "Pill", id: "chat-ui-pill--docs" },
   { title: "Tag", id: "chat-ui-tag--docs" },
@@ -78,6 +78,7 @@ const UI: NavGridEntry[] = [
   { title: "Shimmer", id: "chat-ui-shimmer--docs" },
   { title: "ProgressBar", id: "chat-ui-progressbar--docs" },
   { title: "ScrollFade", id: "chat-ui-scrollfade--docs" },
+  { title: "CodeBlock", id: "chat-ui-codeblock--docs" },
 ];
 
 function SectionLabel({ children }: { children: React.ReactNode }) {

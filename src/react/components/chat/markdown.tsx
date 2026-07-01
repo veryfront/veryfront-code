@@ -2,7 +2,7 @@ import * as React from "react";
 import { cn } from "./theme.ts";
 import { isBrowserEnvironment } from "#veryfront/platform/compat/runtime.ts";
 import { validateTrustedHtml } from "#veryfront/security/client/html-sanitizer.ts";
-import { RichCodeBlock } from "./chat/components/code-block.tsx";
+import { CodeBlock as SyntaxCodeBlock } from "./ui/code-block.tsx";
 
 /** Props accepted by markdown. */
 export interface MarkdownProps {
@@ -200,7 +200,9 @@ function CodeBlock({
     return <MermaidDiagram code={code} />;
   }
 
-  return <RichCodeBlock language={language} code={code} />;
+  // Block fences render through the shared syntax-highlight primitive (shiki +
+  // copy + language label + collapsible), forked from Studio's ChatCodeBlock.
+  return <SyntaxCodeBlock code={code} language={language} />;
 }
 
 function FallbackMarkdown({

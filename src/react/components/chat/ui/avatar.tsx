@@ -65,7 +65,7 @@ export function Avatar({
     <div
       ref={ref}
       className={cn(
-        "rounded-full size-8 shrink-0 flex items-center justify-center overflow-hidden",
+        "@container rounded-full size-8 shrink-0 flex items-center justify-center overflow-hidden",
         isMuted ? "bg-[var(--accent)]" : "bg-[var(--primary)]",
         accentColor && "border",
         className,
@@ -86,8 +86,12 @@ export function Avatar({
         : (
           <span
             className={cn(
-              "w-full h-full flex items-center justify-center text-xs font-medium capitalize",
-              isMuted ? "text-[var(--foreground)]" : "text-white",
+              // Scale the initial to the avatar via container-query units, so it
+              // fills small pills AND large empty-state avatars (Studio parity).
+              "w-full h-full flex items-center justify-center font-medium capitalize leading-none",
+              isMuted
+                ? "text-[length:44cqw] text-[var(--foreground)]"
+                : "text-[length:34cqw] text-white",
             )}
           >
             {isMuted ? getSingleInitial(name) : getInitials(name)}

@@ -79,7 +79,7 @@ export function InlineCitation({
           onMouseEnter={show}
           onMouseLeave={hide}
         >
-          <div className="rounded-[var(--radius-lg)] border border-[var(--outline-border)] bg-[var(--secondary)] p-3.5 text-left shadow-sm">
+          <div className="rounded-lg bg-[var(--popover)] p-3.5 text-left shadow-sm">
             {/* Title */}
             <div className="flex items-start gap-2">
               <span className="mt-0.5 flex size-5 flex-shrink-0 items-center justify-center rounded-full border border-[var(--outline-border)] text-[10px] font-medium text-[var(--foreground)]">

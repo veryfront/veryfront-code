@@ -357,8 +357,8 @@ describe("Storybook UI workbench", () => {
       "src/server/handlers/dev/projects/html-shell.ts",
       "src/studio/bridge/bridge-styles.ts",
       "storybook/.storybook/preview.css",
-      "storybook/stories/chat/ToolCallCard.stories.tsx",
-      "storybook/stories/chat/ChatComposer.stories.tsx",
+      "storybook/stories/chat/ToolCall.stories.tsx",
+      "storybook/stories/chat/ChatInput.stories.tsx",
     ];
     const licensedFontNames = [
       ["Gell", "ix"].join(""),

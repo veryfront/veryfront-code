@@ -15,12 +15,11 @@ import { StoryFrame } from "../support/StoryFrame";
 const importCode =
   `import { Message, StandaloneMessage, StreamingMessage } from "veryfront/chat"`;
 
-const compositionTree = `Message.Root  <- context: message, feedback state, branch state
+const compositionTree = `Message.Root  <- context: message, branch state
   +-- Message.Avatar  <- role glyph
   +-- Message.BranchPicker  <- switch between regenerated responses
   +-- Message.Content  <- markdown body, sources, reasoning steps
-  +-- Message.Actions  <- copy / regenerate / share
-  +-- Message.Feedback  <- thumbs up / down
+  +-- Message.Actions  <- copy / regenerate
 StandaloneMessage  <- non-compound convenience wrapper around Root
 StreamingMessage  <- live token + tool-call stream while generating`;
 
@@ -169,8 +168,6 @@ export const CompoundAssistant: Story = {
     <StoryFrame maxWidth="760px">
       <Message.Root
         message={chatMessages[1]}
-        onFeedback={() => undefined}
-        feedback="positive"
         getBranches={() => ({ current: 1, total: 3 })}
         switchBranch={() => undefined}
       >
@@ -179,7 +176,6 @@ export const CompoundAssistant: Story = {
           <Message.BranchPicker />
           <Message.Content showSources showSteps />
           <Message.Actions />
-          <Message.Feedback />
         </div>
       </Message.Root>
     </StoryFrame>

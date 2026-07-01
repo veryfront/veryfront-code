@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { ReasoningCard } from "veryfront/chat";
+import { Reasoning } from "veryfront/chat";
 import {
   DocsCode,
   DocsComposition,
@@ -11,17 +11,17 @@ import {
 } from "../../.storybook/docs";
 import { ReviewSurface, StoryFrame } from "../support/StoryFrame";
 
-const importCode = `import { ReasoningCard } from "veryfront/chat"`;
+const importCode = `import { Reasoning } from "veryfront/chat"`;
 
-const compositionTree = `ReasoningCard  <- collapsible disclosure for model thinking
+const compositionTree = `Reasoning  <- collapsible disclosure for model thinking
   +-- toggle button  <- "Thinking..." shimmer or "Thought process"
   +-- Markdown  <- reasoning text body when expanded`;
 
-function ReasoningCardDocsPage() {
+function ReasoningDocsPage() {
   return (
     <DocsPage>
       <DocsHero
-        title="ReasoningCard"
+        title="Reasoning"
         lead="A collapsible disclosure for a model's reasoning — shimmers while streaming, then auto-collapses once the thought is complete."
       />
 
@@ -49,7 +49,7 @@ function ReasoningCardDocsPage() {
 
       <DocsSection title="API Reference">
         <DocsPropsTable
-          component="ReasoningCard"
+          component="Reasoning"
           description="Collapsible reasoning disclosure"
           props={[
             {
@@ -77,14 +77,14 @@ function ReasoningCardDocsPage() {
 }
 
 const meta = {
-  title: "Chat/Components/ReasoningCard",
-  component: ReasoningCard,
+  title: "Chat/Components/Reasoning",
+  component: Reasoning,
   tags: ["autodocs"],
   parameters: {
     layout: "fullscreen",
-    docs: { page: ReasoningCardDocsPage },
+    docs: { page: ReasoningDocsPage },
   },
-} satisfies Meta<typeof ReasoningCard>;
+} satisfies Meta<typeof Reasoning>;
 
 export default meta;
 type Story = StoryObj<typeof meta>;
@@ -94,7 +94,7 @@ export const Streaming: Story = {
   render: () => (
     <StoryFrame maxWidth="640px">
       <ReviewSurface label="Streaming reasoning">
-        <ReasoningCard
+        <Reasoning
           text="I am comparing the current run state, recent tool calls, and the deploy preconditions before giving a recommendation."
           isStreaming
         />
@@ -108,7 +108,7 @@ export const Complete: Story = {
   render: () => (
     <StoryFrame maxWidth="640px">
       <ReviewSurface label="Collapsed after completion">
-        <ReasoningCard text="The release can proceed after the retry path has a user-visible error and the Storybook build is green." />
+        <Reasoning text="The release can proceed after the retry path has a user-visible error and the Storybook build is green." />
       </ReviewSurface>
     </StoryFrame>
   ),

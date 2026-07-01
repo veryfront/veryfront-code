@@ -80,6 +80,23 @@ const X_CIRCLE_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
   { type: "line", props: { x1: "9", y1: "9", x2: "15", y2: "15" } },
 ];
 
+const INFO_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
+  { type: "circle", props: { cx: "12", cy: "12", r: "10" } },
+  { type: "line", props: { x1: "12", y1: "16", x2: "12", y2: "12" } },
+  { type: "line", props: { x1: "12", y1: "8", x2: "12.01", y2: "8" } },
+];
+
+const ALERT_TRIANGLE_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
+  {
+    type: "path",
+    props: {
+      d: "M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z",
+    },
+  },
+  { type: "line", props: { x1: "12", y1: "9", x2: "12", y2: "13" } },
+  { type: "line", props: { x1: "12", y1: "17", x2: "12.01", y2: "17" } },
+];
+
 const WRENCH_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
   {
     type: "path",
@@ -188,6 +205,14 @@ export function ClockIcon({ className }: IconProps): React.ReactElement {
 
 export function CheckCircleIcon({ className }: IconProps): React.ReactElement {
   return renderIcon(className, CHECK_CIRCLE_ICON_ELEMENTS);
+}
+
+export function InfoIcon({ className }: IconProps): React.ReactElement {
+  return renderIcon(className, INFO_ICON_ELEMENTS);
+}
+
+export function AlertTriangleIcon({ className }: IconProps): React.ReactElement {
+  return renderIcon(className, ALERT_TRIANGLE_ICON_ELEMENTS);
 }
 
 export function XCircleIcon({ className }: IconProps): React.ReactElement {
