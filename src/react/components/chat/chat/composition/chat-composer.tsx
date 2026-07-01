@@ -7,7 +7,13 @@
 import * as React from "react";
 import { InputBox } from "#veryfront/react/primitives/index.ts";
 import { cn } from "../../theme.ts";
-import { ArrowUpIcon, FileTextIcon, PaperclipIcon, PlusIcon, StopIcon } from "../../icons/index.ts";
+import {
+  ArrowUpIcon,
+  FileTextIcon,
+  PaperclipIcon,
+  PlusIcon,
+  StopIcon,
+} from "../../icons/index.ts";
 import { Button } from "../../ui/button.tsx";
 import { IconButton } from "../../ui/icon-button.tsx";
 import {
@@ -103,7 +109,7 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
         ref={ref}
         className={cn("flex-shrink-0 pb-6 pt-2", className)}
       >
-        <div className="mx-auto w-full max-w-3xl px-4">
+        <div className="mx-auto w-full max-w-[850px] px-4">
           {children && (
             <div className="flex flex-wrap items-center gap-1.5 pb-3">
               {children}
