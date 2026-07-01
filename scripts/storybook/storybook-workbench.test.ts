@@ -23,7 +23,50 @@ async function readText(path: string): Promise<string> {
   return await Deno.readTextFile(path);
 }
 
+/** Slugify a story `title` to the id prefix Storybook derives from it. */
+function toStorybookId(title: string): string {
+  return title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+/** Recursively yield every `*.stories.tsx` file under `dir`. */
+async function* storyFiles(dir: string): AsyncGenerator<string> {
+  for await (const entry of Deno.readDir(dir)) {
+    const full = `${dir}/${entry.name}`;
+    if (entry.isDirectory) yield* storyFiles(full);
+    else if (entry.name.endsWith(".stories.tsx")) yield full;
+  }
+}
+
 describe("Storybook UI workbench", () => {
+  it("Overview nav cards link to stories that exist", async () => {
+    const overview = await readText("storybook/stories/Overview.stories.tsx");
+    const navIds = [
+      ...overview.matchAll(/id:\s*"([a-z0-9-]+--[a-z0-9-]+)"/g),
+    ].map((m) => m[1]);
+    assert(navIds.length > 0, "expected NavGrid ids in the Overview");
+
+    // Every title Storybook will generate a story id from.
+    const titleSlugs = new Set<string>();
+    for await (const path of storyFiles("storybook/stories")) {
+      const src = await readText(path);
+      for (const m of src.matchAll(/title:\s*"([^"]+)"/g)) {
+        titleSlugs.add(toStorybookId(m[1]));
+      }
+    }
+
+    // Each nav id is `<title-slug>--<story>`; strip the story to check the slug.
+    const missing = navIds.filter((id) =>
+      !titleSlugs.has(id.replace(/--[a-z0-9-]+$/, ""))
+    );
+    assertEquals(
+      missing,
+      [],
+      `Overview nav cards point at stories that don't exist: ${
+        missing.join(", ")
+      }`,
+    );
+  });
+
   it("keeps Storybook isolated from framework exports and browser-safe runtime patches", async () => {
     const denoConfig = await readJson<DenoConfig>("deno.json");
     const exportsJson = JSON.stringify(denoConfig.exports);
