@@ -43,6 +43,8 @@ const buttonVariants = cva(
         ghost: "bg-transparent text-[var(--foreground)]",
         text:
           "bg-transparent text-[var(--foreground)] hover:text-[var(--foreground)] !h-auto !w-auto !p-0 !justify-start !gap-1.5 [&_svg]:!mr-0",
+        "secondary-to-link":
+          "bg-[var(--secondary)] text-[var(--foreground)] hover:bg-[var(--primary)] hover:text-[var(--secondary)] md:bg-transparent md:text-[var(--foreground)] md:hover:bg-transparent md:hover:text-[var(--foreground)] md:underline md:underline-offset-4 md:hover:no-underline md:!px-0 md:!gap-2",
         "icon-primary":
           "bg-[var(--primary)] text-[var(--secondary)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)] !p-0 !gap-0 !justify-center",
         "icon-ghost":
@@ -68,6 +70,8 @@ const buttonVariants = cva(
         sm: "h-[32px] px-3.5 text-sm [&_svg]:size-3.5",
         default: "h-[38px] px-4.5 text-base [&_svg]:size-3.5",
         lg: "h-[48px] px-6 text-base [&_svg]:size-4.5",
+        "lg-to-default":
+          "h-[48px] px-6 text-base [&_svg]:size-4.5 md:h-[38px] md:px-4.5 md:text-base md:[&_svg]:size-3.5",
         "icon-sm": "size-7 [&_svg]:size-3.5",
         "icon-default": "size-8 [&_svg]:size-3.5",
         "icon-lg": "size-9 [&_svg]:size-4.5",

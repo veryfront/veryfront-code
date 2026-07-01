@@ -285,6 +285,24 @@ export function XIcon({ className }: IconProps): React.ReactElement {
   return renderIcon(className, X_ICON_ELEMENTS);
 }
 
+const ARROW_RIGHT_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
+  { type: "line", props: { x1: "5", y1: "12", x2: "19", y2: "12" } },
+  { type: "polyline", props: { points: "12 5 19 12 12 19" } },
+];
+
+export function ArrowRightIcon({ className }: IconProps): React.ReactElement {
+  return renderIcon(className, ARROW_RIGHT_ICON_ELEMENTS);
+}
+
+const ARROW_UP_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
+  { type: "line", props: { x1: "12", y1: "19", x2: "12", y2: "5" } },
+  { type: "polyline", props: { points: "5 12 12 5 19 12" } },
+];
+
+export function ArrowUpIcon({ className }: IconProps): React.ReactElement {
+  return renderIcon(className, ARROW_UP_ICON_ELEMENTS);
+}
+
 export function TrashIcon({ className }: IconProps): React.ReactElement {
   return renderIcon(className, TRASH_ICON_ELEMENTS);
 }
