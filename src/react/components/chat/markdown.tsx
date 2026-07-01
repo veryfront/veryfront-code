@@ -26,7 +26,6 @@ export interface CodeBlockProps {
 const ESM_REACT_MARKDOWN =
   "https://esm.sh/react-markdown@9.0.3?target=es2022&pin=v135&deps=react@19.2.4";
 const ESM_REMARK_GFM = "https://esm.sh/remark-gfm@4.0.1?target=es2022&pin=v135";
-const ESM_REHYPE_HIGHLIGHT = "https://esm.sh/rehype-highlight@7.0.2?target=es2022&pin=v135";
 const ESM_MERMAID = "https://esm.sh/mermaid@11.4.1?pin=v135";
 const MARKDOWN_CONTAINER_CLASS =
   "prose max-w-none min-w-0 overflow-hidden break-words text-base leading-relaxed text-[var(--foreground)] [overflow-wrap:anywhere] prose-headings:font-medium prose-strong:font-medium prose-a:text-[var(--foreground)] prose-a:underline prose-a:underline-offset-4 hover:prose-a:no-underline prose-inline-code:rounded-[var(--radius-xs)] prose-inline-code:bg-[var(--accent)] prose-inline-code:px-1 prose-inline-code:py-0.5 prose-inline-code:font-mono prose-inline-code:font-medium prose-inline-code:text-[var(--foreground)] prose-pre:rounded-[var(--radius-lg)] prose-pre:bg-[var(--secondary)] prose-pre:text-[var(--foreground)] prose-hr:border-[var(--edge-medium)] [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_*]:max-w-full";
@@ -84,7 +83,24 @@ async function importFromUrl<T>(url: string): Promise<T> {
 
 let ReactMarkdown: ReactMarkdownComponent | null = null;
 let remarkGfm: MarkdownPlugin | null = null;
-let rehypeHighlight: MarkdownPlugin | null = null;
+
+/**
+ * Recursively flatten a react-markdown child tree to plain text. Fenced code
+ * arrives as a string, but some remark/rehype plugins wrap it in nested
+ * element nodes; naive `String(children)` on those yields "[object Object]".
+ * Walking the tree keeps the raw source text intact for the shiki-based
+ * CodeBlock to highlight itself.
+ */
+function extractText(node: React.ReactNode): string {
+  if (node == null || node === false || node === true) return "";
+  if (typeof node === "string") return node;
+  if (typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(extractText).join("");
+  if (React.isValidElement(node)) {
+    return extractText((node.props as { children?: React.ReactNode }).children);
+  }
+  return "";
+}
 
 let mermaidPromise: Promise<MermaidModule> | null = null;
 let mermaidModule: MermaidModule | null = null;
@@ -127,7 +143,9 @@ function MermaidDiagram({ code }: { code: string }): React.ReactElement {
         setError("");
       } catch (error) {
         if (cancelled) return;
-        setError(error instanceof Error ? error.message : "Failed to render diagram");
+        setError(
+          error instanceof Error ? error.message : "Failed to render diagram",
+        );
       }
     }
 
@@ -230,15 +248,13 @@ export function Markdown({
 
     async function load(): Promise<void> {
       if (!ReactMarkdown) {
-        const [rmModule, gfmModule, highlightModule] = await Promise.all([
+        const [rmModule, gfmModule] = await Promise.all([
           importFromUrl<DefaultModule<unknown>>(ESM_REACT_MARKDOWN),
           importFromUrl<DefaultModule<unknown>>(ESM_REMARK_GFM),
-          importFromUrl<DefaultModule<unknown>>(ESM_REHYPE_HIGHLIGHT),
         ]);
 
         ReactMarkdown = rmModule.default as ReactMarkdownComponent;
         remarkGfm = gfmModule.default;
-        rehypeHighlight = highlightModule.default;
       }
 
       if (cancelled) return;
@@ -253,20 +269,22 @@ export function Markdown({
   }, []);
 
   if (!isLoaded || !ReactMarkdown) {
-    return <FallbackMarkdown className={className}>{children}</FallbackMarkdown>;
+    return (
+      <FallbackMarkdown className={className}>{children}</FallbackMarkdown>
+    );
   }
 
   return (
     <div className={cn(MARKDOWN_CONTAINER_CLASS, className)}>
       <ReactMarkdown
         remarkPlugins={remarkGfm ? [remarkGfm] : []}
-        rehypePlugins={rehypeHighlight ? [rehypeHighlight] : []}
         components={{
           code(props: CodeRendererProps) {
-            const { className: codeClassName, children: codeChildren, node } = props;
+            const { className: codeClassName, children: codeChildren, node } =
+              props;
             const match = /language-(\w+)/.exec(codeClassName || "");
             const language = match ? match[1] : undefined;
-            const code = String(codeChildren).replace(/\n$/, "");
+            const code = extractText(codeChildren).replace(/\n$/, "");
             const isInline = !node?.position?.start?.line;
 
             return (
