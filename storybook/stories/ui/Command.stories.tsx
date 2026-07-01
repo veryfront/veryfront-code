@@ -11,6 +11,9 @@ import {
   CommandList,
   CommandSeparator,
   CommandShortcut,
+  Drawer,
+  DrawerContent,
+  DrawerTitle,
 } from "../../../src/react/components/chat/ui/index.ts";
 import {
   BrainIcon,
@@ -109,6 +112,12 @@ function CommandDocsPage() {
       </DocsSection>
       <DocsSection title="In Dialog">
         <DocsExampleAuto of={InDialog} />
+      </DocsSection>
+      <DocsSection
+        title="In Drawer (mobile)"
+        description="Compose Command inside a Drawer for mobile palettes. The list uses variant='flush' so the drawer padding wraps the items."
+      >
+        <DocsExampleAuto of={InDrawer} />
       </DocsSection>
       <DocsSection
         title="Custom Filter"
@@ -413,6 +422,47 @@ export const InDialog: Story = {
             </CommandGroup>
           </CommandList>
         </CommandDialog>
+      </div>
+    );
+  },
+};
+
+export const InDrawer: Story = {
+  name: "In Drawer",
+  tags: ["!dev"],
+  render: () => {
+    const [open, setOpen] = useState(false);
+    return (
+      <div>
+        <Button onClick={() => setOpen(true)}>Open Command Drawer</Button>
+        <Drawer open={open} onOpenChange={setOpen}>
+          <DrawerContent className="bg-[var(--secondary)] text-[var(--foreground)]">
+            <DrawerTitle className="sr-only">Command palette</DrawerTitle>
+            <Command className="bg-transparent">
+              <CommandInput
+                icon={<SearchIcon className="size-4" />}
+                placeholder="Type a command or search..."
+              />
+              <div className="px-4.5 py-2">
+                <CommandList variant="flush" className="max-h-[min(60vh,420px)]">
+                  <CommandEmpty>No results found.</CommandEmpty>
+                  <CommandGroup heading="Actions">
+                    <CommandItem onSelect={() => setOpen(false)}>
+                      New File
+                      <CommandShortcut>⌘N</CommandShortcut>
+                    </CommandItem>
+                    <CommandItem onSelect={() => setOpen(false)}>Open Project</CommandItem>
+                    <CommandItem onSelect={() => setOpen(false)}>Deploy</CommandItem>
+                  </CommandGroup>
+                  <CommandGroup heading="Settings">
+                    <CommandItem onSelect={() => setOpen(false)}>Theme</CommandItem>
+                    <CommandItem onSelect={() => setOpen(false)}>Keybindings</CommandItem>
+                  </CommandGroup>
+                </CommandList>
+              </div>
+            </Command>
+          </DrawerContent>
+        </Drawer>
       </div>
     );
   },

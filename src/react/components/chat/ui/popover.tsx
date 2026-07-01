@@ -14,9 +14,14 @@
 import * as React from "react";
 import { cn } from "../theme.ts";
 import { Slot } from "./slot.tsx";
+import { Floating } from "./floating.tsx";
 
 const PopoverContext = React.createContext<
-  { open: boolean; setOpen: (open: boolean) => void } | null
+  {
+    open: boolean;
+    setOpen: (open: boolean) => void;
+    anchorRef: React.RefObject<HTMLElement | null>;
+  } | null
 >(null);
 
 /** Props accepted by `<Popover>`. */
@@ -41,9 +46,10 @@ export function Popover({
     if (!isControlled) setInternal(next);
     onOpenChange?.(next);
   }, [isControlled, onOpenChange]);
+  const anchorRef = React.useRef<HTMLElement | null>(null);
   return (
-    <span className="relative inline-block">
-      <PopoverContext.Provider value={{ open: isOpen, setOpen }}>
+    <span ref={anchorRef} className="relative inline-block">
+      <PopoverContext.Provider value={{ open: isOpen, setOpen, anchorRef }}>
         {children}
       </PopoverContext.Provider>
     </span>
@@ -91,40 +97,22 @@ export function PopoverContent({
   ...props
 }: PopoverContentProps): React.ReactElement | null {
   const ctx = React.useContext(PopoverContext);
-  const ref = React.useRef<HTMLDivElement>(null);
-
-  React.useEffect(() => {
-    if (!ctx?.open) return;
-    const onPointerDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        ctx.setOpen(false);
-      }
-    };
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") ctx.setOpen(false);
-    };
-    document.addEventListener("mousedown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [ctx, ctx?.open]);
-
-  if (!ctx?.open) return null;
+  if (!ctx) return null;
   return (
-    <div
-      ref={ref}
+    <Floating
+      anchorRef={ctx.anchorRef}
+      open={ctx.open}
+      align={align}
+      onDismiss={() => ctx.setOpen(false)}
       role="dialog"
       className={cn(
-        "absolute top-full mt-2 z-50 min-w-[220px] overflow-hidden rounded-lg bg-[var(--popover)] text-[var(--foreground)] shadow-sm outline-none",
-        align === "end" ? "right-0" : "left-0",
+        "z-50 min-w-[220px] overflow-hidden rounded-lg bg-[var(--popover)] text-[var(--foreground)] shadow-sm outline-none",
         className,
       )}
       {...props}
     >
       {children}
-    </div>
+    </Floating>
   );
 }
 

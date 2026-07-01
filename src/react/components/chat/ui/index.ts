@@ -95,6 +95,17 @@ export {
 } from "./select.tsx";
 export { ScrollFade, type ScrollFadeProps } from "./scroll-fade.tsx";
 export {
+  Drawer,
+  DrawerBody,
+  DrawerClose,
+  DrawerContent,
+  DrawerFooter,
+  DrawerHeader,
+  type DrawerProps,
+  DrawerTitle,
+  DrawerTrigger,
+} from "./drawer.tsx";
+export {
   Dialog,
   DialogAction,
   type DialogActionProps,
