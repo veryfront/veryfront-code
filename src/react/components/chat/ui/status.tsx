@@ -1,21 +1,21 @@
 /**
- * StatusBadge — ported 1:1 from Veryfront Studio. A coloured status dot with a
+ * Status — ported 1:1 from Veryfront Studio. A coloured status dot with a
  * label (optionally pulsing / responsively hidden). Semantic classes remapped
  * to veryfront's `[var(--token)]` vocabulary — the `--status-*` dot tokens all
  * exist in `theme.ts`. Private to the chat module.
  *
- * @module react/components/chat/ui/status-badge
+ * @module react/components/chat/ui/status
  */
 import * as React from "react";
 import { cn } from "../theme.ts";
 
 /** Dot colour, keyed to the `--status-*` palette. */
-export type StatusBadgeColor = "gray" | "blue" | "green" | "red" | "yellow";
+export type StatusColor = "gray" | "blue" | "green" | "red" | "yellow";
 
-/** Props accepted by `<StatusBadge>`. */
-export interface StatusBadgeProps {
+/** Props accepted by `<Status>`. */
+export interface StatusProps {
   label: string;
-  color: StatusBadgeColor;
+  color: StatusColor;
   /** Pulse the dot (e.g. an in-progress run). */
   pulse?: boolean;
   /** Render the label (off → dot-only, label kept for screen readers). */
@@ -27,7 +27,7 @@ export interface StatusBadgeProps {
   className?: string;
 }
 
-const dotColorMap: Record<StatusBadgeColor, string> = {
+const dotColorMap: Record<StatusColor, string> = {
   gray: "bg-[var(--status-neutral)]",
   blue: "bg-[var(--status-info)]",
   green: "bg-[var(--status-success)]",
@@ -36,7 +36,7 @@ const dotColorMap: Record<StatusBadgeColor, string> = {
 };
 
 /** Render a status dot + label. */
-export function StatusBadge({
+export function Status({
   label,
   color,
   pulse,
@@ -44,7 +44,7 @@ export function StatusBadge({
   responsive,
   size = "sm",
   className,
-}: StatusBadgeProps): React.ReactElement {
+}: StatusProps): React.ReactElement {
   return (
     <div
       className={cn(

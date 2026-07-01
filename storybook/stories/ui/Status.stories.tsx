@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { StatusBadge } from "../../../src/react/components/chat/ui/index.ts";
+import { Status } from "../../../src/react/components/chat/ui/index.ts";
 import {
   DocsCode,
   DocsComposition,
@@ -10,15 +10,15 @@ import {
   DocsSection,
 } from "../../.storybook/docs";
 
-const importCode = `import { StatusBadge } from "veryfront/chat/ui"`;
+const importCode = `import { Status } from "veryfront/chat/ui"`;
 
-const compositionTree = `StatusBadge`;
+const compositionTree = `Status`;
 
-function StatusBadgeDocsPage() {
+function StatusDocsPage() {
   return (
     <DocsPage>
       <DocsHero
-        title="StatusBadge"
+        title="Status"
         lead="Coloured dot with a label for resource state."
       />
 
@@ -62,7 +62,7 @@ function StatusBadgeDocsPage() {
 
       <DocsSection title="API Reference">
         <DocsPropsTable
-          component="StatusBadge"
+          component="Status"
           description="Status indicator with colored dot and label"
           props={[
             { name: "label", type: "string", description: "Status text" },
@@ -103,8 +103,8 @@ function StatusBadgeDocsPage() {
 }
 
 const meta = {
-  title: "Chat/UI/StatusBadge",
-  component: StatusBadge,
+  title: "Chat/UI/Status",
+  component: Status,
   tags: ["autodocs"],
   args: {
     label: "Deployed",
@@ -112,16 +112,16 @@ const meta = {
   },
   parameters: {
     layout: "centered",
-    docs: { page: StatusBadgeDocsPage },
+    docs: { page: StatusDocsPage },
   },
-} satisfies Meta<typeof StatusBadge>;
+} satisfies Meta<typeof Status>;
 
 export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Default: Story = {
   tags: ["!dev"],
-  render: () => <StatusBadge label="Deployed" color="green" />,
+  render: () => <Status label="Deployed" color="green" />,
 };
 
 export const AllColors: Story = {
@@ -129,18 +129,18 @@ export const AllColors: Story = {
   tags: ["!dev"],
   render: () => (
     <div className="flex flex-col gap-3">
-      <StatusBadge label="Pending" color="gray" />
-      <StatusBadge label="Building" color="blue" />
-      <StatusBadge label="Deployed" color="green" />
-      <StatusBadge label="Failed" color="red" />
-      <StatusBadge label="Partial Success" color="yellow" />
+      <Status label="Pending" color="gray" />
+      <Status label="Building" color="blue" />
+      <Status label="Deployed" color="green" />
+      <Status label="Failed" color="red" />
+      <Status label="Partial Success" color="yellow" />
     </div>
   ),
 };
 
 export const Pulse: Story = {
   tags: ["!dev"],
-  render: () => <StatusBadge label="Building" color="blue" pulse />,
+  render: () => <Status label="Building" color="blue" pulse />,
 };
 
 export const JobStatusRow: Story = {
@@ -148,10 +148,10 @@ export const JobStatusRow: Story = {
   tags: ["!dev"],
   render: () => (
     <div className="flex items-center gap-4">
-      <StatusBadge label="Submitted" color="gray" />
-      <StatusBadge label="Working" color="blue" pulse />
-      <StatusBadge label="Completed" color="green" />
-      <StatusBadge label="Failed" color="red" />
+      <Status label="Submitted" color="gray" />
+      <Status label="Working" color="blue" pulse />
+      <Status label="Completed" color="green" />
+      <Status label="Failed" color="red" />
     </div>
   ),
 };
@@ -159,7 +159,7 @@ export const JobStatusRow: Story = {
 export const DeploymentStatus: Story = {
   name: "Deployment Status",
   tags: ["!dev"],
-  render: () => <StatusBadge label="Deployed 3 hours ago" color="green" />,
+  render: () => <Status label="Deployed 3 hours ago" color="green" />,
 };
 
 export const ChannelStatus: Story = {
@@ -167,10 +167,10 @@ export const ChannelStatus: Story = {
   tags: ["!dev"],
   render: () => (
     <div className="flex flex-col gap-3">
-      <StatusBadge label="Connected" color="green" />
-      <StatusBadge label="Needs Reauth" color="yellow" />
-      <StatusBadge label="Error" color="red" />
-      <StatusBadge label="Not Connected" color="gray" />
+      <Status label="Connected" color="green" />
+      <Status label="Needs Reauth" color="yellow" />
+      <Status label="Error" color="red" />
+      <Status label="Not Connected" color="gray" />
     </div>
   ),
 };

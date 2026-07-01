@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import {
-  FileTypeBadge,
+  FileType,
   FileTypeThumb,
 } from "../../../src/react/components/chat/ui/index.ts";
 import {
@@ -13,25 +13,25 @@ import {
   DocsSection,
 } from "../../.storybook/docs";
 
-const importBadge = `import { FileTypeBadge } from "veryfront/chat/ui"`;
+const importBadge = `import { FileType } from "veryfront/chat/ui"`;
 const importThumb = `import { FileTypeThumb } from "veryfront/chat/ui"`;
 const importLabel = `import { getFileTypeLabel } from "veryfront/chat/ui"`;
 
 const importCode = `${importBadge}\n${importThumb}\n${importLabel}`;
 
-const compositionTree = `FileTypeBadge
+const compositionTree = `FileType
 FileTypeThumb`;
 
-function FileTypeBadgeDocsPage() {
+function FileTypeDocsPage() {
   return (
     <DocsPage>
       <DocsHero
-        title="FileTypeBadge"
+        title="FileType"
         lead="Per-extension identity badge. The only place the Tailwind named-colour palette is sanctioned."
       />
 
       <DocsSection
-        title="FileTypeBadge — soft fill"
+        title="FileType — soft fill"
         description="Sits next to filename text in lists and tables."
       >
         <DocsExampleAuto of={Markdown} />
@@ -90,7 +90,7 @@ getFileTypeLabel('???')
 
       <DocsSection title="API Reference">
         <DocsPropsTable
-          component="FileTypeBadge"
+          component="FileType"
           description="Soft-fill identity badge for a file extension"
           props={[
             {
@@ -111,15 +111,15 @@ getFileTypeLabel('???')
 }
 
 const meta = {
-  title: "Chat/UI/FileTypeBadge",
-  component: FileTypeBadge,
+  title: "Chat/UI/FileType",
+  component: FileType,
   tags: ["autodocs"],
   args: { extension: "tsx" },
   parameters: {
     layout: "centered",
-    docs: { page: FileTypeBadgeDocsPage },
+    docs: { page: FileTypeDocsPage },
   },
-} satisfies Meta<typeof FileTypeBadge>;
+} satisfies Meta<typeof FileType>;
 
 export default meta;
 type Story = StoryObj<typeof meta>;
@@ -149,23 +149,23 @@ const COMMON_EXTENSIONS = [
 
 export const Markdown: Story = {
   tags: ["!dev"],
-  render: () => <FileTypeBadge extension="md" />,
+  render: () => <FileType extension="md" />,
 };
 
 export const TypeScript: Story = {
   tags: ["!dev"],
-  render: () => <FileTypeBadge extension="tsx" />,
+  render: () => <FileType extension="tsx" />,
 };
 
 export const PDF: Story = {
   tags: ["!dev"],
-  render: () => <FileTypeBadge extension="pdf" />,
+  render: () => <FileType extension="pdf" />,
 };
 
 export const Unknown: Story = {
   name: "Unknown extension (fallback)",
   tags: ["!dev"],
-  render: () => <FileTypeBadge extension="zip" />,
+  render: () => <FileType extension="zip" />,
 };
 
 export const Grid: Story = {
@@ -174,7 +174,7 @@ export const Grid: Story = {
   render: () => (
     <div className="flex flex-wrap items-center gap-3">
       {COMMON_EXTENSIONS.map((ext) => (
-        <FileTypeBadge key={ext} extension={ext} />
+        <FileType key={ext} extension={ext} />
       ))}
     </div>
   ),
@@ -198,8 +198,8 @@ export const ThumbVsBadge: Story = {
   render: () => (
     <div className="flex items-center gap-6">
       <div className="flex flex-col items-center gap-2">
-        <FileTypeBadge extension="tsx" />
-        <span className="text-xs text-foreground">FileTypeBadge</span>
+        <FileType extension="tsx" />
+        <span className="text-xs text-foreground">FileType</span>
       </div>
       <div className="flex flex-col items-center gap-2">
         <FileTypeThumb extension="tsx" />

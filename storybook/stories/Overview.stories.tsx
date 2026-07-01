@@ -20,6 +20,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 const COMPONENTS: NavGridEntry[] = [
+  { title: "ChatEmptyState", id: "chat-components-chatemptystate--docs" },
   { title: "Message", id: "chat-components-message--docs" },
   { title: "AgentCard", id: "chat-components-agentcard--docs" },
   { title: "ChatComposer", id: "chat-components-chatcomposer--docs" },
@@ -59,6 +60,7 @@ const UI: NavGridEntry[] = [
   { title: "Checkbox", id: "chat-ui-checkbox--docs" },
   { title: "Radio", id: "chat-ui-radio--docs" },
   { title: "Switch", id: "chat-ui-switch--docs" },
+  { title: "Tabs", id: "chat-ui-tabs--docs" },
   { title: "Select", id: "chat-ui-select--docs" },
   { title: "DropdownMenu", id: "chat-ui-dropdownmenu--docs" },
   { title: "Popover", id: "chat-ui-popover--docs" },
@@ -67,11 +69,11 @@ const UI: NavGridEntry[] = [
   { title: "Tooltip", id: "chat-ui-tooltip--docs" },
   { title: "Collapsible", id: "chat-ui-collapsible--docs" },
   { title: "Badge", id: "chat-ui-badge--docs" },
-  { title: "StatusBadge", id: "chat-ui-statusbadge--docs" },
+  { title: "Status", id: "chat-ui-status--docs" },
   { title: "Pill", id: "chat-ui-pill--docs" },
   { title: "Tag", id: "chat-ui-tag--docs" },
-  { title: "FileTypeBadge", id: "chat-ui-filetypebadge--docs" },
-  { title: "UserAvatar", id: "chat-ui-useravatar--docs" },
+  { title: "FileType", id: "chat-ui-filetype--docs" },
+  { title: "Avatar", id: "chat-ui-avatar--docs" },
   { title: "Skeleton", id: "chat-ui-skeleton--docs" },
   { title: "Shimmer", id: "chat-ui-shimmer--docs" },
   { title: "ProgressBar", id: "chat-ui-progressbar--docs" },

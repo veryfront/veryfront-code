@@ -94,7 +94,7 @@ import { ChatComponents as Chat } from "veryfront/react";
 <Chat>
   <Chat.Header>
     <h1>Customer Support</h1>
-    <StatusBadge />
+    <Status />
   </Chat.Header>
 
   <Chat.Messages>

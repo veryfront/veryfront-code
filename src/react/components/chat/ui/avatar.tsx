@@ -1,10 +1,11 @@
 /**
- * UserAvatar — ported 1:1 from Veryfront Studio. Shows an image when available,
- * else initials (two-letter for `primary` tone, single capital for `muted`).
+ * Avatar — ported 1:1 from Veryfront Studio's `UserAvatar`. The one generic
+ * avatar for users, agents, and entities: shows an image when available, else
+ * initials (two-letter for `primary` tone, single capital for `muted`).
  * Studio's `vf-avatar-initial` container-query sizing is simplified to a fixed
  * `text-xs` for v1. Private to the chat module.
  *
- * @module react/components/chat/ui/user-avatar
+ * @module react/components/chat/ui/avatar
  */
 import * as React from "react";
 import { cn } from "../theme.ts";
@@ -20,8 +21,8 @@ function getSingleInitial(name: string): string {
   return trimmed.length > 0 ? trimmed.charAt(0).toUpperCase() : "?";
 }
 
-/** Props accepted by `<UserAvatar>`. */
-export interface UserAvatarProps extends React.HTMLAttributes<HTMLDivElement> {
+/** Props accepted by `<Avatar>`. */
+export interface AvatarProps extends React.HTMLAttributes<HTMLDivElement> {
   name: string;
   avatarSrc?: string;
   accentColor?: string;
@@ -32,8 +33,8 @@ export interface UserAvatarProps extends React.HTMLAttributes<HTMLDivElement> {
   ref?: React.Ref<HTMLDivElement>;
 }
 
-/** Render a user / entity avatar. */
-export function UserAvatar({
+/** Render a user / agent / entity avatar. */
+export function Avatar({
   className,
   style,
   name,
@@ -43,7 +44,7 @@ export function UserAvatar({
   tone = "primary",
   ref,
   ...props
-}: UserAvatarProps): React.ReactElement {
+}: AvatarProps): React.ReactElement {
   const isBordered = variant === "bordered";
   const isMuted = tone === "muted" && !accentColor;
   const [imageFailed, setImageFailed] = React.useState(false);
