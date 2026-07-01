@@ -192,8 +192,7 @@ export function ChatSidebar({
   isOpen = true,
 }: ChatSidebarProps): React.ReactElement | null {
   const visibleThreads = React.useMemo(
-    () =>
-      threads.filter((t) => t.messages.length > 0 || t.id === activeThreadId),
+    () => threads.filter((t) => t.messages.length > 0 || t.id === activeThreadId),
     [threads, activeThreadId],
   );
   const grouped = React.useMemo(() => groupThreads(visibleThreads), [
@@ -237,8 +236,7 @@ export function ChatSidebar({
                     thread={thread}
                     isActive={thread.id === activeThreadId}
                     onSelect={() => onSelectThread(thread.id)}
-                    onDelete={() =>
-                      onDeleteThread(thread.id)}
+                    onDelete={() => onDeleteThread(thread.id)}
                     onRename={onRenameThread
                       ? (title) => onRenameThread(thread.id, title)
                       : undefined}

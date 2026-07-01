@@ -45,7 +45,10 @@
  */
 
 import * as React from "react";
-import { useVoiceInput } from "#veryfront/agent/react";
+import { useChat, useVoiceInput } from "#veryfront/agent/react";
+import { useAgentMetadata } from "#veryfront/agent/react/use-agent-metadata.ts";
+import type { AgentMetadata } from "#veryfront/agent/react/use-agent-metadata.ts";
+import { AgentAvatar } from "./composition/agent-avatar.tsx";
 import type {
   BranchInfo,
   ChatDynamicToolPart,
@@ -92,15 +95,37 @@ export {
   Suggestions,
   type SuggestionsProps,
 } from "./components/empty-state.tsx";
-export { MessageActions, type MessageActionsProps } from "./components/message-actions.tsx";
-export { MessageEditForm, type MessageEditFormProps } from "./components/message-edit-form.tsx";
-export { BranchPicker, type BranchPickerProps } from "./components/branch-picker.tsx";
-export { DropZoneOverlay, type DropZoneOverlayProps } from "./components/drop-zone.tsx";
+export {
+  MessageActions,
+  type MessageActionsProps,
+} from "./components/message-actions.tsx";
+export {
+  MessageEditForm,
+  type MessageEditFormProps,
+} from "./components/message-edit-form.tsx";
+export {
+  BranchPicker,
+  type BranchPickerProps,
+} from "./components/branch-picker.tsx";
+export {
+  DropZoneOverlay,
+  type DropZoneOverlayProps,
+} from "./components/drop-zone.tsx";
 export { SkillBadge, type SkillBadgeProps } from "./components/skill-badge.tsx";
 export { ToolCallCard, ToolStatusBadge } from "./components/tool-ui.tsx";
-export { InferenceBadge, type InferenceBadgeProps } from "./components/inference-badge.tsx";
-export { type Source, Sources, type SourcesProps } from "./components/sources.tsx";
-export { InlineCitation, type InlineCitationProps } from "./components/inline-citation.tsx";
+export {
+  InferenceBadge,
+  type InferenceBadgeProps,
+} from "./components/inference-badge.tsx";
+export {
+  type Source,
+  Sources,
+  type SourcesProps,
+} from "./components/sources.tsx";
+export {
+  InlineCitation,
+  type InlineCitationProps,
+} from "./components/inline-citation.tsx";
 export {
   type FeedbackValue,
   MessageFeedback,
@@ -111,10 +136,20 @@ export {
   AttachmentPill,
   type AttachmentPillProps,
 } from "./components/attachment-pill.tsx";
-export { type CodeBlockProps, RichCodeBlock } from "./components/code-block.tsx";
-export { StepIndicator, type StepIndicatorProps } from "./components/step-indicator.tsx";
+export {
+  type CodeBlockProps,
+  RichCodeBlock,
+} from "./components/code-block.tsx";
+export {
+  StepIndicator,
+  type StepIndicatorProps,
+} from "./components/step-indicator.tsx";
 export { ChatSidebar, type ChatSidebarProps } from "./components/sidebar.tsx";
-export { type ChatTab, TabSwitcher, type TabSwitcherProps } from "./components/tab-switcher.tsx";
+export {
+  type ChatTab,
+  TabSwitcher,
+  type TabSwitcherProps,
+} from "./components/tab-switcher.tsx";
 export {
   type QuickAction,
   QuickActions,
@@ -202,9 +237,25 @@ export {
 
 /** Props accepted by chat. */
 export interface ChatProps {
-  messages: ChatMessage[];
-  input: string;
-  onChange: (
+  // --- App mode (uncontrolled) ---------------------------------------------
+  // When `messages`/`input` are omitted, `<Chat>` self-drives `useChat` +
+  // `useAgentMetadata` internally, so the consumer writes just
+  // `<Chat agentId="…" api="/api/ag-ui" />`. These props configure that mode
+  // and are ignored in the controlled mode below.
+  /** Agent id — fetches avatar/name/suggestions and scopes the request. */
+  agentId?: string;
+  /** AG-UI endpoint for the self-driven `useChat`. @default "/api/ag-ui" */
+  api?: string;
+  /** Seed messages for the self-driven thread. */
+  initialMessages?: ChatMessage[];
+  /** Error callback for the self-driven `useChat`. */
+  onError?: (error: Error) => void;
+
+  // --- Controlled mode ------------------------------------------------------
+  // Pass `messages` + `input` to drive `<Chat>` yourself (back-compat).
+  messages?: ChatMessage[];
+  input?: string;
+  onChange?: (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
   ) => void;
   onSubmit?: (e?: React.FormEvent) => void | Promise<void>;
@@ -270,249 +321,375 @@ export interface ChatProps {
 // building blocks directly.
 // ---------------------------------------------------------------------------
 
-/** Render chat. */
-export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
-  {
-    messages,
-    input,
-    onChange,
-    onSubmit,
-    stop,
-    reload,
-    enableVoice = false,
-    onVoice,
-    setInput,
-    isLoading,
-    error,
-    placeholder = "Type a message...",
-    maxHeight = "100%",
-    className,
-    theme: userTheme,
-    renderMessage,
-    renderTool,
-    suggestions,
-    onSuggestionClick,
-    emptyState,
-    showScrollButton = false,
-    showMessageActions = true,
-    models,
-    model,
-    activeModel,
-    onModelChange,
-    inferenceMode,
-    showSources = false,
-    onSourceClick,
-    onAttach,
-    onSelectAttachment,
-    onDrop,
-    attachAccept,
-    attachments,
-    onRemoveAttachment,
-    showExport = false,
-    onFeedback,
-    editMessage,
-    getBranches,
-    switchBranch,
-    showSteps = false,
-    showTabs = false,
-    activeTab: controlledTab,
-    onTabChange: controlledTabChange,
-    uploads,
-    onRemoveUpload,
-    quickActions,
-    onQuickAction,
-    hideTabSwitcher = false,
-    children,
-  },
-  ref,
-): React.ReactElement {
-  const theme = React.useMemo(() => mergeThemes(defaultChatTheme, userTheme), [
-    userTheme,
-  ]);
+/** Render the controlled chat (caller supplies `messages`/`input`). */
+const ControlledChat = React.forwardRef<HTMLDivElement, ChatProps>(
+  function ControlledChat(
+    {
+      messages = [],
+      input = "",
+      onChange = () => {},
+      onSubmit,
+      stop,
+      reload,
+      enableVoice = false,
+      onVoice,
+      setInput,
+      isLoading,
+      error,
+      placeholder = "Type a message...",
+      maxHeight = "100%",
+      className,
+      theme: userTheme,
+      renderMessage,
+      renderTool,
+      suggestions,
+      onSuggestionClick,
+      emptyState,
+      showScrollButton = false,
+      showMessageActions = true,
+      models,
+      model,
+      activeModel,
+      onModelChange,
+      inferenceMode,
+      showSources = false,
+      onSourceClick,
+      onAttach,
+      onSelectAttachment,
+      onDrop,
+      attachAccept,
+      attachments,
+      onRemoveAttachment,
+      showExport = false,
+      onFeedback,
+      editMessage,
+      getBranches,
+      switchBranch,
+      showSteps = false,
+      showTabs = false,
+      activeTab: controlledTab,
+      onTabChange: controlledTabChange,
+      uploads,
+      onRemoveUpload,
+      quickActions,
+      onQuickAction,
+      hideTabSwitcher = false,
+      children,
+    },
+    ref,
+  ): React.ReactElement {
+    const theme = React.useMemo(
+      () => mergeThemes(defaultChatTheme, userTheme),
+      [
+        userTheme,
+      ],
+    );
 
-  // --- Drag-and-drop ---
-  const dropHandler = onDrop ?? onAttach;
-  const [dragOver, setDragOver] = React.useState(false);
-  const dragCounter = React.useRef(0);
+    // --- Drag-and-drop ---
+    const dropHandler = onDrop ?? onAttach;
+    const [dragOver, setDragOver] = React.useState(false);
+    const dragCounter = React.useRef(0);
 
-  const handleDragEnter = React.useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    dragCounter.current++;
-    if (e.dataTransfer.types.includes("Files")) setDragOver(true);
-  }, []);
-
-  const handleDragLeave = React.useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    dragCounter.current--;
-    if (dragCounter.current === 0) setDragOver(false);
-  }, []);
-
-  const handleDragOver = React.useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-  }, []);
-
-  const handleFileDrop = React.useCallback(
-    (e: React.DragEvent) => {
+    const handleDragEnter = React.useCallback((e: React.DragEvent) => {
       e.preventDefault();
       e.stopPropagation();
-      dragCounter.current = 0;
-      setDragOver(false);
-      if (e.dataTransfer.files.length > 0 && dropHandler) {
-        dropHandler(e.dataTransfer.files);
+      dragCounter.current++;
+      if (e.dataTransfer.types.includes("Files")) setDragOver(true);
+    }, []);
+
+    const handleDragLeave = React.useCallback((e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dragCounter.current--;
+      if (dragCounter.current === 0) setDragOver(false);
+    }, []);
+
+    const handleDragOver = React.useCallback((e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+    }, []);
+
+    const handleFileDrop = React.useCallback(
+      (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dragCounter.current = 0;
+        setDragOver(false);
+        if (e.dataTransfer.files.length > 0 && dropHandler) {
+          dropHandler(e.dataTransfer.files);
+        }
+      },
+      [dropHandler],
+    );
+
+    // --- Tab state ---
+    const [internalTab, setInternalTab] = React.useState<ChatTab>("chat");
+    const currentTab = controlledTab ?? internalTab;
+    const handleTabChange = controlledTabChange ?? setInternalTab;
+
+    // --- Voice ---
+    const voice = useVoiceInput({
+      onTranscript: (transcript, isFinal) => {
+        if (!isFinal || !setInput) return;
+        setInput(transcript);
+      },
+    });
+
+    const voiceHandler = React.useMemo(() => {
+      if (onVoice) return onVoice;
+      if (enableVoice && voice.isSupported && setInput) return voice.toggle;
+      return undefined;
+    }, [onVoice, enableVoice, voice.isSupported, voice.toggle, setInput]);
+
+    const isEmpty = messages.length === 0;
+    const isDocsTab = showTabs && currentTab === "uploads";
+
+    const dragProps = dropHandler
+      ? {
+        onDragEnter: handleDragEnter,
+        onDragLeave: handleDragLeave,
+        onDragOver: handleDragOver,
+        onDrop: handleFileDrop,
       }
-    },
-    [dropHandler],
-  );
+      : {};
 
-  // --- Tab state ---
-  const [internalTab, setInternalTab] = React.useState<ChatTab>("chat");
-  const currentTab = controlledTab ?? internalTab;
-  const handleTabChange = controlledTabChange ?? setInternalTab;
-
-  // --- Voice ---
-  const voice = useVoiceInput({
-    onTranscript: (transcript, isFinal) => {
-      if (!isFinal || !setInput) return;
-      setInput(transcript);
-    },
-  });
-
-  const voiceHandler = React.useMemo(() => {
-    if (onVoice) return onVoice;
-    if (enableVoice && voice.isSupported && setInput) return voice.toggle;
-    return undefined;
-  }, [onVoice, enableVoice, voice.isSupported, voice.toggle, setInput]);
-
-  const isEmpty = messages.length === 0;
-  const isDocsTab = showTabs && currentTab === "uploads";
-
-  const dragProps = dropHandler
-    ? {
-      onDragEnter: handleDragEnter,
-      onDragLeave: handleDragLeave,
-      onDragOver: handleDragOver,
-      onDrop: handleFileDrop,
-    }
-    : {};
-
-  return (
-    <ChatRoot
-      ref={ref}
-      messages={messages}
-      input={input}
-      isLoading={isLoading}
-      error={error}
-      setInput={setInput}
-      onSubmit={onSubmit}
-      onStop={stop}
-      onReload={reload}
-      model={model}
-      models={models}
-      onModelChange={onModelChange}
-      attachments={attachments}
-      onAttach={onAttach}
-      onRemoveAttachment={onRemoveAttachment}
-      editMessage={editMessage}
-      getBranches={getBranches}
-      switchBranch={switchBranch}
-      onFeedback={onFeedback}
-      showSources={showSources}
-      onSourceClick={onSourceClick}
-      theme={userTheme}
-      maxHeight={maxHeight}
-      className={className}
-      {...dragProps}
-    >
-      {dropHandler && <DropZoneOverlay visible={dragOver} accept={attachAccept} />}
-
-      {showTabs && !hideTabSwitcher && (
-        <TabSwitcher activeTab={currentTab} onTabChange={handleTabChange} />
-      )}
-
-      {isDocsTab
-        ? (
-          <UploadsPanel
-            uploads={uploads}
-            onRemoveUpload={onRemoveUpload}
-            onAttach={onAttach}
-            attachAccept={attachAccept}
-            className="flex-1 min-h-0"
-          />
-        )
-        : isEmpty
-        ? (
-          <ChatEmpty
-            icon={emptyState?.icon}
-            title={emptyState?.title}
-            description={emptyState?.description}
-            suggestions={suggestions}
-            onSuggestionClick={onSuggestionClick}
-          />
-        )
-        : (
-          <ChatMessageList
-            messages={messages}
-            isLoading={isLoading}
-            theme={theme}
-            renderMessage={renderMessage}
-            renderTool={renderTool}
-            model={activeModel || model}
-            showMessageActions={showMessageActions}
-            showSources={showSources}
-            showSteps={showSteps}
-            showScrollButton={showScrollButton}
-            onSourceClick={onSourceClick}
-            inferenceMode={inferenceMode}
-            editMessage={editMessage}
-            getBranches={getBranches}
-            switchBranch={switchBranch}
-            onFeedback={onFeedback}
-          />
+    return (
+      <ChatRoot
+        ref={ref}
+        messages={messages}
+        input={input}
+        isLoading={isLoading}
+        error={error}
+        setInput={setInput}
+        onSubmit={onSubmit}
+        onStop={stop}
+        onReload={reload}
+        model={model}
+        models={models}
+        onModelChange={onModelChange}
+        attachments={attachments}
+        onAttach={onAttach}
+        onRemoveAttachment={onRemoveAttachment}
+        editMessage={editMessage}
+        getBranches={getBranches}
+        switchBranch={switchBranch}
+        onFeedback={onFeedback}
+        showSources={showSources}
+        onSourceClick={onSourceClick}
+        theme={userTheme}
+        maxHeight={maxHeight}
+        className={className}
+        {...dragProps}
+      >
+        {dropHandler && (
+          <DropZoneOverlay visible={dragOver} accept={attachAccept} />
         )}
 
-      {error && <ErrorBanner error={error} onRetry={reload} />}
+        {showTabs && !hideTabSwitcher && (
+          <TabSwitcher activeTab={currentTab} onTabChange={handleTabChange} />
+        )}
 
-      {!isDocsTab && (
-        <ChatComposer
-          input={voice.isListening ? voice.transcript || input : input}
-          onChange={onChange}
-          onSubmit={onSubmit}
-          isLoading={isLoading}
-          placeholder={voice.isListening ? "Listening..." : placeholder}
-          theme={theme}
-          stop={voice.isListening ? undefined : stop}
-          onVoice={voiceHandler}
-          isListening={voice.isListening}
-          transcript={voice.transcript}
-          models={models}
-          model={model}
-          onModelChange={onModelChange}
-          onAttach={onAttach}
-          onSelectAttachment={onSelectAttachment}
-          attachAccept={attachAccept}
-          attachments={attachments}
-          onRemoveAttachment={onRemoveAttachment}
-          showExport={showExport}
-          messages={messages}
-        >
-          {inferenceMode && inferenceMode !== "cloud" && (
-            <InferenceBadge inferenceMode={inferenceMode} />
-          )}
-          {isEmpty && quickActions && quickActions.length > 0 && (
-            <QuickActionsComponent
-              actions={quickActions}
-              onActionClick={onQuickAction}
+        {isDocsTab
+          ? (
+            <UploadsPanel
+              uploads={uploads}
+              onRemoveUpload={onRemoveUpload}
+              onAttach={onAttach}
+              attachAccept={attachAccept}
+              className="flex-1 min-h-0"
+            />
+          )
+          : isEmpty
+          ? (
+            <ChatEmpty
+              icon={emptyState?.icon}
+              title={emptyState?.title}
+              description={emptyState?.description}
+              suggestions={suggestions}
+              onSuggestionClick={onSuggestionClick}
+            />
+          )
+          : (
+            <ChatMessageList
+              messages={messages}
+              isLoading={isLoading}
+              theme={theme}
+              renderMessage={renderMessage}
+              renderTool={renderTool}
+              model={activeModel || model}
+              showMessageActions={showMessageActions}
+              showSources={showSources}
+              showSteps={showSteps}
+              showScrollButton={showScrollButton}
+              onSourceClick={onSourceClick}
+              inferenceMode={inferenceMode}
+              editMessage={editMessage}
+              getBranches={getBranches}
+              switchBranch={switchBranch}
+              onFeedback={onFeedback}
             />
           )}
-        </ChatComposer>
-      )}
 
-      {children}
-    </ChatRoot>
-  );
+        {error && <ErrorBanner error={error} onRetry={reload} />}
+
+        {!isDocsTab && (
+          <ChatComposer
+            input={voice.isListening ? voice.transcript || input : input}
+            onChange={onChange}
+            onSubmit={onSubmit}
+            isLoading={isLoading}
+            placeholder={voice.isListening ? "Listening..." : placeholder}
+            theme={theme}
+            stop={voice.isListening ? undefined : stop}
+            onVoice={voiceHandler}
+            isListening={voice.isListening}
+            transcript={voice.transcript}
+            models={models}
+            model={model}
+            onModelChange={onModelChange}
+            onAttach={onAttach}
+            onSelectAttachment={onSelectAttachment}
+            attachAccept={attachAccept}
+            attachments={attachments}
+            onRemoveAttachment={onRemoveAttachment}
+            showExport={showExport}
+            messages={messages}
+          >
+            {inferenceMode && inferenceMode !== "cloud" && (
+              <InferenceBadge inferenceMode={inferenceMode} />
+            )}
+            {isEmpty && quickActions && quickActions.length > 0 && (
+              <QuickActionsComponent
+                actions={quickActions}
+                onActionClick={onQuickAction}
+              />
+            )}
+          </ChatComposer>
+        )}
+
+        {children}
+      </ChatRoot>
+    );
+  },
+);
+ControlledChat.displayName = "ControlledChat";
+
+// ---------------------------------------------------------------------------
+// UncontrolledChat — "app mode": self-drives useChat + useAgentMetadata so the
+// consumer writes only `<Chat agentId="…" api="…" />`.
+// ---------------------------------------------------------------------------
+
+function suggestionsToStrings(
+  suggestions: AgentMetadata["suggestions"] | undefined,
+): string[] | undefined {
+  const list = suggestions?.suggestions;
+  if (!Array.isArray(list)) return undefined;
+  const out = list
+    .map((s) => {
+      if (s.type === "prompt" && "prompt" in s) return s.prompt;
+      const title = (s as { title?: unknown }).title;
+      return typeof title === "string" ? title : undefined;
+    })
+    .filter((s): s is string => typeof s === "string" && s.length > 0);
+  return out.length > 0 ? out : undefined;
+}
+
+const UncontrolledChat = React.forwardRef<HTMLDivElement, ChatProps>(
+  function UncontrolledChat(
+    {
+      agentId,
+      api = "/api/ag-ui",
+      initialMessages,
+      onError,
+      models,
+      suggestions: suggestionsProp,
+      onSuggestionClick,
+      emptyState,
+      ...rest
+    },
+    ref,
+  ): React.ReactElement {
+    const chat = useChat({
+      api,
+      initialMessages,
+      onError,
+      body: agentId ? { agentId } : undefined,
+    });
+    const { agent } = useAgentMetadata(agentId);
+
+    // Empty state fed from agent metadata: avatar (icon slot) + name + blurb.
+    const derivedEmptyState = React.useMemo(() => {
+      if (emptyState) return emptyState;
+      if (!agent) return undefined;
+      return {
+        icon: (
+          <AgentAvatar
+            name={agent.name}
+            avatarUrl={agent.avatarUrl ?? undefined}
+            className="size-12"
+          />
+        ),
+        title: agent.name,
+        description: agent.description ?? undefined,
+      };
+    }, [emptyState, agent]);
+
+    const derivedSuggestions = suggestionsProp ??
+      suggestionsToStrings(agent?.suggestions);
+
+    const handleSuggestion = onSuggestionClick ??
+      ((suggestion: string) => {
+        void chat.sendMessage({ text: suggestion });
+      });
+
+    return (
+      <ControlledChat
+        ref={ref}
+        messages={chat.messages}
+        input={chat.input}
+        onChange={chat.onChange}
+        onSubmit={chat.onSubmit}
+        stop={chat.stop}
+        reload={() => void chat.reload()}
+        setInput={chat.setInput}
+        isLoading={chat.isLoading}
+        error={chat.error}
+        model={chat.model}
+        activeModel={chat.activeModel}
+        onModelChange={chat.onModelChange}
+        inferenceMode={chat.inferenceMode}
+        models={models}
+        editMessage={chat.editMessage}
+        getBranches={chat.getBranches}
+        switchBranch={chat.switchBranch}
+        emptyState={derivedEmptyState}
+        suggestions={derivedSuggestions}
+        onSuggestionClick={handleSuggestion}
+        {...rest}
+      />
+    );
+  },
+);
+UncontrolledChat.displayName = "UncontrolledChat";
+
+/**
+ * Chat — batteries-included chat surface.
+ *
+ * - **App mode (uncontrolled):** omit `messages`/`input` and pass `agentId` +
+ *   `api`; `<Chat>` wires `useChat` + `useAgentMetadata` internally.
+ * - **Controlled mode:** pass `messages` + `input` to drive it yourself.
+ */
+export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
+  props,
+  ref,
+): React.ReactElement {
+  // Controlled when the caller supplies the message/input state; otherwise the
+  // component self-drives (app mode).
+  const isControlled = props.messages !== undefined &&
+    props.input !== undefined;
+  return isControlled
+    ? <ControlledChat ref={ref} {...props} />
+    : <UncontrolledChat ref={ref} {...props} />;
 });
 Chat.displayName = "Chat";
 
