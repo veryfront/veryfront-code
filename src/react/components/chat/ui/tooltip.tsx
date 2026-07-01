@@ -62,6 +62,15 @@ const sideClasses: Record<string, string> = {
   right: "left-full top-1/2 -translate-y-1/2 ml-1.5",
 };
 
+// A rotated square centred on the trigger-facing edge — half straddles the
+// bubble so the outer half reads as a triangle pointing at the trigger.
+const arrowClasses: Record<string, string> = {
+  top: "top-full left-1/2 -translate-x-1/2 -translate-y-1/2 rotate-45",
+  bottom: "bottom-full left-1/2 -translate-x-1/2 translate-y-1/2 rotate-45",
+  left: "left-full top-1/2 -translate-x-1/2 -translate-y-1/2 rotate-45",
+  right: "right-full top-1/2 translate-x-1/2 -translate-y-1/2 rotate-45",
+};
+
 /** Props accepted by `<TooltipContent>`. */
 export interface TooltipContentProps
   extends React.HTMLAttributes<HTMLDivElement> {
@@ -87,6 +96,13 @@ export function TooltipContent(
       {...props}
     >
       {children}
+      <span
+        aria-hidden="true"
+        className={cn(
+          "absolute size-2 bg-[var(--primary)] dark:bg-[var(--secondary)]",
+          arrowClasses[side],
+        )}
+      />
     </div>
   );
 }
