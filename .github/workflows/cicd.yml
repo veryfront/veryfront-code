@@ -426,10 +426,24 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: deno task sbom:all --output-dir "dist/sbom-${VERSION}"
 
+      - name: Create release GitHub App token
+        id: release-app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          client-id: ${{ vars.VERYFRONT_RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.VERYFRONT_RELEASE_APP_PRIVATE_KEY }}
+          owner: veryfront
+          repositories: |
+            veryfront
+            veryfront-server
+            veryfront-job-runner
+            veryfront-sandbox
+          permission-contents: write
+
       - name: Create GitHub pre-release
         env:
           VERSION: ${{ steps.version.outputs.version }}
-          GH_TOKEN: ${{ secrets.GH_PAT_VERYFRONT }}
+          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
         run: |
           # Collect available binaries dynamically (Windows build is optional)
           BINARIES=""
@@ -461,7 +475,7 @@ jobs:
       - name: Trigger server deploy
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697  # v4.0.1
         with:
-          token: ${{ secrets.GH_PAT_VERYFRONT }}
+          token: ${{ steps.release-app-token.outputs.token }}
           repository: veryfront/veryfront-server
           event-type: veryfront-code-released
           client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
@@ -469,7 +483,7 @@ jobs:
       - name: Trigger job-runner deploy
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697  # v4.0.1
         with:
-          token: ${{ secrets.GH_PAT_VERYFRONT }}
+          token: ${{ steps.release-app-token.outputs.token }}
           repository: veryfront/veryfront-job-runner
           event-type: veryfront-code-released
           client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
@@ -477,7 +491,7 @@ jobs:
       - name: Trigger sandbox deploy
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697  # v4.0.1
         with:
-          token: ${{ secrets.GH_PAT_VERYFRONT }}
+          token: ${{ steps.release-app-token.outputs.token }}
           repository: veryfront/veryfront-sandbox
           event-type: veryfront-code-released
           client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
@@ -505,9 +519,24 @@ jobs:
           echo "version=${{ needs.version-check.outputs.version }}" >> $GITHUB_OUTPUT
           echo "Publishing stable: ${{ needs.version-check.outputs.version }}"
 
+      - name: Create release GitHub App token
+        id: release-app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          client-id: ${{ vars.VERYFRONT_RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.VERYFRONT_RELEASE_APP_PRIVATE_KEY }}
+          owner: veryfront
+          repositories: |
+            veryfront
+            veryfront-server
+            veryfront-job-runner
+            veryfront-sandbox
+          permission-contents: write
+
       - name: Ensure stable version is unpublished
         env:
-          GH_TOKEN: ${{ secrets.GH_PAT_VERYFRONT }}
+          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
+          SOURCE_REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           TAG="v${VERSION}"
@@ -543,7 +572,7 @@ jobs:
             echo "::error::Release ${TAG} already exists on veryfront/veryfront. Bump deno.json before releasing."
             exit 1
           fi
-          if gh release view "${TAG}" &>/dev/null; then
+          if GH_TOKEN="${SOURCE_REPO_TOKEN}" gh release view "${TAG}" &>/dev/null; then
             echo "::error::Release ${TAG} already exists on source repo. Bump deno.json before releasing."
             exit 1
           fi
@@ -626,7 +655,7 @@ jobs:
       - name: Create GitHub releases
         env:
           VERSION: ${{ steps.version.outputs.version }}
-          GH_TOKEN: ${{ secrets.GH_PAT_VERYFRONT }}
+          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
         run: |
           # Collect available binaries dynamically (Windows build is optional)
           BINARIES=""
@@ -676,7 +705,7 @@ jobs:
       - name: Trigger server deploy
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697  # v4.0.1
         with:
-          token: ${{ secrets.GH_PAT_VERYFRONT }}
+          token: ${{ steps.release-app-token.outputs.token }}
           repository: veryfront/veryfront-server
           event-type: veryfront-code-released
           client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
@@ -684,7 +713,7 @@ jobs:
       - name: Trigger job-runner deploy
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697  # v4.0.1
         with:
-          token: ${{ secrets.GH_PAT_VERYFRONT }}
+          token: ${{ steps.release-app-token.outputs.token }}
           repository: veryfront/veryfront-job-runner
           event-type: veryfront-code-released
           client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
@@ -692,7 +721,7 @@ jobs:
       - name: Trigger sandbox deploy
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697  # v4.0.1
         with:
-          token: ${{ secrets.GH_PAT_VERYFRONT }}
+          token: ${{ steps.release-app-token.outputs.token }}
           repository: veryfront/veryfront-sandbox
           event-type: veryfront-code-released
           client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
@@ -705,13 +734,25 @@ jobs:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     needs: [release, version-check]
     runs-on: ubuntu-latest
+    environment: production
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      - name: Create Homebrew tap GitHub App token
+        id: homebrew-app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          client-id: ${{ vars.HOMEBREW_TAP_APP_CLIENT_ID }}
+          private-key: ${{ secrets.HOMEBREW_TAP_APP_PRIVATE_KEY }}
+          owner: veryfront
+          repositories: homebrew-tap
+          permission-contents: write
+          permission-pull-requests: write
 
       - name: Update Homebrew tap
         uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60  # v4.0.0
         env:
-          HOMEBREW_TAP_PAT: ${{ secrets.GH_PAT_HOMEBREW_TAP || secrets.GH_PAT_VERYFRONT }}
+          HOMEBREW_TAP_TOKEN: ${{ steps.homebrew-app-token.outputs.token }}
         with:
           timeout_minutes: 5
           max_attempts: 3
@@ -736,7 +777,7 @@ jobs:
 
             # Create PR against tap repo (branch protection requires PRs)
             rm -rf tap
-            git clone "https://x-access-token:${HOMEBREW_TAP_PAT}@github.com/veryfront/homebrew-tap.git" tap
+            git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/veryfront/homebrew-tap.git" tap
             mkdir -p tap/Formula
             echo "$FORMULA" > tap/Formula/veryfront.rb
             cd tap
@@ -750,14 +791,14 @@ jobs:
             git commit -m "Update veryfront to v${VERSION}"
             git push -u origin "${BRANCH}" || git push -u origin "${BRANCH}" --force-with-lease
 
-            PR_NUMBER=$(GH_TOKEN="${HOMEBREW_TAP_PAT}" gh api \
+            PR_NUMBER=$(GH_TOKEN="${HOMEBREW_TAP_TOKEN}" gh api \
               --method GET \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "/repos/veryfront/homebrew-tap/pulls?state=open&head=veryfront:${BRANCH}&base=main&per_page=1" \
               --jq '.[0].number // empty')
 
             if [ -z "${PR_NUMBER}" ]; then
-              CREATE_PR_OUTPUT=$(GH_TOKEN="${HOMEBREW_TAP_PAT}" gh api \
+              CREATE_PR_OUTPUT=$(GH_TOKEN="${HOMEBREW_TAP_TOKEN}" gh api \
                 --method POST \
                 -H "X-GitHub-Api-Version: 2022-11-28" \
                 "/repos/veryfront/homebrew-tap/pulls" \
@@ -767,7 +808,7 @@ jobs:
                 -f body="Automated update from CI - veryfront v${VERSION}" \
                 --jq '.number' 2>&1) || {
                   if echo "${CREATE_PR_OUTPUT}" | grep -q "Resource not accessible by personal access token"; then
-                    echo "::error::Homebrew tap update requires a token with Pull requests: write and Contents: write on veryfront/homebrew-tap (set GH_PAT_HOMEBREW_TAP or fix GH_PAT_VERYFRONT)."
+                    echo "::error::Homebrew tap update requires a GitHub App token with Pull requests: write and Contents: write on veryfront/homebrew-tap."
                   fi
                   echo "${CREATE_PR_OUTPUT}"
                   exit 1
@@ -779,7 +820,7 @@ jobs:
             MERGEABLE=""
             MERGEABLE_STATE=""
             for attempt in {1..24}; do
-              PR_JSON=$(GH_TOKEN="${HOMEBREW_TAP_PAT}" gh api \
+              PR_JSON=$(GH_TOKEN="${HOMEBREW_TAP_TOKEN}" gh api \
                 --method GET \
                 -H "X-GitHub-Api-Version: 2022-11-28" \
                 "/repos/veryfront/homebrew-tap/pulls/${PR_NUMBER}")
@@ -803,7 +844,7 @@ jobs:
               exit 1
             fi
 
-            GH_TOKEN="${HOMEBREW_TAP_PAT}" gh api \
+            GH_TOKEN="${HOMEBREW_TAP_TOKEN}" gh api \
               --method PUT \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "/repos/veryfront/homebrew-tap/pulls/${PR_NUMBER}/merge" \

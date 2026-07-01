@@ -3,6 +3,8 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 
 const WORKFLOW_PR_GUARD =
   "github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository";
+const CREATE_APP_TOKEN_ACTION =
+  "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1";
 
 async function readText(path: string): Promise<string> {
   return await Deno.readTextFile(path);
@@ -55,6 +57,12 @@ describe("repository hardening", () => {
         "Code security",
         "Dependabot security updates",
         "External fork pull requests",
+        "GitHub App release credentials",
+        "VERYFRONT_RELEASE_APP_CLIENT_ID",
+        "VERYFRONT_DOCS_APP_CLIENT_ID",
+        "HOMEBREW_TAP_APP_CLIENT_ID",
+        "GH_PAT_VERYFRONT",
+        "GH_PAT_HOMEBREW_TAP",
       ]
     ) {
       assert(
@@ -80,6 +88,43 @@ describe("repository hardening", () => {
     assert(workflow.includes("package-manager-cache: false"));
     assert(workflow.includes("npm publish --provenance --access public --tag rc"));
     assert(workflow.includes("npm publish --provenance --access public 2>&1"));
+  });
+
+  it("uses scoped GitHub App tokens instead of release PATs", async () => {
+    const releaseWorkflow = await readText(".github/workflows/cicd.yml");
+    const docsWorkflow = await readText(".github/workflows/sync-docs.yml");
+    const workflows = `${releaseWorkflow}\n${docsWorkflow}`;
+
+    assertEquals(workflows.includes("GH_PAT_"), false);
+    assertEquals(workflows.includes("HOMEBREW_TAP_PAT"), false);
+
+    for (
+      const required of [
+        CREATE_APP_TOKEN_ACTION,
+        "client-id: ${{ vars.VERYFRONT_RELEASE_APP_CLIENT_ID }}",
+        "private-key: ${{ secrets.VERYFRONT_RELEASE_APP_PRIVATE_KEY }}",
+        "client-id: ${{ vars.VERYFRONT_DOCS_APP_CLIENT_ID }}",
+        "private-key: ${{ secrets.VERYFRONT_DOCS_APP_PRIVATE_KEY }}",
+        "client-id: ${{ vars.HOMEBREW_TAP_APP_CLIENT_ID }}",
+        "private-key: ${{ secrets.HOMEBREW_TAP_APP_PRIVATE_KEY }}",
+        "repositories: |",
+        "veryfront-server",
+        "veryfront-job-runner",
+        "veryfront-sandbox",
+        "veryfront-docs",
+        "homebrew-tap",
+        "permission-contents: write",
+        "permission-pull-requests: write",
+        "steps.release-app-token.outputs.token",
+        "steps.docs-app-token.outputs.token",
+        "steps.homebrew-app-token.outputs.token",
+      ]
+    ) {
+      assert(
+        workflows.includes(required),
+        `expected workflows to use ${required}`,
+      );
+    }
   });
 
   it("does not run npm lifecycle scripts while building the npm package", async () => {
