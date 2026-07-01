@@ -53,9 +53,7 @@ function metadataString(
   key: string,
 ): string | undefined {
   const value = metadata?.[key];
-  return typeof value === "string" && value.trim().length > 0
-    ? value
-    : undefined;
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
 }
 
 function getAssistantIdentity(message: ChatMessage): AssistantIdentity {
@@ -297,9 +295,7 @@ function UserMessage({
               onNext={() => switchBranch?.(msg.id, branches.current)}
             />
           )}
-          {editMessage && (
-            <MessageActions content={content} onEdit={onStartEdit} />
-          )}
+          {editMessage && <MessageActions content={content} onEdit={onStartEdit} />}
         </div>
       )}
     </MessageItem>
