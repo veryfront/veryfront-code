@@ -295,9 +295,7 @@ export function Markdown({
   }, []);
 
   if (!isLoaded || !ReactMarkdown) {
-    return (
-      <FallbackMarkdown className={className}>{children}</FallbackMarkdown>
-    );
+    return <FallbackMarkdown className={className}>{children}</FallbackMarkdown>;
   }
 
   return (
@@ -306,8 +304,7 @@ export function Markdown({
         remarkPlugins={remarkGfm ? [remarkGfm] : []}
         components={{
           code(props: CodeRendererProps) {
-            const { className: codeClassName, children: codeChildren, node } =
-              props;
+            const { className: codeClassName, children: codeChildren, node } = props;
             const match = /language-(\w+)/.exec(codeClassName || "");
             const language = match ? match[1] : undefined;
             const code = extractText(codeChildren).replace(/\n$/, "");

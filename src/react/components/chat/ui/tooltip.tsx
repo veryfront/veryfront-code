@@ -1,24 +1,28 @@
 /**
- * Tooltip — BASIC implementation with the same API surface as Studio's
- * (Radix-shaped: `TooltipProvider` / `Tooltip` / `TooltipTrigger` /
- * `TooltipContent`). Hover/focus opens it; positioning is CSS-only by `side`.
+ * Tooltip — API-compatible with Studio's (Radix-shaped: `TooltipProvider` /
+ * `Tooltip` / `TooltipTrigger` / `TooltipContent`). Hover/focus opens it.
  *
- * TODO(a11y): this is intentionally minimal so the chat composition can be
- * built against the final API now. Still owed before production:
- *   - `aria-describedby` wiring trigger ↔ content, `role="tooltip"` id
- *   - open/close delay + provider-level delay grouping
- *   - `Escape` to dismiss, pointer-down dismissal
- *   - collision-aware positioning (flip/shift) + portal to escape overflow
+ * Content is PORTALLED to `document.body` and positioned with `getBounding
+ * ClientRect`, so it escapes the Storybook iframe / any `overflow:hidden`
+ * ancestor (the recurring clip bug). Positioning is collision-aware: the
+ * requested `side` flips to its opposite when it would overflow the viewport,
+ * and the cross-axis is clamped to stay on-screen.
  *
- * Private to the chat module.
+ * TODO(a11y): `aria-describedby` wiring, open/close delay grouping, `Escape`
+ * dismissal. Private to the chat module.
  *
  * @module react/components/chat/ui/tooltip
  */
 import * as React from "react";
+import { createPortal } from "react-dom";
 import { cn } from "../theme.ts";
 import { Slot } from "./slot.tsx";
 
-const TooltipContext = React.createContext<{ open: boolean } | null>(null);
+type Side = "top" | "bottom" | "left" | "right";
+
+const TooltipContext = React.createContext<
+  { open: boolean; anchorRef: React.RefObject<HTMLSpanElement | null> } | null
+>(null);
 
 /** Provider for shared tooltip config. Basic: a passthrough for API parity. */
 export function TooltipProvider(
@@ -32,15 +36,17 @@ export function Tooltip(
   { children }: { children: React.ReactNode },
 ): React.ReactElement {
   const [open, setOpen] = React.useState(false);
+  const anchorRef = React.useRef<HTMLSpanElement>(null);
   return (
     <span
+      ref={anchorRef}
       className="relative inline-flex"
       onMouseEnter={() => setOpen(true)}
       onMouseLeave={() => setOpen(false)}
       onFocusCapture={() => setOpen(true)}
       onBlurCapture={() => setOpen(false)}
     >
-      <TooltipContext.Provider value={{ open }}>
+      <TooltipContext.Provider value={{ open, anchorRef }}>
         {children}
       </TooltipContext.Provider>
     </span>
@@ -55,16 +61,59 @@ export function TooltipTrigger(
   return <Comp>{children}</Comp>;
 }
 
-const sideClasses: Record<string, string> = {
-  top: "bottom-full left-1/2 -translate-x-1/2 mb-1.5",
-  bottom: "top-full left-1/2 -translate-x-1/2 mt-1.5",
-  left: "right-full top-1/2 -translate-y-1/2 mr-1.5",
-  right: "left-full top-1/2 -translate-y-1/2 ml-1.5",
+/** Which viewport edge each side would collide with, and its opposite. */
+const opposite: Record<Side, Side> = {
+  top: "bottom",
+  bottom: "top",
+  left: "right",
+  right: "left",
 };
+
+/** Compute a fixed-position rect for `side`, flipping on collision. */
+function place(
+  anchor: DOMRect,
+  cw: number,
+  ch: number,
+  side: Side,
+  offset: number,
+): { top: number; left: number; side: Side } {
+  const vw = globalThis.innerWidth;
+  const vh = globalThis.innerHeight;
+  const pad = 8;
+
+  const fits = (s: Side): boolean => {
+    if (s === "top") return anchor.top - offset - ch >= pad;
+    if (s === "bottom") return anchor.bottom + offset + ch <= vh - pad;
+    if (s === "left") return anchor.left - offset - cw >= pad;
+    return anchor.right + offset + cw <= vw - pad;
+  };
+
+  const chosen = fits(side) || !fits(opposite[side]) ? side : opposite[side];
+
+  let top: number;
+  let left: number;
+  if (chosen === "top") {
+    top = anchor.top - offset - ch;
+    left = anchor.left + anchor.width / 2 - cw / 2;
+  } else if (chosen === "bottom") {
+    top = anchor.bottom + offset;
+    left = anchor.left + anchor.width / 2 - cw / 2;
+  } else if (chosen === "left") {
+    top = anchor.top + anchor.height / 2 - ch / 2;
+    left = anchor.left - offset - cw;
+  } else {
+    top = anchor.top + anchor.height / 2 - ch / 2;
+    left = anchor.right + offset;
+  }
+
+  left = Math.max(pad, Math.min(left, vw - cw - pad));
+  top = Math.max(pad, Math.min(top, vh - ch - pad));
+  return { top, left, side: chosen };
+}
 
 // A rotated square centred on the trigger-facing edge — half straddles the
 // bubble so the outer half reads as a triangle pointing at the trigger.
-const arrowClasses: Record<string, string> = {
+const arrowClasses: Record<Side, string> = {
   top: "top-full left-1/2 -translate-x-1/2 -translate-y-1/2 rotate-45",
   bottom: "bottom-full left-1/2 -translate-x-1/2 translate-y-1/2 rotate-45",
   left: "left-full top-1/2 -translate-x-1/2 -translate-y-1/2 rotate-45",
@@ -72,26 +121,61 @@ const arrowClasses: Record<string, string> = {
 };
 
 /** Props accepted by `<TooltipContent>`. */
-export interface TooltipContentProps extends React.HTMLAttributes<HTMLDivElement> {
-  side?: "top" | "bottom" | "left" | "right";
+export interface TooltipContentProps
+  extends React.HTMLAttributes<HTMLDivElement> {
+  side?: Side;
   sideOffset?: number;
 }
 
-/** Tooltip content — shown while the trigger is hovered/focused. */
+/** Tooltip content — portalled + positioned while hovered/focused. */
 export function TooltipContent(
-  { side = "top", className, children, ...props }: TooltipContentProps,
+  { side = "top", sideOffset = 6, className, children, style, ...props }:
+    TooltipContentProps,
 ): React.ReactElement | null {
   const ctx = React.useContext(TooltipContext);
-  if (!ctx?.open) return null;
-  return (
+  const ref = React.useRef<HTMLDivElement>(null);
+  const [pos, setPos] = React.useState<
+    { top: number; left: number; side: Side; visible: boolean }
+  >({ top: 0, left: 0, side, visible: false });
+
+  const open = ctx?.open ?? false;
+  const anchorRef = ctx?.anchorRef;
+
+  React.useLayoutEffect(() => {
+    if (!open || !anchorRef) return;
+    const update = () => {
+      const a = anchorRef.current?.getBoundingClientRect();
+      const c = ref.current;
+      if (!a || !c) return;
+      const next = place(a, c.offsetWidth, c.offsetHeight, side, sideOffset);
+      setPos({ ...next, visible: true });
+    };
+    update();
+    globalThis.addEventListener("scroll", update, true);
+    globalThis.addEventListener("resize", update);
+    return () => {
+      globalThis.removeEventListener("scroll", update, true);
+      globalThis.removeEventListener("resize", update);
+    };
+  }, [open, side, sideOffset, anchorRef]);
+
+  if (!open) return null;
+
+  return createPortal(
     <div
+      ref={ref}
       role="tooltip"
       className={cn(
-        "absolute z-50 whitespace-nowrap rounded-md bg-[var(--primary)] px-2.5 py-1 text-xs font-medium text-[var(--secondary)] shadow-sm pointer-events-none",
+        "fixed z-[60] w-max max-w-xs whitespace-nowrap rounded-md bg-[var(--primary)] px-2.5 py-1 text-xs font-medium text-[var(--secondary)] shadow-sm pointer-events-none",
         "dark:bg-[var(--secondary)] dark:text-[var(--foreground)]",
-        sideClasses[side],
         className,
       )}
+      style={{
+        top: pos.top,
+        left: pos.left,
+        visibility: pos.visible ? "visible" : "hidden",
+        ...style,
+      }}
       {...props}
     >
       {children}
@@ -99,9 +183,10 @@ export function TooltipContent(
         aria-hidden="true"
         className={cn(
           "absolute size-2 bg-[var(--primary)] dark:bg-[var(--secondary)]",
-          arrowClasses[side],
+          arrowClasses[pos.side],
         )}
       />
-    </div>
+    </div>,
+    document.body,
   );
 }
