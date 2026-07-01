@@ -49,12 +49,11 @@ describe("normalizeNpmPackageMetadata", () => {
 		});
 
 		assertEquals(pkg.dependencies, { zod: "4.3.6" });
-		assertEquals(pkg.optionalDependencies, {
-			"@huggingface/transformers": "4.2.0",
-		});
+		assertEquals(pkg.optionalDependencies, undefined);
 		assertEquals(pkg.peerDependencies, {
 			"@kreuzberg/node": "^4.4.2",
 			"@kreuzberg/wasm": "4.5.2",
+			"@huggingface/transformers": "^4.2.0",
 			"@opentelemetry/api": "1.9.1",
 			"@opentelemetry/exporter-metrics-otlp-http": "0.219.0",
 			"@opentelemetry/sdk-metrics": "2.8.0",
@@ -64,6 +63,7 @@ describe("normalizeNpmPackageMetadata", () => {
 		assertEquals(pkg.peerDependenciesMeta, {
 			"@kreuzberg/node": { optional: true },
 			"@kreuzberg/wasm": { optional: true },
+			"@huggingface/transformers": { optional: true },
 			"@opentelemetry/api": { optional: true },
 			"@opentelemetry/exporter-metrics-otlp-http": { optional: true },
 			"@opentelemetry/sdk-metrics": { optional: true },
@@ -72,7 +72,7 @@ describe("normalizeNpmPackageMetadata", () => {
 		});
 	});
 
-	it("keeps auto-enabled sandbox shell extension packages installable at runtime", () => {
+	it("keeps sandbox shell packages out of automatic npm installs", () => {
 		const pkg = normalizeNpmPackageMetadata({
 			dependencies: {
 				"bash-tool": "1.3.16",
@@ -82,15 +82,16 @@ describe("normalizeNpmPackageMetadata", () => {
 		});
 
 		assertEquals(pkg.dependencies, { zod: "4.3.6" });
-		assertEquals(pkg.optionalDependencies, {
+		assertEquals(pkg.optionalDependencies, undefined);
+		assertEquals(pkg.peerDependencies, {
 			"bash-tool": "1.3.16",
+			"better-sqlite3": ">=9.0.0",
 			"just-bash": "2.14.5",
 		});
-		assertEquals(pkg.peerDependencies, {
-			"better-sqlite3": ">=9.0.0",
-		});
 		assertEquals(pkg.peerDependenciesMeta, {
+			"bash-tool": { optional: true },
 			"better-sqlite3": { optional: true },
+			"just-bash": { optional: true },
 		});
 	});
 
@@ -144,18 +145,21 @@ describe("normalizeNpmPackageMetadata", () => {
 
 		assertEquals(pkg.dependencies, {
 			"@types/react": "19.2.14",
-			"@deno/shim-deno": "0.18.0",
+			"@deno/shim-deno": "0.19.2",
 			zod: "4.3.6",
 		});
-		assertEquals(pkg.optionalDependencies, {
-			"just-bash": "2.14.5",
-		});
+		assertEquals(pkg.optionalDependencies, undefined);
 		assertEquals(pkg.devDependencies, {
 			"@types/node": "20.9.0",
 		});
 		assertEquals(pkg.peerDependencies, {
 			react: "^19.0.0",
 			"better-sqlite3": ">=9.0.0",
+			"just-bash": "^2.14.5",
+		});
+		assertEquals(pkg.peerDependenciesMeta, {
+			"better-sqlite3": { optional: true },
+			"just-bash": { optional: true },
 		});
 		assertEquals(pkg.overrides, {
 			protobufjs: "8.6.5",
@@ -370,5 +374,23 @@ describe("npm generated integration artifacts", () => {
 			source,
 			'pkg.files = ["esm", "script", "bin", "assets", "tsconfig.json", "LICENSE", "NOTICE", "README.md"];',
 		);
+	});
+
+	it("keeps high-risk feature packages opt-in in generated npm metadata", async () => {
+		const pkg = JSON.parse(await Deno.readTextFile("npm/package.json"));
+		const optInPackages = [
+			"@huggingface/transformers",
+			"bash-tool",
+			"just-bash",
+		];
+
+		for (const packageName of optInPackages) {
+			assertEquals(pkg.dependencies?.[packageName], undefined);
+			assertEquals(pkg.optionalDependencies?.[packageName], undefined);
+			assertEquals(typeof pkg.peerDependencies?.[packageName], "string");
+			assertEquals(pkg.peerDependenciesMeta?.[packageName], { optional: true });
+		}
+
+		assertEquals(pkg.dependencies?.["@deno/shim-deno"], "0.19.2");
 	});
 });

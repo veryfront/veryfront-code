@@ -18,6 +18,7 @@ const OPTIONAL_NATIVE_PEERS = {
 const OPTIONAL_FEATURE_PEERS = [
 	"@kreuzberg/node",
 	"@kreuzberg/wasm",
+	"@huggingface/transformers",
 	"@opentelemetry/api",
 	"@opentelemetry/auto-instrumentations-node",
 	"@opentelemetry/context-async-hooks",
@@ -29,9 +30,6 @@ const OPTIONAL_FEATURE_PEERS = [
 	"@opentelemetry/sdk-node",
 	"@opentelemetry/sdk-trace-base",
 	"@opentelemetry/semantic-conventions",
-] as const;
-
-const AUTO_ENABLED_EXTENSION_OPTIONAL_DEPENDENCIES = [
 	"bash-tool",
 	"just-bash",
 ] as const;
@@ -48,6 +46,10 @@ const STALE_DEV_DEPENDENCIES = [
 
 const REQUIRED_NPM_OVERRIDES = {
 	protobufjs: "8.6.5",
+} as const;
+
+const REQUIRED_NPM_DEPENDENCY_VERSIONS = {
+	"@deno/shim-deno": "0.19.2",
 } as const;
 
 export function normalizeNpmPackageMetadata(pkg: PackageJson): PackageJson {
@@ -69,10 +71,6 @@ export function normalizeNpmPackageMetadata(pkg: PackageJson): PackageJson {
 		movePackageToOptionalPeer(pkg, name);
 	}
 
-	for (const name of AUTO_ENABLED_EXTENSION_OPTIONAL_DEPENDENCIES) {
-		movePackageToOptionalDependency(pkg, name);
-	}
-
 	for (const name of STALE_DIRECT_DEPENDENCIES) {
 		delete pkg.dependencies?.[name];
 		delete pkg.optionalDependencies?.[name];
@@ -91,6 +89,7 @@ export function normalizeNpmPackageMetadata(pkg: PackageJson): PackageJson {
 	}
 
 	pinAutomaticDependencyRanges(pkg);
+	pinRequiredDependencyVersions(pkg);
 
 	return pkg;
 }
@@ -110,6 +109,16 @@ function stripLeadingRangeOperator(range: string): string {
 	return range.replace(/^[\^~]/, "");
 }
 
+function pinRequiredDependencyVersions(pkg: PackageJson): void {
+	if (!pkg.dependencies) return;
+
+	for (const [name, version] of Object.entries(REQUIRED_NPM_DEPENDENCY_VERSIONS)) {
+		if (name in pkg.dependencies) {
+			pkg.dependencies[name] = version;
+		}
+	}
+}
+
 function movePackageToOptionalPeer(pkg: PackageJson, name: string): void {
 	const range = pkg.dependencies?.[name] ?? pkg.optionalDependencies?.[name];
 	if (!range) return;
@@ -122,18 +131,6 @@ function movePackageToOptionalPeer(pkg: PackageJson, name: string): void {
 
 	pkg.peerDependenciesMeta ??= {};
 	pkg.peerDependenciesMeta[name] = { optional: true };
-}
-
-function movePackageToOptionalDependency(pkg: PackageJson, name: string): void {
-	const range = pkg.dependencies?.[name] ?? pkg.optionalDependencies?.[name];
-	if (!range) return;
-
-	delete pkg.dependencies?.[name];
-	delete pkg.peerDependencies?.[name];
-	delete pkg.peerDependenciesMeta?.[name];
-
-	pkg.optionalDependencies ??= {};
-	pkg.optionalDependencies[name] = range;
 }
 
 function deleteIfEmpty(
