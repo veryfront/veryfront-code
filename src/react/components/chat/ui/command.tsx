@@ -14,6 +14,7 @@
 import * as React from "react";
 import { cn } from "../theme.ts";
 import { SearchIcon, XIcon } from "../icons/index.ts";
+import { Dialog, DialogContent, DialogTitle } from "./dialog.tsx";
 
 interface CommandContextValue {
   search: string;
@@ -81,6 +82,31 @@ export function Command({
         {children}
       </CommandContext.Provider>
     </div>
+  );
+}
+
+/** Props accepted by `<CommandDialog>`. */
+export interface CommandDialogProps {
+  children: React.ReactNode;
+  open?: boolean;
+  defaultOpen?: boolean;
+  onOpenChange?: (open: boolean) => void;
+}
+
+/** A Command palette inside a modal Dialog overlay. */
+export function CommandDialog({
+  children,
+  open,
+  defaultOpen,
+  onOpenChange,
+}: CommandDialogProps): React.ReactElement {
+  return (
+    <Dialog open={open} defaultOpen={defaultOpen} onOpenChange={onOpenChange}>
+      <DialogContent className="overflow-hidden rounded-lg! p-0 shadow-lg">
+        <DialogTitle className="sr-only">Command Menu</DialogTitle>
+        <Command>{children}</Command>
+      </DialogContent>
+    </Dialog>
   );
 }
 
