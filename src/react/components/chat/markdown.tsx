@@ -27,8 +27,34 @@ const ESM_REACT_MARKDOWN =
   "https://esm.sh/react-markdown@9.0.3?target=es2022&pin=v135&deps=react@19.2.4";
 const ESM_REMARK_GFM = "https://esm.sh/remark-gfm@4.0.1?target=es2022&pin=v135";
 const ESM_MERMAID = "https://esm.sh/mermaid@11.4.1?pin=v135";
-const MARKDOWN_CONTAINER_CLASS =
-  "prose max-w-none min-w-0 overflow-hidden break-words text-base leading-relaxed text-[var(--foreground)] [overflow-wrap:anywhere] prose-headings:font-medium prose-strong:font-medium prose-a:text-[var(--foreground)] prose-a:underline prose-a:underline-offset-4 hover:prose-a:no-underline prose-inline-code:rounded-[var(--radius-xs)] prose-inline-code:bg-[var(--accent)] prose-inline-code:px-1 prose-inline-code:py-0.5 prose-inline-code:font-mono prose-inline-code:font-medium prose-inline-code:text-[var(--foreground)] prose-pre:rounded-[var(--radius-lg)] prose-pre:bg-[var(--secondary)] prose-pre:text-[var(--foreground)] prose-hr:border-[var(--edge-medium)] [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_*]:max-w-full";
+// Self-contained prose styling. Studio's ChatMessageText leans on the
+// `@tailwindcss/typography` `prose` plugin for element defaults (list markers,
+// heading sizes, spacing). This package is dependency-light and must not
+// require consumers to install that plugin, so the element styles are declared
+// explicitly with arbitrary-variant descendant selectors — mirroring Studio's
+// `variantStyles.default` (`prose-p:my-4 prose-ul:my-4 prose-li:my-1.5
+// prose-h1:text-lg … prose-hr:my-5`). Tailwind's preflight strips list markers,
+// so `list-disc`/`list-decimal` + padding are restored here.
+const MARKDOWN_CONTAINER_CLASS = [
+  "max-w-none min-w-0 overflow-hidden break-words text-base leading-relaxed text-[var(--foreground)] [overflow-wrap:anywhere]",
+  // paragraph rhythm
+  "[&_p]:my-4",
+  // lists — restore markers + indentation preflight removes
+  "[&_ul]:my-4 [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:my-4 [&_ol]:list-decimal [&_ol]:pl-6 [&_li]:my-1.5 [&_li]:pl-1",
+  "[&_ul_ul]:my-1 [&_ol_ol]:my-1 [&_ul_ol]:my-1 [&_ol_ul]:my-1",
+  "[&_li>p]:my-0 [&_li_p]:my-2",
+  // headings — Studio sizes; font-semibold (Inter reads lighter than Söhne)
+  "[&_h1]:mt-6 [&_h1]:mb-2 [&_h1]:text-lg [&_h1]:font-semibold",
+  "[&_h2]:mt-5 [&_h2]:mb-2 [&_h2]:text-base [&_h2]:font-semibold",
+  "[&_h3]:mt-4 [&_h3]:mb-1 [&_h3]:text-sm [&_h3]:font-semibold",
+  "[&_h4]:mt-3 [&_h4]:mb-1 [&_h4]:text-sm [&_h4]:font-semibold",
+  // inline emphasis
+  "[&_strong]:font-semibold [&_em]:italic",
+  // horizontal rule
+  "[&_hr]:my-6 [&_hr]:border-0 [&_hr]:border-t [&_hr]:border-[var(--edge-medium)]",
+  // margin reset for the container edges + width guard
+  "[&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_*]:max-w-full",
+].join(" ");
 
 type DefaultModule<T> = { default: T };
 
