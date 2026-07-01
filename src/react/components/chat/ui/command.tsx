@@ -104,7 +104,7 @@ export function CommandDialog({
     <Dialog open={open} defaultOpen={defaultOpen} onOpenChange={onOpenChange}>
       <DialogContent className="overflow-hidden rounded-lg! p-0 shadow-lg">
         <DialogTitle className="sr-only">Command Menu</DialogTitle>
-        <Command>{children}</Command>
+        <Command className="pt-1.5">{children}</Command>
       </DialogContent>
     </Dialog>
   );

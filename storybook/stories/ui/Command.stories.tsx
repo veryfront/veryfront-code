@@ -438,7 +438,7 @@ export const InDrawer: Story = {
         <Drawer open={open} onOpenChange={setOpen}>
           <DrawerContent className="bg-[var(--secondary)] text-[var(--foreground)]">
             <DrawerTitle className="sr-only">Command palette</DrawerTitle>
-            <Command className="bg-transparent">
+            <Command className="bg-transparent pt-1.5">
               <CommandInput
                 icon={<SearchIcon className="size-4" />}
                 placeholder="Type a command or search..."
