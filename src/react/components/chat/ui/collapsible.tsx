@@ -17,8 +17,7 @@ const CollapsibleContext = React.createContext<
 >(null);
 
 /** Props accepted by `<Collapsible>`. */
-export interface CollapsibleProps
-  extends Omit<React.HTMLAttributes<HTMLDivElement>, "onChange"> {
+export interface CollapsibleProps extends Omit<React.HTMLAttributes<HTMLDivElement>, "onChange"> {
   open?: boolean;
   defaultOpen?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -52,8 +51,7 @@ export function Collapsible({
 }
 
 /** Props accepted by `<CollapsibleTrigger>`. */
-export interface CollapsibleTriggerProps
-  extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+export interface CollapsibleTriggerProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   asChild?: boolean;
 }
 

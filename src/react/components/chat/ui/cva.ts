@@ -72,8 +72,7 @@ export function cva<V extends VariantShape>(
 
     const compoundClassNames = config.compoundVariants?.reduce<ClassValue[]>(
       (acc, compound) => {
-        const { class: cvClass, className: cvClassName, ...selectors } =
-          compound;
+        const { class: cvClass, className: cvClassName, ...selectors } = compound;
         const matches = Object.entries(selectors).every(([key, value]) =>
           Array.isArray(value)
             ? (value as unknown[]).includes(resolved[key])

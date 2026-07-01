@@ -72,8 +72,7 @@ const arrowClasses: Record<string, string> = {
 };
 
 /** Props accepted by `<TooltipContent>`. */
-export interface TooltipContentProps
-  extends React.HTMLAttributes<HTMLDivElement> {
+export interface TooltipContentProps extends React.HTMLAttributes<HTMLDivElement> {
   side?: "top" | "bottom" | "left" | "right";
   sideOffset?: number;
 }

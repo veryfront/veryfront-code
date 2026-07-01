@@ -35,9 +35,7 @@ const inputVariants = cva(
 
 /** Props accepted by `<Input>`. */
 export interface InputProps
-  extends
-    Omit<React.ComponentProps<"input">, "size">,
-    VariantProps<typeof inputVariants> {
+  extends Omit<React.ComponentProps<"input">, "size">, VariantProps<typeof inputVariants> {
   ref?: React.Ref<HTMLInputElement>;
   /** Leading icon rendered inside the field. */
   icon?: React.ReactNode;

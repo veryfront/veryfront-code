@@ -178,9 +178,7 @@ export function SelectValue(
   { placeholder }: { placeholder?: string },
 ): React.ReactElement {
   const ctx = useSelect();
-  const label = ctx.value !== undefined
-    ? ctx.labels.get(ctx.value) ?? ctx.value
-    : undefined;
+  const label = ctx.value !== undefined ? ctx.labels.get(ctx.value) ?? ctx.value : undefined;
   return (
     <span className={cn(label === undefined && "opacity-25")}>
       {label ?? placeholder}
@@ -216,8 +214,7 @@ export function SelectContent({
 }
 
 /** Props accepted by `<SelectItem>`. */
-export interface SelectItemProps
-  extends Omit<React.HTMLAttributes<HTMLDivElement>, "onSelect"> {
+export interface SelectItemProps extends Omit<React.HTMLAttributes<HTMLDivElement>, "onSelect"> {
   value: string;
   disabled?: boolean;
 }
@@ -252,9 +249,7 @@ export function SelectItem({
       {...props}
     >
       <span className="line-clamp-1">{children}</span>
-      {selected && (
-        <CheckIcon className="ml-auto pl-2 size-3 shrink-0 box-content" />
-      )}
+      {selected && <CheckIcon className="ml-auto pl-2 size-3 shrink-0 box-content" />}
     </div>
   );
 }
@@ -278,9 +273,7 @@ export function SelectLabel(
 export function SelectSeparator(
   { className }: { className?: string },
 ): React.ReactElement {
-  return (
-    <div className={cn("-mx-2.5 my-1.5 h-px bg-[var(--tertiary)]", className)} />
-  );
+  return <div className={cn("-mx-2.5 my-1.5 h-px bg-[var(--tertiary)]", className)} />;
 }
 
 /** Groups related options (semantic only in this basic version). */

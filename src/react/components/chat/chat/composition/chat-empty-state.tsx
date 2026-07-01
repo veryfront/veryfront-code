@@ -26,8 +26,7 @@ import { cn } from "../../theme.ts";
 import { Avatar, Button, type ButtonProps } from "../../ui/index.ts";
 
 /** Props accepted by `<ChatEmptyState.Root>`. */
-export interface ChatEmptyStateRootProps
-  extends React.HTMLAttributes<HTMLDivElement> {
+export interface ChatEmptyStateRootProps extends React.HTMLAttributes<HTMLDivElement> {
   ref?: React.Ref<HTMLDivElement>;
 }
 
@@ -87,8 +86,7 @@ function EmptyStateAvatar({
 }
 
 /** Props accepted by `<ChatEmptyState.Heading>`. */
-export interface ChatEmptyStateHeadingProps
-  extends React.HTMLAttributes<HTMLHeadingElement> {
+export interface ChatEmptyStateHeadingProps extends React.HTMLAttributes<HTMLHeadingElement> {
   /** Heading level, `1`–`6`. Defaults to `2`. */
   level?: 1 | 2 | 3 | 4 | 5 | 6;
   ref?: React.Ref<HTMLHeadingElement>;
@@ -118,8 +116,7 @@ function Heading({
 }
 
 /** Props accepted by `<ChatEmptyState.Suggestions>`. */
-export interface ChatEmptyStateSuggestionsProps
-  extends React.HTMLAttributes<HTMLDivElement> {
+export interface ChatEmptyStateSuggestionsProps extends React.HTMLAttributes<HTMLDivElement> {
   ref?: React.Ref<HTMLDivElement>;
 }
 

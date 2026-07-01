@@ -76,16 +76,12 @@ export const Slot: React.ForwardRefExoticComponent<
       const childRef = (children as { ref?: React.Ref<HTMLElement> }).ref ??
         (childProps.ref as React.Ref<HTMLElement> | undefined);
       const merged = mergeProps(slotProps as AnyProps, childProps);
-      merged.ref = forwardedRef
-        ? composeRefs(forwardedRef, childRef)
-        : childRef;
+      merged.ref = forwardedRef ? composeRefs(forwardedRef, childRef) : childRef;
       return React.cloneElement(
         children as React.ReactElement,
         merged as Record<string, never>,
       );
     }
-    return React.Children.count(children) > 1
-      ? React.Children.only(null)
-      : null;
+    return React.Children.count(children) > 1 ? React.Children.only(null) : null;
   },
 );
