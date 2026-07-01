@@ -85,8 +85,7 @@ export const InputBox = React.forwardRef<
 
 InputBox.displayName = "InputBox";
 
-export interface SubmitButtonProps
-  extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+export interface SubmitButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   isLoading?: boolean;
   hasInput?: boolean;
   onStop?: () => void;
@@ -222,8 +221,7 @@ export const SubmitButton = React.forwardRef<
 
 SubmitButton.displayName = "SubmitButton";
 
-export interface LoadingIndicatorProps
-  extends React.HTMLAttributes<HTMLDivElement> {}
+export interface LoadingIndicatorProps extends React.HTMLAttributes<HTMLDivElement> {}
 
 export const LoadingIndicator = React.forwardRef<
   HTMLDivElement,

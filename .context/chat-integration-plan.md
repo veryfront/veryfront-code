@@ -52,6 +52,13 @@ wires `useChat` + `useAgentMetadata` internally:
 - ✅ **#4 Message formatting** — Message Studio-parity rebuild landed (Header, right-aligned user `max-w-[80%]`, regenerate, Tokens popover; `StandaloneMessage` now composes the compound parts). See chat-review.
 - ✅ **#2/#3/#5 Uncontrolled `<Chat>` app mode** — `<Chat agentId api />` self-drives `useChat` + `useAgentMetadata` when `messages`/`input` are omitted (`ControlledChat`/`UncontrolledChat` split, conditional render not conditional hooks). Empty state fed from agent metadata (avatar icon + name + description), suggestions from `agent.suggestions`, default `onSuggestionClick → sendMessage`, retry via `reload`. Controlled surface kept for back-compat. Driver green, controlled preset unchanged (screenshot).
 
+- ✅ **#6/#12 Layout + scroll + sticky** — `useStickToBottom` hook (auto-scroll only while pinned, pauses on width reflow, `ResizeObserver`); `ConversationScrollButton` now hidden at bottom + wired to `scrollToBottom`; message column + composer both `max-w-[850px]`; composer sticky via the flex column. Scroll button gained an aria-label.
+- ✅ **#1 Skeleton** — `ChatMessagesSkeleton` (Studio 1:1, alternating user/assistant rows, `aria-busy`), rendered when a thread is loading with no messages yet.
+- ✅ **#7/#8 Attach + upload** — composer `+` menu already portalled (chat-review); added `useUpload({api})` — multipart POST → `{id,url}`, per-file lifecycle (`uploading`%/`uploaded`/`error`) driving the `Attachment` pill states; `url` added to `AttachmentInfo`. Public `veryfront/chat` export.
+- ✅ **#9/#10 Stop/Mic + SSR height** — composer footer: streaming→Stop, empty→**Mic** (via `onVoice`), value→Send. Textarea auto-resize moved to `useLayoutEffect` + `suppressHydrationWarning` + fixed `min-h` → no post-hydration jump.
+
+- ✅ **#11 Tool/skill coverage** — audited `groupPartsInOrder`: text/tool/`dynamic-tool`/reasoning/step/tool-result all handled; `isToolPart` covers `dynamic-tool` + `tool-*`. **Fixed a gap:** both render paths (`Message.Content` + preset `AssistantMessage`) were still rendering skills through the OLD `SkillBadge` pill — now routed to the rebuilt **`SkillTool`** row via `getSkillToolProps(part)`. Tools → `ToolCall`, skills → `SkillTool`, everywhere.
+
 ## Per-requirement plan
 
 | # | Requirement | Current | Studio reference | Work |

@@ -13,6 +13,7 @@
  */
 
 import * as React from "react";
+import type { ChatDynamicToolPart, ChatToolPart } from "#veryfront/agent/react";
 import { cn } from "../../theme.ts";
 import { cva } from "../../ui/cva.ts";
 import { Shimmer } from "../../ui/shimmer.tsx";
@@ -44,7 +45,9 @@ export function SkillTool({
   className,
 }: SkillToolProps): React.JSX.Element {
   const isLoading = state === "loading";
-  const label = isLoading ? `Loading skill: ${skill}` : `Loaded skill: ${skill}`;
+  const label = isLoading
+    ? `Loading skill: ${skill}`
+    : `Loaded skill: ${skill}`;
 
   return (
     <p className={cn(skillToolRow(), className)}>
@@ -60,4 +63,21 @@ export function SkillTool({
         : <span className="min-w-0 truncate">{label}</span>}
     </p>
   );
+}
+
+/**
+ * Derive `SkillTool` props from a skill tool-call part (`load_skill`,
+ * `load_skill_reference`, `execute_skill_script`). Lets the message list route
+ * skill parts to the `SkillTool` row rather than the old `SkillBadge` pill.
+ */
+export function getSkillToolProps(
+  tool: ChatToolPart | ChatDynamicToolPart,
+): SkillToolProps {
+  const input = tool.input as Record<string, unknown> | undefined;
+  const skill = (input?.skillId ?? input?.reference ?? input?.script ??
+    "unknown") as string;
+  return {
+    skill,
+    state: tool.state === "output-available" ? "loaded" : "loading",
+  };
 }
