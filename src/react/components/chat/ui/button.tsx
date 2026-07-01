@@ -47,8 +47,7 @@ const buttonVariants = cva(
           "bg-[var(--secondary)] text-[var(--foreground)] hover:bg-[var(--primary)] hover:text-[var(--secondary)] md:bg-transparent md:text-[var(--foreground)] md:hover:bg-transparent md:hover:text-[var(--foreground)] md:underline md:underline-offset-4 md:hover:no-underline md:!px-0 md:!gap-2",
         "icon-primary":
           "bg-[var(--primary)] text-[var(--secondary)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)] !p-0 !gap-0 !justify-center",
-        "icon-ghost":
-          "bg-transparent text-[var(--foreground)] !p-0 !gap-0 !justify-center",
+        "icon-ghost": "bg-transparent text-[var(--foreground)] !p-0 !gap-0 !justify-center",
         "icon-secondary":
           "bg-[var(--secondary)] text-[var(--foreground)] hover:bg-[var(--primary)] hover:text-[var(--secondary)] !p-0 !gap-0 !justify-center",
         "icon-tertiary":
@@ -115,9 +114,7 @@ const buttonVariants = cva(
 
 /** Props accepted by `<Button>`. */
 export interface ButtonProps
-  extends
-    React.ButtonHTMLAttributes<HTMLButtonElement>,
-    VariantProps<typeof buttonVariants> {
+  extends React.ButtonHTMLAttributes<HTMLButtonElement>, VariantProps<typeof buttonVariants> {
   /** Render as a Radix-style Slot, merging props onto the child element. */
   asChild?: boolean;
   /** Slide the icon right on hover. */
