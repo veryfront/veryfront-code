@@ -19,7 +19,6 @@ export {
 } from "./status-badge.tsx";
 export { Label, type LabelProps, labelVariants } from "./label.tsx";
 export { Skeleton, type SkeletonProps } from "./skeleton.tsx";
-export { Spinner, type SpinnerProps } from "./spinner.tsx";
 export { Shimmer, type ShimmerProps } from "./shimmer.tsx";
 export { ProgressBar, type ProgressBarProps } from "./progress-bar.tsx";
 export {
