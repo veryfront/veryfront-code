@@ -45,9 +45,7 @@ export function SkillTool({
   className,
 }: SkillToolProps): React.JSX.Element {
   const isLoading = state === "loading";
-  const label = isLoading
-    ? `Loading skill: ${skill}`
-    : `Loaded skill: ${skill}`;
+  const label = isLoading ? `Loading skill: ${skill}` : `Loaded skill: ${skill}`;
 
   return (
     <p className={cn(skillToolRow(), className)}>
