@@ -1,15 +1,15 @@
 /**
- * FileTypeBadge — ported 1:1 from Veryfront Studio. The canonical file-type
+ * FileType — ported 1:1 from Veryfront Studio. The canonical file-type
  * identity primitive: one distinct hue per extension. This is the single
  * sanctioned place where Tailwind named-colour utilities live (the per-file-
  * type identity palette) — every other primitive uses `[var(--token)]`. Only
  * the `DEFAULT` style and `vf-type`/`vf-weight` classes are remapped to
  * veryfront's vocabulary. Private to the chat module.
  *
- * Exports the soft-fill `FileTypeBadge` (lists/tables), the solid-fill
+ * Exports the soft-fill `FileType` (lists/tables), the solid-fill
  * `FileTypeThumb` (chip thumbnails), and the `getFileTypeLabel` helper.
  *
- * @module react/components/chat/ui/file-type-badge
+ * @module react/components/chat/ui/file-type
  */
 import * as React from "react";
 import { cn } from "../theme.ts";
@@ -80,15 +80,15 @@ export function getFileTypeLabel(ext: string, mediaType?: string): string {
     mediaType?.split("/").pop()?.toUpperCase() ?? "File";
 }
 
-/** Props accepted by `<FileTypeBadge>` / `<FileTypeThumb>`. */
-export interface FileTypeBadgeProps {
+/** Props accepted by `<FileType>` / `<FileTypeThumb>`. */
+export interface FileTypeProps {
   extension: string;
   className?: string;
 }
 
 /** Soft-fill badge — rounded square, tinted background, extension label. */
-export function FileTypeBadge(
-  { extension, className }: FileTypeBadgeProps,
+export function FileType(
+  { extension, className }: FileTypeProps,
 ): React.ReactElement {
   const { bg, text } = lookup(extension);
   return (
@@ -109,7 +109,7 @@ export function FileTypeBadge(
 
 /** Solid-fill thumbnail — full-saturation square with white `.ext` text. */
 export function FileTypeThumb(
-  { extension, className }: FileTypeBadgeProps,
+  { extension, className }: FileTypeProps,
 ): React.ReactElement {
   const { solid } = lookup(extension);
   return (

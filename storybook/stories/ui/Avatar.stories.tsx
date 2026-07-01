@@ -4,7 +4,7 @@ import {
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-  UserAvatar,
+  Avatar,
 } from "../../../src/react/components/chat/ui/index.ts";
 import { cn } from "../../../src/react/components/chat/theme.ts";
 import {
@@ -22,13 +22,13 @@ import {
 // arrow), so the "Active Users" example renders the accent-coloured tooltips
 // without a pointer arrow.
 
-const importCode = `import { UserAvatar } from "veryfront/chat/ui"`;
+const importCode = `import { Avatar } from "veryfront/chat/ui"`;
 
-function UserAvatarDocsPage() {
+function AvatarDocsPage() {
   return (
     <DocsPage>
       <DocsHero
-        title="UserAvatar"
+        title="Avatar"
         lead="Circular user avatar — photo or initials fallback with optional accent colour."
       />
 
@@ -86,13 +86,13 @@ function UserAvatarDocsPage() {
 
       <DocsSection title="Composition">
         <DocsComposition>
-          {`UserAvatar  <- Circular avatar with image or initials fallback`}
+          {`Avatar  <- Circular avatar with image or initials fallback`}
         </DocsComposition>
       </DocsSection>
 
       <DocsSection title="API Reference">
         <DocsPropsTable
-          component="UserAvatar"
+          component="Avatar"
           description="Circular user avatar with image or initials fallback"
           props={[
             {
@@ -146,29 +146,29 @@ function UserAvatarDocsPage() {
 }
 
 const meta = {
-  title: "Chat/UI/UserAvatar",
-  component: UserAvatar,
+  title: "Chat/UI/Avatar",
+  component: Avatar,
   tags: ["autodocs"],
   parameters: {
     layout: "centered",
-    docs: { page: UserAvatarDocsPage },
+    docs: { page: AvatarDocsPage },
   },
   args: { name: "Priya Patel" },
-} satisfies Meta<typeof UserAvatar>;
+} satisfies Meta<typeof Avatar>;
 
 export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Default: Story = {
   tags: ["!dev"],
-  render: () => <UserAvatar name="Priya Patel" />,
+  render: () => <Avatar name="Priya Patel" />,
 };
 
 export const WithImage: Story = {
   name: "With Image",
   tags: ["!dev"],
   render: () => (
-    <UserAvatar name="Priya Patel" avatarSrc="https://i.pravatar.cc/150" />
+    <Avatar name="Priya Patel" avatarSrc="https://i.pravatar.cc/150" />
   ),
 };
 
@@ -176,10 +176,10 @@ export const Sizes: Story = {
   tags: ["!dev"],
   render: () => (
     <div className="flex items-center gap-3">
-      <UserAvatar name="Priya Patel" className="size-5" />
-      <UserAvatar name="Priya Patel" className="size-6" />
-      <UserAvatar name="Priya Patel" />
-      <UserAvatar name="Priya Patel" className="size-9" />
+      <Avatar name="Priya Patel" className="size-5" />
+      <Avatar name="Priya Patel" className="size-6" />
+      <Avatar name="Priya Patel" />
+      <Avatar name="Priya Patel" className="size-9" />
     </div>
   ),
 };
@@ -187,7 +187,7 @@ export const Sizes: Story = {
 export const Bordered: Story = {
   tags: ["!dev"],
   render: () => (
-    <UserAvatar name="Priya Patel" variant="bordered" accentColor="#3b82f6" />
+    <Avatar name="Priya Patel" variant="bordered" accentColor="#3b82f6" />
   ),
 };
 
@@ -196,19 +196,19 @@ export const StackedAvatars: Story = {
   tags: ["!dev"],
   render: () => (
     <div className="flex items-center">
-      <UserAvatar
+      <Avatar
         name="Priya Patel"
         accentColor="#3b82f6"
         variant="bordered"
         className="relative ring-2 ring-background"
       />
-      <UserAvatar
+      <Avatar
         name="Sarah Chen"
         accentColor="#10b981"
         variant="bordered"
         className="relative -ml-2.5 ring-2 ring-background"
       />
-      <UserAvatar
+      <Avatar
         name="Alex Rivera"
         accentColor="#f59e0b"
         variant="bordered"
@@ -233,7 +233,7 @@ export const ActiveUsers: Story = {
         <TooltipProvider key={user.name}>
           <Tooltip>
             <TooltipTrigger asChild>
-              <UserAvatar
+              <Avatar
                 name={user.name}
                 accentColor={user.color}
                 variant="bordered"
@@ -263,5 +263,5 @@ export const ActiveUsers: Story = {
 export const EmailFallback: Story = {
   name: "Email Fallback",
   tags: ["!dev"],
-  render: () => <UserAvatar name="user@example.com" />,
+  render: () => <Avatar name="user@example.com" />,
 };
