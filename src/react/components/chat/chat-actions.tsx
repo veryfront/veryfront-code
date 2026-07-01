@@ -75,7 +75,9 @@ function FigmaGlyph({ className }: { className?: string }): React.ReactElement {
   );
 }
 
-function SettingsGlyph({ className }: { className?: string }): React.ReactElement {
+function SettingsGlyph(
+  { className }: { className?: string },
+): React.ReactElement {
   return (
     <GlyphSvg className={className}>
       <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
@@ -134,7 +136,20 @@ function SettingsToggleRow({
   );
 }
 
-/** The "Settings" row + its nested submenu (a portalled `Floating` popover). */
+/**
+ * The "Settings" row + its nested submenu (a portalled `Floating` popover).
+ *
+ * The submenu is portalled to `document.body`, so it is NOT a DOM descendant of
+ * the row — moving the pointer from the row into the submenu would fire the
+ * row's `onMouseLeave` and close it before the mouse arrives. Two fixes:
+ *   1. **Close delay** — leaving the row schedules a close after a short grace
+ *      period; entering the submenu (or re-entering the row) cancels it. This
+ *      is the standard "safe transit" technique (a lighter cousin of Radix's
+ *      pointer-safe-triangle).
+ *   2. **stopPropagation on the submenu's pointer-down** — the parent menu
+ *      dismisses on outside pointer-down; without this, toggling a switch in
+ *      the (portalled, "outside") submenu would collapse the whole menu.
+ */
 function SettingsSubmenu({
   settings,
 }: {
@@ -142,20 +157,37 @@ function SettingsSubmenu({
 }): React.ReactElement {
   const [open, setOpen] = React.useState(false);
   const rowRef = React.useRef<HTMLDivElement | null>(null);
+  const closeTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const cancelClose = React.useCallback(() => {
+    if (closeTimer.current) {
+      clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+  }, []);
+  const openNow = React.useCallback(() => {
+    cancelClose();
+    setOpen(true);
+  }, [cancelClose]);
+  const scheduleClose = React.useCallback(() => {
+    cancelClose();
+    closeTimer.current = setTimeout(() => setOpen(false), 160);
+  }, [cancelClose]);
+  React.useEffect(() => cancelClose, [cancelClose]);
 
   return (
     <div
       ref={rowRef}
       className="relative"
-      onMouseEnter={() => setOpen(true)}
-      onMouseLeave={() => setOpen(false)}
+      onMouseEnter={openNow}
+      onMouseLeave={scheduleClose}
     >
       <button
         type="button"
         role="menuitem"
         aria-haspopup="menu"
         aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => (open ? scheduleClose() : openNow())}
         className={cn(
           "relative flex w-full cursor-pointer select-none items-center gap-2.5 rounded-md px-3 h-[36px] text-base font-normal text-left text-[var(--foreground)] outline-none transition-colors",
           "hover:bg-[var(--tertiary)] focus:bg-[var(--tertiary)] dark:hover:bg-[var(--accent)] dark:focus:bg-[var(--accent)]",
@@ -173,8 +205,19 @@ function SettingsSubmenu({
         align="end"
         onDismiss={() => setOpen(false)}
         role="menu"
+        onMouseEnter={openNow}
+        onMouseLeave={scheduleClose}
+        onPointerDownCapture={(e) => e.stopPropagation()}
         className="z-50 min-w-[240px] overflow-hidden rounded-lg bg-[var(--popover)] p-2.5 shadow-sm outline-none"
       >
+        {
+          /* Invisible hover bridge covering the gap between the row and the
+            submenu, so a diagonal transit never lands on dead space. */
+        }
+        <div
+          aria-hidden="true"
+          className="absolute -top-2 right-0 left-0 h-2"
+        />
         <SettingsToggleRow
           label="Auto-send queue"
           checked={settings.autoSubmit}
