@@ -10,9 +10,9 @@ import {
 } from "../../.storybook/docs";
 import { Button, LoadingButton } from "../../../src/react/components/chat/ui/index.ts";
 import {
-  ArrowDownIcon,
+  ArrowUpIcon,
   PlusIcon,
-  SendIcon,
+  ArrowRightIcon,
 } from "../../../src/react/components/chat/icons/index.ts";
 
 const importCode = `import { Button, LoadingButton } from "veryfront/chat/ui"`;
@@ -287,7 +287,7 @@ export const Icon: Story = {
   args: {
     variant: "icon-primary",
     size: "icon-default",
-    children: <ArrowDownIcon />,
+    children: <ArrowUpIcon />,
   },
   parameters: {
     docs: {
@@ -304,7 +304,7 @@ export const IconSecondary: Story = {
   args: {
     variant: "icon-secondary",
     size: "icon-default",
-    children: <ArrowDownIcon />,
+    children: <ArrowUpIcon />,
   },
   parameters: {
     docs: {
@@ -321,7 +321,7 @@ export const IconGhost: Story = {
   args: {
     variant: "icon-ghost",
     size: "icon-default",
-    children: <ArrowDownIcon />,
+    children: <ArrowUpIcon />,
   },
   parameters: {
     docs: {
@@ -339,7 +339,7 @@ export const WithIcon: Story = {
     children: (
       <>
         Get Started
-        <SendIcon />
+        <ArrowRightIcon />
       </>
     ),
   },
@@ -389,7 +389,7 @@ export const LinkWithArrow: Story = {
   render: () => (
     <Button variant="link" animateIcon>
       Read more
-      <SendIcon />
+      <ArrowRightIcon />
     </Button>
   ),
 };
@@ -467,19 +467,19 @@ export const Matrix: Story = {
         <div>
           <Button variant="outline" size="sm" animateIcon>
             Process Automation
-            <SendIcon />
+            <ArrowRightIcon />
           </Button>
         </div>
         <div>
           <Button variant="outline" size="default" animateIcon>
             Process Automation
-            <SendIcon />
+            <ArrowRightIcon />
           </Button>
         </div>
         <div>
           <Button variant="outline" size="lg" animateIcon>
             Process Automation
-            <SendIcon />
+            <ArrowRightIcon />
           </Button>
         </div>
       </div>
@@ -515,19 +515,19 @@ export const Matrix: Story = {
         <div>
           <Button variant="link" size="sm" animateIcon>
             View Docs
-            <SendIcon />
+            <ArrowRightIcon />
           </Button>
         </div>
         <div>
           <Button variant="link" size="default" animateIcon>
             View Docs
-            <SendIcon />
+            <ArrowRightIcon />
           </Button>
         </div>
         <div>
           <Button variant="link" size="lg" animateIcon>
             View Docs
-            <SendIcon />
+            <ArrowRightIcon />
           </Button>
         </div>
       </div>
@@ -536,17 +536,17 @@ export const Matrix: Story = {
         <div className="text-sm">Icon</div>
         <div>
           <Button variant="icon-primary" size="icon-default">
-            <ArrowDownIcon />
+            <ArrowUpIcon />
           </Button>
         </div>
         <div>
           <Button variant="icon-primary" size="icon-default">
-            <ArrowDownIcon />
+            <ArrowUpIcon />
           </Button>
         </div>
         <div>
           <Button variant="icon-primary" size="icon-lg">
-            <ArrowDownIcon />
+            <ArrowUpIcon />
           </Button>
         </div>
       </div>
@@ -555,17 +555,17 @@ export const Matrix: Story = {
         <div className="text-sm">Icon Ghost</div>
         <div>
           <Button variant="icon-ghost" size="icon-default">
-            <ArrowDownIcon />
+            <ArrowUpIcon />
           </Button>
         </div>
         <div>
           <Button variant="icon-ghost" size="icon-default">
-            <ArrowDownIcon />
+            <ArrowUpIcon />
           </Button>
         </div>
         <div>
           <Button variant="icon-ghost" size="icon-lg">
-            <ArrowDownIcon />
+            <ArrowUpIcon />
           </Button>
         </div>
       </div>
