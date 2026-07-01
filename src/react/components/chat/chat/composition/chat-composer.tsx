@@ -7,8 +7,20 @@
 import * as React from "react";
 import { InputBox } from "#veryfront/react/primitives/index.ts";
 import { cn } from "../../theme.ts";
-import { ArrowUpIcon, PlusIcon, StopIcon } from "../../icons/index.ts";
+import {
+  ArrowUpIcon,
+  FileTextIcon,
+  PaperclipIcon,
+  PlusIcon,
+  StopIcon,
+} from "../../icons/index.ts";
 import { Button } from "../../ui/button.tsx";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../../ui/dropdown-menu.tsx";
 import { type ModelOption, ModelSelector } from "../../model-selector.tsx";
 import type { ChatTheme } from "../../theme.ts";
 import { AttachmentPill } from "../components/attachment-pill.tsx";
@@ -166,55 +178,57 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
                           }}
                         />
                       )}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (onAttach && !onSelectAttachment) {
-                            fileInputRef.current?.click();
-                            return;
-                          }
-                          setAttachmentMenuOpen((open) => !open);
-                        }}
-                        className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[var(--accent)] text-[var(--foreground)] transition-colors hover:bg-[var(--primary)] hover:text-[var(--secondary)]"
-                        aria-label="Add document"
-                        aria-expanded={attachmentMenuOpen}
-                      >
-                        <PlusIcon className="size-4.5" />
-                      </button>
-                      {attachmentMenuOpen && (
-                        <div
-                          role="menu"
-                          className="absolute bottom-full left-0 z-20 mb-2 overflow-hidden rounded-[var(--radius-lg)] bg-[var(--popover)] shadow-sm"
-                          style={{ minWidth: 224 }}
-                        >
-                          {onAttach && (
-                            <button
-                              type="button"
-                              role="menuitem"
-                              className="block w-full whitespace-nowrap px-3 py-2.5 text-left text-sm text-[var(--foreground)] transition-colors hover:bg-[var(--tertiary)]"
-                              onClick={() => {
-                                setAttachmentMenuOpen(false);
-                                fileInputRef.current?.click();
-                              }}
-                            >
-                              Upload document
-                            </button>
-                          )}
-                          {onSelectAttachment && (
-                            <button
-                              type="button"
-                              role="menuitem"
-                              className="block w-full whitespace-nowrap px-3 py-2.5 text-left text-sm text-[var(--foreground)] transition-colors hover:bg-[var(--tertiary)]"
-                              onClick={() => {
-                                setAttachmentMenuOpen(false);
-                                onSelectAttachment();
-                              }}
-                            >
-                              Select document
-                            </button>
-                          )}
-                        </div>
-                      )}
+                      {onAttach && !onSelectAttachment
+                        ? (
+                          // Single action → the `+` opens the OS file dialog
+                          // directly, no menu needed.
+                          <Button
+                            type="button"
+                            variant="icon-tertiary"
+                            size="icon-lg"
+                            onClick={() => fileInputRef.current?.click()}
+                            aria-label="Add document"
+                            className="shrink-0"
+                          >
+                            <PlusIcon />
+                          </Button>
+                        )
+                        : (
+                          // Multiple actions → portalled DropdownMenu (escapes
+                          // the composer's overflow so it never clips) with icons.
+                          <DropdownMenu
+                            open={attachmentMenuOpen}
+                            onOpenChange={setAttachmentMenuOpen}
+                          >
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                type="button"
+                                variant="icon-tertiary"
+                                size="icon-lg"
+                                aria-label="Add document"
+                                className="shrink-0"
+                              >
+                                <PlusIcon />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="start">
+                              {onAttach && (
+                                <DropdownMenuItem
+                                  onSelect={() => fileInputRef.current?.click()}
+                                >
+                                  <PaperclipIcon />
+                                  Upload document
+                                </DropdownMenuItem>
+                              )}
+                              {onSelectAttachment && (
+                                <DropdownMenuItem onSelect={onSelectAttachment}>
+                                  <FileTextIcon />
+                                  Select document
+                                </DropdownMenuItem>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        )}
                     </div>
                   )}
                   {agentSelector}
