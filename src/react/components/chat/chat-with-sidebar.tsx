@@ -272,9 +272,7 @@ export const ChatWithSidebar = React.forwardRef<
       if (messages.length > 0) {
         // Auto-title from first user message — combine with message sync
         // into a single updateThread call to avoid racing setThreads batches
-        const activeThread = threadsRef.current.find((t) =>
-          t.id === currentActiveId
-        );
+        const activeThread = threadsRef.current.find((t) => t.id === currentActiveId);
         let title: string | undefined;
         if (activeThread?.title === "New Chat") {
           const firstUserMsg = messages.find((m) => m.role === "user");

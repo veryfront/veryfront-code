@@ -26,6 +26,7 @@ import {
   isSkillToolPart,
 } from "../utils/message-parts.ts";
 import { ConversationScrollButton } from "../components/empty-state.tsx";
+import { useStickToBottom } from "../hooks/use-stick-to-bottom.ts";
 import { MessageActions } from "../components/message-actions.tsx";
 import { ReasoningCard } from "../components/reasoning.tsx";
 import { SkillBadge } from "../components/skill-badge.tsx";
@@ -52,7 +53,9 @@ function metadataString(
   key: string,
 ): string | undefined {
   const value = metadata?.[key];
-  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+  return typeof value === "string" && value.trim().length > 0
+    ? value
+    : undefined;
 }
 
 function getAssistantIdentity(message: ChatMessage): AssistantIdentity {
@@ -96,7 +99,10 @@ export interface ChatMessageListProps {
 }
 
 /** Render chat message list. */
-export const ChatMessageList = React.forwardRef<HTMLDivElement, ChatMessageListProps>(
+export const ChatMessageList = React.forwardRef<
+  HTMLDivElement,
+  ChatMessageListProps
+>(
   function ChatMessageList(
     {
       messages,
@@ -120,9 +126,30 @@ export const ChatMessageList = React.forwardRef<HTMLDivElement, ChatMessageListP
     },
     ref,
   ) {
-    const messagesEndRef = React.useRef<HTMLDivElement>(null!);
-    const [editingMessageId, setEditingMessageId] = React.useState<string | null>(null);
-    const [feedbackMap, setFeedbackMap] = React.useState<Record<string, FeedbackValue>>({});
+    const [editingMessageId, setEditingMessageId] = React.useState<
+      string | null
+    >(null);
+    const [feedbackMap, setFeedbackMap] = React.useState<
+      Record<string, FeedbackValue>
+    >({});
+
+    // Stick-to-bottom: auto-scroll on new messages only while pinned, and drive
+    // the scroll-to-bottom button's visibility off `isAtBottom`.
+    const { scrollRef, isAtBottom, scrollToBottom } = useStickToBottom<
+      HTMLDivElement
+    >(messages.length);
+
+    // Merge the forwarded ref with the stick-to-bottom scroll container ref.
+    const setListRef = React.useCallback(
+      (node: HTMLDivElement | null) => {
+        scrollRef.current = node;
+        if (typeof ref === "function") ref(node);
+        else if (ref) {
+          (ref as React.MutableRefObject<HTMLDivElement | null>).current = node;
+        }
+      },
+      [ref, scrollRef],
+    );
 
     const handleFeedback = React.useCallback(
       (msgId: string, value: FeedbackValue) => {
@@ -132,17 +159,19 @@ export const ChatMessageList = React.forwardRef<HTMLDivElement, ChatMessageListP
       [onFeedback],
     );
 
-    const messageCount = messages.length;
-    React.useEffect(() => {
-      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    }, [messageCount]);
-
     return (
-      <MessageList ref={ref} className={cn("flex-1 min-h-0 overflow-y-auto relative", className)}>
-        <div className="max-w-2xl mx-auto px-4 py-6 space-y-6">
+      <MessageList
+        ref={setListRef}
+        className={cn("flex-1 min-h-0 overflow-y-auto relative", className)}
+      >
+        <div className="max-w-[850px] mx-auto px-4 py-6 space-y-6">
           {messages.map((msg) => {
             if (renderMessage) {
-              return <React.Fragment key={msg.id}>{renderMessage(msg)}</React.Fragment>;
+              return (
+                <React.Fragment key={msg.id}>
+                  {renderMessage(msg)}
+                </React.Fragment>
+              );
             }
 
             if (msg.role === "user") {
@@ -153,8 +182,7 @@ export const ChatMessageList = React.forwardRef<HTMLDivElement, ChatMessageListP
                   theme={theme}
                   isEditing={editingMessageId === msg.id}
                   onStartEdit={() => setEditingMessageId(msg.id)}
-                  onCancelEdit={() =>
-                    setEditingMessageId(null)}
+                  onCancelEdit={() => setEditingMessageId(null)}
                   editMessage={editMessage}
                   getBranches={getBranches}
                   switchBranch={switchBranch}
@@ -183,21 +211,23 @@ export const ChatMessageList = React.forwardRef<HTMLDivElement, ChatMessageListP
               <ModelAvatar model={model} />
               <div className="flex gap-1.5 items-center py-3">
                 <span className={cn(theme?.loading)} />
-                <span className={cn(theme?.loading)} style={{ animationDelay: "0.15s" }} />
-                <span className={cn(theme?.loading)} style={{ animationDelay: "0.3s" }} />
+                <span
+                  className={cn(theme?.loading)}
+                  style={{ animationDelay: "0.15s" }}
+                />
+                <span
+                  className={cn(theme?.loading)}
+                  style={{ animationDelay: "0.3s" }}
+                />
               </div>
             </div>
           )}
-
-          <div ref={messagesEndRef} />
         </div>
 
         {children}
 
-        {showScrollButton && (
-          <ConversationScrollButton
-            onClick={() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })}
-          />
+        {showScrollButton && !isAtBottom && (
+          <ConversationScrollButton onClick={() => scrollToBottom("smooth")} />
         )}
       </MessageList>
     );
@@ -233,7 +263,10 @@ function UserMessage({
   const hasBranches = branches && branches.total > 1;
 
   return (
-    <MessageItem role={msg.role} className={cn("flex flex-col items-end", "group/msg")}>
+    <MessageItem
+      role={msg.role}
+      className={cn("flex flex-col items-end", "group/msg")}
+    >
       {isEditing
         ? (
           <div className="w-full max-w-md">
@@ -249,7 +282,9 @@ function UserMessage({
         )
         : (
           <div className={theme?.message?.user}>
-            <p className="whitespace-pre-wrap text-[15px] leading-relaxed">{content}</p>
+            <p className="whitespace-pre-wrap text-[15px] leading-relaxed">
+              {content}
+            </p>
           </div>
         )}
       {!isEditing && (
@@ -262,7 +297,9 @@ function UserMessage({
               onNext={() => switchBranch?.(msg.id, branches.current)}
             />
           )}
-          {editMessage && <MessageActions content={content} onEdit={onStartEdit} />}
+          {editMessage && (
+            <MessageActions content={content} onEdit={onStartEdit} />
+          )}
         </div>
       )}
     </MessageItem>
@@ -344,7 +381,10 @@ function AssistantMessage({
           }
           const isSkill = isSkillToolPart(group.tool);
           return (
-            <div key={group.tool.toolCallId} className={isSkill ? "my-2" : "my-3"}>
+            <div
+              key={group.tool.toolCallId}
+              className={isSkill ? "my-2" : "my-3"}
+            >
               {renderTool
                 ? renderTool(group.tool)
                 : isSkill
