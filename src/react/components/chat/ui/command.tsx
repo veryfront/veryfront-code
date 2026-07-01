@@ -104,7 +104,7 @@ export function CommandDialog({
     <Dialog open={open} defaultOpen={defaultOpen} onOpenChange={onOpenChange}>
       <DialogContent className="overflow-hidden rounded-lg! p-0 shadow-lg">
         <DialogTitle className="sr-only">Command Menu</DialogTitle>
-        <Command className="pt-1.5">{children}</Command>
+        <Command>{children}</Command>
       </DialogContent>
     </Dialog>
   );
@@ -135,7 +135,7 @@ export function CommandInput({
         onChange={(e) => ctx.setSearch(e.target.value)}
         placeholder={placeholder}
         className={cn(
-          "flex h-12 w-full bg-transparent pl-7 pr-9 text-sm text-[var(--foreground)] placeholder:text-[var(--foreground)] placeholder:opacity-50 outline-none disabled:cursor-not-allowed disabled:opacity-50",
+          "flex h-12 w-full bg-transparent pl-9 pr-9 text-sm text-[var(--foreground)] placeholder:text-[var(--foreground)] placeholder:opacity-50 outline-none disabled:cursor-not-allowed disabled:opacity-50",
           className,
         )}
         {...props}
