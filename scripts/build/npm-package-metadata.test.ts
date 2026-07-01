@@ -355,7 +355,7 @@ describe("npm generated integration artifacts", () => {
 		);
 	});
 
-	it("publishes README banner assets with the npm package", async () => {
+	it("publishes README banner assets and NOTICE with the npm package", async () => {
 		const source = await Deno.readTextFile("scripts/build/build-npm-dnt.ts");
 
 		assertStringIncludes(
@@ -364,7 +364,11 @@ describe("npm generated integration artifacts", () => {
 		);
 		assertStringIncludes(
 			source,
-			'pkg.files = ["esm", "script", "bin", "assets", "tsconfig.json", "LICENSE", "README.md"];',
+			'await Deno.copyFile("./NOTICE", "./npm/NOTICE");',
+		);
+		assertStringIncludes(
+			source,
+			'pkg.files = ["esm", "script", "bin", "assets", "tsconfig.json", "LICENSE", "NOTICE", "README.md"];',
 		);
 	});
 });
