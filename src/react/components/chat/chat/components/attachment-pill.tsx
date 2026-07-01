@@ -73,14 +73,14 @@ export function AttachmentPill({
     >
       {isImage && attachment.preview
         ? (
-          <div className="relative size-10 shrink-0 overflow-hidden rounded-[var(--radius-md)] bg-[var(--tertiary)]">
+          <div className="relative size-10 shrink-0 overflow-hidden rounded-[var(--radius-sm)] bg-[var(--tertiary)]">
             <img
               alt=""
               className="size-full object-cover"
               src={attachment.preview}
             />
             {attachment.status === "uploading" && (
-              <div className="absolute inset-0 flex items-center justify-center rounded-[var(--radius-md)] bg-[var(--overlay)]">
+              <div className="absolute inset-0 flex items-center justify-center rounded-[var(--radius-sm)] bg-[var(--overlay)]">
                 <span className="size-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
               </div>
             )}
@@ -89,20 +89,20 @@ export function AttachmentPill({
         : (
           <div
             className={cn(
-              "relative flex size-10 shrink-0 items-center justify-center rounded-[var(--radius-md)] text-[10px] font-medium uppercase leading-none",
+              "relative flex size-10 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-[10px] font-medium uppercase leading-none",
               colorClass,
             )}
           >
             {ext || "file"}
             {attachment.status === "uploading" && (
-              <div className="absolute inset-0 flex items-center justify-center rounded-[var(--radius-md)] bg-[var(--overlay)]">
+              <div className="absolute inset-0 flex items-center justify-center rounded-[var(--radius-sm)] bg-[var(--overlay)]">
                 <span className="size-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
               </div>
             )}
           </div>
         )}
 
-      <div className="min-w-0 flex-1">
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <p className="truncate text-sm font-medium leading-tight">
           {attachment.name || "Attachment"}
         </p>
@@ -111,30 +111,26 @@ export function AttachmentPill({
         </p>
       </div>
 
-      {attachment.status === "uploading"
-        ? (
-          <span className="size-4 shrink-0 rounded-full border-2 border-[var(--faint)] border-t-transparent animate-spin" />
-        )
-        : onRemove && (
-          <button
-            type="button"
-            onClick={() => onRemove(attachment.id)}
-            aria-label={`Remove ${attachment.name}`}
-            className="flex size-5 shrink-0 items-center justify-center rounded-full text-[var(--foreground)] opacity-100 transition-colors hover:bg-[var(--tertiary)] md:opacity-0 md:group-hover:opacity-100"
+      {attachment.status !== "uploading" && onRemove && (
+        <button
+          type="button"
+          onClick={() => onRemove(attachment.id)}
+          aria-label={`Remove ${attachment.name}`}
+          className="flex size-5 shrink-0 items-center justify-center rounded-full text-[var(--foreground)] opacity-100 transition-colors hover:bg-[var(--tertiary)] md:opacity-0 md:group-hover:opacity-100"
+        >
+          <svg
+            className="size-3"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
           >
-            <svg
-              className="size-3"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-            >
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
-        )}
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      )}
 
       {/* Hover preview */}
       {showPreview && attachment.preview && (

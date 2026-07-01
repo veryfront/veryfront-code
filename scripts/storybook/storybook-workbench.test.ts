@@ -234,116 +234,116 @@ describe("Storybook UI workbench", () => {
     }
   });
 
-  it("gives reviewable chat components dedicated Storybook stories", async () => {
-    const dedicatedStories = [
-      {
-        path: "storybook/stories/chat/AttachmentPill.stories.tsx",
-        title: "Chat/Components/AttachmentPill",
-        imports: ['from "veryfront/chat"'],
-        names: ["AttachmentPill"],
-      },
-      {
-        path: "storybook/stories/chat/ChatComposer.stories.tsx",
-        title: "Chat/Components/ChatComposer",
-        imports: ['from "veryfront/chat"'],
-        names: ["ChatComposer", "ModelSelector", "AttachmentPill"],
-      },
-      {
-        path: "storybook/stories/chat/ChatSidebar.stories.tsx",
-        title: "Chat/Components/ChatSidebar",
-        imports: ['from "veryfront/chat"'],
-        names: ["ChatSidebar"],
-      },
-      {
-        path: "storybook/stories/chat/Message.stories.tsx",
-        title: "Chat/Components/Message",
-        imports: ['from "veryfront/chat"'],
-        names: ["StandaloneMessage", "StreamingMessage", "Message"],
-      },
-      {
-        path: "storybook/stories/chat/ModelSelector.stories.tsx",
-        title: "Chat/Components/ModelSelector",
-        imports: ['from "veryfront/chat"'],
-        names: ["ModelSelector"],
-      },
-      {
-        path: "storybook/stories/chat/ReasoningCard.stories.tsx",
-        title: "Chat/Components/ReasoningCard",
-        imports: ['from "veryfront/chat"'],
-        names: ["ReasoningCard"],
-      },
-      {
-        path: "storybook/stories/chat/Sources.stories.tsx",
-        title: "Chat/Components/Sources",
-        imports: ['from "veryfront/chat"'],
-        names: ["Sources", "InlineCitation"],
-      },
-      {
-        path: "storybook/stories/chat/ToolCallCard.stories.tsx",
-        title: "Chat/Components/ToolCallCard",
-        imports: ['from "veryfront/chat"'],
-        names: [
-          "ToolCallCard",
-          "ToolStatusBadge",
-          "SkillBadge",
-          "InferenceBadge",
-        ],
-      },
-      {
-        path: "storybook/stories/chat/UploadsPanel.stories.tsx",
-        title: "Chat/Components/UploadsPanel",
-        imports: ['from "veryfront/chat"'],
-        names: ["UploadsPanel"],
-      },
-      {
-        path: "storybook/stories/chat/AgentCard.stories.tsx",
-        title: "Chat/Components/AgentCard",
-        imports: ['from "veryfront/chat"'],
-        names: ["AgentCard"],
-      },
-      {
-        path: "storybook/stories/chat/Markdown.stories.tsx",
-        title: "Chat/Components/Markdown",
-        imports: ['from "veryfront/react/components/chat"'],
-        names: ["Markdown", "RichCodeBlock"],
-      },
-      {
-        path: "storybook/stories/chat/ActionComponents.stories.tsx",
-        title: "Chat/Components/Action Components",
-        imports: ['from "veryfront/chat"'],
-        names: [
-          "MessageActions",
-          "MessageFeedback",
-          "QuickActions",
-          "Suggestions",
-          "TabSwitcher",
-        ],
-      },
+  it("has every target Chat/Components story in the sidebar", async () => {
+    // The TARGET sidebar under Chat/Components — the final, renamed component set
+    // (see .context/chat-components-checklist.md). This is the driver: it fails
+    // until every component has a story at its target path/title exporting its
+    // target name. Sub-agents take one row each and turn it green.
+    const target = [
+      { file: "Attachment", title: "Attachment", names: ["Attachment"] },
+      { file: "Markdown", title: "Markdown", names: ["Markdown"] },
+      { file: "Sources", title: "Sources", names: ["Sources"] },
+      { file: "Reasoning", title: "Reasoning", names: ["Reasoning"] },
+      { file: "SkillTool", title: "SkillTool", names: ["SkillTool"] },
+      { file: "ToolCall", title: "ToolCall", names: ["ToolCall"] },
+      { file: "Message", title: "Message", names: ["Message"] },
+      { file: "AgentCard", title: "AgentCard", names: ["AgentCard"] },
+      { file: "UploadsPanel", title: "UploadsPanel", names: ["UploadsPanel"] },
+      { file: "ChatSidebar", title: "ChatSidebar", names: ["ChatSidebar"] },
+      { file: "ModelSelector", title: "ModelSelector", names: ["ModelSelector"] },
+      { file: "AgentPicker", title: "AgentPicker", names: ["AgentPicker"] },
+      { file: "ChatActions", title: "ChatActions", names: ["ChatActions"] },
+      { file: "ChatInput", title: "ChatInput", names: ["ChatInput"] },
+      { file: "ChatEmptyState", title: "ChatEmptyState", names: ["ChatEmptyState"] },
     ];
 
-    for (const story of dedicatedStories) {
-      const source = await readText(story.path);
-
-      assertStringIncludes(
-        source,
-        story.title,
-        `${story.path} must use the expected title`,
-      );
-      for (const importSpec of story.imports) {
-        assertStringIncludes(
-          source,
-          importSpec,
-          `${story.path} must import ${importSpec}`,
-        );
+    const problems: string[] = [];
+    for (const c of target) {
+      const path = `storybook/stories/chat/${c.file}.stories.tsx`;
+      let source: string;
+      try {
+        source = await readText(path);
+      } catch {
+        problems.push(`${c.title}: missing story ${path}`);
+        continue;
       }
-      for (const componentName of story.names) {
-        assertStringIncludes(
-          source,
-          componentName,
-          `${story.path} must cover ${componentName}`,
-        );
+      const expectedTitle = `Chat/Components/${c.title}`;
+      if (!source.includes(expectedTitle)) {
+        problems.push(`${c.title}: story must use title "${expectedTitle}"`);
+      }
+      for (const name of c.names) {
+        if (!source.includes(name)) {
+          problems.push(`${c.title}: story must cover export ${name}`);
+        }
       }
     }
+
+    assertEquals(
+      problems,
+      [],
+      `Chat/Components sidebar incomplete:\n  - ${problems.join("\n  - ")}`,
+    );
+  });
+
+  it("exports every target chat component from veryfront/chat (driver)", async () => {
+    // The public API target. Fails until every component is exported under its
+    // final name (renames landed + new components built). `\b` boundaries mean
+    // "Attachment" does NOT match "AttachmentPill", "CodeBlock" not "RichCodeBlock".
+    const publicBarrel = await readText("src/chat/index.ts");
+    const targetExports = [
+      "Attachment",
+      "Markdown",
+      "Sources",
+      "Reasoning",
+      "SkillTool",
+      "ToolCall",
+      "Message",
+      "AgentCard",
+      "UploadsPanel",
+      "ChatSidebar",
+      "ModelSelector",
+      "AgentPicker",
+      "ChatActions",
+      "ChatInput",
+      "ChatEmptyState",
+      "CodeBlock",
+    ];
+    const missing = targetExports.filter(
+      (name) => !new RegExp(`\\b${name}\\b`).test(publicBarrel),
+    );
+    assertEquals(
+      missing,
+      [],
+      `veryfront/chat is missing target exports: ${missing.join(", ")}`,
+    );
+  });
+
+  it("has a CodeBlock primitive under Chat/UI (driver)", async () => {
+    // CodeBlock is the shared syntax-highlight primitive (Markdown + ToolCall).
+    // Renamed from RichCodeBlock, moved to the ui barrel, shiki github-light/dark
+    // + mermaid, lazy-loaded from esm.sh (no bundled dep).
+    const problems: string[] = [];
+
+    const uiBarrel = await readText("src/react/components/chat/ui/index.ts");
+    if (!/\bCodeBlock\b/.test(uiBarrel)) {
+      problems.push("src/react/components/chat/ui/index.ts must export CodeBlock");
+    }
+
+    const storyPath = "storybook/stories/ui/CodeBlock.stories.tsx";
+    try {
+      const story = await readText(storyPath);
+      if (!story.includes("Chat/UI/CodeBlock")) {
+        problems.push(`${storyPath} must use title "Chat/UI/CodeBlock"`);
+      }
+    } catch {
+      problems.push(`missing story ${storyPath}`);
+    }
+
+    assertEquals(
+      problems,
+      [],
+      `CodeBlock primitive incomplete:\n  - ${problems.join("\n  - ")}`,
+    );
   });
 
   it("ports Studio styling without importing Studio-only UI dependencies", async () => {
