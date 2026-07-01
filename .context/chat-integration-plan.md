@@ -48,6 +48,10 @@ wires `useChat` + `useAgentMetadata` internally:
   suggestions must be passed manually); no built-in **upload client**; SSR textarea height
   set in a plain effect → **post-hydration jump**; `AgentPicker` not wired into composer.
 
+## Progress (this round)
+- ✅ **#4 Message formatting** — Message Studio-parity rebuild landed (Header, right-aligned user `max-w-[80%]`, regenerate, Tokens popover; `StandaloneMessage` now composes the compound parts). See chat-review.
+- ✅ **#2/#3/#5 Uncontrolled `<Chat>` app mode** — `<Chat agentId api />` self-drives `useChat` + `useAgentMetadata` when `messages`/`input` are omitted (`ControlledChat`/`UncontrolledChat` split, conditional render not conditional hooks). Empty state fed from agent metadata (avatar icon + name + description), suggestions from `agent.suggestions`, default `onSuggestionClick → sendMessage`, retry via `reload`. Controlled surface kept for back-compat. Driver green, controlled preset unchanged (screenshot).
+
 ## Per-requirement plan
 
 | # | Requirement | Current | Studio reference | Work |
