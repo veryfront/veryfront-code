@@ -23,4 +23,9 @@ export { ModelAvatar, type ModelAvatarProps } from "./model-avatar.tsx";
 export { ErrorBanner, type ErrorBannerProps } from "./error-banner.tsx";
 
 // Message compound
-export { Message, type MessageRootProps } from "./message.tsx";
+export {
+  Message,
+  type MessageRootProps,
+  StandaloneMessage,
+  type StandaloneMessageProps,
+} from "./message.tsx";

@@ -178,7 +178,10 @@ export {
 } from "#veryfront/react/components/chat/chat.tsx";
 
 export {
-  Message as StandaloneMessage,
+  StandaloneMessage,
+  type StandaloneMessageProps,
+} from "#veryfront/react/components/chat/chat.tsx";
+export {
   type MessageProps,
   StreamingMessage,
   type StreamingMessageProps,

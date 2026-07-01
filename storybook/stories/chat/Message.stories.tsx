@@ -16,10 +16,11 @@ const importCode =
   `import { Message, StandaloneMessage, StreamingMessage } from "veryfront/chat"`;
 
 const compositionTree = `Message.Root  <- context: message, branch state
-  +-- Message.Avatar  <- role glyph
+  +-- Message.Header  <- agent avatar + name + timestamp (assistant)
   +-- Message.BranchPicker  <- switch between regenerated responses
   +-- Message.Content  <- markdown body, sources, reasoning steps
   +-- Message.Actions  <- copy / regenerate
+  +-- Message.Tokens  <- token-usage popover (Model / Input / Output / Total)
 StandaloneMessage  <- non-compound convenience wrapper around Root
 StreamingMessage  <- live token + tool-call stream while generating`;
 
@@ -171,11 +172,12 @@ export const CompoundAssistant: Story = {
         getBranches={() => ({ current: 1, total: 3 })}
         switchBranch={() => undefined}
       >
-        <Message.Avatar />
-        <div className="min-w-0 flex-1">
-          <Message.BranchPicker />
-          <Message.Content showSources showSteps />
+        <Message.Header />
+        <Message.BranchPicker />
+        <Message.Content showSources showSteps />
+        <div className="flex items-center gap-0.5">
           <Message.Actions />
+          <Message.Tokens />
         </div>
       </Message.Root>
     </StoryFrame>

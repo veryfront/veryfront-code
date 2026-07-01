@@ -172,6 +172,8 @@ export {
   type MessageRootProps,
   ModelAvatar,
   type ModelAvatarProps,
+  StandaloneMessage,
+  type StandaloneMessageProps,
 } from "./composition/api.tsx";
 
 // Re-exports — contexts
@@ -202,7 +204,9 @@ export {
 export interface ChatProps {
   messages: ChatMessage[];
   input: string;
-  onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
+  onChange: (
+    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
+  ) => void;
   onSubmit?: (e?: React.FormEvent) => void | Promise<void>;
   stop?: () => void;
   reload?: () => void;
@@ -322,7 +326,9 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
   },
   ref,
 ): React.ReactElement {
-  const theme = React.useMemo(() => mergeThemes(defaultChatTheme, userTheme), [userTheme]);
+  const theme = React.useMemo(() => mergeThemes(defaultChatTheme, userTheme), [
+    userTheme,
+  ]);
 
   // --- Drag-and-drop ---
   const dropHandler = onDrop ?? onAttach;
@@ -496,7 +502,10 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
             <InferenceBadge inferenceMode={inferenceMode} />
           )}
           {isEmpty && quickActions && quickActions.length > 0 && (
-            <QuickActionsComponent actions={quickActions} onActionClick={onQuickAction} />
+            <QuickActionsComponent
+              actions={quickActions}
+              onActionClick={onQuickAction}
+            />
           )}
         </ChatComposer>
       )}

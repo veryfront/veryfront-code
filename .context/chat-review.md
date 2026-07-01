@@ -48,7 +48,7 @@ confirmation is on you (HMR); I verify types + driver + build.
   - tool calls → **ToolCall** card.
   - message text → **Markdown**.
   - Mirror Studio's agent/message anatomy; it should read like a `Message` inside a card.
-- **Message** (chat-components-message) — looks unchanged; needs the Studio-parity pass: header (Avatar + name + timestamp), Status top-right, Reasoning toggle, Markdown content, actions (copy / regenerate), token usage. (Was a 🟡 row, out of the original red scope.)
+- ✅ **Message** (chat-components-message) — DONE (Studio-parity rebuild). Reworked `Message.Root` to Studio's vertical-column anatomy (`ChatMessageView`/`Message`): assistant header on top, user turns right-aligned + `max-w-[80%]` (no more old dark bubble). Added **`Message.Header`** (agent Avatar `size-8` + name + right timestamp, ported from `ChatMessageHeader`), wired **regenerate** into `Message.Actions` (from `onReload`), and added **`Message.Tokens`** — a token-usage popover (Model/Input/Output/**Total**, dropped "Credits used", tightened per checklist). Rebuilt **`StandaloneMessage`** as a thin wrapper composing the compound parts (was the old monolithic renderer showing raw `[output-available]`/role labels). Re-pointed the export chain (composition/api → chat/index → chat.tsx → both public barrels) + updated `index.test.ts`. Verified in Storybook (header, right-aligned user, reasoning, markdown, tool card, token popover — screenshots).
 - **ChatSidebar** — "looks totally broken"; make it resemble Studio's chat sidebar (M2PPf6): **slimmer list items**, a per-row **context menu** (rename/delete via DropdownMenu), tighter spacing. Reference Studio `ConversationsPanel`.
 
 ---
