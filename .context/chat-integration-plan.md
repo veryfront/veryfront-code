@@ -76,6 +76,16 @@ wires `useChat` + `useAgentMetadata` internally:
 | 11 | **All tool calls + skills** | `ToolCall` + `SkillTool` render in the list | `ChatToolCard`/`ChatTool`/`LoadSkillTool` | Confirm every tool/skill part routes to `ToolCall`/`SkillTool` in the message list (audit `message-parts.ts` grouping). Mostly done — verify coverage. |
 | 12 | **Page layout / width + sticky input** | Composer is in-flow; width via `max-w-3xl` | Messages `max-w-[850px] mx-auto`; input sticky at bottom of the column | Match container width (`max-w-[850px]`), make the ChatInput **sticky to the bottom** of the chat column, messages scroll above it. |
 
+- ✅ **Shipped the minimal `:3000` example** — the demo (`customer-operations-agent/havana/app/page.tsx`) is now just:
+  ```tsx
+  'use client'
+  import { Chat } from 'veryfront/chat'
+  export default function ChatPage() {
+    return <Chat agentId="support-agent" api="/api/ag-ui" className="flex-1 min-h-0" placeholder="Ask the support agent..." />
+  }
+  ```
+  (was 24 lines of manual `useChat` + `useAgentMetadata` + `getAgentPromptSuggestions` + emptyState/suggestions/onSuggestionClick). Verified live: empty state shows agent avatar + name + description + suggestions; clicking a suggestion sends → streams a response with the header, the **`SkillTool`** row ("✓ Loaded skill: support-escalation"), the `search_knowledge` **ToolCall** card (syntax-highlighted JSON), a Stop button while streaming, and a sticky composer. **DoD met: the consumer writes one component.**
+
 ## Suggested build order
 1. **Message Studio-parity rebuild** (#4) — foundation; also unblocks AgentCard (chat-review).
 2. **Uncontrolled `<Chat>` mode** (#2, #3, #5) — internally wire `useChat` + `useAgentMetadata`; empty state + suggestions + retry.
