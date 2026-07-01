@@ -138,9 +138,7 @@ export const AgentCard = React.forwardRef<HTMLDivElement, AgentCardProps>(
             <div className="flex flex-col">
               {toolCalls.map((tool) => (
                 <React.Fragment key={tool.id}>
-                  {renderTool
-                    ? renderTool(tool)
-                    : <ToolCallCard tool={toToolPart(tool)} />}
+                  {renderTool ? renderTool(tool) : <ToolCallCard tool={toToolPart(tool)} />}
                 </React.Fragment>
               ))}
             </div>
