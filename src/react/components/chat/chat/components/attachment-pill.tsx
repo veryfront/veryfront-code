@@ -1,6 +1,12 @@
 import * as React from "react";
 import { cn } from "../../theme.ts";
-import { CheckIcon, ClockIcon, FileTextIcon, RefreshCwIcon } from "../../icons/index.ts";
+import {
+  CheckIcon,
+  ClockIcon,
+  FileTextIcon,
+  RefreshCwIcon,
+} from "../../icons/index.ts";
+import { Button } from "../../ui/button.tsx";
 import { Shimmer } from "./animations.tsx";
 
 /** Upload lifecycle state (shadcn-style). Drives the icon, label, and treatment. */
@@ -80,7 +86,9 @@ function getStateLabel(
     case "processing":
       return "Processing document";
     case "uploaded":
-      return attachment.size != null ? `Uploaded · ${formatSize(attachment.size)}` : "Uploaded";
+      return attachment.size != null
+        ? `Uploaded · ${formatSize(attachment.size)}`
+        : "Uploaded";
     case "error":
       return "Upload failed. Try again.";
     default:
@@ -136,7 +144,8 @@ export function AttachmentPill({
   const label = getStateLabel(attachment, ext, mediaType);
   // Legacy dimming only applies to the old `status` API (new states stay solid).
   const legacyUploading = !state && attachment.status === "uploading";
-  const showRemove = onRemove && (Boolean(state) || attachment.status !== "uploading");
+  const showRemove = onRemove &&
+    (Boolean(state) || attachment.status !== "uploading");
 
   // The left box shows a state glyph when a lifecycle `state` is set, otherwise
   // the file-type extension badge (default behaviour).
@@ -220,25 +229,30 @@ export function AttachmentPill({
       </div>
 
       {isError && onRetry && (
-        <button
+        <Button
           type="button"
+          variant="icon-ghost"
+          size="icon-xs"
+          on="card"
           onClick={() => onRetry(attachment.id)}
           aria-label={`Retry ${attachment.name}`}
-          className="flex size-5 shrink-0 items-center justify-center rounded-full text-[var(--foreground)] transition-colors hover:bg-[var(--tertiary)]"
+          className="shrink-0"
         >
-          <RefreshCwIcon className="size-3.5" />
-        </button>
+          <RefreshCwIcon />
+        </Button>
       )}
 
       {showRemove && (
-        <button
+        <Button
           type="button"
+          variant="icon-ghost"
+          size="icon-xs"
+          on="card"
           onClick={() => onRemove?.(attachment.id)}
           aria-label={`Remove ${attachment.name}`}
-          className="flex size-5 shrink-0 items-center justify-center rounded-full text-[var(--foreground)] opacity-100 transition-colors hover:bg-[var(--tertiary)] md:opacity-0 md:group-hover:opacity-100"
+          className="shrink-0 opacity-100 md:opacity-0 md:group-hover:opacity-100"
         >
           <svg
-            className="size-3"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
@@ -248,7 +262,7 @@ export function AttachmentPill({
             <line x1="18" y1="6" x2="6" y2="18" />
             <line x1="6" y1="6" x2="18" y2="18" />
           </svg>
-        </button>
+        </Button>
       )}
 
       {/* Hover preview */}
