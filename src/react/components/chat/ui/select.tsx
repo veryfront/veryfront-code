@@ -15,6 +15,7 @@ import * as React from "react";
 import { cn } from "../theme.ts";
 import { cva, type VariantProps } from "./cva.ts";
 import { CheckIcon, ChevronDownIcon } from "../icons/index.ts";
+import { Floating } from "./floating.tsx";
 
 const selectTriggerVariants = cva(
   [
@@ -44,7 +45,7 @@ interface SelectContextValue {
   open: boolean;
   setOpen: (open: boolean) => void;
   labels: Map<string, React.ReactNode>;
-  register: (value: string, label: React.ReactNode) => void;
+  anchorRef: React.RefObject<HTMLElement | null>;
 }
 
 const SelectContext = React.createContext<SelectContextValue | null>(null);
@@ -78,8 +79,7 @@ export function Select({
 }: SelectProps): React.ReactElement {
   const [internalValue, setInternalValue] = React.useState(defaultValue);
   const [internalOpen, setInternalOpen] = React.useState(defaultOpen ?? false);
-  const [, forceUpdate] = React.useReducer((n: number) => n + 1, 0);
-  const labelsRef = React.useRef(new Map<string, React.ReactNode>());
+  const anchorRef = React.useRef<HTMLElement | null>(null);
 
   const isValueControlled = value !== undefined;
   const isOpenControlled = open !== undefined;
@@ -96,29 +96,47 @@ export function Select({
     onOpenChange?.(next);
   }, [isOpenControlled, onOpenChange]);
 
-  const register = React.useCallback((v: string, label: React.ReactNode) => {
-    if (labelsRef.current.get(v) !== label) {
-      labelsRef.current.set(v, label);
-      forceUpdate();
-    }
-  }, []);
+  // Collect value→label synchronously from the item children so the trigger
+  // shows the selected LABEL immediately — no flip from raw value on first open.
+  const labels = React.useMemo(() => {
+    const map = new Map<string, React.ReactNode>();
+    collectSelectLabels(children, map);
+    return map;
+  }, [children]);
 
   return (
-    <span className="relative inline-block w-full">
+    <span ref={anchorRef} className="relative inline-block w-full">
       <SelectContext.Provider
         value={{
           value: currentValue,
           setValue,
           open: isOpen,
           setOpen,
-          labels: labelsRef.current,
-          register,
+          labels,
+          anchorRef,
         }}
       >
         {children}
       </SelectContext.Provider>
     </span>
   );
+}
+
+/** Walk children for `SelectItem` elements, mapping `value` → label node. */
+function collectSelectLabels(
+  node: React.ReactNode,
+  map: Map<string, React.ReactNode>,
+): void {
+  React.Children.forEach(node, (child) => {
+    if (!React.isValidElement(child)) return;
+    if (child.type === SelectItem) {
+      const p = child.props as SelectItemProps;
+      if (p.value !== undefined) map.set(p.value, p.children);
+    } else {
+      const p = child.props as { children?: React.ReactNode };
+      if (p?.children) collectSelectLabels(p.children, map);
+    }
+  });
 }
 
 /** Props accepted by `<SelectTrigger>`. */
@@ -177,40 +195,23 @@ export function SelectContent({
   ...props
 }: React.HTMLAttributes<HTMLDivElement>): React.ReactElement | null {
   const ctx = useSelect();
-  const ref = React.useRef<HTMLDivElement>(null);
-
-  React.useEffect(() => {
-    if (!ctx.open) return;
-    const onPointerDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        ctx.setOpen(false);
-      }
-    };
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") ctx.setOpen(false);
-    };
-    document.addEventListener("mousedown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [ctx.open]);
-
-  if (!ctx.open) return null;
   return (
-    <div
-      ref={ref}
+    <Floating
+      anchorRef={ctx.anchorRef}
+      open={ctx.open}
+      align="start"
+      matchTriggerWidth
+      onDismiss={() => ctx.setOpen(false)}
       role="listbox"
       className={cn(
-        "absolute top-full left-0 mt-2 z-50 max-h-96 min-w-full overflow-x-hidden overflow-y-auto rounded-lg bg-[var(--secondary)] text-[var(--foreground)] shadow-sm",
+        "z-50 max-h-96 overflow-x-hidden overflow-y-auto rounded-lg bg-[var(--secondary)] text-[var(--foreground)] shadow-sm",
         "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
         className,
       )}
       {...props}
     >
       <div className="p-2.5">{children}</div>
-    </div>
+    </Floating>
   );
 }
 
@@ -231,10 +232,6 @@ export function SelectItem({
 }: SelectItemProps): React.ReactElement {
   const ctx = useSelect();
   const selected = ctx.value === value;
-
-  React.useEffect(() => {
-    ctx.register(value, children);
-  }, [value, children]);
 
   return (
     <div

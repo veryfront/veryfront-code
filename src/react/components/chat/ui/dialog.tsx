@@ -94,7 +94,13 @@ export function DialogContent({
       if (e.key === "Escape") ctx.setOpen(false);
     };
     document.addEventListener("keydown", onKeyDown);
-    panelRef.current?.focus();
+    // Focus the first focusable descendant on open (radix-like) — e.g. a
+    // CommandInput — falling back to the panel itself. Full focus-trap is TODO.
+    const panel = panelRef.current;
+    const focusable = panel?.querySelector<HTMLElement>(
+      'input:not([disabled]), textarea:not([disabled]), select:not([disabled]), button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+    );
+    (focusable ?? panel)?.focus();
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [ctx.open]);
 
