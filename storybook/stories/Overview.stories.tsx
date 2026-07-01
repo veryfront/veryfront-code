@@ -48,6 +48,36 @@ const COMPOSITION: NavGridEntry[] = [
   },
 ];
 
+// The private `chat/ui` primitives the chat components are built on (forked
+// from Veryfront Studio, dependency-light).
+const UI: NavGridEntry[] = [
+  { title: "Button", id: "chat-ui-button--docs" },
+  { title: "IconButton", id: "chat-ui-iconbutton--docs" },
+  { title: "Input", id: "chat-ui-input--docs" },
+  { title: "Textarea", id: "chat-ui-textarea--docs" },
+  { title: "Label", id: "chat-ui-label--docs" },
+  { title: "Checkbox", id: "chat-ui-checkbox--docs" },
+  { title: "Radio", id: "chat-ui-radio--docs" },
+  { title: "Switch", id: "chat-ui-switch--docs" },
+  { title: "Select", id: "chat-ui-select--docs" },
+  { title: "DropdownMenu", id: "chat-ui-dropdownmenu--docs" },
+  { title: "Popover", id: "chat-ui-popover--docs" },
+  { title: "Dialog", id: "chat-ui-dialog--docs" },
+  { title: "Command", id: "chat-ui-command--docs" },
+  { title: "Tooltip", id: "chat-ui-tooltip--docs" },
+  { title: "Collapsible", id: "chat-ui-collapsible--docs" },
+  { title: "Badge", id: "chat-ui-badge--docs" },
+  { title: "StatusBadge", id: "chat-ui-statusbadge--docs" },
+  { title: "Pill", id: "chat-ui-pill--docs" },
+  { title: "Tag", id: "chat-ui-tag--docs" },
+  { title: "FileTypeBadge", id: "chat-ui-filetypebadge--docs" },
+  { title: "UserAvatar", id: "chat-ui-useravatar--docs" },
+  { title: "Skeleton", id: "chat-ui-skeleton--docs" },
+  { title: "Shimmer", id: "chat-ui-shimmer--docs" },
+  { title: "ProgressBar", id: "chat-ui-progressbar--docs" },
+  { title: "ScrollFade", id: "chat-ui-scrollfade--docs" },
+];
+
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
     <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-4">
@@ -72,6 +102,10 @@ function ChatOverviewPage() {
         <section>
           <SectionLabel>Composition</SectionLabel>
           <NavGrid pages={COMPOSITION} />
+        </section>
+        <section>
+          <SectionLabel>UI</SectionLabel>
+          <NavGrid pages={UI} />
         </section>
       </div>
     </Page>
