@@ -20,13 +20,23 @@ import * as React from "react";
 import { cn } from "../theme.ts";
 import { isBrowserEnvironment } from "#veryfront/platform/compat/runtime.ts";
 import { validateTrustedHtml } from "#veryfront/security/client/html-sanitizer.ts";
-import { CheckIcon, ChevronDownIcon, CopyIcon } from "../icons/index.ts";
+import {
+  CheckIcon,
+  ChevronDownIcon,
+  CodeBracketsIcon,
+  CopyIcon,
+} from "../icons/index.ts";
 import { useColorModeOptional } from "../color-mode.tsx";
 
 /** Light/dark, for switching the shiki + mermaid theme. */
 type CodeBlockMode = "light" | "dark";
 import { Skeleton } from "./skeleton.tsx";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./collapsible.tsx";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "./collapsible.tsx";
+import { IconButton } from "./icon-button.tsx";
 
 // ---------------------------------------------------------------------------
 // Lazy esm.sh loaders (dependency-light — mirrors markdown.tsx)
@@ -174,7 +184,9 @@ function MermaidDiagram(
         setError("");
       } catch (err) {
         if (cancelled) return;
-        setError(err instanceof Error ? err.message : "Failed to render diagram");
+        setError(
+          err instanceof Error ? err.message : "Failed to render diagram",
+        );
         setSvg("");
       }
     }
@@ -201,7 +213,9 @@ function MermaidDiagram(
   }
 
   if (!svg) {
-    return <Skeleton className={cn("h-32 rounded-[var(--radius-md)]", className)} />;
+    return (
+      <Skeleton className={cn("h-32 rounded-[var(--radius-md)]", className)} />
+    );
   }
 
   return (
@@ -261,30 +275,24 @@ function useClipboard(text: string): { copied: boolean; copy: () => void } {
   return { copied, copy };
 }
 
+// Icon-only copy control (Studio's ChatCodeBlock copy = `icon-ghost`/`icon-sm`,
+// no "Copy" text). The label lives in the hover tooltip instead.
 function CopyButton({ code }: { code: string }): React.ReactElement {
   const { copied, copy } = useClipboard(code);
   return (
-    <button
-      type="button"
+    <IconButton
+      variant="icon-ghost"
+      size="icon-sm"
       onClick={copy}
+      tooltip={copied ? "Copied" : "Copy code"}
       aria-label="Copy code"
-      className="inline-flex items-center gap-1.5 text-[var(--faint)] transition-colors hover:text-[var(--foreground)]"
+      className="-mr-1 text-[var(--faint)] hover:text-[var(--foreground)]"
     >
+      {/* icons render a half-step smaller than Studio: size-4 -> size-3.5 */}
       {copied
-        ? (
-          <>
-            {/* icons render a half-step smaller than Studio: size-4 -> size-3.5 */}
-            <CheckIcon className="size-3.5" />
-            <span>Copied</span>
-          </>
-        )
-        : (
-          <>
-            <CopyIcon className="size-3.5" />
-            <span>Copy</span>
-          </>
-        )}
-    </button>
+        ? <CheckIcon className="size-3.5" />
+        : <CopyIcon className="size-3.5" />}
+    </IconButton>
   );
 }
 
@@ -308,7 +316,9 @@ function CodeSurface({
     if (!isBrowserEnvironment()) return;
 
     let cancelled = false;
-    const theme: ShikiTheme = resolvedMode === "dark" ? "github-dark" : "github-light";
+    const theme: ShikiTheme = resolvedMode === "dark"
+      ? "github-dark"
+      : "github-light";
 
     async function highlight(): Promise<void> {
       try {
@@ -376,17 +386,28 @@ export function CodeBlock({
 
   // Mermaid fences render as an SVG diagram, no chrome.
   if (language === "mermaid" && code.trim()) {
-    return <MermaidDiagram code={code} className={className} resolvedMode={resolvedMode} />;
+    return (
+      <MermaidDiagram
+        code={code}
+        className={className}
+        resolvedMode={resolvedMode}
+      />
+    );
   }
 
   const header = (
-    <div className="flex items-center justify-between px-3 py-2 text-xs text-[var(--faint)]">
-      <span className="font-mono font-medium">{lang}</span>
+    <div className="flex items-center justify-between py-1.5 pl-3 pr-1.5 text-xs text-[var(--faint)]">
+      <span className="inline-flex items-center gap-1.5 font-mono font-medium">
+        <CodeBracketsIcon className="size-3.5 shrink-0" />
+        {lang}
+      </span>
       <CopyButton code={code} />
     </div>
   );
 
-  const surface = <CodeSurface code={code} language={lang} resolvedMode={resolvedMode} />;
+  const surface = (
+    <CodeSurface code={code} language={lang} resolvedMode={resolvedMode} />
+  );
 
   if (collapsible) {
     return (
@@ -397,10 +418,11 @@ export function CodeBlock({
           className,
         )}
       >
-        <div className="flex items-center justify-between px-3 py-2 text-xs text-[var(--faint)]">
+        <div className="flex items-center justify-between py-1.5 pl-3 pr-1.5 text-xs text-[var(--faint)]">
           <CollapsibleTrigger className="group inline-flex items-center gap-1.5 font-mono font-medium text-[var(--faint)] transition-colors hover:text-[var(--foreground)]">
             {/* icons render a half-step smaller than Studio: size-4 -> size-3.5 */}
             <ChevronDownIcon className="size-3.5 shrink-0 transition-transform duration-100 group-data-[state=closed]:-rotate-90" />
+            <CodeBracketsIcon className="size-3.5 shrink-0" />
             <span>{lang}</span>
           </CollapsibleTrigger>
           <CopyButton code={code} />
