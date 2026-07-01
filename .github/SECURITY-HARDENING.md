@@ -45,11 +45,27 @@ Required controls:
 - Configure npm trusted publishing for package `veryfront`: GitHub Actions publisher, owner `veryfront`, repository `veryfront-code`, workflow filename `cicd.yml`, environment `production`, action `npm publish`.
 - Keep `.github/workflows/cicd.yml` release jobs on `permissions: id-token: write` and publish with `npm publish --provenance --access public`.
 - Do not reference `secrets.NPM_TOKEN` or `NODE_AUTH_TOKEN` in npm publish steps.
-- Remove the repository `NPM_TOKEN` secret after trusted publishing is configured and one dry release check confirms npm accepts OIDC authentication.
+- Remove the repository or organization `NPM_TOKEN` secret after trusted publishing is configured and one dry release check confirms npm accepts OIDC authentication.
 - Keep release `actions/setup-node` caching disabled.
 - Keep generated npm package metadata pointed at `github.com/veryfront/veryfront-code` so npm provenance links to the publishing source.
 - Keep `scripts/build/build-npm-dnt.ts` npm install calls on `--ignore-scripts`.
 - Keep `deno task lint:deps` and `deno task audit` in CI.
+
+## GitHub App release credentials
+
+Release automation must use short-lived GitHub App installation tokens instead of user PAT secrets.
+
+Configure these GitHub Apps before the first release after this checklist lands:
+
+| Purpose                               | Repository access                                                            | Required permissions                  | Variables and secrets                                                  |
+| ------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------- | ---------------------------------------------------------------------- |
+| Release artifacts and deploy dispatch | `veryfront`, `veryfront-server`, `veryfront-job-runner`, `veryfront-sandbox` | Contents: write                       | `VERYFRONT_RELEASE_APP_CLIENT_ID`, `VERYFRONT_RELEASE_APP_PRIVATE_KEY` |
+| Docs sync                             | `veryfront-docs`                                                             | Contents: write                       | `VERYFRONT_DOCS_APP_CLIENT_ID`, `VERYFRONT_DOCS_APP_PRIVATE_KEY`       |
+| Homebrew tap                          | `homebrew-tap`                                                               | Contents: write, Pull requests: write | `HOMEBREW_TAP_APP_CLIENT_ID`, `HOMEBREW_TAP_APP_PRIVATE_KEY`           |
+
+Store app client IDs as GitHub Actions variables. Store private keys as `production` environment secrets where the workflow uses `environment: production`; use the narrowest available scope for any workflow that cannot use an environment.
+
+After a successful dry release or equivalent workflow validation, remove the old repository secrets `GH_PAT_VERYFRONT` and `GH_PAT_HOMEBREW_TAP`.
 
 ## Validation commands
 
