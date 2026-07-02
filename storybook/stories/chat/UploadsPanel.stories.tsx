@@ -134,6 +134,22 @@ type Story = StoryObj<typeof meta>;
 
 export const UploadedFiles: Story = {
   tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { UploadsPanel } from "veryfront/chat";
+
+<UploadsPanel
+  uploads={[
+    { id: "upload-1", name: "run-analysis.csv", size: 24424, type: "text/csv" },
+    { id: "upload-2", name: "prompt-notes.md", size: 9812, type: "text/markdown" },
+  ]}
+  onRemoveUpload={(id) => removeUpload(id)}
+  onAttach={(files) => attach(files)}
+/>`,
+      },
+    },
+  },
   render: () => (
     <StoryFrame maxWidth="720px">
       <ReviewSurface label="Uploaded files">
@@ -151,6 +167,15 @@ export const UploadedFiles: Story = {
 
 export const Empty: Story = {
   tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { UploadsPanel } from "veryfront/chat";
+
+<UploadsPanel uploads={[]} onAttach={(files) => attach(files)} />`,
+      },
+    },
+  },
   render: () => (
     <StoryFrame maxWidth="720px">
       <ReviewSurface label="Empty">
