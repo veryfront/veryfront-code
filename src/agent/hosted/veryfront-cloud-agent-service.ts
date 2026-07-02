@@ -915,7 +915,9 @@ async function prepareChatExecution(
 
   setPrepareChatExecutionStartAttributes(context, { projectId, userId });
 
-  const agentConfig = await resolveAgentConfig(context, req.agentId ?? getDefaultAgentId(context));
+  const requestedAgentId = req.agentId ?? getDefaultAgentId(context);
+  // veryfront-api is the trusted caller for request-scoped project-agent config.
+  const agentConfig = req.agentConfig ?? await resolveAgentConfig(context, requestedAgentId);
   const abortController = new AbortController();
   const {
     effectiveMessages,

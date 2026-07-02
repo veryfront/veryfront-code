@@ -1,9 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildHostedChatRequestForwardedPropsFromRuntimeAgentInvocation,
   buildHostedChatRequestFromRuntimeAgentInvocation,
+  buildParsedHostedChatRequest,
   hostedChatRequestSchema,
   hostedChatRuntimeOverridesSchema,
   parseHostedChatRequestFromRequest,
@@ -267,6 +268,99 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(parsed.projectId, projectId);
     assertEquals(parsed.projectSlug, "demo-project");
     assertEquals(parsed.validatedContext.projectSlug, "demo-project");
+  });
+
+  it("preserves request-scoped project agent config from runtime invocations", async () => {
+    const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/runs", {
+        method: "POST",
+        body: JSON.stringify({
+          ...createRuntimeInvocation(),
+          agentConfig: {
+            id: "builder",
+            name: "Builder",
+            description: "Builds with project skills.",
+            instructions: "Use project skills.",
+            skills: ["support-triage"],
+            tools: ["search_knowledge", "get_file"],
+          },
+        }),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+      },
+    );
+
+    if (parsed instanceof Response) {
+      throw new Error("Expected parsed request");
+    }
+
+    assertEquals(parsed.agentConfig?.skills, ["support-triage"]);
+    assertEquals(parsed.agentConfig?.tools, ["search_knowledge", "get_file"]);
+  });
+
+  it("rejects parsed hosted chat requests when agent config does not match the requested agent", async () => {
+    const response = await buildParsedHostedChatRequest({
+      chatRequest: hostedChatRequestSchema.parse({
+        messages: [{ id: "m1", role: "user", parts: [{ type: "text", text: "Hello" }] }],
+        context: {
+          conversationId,
+          projectId,
+          branchId,
+        },
+      }),
+      agentId: "builder",
+      agentConfig: {
+        id: "other-agent",
+        name: "Other Agent",
+        description: "Does not match the requested agent.",
+        instructions: "Use another agent.",
+      },
+      authToken: "token_1",
+      userId,
+    });
+
+    if (!(response instanceof Response)) {
+      throw new Error("Expected error response");
+    }
+
+    assertEquals(response.status, 400);
+    assertEquals(await response.json(), {
+      errorCode: "VALIDATION_ERROR",
+      message: "Invalid runtime agent invocation: agentConfig.id must match the requested agent id",
+    });
+  });
+
+  it("rejects runtime invocation agent config for a different agent", async () => {
+    const response = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/runs", {
+        method: "POST",
+        body: JSON.stringify({
+          ...createRuntimeInvocation(),
+          agentConfig: {
+            id: "other-agent",
+            name: "Other Agent",
+            description: "Does not match the requested agent.",
+            instructions: "Use another agent.",
+          },
+        }),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+      },
+    );
+
+    if (!(response instanceof Response)) {
+      throw new Error("Expected error response");
+    }
+
+    const body = await response.json();
+    assertEquals(response.status, 400);
+    assertEquals(body.errorCode, "VALIDATION_ERROR");
+    assertStringIncludes(body.message, "Invalid runtime agent invocation");
+    assertStringIncludes(body.message, "agentConfig.id must match run.agentId");
   });
 
   it("returns hosted chat project-access errors as stable JSON responses", async () => {

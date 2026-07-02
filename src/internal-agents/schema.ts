@@ -13,6 +13,7 @@ import {
   getAgUiRuntimeToolCallSchema,
 } from "#veryfront/agent/runtime/ag-ui-contract.ts";
 import { stripLeadingEmptyObjectPlaceholder } from "#veryfront/agent/streaming/data-stream.ts";
+import { getRuntimeAgentMarkdownDefinitionSchema } from "#veryfront/agent/runtime/agent-definition.ts";
 import {
   buildRuntimeAgentControlPlaneStreamRequestFromInvocation,
   getRuntimeAgentCredentialsSchema,
@@ -22,6 +23,7 @@ import {
 } from "#veryfront/agent/runtime/agent-invocation-contract.ts";
 
 const AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
+const MAX_AGENT_CONFIG_BYTES = 65_536;
 const MAX_FORWARDED_PROPS_BYTES = 196_608;
 const MAX_TOOL_RESULT_BYTES = 65_536;
 const MAX_RUNTIME_MESSAGES = 100;
@@ -74,12 +76,24 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
       { message: "context must be less than 64 KB total" },
     ),
     agentSource: getRuntimeAgentSourceContextSchema().optional(),
+    agentConfig: getRuntimeAgentMarkdownDefinitionSchema().optional().refine(
+      (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_AGENT_CONFIG_BYTES),
+      { message: "agentConfig must be less than 64 KB" },
+    ),
     credentials: getRuntimeAgentCredentialsSchema().optional(),
     forwardedProps: v.record(v.string(), v.unknown()).optional().refine(
       (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_FORWARDED_PROPS_BYTES),
       { message: "forwardedProps must be less than 192 KB" },
     ),
-  }).strict()
+  }).strict().superRefine((input, ctx) => {
+    if (input.agentConfig && input.agentConfig.id !== input.agentId) {
+      ctx.addIssue({
+        code: "custom",
+        message: "agentConfig.id must match agentId",
+        path: ["agentConfig", "id"],
+      });
+    }
+  })
 );
 
 export const getInternalAgentStreamRequestSchema = defineSchema((v) => {

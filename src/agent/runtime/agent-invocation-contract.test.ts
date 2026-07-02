@@ -240,6 +240,62 @@ describe("agent/runtime-agent-invocation-contract", () => {
     });
   });
 
+  it("preserves the selected project agent config on control-plane stream requests", () => {
+    const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
+      agentConfig: {
+        id: "builder",
+        name: "Builder",
+        description: "Builds with project skills.",
+        instructions: "Use project skills.",
+        skills: ["support-triage"],
+        tools: ["search_knowledge", "get_file"],
+      },
+    }));
+
+    const request = buildRuntimeAgentControlPlaneStreamRequestFromInvocation(parsed);
+
+    assertEquals(request.agentConfig, {
+      id: "builder",
+      name: "Builder",
+      description: "Builds with project skills.",
+      instructions: "Use project skills.",
+      skills: ["support-triage"],
+      tools: ["search_knowledge", "get_file"],
+    });
+  });
+
+  it("rejects request-scoped agent config for a different agent", () => {
+    assertThrows(
+      () =>
+        RuntimeAgentRunInvocationSchema.parse(createInvocation({
+          agentConfig: {
+            id: "other-agent",
+            name: "Other Agent",
+            description: "Does not match the requested agent.",
+            instructions: "Use other instructions.",
+          },
+        })),
+      Error,
+      "agentConfig.id must match run.agentId",
+    );
+  });
+
+  it("rejects oversized request-scoped agent config", () => {
+    assertThrows(
+      () =>
+        RuntimeAgentRunInvocationSchema.parse(createInvocation({
+          agentConfig: {
+            id: "builder",
+            name: "Builder",
+            description: "Builds with project skills.",
+            instructions: "x".repeat(70_000),
+          },
+        })),
+      Error,
+      "agentConfig must be less than 64 KB",
+    );
+  });
+
   it("parses runtime agent invocation request bodies through the public helper", async () => {
     const parsed = await parseRuntimeAgentRunInvocation(
       new Request("http://localhost/api/control-plane/runs/run_1/stream", {

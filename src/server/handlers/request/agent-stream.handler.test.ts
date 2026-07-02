@@ -531,6 +531,140 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(injectedToolSchema, inputSchema);
   });
 
+  it("runs control-plane streams with request-scoped project agent config", async () => {
+    let capturedSystem: unknown;
+    let capturedSkills: unknown;
+    let capturedTools: unknown;
+    let capturedAllowedRemoteTools: string[] | undefined;
+    let platformMcpFetchCalls = 0;
+    const originalFetch = globalThis.fetch;
+    const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
+
+    Deno.env.set("VERYFRONT_API_URL", "https://api.veryfront.org");
+    globalThis.fetch = ((url, init) => {
+      if (String(url) === "https://api.veryfront.org/mcp") {
+        platformMcpFetchCalls += 1;
+        assertEquals(
+          new Headers(init?.headers).get("authorization"),
+          "Bearer request-scoped-user-token",
+        );
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: "veryfront-platform-mcp:tools:list",
+              result: {
+                tools: [
+                  {
+                    name: "search_knowledge",
+                    description: "Search project knowledge",
+                    inputSchema: { type: "object", properties: {} },
+                  },
+                  {
+                    name: "get_file",
+                    description: "Read a project file",
+                    inputSchema: { type: "object", properties: {} },
+                  },
+                ],
+              },
+            }),
+            { headers: { "content-type": "application/json" } },
+          ),
+        );
+      }
+
+      if (String(url) === "https://api.veryfront.org/projects/demo-project/environments") {
+        return Promise.resolve(
+          new Response(JSON.stringify({ data: [] }), {
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }
+
+      return Promise.reject(new Error(`unexpected fetch: ${url}`));
+    }) as typeof fetch;
+
+    try {
+      const handler = new AgentStreamHandler({
+        ensureProjectDiscovery: async () => {},
+        getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
+        getAllAgentIds: () => ["assistant-1"],
+        sessionManager: new AgentRunSessionManager(),
+        createRuntime: (runtimeAgent) => {
+          const runtimeConfig = runtimeAgent.config as
+            & typeof runtimeAgent.config
+            & RuntimeRemoteToolConfig;
+          capturedSystem = runtimeConfig.system;
+          capturedSkills = runtimeConfig.skills;
+          capturedTools = runtimeConfig.tools;
+          capturedAllowedRemoteTools = runtimeConfig.__vfAllowedRemoteTools;
+
+          return {
+            stream: async (_messages, _context, callbacks) => {
+              callbacks?.onFinish?.({
+                text: "ok",
+                messages: [],
+                toolCalls: [],
+                status: "completed",
+                usage: {
+                  promptTokens: 1,
+                  completionTokens: 1,
+                  totalTokens: 2,
+                },
+              });
+
+              return new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              });
+            },
+          };
+        },
+      });
+
+      const body = createAgentStreamRequestBody({
+        credentials: { authToken: "request-scoped-user-token" },
+        agentConfig: {
+          id: "assistant-1",
+          name: "Project Assistant",
+          description: "Uses project-scoped skills and tools.",
+          instructions: "Use project-scoped instructions.",
+          skills: ["support-triage"],
+          tools: ["search_knowledge", "get_file"],
+        },
+      });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+        requestId: "run_1",
+      });
+
+      const result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        createCtx(publicKeyPem),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      assertEquals(capturedSystem, "Use project-scoped instructions.");
+      assertEquals(capturedSkills, ["support-triage"]);
+      assertEquals((capturedTools as Record<string, unknown>).search_knowledge, true);
+      assertEquals((capturedTools as Record<string, unknown>).get_file, true);
+      assertEquals(capturedAllowedRemoteTools, ["get_file", "search_knowledge"]);
+      assertEquals(platformMcpFetchCalls, 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
+      else Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
+    }
+  });
+
   it("does not pass undeclared forwarded remote tool allowlists into the runtime agent config", async () => {
     let capturedAllowedTools: string[] | undefined;
 
