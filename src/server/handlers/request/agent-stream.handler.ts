@@ -11,6 +11,7 @@ import {
   createRuntimeAgentStreamResponse,
   type RuntimeAgentStreamExecutionDeps,
 } from "#veryfront/internal-agents/run-stream.ts";
+import { createRuntimeAgentFromMarkdownDefinition } from "#veryfront/agent/runtime/agent-markdown-adapter.ts";
 import type { RuntimeRemoteToolConfig } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
 import { buildStudioMcpHeaders } from "#veryfront/agent/project/live-studio-mcp-tools.ts";
 import {
@@ -639,6 +640,7 @@ export class AgentStreamHandler extends BaseHandler {
           messageCount: payload.messages.length,
           toolCount: payload.tools.length,
           hasAgentSource: Boolean(payload.agentSource),
+          hasAgentConfig: Boolean(payload.agentConfig),
         });
 
         return await this.withAgentSourceContext(
@@ -658,11 +660,16 @@ export class AgentStreamHandler extends BaseHandler {
               return this.respond(builder.json({ error: "Agent not found" }, 404));
             }
 
+            // veryfront-api is the trusted control-plane caller; it resolves
+            // authorization before attaching request-scoped project-agent config.
+            const runtimeBaseAgent = payload.agentConfig
+              ? createRuntimeAgentFromMarkdownDefinition(payload.agentConfig)
+              : agent;
             const runtimeInput = sanitizeRuntimeRunAgentInput(toRuntimeRunAgentInput(payload));
             const apiAuthToken = payload.credentials?.authToken || ctx.proxyToken ||
               getHostEnv("VERYFRONT_API_TOKEN") || "";
             const platformRuntimeAgent = await withVeryfrontPlatformRemoteTools({
-              agent: agent as Agent,
+              agent: runtimeBaseAgent as Agent,
               token: apiAuthToken || null,
               projectId: ctx.projectId ?? null,
               availableToolNames: runtimeInput.tools.map((tool) => tool.name),

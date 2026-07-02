@@ -249,6 +249,14 @@ describe("internal-agents/schema", () => {
       }],
       context: [{ type: "text", text: "Current project context" }],
       agentSource: { type: "branch", branch: "main" },
+      agentConfig: {
+        id: "incident-responder",
+        name: "Incident Responder",
+        description: "Triages incidents.",
+        instructions: "Use the project incident-response skills.",
+        skills: ["incident-triage"],
+        tools: ["search_knowledge", "get_file"],
+      },
       forwardedProps: { runtimeOverrides: { allowedTools: ["studio_search_files"] } },
     });
 
@@ -265,9 +273,37 @@ describe("internal-agents/schema", () => {
       description: "Search files",
       inputSchema: { type: "object", properties: { query: { type: "string" } } },
     });
+    assertEquals(internalRequest.agentConfig, {
+      id: "incident-responder",
+      name: "Incident Responder",
+      description: "Triages incidents.",
+      instructions: "Use the project incident-response skills.",
+      skills: ["incident-triage"],
+      tools: ["search_knowledge", "get_file"],
+    });
     assertEquals(
       toRuntimeRunAgentInput(internalRequest).threadId,
       "10000000-1000-4000-8000-100000000001",
+    );
+  });
+
+  it("rejects mismatched agent config on control-plane stream payloads", () => {
+    assertThrows(
+      () =>
+        getInternalAgentStreamRequestSchema().parse({
+          agentId: "agent_1",
+          threadId: "10000000-1000-4000-8000-100000000001",
+          runId: "run_1",
+          messages: [],
+          agentConfig: {
+            id: "agent_2",
+            name: "Agent 2",
+            description: "Wrong agent.",
+            instructions: "Use another agent.",
+          },
+        }),
+      Error,
+      "agentConfig.id must match agentId",
     );
   });
 
