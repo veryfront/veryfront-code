@@ -12,6 +12,7 @@
 import { PDFDocument } from "pdf-lib";
 import JSZip from "jszip";
 import type { DocumentExtractionProgressEvent } from "veryfront/extensions/compat";
+import { extractionConfigForMimeType } from "./extraction-config.ts";
 import { loadKreuzbergNative } from "./kreuzberg.ts";
 
 interface ExtractRequest {
@@ -153,7 +154,11 @@ async function extractPdfByPage(buffer: ArrayBuffer): Promise<string> {
     const [page] = await singlePage.copyPages(source, [index]);
     singlePage.addPage(page);
     const bytes = await singlePage.save({ useObjectStreams: false });
-    const result = await extractBytes(new Uint8Array(bytes), "application/pdf");
+    const result = await extractBytes(
+      new Uint8Array(bytes),
+      "application/pdf",
+      extractionConfigForMimeType("application/pdf"),
+    );
     const content = result.content.trim();
     pages.push(content);
     postProgress({

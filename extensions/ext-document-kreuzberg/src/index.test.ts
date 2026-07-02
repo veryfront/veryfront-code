@@ -149,12 +149,12 @@ describe("ext-document-kreuzberg extension", () => {
   });
 
   it("uses native extraction for PDFs in Deno before falling back to the WASM worker", async () => {
-    const calls: Array<{ bytes: string; mimeType: string }> = [];
+    const calls: Array<{ bytes: string; mimeType: string; config: unknown }> = [];
     const deps: KreuzbergDocumentExtractorDeps = {
       isDenoRuntime: true,
       loadNativeKreuzberg: async () => ({
-        extractBytes: async (data, mimeType) => {
-          calls.push({ bytes: new TextDecoder().decode(data), mimeType });
+        extractBytes: async (data, mimeType, config) => {
+          calls.push({ bytes: new TextDecoder().decode(data), mimeType, config });
           return { content: "native pdf text" };
         },
       }),
@@ -168,7 +168,19 @@ describe("ext-document-kreuzberg extension", () => {
     const content = await extractor.extractInWorker(buffer, "application/pdf");
 
     assertEquals(content, "native pdf text");
-    assertEquals(calls, [{ bytes: "%PDF-1.4\n", mimeType: "application/pdf" }]);
+    assertEquals(calls, [{
+      bytes: "%PDF-1.4\n",
+      mimeType: "application/pdf",
+      config: {
+        images: { extractImages: false },
+        pdfOptions: {
+          extractImages: false,
+          extractMetadata: false,
+          extractAnnotations: false,
+          hierarchy: { enabled: false, includeBbox: false },
+        },
+      },
+    }]);
   });
 
   it("uses progress-capable native extraction for PDFs in Deno when progress is requested", async () => {
@@ -234,7 +246,7 @@ describe("ext-document-kreuzberg extension", () => {
   });
 
   it("falls back to the previous PDF extraction path when progress extraction fails", async () => {
-    const nativeCalls: Array<{ bytes: string; mimeType: string }> = [];
+    const nativeCalls: Array<{ bytes: string; mimeType: string; config: unknown }> = [];
     const warnings: Array<{ message: string; details: unknown[] }> = [];
     const deps: KreuzbergDocumentExtractorDeps = {
       isDenoRuntime: true,
@@ -247,8 +259,8 @@ describe("ext-document-kreuzberg extension", () => {
         throw new Error("page split failed");
       },
       loadNativeKreuzberg: async () => ({
-        extractBytes: async (data, mimeType) => {
-          nativeCalls.push({ bytes: new TextDecoder().decode(data), mimeType });
+        extractBytes: async (data, mimeType, config) => {
+          nativeCalls.push({ bytes: new TextDecoder().decode(data), mimeType, config });
           return { content: "native fallback pdf text" };
         },
       }),
@@ -264,7 +276,19 @@ describe("ext-document-kreuzberg extension", () => {
     });
 
     assertEquals(content, "native fallback pdf text");
-    assertEquals(nativeCalls, [{ bytes: "%PDF-1.4\n", mimeType: "application/pdf" }]);
+    assertEquals(nativeCalls, [{
+      bytes: "%PDF-1.4\n",
+      mimeType: "application/pdf",
+      config: {
+        images: { extractImages: false },
+        pdfOptions: {
+          extractImages: false,
+          extractMetadata: false,
+          extractAnnotations: false,
+          hierarchy: { enabled: false, includeBbox: false },
+        },
+      },
+    }]);
     assertEquals(warnings, [{
       message:
         "[ext-document-kreuzberg] native progress extraction failed; falling back to opaque extraction",
