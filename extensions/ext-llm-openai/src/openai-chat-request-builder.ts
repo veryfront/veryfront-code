@@ -5,14 +5,11 @@ import {
   unwrapToolInputSchema,
 } from "veryfront/provider/shared";
 import type { OpenAICompatibleChatRequest, RuntimePromptMessage } from "veryfront/provider/shared";
-
-type ProviderReasoningEffort = "low" | "medium" | "high" | "max";
-
-type ProviderReasoningOption = {
-  enabled?: boolean;
-  effort?: ProviderReasoningEffort;
-  budgetTokens?: number;
-};
+import {
+  type OpenAIProviderReasoningOption,
+  rejectsOpenAISamplingParams,
+  resolveOpenAIReasoningConfig,
+} from "./openai-reasoning-models.ts";
 
 export type RuntimeToolDefinition =
   | {
@@ -44,7 +41,7 @@ export type OpenAICompatibleLanguageOptions = {
   providerOptions?: Record<string, unknown>;
   includeRawChunks?: boolean;
   abortSignal?: AbortSignal;
-  reasoning?: ProviderReasoningOption;
+  reasoning?: OpenAIProviderReasoningOption;
   userId?: string;
   serviceTier?: "auto" | "default" | "flex" | "scale";
   parallelToolCalls?: boolean;
@@ -75,34 +72,12 @@ type WarningCollector = {
   }>;
 };
 
-function isOpenAIReasoningModel(modelId: string): boolean {
-  return /^o[134](-|$)/.test(modelId);
-}
-
 function isNativeOpenAIModel(modelId: string): boolean {
   return /^(gpt-|o[134](-|$)|chatgpt-)/.test(modelId);
 }
 
 function isFixedSamplingModel(modelId: string): boolean {
   return /^kimi-k2\.5/.test(modelId);
-}
-
-function resolveOpenAIReasoningEffort(
-  option: ProviderReasoningOption | undefined,
-): "low" | "medium" | "high" | undefined {
-  if (!option || option.enabled !== true) {
-    return undefined;
-  }
-  switch (option.effort) {
-    case "low":
-      return "low";
-    case "high":
-    case "max":
-      return "high";
-    case "medium":
-    default:
-      return "medium";
-  }
 }
 
 export function buildOpenAIChatRequest(
@@ -112,11 +87,11 @@ export function buildOpenAIChatRequest(
   stream: boolean,
   warnings: WarningCollector,
 ): OpenAICompatibleChatRequest {
-  const isReasoningModel = isOpenAIReasoningModel(modelId);
-  const reasoningEffort = resolveOpenAIReasoningEffort(options.reasoning);
-  const reasoningEnabled = isReasoningModel || reasoningEffort !== undefined;
+  const reasoning = resolveOpenAIReasoningConfig(modelId, providerName, options.reasoning);
+  const reasoningEnabled = reasoning !== undefined;
+  const samplingRejected = rejectsOpenAISamplingParams(modelId);
   const fixedSampling = isFixedSamplingModel(modelId);
-  const dropSamplingParams = reasoningEnabled || fixedSampling;
+  const dropSamplingParams = reasoningEnabled || samplingRejected || fixedSampling;
 
   // OpenAI Chat Completions has no top_k surface.
   if (options.topK !== undefined) {
@@ -128,7 +103,7 @@ export function buildOpenAIChatRequest(
     });
   }
 
-  // Reasoning models (o1 / o3 / o4) and models with fixed sampling params
+  // Reasoning models and models with fixed sampling params
   // reject sampling params outright. Emit warnings.
   if (dropSamplingParams) {
     const dropped: Array<[keyof typeof options, string]> = [
@@ -145,7 +120,9 @@ export function buildOpenAIChatRequest(
           setting: key,
           details: fixedSampling
             ? `Dropped because this model uses fixed sampling parameters.`
-            : `Dropped because OpenAI reasoning models reject ${openaiName}. Reasoning was active for this request.`,
+            : samplingRejected
+            ? `Dropped because this model rejects ${openaiName}.`
+            : `Dropped because reasoning was active for this request and OpenAI rejects ${openaiName} with reasoning.`,
         });
       }
     }
@@ -178,7 +155,7 @@ export function buildOpenAIChatRequest(
     ...(!dropSamplingParams && options.frequencyPenalty !== undefined
       ? { frequency_penalty: options.frequencyPenalty }
       : {}),
-    ...(reasoningEffort !== undefined ? { reasoning_effort: reasoningEffort } : {}),
+    ...(reasoning !== undefined ? { reasoning_effort: reasoning.effort } : {}),
     ...(typeof options.userId === "string" && options.userId.length > 0
       ? { user: options.userId }
       : {}),

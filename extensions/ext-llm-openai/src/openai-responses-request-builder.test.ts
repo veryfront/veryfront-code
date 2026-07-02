@@ -27,6 +27,97 @@ function createWarningCollector() {
 }
 
 describe("ext-llm-openai/openai-responses-request-builder", () => {
+  it("requests reasoning summaries by default for Veryfront Cloud GPT-5.5 Responses models", () => {
+    const warnings = createWarningCollector();
+
+    const body = buildOpenAIResponsesRequest(
+      "gpt-5.5",
+      "veryfront-cloud",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Think carefully." }] }],
+        temperature: 0.2,
+      },
+      true,
+      warnings,
+    );
+
+    assertEquals(body.reasoning, { effort: "medium", summary: "auto" });
+    assertEquals(body.temperature, undefined);
+    assertEquals(warnings.drain().map((warning) => warning.setting), ["temperature"]);
+  });
+
+  it("omits reasoning summaries for direct OpenAI default reasoning requests", () => {
+    const warnings = createWarningCollector();
+
+    const body = buildOpenAIResponsesRequest(
+      "gpt-5.5",
+      "openai",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Think carefully." }] }],
+      },
+      true,
+      warnings,
+    );
+
+    assertEquals(body.reasoning, { effort: "medium" });
+  });
+
+  it("keeps explicit reasoning summaries for direct OpenAI requests", () => {
+    const warnings = createWarningCollector();
+
+    const body = buildOpenAIResponsesRequest(
+      "gpt-5.5",
+      "openai",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Think carefully." }] }],
+        reasoning: { enabled: true, effort: "high" },
+      },
+      true,
+      warnings,
+    );
+
+    assertEquals(body.reasoning, { effort: "high", summary: "auto" });
+  });
+
+  it("does not set default reasoning for OpenAI-compatible providers but still drops rejected sampling params", () => {
+    const warnings = createWarningCollector();
+
+    const body = buildOpenAIResponsesRequest(
+      "gpt-5.5",
+      "azure",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Think carefully." }] }],
+        temperature: 0.2,
+      },
+      true,
+      warnings,
+    );
+
+    assertEquals(body.reasoning, undefined);
+    assertEquals(body.temperature, undefined);
+    assertEquals(warnings.drain().map((warning) => warning.setting), ["temperature"]);
+  });
+
+  it("drops rejected sampling params when explicit reasoning is disabled", () => {
+    const warnings = createWarningCollector();
+
+    const body = buildOpenAIResponsesRequest(
+      "o3-mini",
+      "openai",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Think carefully." }] }],
+        reasoning: { enabled: false },
+        temperature: 0.2,
+      },
+      true,
+      warnings,
+    );
+
+    assertEquals(body.reasoning, undefined);
+    assertEquals(body.temperature, undefined);
+    assertEquals(warnings.drain().map((warning) => warning.setting), ["temperature"]);
+  });
+
   it("preserves Responses request shaping, provider option merge order, and warnings", () => {
     const prompt: RuntimePromptMessage[] = [
       { role: "system", content: "You are concise." },
