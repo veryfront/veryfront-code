@@ -101,6 +101,12 @@ interface BlockRendererProps {
   children?: React.ReactNode;
 }
 
+/** Props for `th`/`td` — carries GFM column alignment via inline `style`. */
+interface TableCellProps {
+  children?: React.ReactNode;
+  style?: React.CSSProperties;
+}
+
 /** Minimal shape of the react-markdown default export used here. */
 interface ReactMarkdownProps {
   remarkPlugins?: MarkdownPlugin[];
@@ -300,7 +306,9 @@ export function Markdown({
   }, []);
 
   if (!isLoaded || !ReactMarkdown) {
-    return <FallbackMarkdown className={className}>{children}</FallbackMarkdown>;
+    return (
+      <FallbackMarkdown className={className}>{children}</FallbackMarkdown>
+    );
   }
 
   return (
@@ -337,10 +345,38 @@ export function Markdown({
           table(props: BlockRendererProps) {
             return (
               <div className="my-4 max-w-full overflow-x-auto rounded-[var(--radius-md)] border border-[var(--outline-border)]">
-                <table className="w-full divide-y divide-[var(--outline-border)]">
+                <table className="w-full text-sm">
                   {props.children}
                 </table>
               </div>
+            );
+          },
+          tr(props: BlockRendererProps) {
+            // Row separators; the last row drops its border (Studio parity).
+            return (
+              <tr className="border-b border-[var(--edge)] last:border-b-0">
+                {props.children}
+              </tr>
+            );
+          },
+          th(props: TableCellProps) {
+            return (
+              <th
+                style={props.style}
+                className="px-4 py-2 text-left font-medium text-[var(--foreground)]"
+              >
+                {props.children}
+              </th>
+            );
+          },
+          td(props: TableCellProps) {
+            return (
+              <td
+                style={props.style}
+                className="px-4 py-2 text-[var(--foreground)]"
+              >
+                {props.children}
+              </td>
             );
           },
           a(props: AnchorRendererProps) {
