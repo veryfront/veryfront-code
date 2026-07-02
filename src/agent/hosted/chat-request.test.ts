@@ -269,6 +269,36 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(parsed.validatedContext.projectSlug, "demo-project");
   });
 
+  it("preserves request-scoped project agent config from runtime invocations", async () => {
+    const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/runs", {
+        method: "POST",
+        body: JSON.stringify({
+          ...createRuntimeInvocation(),
+          agentConfig: {
+            id: "builder",
+            name: "Builder",
+            description: "Builds with project skills.",
+            instructions: "Use project skills.",
+            skills: ["support-triage"],
+            tools: ["search_knowledge", "get_file"],
+          },
+        }),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+      },
+    );
+
+    if (parsed instanceof Response) {
+      throw new Error("Expected parsed request");
+    }
+
+    assertEquals(parsed.agentConfig?.skills, ["support-triage"]);
+    assertEquals(parsed.agentConfig?.tools, ["search_knowledge", "get_file"]);
+  });
+
   it("returns hosted chat project-access errors as stable JSON responses", async () => {
     const response = await parseHostedChatRequestFromRequest(
       new Request("https://agent.example.com/api/runs", {

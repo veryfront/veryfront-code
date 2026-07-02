@@ -240,6 +240,30 @@ describe("agent/runtime-agent-invocation-contract", () => {
     });
   });
 
+  it("preserves the selected project agent config on control-plane stream requests", () => {
+    const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
+      agentConfig: {
+        id: "builder",
+        name: "Builder",
+        description: "Builds with project skills.",
+        instructions: "Use project skills.",
+        skills: ["support-triage"],
+        tools: ["search_knowledge", "get_file"],
+      },
+    }));
+
+    const request = buildRuntimeAgentControlPlaneStreamRequestFromInvocation(parsed);
+
+    assertEquals(request.agentConfig, {
+      id: "builder",
+      name: "Builder",
+      description: "Builds with project skills.",
+      instructions: "Use project skills.",
+      skills: ["support-triage"],
+      tools: ["search_knowledge", "get_file"],
+    });
+  });
+
   it("parses runtime agent invocation request bodies through the public helper", async () => {
     const parsed = await parseRuntimeAgentRunInvocation(
       new Request("http://localhost/api/control-plane/runs/run_1/stream", {

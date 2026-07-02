@@ -2,6 +2,7 @@ import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema, RefinementCtx } from "#veryfront/extensions/schema/index.ts";
 import { ensureBuiltinSchemaValidator } from "#veryfront/extensions/builtin-extensions.ts";
 import { parseAgUiJsonRequestOrError } from "../ag-ui/request-shared.ts";
+import { getRuntimeAgentMarkdownDefinitionSchema } from "./agent-definition.ts";
 
 ensureBuiltinSchemaValidator();
 
@@ -313,6 +314,7 @@ export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
       { message: "context must be less than 64 KB total" },
     ),
     agentSource: getRuntimeAgentSourceContextSchema().optional(),
+    agentConfig: getRuntimeAgentMarkdownDefinitionSchema().optional(),
     credentials: getRuntimeAgentCredentialsSchema().optional(),
     forwardedProps: v.record(v.string(), v.unknown()).optional().refine(
       (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_FORWARDED_PROPS_BYTES),
@@ -368,6 +370,7 @@ export type RuntimeAgentControlPlaneStreamRequest = {
   context: RuntimeAgentRunInvocation["context"];
   credentials?: RuntimeAgentRunInvocation["credentials"];
   agentSource?: RuntimeAgentRunInvocation["agentSource"];
+  agentConfig?: RuntimeAgentRunInvocation["agentConfig"];
   forwardedProps?: RuntimeAgentRunInvocation["forwardedProps"];
 };
 
@@ -385,6 +388,7 @@ export function buildRuntimeAgentControlPlaneStreamRequestFromInvocation(
     context: input.context,
     ...(input.credentials ? { credentials: input.credentials } : {}),
     ...(input.agentSource ? { agentSource: input.agentSource } : {}),
+    ...(input.agentConfig ? { agentConfig: input.agentConfig } : {}),
     ...(input.forwardedProps ? { forwardedProps: input.forwardedProps } : {}),
   };
 }
