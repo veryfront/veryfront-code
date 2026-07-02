@@ -28,7 +28,10 @@ import type {
 import { cn } from "../../theme.ts";
 import { Markdown } from "../../markdown.tsx";
 import { MessageItem } from "#veryfront/react/primitives/index.ts";
-import { MessageContextProvider, useMessageContext } from "../contexts/message-context.tsx";
+import {
+  MessageContextProvider,
+  useMessageContext,
+} from "../contexts/message-context.tsx";
 import type { MessageContextValue } from "../contexts/message-context.tsx";
 import { useChatContextOptional } from "../contexts/chat-context.tsx";
 import type { FeedbackValue } from "../components/message-feedback.tsx";
@@ -36,7 +39,6 @@ import { MessageActions as ActionsImpl } from "../components/message-actions.tsx
 import { MessageFeedback as FeedbackImpl } from "../components/message-feedback.tsx";
 import { BranchPicker as BranchPickerImpl } from "../components/branch-picker.tsx";
 import { ReasoningCard } from "../components/reasoning.tsx";
-import { getSkillToolProps, SkillTool } from "../components/skill-tool.tsx";
 import { ToolCallCard } from "../components/tool-ui.tsx";
 import { StepIndicator } from "../components/step-indicator.tsx";
 import { Sources as SourcesImpl } from "../components/sources.tsx";
@@ -48,7 +50,6 @@ import {
   getAnswerPartsForRendering,
   getTextContentFromParts,
   groupPartsInOrder,
-  isSkillToolPart,
 } from "../utils/message-parts.ts";
 
 // ---------------------------------------------------------------------------
@@ -60,7 +61,9 @@ function metadataString(
   key: string,
 ): string | undefined {
   const value = metadata?.[key];
-  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+  return typeof value === "string" && value.trim().length > 0
+    ? value
+    : undefined;
 }
 
 /** Props accepted by message root. */
@@ -303,7 +306,9 @@ function MessageContent({
   }
 
   const stepCount = parts.filter((g) => g.type === "step").length;
-  const messageSources = shouldShowSources ? extractSourcesFromParts(message.parts) : [];
+  const messageSources = shouldShowSources
+    ? extractSourcesFromParts(message.parts)
+    : [];
 
   return (
     <div
@@ -341,16 +346,12 @@ function MessageContent({
             )
             : null;
         }
-        const isSkill = isSkillToolPart(group.tool);
+        // ToolCall renders the compact skill row for skill tools and the full
+        // params/result card for everything else — one component either way.
         return (
-          <div
-            key={group.tool.toolCallId}
-            className={isSkill ? "my-2" : "my-3"}
-          >
+          <div key={group.tool.toolCallId} className="my-2">
             {renderTool
               ? renderTool(group.tool)
-              : isSkill
-              ? <SkillTool {...getSkillToolProps(group.tool)} />
               : <ToolCallCard tool={group.tool} />}
           </div>
         );
@@ -544,7 +545,10 @@ MessageBranchPicker.displayName = "Message.BranchPicker";
 // Message — compound export
 // ---------------------------------------------------------------------------
 
-export type { MessageContentProps as MessageCompoundContentProps, MessageContextValue };
+export type {
+  MessageContentProps as MessageCompoundContentProps,
+  MessageContextValue,
+};
 
 // ---------------------------------------------------------------------------
 // StandaloneMessage — non-compound convenience wrapper (Studio anatomy)
