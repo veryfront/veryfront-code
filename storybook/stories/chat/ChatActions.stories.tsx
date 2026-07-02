@@ -14,11 +14,12 @@ import { ReviewSurface, StoryFrame } from "../support/StoryFrame";
 
 const importCode = `import { ChatActions } from "veryfront/chat"`;
 
-const compositionTree = `ChatActions  <- the composer's \`+\` menu (DropdownMenu)
+const compositionTree =
+  `ChatActions  <- the composer's \`+\` menu (DropdownMenu)
   +-- DropdownMenuTrigger  <- \`+\` IconButton (override with \`trigger\`)
   +-- DropdownMenuContent  <- portalled surface (Floating)
-        +-- "Attach Files or Photos"  <- onAttachFiles
-        +-- "Attach Figma File"       <- onAttachFigma
+        +-- "Attach Files or Photos"  <- onAttachFiles (built-in convenience)
+        +-- ...actions                <- your data-driven rows (actions prop)
         +-- Settings                  <- nested submenu (Floating)
               +-- Auto-send queue   (Switch)
               +-- Autofix errors    (Switch)`;
@@ -40,7 +41,7 @@ function ChatActionsDocsPage() {
     <DocsPage>
       <DocsHero
         title="ChatActions"
-        lead="The composer's `+` menu — a dropdown with the built-in attach rows (`Attach Files or Photos`, `Attach Figma File`) and a `Settings` submenu of toggles. Portals its surface via `Floating` so it never clips inside the input box."
+        lead="The composer's `+` menu — a dropdown with a built-in `Attach Files or Photos` row plus your own data-driven `actions`, and a `Settings` submenu of toggles. Portals its surface via `Floating` so it never clips inside the input box."
       />
 
       <DocsSection
@@ -77,10 +78,10 @@ function ChatActionsDocsPage() {
                 "Selecting the attach-files row. The row is hidden when omitted.",
             },
             {
-              name: "onAttachFigma",
-              type: "() => void",
+              name: "actions",
+              type: "ChatActionItem[]",
               description:
-                "Selecting the attach-Figma row. The row is hidden when omitted.",
+                "Data-driven menu rows ({ icon, label, title?, onSelect }) — callers own every action, nothing app-specific is hardcoded.",
             },
             {
               name: "attachFilesLabel",
@@ -139,15 +140,36 @@ export const Menu: Story = {
         <ReviewSurface label="ChatActions">
           <div className="flex min-h-[280px] items-start">
             <ChatActions
-              defaultOpen
               onAttachFiles={() => undefined}
-              onAttachFigma={() => undefined}
+              actions={[
+                { label: "Add from URL", onSelect: () => undefined },
+                { label: "Connect data source", onSelect: () => undefined },
+              ]}
               settings={settings}
             />
           </div>
         </ReviewSurface>
       </StoryFrame>
     );
+  },
+  parameters: {
+    docs: {
+      source: {
+        code: `<ChatActions
+  onAttachFiles={handleAttachFiles}
+  actions={[
+    { label: "Add from URL", onSelect: handleAddUrl },
+    { label: "Connect data source", onSelect: handleConnect },
+  ]}
+  settings={{
+    autoSubmit,
+    autoFixErrors,
+    onAutoSubmitChange: setAutoSubmit,
+    onAutoFixErrorsChange: setAutoFixErrors,
+  }}
+/>`,
+      },
+    },
   },
 };
 
@@ -158,12 +180,21 @@ export const AttachOnly: Story = {
       <ReviewSurface label="Attach only">
         <div className="flex min-h-[160px] items-start">
           <ChatActions
-            defaultOpen
             onAttachFiles={() => undefined}
-            onAttachFigma={() => undefined}
+            actions={[{ label: "Add from URL", onSelect: () => undefined }]}
           />
         </div>
       </ReviewSurface>
     </StoryFrame>
   ),
+  parameters: {
+    docs: {
+      source: {
+        code: `<ChatActions
+  onAttachFiles={handleAttachFiles}
+  actions={[{ label: "Add from URL", onSelect: handleAddUrl }]}
+/>`,
+      },
+    },
+  },
 };

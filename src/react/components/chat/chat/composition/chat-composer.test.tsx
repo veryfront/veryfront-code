@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { ChatComposer } from "./chat-composer.tsx";
+import { ChatInput } from "./chat-composer.tsx";
 
 function installDomGlobals(dom: JSDOM): () => void {
   const window = dom.window;
@@ -52,7 +52,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       const root = createRoot(rootElement);
       flushSync(() => {
         root.render(
-          <ChatComposer
+          <ChatInput
             input=""
             onChange={() => {}}
             placeholder="Ask Veryfront"
@@ -84,7 +84,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       const root = createRoot(rootElement);
       flushSync(() => {
         root.render(
-          <ChatComposer
+          <ChatInput
             input=""
             onChange={() => {}}
             onAttach={() => {}}
@@ -105,7 +105,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       });
 
       const uploadAction = Array.from(document.querySelectorAll("button")).find(
-        (button) => button.textContent?.trim() === "Upload document",
+        (button) => button.textContent?.trim() === "Attach files to chat",
       );
       const selectAction = Array.from(document.querySelectorAll("button")).find(
         (button) => button.textContent?.trim() === "Select document",
@@ -144,7 +144,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       const root = createRoot(rootElement);
       flushSync(() => {
         root.render(
-          <ChatComposer
+          <ChatInput
             input="Review Article 30"
             onChange={() => {}}
             onSubmit={() => {
@@ -211,7 +211,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       const root = createRoot(rootElement);
       flushSync(() => {
         root.render(
-          <ChatComposer
+          <ChatInput
             input="Hej"
             onChange={() => {}}
             onSubmit={() => {}}

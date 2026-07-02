@@ -60,9 +60,9 @@ export type { ChatProps } from "./components/chat/chat.tsx";
 
 // Chat — Composition building blocks
 export {
-  ChatComposer,
   ChatEmpty,
   ChatIf,
+  ChatInput,
   ChatMessageList,
   ChatRoot,
   ErrorBanner,
@@ -71,9 +71,9 @@ export {
   ModelAvatar,
 } from "./components/chat/chat.tsx";
 export type {
-  ChatComposerProps,
   ChatEmptyProps,
   ChatIfProps,
+  ChatInputProps,
   ChatMessageListProps,
   ChatRootProps,
   ErrorBannerProps,
@@ -123,7 +123,7 @@ export {
   isReasoningPart,
   isToolPart,
   Loader,
-  MessageActions,
+  MessageActionBar,
   MessageEditForm,
   MessageFeedback,
   ModelSelector,
@@ -164,7 +164,7 @@ export type {
   FeedbackValue,
   InferenceBadgeProps,
   InlineCitationProps,
-  MessageActionsProps,
+  MessageActionBarProps,
   MessageEditFormProps,
   MessageFeedbackProps,
   ModelOption,
@@ -245,6 +245,7 @@ export type { UseAgentOptions, UseAgentResult } from "#veryfront/agent/react/use
 
 export {
   getAgentPromptSuggestions,
+  normalizeAgentMetadata,
   normalizeAgentMetadataResponse,
   useAgentMetadata,
 } from "#veryfront/agent/react/use-agent-metadata.ts";
@@ -256,6 +257,9 @@ export type {
   AgentMetadataTaskSuggestion,
   UseAgentMetadataResult,
 } from "#veryfront/agent/react/use-agent-metadata.ts";
+
+export { normalizeAgentsListResponse, useAgents } from "#veryfront/agent/react/use-agents.ts";
+export type { UseAgentsOptions, UseAgentsResult } from "#veryfront/agent/react/use-agents.ts";
 
 export { useCompletion } from "#veryfront/agent/react/use-completion.ts";
 export type {

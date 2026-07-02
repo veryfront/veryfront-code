@@ -1,8 +1,20 @@
 import * as React from "react";
+// Types are sourced from react-markdown itself (the package `Markdown` already
+// loads at runtime via ESM URL). `PluggableList` is not re-exported by
+// react-markdown, so it is derived from the `remarkPlugins` slot of `Options`.
+import type {
+  Components,
+  Options as ReactMarkdownOptions,
+} from "https://esm.sh/react-markdown@9.0.3?target=es2022&pin=v135&deps=react@19.2.4";
 import { cn } from "./theme.ts";
 import { isBrowserEnvironment } from "#veryfront/platform/compat/runtime.ts";
 import { validateTrustedHtml } from "#veryfront/security/client/html-sanitizer.ts";
 import { CodeBlock as SyntaxCodeBlock } from "./ui/code-block.tsx";
+
+/** react-markdown's plugin list type (remark/rehype), derived from `Options`. */
+export type PluggableList = NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
+
+export type { Components };
 
 /** Props accepted by markdown. */
 export interface MarkdownProps {
@@ -14,6 +26,17 @@ export interface MarkdownProps {
   enableMermaid?: boolean;
   /** Custom code block renderer */
   renderCodeBlock?: (props: CodeBlockProps) => React.ReactNode;
+  /**
+   * Custom element renderers merged OVER the built-in defaults (consumer
+   * entries win). Lets callers override the anchor/table/heading/blockquote/etc
+   * renderers, not just code fences. `renderCodeBlock` still handles the
+   * `pre`/code path unless a `pre` entry is supplied here.
+   */
+  components?: Components;
+  /** Extra remark plugins, appended after the built-in list (GFM etc.). */
+  remarkPlugins?: PluggableList;
+  /** Extra rehype plugins, appended after the built-in list. */
+  rehypePlugins?: PluggableList;
 }
 
 /** Props accepted by code block. */
@@ -277,6 +300,9 @@ export function Markdown({
   className,
   enableMermaid = true,
   renderCodeBlock,
+  components,
+  remarkPlugins,
+  rehypePlugins,
 }: MarkdownProps): React.ReactElement {
   const [isLoaded, setIsLoaded] = React.useState(false);
 
@@ -309,92 +335,106 @@ export function Markdown({
     return <FallbackMarkdown className={className}>{children}</FallbackMarkdown>;
   }
 
+  const builtinComponents: ReactMarkdownProps["components"] = {
+    // Override `pre` (not `code`) — Studio's approach. Block code arrives
+    // as `<pre><code class="language-x">…</code></pre>`; we pull the
+    // language + text off the inner (default-rendered) `<code>` element
+    // and hand it to the syntax highlighter. Inline code is left as a bare
+    // `<code>`, styled by the container class.
+    pre(props: PreRendererProps) {
+      const child = React.Children.toArray(props.children).find(
+        React.isValidElement,
+      ) as React.ReactElement<CodeElementProps> | undefined;
+      if (!child) {
+        return <pre>{props.children}</pre>;
+      }
+      const codeClassName = child.props.className;
+      const match = /language-(\w+)/.exec(codeClassName || "");
+      const language = match ? match[1] : undefined;
+      const code = extractText(child.props.children).replace(/\n$/, "");
+
+      return (
+        <CodeBlock
+          language={language}
+          code={code}
+          enableMermaid={enableMermaid}
+          renderCodeBlock={renderCodeBlock}
+        />
+      );
+    },
+    table(props: BlockRendererProps) {
+      // Borders live on the rows, scoped by section so the header always
+      // keeps its divider (a `tr:last-child` rule would wrongly strip the
+      // lone header row in <thead>). Only the final body row drops its
+      // border so it doesn't double up with the container edge.
+      return (
+        <div className="my-4 max-w-full overflow-x-auto rounded-[var(--radius-md)] border border-[var(--outline-border)]">
+          <table className="w-full text-sm [&_thead_tr]:border-b [&_thead_tr]:border-[var(--edge)] [&_tbody_tr]:border-b [&_tbody_tr]:border-[var(--edge)] [&_tbody_tr:last-child]:border-b-0">
+            {props.children}
+          </table>
+        </div>
+      );
+    },
+    th(props: TableCellProps) {
+      return (
+        <th
+          style={props.style}
+          className="px-4 py-2 text-left font-medium text-[var(--foreground)]"
+        >
+          {props.children}
+        </th>
+      );
+    },
+    td(props: TableCellProps) {
+      return (
+        <td
+          style={props.style}
+          className="px-4 py-2 text-[var(--foreground)]"
+        >
+          {props.children}
+        </td>
+      );
+    },
+    a(props: AnchorRendererProps) {
+      // Studio: links are foreground (black), underlined, and drop the
+      // underline on hover — not the default browser blue.
+      return (
+        <a
+          href={props.href}
+          className="break-words text-[var(--foreground)] underline underline-offset-4 hover:no-underline [overflow-wrap:anywhere]"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          {props.children}
+        </a>
+      );
+    },
+    blockquote(props: BlockRendererProps) {
+      return (
+        <blockquote className="border-l-4 border-[var(--outline-border)] pl-4 my-4 text-[var(--foreground)] italic">
+          {props.children}
+        </blockquote>
+      );
+    },
+  };
+
+  // Consumer entries win over the built-ins (merge order matters). Cast is
+  // needed because the built-ins are typed with local prop interfaces while
+  // `components` uses react-markdown's `Components`.
+  const mergedComponents = {
+    ...builtinComponents,
+    ...(components as ReactMarkdownProps["components"] | undefined),
+  } as ReactMarkdownProps["components"];
+
   return (
     <div className={cn(MARKDOWN_CONTAINER_CLASS, className)}>
       <ReactMarkdown
-        remarkPlugins={remarkGfm ? [remarkGfm] : []}
-        components={{
-          // Override `pre` (not `code`) — Studio's approach. Block code arrives
-          // as `<pre><code class="language-x">…</code></pre>`; we pull the
-          // language + text off the inner (default-rendered) `<code>` element
-          // and hand it to the syntax highlighter. Inline code is left as a bare
-          // `<code>`, styled by the container class.
-          pre(props: PreRendererProps) {
-            const child = React.Children.toArray(props.children).find(
-              React.isValidElement,
-            ) as React.ReactElement<CodeElementProps> | undefined;
-            if (!child) {
-              return <pre>{props.children}</pre>;
-            }
-            const codeClassName = child.props.className;
-            const match = /language-(\w+)/.exec(codeClassName || "");
-            const language = match ? match[1] : undefined;
-            const code = extractText(child.props.children).replace(/\n$/, "");
-
-            return (
-              <CodeBlock
-                language={language}
-                code={code}
-                enableMermaid={enableMermaid}
-                renderCodeBlock={renderCodeBlock}
-              />
-            );
-          },
-          table(props: BlockRendererProps) {
-            // Borders live on the rows, scoped by section so the header always
-            // keeps its divider (a `tr:last-child` rule would wrongly strip the
-            // lone header row in <thead>). Only the final body row drops its
-            // border so it doesn't double up with the container edge.
-            return (
-              <div className="my-4 max-w-full overflow-x-auto rounded-[var(--radius-md)] border border-[var(--outline-border)]">
-                <table className="w-full text-sm [&_thead_tr]:border-b [&_thead_tr]:border-[var(--edge)] [&_tbody_tr]:border-b [&_tbody_tr]:border-[var(--edge)] [&_tbody_tr:last-child]:border-b-0">
-                  {props.children}
-                </table>
-              </div>
-            );
-          },
-          th(props: TableCellProps) {
-            return (
-              <th
-                style={props.style}
-                className="px-4 py-2 text-left font-medium text-[var(--foreground)]"
-              >
-                {props.children}
-              </th>
-            );
-          },
-          td(props: TableCellProps) {
-            return (
-              <td
-                style={props.style}
-                className="px-4 py-2 text-[var(--foreground)]"
-              >
-                {props.children}
-              </td>
-            );
-          },
-          a(props: AnchorRendererProps) {
-            // Studio: links are foreground (black), underlined, and drop the
-            // underline on hover — not the default browser blue.
-            return (
-              <a
-                href={props.href}
-                className="break-words text-[var(--foreground)] underline underline-offset-4 hover:no-underline [overflow-wrap:anywhere]"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                {props.children}
-              </a>
-            );
-          },
-          blockquote(props: BlockRendererProps) {
-            return (
-              <blockquote className="border-l-4 border-[var(--outline-border)] pl-4 my-4 text-[var(--foreground)] italic">
-                {props.children}
-              </blockquote>
-            );
-          },
-        } as ReactMarkdownProps["components"]}
+        remarkPlugins={[
+          ...(remarkGfm ? [remarkGfm] : []),
+          ...((remarkPlugins ?? []) as MarkdownPlugin[]),
+        ]}
+        rehypePlugins={(rehypePlugins ?? []) as MarkdownPlugin[]}
+        components={mergedComponents}
       >
         {children}
       </ReactMarkdown>

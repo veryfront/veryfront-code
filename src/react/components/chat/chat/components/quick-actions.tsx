@@ -33,6 +33,7 @@ export function QuickActions({
           onClick={() => onActionClick?.(action)}
           className="rounded-full border border-[var(--outline-border)] px-4 py-2 text-sm text-[var(--faint)] transition-colors hover:border-[var(--edge-medium)] hover:bg-[var(--tertiary)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--background)]"
         >
+          {action.icon}
           {action.label}
         </button>
       ))}

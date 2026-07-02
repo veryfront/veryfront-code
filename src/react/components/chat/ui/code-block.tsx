@@ -240,9 +240,38 @@ export interface CodeBlockProps {
    * without requiring a provider.
    */
   mode?: CodeBlockMode;
+  /** Override the idle copy icon in the header copy button. */
+  copyIcon?: React.ReactNode;
+  /** Override the collapse chevron icon (only used when `collapsible`). */
+  collapseIcon?: React.ReactNode;
+  /**
+   * Intercept the built-in header copy. The caller runs first and must call
+   * `next()` to actually copy.
+   */
+  onCopy?: (e: React.MouseEvent, next: () => void) => void;
+  /**
+   * Replace the header row entirely. Receives the language label, a `copy`
+   * trigger, and (for the collapsible variant) the `collapsed` state + a
+   * `toggle`. When provided, the built-in header/trigger row is not rendered.
+   */
+  renderHeader?: (opts: {
+    language?: string;
+    copy: () => void;
+    collapsed: boolean;
+    toggle: () => void;
+  }) => React.ReactNode;
 }
 
-function useClipboard(text: string): { copied: boolean; copy: () => void } {
+/** Result of {@link useClipboard}: the copied flag + a `copy` trigger. */
+export interface UseClipboardResult {
+  /** `true` for ~2s after a successful (or fallback) copy. */
+  copied: boolean;
+  /** Copy `text` to the clipboard (with a `execCommand` fallback). */
+  copy: () => void;
+}
+
+/** Clipboard copy hook: copies `text`, flips `copied` for ~2s. */
+export function useClipboard(text: string): UseClipboardResult {
   const [copied, setCopied] = React.useState(false);
   const copy = React.useCallback(() => {
     void (async () => {
@@ -264,23 +293,57 @@ function useClipboard(text: string): { copied: boolean; copy: () => void } {
   return { copied, copy };
 }
 
+/** Props accepted by {@link CopyButton}. */
+export interface CopyButtonProps {
+  /** The text copied to the clipboard on click. */
+  code: string;
+  /**
+   * Override the idle copy icon (the copied/check state is unchanged). When
+   * omitted, the built-in {@link CopyIcon} is used.
+   */
+  copyIcon?: React.ReactNode;
+  /**
+   * Intercept the built-in copy. The caller runs first and must call `next()`
+   * to actually copy. When omitted, the copy happens directly.
+   */
+  onCopy?: (e: React.MouseEvent, next: () => void) => void;
+}
+
 // Icon-only copy control (Studio's ChatCodeBlock copy = `icon-ghost`/`icon-sm`,
 // no "Copy" text). The label lives in the hover tooltip instead.
-function CopyButton({ code }: { code: string }): React.ReactElement {
+export function CopyButton(
+  { code, copyIcon, onCopy }: CopyButtonProps,
+): React.ReactElement {
   const { copied, copy } = useClipboard(code);
+  const handleClick = (e: React.MouseEvent): void => {
+    if (onCopy) onCopy(e, copy);
+    else copy();
+  };
   return (
     <IconButton
       variant="icon-ghost"
       size="icon-sm"
-      onClick={copy}
+      onClick={handleClick}
       tooltip={copied ? "Copied" : "Copy code"}
       aria-label="Copy code"
       className="-mr-1 text-[var(--faint)] hover:text-[var(--foreground)]"
     >
       {/* icons render a half-step smaller than Studio: size-4 -> size-3.5 */}
-      {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+      {copied
+        ? <CheckIcon className="size-3.5" />
+        : (copyIcon ?? <CopyIcon className="size-3.5" />)}
     </IconButton>
   );
+}
+
+/** Props accepted by {@link CodeSurface}. */
+export interface CodeSurfaceProps {
+  /** The source code to highlight. */
+  code: string;
+  /** Language id for syntax highlighting (defaults handled by the caller). */
+  language: string;
+  /** Resolved light/dark mode for the shiki theme. */
+  resolvedMode: CodeBlockMode;
 }
 
 /**
@@ -288,15 +351,11 @@ function CopyButton({ code }: { code: string }): React.ReactElement {
  * shiki is progressive enhancement layered on top once it lazy-loads from
  * esm.sh (so a stalled/blocked network never leaves an empty "no code block").
  */
-function CodeSurface({
+export function CodeSurface({
   code,
   language,
   resolvedMode,
-}: {
-  code: string;
-  language: string;
-  resolvedMode: CodeBlockMode;
-}): React.ReactElement {
+}: CodeSurfaceProps): React.ReactElement {
   const [html, setHtml] = React.useState<string>("");
 
   React.useEffect(() => {
@@ -363,11 +422,30 @@ export function CodeBlock({
   collapsible = false,
   defaultCollapsed = false,
   mode,
+  copyIcon,
+  collapseIcon,
+  onCopy,
+  renderHeader,
 }: CodeBlockProps): React.ReactElement {
   const lang = language ?? "text";
   // Hook called unconditionally; prop wins, else provider, else light. Never throws.
   const contextMode = useColorModeOptional()?.resolvedMode;
   const resolvedMode: CodeBlockMode = mode ?? contextMode ?? "light";
+
+  // Control the collapsible open state locally so `renderHeader` can expose a
+  // working `collapsed`/`toggle` (DOM output is identical to the uncontrolled
+  // default). Hook is called unconditionally.
+  const [open, setOpen] = React.useState(!defaultCollapsed);
+  const toggle = React.useCallback(() => setOpen((v) => !v), []);
+  // A `copy` trigger for `renderHeader` that honours `onCopy`.
+  const clipboard = useClipboard(code);
+  const copy = React.useCallback(() => {
+    if (onCopy) {
+      onCopy({} as React.MouseEvent, clipboard.copy);
+    } else {
+      clipboard.copy();
+    }
+  }, [onCopy, clipboard]);
 
   // Mermaid fences render as an SVG diagram, no chrome.
   if (language === "mermaid" && code.trim()) {
@@ -383,7 +461,7 @@ export function CodeBlock({
   const header = (
     <div className="flex items-center justify-between py-1.5 pl-3 pr-1.5 text-xs text-[var(--faint)]">
       <span className="font-mono font-medium">{lang}</span>
-      <CopyButton code={code} />
+      <CopyButton code={code} copyIcon={copyIcon} onCopy={onCopy} />
     </div>
   );
 
@@ -392,26 +470,29 @@ export function CodeBlock({
   if (collapsible) {
     return (
       <Collapsible
-        defaultOpen={!defaultCollapsed}
+        open={open}
+        onOpenChange={setOpen}
         className={cn(
           "not-prose my-4 overflow-hidden rounded-[var(--radius-md)] border border-[var(--outline-border)] bg-[var(--secondary)]",
           className,
         )}
       >
-        {
+        {renderHeader ? renderHeader({ language, copy, collapsed: !open, toggle }) : (
           /* Trigger + copy are siblings (not nested — that would be a
-            button-in-button). The trigger is `flex-1`, so the whole row toggles
-            the body; the in-flow copy button keeps the header the same height as
-            the flat variant. */
-        }
-        <div className="flex items-center py-1.5 pl-3 pr-1.5 text-xs text-[var(--faint)]">
-          <CollapsibleTrigger className="group flex flex-1 items-center gap-1.5 font-mono font-medium text-[var(--faint)] transition-colors hover:text-[var(--foreground)]">
-            {/* icons render a half-step smaller than Studio: size-4 -> size-3.5 */}
-            <ChevronDownIcon className="size-3.5 shrink-0 transition-transform duration-100 group-data-[state=closed]:-rotate-90" />
-            <span>{lang}</span>
-          </CollapsibleTrigger>
-          <CopyButton code={code} />
-        </div>
+              button-in-button). The trigger is `flex-1`, so the whole row toggles
+              the body; the in-flow copy button keeps the header the same height as
+              the flat variant. */
+          <div className="flex items-center py-1.5 pl-3 pr-1.5 text-xs text-[var(--faint)]">
+            <CollapsibleTrigger className="group flex flex-1 items-center gap-1.5 font-mono font-medium text-[var(--faint)] transition-colors hover:text-[var(--foreground)]">
+              {/* icons render a half-step smaller than Studio: size-4 -> size-3.5 */}
+              {collapseIcon ?? (
+                <ChevronDownIcon className="size-3.5 shrink-0 transition-transform duration-100 group-data-[state=closed]:-rotate-90" />
+              )}
+              <span>{lang}</span>
+            </CollapsibleTrigger>
+            <CopyButton code={code} copyIcon={copyIcon} onCopy={onCopy} />
+          </div>
+        )}
         <CollapsibleContent className="border-t border-[var(--outline-border)]">
           {surface}
         </CollapsibleContent>
@@ -426,7 +507,7 @@ export function CodeBlock({
         className,
       )}
     >
-      {header}
+      {renderHeader ? renderHeader({ language, copy, collapsed: !open, toggle }) : header}
       <div className="border-t border-[var(--outline-border)]">{surface}</div>
     </div>
   );

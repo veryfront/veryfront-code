@@ -25,20 +25,23 @@ import type {
   ChatMessage,
   ChatToolPart,
 } from "#veryfront/agent/react";
-import { cn } from "../../theme.ts";
+import { cn, defaultChatTheme } from "../../theme.ts";
 import { Markdown } from "../../markdown.tsx";
 import { MessageItem } from "#veryfront/react/primitives/index.ts";
 import { MessageContextProvider, useMessageContext } from "../contexts/message-context.tsx";
 import type { MessageContextValue } from "../contexts/message-context.tsx";
 import { useChatContextOptional } from "../contexts/chat-context.tsx";
 import type { FeedbackValue } from "../components/message-feedback.tsx";
-import { MessageActions as ActionsImpl } from "../components/message-actions.tsx";
+import { useClipboard } from "../hooks/use-clipboard.ts";
+import { Slot } from "../../ui/slot.tsx";
+import { CheckIcon, CopyIcon, PencilIcon, RefreshCwIcon } from "../../icons/index.ts";
 import { MessageFeedback as FeedbackImpl } from "../components/message-feedback.tsx";
 import { BranchPicker as BranchPickerImpl } from "../components/branch-picker.tsx";
 import { ReasoningCard } from "../components/reasoning.tsx";
 import { Shimmer } from "../../ui/shimmer.tsx";
 import { ToolCallCard } from "../components/tool-ui.tsx";
 import { StepIndicator } from "../components/step-indicator.tsx";
+import { AttachmentPill } from "../components/attachment-pill.tsx";
 import { Sources as SourcesImpl } from "../components/sources.tsx";
 import type { Source } from "../components/sources.tsx";
 import { AgentAvatar as AvatarImpl } from "./agent-avatar.tsx";
@@ -113,19 +116,11 @@ const MessageRoot = React.forwardRef<HTMLDivElement, MessageRootProps>(
       [getBranches, message.id],
     );
 
-    const onCopy = React.useCallback(async () => {
-      try {
-        await navigator.clipboard.writeText(textContent);
-      } catch (_) {
-        /* expected: clipboard API unavailable, using fallback */
-        const textarea = document.createElement("textarea");
-        textarea.value = textContent;
-        document.body.appendChild(textarea);
-        textarea.select();
-        document.execCommand("copy");
-        document.body.removeChild(textarea);
-      }
-    }, [textContent]);
+    const { copied, copy } = useClipboard();
+    const onCopy = React.useCallback(
+      () => copy(textContent),
+      [copy, textContent],
+    );
 
     const contextValue = React.useMemo<MessageContextValue>(
       () => ({
@@ -142,6 +137,7 @@ const MessageRoot = React.forwardRef<HTMLDivElement, MessageRootProps>(
           ? () => switchBranch(message.id, branch.current)
           : undefined,
         onCopy,
+        copied,
         onEdit: editMessage
           ? (content: string) => {
             editMessage(message.id, content);
@@ -164,6 +160,7 @@ const MessageRoot = React.forwardRef<HTMLDivElement, MessageRootProps>(
         branch,
         switchBranch,
         onCopy,
+        copied,
         editMessage,
         onFeedbackProp,
         overrides.feedback,
@@ -206,12 +203,15 @@ function MessageAvatar(
   { className }: MessageAvatarProps,
 ): React.ReactElement | null {
   const { message, role } = useMessageContext();
+  const chat = useChatContextOptional();
   if (role === "user") return null;
   return (
     <AvatarImpl
       name={metadataString(message.metadata, "agentName") ??
+        chat?.agent?.name ??
         metadataString(message.metadata, "agentId")}
-      avatarUrl={metadataString(message.metadata, "agentAvatarUrl")}
+      avatarUrl={metadataString(message.metadata, "agentAvatarUrl") ??
+        chat?.agent?.avatarUrl}
       model={metadataString(message.metadata, "model")}
       className={className}
     />
@@ -245,10 +245,14 @@ function MessageHeader(
   { className }: MessageHeaderProps,
 ): React.ReactElement | null {
   const { message, role } = useMessageContext();
+  const chat = useChatContextOptional();
   if (role === "user") return null;
 
   const displayName = metadataString(message.metadata, "agentName") ??
+    chat?.agent?.name ??
     metadataString(message.metadata, "agentId") ?? "Assistant";
+  const avatarUrl = metadataString(message.metadata, "agentAvatarUrl") ??
+    chat?.agent?.avatarUrl;
   const timestamp = formatTimestamp(message.createdAt);
 
   return (
@@ -257,7 +261,7 @@ function MessageHeader(
     <div className={cn("flex w-full items-center gap-2 pt-px pb-1", className)}>
       <AvatarImpl
         name={displayName}
-        avatarUrl={metadataString(message.metadata, "agentAvatarUrl")}
+        avatarUrl={avatarUrl}
         model={metadataString(message.metadata, "model")}
         className="size-8"
       />
@@ -300,11 +304,36 @@ function MessageContent({
   const sourceClickHandler = onSourceClick ?? chat?.onSourceClick;
 
   if (role === "user") {
+    const fileParts = message.parts.filter((p) => p.type === "file");
     return (
-      <div className={cn(chat?.theme.message?.user, className)}>
-        <p className="whitespace-pre-wrap text-[15px] leading-relaxed">
-          {textContent}
-        </p>
+      <div
+        className={cn(
+          chat?.theme.message?.user ?? defaultChatTheme.message?.user,
+          className,
+        )}
+      >
+        {fileParts.length > 0 && (
+          <div className="mb-2 flex flex-wrap justify-end gap-2">
+            {fileParts.map((file, index) => (
+              <AttachmentPill
+                key={`file-${index}`}
+                attachment={{
+                  id: `file-${index}`,
+                  name: file.filename ?? "Attachment",
+                  type: file.mediaType,
+                  url: file.url,
+                  state: "uploaded",
+                  preview: file.mediaType.startsWith("image/") ? file.url : undefined,
+                }}
+              />
+            ))}
+          </div>
+        )}
+        {textContent && (
+          <p className="whitespace-pre-wrap text-[15px] leading-relaxed">
+            {textContent}
+          </p>
+        )}
       </div>
     );
   }
@@ -315,7 +344,7 @@ function MessageContent({
   return (
     <div
       className={cn(
-        chat?.theme.message?.assistant,
+        chat?.theme.message?.assistant ?? defaultChatTheme.message?.assistant,
         "flex-1 min-w-0",
         className,
       )}
@@ -348,6 +377,23 @@ function MessageContent({
             )
             : null;
         }
+        if (group.type === "file") {
+          const isImage = group.file.mediaType.startsWith("image/");
+          return (
+            <div key={`file-${index}`} className="my-1.5">
+              <AttachmentPill
+                attachment={{
+                  id: `file-${index}`,
+                  name: group.file.filename ?? "Attachment",
+                  type: group.file.mediaType,
+                  url: group.file.url,
+                  state: "uploaded",
+                  preview: isImage ? group.file.url : undefined,
+                }}
+              />
+            </div>
+          );
+        }
         // ToolCall renders the compact skill row for skill tools and the full
         // params/result card for everything else — one component either way.
         return (
@@ -368,25 +414,155 @@ function MessageContent({
 MessageContent.displayName = "Message.Content";
 
 // ---------------------------------------------------------------------------
-// Message.Actions
+// Message.Actions — the reference render-or-compose pattern.
+//
+// `<Message.Actions />` renders the default cluster (copy / regenerate); pass
+// children to compose your own bar from the individual action sub-parts
+// (`Message.CopyAction`, `Message.EditAction`, …), each of which reads its
+// handler + state from context. `Message.EditAction` stays available but is off
+// by default. Every sub-part accepts `icon`, `className`, `asChild`, and an
+// `onClick(e, next)` wrap-signature so you can log-then-run or fully replace the
+// default without ejecting.
 // ---------------------------------------------------------------------------
 
-interface MessageActionsWrapperProps {
-  className?: string;
+const ACTION_BUTTON =
+  "inline-flex items-center justify-center size-7 rounded-full text-[var(--faint)] transition-colors hover:bg-[var(--tertiary)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--background)]";
+
+/** Shared props for the individual `Message.*Action` sub-parts. */
+export interface MessageActionProps
+  extends Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "onClick"> {
+  /** Override the button's icon (ignored when `asChild`). */
+  icon?: React.ReactNode;
+  /** Render onto a supplied child element (Slot) instead of a `<button>`. */
+  asChild?: boolean;
+  /** Runs before the default action; call `next()` to invoke it (or skip it). */
+  onClick?: (event: React.MouseEvent<HTMLElement>, next: () => void) => void;
+}
+
+/** Internal button shared by every action sub-part. */
+const ActionButton = React.forwardRef<
+  HTMLButtonElement,
+  MessageActionProps & {
+    label: string;
+    defaultIcon: React.ReactNode;
+    action: () => void;
+  }
+>(function ActionButton(
+  { icon, asChild, onClick, className, children, label, defaultIcon, action, ...props },
+  ref,
+) {
+  const handleClick = (e: React.MouseEvent<HTMLElement>) => onClick ? onClick(e, action) : action();
+
+  if (asChild) {
+    return (
+      <Slot
+        ref={ref}
+        {...props}
+        className={cn(ACTION_BUTTON, className)}
+        onClick={handleClick}
+      >
+        {children}
+      </Slot>
+    );
+  }
+  return (
+    <button
+      ref={ref}
+      type="button"
+      {...props}
+      aria-label={label}
+      title={label}
+      className={cn(ACTION_BUTTON, className)}
+      onClick={handleClick}
+    >
+      {icon ?? defaultIcon}
+    </button>
+  );
+});
+ActionButton.displayName = "Message.ActionButton";
+
+/** Copy the message text. Reads `onCopy`/`copied`/`textContent` from context. */
+export const MessageCopyAction = React.forwardRef<HTMLButtonElement, MessageActionProps>(
+  function MessageCopyAction(props, ref) {
+    const { onCopy, copied, textContent } = useMessageContext();
+    if (!textContent) return null;
+    return (
+      <ActionButton
+        ref={ref}
+        {...props}
+        label={copied ? "Copied!" : "Copy to clipboard"}
+        defaultIcon={copied
+          ? <CheckIcon className="size-3.5" />
+          : <CopyIcon className="size-3.5" />}
+        action={() => void onCopy()}
+      />
+    );
+  },
+);
+MessageCopyAction.displayName = "Message.CopyAction";
+
+/** Regenerate this turn. Renders only when `onRegenerate` is available. */
+export const MessageRegenerateAction = React.forwardRef<HTMLButtonElement, MessageActionProps>(
+  function MessageRegenerateAction(props, ref) {
+    const { onRegenerate } = useMessageContext();
+    if (!onRegenerate) return null;
+    return (
+      <ActionButton
+        ref={ref}
+        {...props}
+        label="Regenerate response"
+        defaultIcon={<RefreshCwIcon className="size-3.5" />}
+        action={onRegenerate}
+      />
+    );
+  },
+);
+MessageRegenerateAction.displayName = "Message.RegenerateAction";
+
+/** Edit this message. Renders only when `onEdit` is available. */
+export const MessageEditAction = React.forwardRef<HTMLButtonElement, MessageActionProps>(
+  function MessageEditAction(props, ref) {
+    const { onEdit, textContent } = useMessageContext();
+    if (!onEdit || !textContent) return null;
+    return (
+      <ActionButton
+        ref={ref}
+        {...props}
+        label="Edit message"
+        defaultIcon={<PencilIcon className="size-3.5" />}
+        action={() => onEdit(textContent)}
+      />
+    );
+  },
+);
+MessageEditAction.displayName = "Message.EditAction";
+
+/** Props accepted by `<Message.Actions>`. */
+export interface MessageActionsProps extends React.HTMLAttributes<HTMLDivElement> {
+  /** Compose your own bar; when omitted, the default cluster is rendered. */
+  children?: React.ReactNode;
 }
 
 function MessageActionsWrapper(
-  { className }: MessageActionsWrapperProps,
+  { children, className, ...props }: MessageActionsProps,
 ): React.ReactElement | null {
-  const { textContent, onEdit, onRegenerate } = useMessageContext();
+  const { textContent } = useMessageContext();
   if (!textContent) return null;
   return (
-    <ActionsImpl
-      content={textContent}
-      onEdit={onEdit}
-      onRegenerate={onRegenerate}
-      className={className}
-    />
+    <div
+      {...props}
+      className={cn(
+        "flex items-center gap-0.5 opacity-0 group-hover/msg:opacity-100 transition-all duration-200",
+        className,
+      )}
+    >
+      {children ?? (
+        <>
+          <MessageCopyAction />
+          <MessageRegenerateAction />
+        </>
+      )}
+    </div>
   );
 }
 MessageActionsWrapper.displayName = "Message.Actions";
@@ -472,7 +648,11 @@ function TokenRow({ label, value, bold }: TokenRowProps): React.ReactElement {
  * when the message carries no usage metadata.
  */
 function MessageTokens(
-  { className }: { className?: string },
+  { className, renderRow }: {
+    className?: string;
+    /** Override how each breakdown row renders (Model / Input / Output / Total). */
+    renderRow?: (row: TokenRowProps) => React.ReactNode;
+  },
 ): React.ReactElement | null {
   const { message, role } = useMessageContext();
   const [open, setOpen] = React.useState(false);
@@ -486,6 +666,12 @@ function MessageTokens(
   if (total === 0) return null;
 
   const model = metadataString(message.metadata, "model");
+  const rows: TokenRowProps[] = [
+    ...(model ? [{ label: "Model", value: model }] : []),
+    { label: "Input", value: formatTokens(input) },
+    { label: "Output", value: formatTokens(output) },
+    { label: "Total", value: formatTokens(total), bold: true },
+  ];
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -513,10 +699,11 @@ function MessageTokens(
           Token usage
         </p>
         <div className="flex flex-col gap-1.5">
-          {model && <TokenRow label="Model" value={model} />}
-          <TokenRow label="Input" value={formatTokens(input)} />
-          <TokenRow label="Output" value={formatTokens(output)} />
-          <TokenRow label="Total" value={formatTokens(total)} bold />
+          {rows.map((row) =>
+            renderRow
+              ? <React.Fragment key={row.label}>{renderRow(row)}</React.Fragment>
+              : <TokenRow key={row.label} {...row} />
+          )}
         </div>
       </PopoverContent>
     </Popover>
@@ -548,13 +735,13 @@ MessageBranchPicker.displayName = "Message.BranchPicker";
 // ---------------------------------------------------------------------------
 
 function MessageContinuing(
-  { className }: { className?: string },
+  { className, children }: { className?: string; children?: React.ReactNode },
 ): React.ReactElement | null {
   const { isStreaming } = useMessageContext();
   if (!isStreaming) return null;
   return (
     <div className={cn("mt-3 text-sm", className)}>
-      <Shimmer duration={1}>Continuing...</Shimmer>
+      {children ?? <Shimmer duration={1}>Continuing...</Shimmer>}
     </div>
   );
 }
@@ -627,6 +814,9 @@ export const Message = Object.assign(MessageComponent, {
   Header: MessageHeader,
   Content: MessageContent,
   Actions: MessageActionsWrapper,
+  CopyAction: MessageCopyAction,
+  RegenerateAction: MessageRegenerateAction,
+  EditAction: MessageEditAction,
   Feedback: MessageFeedbackWrapper,
   BranchPicker: MessageBranchPicker,
   Tokens: MessageTokens,

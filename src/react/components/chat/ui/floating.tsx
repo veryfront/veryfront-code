@@ -99,8 +99,15 @@ export function Floating({
   }, [open, align, matchTriggerWidth, onDismiss, anchorRef]);
 
   if (!open) return null;
+  // Portal into the nearest chat root rather than <body>: the design tokens are
+  // scoped to `[data-vf-chat]`, so a surface under <body> would resolve every
+  // `var(--…)` to nothing (transparent background, wrong text color). The root
+  // still sits above the composer's `overflow-hidden`, so we keep the clipping
+  // escape while staying inside the token scope.
+  const container = anchorRef.current?.closest<HTMLElement>("[data-vf-chat]") ??
+    document.body;
   return createPortal(
     <div ref={ref} style={{ ...pos, ...style }} {...rest}>{children}</div>,
-    document.body,
+    container,
   );
 }

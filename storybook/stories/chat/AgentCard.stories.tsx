@@ -140,6 +140,19 @@ export const Thinking: Story = {
       />
     </StoryFrame>
   ),
+  parameters: {
+    docs: {
+      source: {
+        code: `<AgentCard
+  name="Release Agent"
+  status="thinking"
+  thinking="Checking run state, recent tool calls, and release blockers."
+  toolCalls={toolCalls}
+  messages={messages}
+/>`,
+      },
+    },
+  },
 };
 
 export const Completed: Story = {
@@ -154,6 +167,18 @@ export const Completed: Story = {
       />
     </StoryFrame>
   ),
+  parameters: {
+    docs: {
+      source: {
+        code: `<AgentCard
+  name="Release Agent"
+  status="completed"
+  toolCalls={toolCalls}
+  messages={messages}
+/>`,
+      },
+    },
+  },
 };
 
 export const Error: Story = {
@@ -175,4 +200,23 @@ export const Error: Story = {
       />
     </StoryFrame>
   ),
+  parameters: {
+    docs: {
+      source: {
+        code: `<AgentCard
+  name="Deploy Agent"
+  status="error"
+  toolCalls={[
+    {
+      id: "tool-error",
+      name: "vf_trigger_deploy",
+      args: { dryRun: true },
+      status: "error",
+      error: "Deploy token is missing",
+    },
+  ]}
+/>`,
+      },
+    },
+  },
 };

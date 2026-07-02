@@ -13,8 +13,7 @@ import { StoryFrame } from "../support/StoryFrame";
 
 const importCode = `import { ChatEmptyState } from "veryfront/chat"`;
 
-const compositionTree =
-  `ChatEmptyState.Root          <- centered container
+const compositionTree = `ChatEmptyState.Root          <- centered container
   +-- ChatEmptyState.Avatar        <- hero agent avatar (64px)
   +-- ChatEmptyState.Heading       <- agent name / title
   +-- ChatEmptyState.Suggestions   <- wrapping chip row
@@ -128,6 +127,32 @@ type Story = StoryObj<typeof meta>;
 
 export const Default: Story = {
   tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { ChatEmptyState } from "veryfront/chat";
+
+const suggestions = [
+  "Create a plan",
+  "Make a research",
+  "Create an agent",
+  "Create a skill",
+];
+
+<ChatEmptyState.Root>
+  <ChatEmptyState.Avatar alt="Veryfront Agent" />
+  <ChatEmptyState.Heading>Veryfront Agent</ChatEmptyState.Heading>
+  <ChatEmptyState.Suggestions>
+    {suggestions.map((s) => (
+      <ChatEmptyState.Suggestion key={s} onClick={() => sendMessage(s)}>
+        {s}
+      </ChatEmptyState.Suggestion>
+    ))}
+  </ChatEmptyState.Suggestions>
+</ChatEmptyState.Root>`,
+      },
+    },
+  },
   render: () => (
     <StoryFrame maxWidth="820px">
       <div className="flex min-h-[360px] flex-col">
@@ -148,6 +173,23 @@ export const Default: Story = {
 export const CustomAgent: Story = {
   name: "Custom Agent",
   tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { ChatEmptyState } from "veryfront/chat";
+
+<ChatEmptyState.Root>
+  <ChatEmptyState.Avatar src="/agents/gmail.png" alt="Gmail Agent" />
+  <ChatEmptyState.Heading>Gmail Agent</ChatEmptyState.Heading>
+  <ChatEmptyState.Suggestions>
+    <ChatEmptyState.Suggestion>Summarize my inbox</ChatEmptyState.Suggestion>
+    <ChatEmptyState.Suggestion>Draft a reply</ChatEmptyState.Suggestion>
+    <ChatEmptyState.Suggestion>Find an attachment</ChatEmptyState.Suggestion>
+  </ChatEmptyState.Suggestions>
+</ChatEmptyState.Root>`,
+      },
+    },
+  },
   render: () => (
     <StoryFrame maxWidth="820px">
       <div className="flex min-h-[360px] flex-col">

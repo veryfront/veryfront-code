@@ -5,7 +5,7 @@ import { Chat, type ChatProps } from "./chat/index.tsx";
 import { ChatSidebar } from "./chat/components/sidebar.tsx";
 import { type ChatTab, TabSwitcher } from "./chat/components/tab-switcher.tsx";
 import { useThreads } from "./chat/hooks/use-threads.ts";
-import { PanelLeftIcon } from "./icons/index.ts";
+import { AppShell, useAppShell } from "./ui/index.ts";
 
 type ChatMessageSetter = (messages: NonNullable<ChatProps["messages"]>) => void;
 type ChatWithSidebarPassthroughProps = Omit<
@@ -132,10 +132,73 @@ export interface ChatWithSidebarGroupedProps {
   placeholder?: ChatProps["placeholder"];
   emptyState?: ChatProps["emptyState"];
   children?: ChatProps["children"];
+  /**
+   * Wraps the internal new-thread handler. Runs before the internal action;
+   * return `false` to skip creating a thread.
+   */
+  onNewThread?: () => void | false;
+  /**
+   * Wraps the internal select-thread handler. Runs before the internal action;
+   * return `false` to skip selecting the thread.
+   */
+  onSelectThread?: (threadId: string) => void | false;
+  /**
+   * Wraps the internal delete-thread handler. Runs before the internal action;
+   * return `false` to skip deleting the thread.
+   */
+  onDeleteThread?: (threadId: string) => void | false;
+  /** Replaces the hardcoded header bar when provided. */
+  renderHeader?: (opts: { onToggleSidebar: () => void }) => React.ReactNode;
+  /** Overrides the built-in PanelLeftIcon on the sidebar-toggle button. */
+  toggleIcon?: React.ReactNode;
 }
 
 /** Props accepted by chat with sidebar. */
 export type ChatWithSidebarProps = ChatWithSidebarGroupedProps;
+
+interface ShellHeaderProps {
+  renderHeader?: ChatWithSidebarGroupedProps["renderHeader"];
+  toggleIcon?: React.ReactNode;
+  showTabs: boolean;
+  activeTab: ChatTab;
+  onTabChange: (tab: ChatTab) => void;
+}
+
+/**
+ * Header bar rendered inside the AppShell so it can drive the sidebar toggle via
+ * context. Falls back to the consumer's `renderHeader` when provided.
+ */
+function ShellHeader({
+  renderHeader,
+  toggleIcon,
+  showTabs,
+  activeTab,
+  onTabChange,
+}: ShellHeaderProps): React.ReactElement {
+  const { toggle } = useAppShell();
+  if (renderHeader) {
+    return <>{renderHeader({ onToggleSidebar: () => toggle("left") })}</>;
+  }
+  return (
+    <AppShell.Header className="pt-4! pb-1!">
+      <AppShell.Trigger
+        side="left"
+        icon={toggleIcon}
+        className="text-[var(--faint)] hover:text-[var(--foreground)]"
+      />
+      {showTabs && (
+        <div className="flex-1 flex justify-center">
+          <TabSwitcher
+            activeTab={activeTab}
+            onTabChange={onTabChange}
+            className="py-0"
+          />
+        </div>
+      )}
+      {showTabs && <div className="size-8 shrink-0" />}
+    </AppShell.Header>
+  );
+}
 
 /** Render chat with sidebar. */
 export const ChatWithSidebar = React.forwardRef<
@@ -159,6 +222,11 @@ export const ChatWithSidebar = React.forwardRef<
       placeholder,
       emptyState,
       children,
+      onNewThread,
+      onSelectThread,
+      onDeleteThread,
+      renderHeader,
+      toggleIcon,
     },
     ref,
   ): React.ReactElement {
@@ -226,24 +294,10 @@ export const ChatWithSidebar = React.forwardRef<
       threads,
       updateThread,
     } = useThreads({ storageKey });
-    const [internalOpen, setInternalOpen] = React.useState(false);
     const [internalTab, setInternalTab] = React.useState<ChatTab>("chat");
     const showTabs = chatProps.showTabs ?? false;
 
     const isSidebarControlled = controlledOpen !== undefined;
-    const sidebarOpen = isSidebarControlled ? controlledOpen : internalOpen;
-    const toggleSidebar = React.useCallback(() => {
-      if (isSidebarControlled) {
-        onSidebarToggle?.();
-        return;
-      }
-
-      setInternalOpen((prev) => {
-        const next = !prev;
-        onSidebarToggle?.();
-        return next;
-      });
-    }, [isSidebarControlled, onSidebarToggle]);
 
     const isTabControlled = controlledTab !== undefined;
     const activeTab = controlledTab ?? internalTab;
@@ -298,6 +352,8 @@ export const ChatWithSidebar = React.forwardRef<
 
     const handleSelectThread = React.useCallback(
       (id: string) => {
+        // Consumer override runs first; returning `false` skips the internal action.
+        if (onSelectThread?.(id) === false) return;
         stopChat?.();
         const currentActiveId = activeIdRef.current;
         if (currentActiveId && messagesRef.current.length > 0) {
@@ -308,10 +364,12 @@ export const ChatWithSidebar = React.forwardRef<
         setMessages(thread?.messages ?? []);
         setInput?.("");
       },
-      [selectThread, updateThread, setMessages, setInput, stopChat],
+      [selectThread, updateThread, setMessages, setInput, stopChat, onSelectThread],
     );
 
     const handleNewThread = React.useCallback(() => {
+      // Consumer override runs first; returning `false` skips the internal action.
+      if (onNewThread?.() === false) return;
       stopChat?.();
       const currentActiveId = activeIdRef.current;
       if (currentActiveId && messagesRef.current.length > 0) {
@@ -320,7 +378,20 @@ export const ChatWithSidebar = React.forwardRef<
       const nextThread = createThread();
       setMessages(nextThread.messages);
       setInput?.("");
-    }, [createThread, updateThread, setMessages, setInput, stopChat]);
+    }, [createThread, updateThread, setMessages, setInput, stopChat, onNewThread]);
+
+    const handleDeleteThread = React.useCallback(
+      (id: string) => {
+        // Consumer override runs first; returning `false` skips the internal action.
+        if (onDeleteThread?.(id) === false) return;
+        deleteThread(id);
+        const next = threadsRef.current.find((t) => t.id !== id);
+        setMessages(next?.messages ?? []);
+      },
+      [deleteThread, setMessages, onDeleteThread],
+    );
+
+    const tokenCSS = React.useMemo(() => generateTokenCSS(), []);
 
     if (!showSidebar) {
       return (
@@ -335,61 +406,54 @@ export const ChatWithSidebar = React.forwardRef<
       );
     }
 
-    const tokenCSS = React.useMemo(() => generateTokenCSS(), []);
-
     return (
       <div
         ref={ref}
-        className={cn("flex h-full bg-[var(--background)]", className)}
+        className={cn("h-full bg-[var(--background)]", className)}
         data-vf-chat=""
       >
         <style nonce={nonce} dangerouslySetInnerHTML={{ __html: tokenCSS }} />
-        {sidebarOpen && (
-          <ChatSidebar
-            threads={threads}
-            activeThreadId={activeThreadId}
-            onSelectThread={handleSelectThread}
-            onDeleteThread={(id) => {
-              deleteThread(id);
-              const next = threadsRef.current.find((t) => t.id !== id);
-              setMessages(next?.messages ?? []);
-            }}
-            onRenameThread={renameThread}
-            onNewThread={handleNewThread}
-          />
-        )}
-        <div className="flex-1 min-w-0 flex flex-col">
-          <div className="flex items-center px-3 pt-4 pb-1 shrink-0">
-            <button
-              type="button"
-              onClick={toggleSidebar}
-              className="size-8 inline-flex items-center justify-center rounded-full text-[var(--faint)] transition-colors hover:bg-[var(--tertiary)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--background)]"
-              aria-label={sidebarOpen ? "Close sidebar" : "Open sidebar"}
-            >
-              <PanelLeftIcon className="size-[18px]" />
-            </button>
-            {showTabs && (
-              <div className="flex-1 flex justify-center">
-                <TabSwitcher
-                  activeTab={activeTab}
-                  onTabChange={handleTabChange}
-                  className="py-0"
-                />
-              </div>
-            )}
-            {showTabs && <div className="size-8 shrink-0" />}
-          </div>
-          <Chat
-            messages={messages}
-            model={model}
-            onModelChange={onModelChange}
-            className="flex-1 min-h-0"
-            activeTab={activeTab}
-            onTabChange={handleTabChange}
-            hideTabSwitcher
-            {...chatProps}
-          />
-        </div>
+        <AppShell
+          className="h-full"
+          open={isSidebarControlled ? { left: controlledOpen } : undefined}
+          defaultOpen={isSidebarControlled ? undefined : { left: false }}
+          onOpenChange={(side) => {
+            if (side === "left") onSidebarToggle?.();
+          }}
+        >
+          <AppShell.Sidebar side="left" width={240} aria-label="Conversations">
+            <ChatSidebar
+              fill
+              threads={threads}
+              activeThreadId={activeThreadId}
+              onSelectThread={handleSelectThread}
+              onDeleteThread={handleDeleteThread}
+              onRenameThread={renameThread}
+              onNewThread={handleNewThread}
+            />
+          </AppShell.Sidebar>
+          <AppShell.Main>
+            <ShellHeader
+              renderHeader={renderHeader}
+              toggleIcon={toggleIcon}
+              showTabs={showTabs}
+              activeTab={activeTab}
+              onTabChange={handleTabChange}
+            />
+            <AppShell.Content className="flex flex-col">
+              <Chat
+                messages={messages}
+                model={model}
+                onModelChange={onModelChange}
+                className="flex-1 min-h-0"
+                activeTab={activeTab}
+                onTabChange={handleTabChange}
+                hideTabSwitcher
+                {...chatProps}
+              />
+            </AppShell.Content>
+          </AppShell.Main>
+        </AppShell>
       </div>
     );
   },

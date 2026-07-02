@@ -23,6 +23,17 @@ export interface ChatReasoningPart {
   state?: ChatPartState;
 }
 
+/** Chat message part that carries an uploaded file or image attachment. */
+export interface ChatFilePart {
+  type: "file";
+  /** MIME type of the file, e.g. "image/png" or "application/pdf". */
+  mediaType: string;
+  /** Resolved URL of the uploaded file (from the upload endpoint). */
+  url: string;
+  /** Original filename shown to the user. */
+  filename?: string;
+}
+
 /** State for chat tool. */
 export type ChatToolState =
   | "input-streaming"
@@ -78,6 +89,7 @@ export interface ChatDataPart {
 export type ChatMessagePart =
   | ChatTextPart
   | ChatReasoningPart
+  | ChatFilePart
   | ChatToolPart
   | ChatToolResultPart
   | ChatDynamicToolPart

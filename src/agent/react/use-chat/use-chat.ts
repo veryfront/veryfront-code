@@ -15,7 +15,9 @@ import { createError, ensureError, toError } from "#veryfront/errors/veryfront-e
 import { handleAgUiStreamingResponse } from "#veryfront/agent/react/use-chat/streaming/index.ts";
 import type {
   BranchInfo,
+  ChatFilePart,
   ChatMessage,
+  ChatMessagePart,
   InferenceMode,
   ToolOutput,
   UseChatOptions,
@@ -58,6 +60,18 @@ export function findBranchUserMessageIndex(
   return messages.findIndex((m) =>
     m.role === "user" && branchKeyByMessageId.get(m.id) === branchKey
   );
+}
+
+/**
+ * Build the parts for an outgoing user message. File attachments lead (before
+ * the text) so the model sees the referenced files first — matching how AI-SDK
+ * orders multimodal parts. Exported for unit testing.
+ */
+export function buildUserMessageParts(
+  text: string,
+  files?: ChatFilePart[],
+): ChatMessagePart[] {
+  return [...(files ?? []), { type: "text", text }];
 }
 
 export function resolveUseChatStreamHandler(
@@ -132,7 +146,14 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
    * Send a message and stream assistant updates.
    */
   const sendMessage = useCallback(
-    async (message: { text: string; baseMessages?: ChatMessage[]; userMessageId?: string }) => {
+    async (
+      message: {
+        text: string;
+        files?: ChatFilePart[];
+        baseMessages?: ChatMessage[];
+        userMessageId?: string;
+      },
+    ) => {
       // Abort any in-flight request before starting a new one
       abortControllerRef.current?.abort();
       abortControllerRef.current = null;
@@ -141,7 +162,8 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       const userMessage: ChatMessage = {
         id: message.userMessageId ?? generateClientId("msg"),
         role: "user",
-        parts: [{ type: "text", text: message.text }],
+        parts: buildUserMessageParts(message.text, message.files),
+        createdAt: new Date().toISOString(),
       };
 
       const base = message.baseMessages ?? messagesRef.current;
@@ -215,7 +237,12 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
               return prev.map((
                 m,
               ) => (m.id === currentMessageIdRef.current
-                ? { ...withMeta, metadata: { ...m.metadata, ...withMeta.metadata } }
+                ? {
+                  ...withMeta,
+                  // Keep the timestamp from when the turn first streamed in.
+                  createdAt: m.createdAt ?? withMeta.createdAt,
+                  metadata: { ...m.metadata, ...withMeta.metadata },
+                }
                 : m)
               );
             });
@@ -263,7 +290,17 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
               hasAddedStreamingMessage = true;
               setMessages((
                 prev,
-              ) => [...prev, { id, role: "assistant", parts, metadata }]);
+              ) => [
+                ...prev,
+                {
+                  id,
+                  role: "assistant",
+                  parts,
+                  metadata,
+                  // Stamp when the turn first appears; `onMessage` preserves it.
+                  createdAt: new Date().toISOString(),
+                },
+              ]);
               return;
             }
 

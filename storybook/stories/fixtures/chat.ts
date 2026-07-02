@@ -58,6 +58,19 @@ export const attachments: AttachmentInfo[] = [
   { id: "log", name: "runtime-log.txt", size: 8427, type: "text/plain" },
 ];
 
+/**
+ * Map dropped / picked `File`s to `AttachmentInfo` pills — the shape a real
+ * `onAttach`/`onDrop` handler produces once files land in composer state.
+ */
+export function filesToAttachments(files: FileList): AttachmentInfo[] {
+  return Array.from(files).map((file, index) => ({
+    id: `${file.name}-${file.size}-${index}`,
+    name: file.name,
+    size: file.size,
+    type: file.type,
+  }));
+}
+
 export const uploads: UploadedFile[] = [
   { id: "upload-1", name: "run-analysis.csv", size: 24424, type: "text/csv" },
   {
@@ -95,6 +108,25 @@ export const runningToolPart: ChatToolPart<"search_docs"> = {
   toolName: "search_docs",
   state: "input-available",
   input: { query: "agent run persistence" },
+};
+
+// Skill tool parts render as the compact single-line `ToolCall` variant
+// (`<ToolCall variant="compact" />`, auto-default for `load_skill` parts).
+export const loadedSkillToolPart: ChatToolPart<"load_skill"> = {
+  type: "tool-load_skill",
+  toolCallId: "tool-load-skill-1",
+  toolName: "load_skill",
+  state: "output-available",
+  input: { skillId: "support-escalation" },
+  output: { loaded: true },
+};
+
+export const loadingSkillToolPart: ChatToolPart<"load_skill"> = {
+  type: "tool-load_skill",
+  toolCallId: "tool-load-skill-loading",
+  toolName: "load_skill",
+  state: "input-available",
+  input: { skillId: "support-escalation" },
 };
 
 export const chatMessages: ChatMessage[] = [

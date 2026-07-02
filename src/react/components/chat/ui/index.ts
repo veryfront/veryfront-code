@@ -7,6 +7,24 @@
  * @module react/components/chat/ui
  */
 export { cva, cx, type VariantProps } from "./cva.ts";
+export {
+  AppShell,
+  type AppShellHeaderProps,
+  type AppShellOpenState,
+  type AppShellProps,
+  type AppShellSide,
+  type AppShellSidebarProps,
+  type AppShellTriggerProps,
+  useAppShell,
+} from "./app-shell.tsx";
+export {
+  List,
+  ListItem,
+  type ListItemProps,
+  ListLabel,
+  type ListLabelProps,
+  type ListProps,
+} from "./list.tsx";
 export { Slot, type SlotProps } from "./slot.tsx";
 export { Button, type ButtonProps, buttonVariants, LoadingButton } from "./button.tsx";
 export { Badge, type BadgeProps, badgeVariants } from "./badge.tsx";
@@ -81,7 +99,7 @@ export {
   SelectValue,
 } from "./select.tsx";
 export { ScrollFade, type ScrollFadeProps } from "./scroll-fade.tsx";
-export { Tabs, type TabsItemProps, type TabsRootProps } from "./tabs.tsx";
+export { Tabs, TabsItem, type TabsItemProps, type TabsProps } from "./tabs.tsx";
 export {
   Drawer,
   DrawerBody,

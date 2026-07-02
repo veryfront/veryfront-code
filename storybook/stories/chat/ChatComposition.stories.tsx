@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import * as React from "react";
 import {
-  ChatComposer,
+  ChatInput,
   ChatEmpty,
   ChatMessageList,
   ChatRoot,
@@ -26,26 +26,26 @@ import {
 } from "../fixtures/chat";
 
 const importCode =
-  `import { ChatRoot, ChatMessageList, ChatComposer, ChatEmpty, ErrorBanner, Message } from "veryfront/chat"`;
+  `import { ChatRoot, ChatMessageList, ChatInput, ChatEmpty, ErrorBanner, Message } from "veryfront/chat"`;
 
 const compositionTree = `ChatRoot  <- context: messages, input, model, error, sources
   +-- ChatEmpty  <- empty state with quick actions (when no messages)
   +-- ChatMessageList  <- renders the message turns
   |     +-- Message  <- one turn per message (compound parts)
   +-- ErrorBanner  <- inline retry surface when error is set
-  +-- ChatComposer  <- input, model selector, export, submit`;
+  +-- ChatInput  <- input, model selector, export, submit`;
 
 function ChatCompositionDocsPage() {
   return (
     <DocsPage>
       <DocsHero
         title="Composition — Anatomy"
-        lead="Assemble a full chat from the exported building blocks. `ChatRoot` provides context; `ChatMessageList`, `ChatComposer`, `ChatEmpty`, and `ErrorBanner` plug into it."
+        lead="Assemble a full chat from the exported building blocks. `ChatRoot` provides context; `ChatMessageList`, `ChatInput`, `ChatEmpty`, and `ErrorBanner` plug into it."
       />
 
       <DocsSection
         title="Assembled chat"
-        description="`ChatRoot` wraps a `ChatMessageList` and a `ChatComposer`, sharing input, model, and error state."
+        description="`ChatRoot` wraps a `ChatMessageList` and a `ChatInput`, sharing input, model, and error state."
       >
         <DocsExampleAuto of={AssembledChat} />
       </DocsSection>
@@ -183,7 +183,7 @@ function ChatCompositionDocsPage() {
           ]}
         />
         <DocsPropsTable
-          component="ChatComposer"
+          component="ChatInput"
           description="Input, model selector, export, and submit control"
           props={[
             {
@@ -344,7 +344,7 @@ function CompositionCanvas({
               onRetry={() => setMessages(initialMessages)}
             />
           )}
-          <ChatComposer
+          <ChatInput
             input={input}
             onChange={createChangeHandler(setInput)}
             onSubmit={submit}

@@ -118,6 +118,28 @@ type Story = StoryObj<typeof meta>;
 
 export const Default: Story = {
   tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { ChatSidebar } from "veryfront/chat";
+
+const [activeThreadId, setActiveThreadId] = React.useState(threads[0]?.id ?? null);
+const [items, setItems] = React.useState(threads);
+
+<ChatSidebar
+  threads={items}
+  activeThreadId={activeThreadId}
+  onSelectThread={setActiveThreadId}
+  onDeleteThread={(id) =>
+    setItems((current) => current.filter((item) => item.id !== id))}
+  onRenameThread={(id, title) =>
+    setItems((current) =>
+      current.map((item) => (item.id === id ? { ...item, title } : item)))}
+  onNewThread={() => createThread()}
+/>`,
+      },
+    },
+  },
   render: () => {
     const [activeThreadId, setActiveThreadId] = React.useState(
       threads[0]?.id ?? null,
@@ -136,9 +158,7 @@ export const Default: Story = {
                 setItems((current) => current.filter((item) => item.id !== id))}
               onRenameThread={(id, title) =>
                 setItems((current) =>
-                  current.map((item) =>
-                    item.id === id ? { ...item, title } : item
-                  )
+                  current.map((item) => item.id === id ? { ...item, title } : item)
                 )}
               onNewThread={() => undefined}
             />
@@ -151,6 +171,21 @@ export const Default: Story = {
 
 export const Empty: Story = {
   tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { ChatSidebar } from "veryfront/chat";
+
+<ChatSidebar
+  threads={[]}
+  activeThreadId={null}
+  onSelectThread={(id) => selectThread(id)}
+  onDeleteThread={(id) => deleteThread(id)}
+  onNewThread={() => createThread()}
+/>`,
+      },
+    },
+  },
   render: () => (
     <StoryFrame maxWidth="360px">
       <ReviewSurface label="No conversations">

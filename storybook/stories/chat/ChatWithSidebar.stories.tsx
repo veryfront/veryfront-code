@@ -75,14 +75,12 @@ function ChatWithSidebarDocsPage() {
             {
               name: "attachments",
               type: "ChatWithSidebarAttachmentConfig",
-              description:
-                "accept, items, uploads, onAttach, onDrop, onRemoveItem, onRemoveUpload",
+              description: "accept, items, uploads, onAttach, onDrop, onRemoveItem, onRemoveUpload",
             },
             {
               name: "quickActions",
               type: "ChatWithSidebarQuickActionsConfig",
-              description:
-                "suggestions, onSuggestionClick, actions, onAction",
+              description: "suggestions, onSuggestionClick, actions, onAction",
             },
             {
               name: "message",
@@ -92,8 +90,7 @@ function ChatWithSidebarDocsPage() {
             {
               name: "features",
               type: "ChatWithSidebarFeatureConfig",
-              description:
-                "Toggles: steps, tabs, sources, export, scrollButton, messageActions",
+              description: "Toggles: steps, tabs, sources, export, scrollButton, messageActions",
             },
             {
               name: "tabs",
@@ -236,5 +233,60 @@ function SidebarReview(): React.ReactElement {
 
 export const Default: Story = {
   tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { ChatWithSidebar } from "veryfront/chat";
+
+<ChatWithSidebar
+  chat={{
+    messages,
+    input,
+    onChange: (e) => setInput(e.currentTarget.value),
+    onSubmit: handleSubmit,
+    reload,
+    stop,
+    setInput,
+    model,
+    activeModel: model,
+    onModelChange: setModel,
+    inferenceMode: "server-local",
+    setMessages,
+  }}
+  sidebar={{
+    open: sidebarOpen,
+    onToggle: () => setSidebarOpen((open) => !open),
+    storageKey: "veryfront-sidebar",
+  }}
+  models={{ options: modelOptions }}
+  attachments={{
+    accept: ".md,.txt,.csv",
+    items: attachments,
+    uploads,
+    onAttach: handleAttach,
+    onRemoveItem: handleRemoveItem,
+    onRemoveUpload: handleRemoveUpload,
+  }}
+  quickActions={{
+    suggestions: ["Plan rollout", "Find test gaps", "Draft release note"],
+    onSuggestionClick: setInput,
+    actions: quickActions,
+    onAction: (action) => setInput(action.prompt ?? action.label),
+  }}
+  features={{
+    tabs: true,
+    sources: true,
+    steps: true,
+    export: true,
+    scrollButton: true,
+    messageActions: true,
+  }}
+  tabs={{ active: tab, onChange: setTab }}
+  maxHeight="100%"
+  placeholder="Ask about this project"
+/>`,
+      },
+    },
+  },
   render: () => <SidebarReview />,
 };

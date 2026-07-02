@@ -26,7 +26,7 @@
  * <Chat.Root messages={messages} input={input}>
  *   <Chat.Empty title="Ask anything" />
  *   <Chat.MessageList messages={messages} />
- *   <Chat.Composer input={input} onChange={onChange} />
+ *   <Chat.Input input={input} onChange={onChange} />
  * </Chat.Root>
  * ```
  *
@@ -48,10 +48,10 @@ import * as React from "react";
 import { useChat, useVoiceInput } from "#veryfront/agent/react";
 import { useAgentMetadata } from "#veryfront/agent/react/use-agent-metadata.ts";
 import type { AgentMetadata } from "#veryfront/agent/react/use-agent-metadata.ts";
-import { AgentAvatar } from "./composition/agent-avatar.tsx";
 import type {
   BranchInfo,
   ChatDynamicToolPart,
+  ChatFilePart,
   ChatMessage,
   ChatToolPart,
   InferenceMode,
@@ -60,6 +60,7 @@ import { type ChatTheme, defaultChatTheme, mergeThemes } from "../theme.ts";
 import type { ModelOption } from "../model-selector.tsx";
 import type { Source } from "./components/sources.tsx";
 import type { AttachmentInfo } from "./components/attachment-pill.tsx";
+import { useUpload } from "./hooks/use-upload.ts";
 import type { FeedbackValue } from "./components/message-feedback.tsx";
 import type { ChatTab } from "./components/tab-switcher.tsx";
 import type { UploadedFile } from "./components/uploads-panel.tsx";
@@ -67,13 +68,13 @@ import type { QuickAction } from "./components/quick-actions.tsx";
 
 // Composition imports (used in the Chat preset)
 import { ChatRoot } from "./composition/chat-root.tsx";
-import { ChatComposer } from "./composition/chat-composer.tsx";
+import { ChatInput } from "./composition/chat-composer.tsx";
 import { ChatMessageList } from "./composition/chat-message-list.tsx";
 import { ChatEmpty } from "./composition/chat-empty.tsx";
+import { AgentAvatar } from "./composition/agent-avatar.tsx";
 import { ChatIf } from "./composition/chat-if.tsx";
 import { ErrorBanner } from "./composition/error-banner.tsx";
 import { Message } from "./composition/message.tsx";
-import { DropZoneOverlay } from "./components/drop-zone.tsx";
 import { ChatMessagesSkeleton } from "./components/chat-messages-skeleton.tsx";
 import { TabSwitcher } from "./components/tab-switcher.tsx";
 import { UploadsPanel } from "./components/uploads-panel.tsx";
@@ -96,7 +97,7 @@ export {
   Suggestions,
   type SuggestionsProps,
 } from "./components/empty-state.tsx";
-export { MessageActions, type MessageActionsProps } from "./components/message-actions.tsx";
+export { MessageActionBar, type MessageActionBarProps } from "./components/message-actions.tsx";
 export { MessageEditForm, type MessageEditFormProps } from "./components/message-edit-form.tsx";
 export { BranchPicker, type BranchPickerProps } from "./components/branch-picker.tsx";
 export { DropZoneOverlay, type DropZoneOverlayProps } from "./components/drop-zone.tsx";
@@ -107,7 +108,13 @@ export {
 export { SkillBadge, type SkillBadgeProps } from "./components/skill-badge.tsx";
 export { ToolCallCard, ToolStatusBadge } from "./components/tool-ui.tsx";
 export { InferenceBadge, type InferenceBadgeProps } from "./components/inference-badge.tsx";
-export { type Source, Sources, type SourcesProps } from "./components/sources.tsx";
+export {
+  type Source,
+  SourcePill,
+  type SourcePillProps,
+  Sources,
+  type SourcesProps,
+} from "./components/sources.tsx";
 export { InlineCitation, type InlineCitationProps } from "./components/inline-citation.tsx";
 export {
   type FeedbackValue,
@@ -142,6 +149,11 @@ export {
   type UseThreadsResult,
 } from "./hooks/use-threads.ts";
 export { useUpload, type UseUploadOptions, type UseUploadResult } from "./hooks/use-upload.ts";
+export {
+  useStickToBottom,
+  type UseStickToBottomOptions,
+  type UseStickToBottomResult,
+} from "./hooks/use-stick-to-bottom.ts";
 
 // Re-exports — utils
 export {
@@ -159,8 +171,6 @@ export { downloadMarkdown, exportAsMarkdown } from "./utils/export.ts";
 export {
   AgentAvatar,
   type AgentAvatarProps,
-  ChatComposer,
-  type ChatComposerProps,
   ChatEmpty,
   type ChatEmptyProps,
   ChatEmptyState,
@@ -171,6 +181,8 @@ export {
   type ChatEmptyStateSuggestionsProps,
   ChatIf,
   type ChatIfProps,
+  ChatInput,
+  type ChatInputProps,
   ChatMessageList,
   type ChatMessageListProps,
   ChatRoot,
@@ -245,11 +257,33 @@ export interface ChatProps {
   renderTool?: (tool: ChatToolPart | ChatDynamicToolPart) => React.ReactNode;
   suggestions?: string[];
   onSuggestionClick?: (suggestion: string) => void;
+  /**
+   * Opt-in idle hero for an empty thread (icon + title + optional blurb, plus
+   * `suggestions`). When omitted, an empty thread renders as a blank canvas +
+   * composer — no "What can I help with?" placeholder. Compose `Chat.Empty`
+   * directly for full control.
+   */
   emptyState?: {
     icon?: React.ReactNode;
     title?: string;
     description?: string;
   };
+  /**
+   * The thread is still loading its initial history → render the skeleton
+   * instead of the idle empty state. In app mode (`agentId`) this is derived
+   * automatically while the agent metadata resolves, so the generic
+   * "What can I help with?" never flashes before the agent loads. Set it
+   * yourself in controlled mode.
+   */
+  initializing?: boolean;
+  /** Override the loading skeleton (defaults to `<Chat.Skeleton />`). */
+  skeleton?: React.ReactNode;
+  /**
+   * Agent identity fallback for assistant message headers when a message's own
+   * metadata omits `agentName` / `agentAvatarUrl`. In app mode (`agentId`) this
+   * is filled from agent metadata automatically.
+   */
+  agent?: { name?: string; avatarUrl?: string };
   showScrollButton?: boolean;
   showMessageActions?: boolean;
   models?: ModelOption[];
@@ -260,6 +294,18 @@ export interface ChatProps {
   inferenceMode?: InferenceMode;
   showSources?: boolean;
   onSourceClick?: (source: Source, index: number) => void;
+  /**
+   * The composer's `+` menu and drag-to-attach are on by default — `<Chat>`
+   * keeps the pending files itself unless you wire the attachment props below.
+   * Set `false` to hide the attach control entirely.
+   */
+  enableAttachments?: boolean;
+  /**
+   * Endpoint that pending files POST to (multipart `file`) → `{ url }`. When
+   * omitted, attachments are inlined as base64 `data:` URLs (no backend
+   * required); set this to store files durably (e.g. `"/api/uploads"`).
+   */
+  uploadApi?: string;
   onAttach?: (files: FileList) => void;
   onSelectAttachment?: () => void;
   onDrop?: (files: FileList) => void;
@@ -281,6 +327,8 @@ export interface ChatProps {
   onQuickAction?: (action: QuickAction) => void;
   enableVoice?: boolean;
   onVoice?: () => void;
+  /** Leading composer-toolbar slot (e.g. an `<AgentPicker>`). */
+  toolbarStart?: React.ReactNode;
   /** @internal Hide the built-in TabSwitcher when rendered externally */
   hideTabSwitcher?: boolean;
   children?: React.ReactNode;
@@ -289,7 +337,7 @@ export interface ChatProps {
 // ---------------------------------------------------------------------------
 // Chat — Preset component
 //
-// Composes ChatRoot, ChatMessageList, ChatComposer, ChatEmpty, etc. into a
+// Composes ChatRoot, ChatMessageList, ChatInput, ChatEmpty, etc. into a
 // full-featured chat UI with sensible defaults. For custom layouts, use the
 // building blocks directly.
 // ---------------------------------------------------------------------------
@@ -318,6 +366,9 @@ const ControlledChat = React.forwardRef<HTMLDivElement, ChatProps>(
       suggestions,
       onSuggestionClick,
       emptyState,
+      initializing = false,
+      skeleton,
+      agent,
       showScrollButton = false,
       showMessageActions = true,
       models,
@@ -327,6 +378,7 @@ const ControlledChat = React.forwardRef<HTMLDivElement, ChatProps>(
       inferenceMode,
       showSources = false,
       onSourceClick,
+      enableAttachments = true,
       onAttach,
       onSelectAttachment,
       onDrop,
@@ -346,6 +398,7 @@ const ControlledChat = React.forwardRef<HTMLDivElement, ChatProps>(
       onRemoveUpload,
       quickActions,
       onQuickAction,
+      toolbarStart,
       hideTabSwitcher = false,
       children,
     },
@@ -358,42 +411,56 @@ const ControlledChat = React.forwardRef<HTMLDivElement, ChatProps>(
       ],
     );
 
-    // --- Drag-and-drop ---
-    const dropHandler = onDrop ?? onAttach;
-    const [dragOver, setDragOver] = React.useState(false);
-    const dragCounter = React.useRef(0);
-
-    const handleDragEnter = React.useCallback((e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      dragCounter.current++;
-      if (e.dataTransfer.types.includes("Files")) setDragOver(true);
+    // --- Attachments (batteries-included) ---
+    // The composer's `+` menu and drag-to-attach are on by default: when the
+    // caller wires none of the attachment props, `<Chat>` manages the pending
+    // files itself so `<Chat />` "just works". Pass any attachment prop to take
+    // control; pass `enableAttachments={false}` to hide the control entirely.
+    const isAttachControlled = onAttach !== undefined ||
+      onDrop !== undefined ||
+      attachments !== undefined ||
+      onRemoveAttachment !== undefined ||
+      onSelectAttachment !== undefined;
+    const [internalAttachments, setInternalAttachments] = React.useState<
+      AttachmentInfo[]
+    >([]);
+    const attachIdRef = React.useRef(0);
+    const defaultAttach = React.useCallback((files: FileList) => {
+      const mapped = Array.from(files).map((file) => ({
+        id: `chat-attachment-${attachIdRef.current++}`,
+        name: file.name,
+        size: file.size,
+        type: file.type,
+      }));
+      setInternalAttachments((current) => [...current, ...mapped]);
+    }, []);
+    const defaultRemove = React.useCallback((id: string) => {
+      setInternalAttachments((current) => current.filter((a) => a.id !== id));
     }, []);
 
-    const handleDragLeave = React.useCallback((e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      dragCounter.current--;
-      if (dragCounter.current === 0) setDragOver(false);
-    }, []);
+    const effectiveOnAttach = !enableAttachments
+      ? undefined
+      : isAttachControlled
+      ? onAttach
+      : defaultAttach;
+    const effectiveOnDrop = !enableAttachments
+      ? undefined
+      : isAttachControlled
+      ? onDrop
+      : defaultAttach;
+    const effectiveAttachments = isAttachControlled ? attachments : internalAttachments;
+    const effectiveOnRemove = !enableAttachments
+      ? undefined
+      : isAttachControlled
+      ? onRemoveAttachment
+      : defaultRemove;
 
-    const handleDragOver = React.useCallback((e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-    }, []);
-
-    const handleFileDrop = React.useCallback(
-      (e: React.DragEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        dragCounter.current = 0;
-        setDragOver(false);
-        if (e.dataTransfer.files.length > 0 && dropHandler) {
-          dropHandler(e.dataTransfer.files);
-        }
-      },
-      [dropHandler],
-    );
+    // Clear pending files on submit. App mode already clears its own upload
+    // state; this covers the self-managed (uncontrolled attachment) path.
+    const handleSubmit = React.useCallback((e?: React.FormEvent) => {
+      onSubmit?.(e);
+      if (!isAttachControlled) setInternalAttachments([]);
+    }, [onSubmit, isAttachControlled]);
 
     // --- Tab state ---
     const [internalTab, setInternalTab] = React.useState<ChatTab>("chat");
@@ -417,15 +484,6 @@ const ControlledChat = React.forwardRef<HTMLDivElement, ChatProps>(
     const isEmpty = messages.length === 0;
     const isDocsTab = showTabs && currentTab === "uploads";
 
-    const dragProps = dropHandler
-      ? {
-        onDragEnter: handleDragEnter,
-        onDragLeave: handleDragLeave,
-        onDragOver: handleDragOver,
-        onDrop: handleFileDrop,
-      }
-      : {};
-
     return (
       <ChatRoot
         ref={ref}
@@ -440,9 +498,10 @@ const ControlledChat = React.forwardRef<HTMLDivElement, ChatProps>(
         model={model}
         models={models}
         onModelChange={onModelChange}
-        attachments={attachments}
-        onAttach={onAttach}
-        onRemoveAttachment={onRemoveAttachment}
+        agent={agent}
+        attachments={effectiveAttachments}
+        onAttach={effectiveOnAttach}
+        onRemoveAttachment={effectiveOnRemove}
         editMessage={editMessage}
         getBranches={getBranches}
         switchBranch={switchBranch}
@@ -452,10 +511,7 @@ const ControlledChat = React.forwardRef<HTMLDivElement, ChatProps>(
         theme={userTheme}
         maxHeight={maxHeight}
         className={className}
-        {...dragProps}
       >
-        {dropHandler && <DropZoneOverlay visible={dragOver} accept={attachAccept} />}
-
         {showTabs && !hideTabSwitcher && (
           <TabSwitcher activeTab={currentTab} onTabChange={handleTabChange} />
         )}
@@ -465,20 +521,24 @@ const ControlledChat = React.forwardRef<HTMLDivElement, ChatProps>(
             <UploadsPanel
               uploads={uploads}
               onRemoveUpload={onRemoveUpload}
-              onAttach={onAttach}
+              onAttach={effectiveOnAttach}
               attachAccept={attachAccept}
               className="flex-1 min-h-0"
             />
           )
-          : isEmpty && isLoading
-          // Thread still loading its history → skeleton, not the idle state.
-          ? <ChatMessagesSkeleton />
-          : isEmpty
+          : isEmpty && (isLoading || initializing)
+          // Thread still loading its history (or agent metadata still
+          // resolving) → skeleton, not an idle placeholder.
+          ? (skeleton ?? <ChatMessagesSkeleton />)
+          : isEmpty && emptyState
+          // Idle hero is opt-in: only rendered when the consumer supplies an
+          // `emptyState`. Otherwise an empty thread is just a blank canvas +
+          // composer — no "What can I help with?" placeholder.
           ? (
             <ChatEmpty
-              icon={emptyState?.icon}
-              title={emptyState?.title}
-              description={emptyState?.description}
+              icon={emptyState.icon}
+              title={emptyState.title}
+              description={emptyState.description}
               suggestions={suggestions}
               onSuggestionClick={onSuggestionClick}
             />
@@ -507,10 +567,10 @@ const ControlledChat = React.forwardRef<HTMLDivElement, ChatProps>(
         {error && <ErrorBanner error={error} onRetry={reload} />}
 
         {!isDocsTab && (
-          <ChatComposer
+          <ChatInput
             input={voice.isListening ? voice.transcript || input : input}
             onChange={onChange}
-            onSubmit={onSubmit}
+            onSubmit={handleSubmit}
             isLoading={isLoading}
             placeholder={voice.isListening ? "Listening..." : placeholder}
             theme={theme}
@@ -521,13 +581,15 @@ const ControlledChat = React.forwardRef<HTMLDivElement, ChatProps>(
             models={models}
             model={model}
             onModelChange={onModelChange}
-            onAttach={onAttach}
+            onAttach={effectiveOnAttach}
             onSelectAttachment={onSelectAttachment}
+            onDrop={effectiveOnDrop}
             attachAccept={attachAccept}
-            attachments={attachments}
-            onRemoveAttachment={onRemoveAttachment}
+            attachments={effectiveAttachments}
+            onRemoveAttachment={effectiveOnRemove}
             showExport={showExport}
             messages={messages}
+            toolbarStart={toolbarStart}
           >
             {inferenceMode && inferenceMode !== "cloud" && (
               <InferenceBadge inferenceMode={inferenceMode} />
@@ -538,7 +600,7 @@ const ControlledChat = React.forwardRef<HTMLDivElement, ChatProps>(
                 onActionClick={onQuickAction}
               />
             )}
-          </ChatComposer>
+          </ChatInput>
         )}
 
         {children}
@@ -553,19 +615,46 @@ ControlledChat.displayName = "ControlledChat";
 // consumer writes only `<Chat agentId="…" api="…" />`.
 // ---------------------------------------------------------------------------
 
-function suggestionsToStrings(
+interface AgentSuggestionItem {
+  /** Short chip label — the agent's `title`, falling back to the prompt. */
+  label: string;
+  /** Full text sent to the agent when the chip is clicked. */
+  prompt: string;
+}
+
+/**
+ * Map agent-metadata suggestions to `{ label, prompt }`. The chip shows the
+ * short `title` ("Triage login issue") while the click sends the full `prompt`
+ * ("Triage a customer who cannot sign in after a release.") — so the empty
+ * state stays scannable without truncating what the agent actually receives.
+ */
+function agentSuggestionItems(
   suggestions: AgentMetadata["suggestions"] | undefined,
-): string[] | undefined {
+): AgentSuggestionItem[] {
   const list = suggestions?.suggestions;
-  if (!Array.isArray(list)) return undefined;
-  const out = list
-    .map((s) => {
-      if (s.type === "prompt" && "prompt" in s) return s.prompt;
-      const title = (s as { title?: unknown }).title;
-      return typeof title === "string" ? title : undefined;
-    })
-    .filter((s): s is string => typeof s === "string" && s.length > 0);
-  return out.length > 0 ? out : undefined;
+  if (!Array.isArray(list)) return [];
+  return list.flatMap((s) => {
+    if (s.type !== "prompt" || !("prompt" in s) || !s.prompt) return [];
+    const title = (s as { title?: unknown }).title;
+    const label = typeof title === "string" && title.length > 0 ? title : s.prompt;
+    return [{ label, prompt: s.prompt }];
+  });
+}
+
+/**
+ * Map uploaded attachments to `file` message parts. Only attachments that
+ * finished uploading (have a resolved `url`) are sent — pending/errored ones
+ * are skipped so a half-uploaded file never reaches the agent.
+ */
+function attachmentsToFileParts(items: AttachmentInfo[]): ChatFilePart[] {
+  return items
+    .filter((a): a is AttachmentInfo & { url: string } => Boolean(a.url))
+    .map((a) => ({
+      type: "file",
+      mediaType: a.type ?? "application/octet-stream",
+      url: a.url,
+      filename: a.name,
+    }));
 }
 
 const UncontrolledChat = React.forwardRef<HTMLDivElement, ChatProps>(
@@ -581,6 +670,17 @@ const UncontrolledChat = React.forwardRef<HTMLDivElement, ChatProps>(
       emptyState,
       // App mode defaults the scroll-to-bottom button on (batteries-included).
       showScrollButton = true,
+      // Attachments: default-wired through `useUpload` unless the caller
+      // controls them. With no `uploadApi`, files inline as base64 `data:` URLs
+      // (guest mode — zero backend). Set `uploadApi` to POST to a durable
+      // upload endpoint (multipart `file` → `{ url }`) for real users + a project.
+      uploadApi,
+      enableAttachments = true,
+      onAttach: userOnAttach,
+      onDrop: userOnDrop,
+      attachments: userAttachments,
+      onRemoveAttachment: userOnRemoveAttachment,
+      onSubmit: userOnSubmit,
       ...rest
     },
     ref,
@@ -591,9 +691,19 @@ const UncontrolledChat = React.forwardRef<HTMLDivElement, ChatProps>(
       onError,
       body: agentId ? { agentId } : undefined,
     });
-    const { agent } = useAgentMetadata(agentId);
+    const { agent, error: agentError } = useAgentMetadata(agentId);
 
-    // Empty state fed from agent metadata: avatar (icon slot) + name + blurb.
+    // App mode owns the loading signal: from the very first paint until the
+    // agent resolves (or errors) we render the skeleton — never flash an idle
+    // placeholder first. Keyed off "agent not yet here" rather than the hook's
+    // `isLoading` flag so there's no one-frame gap on mount. Works out of the
+    // box — no `isLoading` wiring from the consumer.
+    const agentInitializing = Boolean(agentId) && !agent && !agentError;
+
+    // Agent-driven empty state: avatar + name + description, shown once the
+    // agent resolves (the skeleton covers the load, so the generic
+    // "What can I help with?" placeholder never flashes). A consumer-supplied
+    // `emptyState` still wins.
     const derivedEmptyState = React.useMemo(() => {
       if (emptyState) return emptyState;
       if (!agent) return undefined;
@@ -610,13 +720,40 @@ const UncontrolledChat = React.forwardRef<HTMLDivElement, ChatProps>(
       };
     }, [emptyState, agent]);
 
+    // Chips show the short `title`; the click sends the full `prompt`.
+    const suggestionItems = React.useMemo(
+      () => agentSuggestionItems(agent?.suggestions),
+      [agent],
+    );
     const derivedSuggestions = suggestionsProp ??
-      suggestionsToStrings(agent?.suggestions);
+      (suggestionItems.length > 0 ? suggestionItems.map((s) => s.label) : undefined);
 
     const handleSuggestion = onSuggestionClick ??
-      ((suggestion: string) => {
-        void chat.sendMessage({ text: suggestion });
+      ((label: string) => {
+        const item = suggestionItems.find((s) => s.label === label);
+        void chat.sendMessage({ text: item?.prompt ?? label });
       });
+
+    // Batteries-included attachments: unless the caller controls them, files
+    // uploaded via the `+` menu / drag land here, ride along on submit as
+    // `file` parts, and clear once sent.
+    const upload = useUpload({ api: uploadApi });
+    const attachControlled = userOnAttach !== undefined ||
+      userOnDrop !== undefined ||
+      userAttachments !== undefined ||
+      userOnRemoveAttachment !== undefined;
+    const manageAttachments = enableAttachments && !attachControlled;
+
+    const submitWithAttachments = React.useCallback((e?: React.FormEvent) => {
+      e?.preventDefault();
+      if (chat.isLoading) return;
+      const text = chat.input.trim();
+      const files = attachmentsToFileParts(upload.attachments);
+      if (!text && files.length === 0) return;
+      chat.setInput("");
+      upload.clear();
+      void chat.sendMessage({ text, files });
+    }, [chat, upload]);
 
     return (
       <ControlledChat
@@ -624,7 +761,7 @@ const UncontrolledChat = React.forwardRef<HTMLDivElement, ChatProps>(
         messages={chat.messages}
         input={chat.input}
         onChange={chat.onChange}
-        onSubmit={chat.onSubmit}
+        onSubmit={manageAttachments ? submitWithAttachments : (userOnSubmit ?? chat.onSubmit)}
         stop={chat.stop}
         reload={() => void chat.reload()}
         setInput={chat.setInput}
@@ -639,9 +776,16 @@ const UncontrolledChat = React.forwardRef<HTMLDivElement, ChatProps>(
         getBranches={chat.getBranches}
         switchBranch={chat.switchBranch}
         emptyState={derivedEmptyState}
+        agent={agent ? { name: agent.name, avatarUrl: agent.avatarUrl ?? undefined } : undefined}
+        initializing={agentInitializing}
         suggestions={derivedSuggestions}
         onSuggestionClick={handleSuggestion}
         showScrollButton={showScrollButton}
+        enableAttachments={enableAttachments}
+        onAttach={manageAttachments ? upload.upload : userOnAttach}
+        onDrop={manageAttachments ? upload.upload : userOnDrop}
+        attachments={manageAttachments ? upload.attachments : userAttachments}
+        onRemoveAttachment={manageAttachments ? upload.remove : userOnRemoveAttachment}
         {...rest}
       />
     );
@@ -656,7 +800,7 @@ UncontrolledChat.displayName = "UncontrolledChat";
  *   `api`; `<Chat>` wires `useChat` + `useAgentMetadata` internally.
  * - **Controlled mode:** pass `messages` + `input` to drive it yourself.
  */
-export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
+const ChatBase = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
   props,
   ref,
 ): React.ReactElement {
@@ -668,29 +812,36 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
     ? <ControlledChat ref={ref} {...props} />
     : <UncontrolledChat ref={ref} {...props} />;
 });
-Chat.displayName = "Chat";
+ChatBase.displayName = "Chat";
 
 // ---------------------------------------------------------------------------
-// ChatComponents — Compound API via Object.assign
+// Chat — Compound API via Object.assign. The default export IS the compound, so
+// `Chat.Root` / `Chat.Empty` / `Chat.Skeleton` / … are all typed off the same
+// import (`ChatComponents` kept as a back-compat alias).
 // ---------------------------------------------------------------------------
 
-export type ChatComponentsType = typeof Chat & {
+export type ChatComponentsType = typeof ChatBase & {
   Root: typeof ChatRoot;
   MessageList: typeof ChatMessageList;
-  Composer: typeof ChatComposer;
+  Input: typeof ChatInput;
   Empty: typeof ChatEmpty;
+  Skeleton: typeof ChatMessagesSkeleton;
   If: typeof ChatIf;
   Message: typeof Message;
   ErrorBanner: typeof ErrorBanner;
 };
 
 /** Render chat components. */
-export const ChatComponents: ChatComponentsType = Object.assign(Chat, {
+export const Chat: ChatComponentsType = Object.assign(ChatBase, {
   Root: ChatRoot,
   MessageList: ChatMessageList,
-  Composer: ChatComposer,
+  Input: ChatInput,
   Empty: ChatEmpty,
+  Skeleton: ChatMessagesSkeleton,
   If: ChatIf,
   Message: Message,
   ErrorBanner: ErrorBanner,
 });
+
+/** @deprecated Back-compat alias — `Chat` is now the compound itself. */
+export const ChatComponents: ChatComponentsType = Chat;

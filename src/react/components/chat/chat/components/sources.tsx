@@ -14,11 +14,16 @@ export interface SourcesProps {
   sources: Source[];
   className?: string;
   onSourceClick?: (source: Source, index: number) => void;
+  /**
+   * Optional render-prop for each source pill. When provided, `Sources` maps
+   * items through it instead of the default `SourcePill`.
+   */
+  renderPill?: (source: Source, index: number) => React.ReactNode;
 }
 
 /** Render sources. */
 export const Sources = React.forwardRef<HTMLDivElement, SourcesProps>(
-  function Sources({ sources, className, onSourceClick }, ref) {
+  function Sources({ sources, className, onSourceClick, renderPill }, ref) {
     if (sources.length === 0) return null;
 
     return (
@@ -27,14 +32,22 @@ export const Sources = React.forwardRef<HTMLDivElement, SourcesProps>(
         className={cn("mt-1", className)}
       >
         <div className="flex flex-wrap gap-2">
-          {sources.map((source, index) => (
-            <SourcePill
-              key={`${source.title}-${index}`}
-              source={source}
-              index={index}
-              onClick={onSourceClick ? () => onSourceClick(source, index) : undefined}
-            />
-          ))}
+          {sources.map((source, index) =>
+            renderPill
+              ? (
+                <React.Fragment key={`${source.title}-${index}`}>
+                  {renderPill(source, index)}
+                </React.Fragment>
+              )
+              : (
+                <SourcePill
+                  key={`${source.title}-${index}`}
+                  source={source}
+                  index={index}
+                  onClick={onSourceClick ? () => onSourceClick(source, index) : undefined}
+                />
+              )
+          )}
         </div>
       </div>
     );
@@ -42,14 +55,17 @@ export const Sources = React.forwardRef<HTMLDivElement, SourcesProps>(
 );
 Sources.displayName = "Sources";
 
-interface SourcePillProps {
+/** Props accepted by an individual source pill. */
+export interface SourcePillProps {
   source: Source;
   index: number;
   onClick?: () => void;
+  className?: string;
 }
 
-function SourcePill(
-  { source, index, onClick }: SourcePillProps,
+/** Render a single source pill with hover preview and score-color behaviour. */
+export function SourcePill(
+  { source, index, onClick, className }: SourcePillProps,
 ): React.ReactElement {
   const [showPreview, setShowPreview] = React.useState(false);
 
@@ -65,6 +81,7 @@ function SourcePill(
           "bg-transparent text-[var(--foreground)]",
           "transition-colors hover:bg-[var(--tertiary)]",
           onClick ? "cursor-pointer" : "cursor-default",
+          className,
         )}
       >
         <span className="flex size-4 shrink-0 items-center justify-center rounded-full border border-[var(--outline-border)] text-xs font-medium">
@@ -89,11 +106,10 @@ function SourcePill(
 
       {/* Hover preview */}
       {showPreview && source.snippet && (
-        <div className="absolute bottom-full left-0 mb-2 z-50 w-60 pointer-events-none">
-          <div className="rounded-md bg-[var(--popover)] px-2.5 py-1 text-left">
+        <div className="absolute bottom-full left-0 mb-2 z-50 w-64 pointer-events-none animate-in fade-in duration-150">
+          <div className="rounded-lg border border-[var(--outline-border)] bg-[var(--popover)] px-3 py-2 text-left shadow-md">
             <p className="text-xs text-[var(--foreground)] line-clamp-3 leading-relaxed">
-              {source.snippet.slice(0, 150)}
-              {source.snippet.length > 150 ? "..." : ""}
+              {source.snippet}
             </p>
           </div>
         </div>

@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useState } from "react";
-import { Tabs } from "../../../src/react/components/chat/ui/index.ts";
+import { Tabs, TabsItem } from "../../../src/react/components/chat/ui/index.ts";
 import {
   DocsCode,
   DocsComposition,
@@ -13,8 +13,8 @@ import {
 
 const importCode = `import { Tabs } from "veryfront/chat/ui"`;
 
-const compositionTree = `Tabs.Root              <- Tablist container, manages active state
-+-- Tabs.Item          <- Individual tab (button or anchor)`;
+const compositionTree = `Tabs              <- Tablist container, manages active state
++-- TabsItem          <- Individual tab (button or anchor)`;
 
 function TabsDocsPage() {
   return (
@@ -67,7 +67,7 @@ function TabsDocsPage() {
 
       <DocsSection title="API Reference">
         <DocsPropsTable
-          component="Tabs.Root"
+          component="Tabs"
           description="Tablist container — manages active state and passes context to items"
           props={[
             {
@@ -94,7 +94,7 @@ function TabsDocsPage() {
           ]}
         />
         <DocsPropsTable
-          component="Tabs.Item"
+          component="TabsItem"
           description="Individual tab — renders as a button, or an anchor when href is set"
           props={[
             {
@@ -116,13 +116,13 @@ function TabsDocsPage() {
 
 const meta = {
   title: "Chat/UI/Tabs",
-  component: Tabs.Root,
+  component: Tabs,
   tags: ["autodocs"],
   parameters: {
     layout: "centered",
     docs: { page: TabsDocsPage },
   },
-} satisfies Meta<typeof Tabs.Root>;
+} satisfies Meta<typeof Tabs>;
 
 export default meta;
 type Story = StoryObj<typeof meta>;
@@ -132,11 +132,11 @@ export const Default: Story = {
   render: () => {
     const [active, setActive] = useState("projects");
     return (
-      <Tabs.Root value={active} onValueChange={setActive}>
-        <Tabs.Item value="projects">Projects</Tabs.Item>
-        <Tabs.Item value="templates">Templates</Tabs.Item>
-        <Tabs.Item value="settings">Settings</Tabs.Item>
-      </Tabs.Root>
+      <Tabs value={active} onValueChange={setActive}>
+        <TabsItem value="projects">Projects</TabsItem>
+        <TabsItem value="templates">Templates</TabsItem>
+        <TabsItem value="settings">Settings</TabsItem>
+      </Tabs>
     );
   },
 };
@@ -147,10 +147,10 @@ export const ChatUploads: Story = {
   render: () => {
     const [active, setActive] = useState("chat");
     return (
-      <Tabs.Root value={active} onValueChange={setActive}>
-        <Tabs.Item value="chat">Chat</Tabs.Item>
-        <Tabs.Item value="uploads">Uploads</Tabs.Item>
-      </Tabs.Root>
+      <Tabs value={active} onValueChange={setActive}>
+        <TabsItem value="chat">Chat</TabsItem>
+        <TabsItem value="uploads">Uploads</TabsItem>
+      </Tabs>
     );
   },
 };
@@ -161,10 +161,10 @@ export const SmallSize: Story = {
   render: () => {
     const [active, setActive] = useState("jobs");
     return (
-      <Tabs.Root value={active} onValueChange={setActive} size="sm">
-        <Tabs.Item value="jobs">Jobs</Tabs.Item>
-        <Tabs.Item value="cron-jobs">Cron Jobs</Tabs.Item>
-      </Tabs.Root>
+      <Tabs value={active} onValueChange={setActive} size="sm">
+        <TabsItem value="jobs">Jobs</TabsItem>
+        <TabsItem value="cron-jobs">Cron Jobs</TabsItem>
+      </Tabs>
     );
   },
 };
@@ -175,11 +175,11 @@ export const SecondaryHeader: Story = {
   render: () => {
     const [active, setActive] = useState("chunks");
     return (
-      <Tabs.Root value={active} onValueChange={setActive} size="sm">
-        <Tabs.Item value="chunks">Chunks</Tabs.Item>
-        <Tabs.Item value="embeddings">Embeddings</Tabs.Item>
-        <Tabs.Item value="cache">Cache</Tabs.Item>
-      </Tabs.Root>
+      <Tabs value={active} onValueChange={setActive} size="sm">
+        <TabsItem value="chunks">Chunks</TabsItem>
+        <TabsItem value="embeddings">Embeddings</TabsItem>
+        <TabsItem value="cache">Cache</TabsItem>
+      </Tabs>
     );
   },
 };
@@ -190,17 +190,17 @@ export const NavigationWithLinks: Story = {
   render: () => {
     const [active, setActive] = useState("pricing");
     return (
-      <Tabs.Root value={active} onValueChange={setActive}>
-        <Tabs.Item value="pricing" href="#pricing">
+      <Tabs value={active} onValueChange={setActive}>
+        <TabsItem value="pricing" href="#pricing">
           Pricing
-        </Tabs.Item>
-        <Tabs.Item value="docs" href="#docs">
+        </TabsItem>
+        <TabsItem value="docs" href="#docs">
           Docs
-        </Tabs.Item>
-        <Tabs.Item value="blog" href="#blog">
+        </TabsItem>
+        <TabsItem value="blog" href="#blog">
           Blog
-        </Tabs.Item>
-      </Tabs.Root>
+        </TabsItem>
+      </Tabs>
     );
   },
 };

@@ -91,6 +91,18 @@ type Story = StoryObj<typeof meta>;
 
 export const Streaming: Story = {
   tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { Reasoning } from "veryfront/chat";
+
+<Reasoning
+  text="I am comparing the current run state, recent tool calls, and the deploy preconditions before giving a recommendation."
+  isStreaming
+/>`,
+      },
+    },
+  },
   render: () => (
     <StoryFrame maxWidth="640px">
       <ReviewSurface label="Streaming reasoning">
@@ -105,6 +117,15 @@ export const Streaming: Story = {
 
 export const Complete: Story = {
   tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { Reasoning } from "veryfront/chat";
+
+<Reasoning text="The release can proceed after the retry path has a user-visible error and the Storybook build is green." />`,
+      },
+    },
+  },
   render: () => (
     <StoryFrame maxWidth="640px">
       <ReviewSurface label="Collapsed after completion">

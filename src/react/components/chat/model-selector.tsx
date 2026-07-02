@@ -84,6 +84,23 @@ export interface ModelSelectorProps {
    * only, like Studio's desktop picker). @default "pill"
    */
   variant?: "pill" | "icon";
+  /**
+   * Custom trigger renderer. When provided, replaces the default pill/icon
+   * trigger. `model` is the currently-selected option (resolved from `value`);
+   * `open` is the popover open state. Rendered inside the existing
+   * `PopoverTrigger asChild`, so the returned element still toggles the popover.
+   */
+  renderTrigger?: (
+    opts: { model?: ModelOption; open: boolean },
+  ) => React.ReactNode;
+  /**
+   * Custom row renderer. When provided, each option renders through it instead
+   * of the default `ModelRow`. Wire `onSelect` to trigger selection (which also
+   * closes the popover).
+   */
+  renderRow?: (
+    opts: { model: ModelOption; selected: boolean; onSelect: () => void },
+  ) => React.ReactNode;
 }
 
 /** Search box appears once the model count crosses this. */
@@ -137,6 +154,8 @@ export function ModelSelector({
   className,
   disabled,
   variant = "pill",
+  renderTrigger,
+  renderRow,
 }: ModelSelectorProps): React.ReactElement {
   const [open, setOpen] = React.useState(false);
   const selected = models.find((m) => m.value === value) ?? models[0];
@@ -150,7 +169,32 @@ export function ModelSelector({
     onChange(modelValue);
   }
 
-  const trigger = variant === "icon"
+  function renderModel(model: ModelOption): React.ReactNode {
+    const isSelected = model.value === selectedValue;
+    if (renderRow) {
+      return (
+        <React.Fragment key={model.value}>
+          {renderRow({
+            model,
+            selected: isSelected,
+            onSelect: () => handleSelect(model.value),
+          })}
+        </React.Fragment>
+      );
+    }
+    return (
+      <ModelRow
+        key={model.value}
+        model={model}
+        selected={isSelected}
+        onSelect={handleSelect}
+      />
+    );
+  }
+
+  const trigger = renderTrigger
+    ? renderTrigger({ model: selected, open })
+    : variant === "icon"
     ? (
       <button
         type="button"
@@ -194,26 +238,12 @@ export function ModelSelector({
                   key={provider || "__ungrouped"}
                   heading={provider || undefined}
                 >
-                  {items.map((model) => (
-                    <ModelRow
-                      key={model.value}
-                      model={model}
-                      selected={model.value === selectedValue}
-                      onSelect={handleSelect}
-                    />
-                  ))}
+                  {items.map((model) => renderModel(model))}
                 </CommandGroup>
               ))
               : (
                 <CommandGroup>
-                  {models.map((model) => (
-                    <ModelRow
-                      key={model.value}
-                      model={model}
-                      selected={model.value === selectedValue}
-                      onSelect={handleSelect}
-                    />
-                  ))}
+                  {models.map((model) => renderModel(model))}
                 </CommandGroup>
               )}
           </CommandList>

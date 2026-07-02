@@ -225,6 +225,7 @@ export function SelectItem({
   children,
   value,
   disabled,
+  onClick,
   ...props
 }: SelectItemProps): React.ReactElement {
   const ctx = useSelect();
@@ -241,12 +242,15 @@ export function SelectItem({
         "aria-disabled:pointer-events-none aria-disabled:opacity-50",
         className,
       )}
-      onClick={() => {
+      {...props}
+      // Compose the caller's onClick with selection (caller runs first) so a
+      // consumer-supplied handler adds to — never overrides — selection.
+      onClick={(e) => {
         if (disabled) return;
+        onClick?.(e);
         ctx.setValue(value);
         ctx.setOpen(false);
       }}
-      {...props}
     >
       <span className="line-clamp-1">{children}</span>
       {selected && <CheckIcon className="ml-auto pl-2 size-3 shrink-0 box-content" />}

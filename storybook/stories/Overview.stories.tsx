@@ -20,6 +20,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 const COMPONENTS: NavGridEntry[] = [
+  { title: "Chat", id: "chat-components-chat--docs" },
   { title: "ChatEmptyState", id: "chat-components-chatemptystate--docs" },
   { title: "Message", id: "chat-components-message--docs" },
   { title: "AgentCard", id: "chat-components-agentcard--docs" },
@@ -33,12 +34,10 @@ const COMPONENTS: NavGridEntry[] = [
   { title: "Sources", id: "chat-components-sources--docs" },
   { title: "Reasoning", id: "chat-components-reasoning--docs" },
   { title: "ToolCall", id: "chat-components-toolcall--docs" },
-  { title: "SkillTool", id: "chat-components-skilltool--docs" },
   { title: "Markdown", id: "chat-components-markdown--docs" },
 ];
 
 const COMPOSITION: NavGridEntry[] = [
-  { title: "Preset", id: "chat-composition-preset--docs" },
   { title: "Anatomy", id: "chat-composition-anatomy--docs" },
   { title: "With Sidebar", id: "chat-composition-with-sidebar--docs" },
   { title: "Subcomponents", id: "chat-composition-subcomponents--docs" },
@@ -51,6 +50,8 @@ const COMPOSITION: NavGridEntry[] = [
 // The private `chat/ui` primitives the chat components are built on (forked
 // from Veryfront Studio, dependency-light).
 const UI: NavGridEntry[] = [
+  { title: "AppShell", id: "chat-ui-appshell--docs" },
+  { title: "List", id: "chat-ui-list--docs" },
   { title: "Button", id: "chat-ui-button--docs" },
   { title: "IconButton", id: "chat-ui-iconbutton--docs" },
   { title: "Input", id: "chat-ui-input--docs" },
