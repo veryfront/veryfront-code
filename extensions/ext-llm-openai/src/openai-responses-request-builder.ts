@@ -8,8 +8,11 @@ import type {
   OpenAICompatibleLanguageOptions,
   RuntimeToolDefinition,
 } from "./openai-chat-request-builder.ts";
-
-type ProviderReasoningOption = OpenAICompatibleLanguageOptions["reasoning"];
+import {
+  rejectsOpenAISamplingParams,
+  resolveOpenAIReasoningConfig,
+  shouldRequestOpenAIReasoningSummary,
+} from "./openai-reasoning-models.ts";
 
 export type OpenAIResponsesInputItem = Record<string, unknown>;
 
@@ -46,28 +49,6 @@ type WarningCollector = {
     provider: string;
   }>;
 };
-
-function isOpenAIReasoningModel(modelId: string): boolean {
-  return /^o[134](-|$)/.test(modelId);
-}
-
-function resolveOpenAIReasoningEffort(
-  option: ProviderReasoningOption | undefined,
-): "low" | "medium" | "high" | undefined {
-  if (!option || option.enabled !== true) {
-    return undefined;
-  }
-  switch (option.effort) {
-    case "low":
-      return "low";
-    case "high":
-    case "max":
-      return "high";
-    case "medium":
-    default:
-      return "medium";
-  }
-}
 
 function toSnakeCaseRecord(record: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(
@@ -215,9 +196,10 @@ export function buildOpenAIResponsesRequest(
   stream: boolean,
   warnings: WarningCollector,
 ): OpenAIResponsesRequest {
-  const isReasoningModel = isOpenAIReasoningModel(modelId);
-  const reasoningEffort = resolveOpenAIReasoningEffort(options.reasoning);
-  const reasoningEnabled = isReasoningModel || reasoningEffort !== undefined;
+  const reasoning = resolveOpenAIReasoningConfig(modelId, providerName, options.reasoning);
+  const reasoningEnabled = reasoning !== undefined;
+  const samplingRejected = rejectsOpenAISamplingParams(modelId);
+  const dropSamplingParams = reasoningEnabled || samplingRejected;
 
   if (options.topK !== undefined) {
     warnings.push({
@@ -227,7 +209,7 @@ export function buildOpenAIResponsesRequest(
       details: "OpenAI Responses API does not expose top_k; the value was dropped.",
     });
   }
-  if (reasoningEnabled) {
+  if (dropSamplingParams) {
     const dropped: Array<[keyof typeof options, string]> = [
       ["temperature", "temperature"],
       ["topP", "top_p"],
@@ -240,8 +222,9 @@ export function buildOpenAIResponsesRequest(
           type: "unsupported-setting",
           provider: "openai",
           setting: key,
-          details:
-            `Dropped because OpenAI reasoning models reject ${openaiName}. Reasoning was active for this request.`,
+          details: samplingRejected
+            ? `Dropped because this model rejects ${openaiName}.`
+            : `Dropped because reasoning was active for this request and OpenAI rejects ${openaiName} with reasoning.`,
         });
       }
     }
@@ -258,14 +241,21 @@ export function buildOpenAIResponsesRequest(
     ...(options.maxOutputTokens !== undefined
       ? { max_output_tokens: options.maxOutputTokens }
       : {}),
-    ...(!reasoningEnabled && options.temperature !== undefined
+    ...(!dropSamplingParams && options.temperature !== undefined
       ? { temperature: options.temperature }
       : {}),
-    ...(!reasoningEnabled && options.topP !== undefined ? { top_p: options.topP } : {}),
+    ...(!dropSamplingParams && options.topP !== undefined ? { top_p: options.topP } : {}),
     ...(responsesTools ? { tools: responsesTools } : {}),
     ...(options.toolChoice !== undefined ? { tool_choice: options.toolChoice } : {}),
-    ...(reasoningEffort !== undefined
-      ? { reasoning: { effort: reasoningEffort, summary: "auto" } }
+    ...(reasoning !== undefined
+      ? {
+        reasoning: {
+          effort: reasoning.effort,
+          ...(shouldRequestOpenAIReasoningSummary(providerName, reasoning)
+            ? { summary: "auto" }
+            : {}),
+        },
+      }
       : {}),
     ...(typeof options.userId === "string" && options.userId.length > 0
       ? { user: options.userId }

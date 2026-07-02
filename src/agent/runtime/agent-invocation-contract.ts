@@ -2,12 +2,14 @@ import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema, RefinementCtx } from "#veryfront/extensions/schema/index.ts";
 import { ensureBuiltinSchemaValidator } from "#veryfront/extensions/builtin-extensions.ts";
 import { parseAgUiJsonRequestOrError } from "../ag-ui/request-shared.ts";
+import { getRuntimeAgentMarkdownDefinitionSchema } from "./agent-definition.ts";
 
 ensureBuiltinSchemaValidator();
 
 const MAX_TOOL_PARAMETERS_BYTES = 16_384;
 const MAX_CONTEXT_ITEM_BYTES = 16_384;
 const MAX_CONTEXT_TOTAL_BYTES = 65_536;
+const MAX_AGENT_CONFIG_BYTES = 65_536;
 const MAX_FORWARDED_PROPS_BYTES = 196_608;
 const MAX_CREDENTIAL_BYTES = 16_384;
 const encoder = new TextEncoder();
@@ -313,11 +315,23 @@ export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
       { message: "context must be less than 64 KB total" },
     ),
     agentSource: getRuntimeAgentSourceContextSchema().optional(),
+    agentConfig: getRuntimeAgentMarkdownDefinitionSchema().optional().refine(
+      (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_AGENT_CONFIG_BYTES),
+      { message: "agentConfig must be less than 64 KB" },
+    ),
     credentials: getRuntimeAgentCredentialsSchema().optional(),
     forwardedProps: v.record(v.string(), v.unknown()).optional().refine(
       (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_FORWARDED_PROPS_BYTES),
       { message: "forwardedProps must be less than 192 KB" },
     ),
+  }).superRefine((input, ctx) => {
+    if (input.agentConfig && input.agentConfig.id !== input.run.agentId) {
+      ctx.addIssue({
+        code: "custom",
+        message: "agentConfig.id must match run.agentId",
+        path: ["agentConfig", "id"],
+      });
+    }
   })
 );
 
@@ -368,6 +382,7 @@ export type RuntimeAgentControlPlaneStreamRequest = {
   context: RuntimeAgentRunInvocation["context"];
   credentials?: RuntimeAgentRunInvocation["credentials"];
   agentSource?: RuntimeAgentRunInvocation["agentSource"];
+  agentConfig?: RuntimeAgentRunInvocation["agentConfig"];
   forwardedProps?: RuntimeAgentRunInvocation["forwardedProps"];
 };
 
@@ -385,6 +400,7 @@ export function buildRuntimeAgentControlPlaneStreamRequestFromInvocation(
     context: input.context,
     ...(input.credentials ? { credentials: input.credentials } : {}),
     ...(input.agentSource ? { agentSource: input.agentSource } : {}),
+    ...(input.agentConfig ? { agentConfig: input.agentConfig } : {}),
     ...(input.forwardedProps ? { forwardedProps: input.forwardedProps } : {}),
   };
 }

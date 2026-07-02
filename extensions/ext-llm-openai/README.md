@@ -57,7 +57,7 @@ Any model accessible through the OpenAI Chat Completions, Responses, or Embeddin
 
 - **Flagship:** `gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano`, `gpt-4o`, `gpt-4o-mini`
 - **Frontier:** `gpt-5`, `gpt-5-mini`, `gpt-5-nano`
-- **Reasoning:** `o3`, `o4-mini`, `o1`, `o1-mini`, `o3-mini` (sampling parameters are automatically dropped with warnings)
+- **Reasoning:** `gpt-5.4-nano`, current `gpt-5`/`gpt-5.x` reasoning models, `o3`, `o4-mini`, `o1`, `o3-mini` (sampling parameters are automatically dropped with warnings)
 - **Embeddings:** `text-embedding-3-small`, `text-embedding-3-large`
 - **OpenAI-compatible:** Any third-party model reachable via an OpenAI-compatible endpoint (set `OPENAI_BASE_URL`)
 
@@ -74,7 +74,11 @@ The extension accepts configuration through `LLMProviderConfig` when creating ru
 
 ## Model-Specific Behavior
 
-### Reasoning Models (o3, o4-mini, o1)
+### Reasoning Models (GPT-5.x, o3, o4-mini, o1)
+
+Default reasoning params are applied only for native `openai` and `veryfront-cloud` providers.
+OpenAI-compatible providers require explicit `reasoning` options. `gpt-5-chat-latest`,
+`gpt-5.1`, `o1-mini`, and `o1-preview` are left unmodified by default.
 
 Reasoning models automatically:
 
