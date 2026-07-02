@@ -214,6 +214,51 @@ export function normalizeExtensionPackageJson(input: {
   return pkg;
 }
 
+const BARE_IMPORT_SPECIFIER_PATTERNS = [
+  // Static imports with bindings: `import x from "pkg"`, `import { a } from "pkg"`.
+  /^\s*import\s[^"'()]*?from\s*["']([^"'\n]+)["']/gm,
+  // Side-effect-only static imports: `import "pkg";`.
+  /^\s*import\s*["']([^"'\n]+)["']/gm,
+  // Re-exports: `export { a } from "pkg"`, `export * from "pkg"`.
+  /^\s*export\s[^"'()]*?from\s*["']([^"'\n]+)["']/gm,
+  // Dynamic imports: `import("pkg")`.
+  /\bimport\s*\(\s*["']([^"'\n]+)["']\s*\)/g,
+  // CommonJS requires: `require("pkg")`.
+  /\brequire\s*\(\s*["']([^"'\n]+)["']\s*\)/g,
+];
+
+/**
+ * Extracts the npm package names imported via bare specifiers in emitted
+ * JavaScript source. Relative/absolute specifiers and scheme-prefixed
+ * specifiers such as `node:` builtins are ignored, and subpath imports
+ * (`pkg/sub`, `@scope/pkg/sub`) are reduced to their package name.
+ */
+export function bareImportPackageNames(source: string): string[] {
+  const packageNames = new Set<string>();
+
+  for (const pattern of BARE_IMPORT_SPECIFIER_PATTERNS) {
+    for (const match of source.matchAll(pattern)) {
+      const packageName = bareSpecifierPackageName(match[1]!);
+      if (packageName) packageNames.add(packageName);
+    }
+  }
+
+  return [...packageNames].toSorted();
+}
+
+function bareSpecifierPackageName(specifier: string): string | undefined {
+  if (specifier.startsWith(".") || specifier.startsWith("/")) return undefined;
+  // Scheme-prefixed specifiers (node:, data:, https:, ...) are not npm packages.
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(specifier)) return undefined;
+
+  const segments = specifier.split("/");
+  if (specifier.startsWith("@")) {
+    if (segments.length < 2 || !segments[1]) return undefined;
+    return `${segments[0]}/${segments[1]}`;
+  }
+  return segments[0] || undefined;
+}
+
 export function createVeryfrontPeerTypeImportReplacements(input: {
   rootConfig: RootPackageConfig;
   outDir: string;
