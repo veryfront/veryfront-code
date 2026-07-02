@@ -1,11 +1,15 @@
 /****
  * OpenTelemetry OTLP tracing for proxy.
  *
- * Uses the core api-shim for in-process tracing; when ext-observability-opentelemetry
- * is loaded, the shim delegates to the real SDK provider.
+ * The standalone proxy (split mode) does not run the server bootstrap, so it
+ * wires the OTLP SDK itself: it loads ext-observability-opentelemetry, starts
+ * its `OtlpTracingExporter`, and registers the SDK provider with the core
+ * api-shim BEFORE caching a tracer. Without this wiring the shim only ever
+ * hands out no-op tracers and nothing is exported (issue #2723).
  *
  * Env: OTEL_TRACES_ENABLED, OTEL_SERVICE_NAME, OTEL_EXPORTER_OTLP_ENDPOINT,
- *      OTEL_EXPORTER_OTLP_HEADERS
+ *      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, OTEL_EXPORTER_OTLP_HEADERS
+ * (endpoint/headers are consumed by the extension itself.)
  */
 
 import {
@@ -14,6 +18,9 @@ import {
   defaultTextMapGetter,
   defaultTextMapSetter,
   propagation as shimPropagation,
+  setGlobalActiveSpanAccessor,
+  setGlobalMetricsAPI,
+  setGlobalTracerProvider,
   type Span,
   SpanKind,
   SpanStatusCode,
@@ -21,61 +28,149 @@ import {
   type Tracer,
 } from "#veryfront/observability/tracing/api-shim.ts";
 import { getHostTelemetryEnv } from "#veryfront/observability/tracing/telemetry-env.ts";
+import type { TracingExporter } from "#veryfront/extensions/observability/tracing-exporter.ts";
+import {
+  importFirstPartyExtensionModule,
+  isMissingFirstPartyExtensionModule,
+} from "#veryfront/extensions/first-party-import.ts";
 import { proxyLogger } from "./logger.ts";
+
+const TRACING_EXTENSION_SOURCE_DIRECTORY = "ext-observability-opentelemetry";
+const TRACING_EXTENSION_PACKAGE = "@veryfront/ext-observability-opentelemetry";
 
 let initialized = false;
 let tracer: Tracer | null = null;
+let exporter: TracingExporter | null = null;
 
 interface OTLPConfig {
   serviceName: string;
   endpoint: string;
-  headers: Record<string, string>;
   enabled: boolean;
-}
-
-function parseHeaders(headerString: string | undefined): Record<string, string> {
-  if (!headerString) return {};
-
-  const headers: Record<string, string> = {};
-  for (const part of headerString.split(",")) {
-    const [key, ...valueParts] = part.split("=");
-    if (!key || valueParts.length === 0) continue;
-    headers[key.trim()] = valueParts.join("=").trim();
-  }
-  return headers;
 }
 
 function getConfig(): OTLPConfig {
   return {
     enabled: getHostTelemetryEnv("OTEL_TRACES_ENABLED") === "true",
     serviceName: getHostTelemetryEnv("OTEL_SERVICE_NAME") || "veryfront-proxy",
-    endpoint: getHostTelemetryEnv("OTEL_EXPORTER_OTLP_ENDPOINT") || "",
-    headers: parseHeaders(getHostTelemetryEnv("OTEL_EXPORTER_OTLP_HEADERS")),
+    // The extension prefers the traces-specific endpoint; mirror that here so
+    // the gate agrees with what the exporter will actually use.
+    endpoint: getHostTelemetryEnv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") ||
+      getHostTelemetryEnv("OTEL_EXPORTER_OTLP_ENDPOINT") || "",
   };
 }
 
-export async function initializeOTLPWithApis(): Promise<void> {
+export type OtlpGateResult = { ok: true } | { ok: false; reason: string };
+
+/**
+ * Decide whether OTLP tracing should be initialized for this process.
+ * Pure so the decision (and its logged reason) is unit-testable.
+ */
+export function resolveOtlpGate(
+  config: { enabled: boolean; endpoint: string },
+): OtlpGateResult {
+  if (!config.enabled) {
+    return { ok: false, reason: 'Tracing disabled: OTEL_TRACES_ENABLED is not "true"' };
+  }
+  if (!config.endpoint) {
+    return {
+      ok: false,
+      reason:
+        "Tracing disabled: no OTLP endpoint (set OTEL_EXPORTER_OTLP_ENDPOINT or OTEL_EXPORTER_OTLP_TRACES_ENDPOINT)",
+    };
+  }
+  return { ok: true };
+}
+
+type TracingExporterModule = {
+  OtlpTracingExporter: new () => TracingExporter;
+};
+
+/**
+ * Load the OTLP tracing exporter from ext-observability-opentelemetry.
+ *
+ * Resolves the workspace source in repo/binary runs and the npm package in
+ * Node installs. Returns `null` (after logging why) when the extension is not
+ * installed or fails to load — telemetry must never crash the proxy.
+ */
+async function loadTracingExporter(): Promise<TracingExporter | null> {
+  try {
+    const mod = await importFirstPartyExtensionModule<TracingExporterModule>(
+      TRACING_EXTENSION_SOURCE_DIRECTORY,
+      TRACING_EXTENSION_PACKAGE,
+    );
+    if (typeof mod.OtlpTracingExporter !== "function") {
+      proxyLogger.warn(
+        `[otel] Tracing disabled: ${TRACING_EXTENSION_PACKAGE} has no OtlpTracingExporter export`,
+      );
+      return null;
+    }
+    return new mod.OtlpTracingExporter();
+  } catch (error) {
+    if (
+      isMissingFirstPartyExtensionModule(error, [
+        `extensions/${TRACING_EXTENSION_SOURCE_DIRECTORY}/src/index`,
+        TRACING_EXTENSION_PACKAGE,
+      ])
+    ) {
+      proxyLogger.warn(
+        `[otel] Tracing disabled: ${TRACING_EXTENSION_PACKAGE} is not installed; install it alongside veryfront to export traces`,
+      );
+      return null;
+    }
+    proxyLogger.error("[otel] Failed to load tracing extension", error);
+    return null;
+  }
+}
+
+/**
+ * Initialize OTLP tracing for the standalone proxy.
+ *
+ * Loads ext-observability-opentelemetry, starts its exporter, wires the SDK
+ * provider (plus metrics API and active-span accessor) into the core shim,
+ * and only then caches a tracer. Logs `[otel] Initialized` only when a real
+ * provider is wired; otherwise logs why tracing is disabled. Never throws.
+ *
+ * @param loadExporter Test seam; production callers use the default loader.
+ */
+export async function initializeOTLPWithApis(
+  loadExporter: () => Promise<TracingExporter | null> = loadTracingExporter,
+): Promise<void> {
   if (initialized) return;
+  initialized = true;
 
   const config = getConfig();
-
-  if (!config.enabled) {
-    initialized = true;
-    return;
-  }
-
-  if (!config.endpoint) {
-    proxyLogger.warn("[otel] No endpoint configured");
-    initialized = true;
+  const gate = resolveOtlpGate(config);
+  if (!gate.ok) {
+    proxyLogger.info(`[otel] ${gate.reason}`);
     return;
   }
 
   try {
-    // The shim's provider is wired by ext-observability-opentelemetry via bootstrap.ts.
-    // We simply get a tracer from the shim — it delegates to the real SDK
-    // when the extension is active, otherwise returns the no-op tracer.
+    const exporterImpl = await loadExporter();
+    if (!exporterImpl) return; // loader already logged the reason
+
+    // The exporter reads OTEL_* env itself (endpoint, headers, signal gates)
+    // and creates the SDK tracer provider with a batch OTLP span processor.
+    await exporterImpl.start({});
+    exporter = exporterImpl;
+
+    // Wire the shim globals before getTracer() — the tracer is cached below,
+    // so wiring afterwards would freeze the no-op tracer forever.
+    setGlobalTracerProvider(
+      exporterImpl.getProvider() as Parameters<typeof setGlobalTracerProvider>[0],
+    );
+    const metricsApi = exporterImpl.getMetricsAPI();
+    if (metricsApi) {
+      setGlobalMetricsAPI(metricsApi as Parameters<typeof setGlobalMetricsAPI>[0]);
+    }
+    const traceApi = exporterImpl.getTraceAPI?.();
+    if (traceApi) {
+      setGlobalActiveSpanAccessor(
+        traceApi as Parameters<typeof setGlobalActiveSpanAccessor>[0],
+      );
+    }
+
     tracer = shimTrace.getTracer(config.serviceName);
-    initialized = true;
 
     proxyLogger.info("[otel] Initialized", {
       serviceName: config.serviceName,
@@ -83,12 +178,32 @@ export async function initializeOTLPWithApis(): Promise<void> {
     });
   } catch (error) {
     proxyLogger.error("[otel] Init failed", error);
-    initialized = true;
   }
 }
 
+/** Flush pending spans and release the exporter. Safe to call when disabled. */
 export async function shutdownOTLP(): Promise<void> {
+  const active = exporter;
+  exporter = null;
+  tracer = null;
+
+  if (active) {
+    try {
+      await active.shutdown();
+    } catch (error) {
+      proxyLogger.warn("[otel] Exporter shutdown failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
   proxyLogger.info("[otel] Shutdown complete");
+}
+
+/** Reset module state between tests. Mirrors api-shim's `_resetShimForTests`. */
+export function _resetOTLPForTests(): void {
+  initialized = false;
+  tracer = null;
+  exporter = null;
 }
 
 export function extractContext(headers: Headers): Context | undefined {
