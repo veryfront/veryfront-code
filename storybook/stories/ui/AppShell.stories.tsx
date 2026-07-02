@@ -108,10 +108,9 @@ function ConversationsSidebar() {
       className="border-r border-[var(--outline-border)]"
     >
       <AppShell.SidebarHeader
-        border
         className={`flex ${HEADER_H} items-center px-3`}
       >
-        <Button variant="secondary" size="sm" className="w-full">
+        <Button variant="primary" size="sm" className="w-full">
           New chat
         </Button>
       </AppShell.SidebarHeader>
@@ -373,7 +372,6 @@ export const LeftAndRight: Story = {
             className="border-l border-[var(--outline-border)]"
           >
             <AppShell.SidebarHeader
-              border
               className={`flex ${HEADER_H} items-center px-4 text-sm font-medium text-[var(--foreground)]`}
             >
               Details

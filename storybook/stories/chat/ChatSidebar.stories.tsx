@@ -16,10 +16,52 @@ import { ReviewSurface, StoryFrame } from "../support/StoryFrame";
 const importCode = `import { ChatSidebar } from "veryfront/chat"`;
 
 const compositionTree =
-  `ChatSidebar  <- thread list rail, grouped by recency (Today / Yesterday / ...)
-  +-- New thread button  <- onNewThread
-  +-- Thread item  <- onSelectThread / onDeleteThread / onRenameThread
-  +-- Empty state  <- shown when threads is empty`;
+  `ChatSidebar            <- one-shot preset: Root + NewButton + auto List
+  +-- ChatSidebar.Root      <- context provider + rail container
+       +-- ChatSidebar.NewButton  <- primary "new chat" action (onNewThread)
+       +-- ChatSidebar.List       <- scroll region; auto-groups by recency
+            +-- ChatSidebar.Group  <- a labeled recency bucket (Today / ...)
+                 +-- ChatSidebar.Item   <- a thread row (select / rename / delete)
+            +-- ChatSidebar.Empty  <- shown when there are no threads`;
+
+const compositionCode = `import { ChatSidebar } from "veryfront/chat";
+
+// The preset composes these for you; drop to the parts for custom layouts.
+<ChatSidebar.Root
+  threads={items}
+  activeThreadId={activeThreadId}
+  onSelectThread={select}
+  onDeleteThread={remove}
+  onRenameThread={rename}
+  onNewThread={create}
+>
+  <ChatSidebar.NewButton>New chat</ChatSidebar.NewButton>
+
+  {/* Auto: groups by recency, renders the empty state when there are none. */}
+  <ChatSidebar.List />
+
+  {/* …or bring your own grouping / rows: */}
+  <ChatSidebar.List>
+    <ChatSidebar.Group label="Pinned">
+      {pinned.map((t) => <ChatSidebar.Item key={t.id} thread={t} />)}
+    </ChatSidebar.Group>
+  </ChatSidebar.List>
+</ChatSidebar.Root>`;
+
+const customGroupsCode = `import { ChatSidebar } from "veryfront/chat";
+
+// Group threads however you like — Item pulls select/rename/delete from Root.
+<ChatSidebar.Root {...ctx}>
+  <ChatSidebar.NewButton />
+  <ChatSidebar.List>
+    <ChatSidebar.Group label="Pinned">
+      {pinned.map((t) => <ChatSidebar.Item key={t.id} thread={t} />)}
+    </ChatSidebar.Group>
+    <ChatSidebar.Group label="Everything else">
+      {rest.map((t) => <ChatSidebar.Item key={t.id} thread={t} />)}
+    </ChatSidebar.Group>
+  </ChatSidebar.List>
+</ChatSidebar.Root>`;
 
 function ChatSidebarDocsPage() {
   return (
@@ -43,12 +85,25 @@ function ChatSidebarDocsPage() {
         <DocsExampleAuto of={Empty} />
       </DocsSection>
 
-      <DocsSection title="Import">
-        <DocsCode code={importCode} />
+      <DocsSection
+        title="Composition"
+        description="`ChatSidebar` is also a compound. `ChatSidebar.Root` holds the shared state; the parts (`NewButton`, `List`, `Group`, `Item`, `Empty`) read it from context — so you can reorder, restyle, or swap any piece without a render prop."
+      >
+        <DocsExampleAuto of={Composed} />
+        <DocsCode code={compositionCode} />
+        <DocsComposition>{compositionTree}</DocsComposition>
       </DocsSection>
 
-      <DocsSection title="Composition">
-        <DocsComposition>{compositionTree}</DocsComposition>
+      <DocsSection
+        title="Custom groups"
+        description="Skip the recency buckets entirely: give `ChatSidebar.List` your own `Group` / `Item` children. Each `Item` still reads select, rename, and delete from `Root`."
+      >
+        <DocsExampleAuto of={CustomGroups} />
+        <DocsCode code={customGroupsCode} />
+      </DocsSection>
+
+      <DocsSection title="Import">
+        <DocsCode code={importCode} />
       </DocsSection>
 
       <DocsSection title="API Reference">
@@ -147,10 +202,11 @@ const [items, setItems] = React.useState(threads);
     const [items, setItems] = React.useState(threads);
 
     return (
-      <StoryFrame maxWidth="360px">
+      <StoryFrame maxWidth="240px">
         <ReviewSurface label="Sidebar">
-          <div className="h-[520px] overflow-hidden rounded-[var(--radius-lg)] border border-[var(--outline-border)] bg-[var(--sidebar-background)]">
+          <div className="h-[520px] overflow-hidden bg-[var(--sidebar-background)]">
             <ChatSidebar
+              fill
               threads={items}
               activeThreadId={activeThreadId}
               onSelectThread={setActiveThreadId}
@@ -187,10 +243,11 @@ export const Empty: Story = {
     },
   },
   render: () => (
-    <StoryFrame maxWidth="360px">
+    <StoryFrame maxWidth="240px">
       <ReviewSurface label="No conversations">
-        <div className="h-[420px] overflow-hidden rounded-[var(--radius-lg)] border border-[var(--outline-border)] bg-[var(--sidebar-background)]">
+        <div className="h-[420px] overflow-hidden bg-[var(--sidebar-background)]">
           <ChatSidebar
+            fill
             threads={[]}
             activeThreadId={null}
             onSelectThread={() => undefined}
@@ -201,4 +258,101 @@ export const Empty: Story = {
       </ReviewSurface>
     </StoryFrame>
   ),
+};
+
+export const Composed: Story = {
+  name: "Composition",
+  tags: ["!dev"],
+  parameters: {
+    docs: { source: { code: compositionCode } },
+  },
+  render: () => {
+    const [activeThreadId, setActiveThreadId] = React.useState(
+      threads[0]?.id ?? null,
+    );
+    const [items, setItems] = React.useState(threads);
+
+    return (
+      <StoryFrame maxWidth="240px">
+        <ReviewSurface label="Composed from parts">
+          <div className="h-[520px] overflow-hidden bg-[var(--sidebar-background)]">
+            <ChatSidebar.Root
+              fill
+              threads={items}
+              activeThreadId={activeThreadId}
+              onSelectThread={setActiveThreadId}
+              onDeleteThread={(id) =>
+                setItems((current) => current.filter((item) => item.id !== id))}
+              onRenameThread={(id, title) =>
+                setItems((current) =>
+                  current.map((item) => item.id === id ? { ...item, title } : item)
+                )}
+              onNewThread={() => undefined}
+            >
+              <ChatSidebar.NewButton>New chat</ChatSidebar.NewButton>
+              <ChatSidebar.List />
+            </ChatSidebar.Root>
+          </div>
+        </ReviewSurface>
+      </StoryFrame>
+    );
+  },
+};
+
+export const CustomGroups: Story = {
+  name: "Custom groups",
+  tags: ["!dev"],
+  parameters: {
+    docs: { source: { code: customGroupsCode } },
+  },
+  render: () => {
+    const [activeThreadId, setActiveThreadId] = React.useState(
+      threads[0]?.id ?? null,
+    );
+    const [items, setItems] = React.useState(threads);
+    const [pinnedIds, setPinnedIds] = React.useState<string[]>(
+      threads[0]?.id ? [threads[0].id] : [],
+    );
+
+    const pinned = items.filter((t) => pinnedIds.includes(t.id));
+    const rest = items.filter((t) => !pinnedIds.includes(t.id));
+
+    return (
+      <StoryFrame maxWidth="240px">
+        <ReviewSurface label="Pinned + everything else">
+          <div className="h-[520px] overflow-hidden bg-[var(--sidebar-background)]">
+            <ChatSidebar.Root
+              fill
+              threads={items}
+              activeThreadId={activeThreadId}
+              onSelectThread={setActiveThreadId}
+              onDeleteThread={(id) => {
+                setItems((current) => current.filter((item) => item.id !== id));
+                setPinnedIds((current) => current.filter((pid) => pid !== id));
+              }}
+              onRenameThread={(id, title) =>
+                setItems((current) =>
+                  current.map((item) => item.id === id ? { ...item, title } : item)
+                )}
+              onNewThread={() => undefined}
+            >
+              <ChatSidebar.NewButton />
+              <ChatSidebar.List>
+                {pinned.length > 0 && (
+                  <ChatSidebar.Group label="Pinned">
+                    {pinned.map((t) => (
+                      <ChatSidebar.Item key={t.id} thread={t} />
+                    ))}
+                  </ChatSidebar.Group>
+                )}
+                <ChatSidebar.Group label="Everything else">
+                  {rest.map((t) => <ChatSidebar.Item key={t.id} thread={t} />)}
+                </ChatSidebar.Group>
+              </ChatSidebar.List>
+            </ChatSidebar.Root>
+          </div>
+        </ReviewSurface>
+      </StoryFrame>
+    );
+  },
 };

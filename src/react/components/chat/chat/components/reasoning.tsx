@@ -14,9 +14,11 @@ type ReasoningCardProps = {
   /** Override the two labels; each defaults to the current string. */
   labels?: { thinking?: string; thought?: string };
   /** Controlled open state. When provided, the component is controlled and the
-   *  auto-collapse timer is disabled (the parent owns the state). */
+   *  auto open/collapse behaviour is disabled (the parent owns the state). */
   open?: boolean;
-  /** Initial open value when uncontrolled. Defaults to `true`. */
+  /** Initial open value when uncontrolled. Defaults to whether the card is
+   *  streaming at mount — so a completed / reloaded reasoning starts collapsed
+   *  and never animates, while a live one opens as tokens arrive. */
   defaultOpen?: boolean;
   /** Called whenever the open state should change (both controlled and not). */
   onOpenChange?: (open: boolean) => void;
@@ -35,20 +37,42 @@ export const ReasoningCard = React.forwardRef<
       icon,
       labels,
       open,
-      defaultOpen = true,
+      defaultOpen,
       onOpenChange,
     },
     ref,
   ) {
     const isControlled = open !== undefined;
-    const [uncontrolledOpen, setUncontrolledOpen] = React.useState(defaultOpen);
+    // Uncontrolled default: open only if we mount mid-stream. A completed /
+    // reloaded card (isStreaming === false) starts collapsed, so it never
+    // plays the open-then-collapse animation.
+    const [uncontrolledOpen, setUncontrolledOpen] = React.useState(
+      defaultOpen ?? isStreaming,
+    );
     const isOpen = isControlled ? open : uncontrolledOpen;
     const userToggledRef = React.useRef(false);
+    // Tracks whether this card has ever streamed during its lifetime. We only
+    // auto-collapse once streaming actually ends — a card that was never
+    // streaming (history reload) has nothing to animate away from.
+    const hasStreamedRef = React.useRef(isStreaming);
 
     React.useEffect(() => {
-      // Parent owns state when controlled; skip the auto-collapse timer.
-      if (isControlled) return;
-      if (isStreaming || !isOpen || userToggledRef.current) return;
+      // Parent owns state when controlled, and a manual toggle opts out of the
+      // stream-driven open/collapse entirely.
+      if (isControlled || userToggledRef.current) return;
+
+      if (isStreaming) {
+        hasStreamedRef.current = true;
+        if (!isOpen) {
+          setUncontrolledOpen(true);
+          onOpenChange?.(true);
+        }
+        return;
+      }
+
+      // Streaming just finished in this session — collapse after a beat. If we
+      // never streamed (reloaded chat), leave the card exactly as it mounted.
+      if (!hasStreamedRef.current || !isOpen) return;
 
       const timer = setTimeout(() => {
         setUncontrolledOpen(false);

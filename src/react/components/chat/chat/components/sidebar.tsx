@@ -1,6 +1,54 @@
+/**
+ * ChatSidebar — a conversation rail, available as a one-shot preset or as a
+ * composable compound (mirroring `Chat` / `Message`).
+ *
+ * @example Preset — the whole rail from props
+ * ```tsx
+ * <ChatSidebar
+ *   threads={threads}
+ *   activeThreadId={activeId}
+ *   onSelectThread={select}
+ *   onDeleteThread={remove}
+ *   onRenameThread={rename}
+ *   onNewThread={create}
+ * />
+ * ```
+ *
+ * @example Composition — drive the layout yourself
+ * ```tsx
+ * <ChatSidebar.Root
+ *   threads={threads}
+ *   activeThreadId={activeId}
+ *   onSelectThread={select}
+ *   onDeleteThread={remove}
+ *   onRenameThread={rename}
+ *   onNewThread={create}
+ * >
+ *   <ChatSidebar.NewButton>New chat</ChatSidebar.NewButton>
+ *   <ChatSidebar.List />
+ * </ChatSidebar.Root>
+ * ```
+ *
+ * `<ChatSidebar.List />` with no children auto-groups the threads by recency.
+ *
+ * @example Composition — bring your own grouping / rows
+ * ```tsx
+ * <ChatSidebar.Root {...ctx}>
+ *   <ChatSidebar.NewButton />
+ *   <ChatSidebar.List>
+ *     <ChatSidebar.Group label="Pinned">
+ *       {pinned.map((t) => <ChatSidebar.Item key={t.id} thread={t} />)}
+ *     </ChatSidebar.Group>
+ *   </ChatSidebar.List>
+ * </ChatSidebar.Root>
+ * ```
+ *
+ * @module react/components/chat/chat/components/sidebar
+ */
 import * as React from "react";
+import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
 import { cn } from "../../theme.ts";
-import { PencilIcon, PlusIcon, TrashIcon } from "../../icons/index.ts";
+import { PencilIcon, TrashIcon } from "../../icons/index.ts";
 import { Button } from "../../ui/button.tsx";
 import {
   DropdownMenu,
@@ -28,7 +76,8 @@ function MoreGlyph({ className }: { className?: string }): React.ReactElement {
 }
 
 /**
- * Icon overrides for {@link ChatSidebar}. Each defaults to the built-in glyph.
+ * Icon overrides for {@link ChatSidebar}. Each defaults to the built-in glyph
+ * (or, for `newThread`, to no icon at all).
  */
 export interface ChatSidebarIcons {
   newThread?: React.ReactNode;
@@ -37,39 +86,49 @@ export interface ChatSidebarIcons {
   more?: React.ReactNode;
 }
 
-/** Props accepted by chat sidebar. */
-export interface ChatSidebarProps {
+/** Per-row handlers/state handed to a custom {@link ChatSidebarProps.renderThreadItem}. */
+export interface ChatSidebarThreadItemRenderOptions {
+  isActive: boolean;
+  onSelect: () => void;
+  onDelete?: () => void;
+  onRename?: (title: string) => void;
+}
+
+// ---------------------------------------------------------------------------
+// Context — shared by every ChatSidebar sub-component
+// ---------------------------------------------------------------------------
+
+interface ChatSidebarContextValue {
   threads: Thread[];
   activeThreadId: string | null;
   onSelectThread: (id: string) => void;
   onDeleteThread: (id: string) => void;
   onRenameThread?: (id: string, title: string) => void;
   onNewThread?: () => void;
-  className?: string;
-  isOpen?: boolean;
-  /**
-   * Fill the parent instead of owning a fixed width + mobile overlay chrome.
-   * Set when embedding inside a layout container (e.g. `AppShell.Sidebar`) that
-   * already provides width and the off-canvas overlay. Default `false`.
-   */
-  fill?: boolean;
-  /** Override any of the sidebar icons. */
   icons?: ChatSidebarIcons;
-  /**
-   * Render each thread row yourself instead of the built-in {@link ThreadItem}.
-   * Receives the thread plus the per-row handlers/state the internal item uses.
-   * When omitted, rows render exactly as the default.
-   */
   renderThreadItem?: (
     thread: Thread,
-    opts: {
-      isActive: boolean;
-      onSelect: () => void;
-      onDelete?: () => void;
-      onRename?: (title: string) => void;
-    },
+    opts: ChatSidebarThreadItemRenderOptions,
   ) => React.ReactNode;
 }
+
+const ChatSidebarContext = React.createContext<ChatSidebarContextValue | null>(
+  null,
+);
+
+function useChatSidebarContext(): ChatSidebarContextValue {
+  const context = React.useContext(ChatSidebarContext);
+  if (!context) {
+    throw COMPONENT_ERROR.create({
+      detail: "ChatSidebar sub-components must be used within <ChatSidebar.Root>",
+    });
+  }
+  return context;
+}
+
+// ---------------------------------------------------------------------------
+// Recency grouping
+// ---------------------------------------------------------------------------
 
 function getRelativeGroup(timestamp: number): string {
   const day = 86_400_000;
@@ -105,21 +164,156 @@ function groupThreads(threads: Thread[]): Map<string, Thread[]> {
   return groups;
 }
 
-function ThreadItem({
-  thread,
-  isActive,
-  onSelect,
-  onDelete,
-  onRename,
-  icons,
-}: {
-  thread: Thread;
-  isActive: boolean;
-  onSelect: () => void;
-  onDelete: () => void;
-  onRename?: (title: string) => void;
+// ---------------------------------------------------------------------------
+// ChatSidebar.Root
+// ---------------------------------------------------------------------------
+
+/** Props accepted by {@link ChatSidebarRoot}. */
+export interface ChatSidebarRootProps {
+  threads: Thread[];
+  activeThreadId: string | null;
+  onSelectThread: (id: string) => void;
+  onDeleteThread: (id: string) => void;
+  onRenameThread?: (id: string, title: string) => void;
+  onNewThread?: () => void;
+  /** Override any of the sidebar icons. */
   icons?: ChatSidebarIcons;
-}): React.ReactElement {
+  /**
+   * Render each thread row yourself instead of the built-in row. Consumed by
+   * the auto {@link ChatSidebarList}; ignored when you supply your own rows.
+   */
+  renderThreadItem?: (
+    thread: Thread,
+    opts: ChatSidebarThreadItemRenderOptions,
+  ) => React.ReactNode;
+  /** When `false`, the rail renders nothing. Default `true`. */
+  isOpen?: boolean;
+  /**
+   * Fill the parent instead of owning a fixed width + mobile overlay chrome.
+   * Set when embedding inside a layout container (e.g. `AppShell.Sidebar`) that
+   * already provides width and the off-canvas overlay. Default `false`.
+   */
+  fill?: boolean;
+  className?: string;
+  children: React.ReactNode;
+}
+
+/** Context provider + outer rail container for the compound sidebar. */
+export function ChatSidebarRoot({
+  threads,
+  activeThreadId,
+  onSelectThread,
+  onDeleteThread,
+  onRenameThread,
+  onNewThread,
+  icons,
+  renderThreadItem,
+  isOpen = true,
+  fill = false,
+  className,
+  children,
+}: ChatSidebarRootProps): React.ReactElement | null {
+  const value = React.useMemo<ChatSidebarContextValue>(
+    () => ({
+      threads,
+      activeThreadId,
+      onSelectThread,
+      onDeleteThread,
+      onRenameThread,
+      onNewThread,
+      icons,
+      renderThreadItem,
+    }),
+    [
+      threads,
+      activeThreadId,
+      onSelectThread,
+      onDeleteThread,
+      onRenameThread,
+      onNewThread,
+      icons,
+      renderThreadItem,
+    ],
+  );
+
+  if (!isOpen) return null;
+
+  return (
+    <ChatSidebarContext.Provider value={value}>
+      <div
+        className={cn(
+          "flex flex-col h-full",
+          fill
+            ? "w-full"
+            : "shrink-0 max-sm:absolute max-sm:z-20 max-sm:shadow-xl max-sm:bg-[var(--background)]",
+          className,
+        )}
+        style={fill ? undefined : { width: 240 }}
+      >
+        {children}
+      </div>
+    </ChatSidebarContext.Provider>
+  );
+}
+ChatSidebarRoot.displayName = "ChatSidebar.Root";
+
+// ---------------------------------------------------------------------------
+// ChatSidebar.NewButton
+// ---------------------------------------------------------------------------
+
+/** Props accepted by {@link ChatSidebarNewButton}. */
+export interface ChatSidebarNewButtonProps {
+  /** Button label. Defaults to "New chat". */
+  children?: React.ReactNode;
+  className?: string;
+}
+
+/** The primary "new conversation" action. Wires `onNewThread` from context. */
+export function ChatSidebarNewButton({
+  children,
+  className,
+}: ChatSidebarNewButtonProps): React.ReactElement {
+  const { onNewThread, icons } = useChatSidebarContext();
+  return (
+    <div className="px-3 pt-4 pb-1">
+      <Button
+        type="button"
+        variant="primary"
+        onClick={onNewThread}
+        className={cn("w-full shadow-sm", className)}
+      >
+        {icons?.newThread}
+        {children ?? "New chat"}
+      </Button>
+    </div>
+  );
+}
+ChatSidebarNewButton.displayName = "ChatSidebar.NewButton";
+
+// ---------------------------------------------------------------------------
+// ChatSidebar.Item
+// ---------------------------------------------------------------------------
+
+/** Props accepted by {@link ChatSidebarItem}. */
+export interface ChatSidebarItemProps {
+  thread: Thread;
+  className?: string;
+}
+
+/** A single thread row — select on click, rename/delete via a "…" menu. */
+export function ChatSidebarItem({
+  thread,
+  className,
+}: ChatSidebarItemProps): React.ReactElement {
+  const {
+    activeThreadId,
+    onSelectThread,
+    onDeleteThread,
+    onRenameThread,
+    icons,
+  } = useChatSidebarContext();
+
+  const isActive = thread.id === activeThreadId;
   const [editing, setEditing] = React.useState(false);
   const [editValue, setEditValue] = React.useState(thread.title);
   const [menuOpen, setMenuOpen] = React.useState(false);
@@ -130,7 +324,7 @@ function ThreadItem({
   }, [editing]);
 
   function startRename(): void {
-    if (!onRename) return;
+    if (!onRenameThread) return;
     setEditValue(thread.title);
     setEditing(true);
   }
@@ -139,7 +333,7 @@ function ThreadItem({
     setEditing(false);
     const trimmed = editValue.trim();
     if (trimmed && trimmed !== thread.title) {
-      onRename?.(trimmed);
+      onRenameThread?.(thread.id, trimmed);
     }
   }
 
@@ -165,7 +359,8 @@ function ThreadItem({
     <ListItem
       title={thread.title}
       active={isActive || menuOpen}
-      onClick={onSelect}
+      className={className}
+      onClick={() => onSelectThread(thread.id)}
       action={
         <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
           <DropdownMenuTrigger asChild>
@@ -180,14 +375,14 @@ function ThreadItem({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="min-w-[160px]">
-            {onRename && (
+            {onRenameThread && (
               <DropdownMenuItem onSelect={startRename}>
                 {icons?.rename ?? <PencilIcon />}
                 Rename
               </DropdownMenuItem>
             )}
             <DropdownMenuItem
-              onSelect={onDelete}
+              onSelect={() => onDeleteThread(thread.id)}
               className="text-[var(--destructive)] hover:bg-[color-mix(in_oklch,var(--destructive),transparent_92%)]"
             >
               {icons?.delete ?? <TrashIcon />}
@@ -199,21 +394,91 @@ function ThreadItem({
     />
   );
 }
+ChatSidebarItem.displayName = "ChatSidebar.Item";
 
-/** Render chat sidebar. */
-export function ChatSidebar({
-  threads,
-  activeThreadId,
-  onSelectThread,
-  onDeleteThread,
-  onRenameThread,
-  onNewThread,
+// ---------------------------------------------------------------------------
+// ChatSidebar.Group
+// ---------------------------------------------------------------------------
+
+/** Props accepted by {@link ChatSidebarGroup}. */
+export interface ChatSidebarGroupProps {
+  /** Section heading (e.g. a recency bucket). Omit for an unlabeled group. */
+  label?: React.ReactNode;
+  children: React.ReactNode;
+  className?: string;
+}
+
+/** A labeled cluster of thread rows. */
+export function ChatSidebarGroup({
+  label,
+  children,
   className,
-  isOpen = true,
-  fill = false,
-  icons,
-  renderThreadItem,
-}: ChatSidebarProps): React.ReactElement | null {
+}: ChatSidebarGroupProps): React.ReactElement {
+  return (
+    <List className={className}>
+      {label !== undefined && <ListLabel>{label}</ListLabel>}
+      {children}
+    </List>
+  );
+}
+ChatSidebarGroup.displayName = "ChatSidebar.Group";
+
+// ---------------------------------------------------------------------------
+// ChatSidebar.Empty
+// ---------------------------------------------------------------------------
+
+/** Props accepted by {@link ChatSidebarEmpty}. */
+export interface ChatSidebarEmptyProps {
+  children?: React.ReactNode;
+  className?: string;
+}
+
+/** Placeholder shown when there are no threads to list. */
+export function ChatSidebarEmpty({
+  children,
+  className,
+}: ChatSidebarEmptyProps): React.ReactElement {
+  return (
+    <div
+      className={cn(
+        "flex h-full flex-col items-center justify-center px-4 text-center text-[var(--faint)]",
+        className,
+      )}
+    >
+      {children ?? <p className="text-sm">No chats yet</p>}
+    </div>
+  );
+}
+ChatSidebarEmpty.displayName = "ChatSidebar.Empty";
+
+// ---------------------------------------------------------------------------
+// ChatSidebar.List
+// ---------------------------------------------------------------------------
+
+/** Props accepted by {@link ChatSidebarList}. */
+export interface ChatSidebarListProps {
+  /**
+   * Provide your own groups/rows. When omitted, the list auto-groups the
+   * context threads by recency and renders {@link ChatSidebarEmpty} when empty.
+   */
+  children?: React.ReactNode;
+  className?: string;
+}
+
+/** Scrollable thread region. Auto-groups by recency unless given `children`. */
+export function ChatSidebarList({
+  children,
+  className,
+}: ChatSidebarListProps): React.ReactElement {
+  const {
+    threads,
+    activeThreadId,
+    onSelectThread,
+    onDeleteThread,
+    onRenameThread,
+    renderThreadItem,
+  } = useChatSidebarContext();
+
   const visibleThreads = React.useMemo(
     () => threads.filter((t) => t.messages.length > 0 || t.id === activeThreadId),
     [threads, activeThreadId],
@@ -221,80 +486,80 @@ export function ChatSidebar({
   const grouped = React.useMemo(() => groupThreads(visibleThreads), [
     visibleThreads,
   ]);
-  const hasThreads = visibleThreads.length > 0;
 
-  if (!isOpen) return null;
+  const body = children ?? (
+    visibleThreads.length > 0
+      ? Array.from(grouped.entries()).map(([label, items]) => (
+        <ChatSidebarGroup key={label} label={label}>
+          {items.map((thread) => {
+            if (renderThreadItem) {
+              return (
+                <React.Fragment key={thread.id}>
+                  {renderThreadItem(thread, {
+                    isActive: thread.id === activeThreadId,
+                    onSelect: () => onSelectThread(thread.id),
+                    onDelete: () =>
+                      onDeleteThread(thread.id),
+                    onRename: onRenameThread
+                      ? (title: string) =>
+                        onRenameThread(thread.id, title)
+                      : undefined,
+                  })}
+                </React.Fragment>
+              );
+            }
+            return <ChatSidebarItem key={thread.id} thread={thread} />;
+          })}
+        </ChatSidebarGroup>
+      ))
+      : <ChatSidebarEmpty />
+  );
 
   return (
     <div
-      className={cn(
-        "flex flex-col h-full",
-        fill
-          ? "w-full"
-          : "shrink-0 max-sm:absolute max-sm:z-20 max-sm:shadow-xl max-sm:bg-[var(--background)]",
-        className,
-      )}
-      style={fill ? undefined : { width: 240 }}
+      className={cn("flex-1 overflow-y-auto px-2 pt-2 pb-3 space-y-3", className)}
     >
-      {onNewThread && (
-        <div className="px-3 pt-4 pb-1">
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={onNewThread}
-            className="w-full shadow-sm"
-          >
-            {icons?.newThread ?? <PlusIcon className="size-4" />}
-            New chat
-          </Button>
-        </div>
-      )}
-      <div className="flex-1 overflow-y-auto px-2 pt-2 pb-3 space-y-3">
-        {hasThreads
-          ? Array.from(grouped.entries()).map(([label, items]) => (
-            <List key={label}>
-              <ListLabel>{label}</ListLabel>
-              {items.map((thread) => {
-                const isActive = thread.id === activeThreadId;
-                const onSelect = () => onSelectThread(thread.id);
-                const onDelete = () => onDeleteThread(thread.id);
-                const onRename = onRenameThread
-                  ? (title: string) => onRenameThread(thread.id, title)
-                  : undefined;
-
-                if (renderThreadItem) {
-                  return (
-                    <React.Fragment key={thread.id}>
-                      {renderThreadItem(thread, {
-                        isActive,
-                        onSelect,
-                        onDelete,
-                        onRename,
-                      })}
-                    </React.Fragment>
-                  );
-                }
-
-                return (
-                  <ThreadItem
-                    key={thread.id}
-                    thread={thread}
-                    isActive={isActive}
-                    onSelect={onSelect}
-                    onDelete={onDelete}
-                    onRename={onRename}
-                    icons={icons}
-                  />
-                );
-              })}
-            </List>
-          ))
-          : (
-            <div className="flex h-full flex-col items-center justify-center px-4 text-center text-[var(--faint)]">
-              <p className="text-sm">No chats yet</p>
-            </div>
-          )}
-      </div>
+      {body}
     </div>
   );
 }
+ChatSidebarList.displayName = "ChatSidebar.List";
+
+// ---------------------------------------------------------------------------
+// ChatSidebar — preset
+// ---------------------------------------------------------------------------
+
+/** Props accepted by the {@link ChatSidebar} preset. */
+export interface ChatSidebarProps extends Omit<ChatSidebarRootProps, "children"> {}
+
+/** The one-shot preset — composes Root + NewButton + auto List. */
+function ChatSidebarBase(props: ChatSidebarProps): React.ReactElement | null {
+  const { onNewThread } = props;
+  return (
+    <ChatSidebarRoot {...props}>
+      {onNewThread && <ChatSidebarNewButton />}
+      <ChatSidebarList />
+    </ChatSidebarRoot>
+  );
+}
+ChatSidebarBase.displayName = "ChatSidebar";
+
+/** Compound type — the preset plus its namespaced sub-components. */
+export type ChatSidebarComponent = typeof ChatSidebarBase & {
+  Root: typeof ChatSidebarRoot;
+  NewButton: typeof ChatSidebarNewButton;
+  List: typeof ChatSidebarList;
+  Group: typeof ChatSidebarGroup;
+  Item: typeof ChatSidebarItem;
+  Empty: typeof ChatSidebarEmpty;
+};
+
+/** Render a chat sidebar — usable as `<ChatSidebar />` or `<ChatSidebar.Root>…`. */
+export const ChatSidebar: ChatSidebarComponent = Object.assign(ChatSidebarBase, {
+  Root: ChatSidebarRoot,
+  NewButton: ChatSidebarNewButton,
+  List: ChatSidebarList,
+  Group: ChatSidebarGroup,
+  Item: ChatSidebarItem,
+  Empty: ChatSidebarEmpty,
+});
