@@ -252,14 +252,17 @@ export async function getTransformers(): Promise<TransformersModule> {
   try {
     mod = await importTransformers();
   } catch (_) {
-    // expected: ONNX runtime not available in some environments (e.g. compiled binaries)
+    // expected: @huggingface/transformers is an optional peer that npm installs
+    // do not pull automatically, and native ONNX Runtime is not available in
+    // some environments (e.g. compiled binaries)
     throw toError(
       createError({
         type: "no_ai_available",
         message:
-          "Local AI model unavailable. Native ONNX Runtime is not supported in this environment " +
-          "(e.g. compiled binaries). Run veryfront login, set VERYFRONT_API_TOKEN, or " +
-          "configure OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY to use a cloud provider.",
+          "Local AI model unavailable. Install @huggingface/transformers alongside veryfront " +
+          "(npm installs), or run veryfront login, set VERYFRONT_API_TOKEN, or configure " +
+          "OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY to use a cloud provider. " +
+          "Native ONNX Runtime is not supported in compiled binaries.",
       }),
     );
   }

@@ -4,7 +4,17 @@ import {
   BROWSER_SAFE_CLIENT_MODULES,
   BROWSER_SAFE_EXPORTS,
 } from "./browser-safe-exports.mjs";
-import { normalizeNpmPackageMetadata } from "./npm-package-metadata.ts";
+import {
+  EXTENSION_OWNED_DEPENDENCIES,
+  normalizeNpmPackageMetadata,
+  ROOT_OPTIONAL_RUNTIME_PEERS,
+} from "./npm-package-metadata.ts";
+import {
+  type ExtensionManifest,
+  firstPartyExtensionManifestPaths,
+  manifestDependencies,
+  type RootPackageConfig,
+} from "./npm-extension-package-metadata.ts";
 
 Deno.test("exports agent skill helpers as a public package subpath", async () => {
   const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
@@ -38,6 +48,59 @@ Deno.test("root npm build metadata does not inject extension implementation depe
       false,
       `${packageName} belongs to a @veryfront/ext-* package, not root veryfront`,
     );
+  }
+});
+
+// Extensions whose implementations are statically imported by
+// src/extensions/builtin-extensions.ts and therefore ship inside the root
+// npm package. Their dependencies must stay in root; every other workspace
+// extension's dependencies must be stripped via EXTENSION_OWNED_DEPENDENCIES.
+const ROOT_BUNDLED_EXTENSIONS = new Set([
+  "ext-schema-zod",
+  "ext-llm-openai",
+  "ext-llm-anthropic",
+  "ext-llm-google",
+]);
+
+Deno.test("EXTENSION_OWNED_DEPENDENCIES stays in sync with extension manifests", async () => {
+  const denoConfig = JSON.parse(
+    await Deno.readTextFile("deno.json"),
+  ) as RootPackageConfig;
+  const owned = new Set<string>(EXTENSION_OWNED_DEPENDENCIES);
+  const optionalPeers = new Set<string>(ROOT_OPTIONAL_RUNTIME_PEERS);
+
+  const manifestPaths = firstPartyExtensionManifestPaths(denoConfig);
+  assertEquals(
+    manifestPaths.length > 0,
+    true,
+    "expected workspace extension manifests",
+  );
+
+  for (const manifestPath of manifestPaths) {
+    const manifest = JSON.parse(
+      await Deno.readTextFile(manifestPath),
+    ) as ExtensionManifest;
+    const extensionDirectory = manifestPath.split("/")[1];
+    const dependencies = Object.keys(manifestDependencies(manifest));
+
+    if (ROOT_BUNDLED_EXTENSIONS.has(extensionDirectory)) {
+      for (const dependency of dependencies) {
+        assertEquals(
+          owned.has(dependency),
+          false,
+          `${dependency} is required by root-bundled ${extensionDirectory} and must not be stripped from the root veryfront package`,
+        );
+      }
+      continue;
+    }
+
+    for (const dependency of dependencies) {
+      assertEquals(
+        owned.has(dependency) || optionalPeers.has(dependency),
+        true,
+        `${dependency} (declared by ${manifestPath}) must be added to EXTENSION_OWNED_DEPENDENCIES so it does not leak into root veryfront npm installs`,
+      );
+    }
   }
 });
 
@@ -87,8 +150,26 @@ describe("normalizeNpmPackageMetadata", () => {
 
     assertEquals(pkg.dependencies, { zod: "4.3.6" });
     assertEquals(pkg.optionalDependencies, undefined);
-    assertEquals(pkg.peerDependencies, undefined);
-    assertEquals(pkg.peerDependenciesMeta, undefined);
+    assertEquals(pkg.peerDependencies, {
+      "@huggingface/transformers": "^4.2.0",
+    });
+    assertEquals(pkg.peerDependenciesMeta, {
+      "@huggingface/transformers": { optional: true },
+    });
+  });
+
+  it("declares opaque optional runtime peers even when dnt cannot trace them", () => {
+    // The @huggingface/transformers import is opaque (invisible to dnt), so the
+    // generated package.json never contains it; the optional peer must still be
+    // declared or npm consumers get no installable remedy for local AI models.
+    const pkg = normalizeNpmPackageMetadata({
+      dependencies: { zod: "4.3.6" },
+    });
+
+    assertEquals(pkg.peerDependencies?.["@huggingface/transformers"], "^4.2.0");
+    assertEquals(pkg.peerDependenciesMeta?.["@huggingface/transformers"], {
+      optional: true,
+    });
   });
 
   it("keeps first-party extension implementation packages out of root npm metadata", () => {
@@ -108,9 +189,11 @@ describe("normalizeNpmPackageMetadata", () => {
 
     assertEquals(pkg.dependencies, { zod: "4.3.6" });
     assertEquals(pkg.peerDependencies, {
+      "@huggingface/transformers": "^4.2.0",
       redis: "^5.11.0",
     });
     assertEquals(pkg.peerDependenciesMeta, {
+      "@huggingface/transformers": { optional: true },
       redis: { optional: true },
     });
   });
@@ -124,8 +207,12 @@ describe("normalizeNpmPackageMetadata", () => {
     });
 
     assertEquals(pkg.dependencies, { zod: "4.3.6" });
-    assertEquals(pkg.peerDependencies, undefined);
-    assertEquals(pkg.peerDependenciesMeta, undefined);
+    assertEquals(pkg.peerDependencies, {
+      "@huggingface/transformers": "^4.2.0",
+    });
+    assertEquals(pkg.peerDependenciesMeta, {
+      "@huggingface/transformers": { optional: true },
+    });
   });
 
   it("removes stale npm-only type dev dependencies", () => {
@@ -169,6 +256,7 @@ describe("normalizeNpmPackageMetadata", () => {
       "@types/node": "20.9.0",
     });
     assertEquals(pkg.peerDependencies, {
+      "@huggingface/transformers": "^4.2.0",
       react: "^19.0.0",
     });
     assertEquals(pkg.overrides, {

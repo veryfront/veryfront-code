@@ -136,7 +136,14 @@ const VERYFRONT_SERVER_RETRY_DELAY_MS = parseInt(
 const { createAuthProvider } = await importFirstPartyExtensionModule<AuthJwtExtensionModule>(
   "ext-auth-jwt",
   "@veryfront/ext-auth-jwt",
-);
+).catch((error) => {
+  throw new Error(
+    `The Veryfront proxy requires the ext-auth-jwt extension. In npm deployments install @veryfront/ext-auth-jwt alongside veryfront. ${
+      error instanceof Error ? error.message : String(error)
+    }`,
+    { cause: error },
+  );
+});
 register("AuthProvider", createAuthProvider({}));
 
 // Initialize cache and proxy handler

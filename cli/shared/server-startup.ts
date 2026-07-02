@@ -7,7 +7,10 @@ import {
   type StartProductionServerOptions,
 } from "veryfront/server";
 import type { RuntimeAdapter } from "veryfront/platform";
-import { ensureBuiltinContentProcessor } from "./ensure-content-processor.ts";
+import {
+  ensureBuiltinContentProcessor,
+  prefetchBuiltinContentProcessor,
+} from "./ensure-content-processor.ts";
 import { join } from "veryfront/platform/path";
 import { parseReleaseAssetManifest } from "veryfront/release-assets";
 import {
@@ -51,6 +54,7 @@ export async function startCliProxyModeServer(
     setEnv("NODE_ENV", "development");
   }
 
+  prefetchBuiltinContentProcessor();
   const result = await startProductionServer({
     port: options.port,
     projectDir: options.projectDir,
@@ -82,6 +86,7 @@ export async function startCliDevServer(
     enableFastRefresh: options.enableFastRefresh,
     signal: options.signal,
   };
+  prefetchBuiltinContentProcessor();
   const result = await startDevServer(devOptions);
   await ensureBuiltinContentProcessor();
   return result;
@@ -139,6 +144,7 @@ export async function startCliProductionServer(
     // through `/_veryfront/rsc/module?` for non-local deployments, so no
     // `localProjects` entry is required for the compiled binary to work.
   };
+  prefetchBuiltinContentProcessor();
   const result = await startProductionServer(serverOptions);
   await ensureBuiltinContentProcessor();
   return {

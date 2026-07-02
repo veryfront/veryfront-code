@@ -251,7 +251,7 @@ async function loadOptionalBuiltinExtension(
     );
     return factory();
   } catch (error) {
-    if (!isMissingOptionalBuiltinImplementation(error)) {
+    if (!isMissingOptionalBuiltinImplementation(error, definition)) {
       throw error;
     }
     ctx.logger.debug(
@@ -276,8 +276,14 @@ async function importOptionalBuiltinFactory(
   return mod.default as ExtensionFactory;
 }
 
-function isMissingOptionalBuiltinImplementation(error: unknown): boolean {
-  return isMissingFirstPartyExtensionModule(error);
+function isMissingOptionalBuiltinImplementation(
+  error: unknown,
+  definition: OptionalBuiltinExtensionDefinition,
+): boolean {
+  return isMissingFirstPartyExtensionModule(error, [
+    `extensions/${definition.sourceDirectory}/src/index`,
+    getFirstPartyExtensionPackageName(definition),
+  ]);
 }
 
 function getFirstPartyExtensionPackageName(definition: OptionalBuiltinExtensionDefinition): string {

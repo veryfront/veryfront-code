@@ -64,4 +64,44 @@ describe("compile-binary includes", () => {
       true,
     );
   });
+
+  it("should include every workspace extension entrypoint", async () => {
+    // The include list is hardcoded in compile-binary.ts. A workspace extension
+    // missing from it ships in npm packages but silently disappears from
+    // compiled binaries: the dynamic source import fails, the npm-package
+    // fallback cannot succeed inside a binary, and the optional-builtin loader
+    // downgrades the miss to a debug log.
+    const denoConfig = JSON.parse(await Deno.readTextFile("deno.json")) as {
+      workspace?: string[];
+    };
+    const workspaceExtensions = (denoConfig.workspace ?? [])
+      .filter((entry) => entry.startsWith("./extensions/"))
+      .map((entry) => entry.replace(/^\.\//, ""));
+    assertEquals(workspaceExtensions.length > 0, true, "expected workspace extensions");
+
+    // Statically imported by src/extensions/builtin-extensions.ts, so
+    // `deno compile` traces them without an explicit --include.
+    const staticallyTracedExtensions = new Set([
+      "extensions/ext-schema-zod",
+      "extensions/ext-llm-openai",
+      "extensions/ext-llm-anthropic",
+      "extensions/ext-llm-google",
+    ]);
+
+    const includeFlags = getIncludeFlags();
+    for (const extensionDir of workspaceExtensions) {
+      if (staticallyTracedExtensions.has(extensionDir)) continue;
+
+      const manifest = JSON.parse(
+        await Deno.readTextFile(`${extensionDir}/deno.json`),
+      ) as { veryfront?: { extension?: boolean } };
+      if (manifest.veryfront?.extension !== true) continue;
+
+      assertEquals(
+        includeFlags.includes(`${extensionDir}/src/index.ts`),
+        true,
+        `${extensionDir}/src/index.ts must be in compile-binary.ts DEFAULT_INCLUDES or the extension silently disappears from compiled binaries`,
+      );
+    }
+  });
 });

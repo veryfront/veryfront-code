@@ -11,12 +11,22 @@ type PackageJson = {
 	overrides?: Record<string, string>;
 };
 
-const ROOT_OPTIONAL_RUNTIME_PEERS = [
+import { OPAQUE_DEPENDENCY_VERSIONS } from "../../src/platform/compat/opaque-dependency-versions.ts";
+
+export const ROOT_OPTIONAL_RUNTIME_PEERS = [
 	"@huggingface/transformers",
 	"redis",
 ] as const;
 
-const EXTENSION_OWNED_DEPENDENCIES = [
+// Opaque imports (src/platform/compat/opaque-deps.ts) are invisible to dnt, so
+// their packages never appear in the generated dependencies. Without this
+// fallback the optional-peer move silently skips them and the published
+// package.json omits the dependency entirely.
+const ROOT_OPTIONAL_RUNTIME_PEER_FALLBACK_RANGES: Record<string, string> = {
+	"@huggingface/transformers": `^${OPAQUE_DEPENDENCY_VERSIONS["@huggingface/transformers"]}`,
+};
+
+export const EXTENSION_OWNED_DEPENDENCIES = [
 	"@babel/generator",
 	"@babel/parser",
 	"@babel/traverse",
@@ -130,7 +140,8 @@ function stripLeadingRangeOperator(range: string): string {
 }
 
 function movePackageToOptionalPeer(pkg: PackageJson, name: string): void {
-	const range = pkg.dependencies?.[name] ?? pkg.optionalDependencies?.[name];
+	const range = pkg.dependencies?.[name] ?? pkg.optionalDependencies?.[name] ??
+		ROOT_OPTIONAL_RUNTIME_PEER_FALLBACK_RANGES[name];
 	if (!range) return;
 
 	delete pkg.dependencies?.[name];
