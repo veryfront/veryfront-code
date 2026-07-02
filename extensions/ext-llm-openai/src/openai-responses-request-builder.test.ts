@@ -79,7 +79,7 @@ describe("ext-llm-openai/openai-responses-request-builder", () => {
     assertEquals(body.reasoning, { effort: "high", summary: "auto" });
   });
 
-  it("does not set default reasoning for OpenAI-compatible provider Responses requests", () => {
+  it("does not set default reasoning for OpenAI-compatible providers but still drops rejected sampling params", () => {
     const warnings = createWarningCollector();
 
     const body = buildOpenAIResponsesRequest(
@@ -94,8 +94,28 @@ describe("ext-llm-openai/openai-responses-request-builder", () => {
     );
 
     assertEquals(body.reasoning, undefined);
-    assertEquals(body.temperature, 0.2);
-    assertEquals(warnings.drain(), []);
+    assertEquals(body.temperature, undefined);
+    assertEquals(warnings.drain().map((warning) => warning.setting), ["temperature"]);
+  });
+
+  it("drops rejected sampling params when explicit reasoning is disabled", () => {
+    const warnings = createWarningCollector();
+
+    const body = buildOpenAIResponsesRequest(
+      "o3-mini",
+      "openai",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Think carefully." }] }],
+        reasoning: { enabled: false },
+        temperature: 0.2,
+      },
+      true,
+      warnings,
+    );
+
+    assertEquals(body.reasoning, undefined);
+    assertEquals(body.temperature, undefined);
+    assertEquals(warnings.drain().map((warning) => warning.setting), ["temperature"]);
   });
 
   it("preserves Responses request shaping, provider option merge order, and warnings", () => {

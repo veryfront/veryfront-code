@@ -7,6 +7,7 @@ import {
 import type { OpenAICompatibleChatRequest, RuntimePromptMessage } from "veryfront/provider/shared";
 import {
   type OpenAIProviderReasoningOption,
+  rejectsOpenAISamplingParams,
   resolveOpenAIReasoningConfig,
 } from "./openai-reasoning-models.ts";
 
@@ -88,8 +89,9 @@ export function buildOpenAIChatRequest(
 ): OpenAICompatibleChatRequest {
   const reasoning = resolveOpenAIReasoningConfig(modelId, providerName, options.reasoning);
   const reasoningEnabled = reasoning !== undefined;
+  const samplingRejected = rejectsOpenAISamplingParams(modelId);
   const fixedSampling = isFixedSamplingModel(modelId);
-  const dropSamplingParams = reasoningEnabled || fixedSampling;
+  const dropSamplingParams = reasoningEnabled || samplingRejected || fixedSampling;
 
   // OpenAI Chat Completions has no top_k surface.
   if (options.topK !== undefined) {
@@ -118,7 +120,9 @@ export function buildOpenAIChatRequest(
           setting: key,
           details: fixedSampling
             ? `Dropped because this model uses fixed sampling parameters.`
-            : `Dropped because OpenAI reasoning models reject ${openaiName}. Reasoning was active for this request.`,
+            : samplingRejected
+            ? `Dropped because this model rejects ${openaiName}.`
+            : `Dropped because reasoning was active for this request and OpenAI rejects ${openaiName} with reasoning.`,
         });
       }
     }

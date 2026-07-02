@@ -9,6 +9,7 @@ import type {
   RuntimeToolDefinition,
 } from "./openai-chat-request-builder.ts";
 import {
+  rejectsOpenAISamplingParams,
   resolveOpenAIReasoningConfig,
   shouldRequestOpenAIReasoningSummary,
 } from "./openai-reasoning-models.ts";
@@ -197,6 +198,8 @@ export function buildOpenAIResponsesRequest(
 ): OpenAIResponsesRequest {
   const reasoning = resolveOpenAIReasoningConfig(modelId, providerName, options.reasoning);
   const reasoningEnabled = reasoning !== undefined;
+  const samplingRejected = rejectsOpenAISamplingParams(modelId);
+  const dropSamplingParams = reasoningEnabled || samplingRejected;
 
   if (options.topK !== undefined) {
     warnings.push({
@@ -206,7 +209,7 @@ export function buildOpenAIResponsesRequest(
       details: "OpenAI Responses API does not expose top_k; the value was dropped.",
     });
   }
-  if (reasoningEnabled) {
+  if (dropSamplingParams) {
     const dropped: Array<[keyof typeof options, string]> = [
       ["temperature", "temperature"],
       ["topP", "top_p"],
@@ -219,8 +222,9 @@ export function buildOpenAIResponsesRequest(
           type: "unsupported-setting",
           provider: "openai",
           setting: key,
-          details:
-            `Dropped because OpenAI reasoning models reject ${openaiName}. Reasoning was active for this request.`,
+          details: samplingRejected
+            ? `Dropped because this model rejects ${openaiName}.`
+            : `Dropped because reasoning was active for this request and OpenAI rejects ${openaiName} with reasoning.`,
         });
       }
     }
@@ -237,10 +241,10 @@ export function buildOpenAIResponsesRequest(
     ...(options.maxOutputTokens !== undefined
       ? { max_output_tokens: options.maxOutputTokens }
       : {}),
-    ...(!reasoningEnabled && options.temperature !== undefined
+    ...(!dropSamplingParams && options.temperature !== undefined
       ? { temperature: options.temperature }
       : {}),
-    ...(!reasoningEnabled && options.topP !== undefined ? { top_p: options.topP } : {}),
+    ...(!dropSamplingParams && options.topP !== undefined ? { top_p: options.topP } : {}),
     ...(responsesTools ? { tools: responsesTools } : {}),
     ...(options.toolChoice !== undefined ? { tool_choice: options.toolChoice } : {}),
     ...(reasoning !== undefined

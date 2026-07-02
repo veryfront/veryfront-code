@@ -80,11 +80,11 @@ describe("ext-llm-openai/openai-chat-request-builder", () => {
     );
 
     assertEquals(body.reasoning_effort, undefined);
-    assertEquals(body.temperature, 0.2);
-    assertEquals(warnings.drain(), []);
+    assertEquals(body.temperature, undefined);
+    assertEquals(warnings.drain().map((warning) => warning.setting), ["temperature"]);
   });
 
-  it("does not set default reasoning effort for OpenAI-compatible providers", () => {
+  it("does not set default reasoning effort for OpenAI-compatible providers but still drops rejected sampling params", () => {
     const warnings = createWarningCollector();
 
     const body = buildOpenAIChatRequest(
@@ -99,8 +99,28 @@ describe("ext-llm-openai/openai-chat-request-builder", () => {
     );
 
     assertEquals(body.reasoning_effort, undefined);
-    assertEquals(body.temperature, 0.2);
-    assertEquals(warnings.drain(), []);
+    assertEquals(body.temperature, undefined);
+    assertEquals(warnings.drain().map((warning) => warning.setting), ["temperature"]);
+  });
+
+  it("drops rejected sampling params when explicit reasoning is disabled", () => {
+    const warnings = createWarningCollector();
+
+    const body = buildOpenAIChatRequest(
+      "o3-mini",
+      "openai",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Be concise." }] }],
+        reasoning: { enabled: false },
+        temperature: 0.2,
+      },
+      true,
+      warnings,
+    );
+
+    assertEquals(body.reasoning_effort, undefined);
+    assertEquals(body.temperature, undefined);
+    assertEquals(warnings.drain().map((warning) => warning.setting), ["temperature"]);
   });
 
   it("preserves chat request shaping, provider option merge order, and warnings", () => {

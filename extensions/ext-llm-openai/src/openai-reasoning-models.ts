@@ -19,6 +19,27 @@ function supportsDefaultReasoningParams(providerName: string): boolean {
   return providerName === "openai" || providerName === "veryfront-cloud";
 }
 
+function isGpt5ChatSnapshot(modelId: string): boolean {
+  return /^gpt-5-chat($|-)/.test(modelId);
+}
+
+function isGpt51(modelId: string): boolean {
+  return /^gpt-5\.1($|-)/.test(modelId);
+}
+
+function isReasoningCapableGpt5(modelId: string): boolean {
+  if (isGpt5ChatSnapshot(modelId) || isGpt51(modelId)) {
+    return false;
+  }
+
+  if (/^gpt-5(-|$)/.test(modelId)) {
+    return true;
+  }
+
+  const gpt5Version = /^gpt-5\.(\d+)(-|$)/.exec(modelId)?.[1];
+  return gpt5Version !== undefined && Number.parseInt(gpt5Version, 10) >= 2;
+}
+
 export function getDefaultOpenAIReasoningEffort(
   modelId: string,
   providerName = "openai",
@@ -30,12 +51,12 @@ export function getDefaultOpenAIReasoningEffort(
     return undefined;
   }
 
-  if (/^gpt-5-chat($|-)/.test(normalized)) {
+  if (isGpt5ChatSnapshot(normalized)) {
     return undefined;
   }
 
   // GPT-5.1 defaults upstream reasoning to none unless callers opt in explicitly.
-  if (/^gpt-5\.1($|-)/.test(normalized)) {
+  if (isGpt51(normalized)) {
     return undefined;
   }
 
@@ -43,12 +64,7 @@ export function getDefaultOpenAIReasoningEffort(
     return DEFAULT_REASONING_EFFORT;
   }
 
-  if (/^gpt-5(-|$)/.test(normalized)) {
-    return DEFAULT_REASONING_EFFORT;
-  }
-
-  const gpt5Version = /^gpt-5\.(\d+)(-|$)/.exec(normalized)?.[1];
-  if (gpt5Version && Number.parseInt(gpt5Version, 10) >= 2) {
+  if (isReasoningCapableGpt5(normalized)) {
     return DEFAULT_REASONING_EFFORT;
   }
 
@@ -90,4 +106,10 @@ export function shouldRequestOpenAIReasoningSummary(
 
 export function isOpenAIReasoningModel(modelId: string, providerName = "openai"): boolean {
   return getDefaultOpenAIReasoningEffort(modelId, providerName) !== undefined;
+}
+
+export function rejectsOpenAISamplingParams(modelId: string): boolean {
+  const normalized = modelId.toLowerCase();
+
+  return /^o[134]($|-)/.test(normalized) || isReasoningCapableGpt5(normalized);
 }
