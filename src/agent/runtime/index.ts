@@ -20,6 +20,7 @@ import {
   type Message,
   type MessagePart,
   type ResolvedRuntimeState,
+  type RuntimeReasoningOption,
   type ToolCall,
   type ToolExecutionResultRequest,
   type ToolResultPart,
@@ -410,6 +411,7 @@ export class AgentRuntime {
             transport.languageModel,
             transport.headers,
             transport.providerOptions,
+            transport.reasoning,
             maxOutputTokensOverride,
             requestedModel,
           ),
@@ -533,6 +535,7 @@ export class AgentRuntime {
                 languageModel,
                 transport.headers,
                 transport.providerOptions,
+                transport.reasoning,
                 maxOutputTokensOverride,
                 streamAbortSignal,
                 requestedModel,
@@ -597,6 +600,7 @@ export class AgentRuntime {
     resolvedModel?: ModelRuntime,
     headers?: HeadersInit,
     providerOptions?: Record<string, unknown>,
+    reasoning?: RuntimeReasoningOption,
     maxOutputTokensOverride?: number,
     temperatureModelString?: string,
   ): Promise<AgentResponse> {
@@ -684,6 +688,7 @@ export class AgentRuntime {
             ...(temperature === undefined ? {} : { temperature }),
             ...(headers ? { headers } : {}),
             ...(providerOptions ? { providerOptions } : {}),
+            ...(reasoning ? { reasoning } : {}),
           });
         });
 
@@ -950,6 +955,7 @@ export class AgentRuntime {
     resolvedModel?: ModelRuntime,
     headers?: HeadersInit,
     providerOptions?: Record<string, unknown>,
+    reasoning?: RuntimeReasoningOption,
     maxOutputTokensOverride?: number,
     abortSignal?: AbortSignal,
     temperatureModelString?: string,
@@ -1044,6 +1050,7 @@ export class AgentRuntime {
         ...(temperature === undefined ? {} : { temperature }),
         ...(headers ? { headers } : {}),
         ...(providerOptions ? { providerOptions } : {}),
+        ...(reasoning ? { reasoning } : {}),
         abortSignal,
       });
 

@@ -235,11 +235,19 @@ export interface ModelTransportRequest {
   mode: "generate" | "stream";
 }
 
+/** Provider-neutral reasoning / thinking option for model transport. */
+export type RuntimeReasoningOption = {
+  enabled?: boolean;
+  effort?: "low" | "medium" | "high" | "max";
+  budgetTokens?: number;
+};
+
 /** Public API contract for resolved model transport. */
 export interface ResolvedModelTransport {
   model?: ModelRuntime;
   headers?: HeadersInit;
   providerOptions?: Record<string, unknown>;
+  reasoning?: RuntimeReasoningOption;
 }
 
 /** Public API contract for model transport resolver. */
