@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildHostedChatRequestForwardedPropsFromRuntimeAgentInvocation,
   buildHostedChatRequestFromRuntimeAgentInvocation,
+  buildParsedHostedChatRequest,
   hostedChatRequestSchema,
   hostedChatRuntimeOverridesSchema,
   parseHostedChatRequestFromRequest,
@@ -297,6 +298,38 @@ describe("agent/hosted-chat-request", () => {
 
     assertEquals(parsed.agentConfig?.skills, ["support-triage"]);
     assertEquals(parsed.agentConfig?.tools, ["search_knowledge", "get_file"]);
+  });
+
+  it("rejects parsed hosted chat requests when agent config does not match the requested agent", async () => {
+    const response = await buildParsedHostedChatRequest({
+      chatRequest: hostedChatRequestSchema.parse({
+        messages: [{ id: "m1", role: "user", parts: [{ type: "text", text: "Hello" }] }],
+        context: {
+          conversationId,
+          projectId,
+          branchId,
+        },
+      }),
+      agentId: "builder",
+      agentConfig: {
+        id: "other-agent",
+        name: "Other Agent",
+        description: "Does not match the requested agent.",
+        instructions: "Use another agent.",
+      },
+      authToken: "token_1",
+      userId,
+    });
+
+    if (!(response instanceof Response)) {
+      throw new Error("Expected error response");
+    }
+
+    assertEquals(response.status, 400);
+    assertEquals(await response.json(), {
+      errorCode: "VALIDATION_ERROR",
+      message: "Invalid runtime agent invocation: agentConfig.id must match the requested agent id",
+    });
   });
 
   it("rejects runtime invocation agent config for a different agent", async () => {
