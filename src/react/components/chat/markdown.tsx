@@ -50,6 +50,10 @@ const MARKDOWN_CONTAINER_CLASS = [
   "[&_h4]:mt-3 [&_h4]:mb-1 [&_h4]:text-sm [&_h4]:font-semibold",
   // inline emphasis
   "[&_strong]:font-semibold [&_em]:italic",
+  // inline code — `:not(pre)>code` targets bare inline code (block code lives
+  // inside the CodeBlock's own <pre>). Mirrors Studio's `prose-inline-code`
+  // (bg-accent, rounded-xs, px-1 py-0.5, font-mono font-medium).
+  "[&_:not(pre)>code]:rounded-[var(--radius-xs)] [&_:not(pre)>code]:bg-[var(--accent)] [&_:not(pre)>code]:px-1 [&_:not(pre)>code]:py-0.5 [&_:not(pre)>code]:font-mono [&_:not(pre)>code]:text-[0.9em] [&_:not(pre)>code]:font-medium [&_:not(pre)>code]:text-[var(--foreground)]",
   // horizontal rule
   "[&_hr]:my-6 [&_hr]:border-0 [&_hr]:border-t [&_hr]:border-[var(--edge-medium)]",
   // margin reset for the container edges + width guard
@@ -75,11 +79,15 @@ type MermaidModule = {
  */
 type MarkdownPlugin = unknown;
 
-/** Props passed by react-markdown to a custom `code` renderer. */
-interface CodeRendererProps {
+/** Props passed by react-markdown to a custom `pre` renderer. */
+interface PreRendererProps {
+  children?: React.ReactNode;
+}
+
+/** Props on the inner `<code>` element inside a `<pre>` (language + text). */
+interface CodeElementProps {
   className?: string;
   children?: React.ReactNode;
-  node?: { position?: { start?: { line?: number } } };
 }
 
 /** Props passed by react-markdown to a custom `a` (anchor) renderer. */
@@ -218,26 +226,23 @@ function MermaidDiagram({ code }: { code: string }): React.ReactElement {
   );
 }
 
+/**
+ * Render a fenced (block) code region. Inline code is NOT handled here — it
+ * renders as a bare `<code>` styled by the container class (see
+ * `MARKDOWN_CONTAINER_CLASS`), matching Studio, which overrides `pre` (not
+ * `code`) so only block code reaches the syntax highlighter.
+ */
 function CodeBlock({
   language,
   code,
-  inline,
   enableMermaid,
   renderCodeBlock,
-}: CodeBlockProps & {
+}: Omit<CodeBlockProps, "inline"> & {
   enableMermaid: boolean;
   renderCodeBlock?: MarkdownProps["renderCodeBlock"];
 }): React.ReactElement {
   if (renderCodeBlock) {
-    return <>{renderCodeBlock({ language, code, inline })}</>;
-  }
-
-  if (inline) {
-    return (
-      <code className="rounded-[var(--radius-xs)] bg-[var(--accent)] px-1 py-0.5 font-mono text-sm font-medium">
-        {code}
-      </code>
-    );
+    return <>{renderCodeBlock({ language, code, inline: false })}</>;
   }
 
   if (enableMermaid && language === "mermaid") {
@@ -295,7 +300,9 @@ export function Markdown({
   }, []);
 
   if (!isLoaded || !ReactMarkdown) {
-    return <FallbackMarkdown className={className}>{children}</FallbackMarkdown>;
+    return (
+      <FallbackMarkdown className={className}>{children}</FallbackMarkdown>
+    );
   }
 
   return (
@@ -303,18 +310,27 @@ export function Markdown({
       <ReactMarkdown
         remarkPlugins={remarkGfm ? [remarkGfm] : []}
         components={{
-          code(props: CodeRendererProps) {
-            const { className: codeClassName, children: codeChildren, node } = props;
+          // Override `pre` (not `code`) — Studio's approach. Block code arrives
+          // as `<pre><code class="language-x">…</code></pre>`; we pull the
+          // language + text off the inner (default-rendered) `<code>` element
+          // and hand it to the syntax highlighter. Inline code is left as a bare
+          // `<code>`, styled by the container class.
+          pre(props: PreRendererProps) {
+            const child = React.Children.toArray(props.children).find(
+              React.isValidElement,
+            ) as React.ReactElement<CodeElementProps> | undefined;
+            if (!child) {
+              return <pre>{props.children}</pre>;
+            }
+            const codeClassName = child.props.className;
             const match = /language-(\w+)/.exec(codeClassName || "");
             const language = match ? match[1] : undefined;
-            const code = extractText(codeChildren).replace(/\n$/, "");
-            const isInline = !node?.position?.start?.line;
+            const code = extractText(child.props.children).replace(/\n$/, "");
 
             return (
               <CodeBlock
                 language={language}
                 code={code}
-                inline={isInline}
                 enableMermaid={enableMermaid}
                 renderCodeBlock={renderCodeBlock}
               />
