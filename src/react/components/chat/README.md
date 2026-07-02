@@ -155,21 +155,15 @@ import { Message } from "veryfront/react";
 />;
 ```
 
-### StreamingMessage
+### Streaming
 
-Display streaming text with cursor.
+Pass `isStreaming` to any `<Message>` to surface the "Continuing…" shimmer while
+the turn is still generating (there is no separate `StreamingMessage`).
 
 ```tsx
-import { StreamingMessage } from "veryfront/react";
+import { Message } from "veryfront/react";
 
-{
-  streamingText && (
-    <StreamingMessage
-      content={streamingText}
-      showCursor={true}
-    />
-  );
-}
+<Message message={message} isStreaming />;
 ```
 
 ## Theme System

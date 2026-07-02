@@ -70,6 +70,7 @@ export {
   ErrorBanner,
   type ErrorBannerProps,
   Message,
+  type MessageProps,
   type MessageRootProps,
   ModelAvatar,
   type ModelAvatarProps,
@@ -179,16 +180,6 @@ export {
   type UseUploadOptions,
   type UseUploadResult,
 } from "#veryfront/react/components/chat/chat.tsx";
-
-export {
-  StandaloneMessage,
-  type StandaloneMessageProps,
-} from "#veryfront/react/components/chat/chat.tsx";
-export {
-  type MessageProps,
-  StreamingMessage,
-  type StreamingMessageProps,
-} from "#veryfront/react/components/chat/message.tsx";
 
 // ---------------------------------------------------------------------------
 // Target component names — the renamed public API (see

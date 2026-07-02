@@ -562,51 +562,33 @@ MessageContinuing.displayName = "Message.Continuing";
 export type { MessageContentProps as MessageCompoundContentProps, MessageContextValue };
 
 // ---------------------------------------------------------------------------
-// StandaloneMessage — non-compound convenience wrapper (Studio anatomy)
+// Message — render-or-compose
+//
+// `<Message message={msg} />` renders the full Studio anatomy (header, content,
+// reasoning, tools, "Continuing…" shimmer, hover action bar). Pass `children`
+// (via `Message.Root`/`Message.Header`/…) to recompose the layout yourself.
+// Mirrors the `Chat` preset: render it, or compose it — userland decides.
 // ---------------------------------------------------------------------------
 
-/** Props accepted by standalone message. */
-export interface StandaloneMessageProps {
-  message: ChatMessage;
-  className?: string;
-  /** Stream state — keeps the last row re-rendering while tokens arrive. */
-  isStreaming?: boolean;
+/** Props accepted by `<Message />`. */
+export interface MessageProps extends Omit<MessageRootProps, "children"> {
+  /** Compose your own layout; when omitted, the default anatomy is rendered. */
+  children?: React.ReactNode;
   /** Render inline citation sources under the answer. @default true */
   showSources?: boolean;
   /** Render multi-step indicators. @default true */
   showSteps?: boolean;
-  /**
-   * @deprecated The header now always shows the agent identity; kept for
-   * back-compat with the old monolithic `Message` prop surface.
-   */
-  showRole?: boolean;
-  /**
-   * @deprecated The header now always shows the timestamp; kept for back-compat.
-   */
-  showTimestamp?: boolean;
 }
 
-/**
- * A self-contained chat turn assembled from the `Message.*` compound parts —
- * the common case where the caller doesn't need to recompose the layout. Gets
- * the full Studio anatomy for free: assistant header (avatar + name +
- * timestamp), reasoning, markdown, tool cards, right-aligned user turns, and a
- * hover action bar.
- */
-export const StandaloneMessage = React.forwardRef<
-  HTMLDivElement,
-  StandaloneMessageProps
->(function StandaloneMessage(
-  { message, className, isStreaming, showSources = true, showSteps = true },
-  ref,
-) {
+/** The default anatomy rendered when `<Message>` gets no children. */
+function MessageDefault(
+  { showSources = true, showSteps = true }: {
+    showSources?: boolean;
+    showSteps?: boolean;
+  },
+): React.ReactElement {
   return (
-    <MessageRoot
-      ref={ref}
-      message={message}
-      isStreaming={isStreaming}
-      className={className}
-    >
+    <>
       <MessageHeader />
       <MessageContent showSources={showSources} showSteps={showSteps} />
       <MessageContinuing />
@@ -614,13 +596,27 @@ export const StandaloneMessage = React.forwardRef<
         <MessageActionsWrapper />
         <MessageTokens />
       </div>
-    </MessageRoot>
+    </>
   );
-});
-StandaloneMessage.displayName = "StandaloneMessage";
+}
 
-/** Message shape for message. */
-export const Message = Object.assign(MessageRoot, {
+const MessageComponent = React.forwardRef<HTMLDivElement, MessageProps>(
+  function Message({ children, showSources, showSteps, ...root }, ref) {
+    return (
+      <MessageRoot ref={ref} {...root}>
+        {children ??
+          <MessageDefault showSources={showSources} showSteps={showSteps} />}
+      </MessageRoot>
+    );
+  },
+);
+MessageComponent.displayName = "Message";
+
+/**
+ * Message — render `<Message message={msg} />` for the default turn, or compose
+ * `Message.Root` + `Message.Header`/`Content`/`Actions`/… for a custom layout.
+ */
+export const Message = Object.assign(MessageComponent, {
   Root: MessageRoot,
   Avatar: MessageAvatar,
   Header: MessageHeader,

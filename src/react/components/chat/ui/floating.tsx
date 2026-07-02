@@ -72,8 +72,9 @@ export function Floating({
     // Re-measure on the next frame: when a menu mounts already-open
     // (`defaultOpen`), the first synchronous measurement can land before the
     // portalled surface has its final layout, leaving it stuck at the hidden
-    // origin. A rAF re-run positions it once layout settles.
-    const raf = requestAnimationFrame(update);
+    // origin. A rAF re-run positions it once layout settles. Guarded because
+    // `requestAnimationFrame` is browser-only (absent in test/SSR envs).
+    const raf = typeof requestAnimationFrame === "function" ? requestAnimationFrame(update) : 0;
     globalThis.addEventListener("scroll", update, true);
     globalThis.addEventListener("resize", update);
     const onPointer = (e: MouseEvent) => {
@@ -89,7 +90,7 @@ export function Floating({
     document.addEventListener("mousedown", onPointer);
     document.addEventListener("keydown", onKey);
     return () => {
-      cancelAnimationFrame(raf);
+      if (raf) cancelAnimationFrame(raf);
       globalThis.removeEventListener("scroll", update, true);
       globalThis.removeEventListener("resize", update);
       document.removeEventListener("mousedown", onPointer);
