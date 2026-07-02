@@ -14,8 +14,11 @@ import { ReviewSurface, StoryFrame } from "../support/StoryFrame";
 
 const importCode = `import { InlineCitation, Sources } from "veryfront/chat"`;
 
-const compositionTree = `Sources  <- wraps a flex-wrap row of pills
-  +-- SourcePill  <- numbered chip with hover snippet preview
+const compositionTree =
+  `Sources  <- render it: <Sources sources={…} /> (flex-wrap row of pills)
+Sources.Root  <- or compose it: context (sources, onSourceClick)
+  +-- Sources.List  <- the flex-wrap row (one Pill per source)
+        +-- Sources.Pill  <- numbered chip with hover snippet preview
 InlineCitation  <- superscript citation marker with hover card`;
 
 function SourcesDocsPage() {
@@ -45,6 +48,13 @@ function SourcesDocsPage() {
         description="`Sources` renders nothing when the source list is empty."
       >
         <DocsExampleAuto of={Empty} />
+      </DocsSection>
+
+      <DocsSection
+        title="Compose"
+        description="Drop to `Sources.Root` + `Sources.List` + `Sources.Pill` to recompose the row — reorder pills, restyle the list with `className`, or render your own set of pills."
+      >
+        <DocsExampleAuto of={Composed} />
       </DocsSection>
 
       <DocsSection title="Import">
@@ -193,6 +203,37 @@ export const Empty: Story = {
     <StoryFrame maxWidth="720px">
       <ReviewSurface label="Empty">
         <Sources sources={[]} />
+      </ReviewSurface>
+    </StoryFrame>
+  ),
+};
+
+export const Composed: Story = {
+  tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { Sources } from "veryfront/chat";
+
+// Recompose the row: reorder the pills and restyle the list.
+<Sources.Root sources={sources}>
+  <Sources.List className="gap-3">
+    <Sources.Pill source={sources[1]} index={1} />
+    <Sources.Pill source={sources[0]} index={0} />
+  </Sources.List>
+</Sources.Root>`,
+      },
+    },
+  },
+  render: () => (
+    <StoryFrame maxWidth="720px">
+      <ReviewSurface label="Composed">
+        <Sources.Root sources={sourceList}>
+          <Sources.List className="gap-3">
+            <Sources.Pill source={sourceList[1]} index={1} />
+            <Sources.Pill source={sourceList[0]} index={0} />
+          </Sources.List>
+        </Sources.Root>
       </ReviewSurface>
     </StoryFrame>
   ),

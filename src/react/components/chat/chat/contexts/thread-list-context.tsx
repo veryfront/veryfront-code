@@ -9,7 +9,7 @@
 
 import * as React from "react";
 import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
-import type { Thread } from "../hooks/use-threads.ts";
+import { type Thread, useThreads, type UseThreadsOptions } from "../hooks/use-threads.ts";
 
 /** Public API contract for thread list context value. */
 export interface ThreadListContextValue {
@@ -22,7 +22,10 @@ export interface ThreadListContextValue {
   selectThread: (id: string) => void;
   deleteThread: (id: string) => void;
   renameThread: (id: string, title: string) => void;
-  updateThread: (id: string, updates: Partial<Pick<Thread, "title" | "messages">>) => void;
+  updateThread: (
+    id: string,
+    updates: Partial<Pick<Thread, "title" | "messages" | "agentId">>,
+  ) => void;
 }
 
 const ThreadListContext = React.createContext<ThreadListContextValue | null>(null);
@@ -45,3 +48,21 @@ export function useThreadListContextOptional(): ThreadListContextValue | null {
 
 /** Render thread list context provider. */
 export const ThreadListContextProvider = ThreadListContext.Provider;
+
+/** Props accepted by {@link ThreadsProvider}. */
+export interface ThreadsProviderProps extends UseThreadsOptions {
+  children: React.ReactNode;
+}
+
+/**
+ * ThreadsProvider — calls {@link useThreads} once and shares it through
+ * {@link ThreadListContext}. Put it in your app layout so the sidebar and the
+ * page read one source of truth via {@link useThreadListContext}; never call
+ * `useThreads()` again below it (a second call is a second, disconnected store).
+ */
+export function ThreadsProvider(
+  { children, ...options }: ThreadsProviderProps,
+): React.ReactElement {
+  const threads = useThreads(options);
+  return <ThreadListContextProvider value={threads}>{children}</ThreadListContextProvider>;
+}

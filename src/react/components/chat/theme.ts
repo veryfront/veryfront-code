@@ -190,7 +190,7 @@ export const defaultChatTheme: ChatTheme = {
   input:
     "w-full bg-transparent border-none text-[15px] leading-6 text-[var(--foreground)] placeholder:text-[var(--faint)] focus:outline-none focus:ring-0",
   button:
-    "flex size-8 shrink-0 items-center justify-center rounded-full bg-[var(--primary)] text-[var(--secondary)] transition-[background-color,color] hover:bg-[var(--secondary)] hover:text-[var(--foreground)] disabled:opacity-60",
+    "flex size-8 shrink-0 items-center justify-center rounded-full bg-[var(--primary)] text-[var(--secondary)] transition-[background-color,color] hover:bg-[var(--secondary)] hover:text-[var(--foreground)]",
   loading: "size-2 bg-[var(--edge-medium)] rounded-full animate-pulse",
 };
 
@@ -334,7 +334,7 @@ export const chatButtonVariants = variantClasses(
     "inline-flex items-center justify-center gap-2 whitespace-nowrap",
     "font-normal rounded-full transition-[background-color,color,border-color] duration-150 ease-in",
     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--background)]",
-    "disabled:pointer-events-none disabled:opacity-60",
+    "disabled:pointer-events-none",
     "[&_svg]:shrink-0",
   ],
   {

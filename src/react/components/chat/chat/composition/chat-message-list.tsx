@@ -96,6 +96,19 @@ export const ChatMessageList = React.forwardRef<
       messages.length,
     );
 
+    // Fade the top edge once the user scrolls down, so messages dissolve under
+    // whatever sits above the list (e.g. a borderless header) instead of a hard
+    // cut. Top-only: the bottom is never masked, so nothing is clipped at rest.
+    const [topFaded, setTopFaded] = React.useState(false);
+    React.useEffect(() => {
+      const el = scrollRef.current;
+      if (!el) return undefined;
+      const onScroll = () => setTopFaded(el.scrollTop > 8);
+      onScroll();
+      el.addEventListener("scroll", onScroll, { passive: true });
+      return () => el.removeEventListener("scroll", onScroll);
+    }, [scrollRef]);
+
     // Merge the forwarded ref with the stick-to-bottom scroll container ref.
     const setListRef = React.useCallback(
       (node: HTMLDivElement | null) => {
@@ -132,7 +145,10 @@ export const ChatMessageList = React.forwardRef<
       <div className={cn("relative flex-1 min-h-0 flex flex-col", className)}>
         <MessageList
           ref={setListRef}
-          className="flex-1 min-h-0 overflow-y-auto"
+          className={cn(
+            "flex-1 min-h-0 overflow-y-auto",
+            topFaded && "[mask-image:linear-gradient(to_bottom,transparent,black_1.5rem)]",
+          )}
         >
           <div
             ref={contentRef as React.Ref<HTMLDivElement>}

@@ -181,4 +181,65 @@ describe("chat/upload-handler", () => {
         assertEquals(res.status, 400, "GET without an id is a client error");
       }));
   });
+
+  describe("DELETE", () => {
+    it("removes a stored file so a later GET 404s", () =>
+      withTempDir(async (dir) => {
+        const { POST, GET, DELETE } = createChatUploadHandler({
+          storage: new LocalBlobStorage(dir),
+          authorize: () => true,
+        });
+        const { id, url } = await (await POST(postFile(txt("bye"))))
+          .json() as { id: string; url: string };
+
+        const del = await DELETE(
+          new Request(`http://localhost:3000/api/uploads?id=${id}`, {
+            method: "DELETE",
+          }),
+        );
+        assertEquals(del.status, 200, "delete of an existing file should succeed");
+        assertEquals(await del.json(), { id, deleted: true });
+
+        const served = await GET(new Request(url));
+        assertEquals(served.status, 404, "the file should be gone after delete");
+      }));
+
+    it("is idempotent — deleting an unknown id still succeeds", () =>
+      withTempDir(async (dir) => {
+        const { DELETE } = createChatUploadHandler({
+          storage: new LocalBlobStorage(dir),
+          authorize: () => true,
+        });
+        const res = await DELETE(
+          new Request("http://localhost:3000/api/uploads?id=never-existed", { method: "DELETE" }),
+        );
+        assertEquals(res.status, 200, "deleting a missing file is a no-op success");
+      }));
+
+    it("rejects an unsafe id with 400 before touching storage", () =>
+      withTempDir(async (dir) => {
+        const { DELETE } = createChatUploadHandler({
+          storage: new LocalBlobStorage(dir),
+          authorize: () => true,
+        });
+        const res = await DELETE(
+          new Request("http://localhost:3000/api/uploads?id=..%2F..%2Fetc%2Fpasswd", {
+            method: "DELETE",
+          }),
+        );
+        assertEquals(res.status, 400, "unsafe ids must be rejected");
+      }));
+
+    it("rejects unauthorized deletes with 401", () =>
+      withTempDir(async (dir) => {
+        const { DELETE } = createChatUploadHandler({
+          storage: new LocalBlobStorage(dir),
+          authorize: () => false,
+        });
+        const res = await DELETE(
+          new Request("http://localhost:3000/api/uploads?id=whatever", { method: "DELETE" }),
+        );
+        assertEquals(res.status, 401, "authorize:false should block the delete");
+      }));
+  });
 });

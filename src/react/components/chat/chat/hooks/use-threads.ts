@@ -7,6 +7,8 @@ export interface Thread {
   id: string;
   title: string;
   messages: ChatMessage[];
+  /** Last agent this thread talked to — lets a switcher restore per-thread. */
+  agentId?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -29,7 +31,10 @@ export interface UseThreadsResult {
   createThread: () => Thread;
   selectThread: (id: string) => void;
   deleteThread: (id: string) => void;
-  updateThread: (id: string, updates: Partial<Pick<Thread, "title" | "messages">>) => void;
+  updateThread: (
+    id: string,
+    updates: Partial<Pick<Thread, "title" | "messages" | "agentId">>,
+  ) => void;
   renameThread: (id: string, title: string) => void;
 }
 
@@ -182,7 +187,7 @@ export function useThreads(options?: UseThreadsOptions): UseThreadsResult {
   );
 
   const updateThread = React.useCallback(
-    (id: string, updates: Partial<Pick<Thread, "title" | "messages">>): void => {
+    (id: string, updates: Partial<Pick<Thread, "title" | "messages" | "agentId">>): void => {
       setThreads((prev) => {
         const next = prev.map((t) => {
           if (t.id !== id) return t;

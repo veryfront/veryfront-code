@@ -3,6 +3,7 @@ import { cn } from "../../theme.ts";
 import { CheckIcon, ClockIcon, FileTextIcon, RefreshCwIcon } from "../../icons/index.ts";
 import { Button } from "../../ui/button.tsx";
 import { Shimmer } from "./animations.tsx";
+import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
 
 /** Upload lifecycle state (shadcn-style). Drives the icon, label, and treatment. */
 export type AttachmentState =
@@ -45,6 +46,8 @@ export interface AttachmentPillProps extends React.HTMLAttributes<HTMLDivElement
   onRetry?: (id: string) => void;
   /** Override the remove / retry button icons. */
   icons?: AttachmentPillIcons;
+  /** Compose your own pill; when omitted, the default anatomy is rendered. */
+  children?: React.ReactNode;
 }
 
 const FILE_TYPE_COLORS: Record<string, string> = {
@@ -128,15 +131,82 @@ function AlertGlyph(): React.ReactElement {
   );
 }
 
-/** Render attachment pill. */
-export function AttachmentPill({
+// ---------------------------------------------------------------------------
+// AttachmentPill — compound, render-or-compose (mirrors `ToolCall` / `Sources`).
+//
+// `<AttachmentPill attachment={…} />` renders the default anatomy: a
+// `Thumbnail` (image) or `Icon` (glyph / ext box), a `Label` column, then the
+// optional `Retry` / `Remove` controls. Pass children to recompose from
+// `AttachmentPill.Thumbnail` / `.Icon` / `.Label` / `.Retry` / `.Remove`, each
+// reading `useAttachmentPill()`. Every part takes `className` (merged LAST).
+// ---------------------------------------------------------------------------
+
+/** Derived per-pill view state shared with `AttachmentPill.*` sub-parts. */
+export interface AttachmentPillContextValue {
+  attachment: AttachmentInfo;
+  onRemove?: (id: string) => void;
+  onRetry?: (id: string) => void;
+  icons?: AttachmentPillIcons;
+  /** File extension (from the name, falling back to the media type). */
+  ext: string;
+  /** Tailwind color pair for the default (no-state) icon box. */
+  colorClass: string;
+  /** Whether the attachment resolves to an image. */
+  isImage: boolean;
+  /** The image `src` to show in the thumbnail (preview → url). */
+  imageSrc?: string;
+  /** Whether the current state is `error`. */
+  isError: boolean;
+  /** Whether a spinner overlay should show (uploading / processing). */
+  isBusy: boolean;
+  /** Whether the title should shimmer (uploading / processing). */
+  shimmerTitle: boolean;
+  /** The secondary label line for the current state. */
+  label: string;
+  /** Legacy dimming for the old `status="uploading"` API. */
+  legacyUploading: boolean;
+  /** Whether the remove control should render. */
+  showRemove: boolean;
+  /** The state glyph for the icon box (null → render the extension text). */
+  stateGlyph: React.ReactNode;
+  /** Tailwind classes for the icon box background/foreground. */
+  boxClass: string;
+}
+
+const AttachmentPillContext = React.createContext<
+  AttachmentPillContextValue | null
+>(null);
+
+/**
+ * Read the enclosing `AttachmentPill` state. Throws when used outside an
+ * `AttachmentPill`.
+ */
+export function useAttachmentPill(): AttachmentPillContextValue {
+  const ctx = React.useContext(AttachmentPillContext);
+  if (!ctx) {
+    throw COMPONENT_ERROR.create({
+      detail: "useAttachmentPill must be used within a AttachmentPill",
+    });
+  }
+  return ctx;
+}
+
+/**
+ * `AttachmentPill.Root` — context provider + the chip wrapper. No children
+ * renders the default anatomy; pass children to recompose.
+ */
+const AttachmentPillRoot = React.forwardRef<
+  HTMLDivElement,
+  AttachmentPillProps
+>(function AttachmentPill({
   attachment,
   onRemove,
   onRetry,
   icons,
   className,
+  children,
   ...props
-}: AttachmentPillProps): React.ReactElement {
+}, ref): React.ReactElement {
   const mediaType = attachment.type ?? "";
   const ext = getExtension(attachment.name) ||
     mediaType.split("/").pop()?.toLowerCase() || "";
@@ -156,7 +226,7 @@ export function AttachmentPill({
   const label = getStateLabel(attachment, ext, mediaType);
   // Legacy dimming only applies to the old `status` API (new states stay solid).
   const legacyUploading = !state && attachment.status === "uploading";
-  const showRemove = onRemove &&
+  const showRemove = Boolean(onRemove) &&
     (Boolean(state) || attachment.status !== "uploading");
 
   // The left box shows a state glyph when a lifecycle `state` is set, otherwise
@@ -179,105 +249,214 @@ export function AttachmentPill({
     ? "bg-[var(--tertiary)] text-[var(--foreground)]"
     : colorClass;
 
+  const context: AttachmentPillContextValue = {
+    attachment,
+    onRemove,
+    onRetry,
+    icons,
+    ext,
+    colorClass,
+    isImage,
+    imageSrc,
+    isError,
+    isBusy,
+    shimmerTitle,
+    label,
+    legacyUploading,
+    showRemove,
+    stateGlyph,
+    boxClass,
+  };
+
+  return (
+    <AttachmentPillContext.Provider value={context}>
+      <div
+        {...props}
+        ref={ref}
+        className={cn(
+          "group relative flex w-[200px] items-center gap-3 rounded-[var(--radius-md)] border bg-[var(--secondary)] py-1 pl-1 pr-2 text-[var(--foreground)]",
+          state === "selected"
+            ? "border-dashed border-[var(--edge-medium)]"
+            : isError
+            ? "border-[var(--destructive)] bg-[color-mix(in_oklch,var(--destructive),transparent_94%)]"
+            : "border-[var(--edge-medium)]",
+          legacyUploading && "opacity-70",
+          className,
+        )}
+      >
+        {children ?? (
+          <>
+            {imageSrc && !isError ? <AttachmentPillThumbnail /> : <AttachmentPillIcon />}
+            <AttachmentPillLabel />
+            <AttachmentPillRetry />
+            <AttachmentPillRemove />
+          </>
+        )}
+      </div>
+    </AttachmentPillContext.Provider>
+  );
+});
+AttachmentPillRoot.displayName = "AttachmentPill.Root";
+
+/**
+ * `AttachmentPill.Thumbnail` — the image square (with a busy overlay). Renders
+ * only when the attachment resolves to a non-error image with a source.
+ */
+function AttachmentPillThumbnail(
+  { className }: { className?: string },
+): React.JSX.Element | null {
+  const { imageSrc, isError, isBusy } = useAttachmentPill();
+  if (!imageSrc || isError) return null;
   return (
     <div
-      {...props}
       className={cn(
-        "group relative flex w-[200px] items-center gap-3 rounded-[var(--radius-md)] border bg-[var(--secondary)] py-1 pl-1 pr-2 text-[var(--foreground)]",
-        state === "selected"
-          ? "border-dashed border-[var(--edge-medium)]"
-          : isError
-          ? "border-[var(--destructive)] bg-[color-mix(in_oklch,var(--destructive),transparent_94%)]"
-          : "border-[var(--edge-medium)]",
-        legacyUploading && "opacity-70",
+        "relative size-10 shrink-0 overflow-hidden rounded-[var(--radius-sm)] bg-[var(--tertiary)]",
         className,
       )}
     >
-      {imageSrc && !isError
-        ? (
-          <div className="relative size-10 shrink-0 overflow-hidden rounded-[var(--radius-sm)] bg-[var(--tertiary)]">
-            <img
-              alt=""
-              className="size-full object-cover"
-              src={imageSrc}
-            />
-            {isBusy && (
-              <div className="absolute inset-0 flex items-center justify-center rounded-[var(--radius-sm)] bg-[var(--overlay)]">
-                <span className="size-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-              </div>
-            )}
-          </div>
-        )
-        : (
-          <div
-            className={cn(
-              "relative flex size-10 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-[10px] font-medium uppercase leading-none",
-              boxClass,
-            )}
-          >
-            {stateGlyph ?? ext ?? "file"}
-            {legacyUploading && (
-              <div className="absolute inset-0 flex items-center justify-center rounded-[var(--radius-sm)] bg-[var(--overlay)]">
-                <span className="size-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-              </div>
-            )}
-          </div>
-        )}
-
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <p className="truncate text-sm font-medium leading-tight">
-          {shimmerTitle
-            ? <Shimmer>{attachment.name || "Attachment"}</Shimmer>
-            : (attachment.name || "Attachment")}
-        </p>
-        <p
-          className={cn(
-            "truncate text-xs leading-tight",
-            isError ? "text-[var(--destructive)]" : "text-[var(--faint)]",
-          )}
-        >
-          {label}
-        </p>
-      </div>
-
-      {isError && onRetry && (
-        <Button
-          type="button"
-          variant="icon-ghost"
-          size="icon-xs"
-          on="card"
-          onClick={() => onRetry(attachment.id)}
-          aria-label={`Retry ${attachment.name}`}
-          className="shrink-0"
-        >
-          {icons?.retry ?? <RefreshCwIcon />}
-        </Button>
-      )}
-
-      {showRemove && (
-        <Button
-          type="button"
-          variant="icon-ghost"
-          size="icon-xs"
-          on="card"
-          onClick={() => onRemove?.(attachment.id)}
-          aria-label={`Remove ${attachment.name}`}
-          className="shrink-0 opacity-100 md:opacity-0 md:group-hover:opacity-100"
-        >
-          {icons?.remove ?? (
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-            >
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          )}
-        </Button>
+      <img
+        alt=""
+        className="size-full object-cover"
+        src={imageSrc}
+      />
+      {isBusy && (
+        <div className="absolute inset-0 flex items-center justify-center rounded-[var(--radius-sm)] bg-[var(--overlay)]">
+          <span className="size-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+        </div>
       )}
     </div>
   );
 }
+AttachmentPillThumbnail.displayName = "AttachmentPill.Thumbnail";
+
+/**
+ * `AttachmentPill.Icon` — the state-glyph / file-extension square shown when
+ * there is no image thumbnail.
+ */
+function AttachmentPillIcon(
+  { className }: { className?: string },
+): React.JSX.Element {
+  const { boxClass, stateGlyph, ext, legacyUploading } = useAttachmentPill();
+  return (
+    <div
+      className={cn(
+        "relative flex size-10 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-[10px] font-medium uppercase leading-none",
+        boxClass,
+        className,
+      )}
+    >
+      {stateGlyph ?? ext ?? "file"}
+      {legacyUploading && (
+        <div className="absolute inset-0 flex items-center justify-center rounded-[var(--radius-sm)] bg-[var(--overlay)]">
+          <span className="size-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+        </div>
+      )}
+    </div>
+  );
+}
+AttachmentPillIcon.displayName = "AttachmentPill.Icon";
+
+/** `AttachmentPill.Label` — the name + secondary state-line column. */
+function AttachmentPillLabel(
+  { className }: { className?: string },
+): React.JSX.Element {
+  const { attachment, shimmerTitle, isError, label } = useAttachmentPill();
+  return (
+    <div
+      className={cn("flex min-w-0 flex-1 flex-col gap-0.5", className)}
+    >
+      <p className="truncate text-sm font-medium leading-tight">
+        {shimmerTitle
+          ? <Shimmer>{attachment.name || "Attachment"}</Shimmer>
+          : (attachment.name || "Attachment")}
+      </p>
+      <p
+        className={cn(
+          "truncate text-xs leading-tight",
+          isError ? "text-[var(--destructive)]" : "text-[var(--faint)]",
+        )}
+      >
+        {label}
+      </p>
+    </div>
+  );
+}
+AttachmentPillLabel.displayName = "AttachmentPill.Label";
+
+/**
+ * `AttachmentPill.Retry` — the retry control. Renders only in the `error` state
+ * when an `onRetry` handler is provided.
+ */
+function AttachmentPillRetry(
+  { className }: { className?: string },
+): React.JSX.Element | null {
+  const { attachment, isError, onRetry, icons } = useAttachmentPill();
+  if (!isError || !onRetry) return null;
+  return (
+    <Button
+      type="button"
+      variant="icon-ghost"
+      size="icon-xs"
+      on="card"
+      onClick={() => onRetry(attachment.id)}
+      aria-label={`Retry ${attachment.name}`}
+      className={cn("shrink-0", className)}
+    >
+      {icons?.retry ?? <RefreshCwIcon />}
+    </Button>
+  );
+}
+AttachmentPillRetry.displayName = "AttachmentPill.Retry";
+
+/**
+ * `AttachmentPill.Remove` — the remove (✕) control. Renders only when an
+ * `onRemove` handler is provided and the pill isn't a legacy uploading pill.
+ */
+function AttachmentPillRemove(
+  { className }: { className?: string },
+): React.JSX.Element | null {
+  const { attachment, showRemove, onRemove, icons } = useAttachmentPill();
+  if (!showRemove) return null;
+  return (
+    <Button
+      type="button"
+      variant="icon-ghost"
+      size="icon-xs"
+      on="card"
+      onClick={() => onRemove?.(attachment.id)}
+      aria-label={`Remove ${attachment.name}`}
+      className={cn(
+        "shrink-0 opacity-100 md:opacity-0 md:group-hover:opacity-100",
+        className,
+      )}
+    >
+      {icons?.remove ?? (
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+        >
+          <line x1="18" y1="6" x2="6" y2="18" />
+          <line x1="6" y1="6" x2="18" y2="18" />
+        </svg>
+      )}
+    </Button>
+  );
+}
+AttachmentPillRemove.displayName = "AttachmentPill.Remove";
+
+/**
+ * AttachmentPill — render `<AttachmentPill attachment={…} />` for the default
+ * chip, or compose `AttachmentPill.Root` + `.Thumbnail` / `.Icon` / `.Label` /
+ * `.Retry` / `.Remove` for a custom layout. Publicly aliased as `Attachment`.
+ */
+export const AttachmentPill = Object.assign(AttachmentPillRoot, {
+  Root: AttachmentPillRoot,
+  Thumbnail: AttachmentPillThumbnail,
+  Icon: AttachmentPillIcon,
+  Label: AttachmentPillLabel,
+  Retry: AttachmentPillRetry,
+  Remove: AttachmentPillRemove,
+});

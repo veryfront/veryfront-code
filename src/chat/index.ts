@@ -83,6 +83,8 @@ export {
   type MessageContextValue,
   ThreadListContextProvider,
   type ThreadListContextValue,
+  ThreadsProvider,
+  type ThreadsProviderProps,
   useChatContext,
   useChatContextOptional,
   useComposerContext,
@@ -155,7 +157,11 @@ export {
   type MessageFeedbackProps,
   type ModelOption,
   ModelSelector,
+  type ModelSelectorContentProps,
+  type ModelSelectorContextValue,
+  type ModelSelectorItemProps,
   type ModelSelectorProps,
+  type ModelSelectorTriggerProps,
   type PartGroup,
   type QuickAction,
   QuickActions,
@@ -168,8 +174,11 @@ export {
   SourcePill,
   type SourcePillProps,
   Sources,
+  type SourcesContextValue,
+  type SourcesListProps,
   type SourcesProps,
   StepIndicator,
+  type StepIndicatorContextValue,
   type StepIndicatorProps,
   Suggestion,
   type SuggestionProps,
@@ -181,7 +190,15 @@ export {
   ToolStatusBadge,
   type UploadedFile,
   UploadsPanel,
+  type UploadsPanelActionProps,
+  type UploadsPanelContextValue,
+  type UploadsPanelEmptyProps,
+  type UploadsPanelItemProps,
+  type UploadsPanelListProps,
   type UploadsPanelProps,
+  useModelSelector,
+  useSources,
+  useStepIndicator,
   useStickToBottom,
   type UseStickToBottomOptions,
   type UseStickToBottomResult,
@@ -191,6 +208,10 @@ export {
   useUpload,
   type UseUploadOptions,
   type UseUploadResult,
+  useUploadsPanel,
+  useUploadsRegistry,
+  type UseUploadsRegistryOptions,
+  type UseUploadsRegistryResult,
 } from "#veryfront/react/components/chat/chat.tsx";
 
 // ---------------------------------------------------------------------------
@@ -200,20 +221,59 @@ export {
 // ---------------------------------------------------------------------------
 export {
   AttachmentPill as Attachment,
+  type AttachmentPillContextValue,
   type AttachmentPillProps as AttachmentProps,
   ChatInput,
   type ChatInputProps,
-  ReasoningCard as Reasoning,
-  ToolCallCard as ToolCall,
+  Reasoning,
+  type ReasoningContextValue,
+  type ReasoningProps,
+  type ReasoningTriggerProps,
+  ToolCall,
+  type ToolCallContextValue,
+  type ToolCallProps,
+  type ToolCallTriggerProps,
+  useAttachmentPill,
+  useReasoning,
+  useToolCall,
 } from "#veryfront/react/components/chat/chat.tsx";
 export { Markdown, type MarkdownProps } from "#veryfront/react/components/chat/markdown.tsx";
+
+// Layout primitives — chat-independent, promoted from the private `chat/ui`
+// barrel so consuming apps can compose their own shell (sidebar in the layout,
+// pages in the content slot). Eventual home is a top-level `veryfront/ui`.
+export {
+  AppShell,
+  type AppShellHeaderProps,
+  type AppShellOpenState,
+  type AppShellProps,
+  type AppShellSide,
+  type AppShellSidebarProps,
+  type AppShellTriggerProps,
+  useAppShell,
+} from "#veryfront/react/components/chat/ui/app-shell.tsx";
+export {
+  Tabs,
+  TabsItem,
+  type TabsItemProps,
+  type TabsProps,
+} from "#veryfront/react/components/chat/ui/tabs.tsx";
+export {
+  ChatThemeScope,
+  type ChatThemeScopeProps,
+} from "#veryfront/react/components/chat/chat-theme-scope.tsx";
 
 // New target components (Studio 1:1, dependency-light forks).
 export {
   type AgentOption,
   AgentPicker,
+  type AgentPickerContentProps,
+  type AgentPickerContextValue,
+  type AgentPickerItemProps,
   type AgentPickerProps,
   type AgentPickerSection,
+  type AgentPickerTriggerProps,
+  useAgentPicker,
 } from "#veryfront/react/components/chat/agent-picker.tsx";
 export {
   agentsToPickerOptions,
@@ -223,8 +283,13 @@ export {
 export {
   type ChatActionItem,
   ChatActions,
+  type ChatActionsContentProps,
+  type ChatActionsContextValue,
+  type ChatActionsItemProps,
   type ChatActionsProps,
   type ChatActionsSettings,
+  type ChatActionsTriggerProps,
+  useChatActions,
 } from "#veryfront/react/components/chat/chat-actions.tsx";
 // `SkillTool` retired as a standalone export — a skill tool is now a presentation
 // variant of `ToolCall` (`<ToolCall variant="compact" />`, auto-default for skill
@@ -241,7 +306,12 @@ export {
   type UseClipboardResult,
 } from "#veryfront/react/components/chat/ui/code-block.tsx";
 
-export { AgentCard, type AgentCardProps } from "#veryfront/react/components/chat/agent-card.tsx";
+export {
+  AgentCard,
+  type AgentCardContextValue,
+  type AgentCardProps,
+  useAgentCard,
+} from "#veryfront/react/components/chat/agent-card.tsx";
 export {
   ChatErrorBoundary,
   type ChatErrorBoundaryProps,

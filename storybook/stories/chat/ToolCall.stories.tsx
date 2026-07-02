@@ -20,12 +20,14 @@ import { StoryFrame } from "../support/StoryFrame";
 
 const importCode = `import { ToolCall } from "veryfront/chat"`;
 
-const compositionTree = `ToolCall  <- one tool invocation (card, or compact row for skills)
-  +-- header       <- tool name + status badge + chevron
-  +-- Parameters   <- highlighted JSON input
-  +-- Result       <- JSON or auto table output
-  +-- Error        <- Alert (error) with the failure text
-  +-- compact      <- single-line row (icon + label) for skill tools`;
+const compositionTree =
+  `ToolCall  <- render it: <ToolCall tool={part} /> (compact row for skill tools)
+ToolCall.Root  <- or compose it: context (tool, expanded state)
+  +-- ToolCall.Trigger  <- tool icon + name + status badge + chevron
+  +-- ToolCall.Body  <- collapsible region (renders when expanded)
+        +-- ToolCall.Input   <- Parameters — highlighted JSON (or your children)
+        +-- ToolCall.Output  <- Result — JSON / auto table (or your children)
+        +-- ToolCall.Error   <- Alert with the failure text`;
 
 function ToolCallDocsPage() {
   return (
@@ -54,6 +56,13 @@ function ToolCallDocsPage() {
         description="When a tool fails, the card surfaces the failure text in an error Alert."
       >
         <DocsExampleAuto of={Error} />
+      </DocsSection>
+
+      <DocsSection
+        title="Compose"
+        description="Drop to `ToolCall.Root` + parts to recompose the card — reorder the body, restyle a section with `className`, or replace the rendered value by passing children to `Input`/`Output`."
+      >
+        <DocsExampleAuto of={Composed} />
       </DocsSection>
 
       <DocsSection
@@ -161,6 +170,39 @@ export const Completed: Story = {
   render: () => (
     <StoryFrame maxWidth="720px">
       <ToolCall tool={completedToolPart} />
+    </StoryFrame>
+  ),
+};
+
+export const Composed: Story = {
+  tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { ToolCall } from "veryfront/chat";
+
+// Recompose the card: Result first, a custom icon, and a restyled Output.
+<ToolCall.Root tool={completedTool}>
+  <ToolCall.Trigger icon={<span aria-hidden>🔧</span>} />
+  <ToolCall.Body>
+    <ToolCall.Output className="ring-1 ring-[var(--edge)]" />
+    <ToolCall.Input />
+    <ToolCall.Error />
+  </ToolCall.Body>
+</ToolCall.Root>`,
+      },
+    },
+  },
+  render: () => (
+    <StoryFrame maxWidth="720px">
+      <ToolCall.Root tool={completedToolPart}>
+        <ToolCall.Trigger icon={<span aria-hidden>🔧</span>} />
+        <ToolCall.Body>
+          <ToolCall.Output className="ring-1 ring-[var(--edge)]" />
+          <ToolCall.Input />
+          <ToolCall.Error />
+        </ToolCall.Body>
+      </ToolCall.Root>
     </StoryFrame>
   ),
 };

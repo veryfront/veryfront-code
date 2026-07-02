@@ -23,11 +23,29 @@ const agents: AgentOption[] = [
 const importCode = `import { AgentPicker } from "veryfront/chat"`;
 
 const compositionTree =
-  `AgentPicker  <- Pill (or input-style) trigger showing the selected agent
-  +-- Popover  <- portals via Floating so it never clips
-  +-- Command  <- searchable list (search appears past 5 agents)
-      +-- CommandGroup
-          +-- AgentRow  <- Avatar + name, Check on the selection`;
+  `AgentPicker            <- render-or-compose: preset with props, or compose sub-parts
+  +-- AgentPicker.Trigger  <- the pill / input-style combobox button
+  +-- AgentPicker.Content  <- the popover surface (wraps a Command shell)
+  +-- AgentPicker.List     <- the scrollable Command list region
+  +-- AgentPicker.Item     <- a single agent row (Avatar + name + check)
+
+Preset props (no children): agents / sections, value / onValueChange,
+onManage / onCreate, inputStyle, isLoading, icons, className.`;
+
+const composedCode = `import { AgentPicker } from "veryfront/chat";
+
+// Pass children to recompose the menu from sub-parts. Each reads the shared
+// selection + open state via useAgentPicker(); className merges last.
+<AgentPicker agents={agents} value={value} onValueChange={setValue}>
+  <AgentPicker.Trigger />
+  <AgentPicker.Content showSearch>
+    <AgentPicker.List>
+      {agents.map((agent) => (
+        <AgentPicker.Item key={agent.id} agent={agent} />
+      ))}
+    </AgentPicker.List>
+  </AgentPicker.Content>
+</AgentPicker>`;
 
 function AgentPickerDocsPage() {
   return (
@@ -57,6 +75,14 @@ function AgentPickerDocsPage() {
 
       <DocsSection title="Composition">
         <DocsComposition>{compositionTree}</DocsComposition>
+      </DocsSection>
+
+      <DocsSection
+        title="Compose"
+        description="Pass children to recompose the menu from `AgentPicker.Trigger` / `Content` / `List` / `Item`. Each sub-part reads the shared selection + open state via `useAgentPicker()`; `className` merges last. Omit children to keep the data-driven preset."
+      >
+        <DocsExampleAuto of={Composed} />
+        <DocsCode code={composedCode} />
       </DocsSection>
 
       <DocsSection title="API Reference">
@@ -103,6 +129,12 @@ function AgentPickerDocsPage() {
               name: "isLoading",
               type: "boolean",
               description: "Show skeleton rows while agents load",
+            },
+            {
+              name: "icons",
+              type: "AgentPickerIcons",
+              description:
+                "Override the check / chevron / create / more glyphs",
             },
             {
               name: "className",
@@ -212,5 +244,31 @@ export const InputStyle: Story = {
 />`,
       },
     },
+  },
+};
+
+export const Composed: Story = {
+  tags: ["!dev"],
+  render: () => {
+    const [value, setValue] = React.useState(agents[0].id);
+    return (
+      <StoryFrame maxWidth="420px">
+        <ReviewSurface label="Composed">
+          <AgentPicker agents={agents} value={value} onValueChange={setValue}>
+            <AgentPicker.Trigger />
+            <AgentPicker.Content showSearch>
+              <AgentPicker.List>
+                {agents.map((agent) => (
+                  <AgentPicker.Item key={agent.id} agent={agent} />
+                ))}
+              </AgentPicker.List>
+            </AgentPicker.Content>
+          </AgentPicker>
+        </ReviewSurface>
+      </StoryFrame>
+    );
+  },
+  parameters: {
+    docs: { source: { code: composedCode } },
   },
 };

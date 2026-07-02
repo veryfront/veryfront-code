@@ -44,9 +44,13 @@ export function ChatMessagesSkeleton(
   return (
     <output
       aria-busy="true"
-      className={cn("flex-1 min-h-0 overflow-hidden px-4 md:px-6", className)}
+      className={cn("flex-1 min-h-0 overflow-hidden", className)}
     >
-      <div className="py-6 w-full max-w-[850px] mx-auto flex flex-col gap-5">
+      {
+        /* Same column box as the real message list (`max-w-[850px] mx-auto px-9`)
+          so the skeleton lines up with the messages it's standing in for. */
+      }
+      <div className="py-6 w-full max-w-[850px] mx-auto px-9 flex flex-col gap-5">
         <Skeleton className="h-8! w-48! self-end rounded-lg! rounded-br-sm! bg-[var(--tint)]!" />
         <AssistantSkeletonRow lines={["w-full!", "w-5/6!", "w-3/4!"]} />
         <Skeleton className="h-8! w-36! self-end rounded-lg! rounded-br-sm! bg-[var(--tint)]!" />

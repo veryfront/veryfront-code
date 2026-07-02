@@ -21,7 +21,7 @@ export interface TabSwitcherProps {
 
 const TABS: { value: ChatTab; label: string }[] = [
   { value: "chat", label: "Chat" },
-  { value: "uploads", label: "Uploads" },
+  { value: "uploads", label: "Attachments" },
 ];
 
 /** Render tab switcher. */

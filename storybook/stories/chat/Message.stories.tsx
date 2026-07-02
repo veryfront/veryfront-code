@@ -17,7 +17,9 @@ const importCode = `import { Message } from "veryfront/chat"`;
 const compositionTree = `Message  <- render it: <Message message={msg} />
 Message.Root  <- or compose it: context (message, branch state)
   +-- Message.Header  <- agent avatar + name + timestamp (assistant)
-  +-- Message.Content  <- markdown body, sources, reasoning steps
+  +-- Message.Content  <- body; no children = default loop, or a function child
+  |     +-- Message.Part  <- default rendering for one grouped part
+  |     +-- Message.Sources  <- inline citation sources
   +-- Message.Continuing  <- "Continuing…" shimmer while streaming
   +-- Message.Actions  <- copy / regenerate
   +-- Message.Tokens  <- token-usage popover (Model / Input / Output / Total)
@@ -170,9 +172,17 @@ export const CompoundAssistant: Story = {
       source: {
         code: `import { Message } from "veryfront/chat";
 
+// Own the body: special-case the parts you want (here, a custom tool view + a
+// swapped code block), and fall back to Message.Part for everything else.
 <Message.Root message={assistantMessage} onReload={() => regenerate()}>
   <Message.Header />
-  <Message.Content showSources showSteps />
+  <Message.Content codeBlock={MyCodeBlock}>
+    {(part) =>
+      part.type === "tool"
+        ? <MyToolView tool={part.tool} />        // custom render for tool parts
+        : <Message.Part part={part} />}          // default for text / reasoning
+  </Message.Content>
+  <Message.Sources />
   <div className="mt-1.5 flex items-center gap-0.5">
     <Message.Actions />
     <Message.Tokens />
@@ -185,7 +195,17 @@ export const CompoundAssistant: Story = {
     <StoryFrame maxWidth="760px">
       <Message.Root message={chatMessages[1]} onReload={() => undefined}>
         <Message.Header />
-        <Message.Content showSources showSteps />
+        <Message.Content>
+          {(part) =>
+            part.type === "tool"
+              ? (
+                <div className="rounded-[var(--radius-md)] border border-dashed border-[var(--edge-medium)] px-3 py-2 text-xs text-[var(--faint)]">
+                  Custom tool view → {part.tool.toolName}
+                </div>
+              )
+              : <Message.Part part={part} />}
+        </Message.Content>
+        <Message.Sources />
         <div className="mt-1.5 flex items-center gap-0.5">
           <Message.Actions />
           <Message.Tokens />

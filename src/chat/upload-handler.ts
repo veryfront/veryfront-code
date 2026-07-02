@@ -7,7 +7,7 @@
  * ```ts
  * // app/api/uploads/route.ts
  * import { createChatUploadHandler } from "veryfront/chat/uploads";
- * export const { POST, GET } = createChatUploadHandler();
+ * export const { POST, GET, DELETE } = createChatUploadHandler();
  * ```
  *
  * `POST` stores the multipart `file` field and returns `{ id, url, name,
@@ -96,15 +96,16 @@ async function reject(
 }
 
 /**
- * Build `{ POST, GET }` route handlers for chat attachments. Auto-selects local
- * disk storage in dev and Veryfront Cloud once deployed (or the `storage` you
- * provide).
+ * Build `{ POST, GET, DELETE }` route handlers for chat attachments.
+ * Auto-selects local disk storage in dev and Veryfront Cloud once deployed (or
+ * the `storage` you provide). `DELETE ?id=` removes the file from storage.
  */
 export function createChatUploadHandler(
   config: ChatUploadHandlerConfig = {},
 ): {
   POST: (request: Request) => Promise<Response>;
   GET: (request: Request) => Promise<Response>;
+  DELETE: (request: Request) => Promise<Response>;
 } {
   const maxFileSize = config.maxFileSize ?? DEFAULT_MAX_FILE_SIZE;
   if (!config.authorize) warnOpenEndpoint();
@@ -163,5 +164,18 @@ export function createChatUploadHandler(
     });
   }
 
-  return { POST, GET };
+  async function DELETE(request: Request): Promise<Response> {
+    const denied = await reject(request, config.authorize);
+    if (denied) return denied;
+
+    const id = new URL(request.url).searchParams.get("id");
+    if (!id || !SAFE_ID.test(id)) {
+      return Response.json({ error: "Invalid id" }, { status: 400 });
+    }
+    // Idempotent: deleting an already-gone file is a success, not a 404.
+    await storage.delete(id);
+    return Response.json({ id, deleted: true });
+  }
+
+  return { POST, GET, DELETE };
 }

@@ -14,11 +14,14 @@ import { ReviewSurface, StoryFrame } from "../support/StoryFrame";
 
 const importCode = `import { Attachment } from "veryfront/chat"`;
 
-const compositionTree = `Attachment  <- context: a single AttachmentInfo
-  +-- Thumbnail  <- image preview or file-type glyph
-  +-- Label  <- file name + size / status
-  +-- Remove button  <- shown when onRemove is set
-  +-- Hover preview  <- shown when attachment.preview is set`;
+const compositionTree =
+  `Attachment  <- render it: <Attachment attachment={info} /> (chip anatomy)
+Attachment.Root  <- or compose it: context (attachment, derived view state)
+  +-- Attachment.Thumbnail  <- image square (shown for image attachments)
+  +-- Attachment.Icon       <- state glyph / file-extension square
+  +-- Attachment.Label      <- name + secondary state line
+  +-- Attachment.Retry      <- retry control (error state, needs onRetry)
+  +-- Attachment.Remove     <- remove (✕) control (needs onRemove)`;
 
 function AttachmentDocsPage() {
   return (
@@ -56,6 +59,13 @@ function AttachmentDocsPage() {
         <DocsExampleAuto of={States} />
       </DocsSection>
 
+      <DocsSection
+        title="Compose"
+        description="Drop to `Attachment.Root` + parts to recompose the chip — reorder the controls, restyle a section with `className`, or swap the thumbnail for the icon box."
+      >
+        <DocsExampleAuto of={Composed} />
+      </DocsSection>
+
       <DocsSection title="Import">
         <DocsCode code={importCode} />
       </DocsSection>
@@ -84,6 +94,16 @@ function AttachmentDocsPage() {
               type: "(id: string) => void",
               description:
                 "Called to retry a failed upload (shows a retry button in the error state)",
+            },
+            {
+              name: "icons",
+              type: "AttachmentPillIcons",
+              description: "Override the remove / retry glyphs ({ remove, retry })",
+            },
+            {
+              name: "className",
+              type: "string",
+              description: "Additional class names for the chip (merged via cn)",
             },
           ]}
         />
@@ -253,6 +273,43 @@ export const WithPreview: Story = {
   }}
   onRemove={handleRemove}
 />`,
+      },
+    },
+  },
+};
+
+export const Composed: Story = {
+  tags: ["!dev"],
+  render: () => (
+    <StoryFrame maxWidth="560px">
+      <ReviewSurface label="Recomposed chip">
+        <Attachment.Root
+          attachment={{
+            id: "composed",
+            name: "handoff-notes.md",
+            type: "md",
+            size: 2418,
+          }}
+          onRemove={() => undefined}
+        >
+          <Attachment.Icon />
+          <Attachment.Label />
+          <Attachment.Remove className="ring-1 ring-[var(--edge)]" />
+        </Attachment.Root>
+      </ReviewSurface>
+    </StoryFrame>
+  ),
+  parameters: {
+    docs: {
+      source: {
+        code: `import { Attachment } from "veryfront/chat";
+
+// Recompose the chip: icon box + label, then a restyled remove control.
+<Attachment.Root attachment={info} onRemove={handleRemove}>
+  <Attachment.Icon />
+  <Attachment.Label />
+  <Attachment.Remove className="ring-1 ring-[var(--edge)]" />
+</Attachment.Root>`,
       },
     },
   },

@@ -81,6 +81,13 @@ function ChatDocsPage() {
       </DocsSection>
 
       <DocsSection
+        title="Compose"
+        description="Drop to `Chat.Root` + the building blocks to own the layout — arrange the transcript, empty state, and composer yourself. `Chat.Root` provides the shared context."
+      >
+        <DocsExampleAuto of={Composed} />
+      </DocsSection>
+
+      <DocsSection
         title="Empty"
         description="With no messages, the preset shows its empty state and exposes the model selector."
       >
@@ -114,6 +121,11 @@ function ChatDocsPage() {
       >
         <DocsExampleAuto of={ModelsAndAttachments} />
       </DocsSection>
+
+      <DocsSection
+        title="Compose vs override — two altitudes"
+        description="Two different jobs, two different tools. **Compose the structure** — arrange the transcript, empty state, and composer — with `Chat.Root` + the building blocks (or, per message, `Message.Root` + sub-parts). **Override how a part type renders** — swap every tool card or whole message — with `renderTool` / `renderMessage`: these take a part and return a node, the right shape for data-driven rendering across a dynamic list (the same pattern as `Message.Content`'s function child). Reach for children when you're laying out fixed structure; reach for `renderTool` / `renderMessage` when you're re-rendering a repeated part."
+      />
 
       <DocsSection title="Import">
         <DocsCode code={importCode} />
@@ -253,6 +265,17 @@ function ChatDocsPage() {
               type: "(suggestion: string) => void",
               description: "Called when a suggestion is chosen",
             },
+            {
+              name: "renderTool",
+              type: "(tool) => ReactNode",
+              description:
+                "Override how every tool part renders (data-driven; applies to the whole conversation)",
+            },
+            {
+              name: "renderMessage",
+              type: "(message) => ReactNode",
+              description: "Override how every message row renders",
+            },
           ]}
         />
       </DocsSection>
@@ -381,6 +404,65 @@ export const Conversation: Story = {
   tags: ["!dev"],
   render: () => <ChatReview />,
   parameters: codeParams("\n      showSources\n      showSteps"),
+};
+
+/** Own the layout: `Chat.Root` provides context; you place the blocks. */
+function ChatComposedReview(): React.ReactElement {
+  const [messages, setMessages] = React.useState<ChatMessage[]>(chatMessages);
+  const [input, setInput] = React.useState("");
+  const onSubmit = (event?: React.FormEvent) => {
+    event?.preventDefault();
+    const text = input.trim();
+    if (!text) return;
+    setMessages((current) => [
+      ...current,
+      {
+        id: `story-user-${current.length + 1}`,
+        role: "user",
+        createdAt: new Date().toISOString(),
+        parts: [{ type: "text", text }],
+      },
+    ]);
+    setInput("");
+  };
+  return (
+    <div className="vf-story-canvas">
+      <div className="vf-chat-panel">
+        <Chat.Root
+          messages={messages}
+          input={input}
+          onChange={createChangeHandler(setInput)}
+          onSubmit={onSubmit}
+        >
+          <Chat.MessageList messages={messages} showSources showSteps />
+          <Chat.Input
+            input={input}
+            onChange={createChangeHandler(setInput)}
+            onSubmit={onSubmit}
+            placeholder="Ask Veryfront"
+          />
+        </Chat.Root>
+      </div>
+    </div>
+  );
+}
+
+export const Composed: Story = {
+  tags: ["!dev"],
+  render: () => <ChatComposedReview />,
+  parameters: {
+    docs: {
+      source: {
+        code: `import { Chat } from "veryfront/chat";
+
+// Chat.Root provides the shared context; you arrange the blocks yourself.
+<Chat.Root messages={messages} input={input} onChange={onChange} onSubmit={onSubmit}>
+  <Chat.MessageList messages={messages} showSources showSteps />
+  <Chat.Input input={input} onChange={onChange} onSubmit={onSubmit} placeholder="Ask Veryfront" />
+</Chat.Root>`,
+      },
+    },
+  },
 };
 
 export const Empty: Story = {

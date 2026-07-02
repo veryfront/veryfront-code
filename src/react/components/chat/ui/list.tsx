@@ -80,7 +80,7 @@ export function ListItem({
       ref={ref}
       data-active={active || undefined}
       className={cn(
-        "group/li flex items-center gap-1 rounded-[var(--radius-md)] px-2.5 py-1.5 transition-colors",
+        "group/li flex items-center gap-1 rounded-[var(--radius-sm)] px-2.5 py-1.5 transition-colors",
         props.onClick && "cursor-pointer",
         active
           ? "bg-[var(--accent)] text-[var(--foreground)]"

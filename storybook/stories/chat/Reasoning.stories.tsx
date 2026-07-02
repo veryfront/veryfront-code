@@ -13,9 +13,11 @@ import { ReviewSurface, StoryFrame } from "../support/StoryFrame";
 
 const importCode = `import { Reasoning } from "veryfront/chat"`;
 
-const compositionTree = `Reasoning  <- collapsible disclosure for model thinking
-  +-- toggle button  <- "Thinking..." shimmer or "Thought process"
-  +-- Markdown  <- reasoning text body when expanded`;
+const compositionTree =
+  `Reasoning  <- render it: <Reasoning text={…} /> (collapsible disclosure)
+Reasoning.Root  <- or compose it: context (text, streaming, open state)
+  +-- Reasoning.Trigger  <- "Thinking…" shimmer / "Thought process" + chevron
+  +-- Reasoning.Content  <- reasoning body when open (or your own children)`;
 
 function ReasoningDocsPage() {
   return (
@@ -37,6 +39,13 @@ function ReasoningDocsPage() {
         description="A completed or reloaded reasoning (`isStreaming` never true) mounts collapsed and static — no open-then-collapse animation. Clicking the toggle reveals the rendered reasoning. It only auto-collapses after streaming that happened live in the same session."
       >
         <DocsExampleAuto of={Complete} />
+      </DocsSection>
+
+      <DocsSection
+        title="Compose"
+        description="Drop to `Reasoning.Root` + parts to recompose the disclosure — restyle the trigger with `className`, or replace the body by passing children to `Reasoning.Content`."
+      >
+        <DocsExampleAuto of={Composed} />
       </DocsSection>
 
       <DocsSection title="Import">
@@ -110,6 +119,35 @@ export const Streaming: Story = {
           text="I am comparing the current run state, recent tool calls, and the deploy preconditions before giving a recommendation."
           isStreaming
         />
+      </ReviewSurface>
+    </StoryFrame>
+  ),
+};
+
+export const Composed: Story = {
+  tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { Reasoning } from "veryfront/chat";
+
+<Reasoning.Root text="…" defaultOpen>
+  <Reasoning.Trigger labels={{ thought: "Show the plan" }} />
+  <Reasoning.Content className="rounded-md bg-[var(--secondary)] p-3" />
+</Reasoning.Root>`,
+      },
+    },
+  },
+  render: () => (
+    <StoryFrame maxWidth="640px">
+      <ReviewSurface label="Composed reasoning">
+        <Reasoning.Root
+          text="The release can proceed after the retry path has a user-visible error and the Storybook build is green."
+          defaultOpen
+        >
+          <Reasoning.Trigger labels={{ thought: "Show the plan" }} />
+          <Reasoning.Content className="rounded-md bg-[var(--secondary)] p-3" />
+        </Reasoning.Root>
       </ReviewSurface>
     </StoryFrame>
   ),
