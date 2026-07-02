@@ -15,6 +15,7 @@ import { downloadUploadToFile, listAllUploads, type UploadItem } from "../upload
 import { putRemoteFileFromLocal } from "../files/command.ts";
 import * as commandHelpers from "./command-helpers.ts";
 import { createRunUserLogger, type Logger, serverLogger } from "veryfront/utils";
+import type { DocumentExtractionProgressEvent } from "veryfront/extensions/compat";
 import { writeRunResultIfConfigured } from "../../utils/write-run-result.ts";
 import { classifyKnowledgeSourcePath } from "./source-policy.ts";
 import { type KnowledgeParserResult, runKnowledgeParser } from "./parser.ts";
@@ -124,6 +125,39 @@ function createKnowledgeIngestEventLogger(): Logger | null {
 
 function buildKnowledgeSourceName(source: KnowledgeSource): string {
   return basename(source.kind === "upload" ? source.uploadPath : source.localPath);
+}
+
+function buildExtractionProgressPhase(event: DocumentExtractionProgressEvent): string {
+  if (event.unit === "page") return "pdf_page_completed";
+  if (event.unit === "slide") return "ppt_slide_completed";
+  return "document_file_completed";
+}
+
+function buildExtractionProgressMetadata(
+  sourceName: string,
+  event: DocumentExtractionProgressEvent,
+): Record<string, unknown> {
+  const total = event.total ?? event.current;
+  const metadata: Record<string, unknown> = {
+    phase: buildExtractionProgressPhase(event),
+    progress_unit: event.unit,
+    progress_current: event.current,
+    progress_total: total,
+    source_name: sourceName,
+  };
+
+  if (event.unit === "page") {
+    metadata.page_current = event.current;
+    metadata.page_total = total;
+  } else if (event.unit === "slide") {
+    metadata.slide_current = event.current;
+    metadata.slide_total = total;
+  }
+  if (event.characters !== undefined) {
+    metadata.characters = event.characters;
+  }
+
+  return metadata;
 }
 
 function showKnowledgeUsage(): void {
@@ -436,13 +470,25 @@ export async function ingestResolvedSources(
 
     let parser: KnowledgeParserResult;
     try {
+      const sourceName = buildKnowledgeSourceName(source);
+      const eventLogger = deps.eventLogger;
+      const parserDeps = eventLogger
+        ? {
+          onProgress: (event: DocumentExtractionProgressEvent) => {
+            eventLogger.info(
+              "Knowledge source extraction progress",
+              buildExtractionProgressMetadata(sourceName, event),
+            );
+          },
+        }
+        : undefined;
       parser = await deps.runParser({
         filePath: source.localPath,
         outputDir: deps.outputDir,
         description: options.description,
         slug: slugs[index],
         sourceReference,
-      });
+      }, parserDeps);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       recordSourceFailure(source, sourceReference, index, message, "parser_error");

@@ -25,6 +25,7 @@ const DEFAULT_INCLUDES = [
   "extensions/ext-sandbox-shell-tools/src/index.ts",
   // Spawned via `new Worker(new URL(...))`, which deno compile does not trace.
   "extensions/ext-document-kreuzberg/src/upload-extraction-worker.ts",
+  "extensions/ext-document-kreuzberg/src/native-progress-extraction-worker.ts",
   "src/rendering/rsc",
   "src/utils/clsx.ts",
   "dist/framework-src",

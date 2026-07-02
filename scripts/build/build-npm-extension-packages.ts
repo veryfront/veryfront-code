@@ -287,25 +287,32 @@ async function transpileDocumentExtractionWorker(
 ): Promise<void> {
   const esbuild = await import("npm:esbuild@0.28.1");
   try {
-    const workerSrc =
-      `${rootDir}/extensions/ext-document-kreuzberg/src/upload-extraction-worker.ts`;
-    const workerDest =
-      `${outDir}/esm/extensions/ext-document-kreuzberg/src/upload-extraction-worker.js`;
-    const transpiled = await esbuild.transform(
-      await Deno.readTextFile(workerSrc),
-      {
-        loader: "ts",
-        format: "esm",
-        target: "esnext",
-      },
-    );
-    await Deno.mkdir(dirname(workerDest), { recursive: true });
-    await Deno.writeTextFile(
-      workerDest,
-      transpiled.code.replaceAll("./kreuzberg.ts", "./kreuzberg.js"),
-    );
+    for (
+      const workerName of [
+        "upload-extraction-worker",
+        "native-progress-extraction-worker",
+      ]
+    ) {
+      const workerSrc =
+        `${rootDir}/extensions/ext-document-kreuzberg/src/${workerName}.ts`;
+      const workerDest =
+        `${outDir}/esm/extensions/ext-document-kreuzberg/src/${workerName}.js`;
+      const transpiled = await esbuild.transform(
+        await Deno.readTextFile(workerSrc),
+        {
+          loader: "ts",
+          format: "esm",
+          target: "esnext",
+        },
+      );
+      await Deno.mkdir(dirname(workerDest), { recursive: true });
+      await Deno.writeTextFile(
+        workerDest,
+        transpiled.code.replaceAll("./kreuzberg.ts", "./kreuzberg.js"),
+      );
+    }
     console.log(
-      "📝 Transpiled @veryfront/ext-document-kreuzberg upload-extraction worker",
+      "📝 Transpiled @veryfront/ext-document-kreuzberg extraction workers",
     );
   } finally {
     await esbuild.stop();

@@ -7,13 +7,20 @@
  * @module extensions/ext-document-kreuzberg
  */
 
-import type { ExtensionFactory } from "veryfront/extensions";
-import type { DocumentExtractor, KreuzbergExtractor } from "veryfront/extensions/compat";
+import type { ExtensionFactory, ExtensionLogger } from "veryfront/extensions";
+import type {
+  DocumentExtractionOptions,
+  DocumentExtractionProgressEvent,
+  DocumentExtractor,
+  KreuzbergExtractor,
+} from "veryfront/extensions/compat";
 import { isMissingPackageError, loadKreuzberg, loadKreuzbergNative } from "./kreuzberg.ts";
 import { isDeno } from "./runtime.ts";
 
 /** Maximum time to wait for fallback worker extraction before aborting. */
 export const EXTRACTION_TIMEOUT_MS = 120_000;
+export const NATIVE_PROGRESS_IDLE_TIMEOUT_MS = 120_000;
+export const NATIVE_PROGRESS_HARD_TIMEOUT_MS = 10 * 60_000;
 
 function extractInWorkerDeno(
   buffer: ArrayBuffer,
@@ -66,10 +73,23 @@ export interface KreuzbergDocumentExtractorDeps {
   isDenoRuntime?: boolean;
   loadNativeKreuzberg?: () => Promise<KreuzbergExtractor>;
   extractInWorkerDeno?: typeof extractInWorkerDeno;
+  extractWithNativeProgressDeno?: typeof extractWithNativeProgressDeno;
+  logger?: Pick<ExtensionLogger, "warn">;
 }
 
 function isPdfMimeType(mimeType: string): boolean {
   return mimeType.toLowerCase().split(";")[0]?.trim() === "application/pdf";
+}
+
+function normalizeMimeType(mimeType: string): string {
+  return mimeType.toLowerCase().split(";")[0]?.trim() ?? "";
+}
+
+function isNativeProgressMimeType(mimeType: string): boolean {
+  const normalized = normalizeMimeType(mimeType);
+  return normalized === "application/pdf" ||
+    normalized === "application/vnd.ms-powerpoint" ||
+    normalized === "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 }
 
 async function extractWithNativeKreuzberg(
@@ -82,6 +102,104 @@ async function extractWithNativeKreuzberg(
   return result.content;
 }
 
+type NativeProgressWorkerResponse =
+  | { type: "done"; content: string }
+  | { type: "error"; error: string }
+  | { type: "progress"; event: DocumentExtractionProgressEvent };
+
+function warningDetails(mimeType: string, error: unknown): Record<string, string> {
+  return {
+    mimeType,
+    error: error instanceof Error ? error.message : String(error),
+  };
+}
+
+function extractWithNativeProgressDeno(
+  buffer: ArrayBuffer,
+  mimeType: string,
+  options: DocumentExtractionOptions,
+): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const workerFile = import.meta.url.endsWith(".ts")
+      ? "./native-progress-extraction-worker.ts"
+      : "./native-progress-extraction-worker.js";
+    const workerUrl = new URL(workerFile, import.meta.url);
+    const worker = new Worker(workerUrl, { type: "module" });
+    const idleTimeoutMs = options.idleTimeoutMs ?? NATIVE_PROGRESS_IDLE_TIMEOUT_MS;
+    const hardTimeoutMs = options.hardTimeoutMs ?? NATIVE_PROGRESS_HARD_TIMEOUT_MS;
+    let settled = false;
+    let idleTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const clearIdleTimer = () => {
+      if (!idleTimer) return;
+      clearTimeout(idleTimer);
+      idleTimer = undefined;
+    };
+    const cleanup = () => {
+      settled = true;
+      clearIdleTimer();
+      clearTimeout(hardTimer);
+      worker.terminate();
+    };
+    const fail = (error: Error) => {
+      if (settled) return;
+      cleanup();
+      reject(error);
+    };
+    const resetIdleTimer = () => {
+      clearIdleTimer();
+      idleTimer = setTimeout(() => {
+        fail(
+          new Error(
+            `Text extraction made no progress for ${idleTimeoutMs / 1000}s. ` +
+              "The file may be corrupted or unsupported",
+          ),
+        );
+      }, idleTimeoutMs);
+    };
+    const hardTimer = setTimeout(() => {
+      fail(
+        new Error(
+          `Text extraction exceeded the hard timeout after ${hardTimeoutMs / 1000}s. ` +
+            "The file may be corrupted or unsupported",
+        ),
+      );
+    }, hardTimeoutMs);
+
+    resetIdleTimer();
+
+    worker.onmessage = async (event: MessageEvent<NativeProgressWorkerResponse>) => {
+      if (settled) return;
+      const message = event.data;
+      if (message.type === "progress") {
+        clearIdleTimer();
+        try {
+          await options.onProgress?.(message.event);
+        } catch (error) {
+          fail(error instanceof Error ? error : new Error(String(error)));
+          return;
+        }
+        if (!settled) resetIdleTimer();
+        return;
+      }
+      if (message.type === "error") {
+        fail(new Error(message.error));
+        return;
+      }
+
+      cleanup();
+      resolve(message.content);
+    };
+
+    worker.onerror = (event) => {
+      fail(new Error(`Text extraction worker failed: ${event.message ?? "unknown"}`));
+    };
+
+    const requestBuffer = buffer.slice(0);
+    worker.postMessage({ buffer: requestBuffer, mimeType }, [requestBuffer]);
+  });
+}
+
 export class KreuzbergDocumentExtractor implements DocumentExtractor {
   constructor(private readonly deps: KreuzbergDocumentExtractorDeps = {}) {}
 
@@ -89,7 +207,11 @@ export class KreuzbergDocumentExtractor implements DocumentExtractor {
     return loadKreuzberg();
   }
 
-  async extractInWorker(buffer: ArrayBuffer, mimeType: string): Promise<string> {
+  async extractInWorker(
+    buffer: ArrayBuffer,
+    mimeType: string,
+    options: DocumentExtractionOptions = {},
+  ): Promise<string> {
     const isDenoRuntime = this.deps.isDenoRuntime ?? isDeno;
     const extractWithWorker = this.deps.extractInWorkerDeno ?? extractInWorkerDeno;
 
@@ -100,6 +222,27 @@ export class KreuzbergDocumentExtractor implements DocumentExtractor {
       const { extractBytes } = await loadKreuzberg();
       const result = await extractBytes(new Uint8Array(buffer), mimeType);
       return result.content;
+    }
+
+    if (options.onProgress && isNativeProgressMimeType(mimeType)) {
+      try {
+        return await (this.deps.extractWithNativeProgressDeno ?? extractWithNativeProgressDeno)(
+          buffer,
+          mimeType,
+          options,
+        );
+      } catch (error) {
+        // Keep progress opportunistic: if page/slide extraction cannot handle a
+        // document, fall back to the previous opaque extraction path.
+        const message =
+          "[ext-document-kreuzberg] native progress extraction failed; falling back to opaque extraction";
+        const details = warningDetails(mimeType, error);
+        if (this.deps.logger) {
+          this.deps.logger.warn(message, details);
+        } else {
+          console.warn(message, details);
+        }
+      }
     }
 
     if (isPdfMimeType(mimeType)) {
@@ -119,8 +262,6 @@ export class KreuzbergDocumentExtractor implements DocumentExtractor {
 }
 
 const extDocumentKreuzberg: ExtensionFactory = () => {
-  const extractor = new KreuzbergDocumentExtractor();
-
   return {
     name: "ext-document-kreuzberg",
     version: "0.1.0",
@@ -132,6 +273,7 @@ const extDocumentKreuzberg: ExtensionFactory = () => {
     ],
 
     setup(ctx) {
+      const extractor = new KreuzbergDocumentExtractor({ logger: ctx.logger });
       ctx.provide("DocumentExtractor", extractor);
       ctx.logger.info("[ext-document-kreuzberg] document extraction registered");
     },

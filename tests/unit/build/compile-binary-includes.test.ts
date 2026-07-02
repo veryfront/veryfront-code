@@ -63,6 +63,12 @@ describe("compile-binary includes", () => {
       ),
       true,
     );
+    assertEquals(
+      extensionIncludes.includes(
+        "extensions/ext-document-kreuzberg/src/native-progress-extraction-worker.ts",
+      ),
+      true,
+    );
   });
 
   it("should include every workspace extension entrypoint", async () => {
