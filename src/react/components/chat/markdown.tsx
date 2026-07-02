@@ -300,9 +300,7 @@ export function Markdown({
   }, []);
 
   if (!isLoaded || !ReactMarkdown) {
-    return (
-      <FallbackMarkdown className={className}>{children}</FallbackMarkdown>
-    );
+    return <FallbackMarkdown className={className}>{children}</FallbackMarkdown>;
   }
 
   return (
