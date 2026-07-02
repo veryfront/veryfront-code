@@ -32,6 +32,26 @@ import {
   createParserSuccess,
   createUploadSource,
 } from "./command.test-helpers.ts";
+import type { Logger } from "#veryfront/utils";
+
+type LoggedEvent = {
+  level: string;
+  message: string;
+  metadata?: Record<string, unknown>;
+};
+
+function createMemoryEventLogger(events: LoggedEvent[]): Logger {
+  const logger: Logger = {
+    info: (message, metadata) => events.push({ level: "info", message, metadata }),
+    warn: (message, metadata) => events.push({ level: "warn", message, metadata }),
+    error: (message, metadata) => events.push({ level: "error", message, metadata }),
+    debug: (message, metadata) => events.push({ level: "debug", message, metadata }),
+    time: async (_label, fn) => fn(),
+    child: () => logger,
+    component: () => logger,
+  };
+  return logger;
+}
 
 describe("normalizeKnowledgeInputPath", () => {
   it("normalizes safe upload paths", () => {
@@ -623,6 +643,111 @@ describe("ingestResolvedSources", () => {
     });
   });
 
+  it("logs real page and slide extraction progress emitted by the parser", async () => {
+    const events: LoggedEvent[] = [];
+
+    await ingestResolvedSources(
+      [
+        createUploadSource("uploads/manuals/bosch.pdf"),
+        createUploadSource("uploads/decks/roadmap.pptx"),
+      ],
+      createKnowledgeCommandArgs(),
+      {
+        client: createMockClient(),
+        projectSlug: "my-project",
+        outputDir: "/workspace/knowledge",
+        runParser: async (input, deps) => {
+          if (input.filePath.endsWith(".pdf")) {
+            deps?.onProgress?.({ unit: "page", current: 1, total: 2, characters: 100 });
+            deps?.onProgress?.({ unit: "page", current: 2, total: 2, characters: 120 });
+            return createParserSuccess({
+              source_path: input.filePath,
+              source_filename: "bosch.pdf",
+              source_type: "pdf",
+              slug: input.slug ?? "bosch",
+              sandbox_output_path: "/workspace/knowledge/manuals-bosch.md",
+              suggested_project_path: "knowledge/manuals-bosch.md",
+              summary: "Extracted PDF text with Kreuzberg.",
+              stats: { engine: "kreuzberg", characters: 220 },
+            });
+          }
+
+          deps?.onProgress?.({ unit: "slide", current: 1, total: 1, characters: 80 });
+          return createParserSuccess({
+            source_path: input.filePath,
+            source_filename: "roadmap.pptx",
+            source_type: "pptx",
+            slug: input.slug ?? "roadmap",
+            sandbox_output_path: "/workspace/knowledge/decks-roadmap.md",
+            suggested_project_path: "knowledge/decks-roadmap.md",
+            summary: "Extracted PPTX text with Kreuzberg.",
+            stats: { engine: "kreuzberg", characters: 80 },
+          });
+        },
+        uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
+        eventLogger: createMemoryEventLogger(events),
+      },
+    );
+
+    const progressEvents = events
+      .filter((event) => event.message === "Knowledge source extraction progress")
+      .map((event) => event.metadata);
+
+    assertEquals(progressEvents, [
+      {
+        phase: "pdf_page_completed",
+        progress_unit: "page",
+        progress_current: 1,
+        progress_total: 2,
+        page_current: 1,
+        page_total: 2,
+        characters: 100,
+        source_name: "bosch.pdf",
+      },
+      {
+        phase: "pdf_page_completed",
+        progress_unit: "page",
+        progress_current: 2,
+        progress_total: 2,
+        page_current: 2,
+        page_total: 2,
+        characters: 120,
+        source_name: "bosch.pdf",
+      },
+      {
+        phase: "ppt_slide_completed",
+        progress_unit: "slide",
+        progress_current: 1,
+        progress_total: 1,
+        slide_current: 1,
+        slide_total: 1,
+        characters: 80,
+        source_name: "roadmap.pptx",
+      },
+    ]);
+  });
+
+  it("does not request extraction progress when no event logger can report it", async () => {
+    let hasProgressCallback = true;
+
+    await ingestResolvedSources(
+      [createUploadSource("uploads/manuals/bosch.pdf")],
+      createKnowledgeCommandArgs(),
+      {
+        client: createMockClient(),
+        projectSlug: "my-project",
+        outputDir: "/workspace/knowledge",
+        runParser: async (_input, deps) => {
+          hasProgressCallback = typeof deps?.onProgress === "function";
+          return createParserSuccess();
+        },
+        uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
+      },
+    );
+
+    assertEquals(hasProgressCallback, false);
+  });
+
   it("uses basename-only slugs for absolute local paths outside /workspace", async () => {
     let parserSlug: string | undefined;
 
@@ -1010,7 +1135,11 @@ describe("runKnowledgeParser", () => {
     const tempDir = await Deno.makeTempDir({ prefix: "veryfront-knowledge-parser-kreuzberg-" });
     const filePath = join(tempDir, "offer.pdf");
     const outputDir = join(tempDir, "knowledge-output");
-    const extractorCalls: Array<{ filePath: string; mimeType: string }> = [];
+    const extractorCalls: Array<{
+      filePath: string;
+      mimeType: string;
+      hasProgressCallback: boolean;
+    }> = [];
 
     try {
       await Deno.writeTextFile(filePath, "stub pdf bytes");
@@ -1025,7 +1154,11 @@ describe("runKnowledgeParser", () => {
         },
         {
           extractDocumentText: (input) => {
-            extractorCalls.push(input);
+            extractorCalls.push({
+              filePath: input.filePath,
+              mimeType: input.mimeType,
+              hasProgressCallback: typeof input.onProgress === "function",
+            });
             return Promise.resolve("Kreuzberg PDF text");
           },
         },
@@ -1035,13 +1168,66 @@ describe("runKnowledgeParser", () => {
       assertEquals(result.slug, "offer-pdf");
       assertEquals(result.stats.engine, "kreuzberg");
       assertStringIncludes(result.summary, "Extracted PDF text with Kreuzberg");
-      assertEquals(extractorCalls, [{ filePath, mimeType: "application/pdf" }]);
+      assertEquals(extractorCalls, [{
+        filePath,
+        mimeType: "application/pdf",
+        hasProgressCallback: false,
+      }]);
 
       const markdown = await Deno.readTextFile(result.sandbox_output_path);
       assertStringIncludes(markdown, 'source: "uploads/offers/offer.pdf"');
       assertStringIncludes(markdown, 'description: "Offer PDF"');
       assertStringIncludes(markdown, "# Offer");
       assertStringIncludes(markdown, "Kreuzberg PDF text");
+    } finally {
+      await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("forwards real extraction progress without changing the single markdown output contract", async () => {
+    const tempDir = await Deno.makeTempDir({ prefix: "veryfront-knowledge-parser-progress-" });
+    const filePath = join(tempDir, "manual.pdf");
+    const outputDir = join(tempDir, "knowledge-output");
+    const progressEvents: Array<Record<string, unknown>> = [];
+
+    try {
+      await Deno.writeTextFile(filePath, "stub pdf bytes");
+
+      const result = await runKnowledgeParser(
+        {
+          filePath,
+          outputDir,
+          slug: "manual",
+          sourceReference: "uploads/manual.pdf",
+        },
+        {
+          onProgress: (event) => {
+            progressEvents.push(event);
+          },
+          extractDocumentText: (input) => {
+            input.onProgress?.({ unit: "page", current: 1, total: 2, characters: 11 });
+            input.onProgress?.({ unit: "page", current: 2, total: 2, characters: 13 });
+            return Promise.resolve("Page one text\n\nPage two text");
+          },
+        },
+      );
+
+      assertEquals(progressEvents, [
+        { unit: "page", current: 1, total: 2, characters: 11 },
+        { unit: "page", current: 2, total: 2, characters: 13 },
+      ]);
+      assertEquals(result.sandbox_output_path, join(outputDir, "manual.md"));
+
+      const outputFiles: string[] = [];
+      for await (const entry of Deno.readDir(outputDir)) {
+        if (entry.isFile) outputFiles.push(entry.name);
+      }
+      assertEquals(outputFiles.sort(), ["manual.md"]);
+
+      const markdown = await Deno.readTextFile(result.sandbox_output_path);
+      assertStringIncludes(markdown, "# Manual");
+      assertStringIncludes(markdown, "Page one text");
+      assertStringIncludes(markdown, "Page two text");
     } finally {
       await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
     }
@@ -1055,7 +1241,11 @@ describe("runKnowledgeParsers", () => {
     const fileB = join(tempDir, "notes.docx");
     const fileC = join(tempDir, "slides.pptx");
     const outputDir = join(tempDir, "knowledge-output");
-    const extractorCalls: Array<{ filePath: string; mimeType: string }> = [];
+    const extractorCalls: Array<{
+      filePath: string;
+      mimeType: string;
+      hasProgressCallback: boolean;
+    }> = [];
 
     try {
       await Deno.writeTextFile(fileA, "stub pdf bytes");
@@ -1088,7 +1278,11 @@ describe("runKnowledgeParsers", () => {
         },
         {
           extractDocumentText: (input) => {
-            extractorCalls.push(input);
+            extractorCalls.push({
+              filePath: input.filePath,
+              mimeType: input.mimeType,
+              hasProgressCallback: typeof input.onProgress === "function",
+            });
             return Promise.resolve(`Extracted ${basename(input.filePath)}`);
           },
         },
@@ -1098,14 +1292,16 @@ describe("runKnowledgeParsers", () => {
       assertEquals(results.map((result) => result.source_type), ["pdf", "docx", "pptx"]);
       assert(results.every((result) => result.stats.engine === "kreuzberg"));
       assertEquals(extractorCalls, [
-        { filePath: fileA, mimeType: "application/pdf" },
+        { filePath: fileA, mimeType: "application/pdf", hasProgressCallback: false },
         {
           filePath: fileB,
           mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          hasProgressCallback: false,
         },
         {
           filePath: fileC,
           mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+          hasProgressCallback: false,
         },
       ]);
 

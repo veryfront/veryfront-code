@@ -1,7 +1,7 @@
 import { tryResolve } from "veryfront/extensions";
 import { register } from "../../src/extensions/contracts.ts";
 import type { ContentProcessor } from "veryfront/extensions/content";
-import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
+import { importFirstPartyExtensionModule } from "veryfront/extensions/first-party-import";
 
 type ContentMdxExtensionModule = {
   MdxContentProcessor: new () => ContentProcessor;

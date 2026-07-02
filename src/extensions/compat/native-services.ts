@@ -45,6 +45,23 @@ export interface KreuzbergExtractor {
   ): Promise<{ content: string }>;
 }
 
+export interface DocumentExtractionProgressEvent {
+  unit: "file" | "page" | "slide";
+  current: number;
+  total?: number;
+  characters?: number;
+}
+
+export type DocumentExtractionProgress = (
+  event: DocumentExtractionProgressEvent,
+) => void | Promise<void>;
+
+export interface DocumentExtractionOptions {
+  onProgress?: DocumentExtractionProgress;
+  idleTimeoutMs?: number;
+  hardTimeoutMs?: number;
+}
+
 /**
  * Document extraction contract.
  */
@@ -63,7 +80,11 @@ export interface DocumentExtractor {
    * Implementations may run extraction inside an isolated worker or call a
    * native implementation directly.
    */
-  extractInWorker?(buffer: ArrayBuffer, mimeType: string): Promise<string>;
+  extractInWorker?(
+    buffer: ArrayBuffer,
+    mimeType: string,
+    options?: DocumentExtractionOptions,
+  ): Promise<string>;
 }
 
 /**

@@ -5,6 +5,9 @@
  */
 
 export type {
+  DocumentExtractionOptions,
+  DocumentExtractionProgress,
+  DocumentExtractionProgressEvent,
   DocumentExtractor,
   KreuzbergExtractor,
   SqliteDatabase,

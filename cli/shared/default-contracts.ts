@@ -1,5 +1,5 @@
 import { register, tryResolve } from "veryfront/extensions/contracts";
-import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
+import { importFirstPartyExtensionModule } from "veryfront/extensions/first-party-import";
 
 export async function ensureCliSchemaValidator(): Promise<void> {
   if (tryResolve("SchemaValidator")) return;

@@ -1,5 +1,10 @@
 import { basename, extname, join } from "veryfront/platform/path";
-import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
+import { importFirstPartyExtensionModule } from "veryfront/extensions/first-party-import";
+import type {
+  DocumentExtractionOptions,
+  DocumentExtractionProgress,
+  DocumentExtractionProgressEvent,
+} from "veryfront/extensions/compat";
 
 export interface KnowledgeParserResult {
   success: true;
@@ -24,17 +29,27 @@ export interface KnowledgeParserInput {
 }
 
 export type ExtractDocumentText = (
-  input: { filePath: string; mimeType: string },
+  input: { filePath: string; mimeType: string; onProgress?: DocumentExtractionProgress },
 ) => Promise<string>;
 
 type DocumentKreuzbergExtensionModule = {
   KreuzbergDocumentExtractor: new () => {
-    extractInWorker(buffer: ArrayBuffer, mimeType: string): Promise<string>;
+    extractInWorker(
+      buffer: ArrayBuffer,
+      mimeType: string,
+      options?: DocumentExtractionOptions,
+    ): Promise<string>;
   };
 };
 
 export interface RunKnowledgeParsersDeps {
   extractDocumentText?: ExtractDocumentText;
+  onProgress?: (event: DocumentExtractionProgressEvent) => void | Promise<void>;
+}
+
+interface ResolvedRunKnowledgeParsersDeps {
+  extractDocumentText: ExtractDocumentText;
+  onProgress?: (event: DocumentExtractionProgressEvent) => void | Promise<void>;
 }
 
 const CODE_FENCE = "`".repeat(3);
@@ -117,7 +132,7 @@ type ParserOutput = {
 
 type ParserDefinition = {
   sourceType: string;
-  parse: (path: string, deps: Required<RunKnowledgeParsersDeps>) => Promise<ParserOutput>;
+  parse: (path: string, deps: ResolvedRunKnowledgeParsersDeps) => Promise<ParserOutput>;
 };
 
 export function slugifyKnowledgeValue(value: string): string {
@@ -287,10 +302,12 @@ async function parseJson(path: string): Promise<ParserOutput> {
 
 async function parseWithKreuzberg(
   path: string,
-  deps: Required<RunKnowledgeParsersDeps>,
+  deps: ResolvedRunKnowledgeParsersDeps,
 ): Promise<ParserOutput> {
   const mimeType = MIME_BY_EXTENSION[extname(path).toLowerCase()] ?? "application/octet-stream";
-  const content = cleanText(await deps.extractDocumentText({ filePath: path, mimeType }));
+  const content = cleanText(
+    await deps.extractDocumentText({ filePath: path, mimeType, onProgress: deps.onProgress }),
+  );
   return {
     content: content || "_No extractable text found in document._",
     stats: {
@@ -359,7 +376,7 @@ function buildSummary(sourceType: string, stats: Record<string, unknown>): strin
 }
 
 async function defaultExtractDocumentText(
-  input: { filePath: string; mimeType: string },
+  input: { filePath: string; mimeType: string; onProgress?: DocumentExtractionProgress },
 ): Promise<string> {
   const bytes = await Deno.readFile(input.filePath);
   const { KreuzbergDocumentExtractor } = await importFirstPartyExtensionModule<
@@ -375,6 +392,7 @@ async function defaultExtractDocumentText(
       bytes.byteOffset + bytes.byteLength,
     ),
     input.mimeType,
+    { onProgress: input.onProgress },
   );
 }
 
@@ -410,8 +428,9 @@ export async function runKnowledgeParsers(input: {
     return [];
   }
 
-  const parserDeps: Required<RunKnowledgeParsersDeps> = {
+  const parserDeps: ResolvedRunKnowledgeParsersDeps = {
     extractDocumentText: deps.extractDocumentText ?? defaultExtractDocumentText,
+    onProgress: deps.onProgress,
   };
 
   await Deno.mkdir(input.outputDir, { recursive: true });

@@ -53,6 +53,8 @@ export const EXTENSION_OWNED_DEPENDENCIES = [
 	"@opentelemetry/semantic-conventions",
 	"bash-tool",
 	"es-module-lexer",
+	"jszip",
+	"pdf-lib",
 	"esbuild",
 	"github-slugger",
 	"jose",
