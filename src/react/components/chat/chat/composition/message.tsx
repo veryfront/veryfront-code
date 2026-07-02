@@ -475,6 +475,7 @@ function MessageTokens(
   { className }: { className?: string },
 ): React.ReactElement | null {
   const { message, role } = useMessageContext();
+  const [open, setOpen] = React.useState(false);
   if (role === "user") return null;
 
   const usage = readUsage(message.metadata);
@@ -487,12 +488,16 @@ function MessageTokens(
   const model = metadataString(message.metadata, "model");
 
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
           type="button"
           className={cn(
-            "inline-flex items-center rounded-full px-2 h-7 text-xs tabular-nums text-[var(--faint)] transition-colors hover:bg-[var(--tertiary)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)]",
+            "inline-flex items-center rounded-full px-2 h-7 text-xs tabular-nums text-[var(--faint)] transition-all hover:bg-[var(--tertiary)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)]",
+            // Hidden until the message is hovered — matching the action
+            // buttons — but stays visible while its popover is open.
+            "opacity-0 transition-opacity group-hover/msg:opacity-100 focus-visible:opacity-100",
+            open && "opacity-100",
             className,
           )}
           aria-label={`Token usage: ${total} total`}
