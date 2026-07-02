@@ -26,11 +26,7 @@ import { useColorModeOptional } from "../color-mode.tsx";
 /** Light/dark, for switching the shiki + mermaid theme. */
 type CodeBlockMode = "light" | "dark";
 import { Skeleton } from "./skeleton.tsx";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "./collapsible.tsx";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./collapsible.tsx";
 import { IconButton } from "./icon-button.tsx";
 
 // ---------------------------------------------------------------------------
@@ -208,9 +204,7 @@ function MermaidDiagram(
   }
 
   if (!svg) {
-    return (
-      <Skeleton className={cn("h-32 rounded-[var(--radius-md)]", className)} />
-    );
+    return <Skeleton className={cn("h-32 rounded-[var(--radius-md)]", className)} />;
   }
 
   return (
@@ -284,9 +278,7 @@ function CopyButton({ code }: { code: string }): React.ReactElement {
       className="-mr-1 text-[var(--faint)] hover:text-[var(--foreground)]"
     >
       {/* icons render a half-step smaller than Studio: size-4 -> size-3.5 */}
-      {copied
-        ? <CheckIcon className="size-3.5" />
-        : <CopyIcon className="size-3.5" />}
+      {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
     </IconButton>
   );
 }
@@ -311,9 +303,7 @@ function CodeSurface({
     if (!isBrowserEnvironment()) return;
 
     let cancelled = false;
-    const theme: ShikiTheme = resolvedMode === "dark"
-      ? "github-dark"
-      : "github-light";
+    const theme: ShikiTheme = resolvedMode === "dark" ? "github-dark" : "github-light";
 
     async function highlight(): Promise<void> {
       try {
@@ -397,9 +387,7 @@ export function CodeBlock({
     </div>
   );
 
-  const surface = (
-    <CodeSurface code={code} language={lang} resolvedMode={resolvedMode} />
-  );
+  const surface = <CodeSurface code={code} language={lang} resolvedMode={resolvedMode} />;
 
   if (collapsible) {
     return (
