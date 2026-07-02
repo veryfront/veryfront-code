@@ -306,7 +306,9 @@ export function Markdown({
   }, []);
 
   if (!isLoaded || !ReactMarkdown) {
-    return <FallbackMarkdown className={className}>{children}</FallbackMarkdown>;
+    return (
+      <FallbackMarkdown className={className}>{children}</FallbackMarkdown>
+    );
   }
 
   return (
@@ -341,20 +343,16 @@ export function Markdown({
             );
           },
           table(props: BlockRendererProps) {
+            // Borders live on the rows, scoped by section so the header always
+            // keeps its divider (a `tr:last-child` rule would wrongly strip the
+            // lone header row in <thead>). Only the final body row drops its
+            // border so it doesn't double up with the container edge.
             return (
               <div className="my-4 max-w-full overflow-x-auto rounded-[var(--radius-md)] border border-[var(--outline-border)]">
-                <table className="w-full text-sm">
+                <table className="w-full text-sm [&_thead_tr]:border-b [&_thead_tr]:border-[var(--edge)] [&_tbody_tr]:border-b [&_tbody_tr]:border-[var(--edge)] [&_tbody_tr:last-child]:border-b-0">
                   {props.children}
                 </table>
               </div>
-            );
-          },
-          tr(props: BlockRendererProps) {
-            // Row separators; the last row drops its border (Studio parity).
-            return (
-              <tr className="border-b border-[var(--edge)] last:border-b-0">
-                {props.children}
-              </tr>
             );
           },
           th(props: TableCellProps) {
@@ -378,10 +376,12 @@ export function Markdown({
             );
           },
           a(props: AnchorRendererProps) {
+            // Studio: links are foreground (black), underlined, and drop the
+            // underline on hover — not the default browser blue.
             return (
               <a
                 href={props.href}
-                className="break-words text-blue-600 hover:underline [overflow-wrap:anywhere]"
+                className="break-words text-[var(--foreground)] underline underline-offset-4 hover:no-underline [overflow-wrap:anywhere]"
                 target="_blank"
                 rel="noopener noreferrer"
               >
