@@ -9,7 +9,10 @@
 import { assertEquals, assertExists } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import type { ExtensionContext, ExtensionLogger } from "veryfront/extensions";
-import factory, { KreuzbergDocumentExtractor } from "./index.ts";
+import factory, {
+  KreuzbergDocumentExtractor,
+  type KreuzbergDocumentExtractorDeps,
+} from "./index.ts";
 
 function silentLogger(): ExtensionLogger {
   return {
@@ -57,5 +60,28 @@ describe("ext-document-kreuzberg extension", () => {
     assertExists(extractor);
     assertEquals(typeof extractor.importKreuzberg, "function");
     assertEquals(typeof extractor.extractInWorker, "function");
+  });
+
+  it("uses native extraction for PDFs in Deno before falling back to the WASM worker", async () => {
+    const calls: Array<{ bytes: string; mimeType: string }> = [];
+    const deps: KreuzbergDocumentExtractorDeps = {
+      isDenoRuntime: true,
+      loadNativeKreuzberg: async () => ({
+        extractBytes: async (data, mimeType) => {
+          calls.push({ bytes: new TextDecoder().decode(data), mimeType });
+          return { content: "native pdf text" };
+        },
+      }),
+      extractInWorkerDeno: async () => {
+        throw new Error("worker should not be used for PDFs when native extraction is available");
+      },
+    };
+    const extractor = new KreuzbergDocumentExtractor(deps);
+    const buffer = new TextEncoder().encode("%PDF-1.4\n").buffer.slice(0) as ArrayBuffer;
+
+    const content = await extractor.extractInWorker(buffer, "application/pdf");
+
+    assertEquals(content, "native pdf text");
+    assertEquals(calls, [{ bytes: "%PDF-1.4\n", mimeType: "application/pdf" }]);
   });
 });

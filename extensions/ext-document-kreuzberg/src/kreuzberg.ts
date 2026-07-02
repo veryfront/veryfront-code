@@ -20,14 +20,13 @@ type KreuzbergModule = {
   ) => Promise<{ content: string }>;
 };
 
-// deno-lint-ignore no-explicit-any
-async function loadKreuzbergNode(): Promise<any> {
+export async function loadKreuzbergNative(): Promise<KreuzbergExtractor> {
   try {
-    return await import("@kreuzberg/node");
+    return await import("@kreuzberg/node") as unknown as KreuzbergExtractor;
   } catch (error) {
     if (!isMissingPackageError(error)) throw error;
     throw new Error(
-      'Document extraction on Node requires the optional package "@kreuzberg/node". ' +
+      'Native document extraction requires the optional package "@kreuzberg/node". ' +
         "Install @kreuzberg/node@^4.4.2 or disable document extraction.",
     );
   }
@@ -37,7 +36,7 @@ export async function loadKreuzberg(): Promise<KreuzbergExtractor> {
   // Node/Bun load the native @kreuzberg/node; only a real Deno runtime uses the
   // WASM build. See ./runtime.ts for why a bare `Deno` check is unreliable here.
   if (!isDeno) {
-    return loadKreuzbergNode();
+    return loadKreuzbergNative();
   }
 
   const mod = await importKreuzbergWasm();
