@@ -219,54 +219,46 @@ export function ToolCallCard({
         />
       </button>
 
-      {!isExpanded
-        ? null
-        : (
-          <div className="mt-3 border-t border-[var(--edge)] pt-3">
-            {tool.input === undefined
-              ? null
-              : (
-                <div className="space-y-2 overflow-hidden">
-                  <h4 className="text-xs font-medium text-[var(--faint)]">
-                    Parameters
-                  </h4>
-                  <div className="rounded-[var(--radius-md)] bg-[var(--secondary)] p-3">
-                    {formatJsonWithHighlight(tool.input)}
-                  </div>
-                </div>
-              )}
+      {!isExpanded ? null : (
+        <div className="mt-3 border-t border-[var(--edge)] pt-3">
+          {tool.input === undefined ? null : (
+            <div className="space-y-2 overflow-hidden">
+              <h4 className="text-xs font-medium text-[var(--faint)]">
+                Parameters
+              </h4>
+              <div className="rounded-[var(--radius-md)] bg-[var(--secondary)] p-3">
+                {formatJsonWithHighlight(tool.input)}
+              </div>
+            </div>
+          )}
 
-            {!hasOutput
-              ? null
-              : (
-                <div className="mt-3 space-y-2 border-t border-[var(--edge)] pt-3">
-                  <h4 className="text-xs font-medium text-[var(--faint)]">
-                    Result
-                  </h4>
-                  <div className="overflow-x-auto rounded-[var(--radius-md)] bg-[var(--secondary)] text-[var(--foreground)]">
-                    {tableOutput ?? (
-                      <div className="p-3">
-                        {formatJsonWithHighlight(tool.output)}
-                      </div>
-                    )}
+          {!hasOutput ? null : (
+            <div className="mt-3 space-y-2 border-t border-[var(--edge)] pt-3">
+              <h4 className="text-xs font-medium text-[var(--faint)]">
+                Result
+              </h4>
+              <div className="overflow-x-auto rounded-[var(--radius-md)] bg-[var(--secondary)] text-[var(--foreground)]">
+                {tableOutput ?? (
+                  <div className="p-3">
+                    {formatJsonWithHighlight(tool.output)}
                   </div>
-                </div>
-              )}
+                )}
+              </div>
+            </div>
+          )}
 
-            {!tool.errorText
-              ? null
-              : (
-                <div className="mt-3 border-t border-[var(--edge)] pt-3">
-                  <Alert variant="error">
-                    <AlertIcon>
-                      <XCircleIcon className="size-4" />
-                    </AlertIcon>
-                    <AlertContent>{tool.errorText}</AlertContent>
-                  </Alert>
-                </div>
-              )}
-          </div>
-        )}
+          {!tool.errorText ? null : (
+            <div className="mt-3 border-t border-[var(--edge)] pt-3">
+              <Alert variant="error">
+                <AlertIcon>
+                  <XCircleIcon className="size-4" />
+                </AlertIcon>
+                <AlertContent>{tool.errorText}</AlertContent>
+              </Alert>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
