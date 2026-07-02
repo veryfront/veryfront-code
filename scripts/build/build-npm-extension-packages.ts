@@ -1,6 +1,7 @@
 import { build, emptyDir } from "#dnt";
 import { dirname } from "#std/path";
 import {
+  bareImportPackageNames,
   createExtensionPackageSpec,
   createVeryfrontPeerTypeImportReplacements,
   type ExtensionManifest,
@@ -90,6 +91,11 @@ export async function buildExtensionPackages(
         await removeDntImportMapArtifacts(outDir);
         await removeUnreferencedTopLevelDir(outDir, "react");
         await removeUnreferencedDntDeps(outDir);
+
+        await assertEmittedBareImportsAreDeclared({
+          outDir,
+          packageName: spec.packageName,
+        });
       },
     });
   }
@@ -156,12 +162,55 @@ async function removeUnreferencedDntDeps(outDir: string): Promise<void> {
   await Deno.remove(depsDir, { recursive: true });
 }
 
+async function assertEmittedBareImportsAreDeclared(input: {
+  outDir: string;
+  packageName: string;
+}): Promise<void> {
+  const pkg = JSON.parse(
+    await Deno.readTextFile(`${input.outDir}/package.json`),
+  ) as {
+    dependencies?: Record<string, string>;
+    peerDependencies?: Record<string, string>;
+    optionalDependencies?: Record<string, string>;
+  };
+  const declared = new Set([
+    ...Object.keys(pkg.dependencies ?? {}),
+    ...Object.keys(pkg.peerDependencies ?? {}),
+    ...Object.keys(pkg.optionalDependencies ?? {}),
+  ]);
+
+  const missing = new Map<string, Set<string>>();
+  for await (const filePath of walkFiles(`${input.outDir}/esm`)) {
+    if (!filePath.endsWith(".js")) continue;
+
+    const text = await Deno.readTextFile(filePath);
+    for (const packageName of bareImportPackageNames(text)) {
+      if (declared.has(packageName)) continue;
+      const files = missing.get(packageName) ?? new Set<string>();
+      files.add(filePath.slice(`${input.outDir}/`.length));
+      missing.set(packageName, files);
+    }
+  }
+
+  if (missing.size === 0) return;
+
+  const details = [...missing.entries()]
+    .toSorted(([left], [right]) => left.localeCompare(right))
+    .map(([packageName, files]) =>
+      `  ${packageName} (imported by ${[...files].toSorted().join(", ")})`
+    )
+    .join("\n");
+  throw new Error(
+    `${input.packageName} emits imports of npm packages that are not declared in its package.json dependencies, peerDependencies, or optionalDependencies:\n${details}\nDeclare them in the extension's deno.json imports so they are published as dependencies.`,
+  );
+}
+
 async function hasGeneratedRootSourceReferences(
   outDir: string,
 ): Promise<boolean> {
   const rootSourceDir = `${outDir}/esm/src`;
   const relativeRootSourceSpecifier =
-    /(?:from\s+|import\s*\(\s*)["'](?:\.\.\/)+src\//;
+    /(?:from\s+|import\s*\(\s*|import\s+)["'](?:\.\.\/)+src\//;
 
   for await (const filePath of walkFiles(`${outDir}/esm`)) {
     if (filePath.startsWith(`${rootSourceDir}/`)) continue;
@@ -180,7 +229,7 @@ async function hasGeneratedDntImportMapReferences(
   outDir: string,
 ): Promise<boolean> {
   const dntImportMapSpecifier =
-    /(?:from\s+|import\s*\(\s*)["'](?:\.\.\/)+deno\.js["']/;
+    /(?:from\s+|import\s*\(\s*|import\s+)["'](?:\.\.\/)+deno\.js["']/;
 
   for await (const filePath of walkFiles(`${outDir}/esm`)) {
     if (filePath === `${outDir}/esm/deno.js`) continue;

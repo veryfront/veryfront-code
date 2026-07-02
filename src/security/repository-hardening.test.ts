@@ -81,13 +81,22 @@ describe("repository hardening", () => {
 
   it("keeps npm publishing tokenless and provenance-backed", async () => {
     const workflow = await readText(".github/workflows/cicd.yml");
+    // The publish commands live in the shared CI script; the workflow only
+    // invokes its modes with OIDC credentials.
+    const publishScript = await readText("scripts/ci/publish-npm-packages.sh");
 
     assertEquals(workflow.includes("secrets.NPM_TOKEN"), false);
     assertEquals(workflow.includes("NODE_AUTH_TOKEN"), false);
     assert(workflow.includes("id-token: write"));
     assert(workflow.includes("package-manager-cache: false"));
-    assert(workflow.includes("npm publish --provenance --access public --tag rc"));
-    assert(workflow.includes("npm publish --provenance --access public 2>&1"));
+    assert(workflow.includes("scripts/ci/publish-npm-packages.sh rc-publish"));
+    assert(workflow.includes("scripts/ci/publish-npm-packages.sh preflight"));
+    assert(workflow.includes("scripts/ci/publish-npm-packages.sh release-publish"));
+
+    assertEquals(publishScript.includes("NPM_TOKEN"), false);
+    assertEquals(publishScript.includes("NODE_AUTH_TOKEN"), false);
+    assert(publishScript.includes("npm publish --provenance --access public --tag rc"));
+    assert(publishScript.includes("npm publish --provenance --access public 2>&1"));
   });
 
   it("uses scoped GitHub App tokens instead of release PATs", async () => {
