@@ -23,13 +23,11 @@ import {
   extractSourcesFromParts,
   getTextContent,
   groupPartsInOrder,
-  isSkillToolPart,
 } from "../utils/message-parts.ts";
 import { ConversationScrollButton } from "../components/empty-state.tsx";
 import { useStickToBottom } from "../hooks/use-stick-to-bottom.ts";
 import { MessageActions } from "../components/message-actions.tsx";
 import { ReasoningCard } from "../components/reasoning.tsx";
-import { getSkillToolProps, SkillTool } from "../components/skill-tool.tsx";
 import { ToolCallCard } from "../components/tool-ui.tsx";
 
 import { Sources } from "../components/sources.tsx";
@@ -53,7 +51,9 @@ function metadataString(
   key: string,
 ): string | undefined {
   const value = metadata?.[key];
-  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+  return typeof value === "string" && value.trim().length > 0
+    ? value
+    : undefined;
 }
 
 function getAssistantIdentity(message: ChatMessage): AssistantIdentity {
@@ -295,7 +295,9 @@ function UserMessage({
               onNext={() => switchBranch?.(msg.id, branches.current)}
             />
           )}
-          {editMessage && <MessageActions content={content} onEdit={onStartEdit} />}
+          {editMessage && (
+            <MessageActions content={content} onEdit={onStartEdit} />
+          )}
         </div>
       )}
     </MessageItem>
@@ -375,16 +377,11 @@ function AssistantMessage({
               )
               : null;
           }
-          const isSkill = isSkillToolPart(group.tool);
+          // ToolCall handles skills (compact row) and tools (full card) alike.
           return (
-            <div
-              key={group.tool.toolCallId}
-              className={isSkill ? "my-2" : "my-3"}
-            >
+            <div key={group.tool.toolCallId} className="my-2">
               {renderTool
                 ? renderTool(group.tool)
-                : isSkill
-                ? <SkillTool {...getSkillToolProps(group.tool)} />
                 : <ToolCallCard tool={group.tool} />}
             </div>
           );
