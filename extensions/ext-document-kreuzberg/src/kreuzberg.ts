@@ -28,6 +28,7 @@ export async function loadKreuzbergNative(): Promise<KreuzbergExtractor> {
     throw new Error(
       'Native document extraction requires the optional package "@kreuzberg/node". ' +
         "Install @kreuzberg/node@^4.4.2 or disable document extraction.",
+      { cause: error },
     );
   }
 }
@@ -69,14 +70,30 @@ async function importKreuzbergWasm(): Promise<KreuzbergModule> {
     throw new Error(
       'Document extraction on Deno requires the optional package "@kreuzberg/wasm". ' +
         "Install @kreuzberg/wasm@4.5.2 or disable document extraction.",
+      { cause: error },
     );
   }
 }
 
-function isMissingPackageError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.includes("Cannot find package") ||
-    message.includes("Cannot find module") ||
-    message.includes("ERR_MODULE_NOT_FOUND") ||
-    message.includes("Module not found");
+export function isMissingPackageError(error: unknown): boolean {
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+
+  while (current !== undefined && current !== null && !seen.has(current)) {
+    seen.add(current);
+    const message = current instanceof Error ? current.message : String(current);
+    if (
+      message.includes("Cannot find package") ||
+      message.includes("Cannot find module") ||
+      message.includes("Cannot find native binding") ||
+      message.includes("ERR_MODULE_NOT_FOUND") ||
+      message.includes("Module not found")
+    ) {
+      return true;
+    }
+
+    current = current instanceof Error ? current.cause : undefined;
+  }
+
+  return false;
 }

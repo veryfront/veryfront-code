@@ -84,4 +84,27 @@ describe("ext-document-kreuzberg extension", () => {
     assertEquals(content, "native pdf text");
     assertEquals(calls, [{ bytes: "%PDF-1.4\n", mimeType: "application/pdf" }]);
   });
+
+  it("falls back to the Deno worker when native PDF extraction is unavailable", async () => {
+    const workerCalls: Array<{ bytes: string; mimeType: string }> = [];
+    const deps: KreuzbergDocumentExtractorDeps = {
+      isDenoRuntime: true,
+      loadNativeKreuzberg: async () => {
+        throw new Error("Cannot find native binding", {
+          cause: new Error("Cannot find module '@kreuzberg/node-linux-x64'"),
+        });
+      },
+      extractInWorkerDeno: async (buffer, mimeType) => {
+        workerCalls.push({ bytes: new TextDecoder().decode(buffer), mimeType });
+        return "worker pdf text";
+      },
+    };
+    const extractor = new KreuzbergDocumentExtractor(deps);
+    const buffer = new TextEncoder().encode("%PDF-1.4\n").buffer.slice(0) as ArrayBuffer;
+
+    const content = await extractor.extractInWorker(buffer, "application/pdf");
+
+    assertEquals(content, "worker pdf text");
+    assertEquals(workerCalls, [{ bytes: "%PDF-1.4\n", mimeType: "application/pdf" }]);
+  });
 });
