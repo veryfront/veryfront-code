@@ -294,8 +294,7 @@ describe("ext-document-kreuzberg extension", () => {
     );
   });
 
-  it("falls back to the Deno worker when native PDF extraction is unavailable", async () => {
-    const workerCalls: Array<{ bytes: string; mimeType: string }> = [];
+  it("fails instead of using the OOM-prone PDF worker fallback when native extraction is unavailable", async () => {
     const deps: KreuzbergDocumentExtractorDeps = {
       isDenoRuntime: true,
       loadNativeKreuzberg: async () => {
@@ -303,17 +302,56 @@ describe("ext-document-kreuzberg extension", () => {
           cause: new Error("Cannot find module '@kreuzberg/node-linux-x64'"),
         });
       },
-      extractInWorkerDeno: async (buffer, mimeType) => {
-        workerCalls.push({ bytes: new TextDecoder().decode(buffer), mimeType });
-        return "worker pdf text";
+      extractInWorkerDeno: async () => {
+        throw new Error("worker should not be used for PDFs without native extraction");
       },
     };
     const extractor = new KreuzbergDocumentExtractor(deps);
     const buffer = new TextEncoder().encode("%PDF-1.4\n").buffer.slice(0) as ArrayBuffer;
 
-    const content = await extractor.extractInWorker(buffer, "application/pdf");
+    let error: unknown;
+    try {
+      await extractor.extractInWorker(buffer, "application/pdf");
+    } catch (caught) {
+      error = caught;
+    }
 
-    assertEquals(content, "worker pdf text");
-    assertEquals(workerCalls, [{ bytes: "%PDF-1.4\n", mimeType: "application/pdf" }]);
+    assertExists(error);
+    assertStringIncludes(
+      error instanceof Error ? error.message : String(error),
+      "Native document extraction is unavailable",
+    );
+  });
+
+  it("fails instead of using opaque extraction when progress native binding is unavailable", async () => {
+    const deps: KreuzbergDocumentExtractorDeps = {
+      isDenoRuntime: true,
+      extractWithNativeProgressDeno: async () => {
+        throw new Error(
+          "Failed to load Kreuzberg native bindings. Underlying error: Cannot find native binding.",
+        );
+      },
+      loadNativeKreuzberg: async () => ({
+        extractBytes: async () => ({ content: "opaque pdf text" }),
+      }),
+      extractInWorkerDeno: async () => {
+        throw new Error("worker should not be used when progress native binding is missing");
+      },
+    };
+    const extractor = new KreuzbergDocumentExtractor(deps);
+    const buffer = new TextEncoder().encode("%PDF-1.4\n").buffer.slice(0) as ArrayBuffer;
+
+    let error: unknown;
+    try {
+      await extractor.extractInWorker(buffer, "application/pdf", { onProgress: () => {} });
+    } catch (caught) {
+      error = caught;
+    }
+
+    assertExists(error);
+    assertStringIncludes(
+      error instanceof Error ? error.message : String(error),
+      "Native document extraction is unavailable",
+    );
   });
 });

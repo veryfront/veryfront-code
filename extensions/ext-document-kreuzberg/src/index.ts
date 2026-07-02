@@ -114,6 +114,13 @@ function warningDetails(mimeType: string, error: unknown): Record<string, string
   };
 }
 
+function createNativeBindingUnavailableError(error: unknown): Error {
+  return new Error(
+    "Native document extraction is unavailable because the Kreuzberg native binding could not be loaded. Install the Kreuzberg native package for this platform or disable document extraction for this file type.",
+    { cause: error },
+  );
+}
+
 function extractWithNativeProgressDeno(
   buffer: ArrayBuffer,
   mimeType: string,
@@ -232,6 +239,10 @@ export class KreuzbergDocumentExtractor implements DocumentExtractor {
           options,
         );
       } catch (error) {
+        if (isMissingPackageError(error)) {
+          throw createNativeBindingUnavailableError(error);
+        }
+
         // Keep progress opportunistic: if page/slide extraction cannot handle a
         // document, fall back to the previous opaque extraction path.
         const message =
@@ -253,7 +264,10 @@ export class KreuzbergDocumentExtractor implements DocumentExtractor {
           this.deps.loadNativeKreuzberg ?? loadKreuzbergNative,
         );
       } catch (error) {
-        if (!isMissingPackageError(error)) throw error;
+        if (isMissingPackageError(error)) {
+          throw createNativeBindingUnavailableError(error);
+        }
+        throw error;
       }
     }
 
