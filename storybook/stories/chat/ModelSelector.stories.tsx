@@ -15,11 +15,30 @@ import { ReviewSurface, StoryFrame } from "../support/StoryFrame";
 
 const importCode = `import { ModelSelector } from "veryfront/chat"`;
 
-const compositionTree = `ModelSelector  <- icon trigger (provider logo) or pill (logo + label)
-  +-- Popover  <- portals via Floating so it never clips
-  +-- Command  <- searchable list (search past 6 models)
-      +-- CommandGroup  <- one per provider (real models.dev logos)
-          +-- CommandItem  <- logo + label + Check on the selection`;
+const compositionTree =
+  `ModelSelector             <- render-or-compose: preset with props, or compose sub-parts
+  +-- ModelSelector.Trigger   <- the pill / icon combobox button
+  +-- ModelSelector.Content   <- the popover surface (wraps a Command shell)
+  +-- ModelSelector.List      <- the scrollable Command list region
+  +-- ModelSelector.Item      <- a single model row (logo + label + badge + check)
+
+Preset props (no children): models, value / onChange, variant,
+renderTrigger / renderRow (back-compat), disabled, className.`;
+
+const composedCode = `import { ModelSelector } from "veryfront/chat";
+
+// Pass children to recompose the menu from sub-parts. Each reads the shared
+// selection + open state via useModelSelector(); className merges last.
+<ModelSelector models={models} value={value} onChange={setModel}>
+  <ModelSelector.Trigger variant="pill" />
+  <ModelSelector.Content showSearch>
+    <ModelSelector.List>
+      {models.map((model) => (
+        <ModelSelector.Item key={model.value} model={model} />
+      ))}
+    </ModelSelector.List>
+  </ModelSelector.Content>
+</ModelSelector>`;
 
 function ModelSelectorDocsPage() {
   return (
@@ -58,6 +77,14 @@ function ModelSelectorDocsPage() {
         <DocsComposition>{compositionTree}</DocsComposition>
       </DocsSection>
 
+      <DocsSection
+        title="Compose"
+        description="Pass children to recompose the menu from `ModelSelector.Trigger` / `Content` / `List` / `Item`. Each sub-part reads the shared selection + open state via `useModelSelector()`; `className` merges last. Omit children to keep the data-driven preset."
+      >
+        <DocsExampleAuto of={Composed} />
+        <DocsCode code={composedCode} />
+      </DocsSection>
+
       <DocsSection title="API Reference">
         <DocsPropsTable
           component="ModelSelector"
@@ -79,14 +106,32 @@ function ModelSelectorDocsPage() {
               description: "Called with the selected model value",
             },
             {
-              name: "className",
-              type: "string",
-              description: "Additional class names",
+              name: "variant",
+              type: '"pill" | "icon"',
+              default: '"pill"',
+              description:
+                "Trigger style: icon (provider logo only) or pill (logo + label + chevron)",
+            },
+            {
+              name: "renderTrigger",
+              type: "(opts: { model?: ModelOption; open: boolean }) => ReactNode",
+              description: "Replace the default pill/icon trigger",
+            },
+            {
+              name: "renderRow",
+              type:
+                "(opts: { model: ModelOption; selected: boolean; onSelect: () => void }) => ReactNode",
+              description: "Replace the default row renderer",
             },
             {
               name: "disabled",
               type: "boolean",
               description: "Disables the trigger",
+            },
+            {
+              name: "className",
+              type: "string",
+              description: "Additional class names for the trigger",
             },
           ]}
         />
@@ -233,4 +278,30 @@ export const Disabled: Story = {
       </ReviewSurface>
     </StoryFrame>
   ),
+};
+
+export const Composed: Story = {
+  tags: ["!dev"],
+  parameters: {
+    docs: { source: { code: composedCode } },
+  },
+  render: () => {
+    const [model, setModel] = React.useState(modelOptions[0]?.value);
+    return (
+      <StoryFrame maxWidth="420px">
+        <ReviewSurface label="Composed">
+          <ModelSelector models={modelOptions} value={model} onChange={setModel}>
+            <ModelSelector.Trigger variant="pill" />
+            <ModelSelector.Content showSearch>
+              <ModelSelector.List>
+                {modelOptions.map((m) => (
+                  <ModelSelector.Item key={m.value} model={m} />
+                ))}
+              </ModelSelector.List>
+            </ModelSelector.Content>
+          </ModelSelector>
+        </ReviewSurface>
+      </StoryFrame>
+    );
+  },
 };

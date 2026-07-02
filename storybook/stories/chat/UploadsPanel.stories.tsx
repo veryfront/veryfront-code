@@ -14,11 +14,14 @@ import { ReviewSurface, StoryFrame } from "../support/StoryFrame";
 
 const importCode = `import { UploadsPanel } from "veryfront/chat"`;
 
-const compositionTree = `UploadsPanel  <- scrollable list of uploaded files
-  +-- File row  <- icon, name (link when url set), size
-  +-- Remove button  <- shown when onRemoveUpload is set
-  +-- Upload action  <- shown when onAttach is set
-  +-- Empty state  <- shown when uploads is empty`;
+const compositionTree =
+  `UploadsPanel  <- render it: <UploadsPanel uploads={…} />
+UploadsPanel.Root  <- or compose it: context (uploads, callbacks, file picker)
+  +-- UploadsPanel.Header <- "Attachments" title + close button (when onClose set)
+  +-- UploadsPanel.List   <- scrollable list of file rows
+  |     +-- UploadsPanel.Item    <- one file row (icon, name, size, remove)
+  +-- UploadsPanel.Empty  <- empty state (heading, hint, upload action)
+  +-- UploadsPanel.Action <- upload/attach button (opens the native picker)`;
 
 function UploadsPanelDocsPage() {
   return (
@@ -40,6 +43,13 @@ function UploadsPanelDocsPage() {
         description="With no uploads the panel shows an empty state and, when `onAttach` is set, an upload button."
       >
         <DocsExampleAuto of={Empty} />
+      </DocsSection>
+
+      <DocsSection
+        title="Compose"
+        description="Drop to `UploadsPanel.Root` + parts to recompose the panel — reorder or restyle the list, swap in your own `Item` rows, or replace the empty state. Every part takes `className`."
+      >
+        <DocsExampleAuto of={Composed} />
       </DocsSection>
 
       <DocsSection title="Import">
@@ -75,6 +85,12 @@ function UploadsPanelDocsPage() {
               name: "attachAccept",
               type: "string",
               description: "accept attribute for the file input",
+            },
+            {
+              name: "onClose",
+              type: "() => void",
+              description:
+                "Called to dismiss the panel; renders the header close button",
             },
             {
               name: "className",
@@ -146,6 +162,7 @@ export const UploadedFiles: Story = {
   ]}
   onRemoveUpload={(id) => removeUpload(id)}
   onAttach={(files) => attach(files)}
+  onClose={() => closePanel()}
 />`,
       },
     },
@@ -158,6 +175,7 @@ export const UploadedFiles: Story = {
             uploads={uploads}
             onRemoveUpload={() => undefined}
             onAttach={() => undefined}
+            onClose={() => undefined}
           />
         </div>
       </ReviewSurface>
@@ -181,6 +199,54 @@ export const Empty: Story = {
       <ReviewSurface label="Empty">
         <div className="h-[280px] rounded-[var(--radius-lg)] border border-[var(--outline-border)]">
           <UploadsPanel uploads={[]} onAttach={() => undefined} />
+        </div>
+      </ReviewSurface>
+    </StoryFrame>
+  ),
+};
+
+export const Composed: Story = {
+  tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { UploadsPanel } from "veryfront/chat";
+
+// Recompose the panel: a restyled list with the rows in reverse order.
+<UploadsPanel.Root uploads={uploads} onRemoveUpload={remove} onAttach={attach}>
+  <div className="flex-1 overflow-y-auto px-4 py-4">
+    <UploadsPanel.List className="ring-1 ring-[var(--edge)] rounded-[var(--radius-md)] p-2">
+      {[...uploads].reverse().map((file) => (
+        <UploadsPanel.Item key={file.id} file={file} />
+      ))}
+      <UploadsPanel.Action variant="more">+ Add another</UploadsPanel.Action>
+    </UploadsPanel.List>
+  </div>
+</UploadsPanel.Root>`,
+      },
+    },
+  },
+  render: () => (
+    <StoryFrame maxWidth="720px">
+      <ReviewSurface label="Composed">
+        <div className="h-[280px] rounded-[var(--radius-lg)] border border-[var(--outline-border)]">
+          <UploadsPanel.Root
+            uploads={uploads}
+            onRemoveUpload={() => undefined}
+            onAttach={() => undefined}
+          >
+            <div className="flex-1 overflow-y-auto px-4 py-4">
+              <UploadsPanel.List className="ring-1 ring-[var(--edge)] rounded-[var(--radius-md)] p-2">
+                {[...uploads].reverse().map((file) => (
+                  <UploadsPanel.Item key={file.id} file={file} />
+                ))}
+                <UploadsPanel.Action variant="more">
+                  <span className="text-xs">+</span>
+                  Add another
+                </UploadsPanel.Action>
+              </UploadsPanel.List>
+            </div>
+          </UploadsPanel.Root>
         </div>
       </ReviewSurface>
     </StoryFrame>

@@ -8,9 +8,20 @@
  *
  * @module react/components/chat/agent-card
  */
+// ---------------------------------------------------------------------------
+// AgentCard — compound, render-or-compose (mirrors `ToolCall` / `Message`).
+//
+// `<AgentCard {...props} />` renders the default anatomy: `Header` (avatar +
+// name + status) over `Reasoning`, `Tools`, and `Body` (the message text).
+// Pass children to recompose from `AgentCard.Header`, `AgentCard.Reasoning`,
+// `AgentCard.Tools`, `AgentCard.Body` — each reads `useAgentCard()`. Every
+// sub-part takes `className`, merged LAST via `cn`. The preset `<AgentCard>`
+// stays fully back-compatible.
+// ---------------------------------------------------------------------------
 import * as React from "react";
 import type { AgentMessage, AgentStatus, ToolCall } from "#veryfront/agent";
 import type { ChatToolPart } from "#veryfront/agent/react";
+import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
 import { cn } from "./theme.ts";
 import { Avatar } from "./ui/avatar.tsx";
 import { Card } from "./ui/card.tsx";
@@ -37,6 +48,8 @@ export interface AgentCardProps {
   className?: string;
   /** Custom tool renderer — overrides the default `ToolCall` card. */
   renderTool?: (toolCall: ToolCall) => React.ReactNode;
+  /** Compose your own card; when omitted, the default anatomy is rendered. */
+  children?: React.ReactNode;
 }
 
 /** Map the agent status to a `Status` dot colour, label, and pulse. */
@@ -88,8 +101,39 @@ function messageText(message: AgentMessage): string {
     .join("") ?? "";
 }
 
-/** Render an agent card (a `Card` wrapping the `Message` anatomy). */
-export const AgentCard = React.forwardRef<HTMLDivElement, AgentCardProps>(
+/** Per-card state shared with `AgentCard.*` sub-parts. */
+export interface AgentCardContextValue {
+  name: string;
+  avatarUrl?: string;
+  messages?: AgentMessage[];
+  toolCalls: ToolCall[];
+  status: AgentStatus;
+  thinking?: string;
+  renderTool?: (toolCall: ToolCall) => React.ReactNode;
+  presentation: { color: StatusColor; label: string; pulse: boolean };
+}
+
+const AgentCardContext = React.createContext<AgentCardContextValue | null>(
+  null,
+);
+
+/** Read the enclosing `AgentCard` state. Throws when used outside an `AgentCard`. */
+export function useAgentCard(): AgentCardContextValue {
+  const ctx = React.useContext(AgentCardContext);
+  if (!ctx) {
+    throw COMPONENT_ERROR.create({
+      detail: "useAgentCard must be used within an AgentCard",
+    });
+  }
+  return ctx;
+}
+
+/**
+ * `AgentCard.Root` — context provider + the `Card` wrapper. No children renders
+ * the default anatomy (`Header` + `Reasoning` + `Tools` + `Body`); pass children
+ * to recompose.
+ */
+const AgentCardRoot = React.forwardRef<HTMLDivElement, AgentCardProps>(
   function AgentCard(
     {
       name = "Agent",
@@ -100,70 +144,130 @@ export const AgentCard = React.forwardRef<HTMLDivElement, AgentCardProps>(
       thinking,
       className,
       renderTool,
+      children,
     },
     ref,
   ) {
     const presentation = statusPresentation(status);
 
+    const context: AgentCardContextValue = {
+      name,
+      avatarUrl,
+      messages,
+      toolCalls,
+      status,
+      thinking,
+      renderTool,
+      presentation,
+    };
+
     return (
-      <Card
-        ref={ref}
-        surface="outline"
-        padding="md"
-        className={cn("flex flex-col gap-3", className)}
-      >
-        {
-          /* Header — Avatar + name (left), Status (right). Mirrors
-            `ChatMessageHeader` / `Message.Header`. */
-        }
-        <div className="flex items-center gap-2">
-          <Avatar name={name} avatarSrc={avatarUrl} className="size-8" />
-          <span className="min-w-0 truncate font-medium text-[var(--foreground)]">
-            {name}
-          </span>
-          <Status
-            className="ml-auto"
-            color={presentation.color}
-            label={presentation.label}
-            pulse={presentation.pulse}
-          />
-        </div>
-
-        {/* Reasoning */}
-        {thinking ? <ReasoningCard text={thinking} /> : null}
-
-        {/* Tool calls */}
-        {toolCalls.length > 0
-          ? (
-            <div className="flex flex-col">
-              {toolCalls.map((tool) => (
-                <React.Fragment key={tool.id}>
-                  {renderTool ? renderTool(tool) : <ToolCallCard tool={toToolPart(tool)} />}
-                </React.Fragment>
-              ))}
-            </div>
-          )
-          : null}
-
-        {/* Message text — rendered as Markdown, like `Message.Content`. */}
-        {messages && messages.length > 0
-          ? (
-            <div className="flex flex-col gap-2">
-              {messages.map((message) => {
-                const text = messageText(message);
-                if (!text) return null;
-                return (
-                  <Markdown key={message.id} className="text-[15px] leading-7">
-                    {text}
-                  </Markdown>
-                );
-              })}
-            </div>
-          )
-          : null}
-      </Card>
+      <AgentCardContext.Provider value={context}>
+        <Card
+          ref={ref}
+          surface="outline"
+          padding="md"
+          className={cn("flex flex-col gap-3", className)}
+        >
+          {children ?? (
+            <>
+              <AgentCardHeader />
+              <AgentCardReasoning />
+              <AgentCardTools />
+              <AgentCardBody />
+            </>
+          )}
+        </Card>
+      </AgentCardContext.Provider>
     );
   },
 );
+AgentCardRoot.displayName = "AgentCard.Root";
 
-AgentCard.displayName = "AgentCard";
+/**
+ * The header row: Avatar + name (left), Status (right). Mirrors
+ * `ChatMessageHeader` / `Message.Header`.
+ */
+function AgentCardHeader(
+  { className }: { className?: string },
+): React.JSX.Element {
+  const { name, avatarUrl, presentation } = useAgentCard();
+  return (
+    <div className={cn("flex items-center gap-2", className)}>
+      <Avatar name={name} avatarSrc={avatarUrl} className="size-8" />
+      <span className="min-w-0 truncate font-medium text-[var(--foreground)]">
+        {name}
+      </span>
+      <Status
+        className="ml-auto"
+        color={presentation.color}
+        label={presentation.label}
+        pulse={presentation.pulse}
+      />
+    </div>
+  );
+}
+AgentCardHeader.displayName = "AgentCard.Header";
+
+/** The reasoning block. Renders only when `thinking` text is present. */
+function AgentCardReasoning(
+  { className }: { className?: string },
+): React.JSX.Element | null {
+  const { thinking } = useAgentCard();
+  if (!thinking) return null;
+  return <ReasoningCard text={thinking} className={className} />;
+}
+AgentCardReasoning.displayName = "AgentCard.Reasoning";
+
+/** The tool-call list. Renders one `ToolCall` card per entry, or `renderTool`. */
+function AgentCardTools(
+  { className }: { className?: string },
+): React.JSX.Element | null {
+  const { toolCalls, renderTool } = useAgentCard();
+  if (toolCalls.length === 0) return null;
+  return (
+    <div className={cn("flex flex-col", className)}>
+      {toolCalls.map((tool) => (
+        <React.Fragment key={tool.id}>
+          {renderTool ? renderTool(tool) : <ToolCallCard tool={toToolPart(tool)} />}
+        </React.Fragment>
+      ))}
+    </div>
+  );
+}
+AgentCardTools.displayName = "AgentCard.Tools";
+
+/** The message body — each message's text rendered as `Markdown`. */
+function AgentCardBody(
+  { className }: { className?: string },
+): React.JSX.Element | null {
+  const { messages } = useAgentCard();
+  if (!messages || messages.length === 0) return null;
+  return (
+    <div className={cn("flex flex-col gap-2", className)}>
+      {messages.map((message) => {
+        const text = messageText(message);
+        if (!text) return null;
+        return (
+          <Markdown key={message.id} className="text-[15px] leading-7">
+            {text}
+          </Markdown>
+        );
+      })}
+    </div>
+  );
+}
+AgentCardBody.displayName = "AgentCard.Body";
+
+/**
+ * AgentCard — render `<AgentCard {...props} />` for the default card, or compose
+ * `AgentCard.Header` / `Reasoning` / `Tools` / `Body` for a custom layout.
+ * Mirrors the `ToolCall` compound: render it, or compose it.
+ */
+export const AgentCard = Object.assign(AgentCardRoot, {
+  Root: AgentCardRoot,
+  Header: AgentCardHeader,
+  Reasoning: AgentCardReasoning,
+  Tools: AgentCardTools,
+  Body: AgentCardBody,
+});

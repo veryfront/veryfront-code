@@ -177,7 +177,46 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
   }, [handleNavigate]);
 
   const normalizedParams = useMemo(() => normalizeParams(state.params), [state.params]);
-  const query = useMemo(() => getQuery(), [state.currentPath]);
+
+  // Keep `query` in lock-step with the live URL. A query-only navigation
+  // (`/?thread=a` → `/?thread=b`) keeps the same path, and the router changes the
+  // URL via `history.pushState`, which fires no event — so without this the query
+  // would stay stale until the *next* navigation (the "two clicks to switch" bug,
+  // which could also momentarily point the page at the wrong thread). We hold the
+  // search string in state and refresh it by patching pushState/replaceState (plus
+  // popstate for back/forward), so `query` updates the instant the URL does.
+  const [search, setSearch] = useState(() =>
+    typeof globalThis.location === "undefined" ? "" : globalThis.location.search
+  );
+  useEffect(() => {
+    if (typeof globalThis.location === "undefined") return;
+    const sync = () => setSearch(globalThis.location.search);
+    const { history } = globalThis;
+    const originalPush = history.pushState;
+    const originalReplace = history.replaceState;
+    history.pushState = function (
+      this: History,
+      ...args: Parameters<History["pushState"]>
+    ): void {
+      originalPush.apply(this, args);
+      sync();
+    };
+    history.replaceState = function (
+      this: History,
+      ...args: Parameters<History["replaceState"]>
+    ): void {
+      originalReplace.apply(this, args);
+      sync();
+    };
+    globalThis.addEventListener("popstate", sync);
+    sync();
+    return () => {
+      history.pushState = originalPush;
+      history.replaceState = originalReplace;
+      globalThis.removeEventListener("popstate", sync);
+    };
+  }, []);
+  const query = useMemo(() => getQuery(), [state.currentPath, search]);
 
   const routerValue: Router = {
     domain: getDomain(),

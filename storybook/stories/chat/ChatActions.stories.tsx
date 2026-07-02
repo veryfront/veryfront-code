@@ -15,14 +15,12 @@ import { ReviewSurface, StoryFrame } from "../support/StoryFrame";
 const importCode = `import { ChatActions } from "veryfront/chat"`;
 
 const compositionTree =
-  `ChatActions  <- the composer's \`+\` menu (DropdownMenu)
-  +-- DropdownMenuTrigger  <- \`+\` IconButton (override with \`trigger\`)
-  +-- DropdownMenuContent  <- portalled surface (Floating)
-        +-- "Attach Files or Photos"  <- onAttachFiles (built-in convenience)
-        +-- ...actions                <- your data-driven rows (actions prop)
-        +-- Settings                  <- nested submenu (Floating)
-              +-- Auto-send queue   (Switch)
-              +-- Autofix errors    (Switch)`;
+  `ChatActions            <- render the preset (props), or compose the sub-parts below
+  +-- ChatActions.Root       <- DropdownMenu wrapper + context (aka <ChatActions>)
+  +-- ChatActions.Trigger    <- the \`+\` button; pass a child to override (asChild)
+  +-- ChatActions.Content    <- the portalled dropdown surface
+  +-- ChatActions.Item       <- a single action row (icon? + label, closes on select)
+  \`-- ChatActions.Preset     <- the data-driven body (attach row + actions + settings)`;
 
 /** A stateful settings object so the submenu toggles are live in the docs. */
 function useDemoSettings() {
@@ -56,6 +54,13 @@ function ChatActionsDocsPage() {
         description="Omit `settings` to drop the Settings submenu and its separator — just the attach rows remain."
       >
         <DocsExampleAuto of={AttachOnly} />
+      </DocsSection>
+
+      <DocsSection
+        title="Compose"
+        description="Pass no `children` and `ChatActions` renders the data-driven preset above. Pass `children` and you own the anatomy: compose `ChatActions.Trigger` / `Content` / `Item` (each wires into the same menu). Drop `ChatActions.Preset` back in to keep the built-in rows alongside your own."
+      >
+        <DocsExampleAuto of={Composed} />
       </DocsSection>
 
       <DocsSection title="Import">
@@ -194,6 +199,42 @@ export const AttachOnly: Story = {
   onAttachFiles={handleAttachFiles}
   actions={[{ label: "Add from URL", onSelect: handleAddUrl }]}
 />`,
+      },
+    },
+  },
+};
+
+export const Composed: Story = {
+  tags: ["!dev"],
+  render: () => (
+    <StoryFrame maxWidth="420px">
+      <ReviewSurface label="Composed">
+        <div className="flex min-h-[220px] items-start">
+          <ChatActions.Root>
+            <ChatActions.Trigger />
+            <ChatActions.Content>
+              <ChatActions.Item onSelect={() => undefined}>
+                Add from URL
+              </ChatActions.Item>
+              <ChatActions.Item onSelect={() => undefined}>
+                Connect data source
+              </ChatActions.Item>
+            </ChatActions.Content>
+          </ChatActions.Root>
+        </div>
+      </ReviewSurface>
+    </StoryFrame>
+  ),
+  parameters: {
+    docs: {
+      source: {
+        code: `<ChatActions.Root>
+  <ChatActions.Trigger />
+  <ChatActions.Content>
+    <ChatActions.Item onSelect={handleAddUrl}>Add from URL</ChatActions.Item>
+    <ChatActions.Item onSelect={handleConnect}>Connect data source</ChatActions.Item>
+  </ChatActions.Content>
+</ChatActions.Root>`,
       },
     },
   },

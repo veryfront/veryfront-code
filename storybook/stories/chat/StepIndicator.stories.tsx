@@ -13,9 +13,11 @@ import { ReviewSurface, StoryFrame } from "../support/StoryFrame";
 
 const importCode = `import { StepIndicator } from "veryfront/chat"`;
 
-const compositionTree = `StepIndicator  <- divider between steps of a multi-step turn
-  +-- rule  <- hairline that runs to each edge
-  +-- pill  <- status glyph + "Step N" label`;
+const compositionTree =
+  `StepIndicator  <- render it: <StepIndicator stepIndex={0} isComplete />
+StepIndicator.Root  <- or compose it: context (stepIndex, isComplete, icon)
+  +-- StepIndicator.Rule   <- a flanking horizontal rule (rendered twice)
+  +-- StepIndicator.Label  <- status glyph + "Step N" pill`;
 
 function StepIndicatorDocsPage() {
   return (
@@ -44,6 +46,13 @@ function StepIndicatorDocsPage() {
         description="Steps divide the parts of a single turn — each rule marks where the next step begins."
       >
         <DocsExampleAuto of={Sequence} />
+      </DocsSection>
+
+      <DocsSection
+        title="Compose"
+        description="Drop to `StepIndicator.Root` + parts to recompose the divider — drop a rule for a leading label, restyle the pill with `className`, or reorder the anatomy."
+      >
+        <DocsExampleAuto of={Composed} />
       </DocsSection>
 
       <DocsSection title="Import">
@@ -135,6 +144,33 @@ export const Pending: Story = {
     <StoryFrame maxWidth="640px">
       <ReviewSurface label="Pending step">
         <StepIndicator stepIndex={1} isComplete={false} />
+      </ReviewSurface>
+    </StoryFrame>
+  ),
+};
+
+export const Composed: Story = {
+  tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { StepIndicator } from "veryfront/chat";
+
+// Recompose the divider: a leading label pill, then a single rule.
+<StepIndicator.Root stepIndex={0} isComplete>
+  <StepIndicator.Label className="ring-1 ring-[var(--edge)]" />
+  <StepIndicator.Rule />
+</StepIndicator.Root>`,
+      },
+    },
+  },
+  render: () => (
+    <StoryFrame maxWidth="640px">
+      <ReviewSurface label="Recomposed divider">
+        <StepIndicator.Root stepIndex={0} isComplete>
+          <StepIndicator.Label className="ring-1 ring-[var(--edge)]" />
+          <StepIndicator.Rule />
+        </StepIndicator.Root>
       </ReviewSurface>
     </StoryFrame>
   ),

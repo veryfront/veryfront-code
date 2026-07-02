@@ -14,9 +14,14 @@ import { ReviewSurface, StoryFrame } from "../support/StoryFrame";
 
 const importCode = `import { Markdown } from "veryfront/react/components/chat"`;
 
-const compositionTree = `Markdown  <- prose renderer (GFM, highlight, mermaid)
-  +-- CodeBlock  <- fenced code blocks (shiki + copy), see Chat/UI/CodeBlock
-  +-- table / blockquote / anchor  <- styled block overrides`;
+const compositionTree =
+  `Markdown  <- prose renderer; no exported sub-parts — configure it with props
+  +-- children         <- the markdown string to render (GFM, highlight, mermaid)
+  +-- enableMermaid    <- toggle client-side mermaid diagrams (default true)
+  +-- renderCodeBlock  <- swap the fenced-code renderer (defaults to CodeBlock)
+  +-- components        <- override element renderers (anchor / table / heading / …)
+  +-- remarkPlugins / rehypePlugins  <- extra plugins, appended to the built-ins
+  +-- className         <- merged onto the container (via cn)`;
 
 function MarkdownDocsPage() {
   return (
@@ -61,6 +66,22 @@ function MarkdownDocsPage() {
               name: "renderCodeBlock",
               type: "(props: CodeBlockProps) => ReactNode",
               description: "Custom renderer for code blocks",
+            },
+            {
+              name: "components",
+              type: "Components",
+              description:
+                "Override element renderers (anchor / table / heading / blockquote / …), merged over the built-in defaults",
+            },
+            {
+              name: "remarkPlugins",
+              type: "PluggableList",
+              description: "Extra remark plugins, appended after the built-ins (GFM etc.)",
+            },
+            {
+              name: "rehypePlugins",
+              type: "PluggableList",
+              description: "Extra rehype plugins, appended after the built-ins",
             },
             {
               name: "className",

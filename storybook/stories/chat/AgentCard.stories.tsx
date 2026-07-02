@@ -15,11 +15,12 @@ import { StoryFrame } from "../support/StoryFrame";
 const importCode = `import { AgentCard } from "veryfront/chat"`;
 
 const compositionTree =
-  `AgentCard  <- Card (outline) wrapping the Message anatomy
-  +-- Header  <- Avatar + name (left) · Status dot + label (right)
-  +-- Reasoning  <- thinking text (shown when 'thinking' is set)
-  +-- ToolCall  <- one ToolCall card per tool call
-  +-- Markdown  <- the agent's message text`;
+  `AgentCard  <- render it: <AgentCard {...props} /> (default anatomy)
+AgentCard.Root  <- or compose it: context (name, status, tools, messages)
+  +-- AgentCard.Header     <- avatar + name (left), Status dot + label (right)
+  +-- AgentCard.Reasoning  <- thinking text (renders when set)
+  +-- AgentCard.Tools      <- one ToolCall card per entry (or renderTool)
+  +-- AgentCard.Body       <- the agent's message text (rendered as Markdown)`;
 
 function AgentCardDocsPage() {
   return (
@@ -48,6 +49,13 @@ function AgentCardDocsPage() {
         description={'A failed tool call renders inline with `status="error"` and the error message.'}
       >
         <DocsExampleAuto of={Error} />
+      </DocsSection>
+
+      <DocsSection
+        title="Compose"
+        description="Drop to `AgentCard.Root` + parts to recompose the card — reorder the sections (Body over Header), or restyle a section with `className`."
+      >
+        <DocsExampleAuto of={Composed} />
       </DocsSection>
 
       <DocsSection title="Import">
@@ -176,6 +184,47 @@ export const Completed: Story = {
   toolCalls={toolCalls}
   messages={messages}
 />`,
+      },
+    },
+  },
+};
+
+export const Composed: Story = {
+  tags: ["!dev"],
+  render: () => (
+    <StoryFrame maxWidth="720px">
+      <AgentCard.Root
+        name="Release Agent"
+        status="completed"
+        thinking="Checking run state, recent tool calls, and release blockers."
+        toolCalls={agentCardTools.slice(0, 1)}
+        messages={agentCardMessages}
+      >
+        <AgentCard.Header className="pb-1" />
+        <AgentCard.Body />
+        <AgentCard.Tools />
+        <AgentCard.Reasoning />
+      </AgentCard.Root>
+    </StoryFrame>
+  ),
+  parameters: {
+    docs: {
+      source: {
+        code: `import { AgentCard } from "veryfront/chat";
+
+// Recompose the card: Header (restyled), then Body, Tools, Reasoning.
+<AgentCard.Root
+  name="Release Agent"
+  status="completed"
+  thinking="Checking run state, recent tool calls, and release blockers."
+  toolCalls={toolCalls}
+  messages={messages}
+>
+  <AgentCard.Header className="pb-1" />
+  <AgentCard.Body />
+  <AgentCard.Tools />
+  <AgentCard.Reasoning />
+</AgentCard.Root>`,
       },
     },
   },

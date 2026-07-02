@@ -86,7 +86,14 @@ import { QuickActions as QuickActionsComponent } from "./components/quick-action
 // ---------------------------------------------------------------------------
 
 export { FadeIn, Loader, Shimmer } from "./components/animations.tsx";
-export { ReasoningCard } from "./components/reasoning.tsx";
+export {
+  Reasoning,
+  ReasoningCard,
+  type ReasoningContextValue,
+  type ReasoningProps,
+  type ReasoningTriggerProps,
+  useReasoning,
+} from "./components/reasoning.tsx";
 export {
   ConversationEmptyState,
   type ConversationEmptyStateProps,
@@ -106,14 +113,25 @@ export {
   type ChatMessagesSkeletonProps,
 } from "./components/chat-messages-skeleton.tsx";
 export { SkillBadge, type SkillBadgeProps } from "./components/skill-badge.tsx";
-export { ToolCallCard, ToolStatusBadge } from "./components/tool-ui.tsx";
+export {
+  ToolCall,
+  ToolCallCard,
+  type ToolCallContextValue,
+  type ToolCallProps,
+  type ToolCallTriggerProps,
+  ToolStatusBadge,
+  useToolCall,
+} from "./components/tool-ui.tsx";
 export { InferenceBadge, type InferenceBadgeProps } from "./components/inference-badge.tsx";
 export {
   type Source,
   SourcePill,
   type SourcePillProps,
   Sources,
+  type SourcesContextValue,
+  type SourcesListProps,
   type SourcesProps,
+  useSources,
 } from "./components/sources.tsx";
 export { InlineCitation, type InlineCitationProps } from "./components/inline-citation.tsx";
 export {
@@ -124,10 +142,17 @@ export {
 export {
   type AttachmentInfo,
   AttachmentPill,
+  type AttachmentPillContextValue,
   type AttachmentPillProps,
+  useAttachmentPill,
 } from "./components/attachment-pill.tsx";
 export { type CodeBlockProps, RichCodeBlock } from "./components/code-block.tsx";
-export { StepIndicator, type StepIndicatorProps } from "./components/step-indicator.tsx";
+export {
+  StepIndicator,
+  type StepIndicatorContextValue,
+  type StepIndicatorProps,
+  useStepIndicator,
+} from "./components/step-indicator.tsx";
 // The sub-components (`ChatSidebar.Root` / `.Item` / …) hang off the compound
 // object, so only the preset needs to be a runtime export. The rest are
 // type-only — they annotate props without widening the public runtime surface.
@@ -153,7 +178,14 @@ export {
 export {
   type UploadedFile,
   UploadsPanel,
+  type UploadsPanelActionProps,
+  type UploadsPanelContextValue,
+  type UploadsPanelEmptyProps,
+  type UploadsPanelHeaderProps,
+  type UploadsPanelItemProps,
+  type UploadsPanelListProps,
   type UploadsPanelProps,
+  useUploadsPanel,
 } from "./components/uploads-panel.tsx";
 
 // Re-exports — hooks
@@ -164,6 +196,11 @@ export {
   type UseThreadsResult,
 } from "./hooks/use-threads.ts";
 export { useUpload, type UseUploadOptions, type UseUploadResult } from "./hooks/use-upload.ts";
+export {
+  useUploadsRegistry,
+  type UseUploadsRegistryOptions,
+  type UseUploadsRegistryResult,
+} from "./hooks/use-uploads-registry.ts";
 export {
   useStickToBottom,
   type UseStickToBottomOptions,
@@ -221,6 +258,8 @@ export {
   type MessageContextValue,
   ThreadListContextProvider,
   type ThreadListContextValue,
+  ThreadsProvider,
+  type ThreadsProviderProps,
   useChatContext,
   useChatContextOptional,
   useComposerContext,
@@ -538,6 +577,7 @@ const ControlledChat = React.forwardRef<HTMLDivElement, ChatProps>(
               onRemoveUpload={onRemoveUpload}
               onAttach={effectiveOnAttach}
               attachAccept={attachAccept}
+              onClose={() => handleTabChange("chat")}
               className="flex-1 min-h-0"
             />
           )

@@ -57,6 +57,7 @@ import {
   DropdownMenuTrigger,
 } from "../../ui/dropdown-menu.tsx";
 import { List, ListItem, ListLabel } from "../../ui/list.tsx";
+import { Skeleton } from "../../ui/skeleton.tsx";
 import type { Thread } from "../hooks/use-threads.ts";
 
 /** Three-dots "more actions" glyph (not in the shared icons barrel). */
@@ -106,6 +107,7 @@ interface ChatSidebarContextValue {
   onRenameThread?: (id: string, title: string) => void;
   onNewThread?: () => void;
   icons?: ChatSidebarIcons;
+  loading?: boolean;
   renderThreadItem?: (
     thread: Thread,
     opts: ChatSidebarThreadItemRenderOptions,
@@ -179,6 +181,12 @@ export interface ChatSidebarRootProps {
   /** Override any of the sidebar icons. */
   icons?: ChatSidebarIcons;
   /**
+   * Show the loading skeleton instead of the list — e.g. while threads are being
+   * fetched. When omitted, the auto {@link ChatSidebarList} shows a skeleton on
+   * its own until the client mounts (threads usually load from localStorage).
+   */
+  loading?: boolean;
+  /**
    * Render each thread row yourself instead of the built-in row. Consumed by
    * the auto {@link ChatSidebarList}; ignored when you supply your own rows.
    */
@@ -207,6 +215,7 @@ export function ChatSidebarRoot({
   onRenameThread,
   onNewThread,
   icons,
+  loading,
   renderThreadItem,
   isOpen = true,
   fill = false,
@@ -222,6 +231,7 @@ export function ChatSidebarRoot({
       onRenameThread,
       onNewThread,
       icons,
+      loading,
       renderThreadItem,
     }),
     [
@@ -232,6 +242,7 @@ export function ChatSidebarRoot({
       onRenameThread,
       onNewThread,
       icons,
+      loading,
       renderThreadItem,
     ],
   );
@@ -280,7 +291,7 @@ export function ChatSidebarNewButton({
         type="button"
         variant="primary"
         onClick={onNewThread}
-        className={cn("w-full shadow-sm", className)}
+        className={cn("w-full", className)}
       >
         {icons?.newThread}
         {children ?? "New chat"}
@@ -338,8 +349,10 @@ export function ChatSidebarItem({
   }
 
   if (editing) {
+    // Fixed `h-8` = the display row's height (py-1.5 + a size-5 action button),
+    // so entering rename mode never resizes the row.
     return (
-      <div className="flex items-center rounded-[var(--radius-md)] bg-[var(--accent)] px-2.5 py-1.5">
+      <div className="flex h-8 items-center gap-1 rounded-[var(--radius-sm)] bg-[var(--accent)] px-2.5">
         <input
           ref={inputRef}
           value={editValue}
@@ -349,7 +362,7 @@ export function ChatSidebarItem({
             if (e.key === "Enter") commitRename();
             if (e.key === "Escape") setEditing(false);
           }}
-          className="min-w-0 flex-1 bg-transparent text-[13px] leading-snug outline-none"
+          className="min-w-0 flex-1 appearance-none border-0 bg-transparent p-0 text-[13px] leading-snug outline-none"
         />
       </div>
     );
@@ -451,6 +464,29 @@ export function ChatSidebarEmpty({
 }
 ChatSidebarEmpty.displayName = "ChatSidebar.Empty";
 
+/**
+ * Loading placeholder for the thread list — shown until the client mounts (or
+ * while `loading`). Mirrors a real recency group (`List` + `ListLabel` + rows)
+ * so it sits at exactly the same position as the loaded list.
+ */
+function ChatSidebarSkeleton(): React.ReactElement {
+  return (
+    <output aria-label="Loading conversations" className="block">
+      <span className="sr-only">Loading conversations</span>
+      <List aria-hidden="true">
+        <ListLabel>
+          <Skeleton className="h-2! w-10! bg-[var(--edge)]!" />
+        </ListLabel>
+        {["w-3/4", "w-1/2", "w-2/3", "w-3/5", "w-1/2"].map((width, index) => (
+          <div key={`${index}-${width}`} className="px-2.5 py-1.5">
+            <Skeleton className={cn("h-3! bg-[var(--edge)]!", width)} />
+          </div>
+        ))}
+      </List>
+    </output>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // ChatSidebar.List
 // ---------------------------------------------------------------------------
@@ -476,19 +512,35 @@ export function ChatSidebarList({
     onSelectThread,
     onDeleteThread,
     onRenameThread,
+    loading,
     renderThreadItem,
   } = useChatSidebarContext();
 
+  // Threads live in localStorage (client-only), so the very first paint has none.
+  // Show a skeleton until mounted rather than flashing the "no chats yet" state —
+  // or whenever the caller explicitly signals `loading`.
+  const [mounted, setMounted] = React.useState(false);
+  React.useEffect(() => setMounted(true), []);
+
   const visibleThreads = React.useMemo(
-    () => threads.filter((t) => t.messages.length > 0 || t.id === activeThreadId),
-    [threads, activeThreadId],
+    () =>
+      // A fresh empty draft ("New Chat") pins to the top; everything else is
+      // ordered by newest activity. (spread first — never sort the source array.)
+      [...threads].sort((a, b) => {
+        const aDraft = a.messages.length === 0 ? 1 : 0;
+        const bDraft = b.messages.length === 0 ? 1 : 0;
+        return bDraft - aDraft || b.updatedAt - a.updatedAt;
+      }),
+    [threads],
   );
   const grouped = React.useMemo(() => groupThreads(visibleThreads), [
     visibleThreads,
   ]);
 
   const body = children ?? (
-    visibleThreads.length > 0
+    !mounted || loading
+      ? <ChatSidebarSkeleton />
+      : visibleThreads.length > 0
       ? Array.from(grouped.entries()).map(([label, items]) => (
         <ChatSidebarGroup key={label} label={label}>
           {items.map((thread) => {
@@ -498,8 +550,7 @@ export function ChatSidebarList({
                   {renderThreadItem(thread, {
                     isActive: thread.id === activeThreadId,
                     onSelect: () => onSelectThread(thread.id),
-                    onDelete: () =>
-                      onDeleteThread(thread.id),
+                    onDelete: () => onDeleteThread(thread.id),
                     onRename: onRenameThread
                       ? (title: string) =>
                         onRenameThread(thread.id, title)

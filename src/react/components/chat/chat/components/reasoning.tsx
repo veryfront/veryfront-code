@@ -2,9 +2,41 @@ import * as React from "react";
 import { cn } from "../../theme.ts";
 import { Markdown } from "../../markdown.tsx";
 import { ChevronDownIcon } from "../../icons/index.ts";
+import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
 import { Shimmer } from "./animations.tsx";
 
-type ReasoningCardProps = {
+// ---------------------------------------------------------------------------
+// Reasoning — compound, render-or-compose (mirrors `Message` / `ToolCall`).
+//
+// `<Reasoning text={...} />` renders the default disclosure (trigger + body).
+// Pass children to recompose from `Reasoning.Trigger` + `Reasoning.Content`,
+// each reading `useReasoning()`. `Content` takes children to replace the
+// rendered markdown; every part takes `className`.
+// ---------------------------------------------------------------------------
+
+/** Per-card state shared with `Reasoning.*` sub-parts. */
+export interface ReasoningContextValue {
+  text: string;
+  isStreaming: boolean;
+  isOpen: boolean;
+  toggle: () => void;
+}
+
+const ReasoningContext = React.createContext<ReasoningContextValue | null>(null);
+
+/** Read the enclosing `Reasoning` state. Throws when used outside a `Reasoning`. */
+export function useReasoning(): ReasoningContextValue {
+  const ctx = React.useContext(ReasoningContext);
+  if (!ctx) {
+    throw COMPONENT_ERROR.create({
+      detail: "useReasoning must be used within a Reasoning",
+    });
+  }
+  return ctx;
+}
+
+/** Props accepted by `Reasoning` / `Reasoning.Root` (aka `ReasoningCard`). */
+export interface ReasoningProps {
   text: string;
   isStreaming?: boolean;
   className?: string;
@@ -22,14 +54,16 @@ type ReasoningCardProps = {
   defaultOpen?: boolean;
   /** Called whenever the open state should change (both controlled and not). */
   onOpenChange?: (open: boolean) => void;
-};
+  /** Compose your own disclosure; when omitted, the default anatomy renders. */
+  children?: React.ReactNode;
+}
 
-/** Render reasoning card. */
-export const ReasoningCard = React.forwardRef<
-  HTMLDivElement,
-  ReasoningCardProps
->(
-  function ReasoningCard(
+/**
+ * `Reasoning.Root` — context provider + wrapper. No children renders the
+ * default anatomy (`Trigger` + `Content`); pass children to recompose.
+ */
+const ReasoningRoot = React.forwardRef<HTMLDivElement, ReasoningProps>(
+  function Reasoning(
     {
       text,
       isStreaming = false,
@@ -39,6 +73,7 @@ export const ReasoningCard = React.forwardRef<
       open,
       defaultOpen,
       onOpenChange,
+      children,
     },
     ref,
   ) {
@@ -81,47 +116,100 @@ export const ReasoningCard = React.forwardRef<
       return () => clearTimeout(timer);
     }, [isControlled, isStreaming, isOpen, onOpenChange]);
 
-    const thinkingLabel = labels?.thinking ?? "Thinking...";
-    const thoughtLabel = labels?.thought ?? "Thought process";
-    const label = isStreaming ? <Shimmer>{thinkingLabel}</Shimmer> : <span>{thoughtLabel}</span>;
+    const toggle = React.useCallback(() => {
+      userToggledRef.current = true;
+      const next = !isOpen;
+      if (!isControlled) setUncontrolledOpen(next);
+      onOpenChange?.(next);
+    }, [isControlled, isOpen, onOpenChange]);
+
+    const context: ReasoningContextValue = { text, isStreaming, isOpen, toggle };
 
     return (
-      <div ref={ref} className={cn("not-prose mb-3", className)}>
-        <button
-          type="button"
-          onClick={() => {
-            userToggledRef.current = true;
-            const next = !isOpen;
-            if (!isControlled) setUncontrolledOpen(next);
-            onOpenChange?.(next);
-          }}
-          className="flex w-full items-center gap-2 rounded-sm text-sm text-[var(--foreground)] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)] focus-visible:ring-offset-0"
-        >
-          {label}
-          <span
-            className={cn(
-              "flex size-3.5 shrink-0 items-center justify-center transition-transform duration-200",
-              !isOpen && "-rotate-90",
-            )}
-          >
-            {icon ?? <ChevronDownIcon className="size-3.5 shrink-0" />}
-          </span>
-        </button>
-
-        {isOpen
-          ? (
-            <div className="mt-2 text-sm text-[var(--foreground)]">
-              {
-                /* `text-sm!` overrides Markdown's base `text-base` (cn does not
-                  tw-merge) so reasoning renders at 14px like Studio's compact
-                  variant. */
-              }
-              <Markdown className="mb-0 space-y-2.5 text-sm!">{text}</Markdown>
-            </div>
-          )
-          : null}
-      </div>
+      <ReasoningContext.Provider value={context}>
+        <div ref={ref} className={cn("not-prose mb-3", className)}>
+          {children ?? (
+            <>
+              <ReasoningTrigger icon={icon} labels={labels} />
+              <ReasoningContent />
+            </>
+          )}
+        </div>
+      </ReasoningContext.Provider>
     );
   },
 );
-ReasoningCard.displayName = "ReasoningCard";
+ReasoningRoot.displayName = "Reasoning.Root";
+
+/** Props for `Reasoning.Trigger` — the disclosure button. */
+export interface ReasoningTriggerProps {
+  /** Overrides the chevron glyph. */
+  icon?: React.ReactNode;
+  /** Override the two labels; each defaults to the current string. */
+  labels?: { thinking?: string; thought?: string };
+  className?: string;
+}
+
+/** The header row: a "Thinking…" / "Thought process" label + expand chevron. */
+function ReasoningTrigger(
+  { icon, labels, className }: ReasoningTriggerProps,
+): React.JSX.Element {
+  const { isStreaming, isOpen, toggle } = useReasoning();
+  const thinkingLabel = labels?.thinking ?? "Thinking...";
+  const thoughtLabel = labels?.thought ?? "Thought process";
+  const label = isStreaming ? <Shimmer>{thinkingLabel}</Shimmer> : <span>{thoughtLabel}</span>;
+
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      className={cn(
+        "flex w-full items-center gap-2 rounded-sm text-sm text-[var(--foreground)] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)] focus-visible:ring-offset-0",
+        className,
+      )}
+    >
+      {label}
+      <span
+        className={cn(
+          "flex size-3.5 shrink-0 items-center justify-center transition-transform duration-200",
+          !isOpen && "-rotate-90",
+        )}
+      >
+        {icon ?? <ChevronDownIcon className="size-3.5 shrink-0" />}
+      </span>
+    </button>
+  );
+}
+ReasoningTrigger.displayName = "Reasoning.Trigger";
+
+/** The reasoning body. Renders when open; pass children to replace the markdown. */
+function ReasoningContent(
+  { className, children }: { className?: string; children?: React.ReactNode },
+): React.JSX.Element | null {
+  const { text, isOpen } = useReasoning();
+  if (!isOpen) return null;
+  return (
+    <div className={cn("mt-2 text-sm text-[var(--foreground)]", className)}>
+      {children ?? (
+        // `text-sm!` overrides Markdown's base `text-base` (cn does not tw-merge)
+        // so reasoning renders at 14px like Studio's compact variant.
+        <Markdown className="mb-0 space-y-2.5 text-sm!">{text}</Markdown>
+      )}
+    </div>
+  );
+}
+ReasoningContent.displayName = "Reasoning.Content";
+
+/**
+ * Reasoning — render `<Reasoning text={…} />` for the default disclosure, or
+ * compose `Reasoning.Trigger` + `Reasoning.Content` for a custom layout.
+ * Mirrors the `Message` / `ToolCall` compounds: render it, or compose it.
+ */
+export const Reasoning = Object.assign(ReasoningRoot, {
+  Root: ReasoningRoot,
+  Trigger: ReasoningTrigger,
+  Content: ReasoningContent,
+});
+
+/** Back-compat alias — `message.tsx` and `agent-card.tsx` import `ReasoningCard`. */
+export const ReasoningCard = ReasoningRoot;

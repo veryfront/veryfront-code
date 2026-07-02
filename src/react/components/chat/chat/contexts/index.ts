@@ -31,6 +31,8 @@ export {
 export {
   ThreadListContextProvider,
   type ThreadListContextValue,
+  ThreadsProvider,
+  type ThreadsProviderProps,
   useThreadListContext,
   useThreadListContextOptional,
 } from "./thread-list-context.tsx";

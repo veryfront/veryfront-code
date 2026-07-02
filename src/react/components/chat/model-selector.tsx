@@ -23,6 +23,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover.tsx";
 import { Pill } from "./ui/pill.tsx";
 import { CheckIcon, ChevronDownIcon, SparklesIcon } from "./icons/index.ts";
+import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
 
 /** Provider slug for a model (explicit `provider`, else the `value` prefix). */
 function providerOf(model: ModelOption | undefined): string | undefined {
@@ -101,6 +102,11 @@ export interface ModelSelectorProps {
   renderRow?: (
     opts: { model: ModelOption; selected: boolean; onSelect: () => void },
   ) => React.ReactNode;
+  /**
+   * Compose your own menu from `ModelSelector.Trigger` / `Content` / `List` /
+   * `Item`. When omitted, the default data-driven preset is rendered.
+   */
+  children?: React.ReactNode;
 }
 
 /** Search box appears once the model count crosses this. */
@@ -120,80 +126,78 @@ function groupByProvider(models: ModelOption[]): Map<string, ModelOption[]> {
   return groups;
 }
 
-function ModelRow({
-  model,
-  selected,
-  onSelect,
-}: {
-  model: ModelOption;
-  selected: boolean;
+// ---------------------------------------------------------------------------
+// ModelSelector — compound, render-or-compose (mirrors `ToolCall`).
+//
+// `<ModelSelector models={...} value={...} onChange={...} />` renders the
+// default data-driven combobox (pill/icon trigger + provider-grouped list).
+// Pass children to recompose from `ModelSelector.Trigger` / `Content` / `List`
+// / `Item` — each reads `useModelSelector()` for the shared selection + open
+// state. Every sub-part takes `className` merged LAST via `cn`. The preset keeps
+// working unchanged when no children are passed. The `renderTrigger`/`renderRow`
+// render-props stay for back-compat.
+//
+// The private `Popover` / `Command` primitives are composed, not modified: the
+// composed tree renders a real `<Popover>` (from Root) whose context flows to
+// `Trigger` (a `PopoverTrigger`) and `Content` (a `PopoverContent` + `Command`),
+// and `Command` context flows from `Content` down to `List` / `Item`.
+// ---------------------------------------------------------------------------
+
+/** Shared selection + open state exposed to `ModelSelector.*` sub-parts. */
+export interface ModelSelectorContextValue {
+  /** Selected model value ("provider/model"). */
+  value?: string;
+  /** The resolved selected option (from `value`, else the first model). */
+  selected?: ModelOption;
+  /** Select a model by value (also closes the menu). */
   onSelect: (value: string) => void;
-}): React.ReactElement {
-  return (
-    <CommandItem
-      value={model.label}
-      onSelect={() => onSelect(model.value)}
-    >
-      <ProviderLogo provider={providerOf(model)} className="size-4.5" />
-      <span className="min-w-0 flex-1 truncate">{model.label}</span>
-      {model.badge && (
-        <span className="rounded-full border border-[var(--outline-border)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--faint)]">
-          {model.badge}
-        </span>
-      )}
-      {selected && <CheckIcon className="ml-auto opacity-70" />}
-    </CommandItem>
-  );
+  /** Popover open state. */
+  open: boolean;
+  /** Set the popover open state. */
+  setOpen: (open: boolean) => void;
+  /** Whether the selector is disabled. */
+  disabled?: boolean;
 }
 
-/** Render model selector. */
-export function ModelSelector({
-  models,
-  value,
-  onChange,
-  className,
-  disabled,
-  variant = "pill",
-  renderTrigger,
-  renderRow,
-}: ModelSelectorProps): React.ReactElement {
-  const [open, setOpen] = React.useState(false);
-  const selected = models.find((m) => m.value === value) ?? models[0];
-  const selectedValue = value ?? selected?.value;
-  const showSearch = models.length > SEARCH_THRESHOLD;
-  const hasGroups = models.some((m) => m.provider);
-  const groups = hasGroups ? groupByProvider(models) : null;
+const ModelSelectorContext = React.createContext<
+  ModelSelectorContextValue | null
+>(null);
 
-  function handleSelect(modelValue: string): void {
-    setOpen(false);
-    onChange(modelValue);
+/**
+ * Read the enclosing `ModelSelector` selection + open state. Throws when used
+ * outside a `<ModelSelector>`.
+ */
+export function useModelSelector(): ModelSelectorContextValue {
+  const ctx = React.useContext(ModelSelectorContext);
+  if (!ctx) {
+    throw COMPONENT_ERROR.create({
+      detail: "useModelSelector must be used within a ModelSelector",
+    });
   }
+  return ctx;
+}
 
-  function renderModel(model: ModelOption): React.ReactNode {
-    const isSelected = model.value === selectedValue;
-    if (renderRow) {
-      return (
-        <React.Fragment key={model.value}>
-          {renderRow({
-            model,
-            selected: isSelected,
-            onSelect: () => handleSelect(model.value),
-          })}
-        </React.Fragment>
-      );
-    }
-    return (
-      <ModelRow
-        key={model.value}
-        model={model}
-        selected={isSelected}
-        onSelect={handleSelect}
-      />
-    );
-  }
+/** Props for `ModelSelector.Trigger` — the pill/icon combobox button. */
+export interface ModelSelectorTriggerProps {
+  /** Trigger style. @default "pill" */
+  variant?: "pill" | "icon";
+  /** Override the trigger contents; defaults to the selected model. */
+  children?: React.ReactNode;
+  className?: string;
+}
 
-  const trigger = renderTrigger
-    ? renderTrigger({ model: selected, open })
+/** The pill (or icon) combobox trigger. Toggles the popover. */
+function ModelSelectorTrigger(
+  { variant = "pill", children, className }: ModelSelectorTriggerProps,
+): React.ReactElement {
+  const { selected, disabled } = useModelSelector();
+
+  const trigger = children
+    ? (
+      <button type="button" disabled={disabled} className={className}>
+        {children}
+      </button>
+    )
     : variant === "icon"
     ? (
       <button
@@ -219,36 +223,233 @@ export function ModelSelector({
         )}
       >
         <ProviderLogo provider={providerOf(selected)} className="size-4" />
-        <span className="min-w-0 truncate">{selected?.label ?? "Select model"}</span>
+        <span className="min-w-0 truncate">
+          {selected?.label ?? "Select model"}
+        </span>
         <ChevronDownIcon className="ml-auto" />
       </Pill>
     );
 
+  return <PopoverTrigger asChild>{trigger}</PopoverTrigger>;
+}
+ModelSelectorTrigger.displayName = "ModelSelector.Trigger";
+
+/** Props for `ModelSelector.Content` — the popover surface + `Command` shell. */
+export interface ModelSelectorContentProps {
+  /** Show the search input above the list. */
+  showSearch?: boolean;
+  /** Search input placeholder. */
+  searchPlaceholder?: string;
+  children?: React.ReactNode;
+  className?: string;
+}
+
+/** The popover surface wrapping a `Command` (search + list region). */
+function ModelSelectorContent(
+  {
+    showSearch = false,
+    searchPlaceholder = "Search models...",
+    children,
+    className,
+  }: ModelSelectorContentProps,
+): React.ReactElement {
   return (
-    <Popover open={open} onOpenChange={disabled ? undefined : setOpen}>
-      <PopoverTrigger asChild>{trigger}</PopoverTrigger>
-      <PopoverContent align="start" className="min-w-[260px] p-0! rounded-lg">
-        <Command className="bg-transparent">
-          {showSearch && <CommandInput placeholder="Search models..." />}
-          <CommandList className="max-h-[320px]">
-            <CommandEmpty>No models found.</CommandEmpty>
-            {groups
-              ? Array.from(groups.entries()).map(([provider, items]) => (
-                <CommandGroup
-                  key={provider || "__ungrouped"}
-                  heading={provider || undefined}
-                >
-                  {items.map((model) => renderModel(model))}
-                </CommandGroup>
-              ))
-              : (
-                <CommandGroup>
-                  {models.map((model) => renderModel(model))}
-                </CommandGroup>
-              )}
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
+    <PopoverContent
+      align="start"
+      className={cn("min-w-[260px] p-0! rounded-lg", className)}
+    >
+      <Command className="bg-transparent">
+        {showSearch && <CommandInput placeholder={searchPlaceholder} />}
+        {children}
+      </Command>
+    </PopoverContent>
   );
 }
+ModelSelectorContent.displayName = "ModelSelector.Content";
+
+/** The scrollable `Command` list region. */
+function ModelSelectorList(
+  { children, className }: { children?: React.ReactNode; className?: string },
+): React.ReactElement {
+  return (
+    <CommandList className={cn("max-h-[320px]", className)}>
+      {children}
+    </CommandList>
+  );
+}
+ModelSelectorList.displayName = "ModelSelector.List";
+
+/** Props for `ModelSelector.Item` — a single selectable model row. */
+export interface ModelSelectorItemProps {
+  /** The model this row represents. Its `value` is the selection value. */
+  model: ModelOption;
+  /** Force selected styling; defaults to matching the context `value`. */
+  selected?: boolean;
+  className?: string;
+}
+
+/** A single model row (provider logo + label + optional badge + check). */
+function ModelSelectorItem(
+  { model, selected, className }: ModelSelectorItemProps,
+): React.ReactElement {
+  const { value, selected: selectedModel, onSelect } = useModelSelector();
+  const selectedValue = value ?? selectedModel?.value;
+  const isSelected = selected ?? model.value === selectedValue;
+  return (
+    <CommandItem
+      value={model.label}
+      onSelect={() => onSelect(model.value)}
+      className={className}
+    >
+      <ProviderLogo provider={providerOf(model)} className="size-4.5" />
+      <span className="min-w-0 flex-1 truncate">{model.label}</span>
+      {model.badge && (
+        <span className="rounded-full border border-[var(--outline-border)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--faint)]">
+          {model.badge}
+        </span>
+      )}
+      {isSelected && <CheckIcon className="ml-auto opacity-70" />}
+    </CommandItem>
+  );
+}
+ModelSelectorItem.displayName = "ModelSelector.Item";
+
+/** The default preset body — provider-grouped model rows. */
+function ModelSelectorPresetBody({
+  models,
+  selectedValue,
+  renderRow,
+  onSelect,
+}: {
+  models: ModelOption[];
+  selectedValue?: string;
+  renderRow?: ModelSelectorProps["renderRow"];
+  onSelect: (value: string) => void;
+}): React.ReactElement {
+  const hasGroups = models.some((m) => m.provider);
+  const groups = hasGroups ? groupByProvider(models) : null;
+
+  function renderModel(model: ModelOption): React.ReactNode {
+    const isSelected = model.value === selectedValue;
+    if (renderRow) {
+      return (
+        <React.Fragment key={model.value}>
+          {renderRow({
+            model,
+            selected: isSelected,
+            onSelect: () => onSelect(model.value),
+          })}
+        </React.Fragment>
+      );
+    }
+    return (
+      <ModelSelectorItem
+        key={model.value}
+        model={model}
+        selected={isSelected}
+      />
+    );
+  }
+
+  return (
+    <>
+      <CommandEmpty>No models found.</CommandEmpty>
+      {groups
+        ? Array.from(groups.entries()).map(([provider, items]) => (
+          <CommandGroup
+            key={provider || "__ungrouped"}
+            heading={provider || undefined}
+          >
+            {items.map((model) => renderModel(model))}
+          </CommandGroup>
+        ))
+        : (
+          <CommandGroup>
+            {models.map((model) => renderModel(model))}
+          </CommandGroup>
+        )}
+    </>
+  );
+}
+
+/**
+ * `ModelSelector.Root` — context provider + the popover shell. No children
+ * renders the default data-driven preset; pass children to recompose from
+ * `ModelSelector.Trigger` / `Content` / `List` / `Item`.
+ */
+function ModelSelectorRoot({
+  models,
+  value,
+  onChange,
+  className,
+  disabled,
+  variant = "pill",
+  renderTrigger,
+  renderRow,
+  children,
+}: ModelSelectorProps): React.ReactElement {
+  const [open, setOpen] = React.useState(false);
+  const selected = models.find((m) => m.value === value) ?? models[0];
+  const selectedValue = value ?? selected?.value;
+  const showSearch = models.length > SEARCH_THRESHOLD;
+
+  const handleSelect = React.useCallback(
+    (modelValue: string): void => {
+      setOpen(false);
+      onChange(modelValue);
+    },
+    [onChange],
+  );
+
+  const context: ModelSelectorContextValue = {
+    value,
+    selected,
+    onSelect: handleSelect,
+    open,
+    setOpen,
+    disabled,
+  };
+
+  // Back-compat: `renderTrigger` fully replaces the default trigger element and
+  // is rendered directly inside `PopoverTrigger asChild`.
+  const presetTrigger = renderTrigger
+    ? <PopoverTrigger asChild>{renderTrigger({ model: selected, open })}</PopoverTrigger>
+    : <ModelSelectorTrigger variant={variant} className={className} />;
+
+  return (
+    <ModelSelectorContext.Provider value={context}>
+      <Popover open={open} onOpenChange={disabled ? undefined : setOpen}>
+        {children ?? (
+          <>
+            {presetTrigger}
+            <ModelSelectorContent showSearch={showSearch}>
+              <ModelSelectorList>
+                <ModelSelectorPresetBody
+                  models={models}
+                  selectedValue={selectedValue}
+                  renderRow={renderRow}
+                  onSelect={handleSelect}
+                />
+              </ModelSelectorList>
+            </ModelSelectorContent>
+          </>
+        )}
+      </Popover>
+    </ModelSelectorContext.Provider>
+  );
+}
+ModelSelectorRoot.displayName = "ModelSelector.Root";
+
+/**
+ * ModelSelector — render `<ModelSelector models={...} .../>` for the default
+ * data-driven combobox, or compose `ModelSelector.Trigger` / `Content` /
+ * `List` / `Item` for a custom menu. Mirrors the `ToolCall` compound: render
+ * it, or compose it.
+ */
+export const ModelSelector = Object.assign(ModelSelectorRoot, {
+  Root: ModelSelectorRoot,
+  Trigger: ModelSelectorTrigger,
+  Content: ModelSelectorContent,
+  List: ModelSelectorList,
+  Item: ModelSelectorItem,
+});

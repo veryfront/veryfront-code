@@ -1,5 +1,6 @@
 import * as React from "react";
 import { cn } from "../../theme.ts";
+import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
 
 /** Public API contract for source. */
 export interface Source {
@@ -9,51 +10,116 @@ export interface Source {
   snippet?: string;
 }
 
-/** Props accepted by sources. */
+// ---------------------------------------------------------------------------
+// Sources — compound, render-or-compose (mirrors `ToolCall` / `Reasoning`).
+//
+// `<Sources sources={…} />` renders the default anatomy: a flex-wrap row of
+// `Sources.Pill`s. Pass children to recompose from `Sources.List` + a mapped
+// set of `Sources.Pill`s, each reading `useSources()`. Every part takes
+// `className`.
+// ---------------------------------------------------------------------------
+
+/** Per-list state shared with `Sources.*` sub-parts. */
+export interface SourcesContextValue {
+  sources: Source[];
+  onSourceClick?: (source: Source, index: number) => void;
+}
+
+const SourcesContext = React.createContext<SourcesContextValue | null>(null);
+
+/** Read the enclosing `Sources` state. Throws when used outside a `Sources`. */
+export function useSources(): SourcesContextValue {
+  const ctx = React.useContext(SourcesContext);
+  if (!ctx) {
+    throw COMPONENT_ERROR.create({
+      detail: "useSources must be used within a Sources",
+    });
+  }
+  return ctx;
+}
+
+/** Props accepted by `Sources` / `Sources.Root`. */
 export interface SourcesProps {
   sources: Source[];
   className?: string;
   onSourceClick?: (source: Source, index: number) => void;
   /**
-   * Optional render-prop for each source pill. When provided, `Sources` maps
-   * items through it instead of the default `SourcePill`.
+   * @deprecated Compose `Sources.Pill` children instead. Optional render-prop
+   * for each source pill; when provided, the default anatomy maps items through
+   * it rather than rendering `Sources.Pill` directly.
    */
   renderPill?: (source: Source, index: number) => React.ReactNode;
+  /** Compose your own row; when omitted, the default anatomy is rendered. */
+  children?: React.ReactNode;
 }
 
-/** Render sources. */
-export const Sources = React.forwardRef<HTMLDivElement, SourcesProps>(
-  function Sources({ sources, className, onSourceClick, renderPill }, ref) {
+/**
+ * `Sources.Root` — context provider + the row wrapper. No children renders the
+ * default anatomy (`List` of `Pill`s); pass children to recompose. Renders
+ * nothing when the source list is empty.
+ */
+const SourcesRoot = React.forwardRef<HTMLDivElement, SourcesProps>(
+  function Sources(
+    { sources, className, onSourceClick, renderPill, children },
+    ref,
+  ) {
     if (sources.length === 0) return null;
 
+    const context: SourcesContextValue = { sources, onSourceClick };
+
     return (
-      <div
-        ref={ref}
-        className={cn("mt-1", className)}
-      >
-        <div className="flex flex-wrap gap-2">
-          {sources.map((source, index) =>
-            renderPill
-              ? (
-                <React.Fragment key={`${source.title}-${index}`}>
-                  {renderPill(source, index)}
-                </React.Fragment>
-              )
-              : (
-                <SourcePill
-                  key={`${source.title}-${index}`}
-                  source={source}
-                  index={index}
-                  onClick={onSourceClick ? () => onSourceClick(source, index) : undefined}
-                />
-              )
-          )}
+      <SourcesContext.Provider value={context}>
+        <div
+          ref={ref}
+          className={cn("mt-1", className)}
+        >
+          {children ?? <SourcesList renderPill={renderPill} />}
         </div>
-      </div>
+      </SourcesContext.Provider>
     );
   },
 );
-Sources.displayName = "Sources";
+SourcesRoot.displayName = "Sources.Root";
+
+/** Props for `Sources.List` — the flex-wrap row of pills. */
+export interface SourcesListProps {
+  className?: string;
+  /**
+   * @deprecated Compose `Sources.Pill` children instead. Optional render-prop
+   * for each source pill.
+   */
+  renderPill?: (source: Source, index: number) => React.ReactNode;
+  /** Compose your own pills; when omitted, one `Sources.Pill` per source. */
+  children?: React.ReactNode;
+}
+
+/** The flex-wrap row. Renders one `Sources.Pill` per source by default. */
+function SourcesList(
+  { className, renderPill, children }: SourcesListProps,
+): React.JSX.Element {
+  const { sources, onSourceClick } = useSources();
+  return (
+    <div className={cn("flex flex-wrap gap-2", className)}>
+      {children ?? sources.map((source, index) =>
+        renderPill
+          ? (
+            <React.Fragment key={`${source.title}-${index}`}>
+              {renderPill(source, index)}
+            </React.Fragment>
+          )
+          : (
+            <SourcePill
+              key={`${source.title}-${index}`}
+              source={source}
+              index={index}
+              onClick={onSourceClick ? () => onSourceClick(source, index) : undefined}
+            />
+          )
+      )}
+    </div>
+  );
+}
+SourcesList.displayName = "Sources.List";
 
 /** Props accepted by an individual source pill. */
 export interface SourcePillProps {
@@ -117,3 +183,15 @@ export function SourcePill(
     </span>
   );
 }
+SourcePill.displayName = "Sources.Pill";
+
+/**
+ * Sources — render `<Sources sources={…} />` for the default row, or compose
+ * `Sources.Root` + `Sources.List` + `Sources.Pill` for a custom layout.
+ * Mirrors the `ToolCall` / `Reasoning` compounds: render it, or compose it.
+ */
+export const Sources = Object.assign(SourcesRoot, {
+  Root: SourcesRoot,
+  List: SourcesList,
+  Pill: SourcePill,
+});

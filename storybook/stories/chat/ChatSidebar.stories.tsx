@@ -356,3 +356,62 @@ export const CustomGroups: Story = {
     );
   },
 };
+
+export const RowStates: Story = {
+  name: "Row states",
+  tags: ["!dev"],
+  render: () => {
+    const [items, setItems] = React.useState(threads.slice(0, 3));
+    const [activeThreadId, setActiveThreadId] = React.useState(items[0]?.id ?? null);
+
+    return (
+      <StoryFrame maxWidth="240px">
+        <ReviewSurface label="Item: default · active · rename (row height must not change on edit)">
+          <div className="h-[320px] overflow-hidden bg-[var(--sidebar-background)]">
+            <ChatSidebar.Root
+              fill
+              threads={items}
+              activeThreadId={activeThreadId}
+              onSelectThread={setActiveThreadId}
+              onDeleteThread={(id) =>
+                setItems((current) => current.filter((item) => item.id !== id))}
+              onRenameThread={(id, title) =>
+                setItems((current) =>
+                  current.map((item) => (item.id === id ? { ...item, title } : item))
+                )}
+              onNewThread={() => undefined}
+            >
+              <ChatSidebar.List>
+                <ChatSidebar.Group label="Today">
+                  {items.map((t) => <ChatSidebar.Item key={t.id} thread={t} />)}
+                </ChatSidebar.Group>
+              </ChatSidebar.List>
+            </ChatSidebar.Root>
+          </div>
+        </ReviewSurface>
+      </StoryFrame>
+    );
+  },
+};
+
+export const Loading: Story = {
+  name: "Loading",
+  tags: ["!dev"],
+  render: () => (
+    <StoryFrame maxWidth="240px">
+      <ReviewSurface label="Loading state — `<ChatSidebar loading />` (auto until the client mounts)">
+        <div className="h-[520px] overflow-hidden bg-[var(--sidebar-background)]">
+          <ChatSidebar
+            fill
+            loading
+            threads={[]}
+            activeThreadId={null}
+            onSelectThread={() => undefined}
+            onDeleteThread={() => undefined}
+            onNewThread={() => undefined}
+          />
+        </div>
+      </ReviewSurface>
+    </StoryFrame>
+  ),
+};

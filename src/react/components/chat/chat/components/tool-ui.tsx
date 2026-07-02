@@ -14,6 +14,7 @@ import {
   XCircleIcon,
 } from "../../icons/index.ts";
 import { Alert, AlertContent, AlertIcon } from "../../ui/alert.tsx";
+import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
 import type { ChatDynamicToolPart, ChatToolPart } from "#veryfront/agent/react";
 import { escapeHtml } from "#veryfront/utils/html-escape.ts";
 import { isSkillToolPart } from "../utils/message-parts.ts";
@@ -186,7 +187,41 @@ function hasVisibleToolOutput(output: unknown): boolean {
  * and tools under one component — callers render `<ToolCall tool={part} />` for
  * either.
  */
-/** Props accepted by `ToolCall` (aka `ToolCallCard`). */
+// ---------------------------------------------------------------------------
+// ToolCall — compound, render-or-compose (mirrors `Message`).
+//
+// `<ToolCall tool={part} />` renders the default card (trigger + collapsible
+// params / result / error). Pass children to recompose from `ToolCall.Trigger`,
+// `ToolCall.Body`, `ToolCall.Input`, `ToolCall.Output`, `ToolCall.Error` — each
+// reads `useToolCall()`. `Input`/`Output` take children to swap the rendered
+// value; every part takes `className`. Skill tools (or `variant="compact"`)
+// render the single-line row and are not composable — there's nothing to
+// compose in a one-line row.
+// ---------------------------------------------------------------------------
+
+/** Per-tool state shared with `ToolCall.*` sub-parts. */
+export interface ToolCallContextValue {
+  tool: ChatToolPart | ChatDynamicToolPart;
+  isExpanded: boolean;
+  toggle: (e: React.MouseEvent<HTMLButtonElement>) => void;
+  hasOutput: boolean;
+  hasError: boolean;
+}
+
+const ToolCallContext = React.createContext<ToolCallContextValue | null>(null);
+
+/** Read the enclosing `ToolCall` state. Throws when used outside a `ToolCall`. */
+export function useToolCall(): ToolCallContextValue {
+  const ctx = React.useContext(ToolCallContext);
+  if (!ctx) {
+    throw COMPONENT_ERROR.create({
+      detail: "useToolCall must be used within a ToolCall",
+    });
+  }
+  return ctx;
+}
+
+/** Props accepted by `ToolCall` / `ToolCall.Root` (aka `ToolCallCard`). */
 export interface ToolCallProps {
   tool: ChatToolPart | ChatDynamicToolPart;
   className?: string;
@@ -204,107 +239,211 @@ export interface ToolCallProps {
   onToggle?: (next: boolean, e: React.MouseEvent<HTMLButtonElement>) => void;
   /** Override the compact/skill row rendering. */
   renderSkill?: (tool: ChatToolPart | ChatDynamicToolPart) => React.ReactNode;
+  /** Compose your own card; when omitted, the default anatomy is rendered. */
+  children?: React.ReactNode;
 }
 
-export function ToolCallCard({
-  tool,
-  className,
-  icon,
-  variant,
-  defaultExpanded,
-  onToggle,
-  renderSkill,
-}: ToolCallProps): React.JSX.Element {
-  const hasOutput = hasVisibleToolOutput(tool.output);
-  const hasError = Boolean(tool.errorText);
-  const shouldExpandByDefault = tool.state !== "output-available" ||
-    hasOutput || hasError;
-  const [isExpanded, setIsExpanded] = React.useState(
-    defaultExpanded ?? shouldExpandByDefault,
-  );
-  const tableOutput = hasOutput ? renderOutputAsTable(tool.output) : null;
+/**
+ * `ToolCall.Root` — context provider + the card wrapper. No children renders
+ * the default anatomy (`Trigger` + `Body`); pass children to recompose. Skill /
+ * compact tools short-circuit to the single-line row (not composable).
+ */
+const ToolCallRoot = React.forwardRef<HTMLDivElement, ToolCallProps>(
+  function ToolCall(
+    { tool, className, icon, variant, defaultExpanded, onToggle, renderSkill, children },
+    ref,
+  ) {
+    const hasOutput = hasVisibleToolOutput(tool.output);
+    const hasError = Boolean(tool.errorText);
+    const shouldExpandByDefault = tool.state !== "output-available" ||
+      hasOutput || hasError;
+    const [isExpanded, setIsExpanded] = React.useState(
+      defaultExpanded ?? shouldExpandByDefault,
+    );
 
-  // Compact row for skill tools (or when forced) — a presentation variant.
-  const isCompact = variant === "compact" ||
-    (variant !== "card" && isSkillToolPart(tool));
-  if (isCompact) {
-    if (renderSkill) return <>{renderSkill(tool)}</>;
-    return <SkillTool {...getSkillToolProps(tool)} />;
-  }
+    // Compact row for skill tools (or when forced) — a presentation variant.
+    const isCompact = variant === "compact" ||
+      (variant !== "card" && isSkillToolPart(tool));
+    if (isCompact) {
+      if (renderSkill) return <>{renderSkill(tool)}</>;
+      return <SkillTool {...getSkillToolProps(tool)} />;
+    }
 
-  const handleToggle = (e: React.MouseEvent<HTMLButtonElement>) => {
-    const next = !isExpanded;
-    setIsExpanded(next);
-    onToggle?.(next, e);
-  };
+    const toggle = (e: React.MouseEvent<HTMLButtonElement>) => {
+      const next = !isExpanded;
+      setIsExpanded(next);
+      onToggle?.(next, e);
+    };
 
+    const context: ToolCallContextValue = {
+      tool,
+      isExpanded,
+      toggle,
+      hasOutput,
+      hasError,
+    };
+
+    return (
+      <ToolCallContext.Provider value={context}>
+        <div
+          ref={ref}
+          className={cn(
+            "not-prose mb-2 w-full overflow-hidden rounded-[var(--radius-md)] border border-[var(--outline-border)] bg-transparent p-4",
+            className,
+          )}
+        >
+          {children ?? (
+            <>
+              <ToolCallTrigger icon={icon} />
+              <ToolCallBody />
+            </>
+          )}
+        </div>
+      </ToolCallContext.Provider>
+    );
+  },
+);
+ToolCallRoot.displayName = "ToolCall.Root";
+
+/** Props for `ToolCall.Trigger` — the header button. */
+export interface ToolCallTriggerProps {
+  /** Override the leading tool icon. */
+  icon?: React.ReactNode;
+  className?: string;
+}
+
+/** The header row: tool icon + name + status badge + expand chevron. */
+function ToolCallTrigger(
+  { icon, className }: ToolCallTriggerProps,
+): React.JSX.Element {
+  const { tool, isExpanded, toggle } = useToolCall();
   return (
-    <div
+    <button
+      type="button"
+      onClick={toggle}
       className={cn(
-        "not-prose mb-2 w-full overflow-hidden rounded-[var(--radius-md)] border border-[var(--outline-border)] bg-transparent p-4",
+        "group flex w-full items-center justify-between gap-3 text-left transition-colors hover:text-[var(--foreground)]",
         className,
       )}
     >
-      <button
-        type="button"
-        onClick={handleToggle}
-        className="group flex w-full items-center justify-between gap-3 text-left transition-colors hover:text-[var(--foreground)]"
-      >
-        <div className="flex min-w-0 items-center gap-2">
-          {icon ?? <WrenchIcon className="size-3.5 shrink-0 text-[var(--foreground)]" />}
-          <span className="min-w-0 truncate text-sm font-medium leading-tight text-[var(--foreground)]">
-            {tool.toolName}
-          </span>
-          <ToolStatusBadge state={tool.state} />
-        </div>
-        <ChevronDownIcon
-          className={cn(
-            "size-3.5 shrink-0 text-[var(--faint)] transition-transform",
-            isExpanded && "rotate-180",
-          )}
-        />
-      </button>
+      <div className="flex min-w-0 items-center gap-2">
+        {icon ?? <WrenchIcon className="size-3.5 shrink-0 text-[var(--foreground)]" />}
+        <span className="min-w-0 truncate text-sm font-medium leading-tight text-[var(--foreground)]">
+          {tool.toolName}
+        </span>
+        <ToolStatusBadge state={tool.state} />
+      </div>
+      <ChevronDownIcon
+        className={cn(
+          "size-3.5 shrink-0 text-[var(--faint)] transition-transform",
+          isExpanded && "rotate-180",
+        )}
+      />
+    </button>
+  );
+}
+ToolCallTrigger.displayName = "ToolCall.Trigger";
 
-      {!isExpanded ? null : (
-        <div className="mt-3 border-t border-[var(--edge)] pt-3">
-          {tool.input === undefined ? null : (
-            <div className="space-y-2 overflow-hidden">
-              <h4 className="text-xs font-medium text-[var(--faint)]">
-                Parameters
-              </h4>
-              <div className="rounded-[var(--radius-md)] bg-[var(--secondary)] p-3">
-                {formatJsonWithHighlight(tool.input)}
-              </div>
-            </div>
-          )}
-
-          {!hasOutput ? null : (
-            <div className="mt-3 space-y-2 border-t border-[var(--edge)] pt-3">
-              <h4 className="text-xs font-medium text-[var(--faint)]">
-                Result
-              </h4>
-              <div className="overflow-x-auto rounded-[var(--radius-md)] bg-[var(--secondary)] text-[var(--foreground)]">
-                {tableOutput ?? (
-                  <div className="p-3">
-                    {formatJsonWithHighlight(tool.output)}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {!tool.errorText ? null : (
-            <div className="mt-3 border-t border-[var(--edge)] pt-3">
-              <Alert variant="error">
-                <AlertIcon>
-                  <XCircleIcon className="size-4" />
-                </AlertIcon>
-                <AlertContent>{tool.errorText}</AlertContent>
-              </Alert>
-            </div>
-          )}
-        </div>
+/** The collapsible region below the trigger. Renders only when expanded. */
+function ToolCallBody(
+  { className, children }: { className?: string; children?: React.ReactNode },
+): React.JSX.Element | null {
+  const { isExpanded } = useToolCall();
+  if (!isExpanded) return null;
+  return (
+    <div className={cn("mt-3 border-t border-[var(--edge)] pt-3", className)}>
+      {children ?? (
+        <>
+          <ToolCallInput />
+          <ToolCallOutput />
+          <ToolCallError />
+        </>
       )}
     </div>
   );
 }
+ToolCallBody.displayName = "ToolCall.Body";
+
+/** The `Parameters` block. Pass children to replace the highlighted JSON. */
+function ToolCallInput(
+  { className, children }: { className?: string; children?: React.ReactNode },
+): React.JSX.Element | null {
+  const { tool } = useToolCall();
+  if (tool.input === undefined) return null;
+  return (
+    <div className={cn("space-y-2 overflow-hidden", className)}>
+      <h4 className="text-xs font-medium text-[var(--faint)]">
+        Parameters
+      </h4>
+      <div className="rounded-[var(--radius-md)] bg-[var(--secondary)] p-3">
+        {children ?? formatJsonWithHighlight(tool.input)}
+      </div>
+    </div>
+  );
+}
+ToolCallInput.displayName = "ToolCall.Input";
+
+/** The `Result` block. Pass children to replace the JSON / auto-table output. */
+function ToolCallOutput(
+  { className, children }: { className?: string; children?: React.ReactNode },
+): React.JSX.Element | null {
+  const { tool, hasOutput } = useToolCall();
+  if (!hasOutput) return null;
+  const tableOutput = renderOutputAsTable(tool.output);
+  return (
+    <div
+      className={cn(
+        "mt-3 space-y-2 border-t border-[var(--edge)] pt-3",
+        className,
+      )}
+    >
+      <h4 className="text-xs font-medium text-[var(--faint)]">
+        Result
+      </h4>
+      <div className="overflow-x-auto rounded-[var(--radius-md)] bg-[var(--secondary)] text-[var(--foreground)]">
+        {children ?? tableOutput ?? (
+          <div className="p-3">
+            {formatJsonWithHighlight(tool.output)}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+ToolCallOutput.displayName = "ToolCall.Output";
+
+/** The error `Alert`. Renders only when the tool carries `errorText`. */
+function ToolCallError(
+  { className }: { className?: string },
+): React.JSX.Element | null {
+  const { tool } = useToolCall();
+  if (!tool.errorText) return null;
+  return (
+    <div className={cn("mt-3 border-t border-[var(--edge)] pt-3", className)}>
+      <Alert variant="error">
+        <AlertIcon>
+          <XCircleIcon className="size-4" />
+        </AlertIcon>
+        <AlertContent>{tool.errorText}</AlertContent>
+      </Alert>
+    </div>
+  );
+}
+ToolCallError.displayName = "ToolCall.Error";
+
+/**
+ * ToolCall — render `<ToolCall tool={part} />` for the default card, or compose
+ * `ToolCall.Trigger` / `Body` / `Input` / `Output` / `Error` for a custom
+ * layout. Mirrors the `Message` compound: render it, or compose it.
+ */
+export const ToolCall = Object.assign(ToolCallRoot, {
+  Root: ToolCallRoot,
+  Trigger: ToolCallTrigger,
+  Body: ToolCallBody,
+  Input: ToolCallInput,
+  Output: ToolCallOutput,
+  Error: ToolCallError,
+});
+
+/** Back-compat alias — `message.tsx` and others import `ToolCallCard`. */
+export const ToolCallCard = ToolCallRoot;

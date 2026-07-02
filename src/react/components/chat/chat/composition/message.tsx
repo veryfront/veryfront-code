@@ -27,6 +27,8 @@ import type {
 } from "#veryfront/agent/react";
 import { cn, defaultChatTheme } from "../../theme.ts";
 import { Markdown } from "../../markdown.tsx";
+import type { CodeBlockProps, Components } from "../../markdown.tsx";
+import type { PartGroup } from "../utils/message-parts.ts";
 import { MessageItem } from "#veryfront/react/primitives/index.ts";
 import { MessageContextProvider, useMessageContext } from "../contexts/message-context.tsx";
 import type { MessageContextValue } from "../contexts/message-context.tsx";
@@ -283,12 +285,111 @@ MessageHeader.displayName = "Message.Header";
 // Message.Content
 // ---------------------------------------------------------------------------
 
+/** A stable React key for a grouped part (preserves streaming reconciliation). */
+function groupKey(group: PartGroup, index: number): string {
+  switch (group.type) {
+    case "text":
+      return `text-${index}`;
+    case "reasoning":
+      return `reasoning-${index}`;
+    case "step":
+      return `step-${group.stepIndex}`;
+    case "file":
+      return `file-${index}`;
+    default:
+      return group.tool.toolCallId;
+  }
+}
+
+/** Options shared by the default part renderer and `Message.Part`. */
+interface RenderPartOptions {
+  renderTool?: (tool: ChatToolPart | ChatDynamicToolPart) => React.ReactNode;
+  showSteps: boolean;
+  stepCount: number;
+  /** Forwarded to the answer `Markdown` — swap the code block. */
+  codeBlock?: (props: CodeBlockProps) => React.ReactNode;
+  /** Forwarded to the answer `Markdown` — override element renderers. */
+  markdownComponents?: Components;
+}
+
+/**
+ * Render one grouped assistant part with the default anatomy. Extracted so both
+ * the default `Message.Content` loop and the `Message.Part` sub-part share one
+ * source of truth — the composed path never drifts from the preset.
+ */
+function renderAnswerPart(
+  group: PartGroup,
+  opts: RenderPartOptions,
+): React.ReactNode {
+  if (group.type === "text") {
+    return (
+      <Markdown
+        className="text-[15px] leading-7"
+        renderCodeBlock={opts.codeBlock}
+        components={opts.markdownComponents}
+      >
+        {group.content}
+      </Markdown>
+    );
+  }
+  if (group.type === "reasoning") {
+    return <ReasoningCard text={group.text} isStreaming={group.isStreaming} />;
+  }
+  if (group.type === "step") {
+    return opts.showSteps && opts.stepCount > 1
+      ? (
+        <StepIndicator
+          stepIndex={group.stepIndex}
+          isComplete={group.isComplete}
+        />
+      )
+      : null;
+  }
+  if (group.type === "file") {
+    const isImage = group.file.mediaType.startsWith("image/");
+    return (
+      <div className="my-1.5">
+        <AttachmentPill
+          attachment={{
+            id: "file",
+            name: group.file.filename ?? "Attachment",
+            type: group.file.mediaType,
+            url: group.file.url,
+            state: "uploaded",
+            preview: isImage ? group.file.url : undefined,
+          }}
+        />
+      </div>
+    );
+  }
+  // ToolCall renders the compact skill row for skill tools and the full
+  // params/result card for everything else — one component either way.
+  return (
+    <div className="my-2">
+      {opts.renderTool ? opts.renderTool(group.tool) : <ToolCallCard tool={group.tool} />}
+    </div>
+  );
+}
+
 export interface MessageContentProps {
   renderTool?: (tool: ChatToolPart | ChatDynamicToolPart) => React.ReactNode;
+  /** @deprecated Prefer composition — render `Message.Part` yourself or omit. */
   showSteps?: boolean;
+  /** @deprecated Prefer composition — render `Message.Sources` or omit. */
   showSources?: boolean;
   onSourceClick?: (source: Source, index: number) => void;
   className?: string;
+  /** Swap the code block used in the answer markdown (forwarded to `Markdown`). */
+  codeBlock?: (props: CodeBlockProps) => React.ReactNode;
+  /** Override markdown element renderers (merged over the built-in defaults). */
+  markdownComponents?: Components;
+  /**
+   * Compose the body yourself. Receives each grouped part in order; return a
+   * node (a `Message.Part`, a `Message.*` sub-part, or your own markup). When
+   * provided you own the whole body — sources are NOT auto-appended, so add a
+   * `Message.Sources` where you want them.
+   */
+  children?: (part: PartGroup, index: number) => React.ReactNode;
 }
 
 function MessageContent({
@@ -297,6 +398,9 @@ function MessageContent({
   showSources = false,
   onSourceClick,
   className,
+  codeBlock,
+  markdownComponents,
+  children,
 }: MessageContentProps): React.ReactElement {
   const { message, role, parts, textContent } = useMessageContext();
   const chat = useChatContextOptional();
@@ -339,6 +443,7 @@ function MessageContent({
   }
 
   const stepCount = parts.filter((g) => g.type === "step").length;
+  const compose = typeof children === "function";
   const messageSources = shouldShowSources ? extractSourcesFromParts(message.parts) : [];
 
   return (
@@ -349,60 +454,18 @@ function MessageContent({
         className,
       )}
     >
-      {parts.map((group, index) => {
-        if (group.type === "text") {
-          return (
-            <Markdown key={`text-${index}`} className="text-[15px] leading-7">
-              {group.content}
-            </Markdown>
-          );
-        }
-        if (group.type === "reasoning") {
-          return (
-            <ReasoningCard
-              key={`reasoning-${index}`}
-              text={group.text}
-              isStreaming={group.isStreaming}
-            />
-          );
-        }
-        if (group.type === "step") {
-          return showSteps && stepCount > 1
-            ? (
-              <StepIndicator
-                key={`step-${group.stepIndex}`}
-                stepIndex={group.stepIndex}
-                isComplete={group.isComplete}
-              />
-            )
-            : null;
-        }
-        if (group.type === "file") {
-          const isImage = group.file.mediaType.startsWith("image/");
-          return (
-            <div key={`file-${index}`} className="my-1.5">
-              <AttachmentPill
-                attachment={{
-                  id: `file-${index}`,
-                  name: group.file.filename ?? "Attachment",
-                  type: group.file.mediaType,
-                  url: group.file.url,
-                  state: "uploaded",
-                  preview: isImage ? group.file.url : undefined,
-                }}
-              />
-            </div>
-          );
-        }
-        // ToolCall renders the compact skill row for skill tools and the full
-        // params/result card for everything else — one component either way.
-        return (
-          <div key={group.tool.toolCallId} className="my-2">
-            {renderTool ? renderTool(group.tool) : <ToolCallCard tool={group.tool} />}
-          </div>
-        );
-      })}
-      {messageSources.length > 0 && (
+      {parts.map((group, index) => (
+        <React.Fragment key={groupKey(group, index)}>
+          {compose ? children(group, index) : renderAnswerPart(group, {
+            renderTool,
+            showSteps,
+            stepCount,
+            codeBlock,
+            markdownComponents,
+          })}
+        </React.Fragment>
+      ))}
+      {!compose && messageSources.length > 0 && (
         <SourcesImpl
           sources={messageSources}
           onSourceClick={sourceClickHandler}
@@ -412,6 +475,71 @@ function MessageContent({
   );
 }
 MessageContent.displayName = "Message.Content";
+
+// ---------------------------------------------------------------------------
+// Message.Part / Message.Sources — the body sub-parts used inside a composed
+// `Message.Content`. `Message.Part` renders any grouped part with the default
+// anatomy (so composition never drifts from the preset); special-case a part by
+// checking `part.type` and rendering your own node instead.
+// ---------------------------------------------------------------------------
+
+/** Props for `Message.Part`. */
+export interface MessagePartProps {
+  part: PartGroup;
+  renderTool?: (tool: ChatToolPart | ChatDynamicToolPart) => React.ReactNode;
+  /** Render multi-step indicators (default: true here — presence is intent). */
+  showSteps?: boolean;
+  codeBlock?: (props: CodeBlockProps) => React.ReactNode;
+  markdownComponents?: Components;
+}
+
+/** Render a single grouped part with the default `Message.Content` anatomy. */
+function MessagePart({
+  part,
+  renderTool,
+  showSteps = true,
+  codeBlock,
+  markdownComponents,
+}: MessagePartProps): React.ReactElement {
+  const { parts } = useMessageContext();
+  const stepCount = parts.filter((g) => g.type === "step").length;
+  return (
+    <>
+      {renderAnswerPart(part, {
+        renderTool,
+        showSteps,
+        stepCount,
+        codeBlock,
+        markdownComponents,
+      })}
+    </>
+  );
+}
+MessagePart.displayName = "Message.Part";
+
+/** Props for `Message.Sources`. */
+export interface MessageSourcesProps {
+  onSourceClick?: (source: Source, index: number) => void;
+  className?: string;
+}
+
+/** The inline citation sources extracted from this message's tool results. */
+function MessageSources(
+  { onSourceClick, className }: MessageSourcesProps,
+): React.ReactElement | null {
+  const { message } = useMessageContext();
+  const chat = useChatContextOptional();
+  const sources = extractSourcesFromParts(message.parts);
+  if (sources.length === 0) return null;
+  return (
+    <SourcesImpl
+      sources={sources}
+      onSourceClick={onSourceClick ?? chat?.onSourceClick}
+      className={className}
+    />
+  );
+}
+MessageSources.displayName = "Message.Sources";
 
 // ---------------------------------------------------------------------------
 // Message.Actions — the reference render-or-compose pattern.
@@ -813,6 +941,8 @@ export const Message = Object.assign(MessageComponent, {
   Avatar: MessageAvatar,
   Header: MessageHeader,
   Content: MessageContent,
+  Part: MessagePart,
+  Sources: MessageSources,
   Actions: MessageActionsWrapper,
   CopyAction: MessageCopyAction,
   RegenerateAction: MessageRegenerateAction,
