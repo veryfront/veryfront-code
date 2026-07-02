@@ -536,14 +536,14 @@ describe("server/handlers/request/agent-stream.handler", () => {
     let capturedSkills: unknown;
     let capturedTools: unknown;
     let capturedAllowedRemoteTools: string[] | undefined;
-    const fetchUrls: string[] = [];
+    let platformMcpFetchCalls = 0;
     const originalFetch = globalThis.fetch;
     const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
 
     Deno.env.set("VERYFRONT_API_URL", "https://api.veryfront.org");
     globalThis.fetch = ((url, init) => {
-      fetchUrls.push(String(url));
       if (String(url) === "https://api.veryfront.org/mcp") {
+        platformMcpFetchCalls += 1;
         assertEquals(
           new Headers(init?.headers).get("authorization"),
           "Bearer request-scoped-user-token",
@@ -657,7 +657,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       assertEquals((capturedTools as Record<string, unknown>).search_knowledge, true);
       assertEquals((capturedTools as Record<string, unknown>).get_file, true);
       assertEquals(capturedAllowedRemoteTools, ["get_file", "search_knowledge"]);
-      assertEquals(fetchUrls.includes("https://api.veryfront.org/mcp"), true);
+      assertEquals(platformMcpFetchCalls, 1);
     } finally {
       globalThis.fetch = originalFetch;
       if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
