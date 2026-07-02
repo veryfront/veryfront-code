@@ -25,6 +25,7 @@ import {
 } from "../runtime/provider-native-tool-inventory.ts";
 import { AgentRuntime } from "../runtime/index.ts";
 import type { AgentResponse, Message as AgentMessage } from "../schemas/index.ts";
+import type { RuntimeReasoningOption } from "../types.ts";
 import {
   commitForkRuntimeStep,
   createForkRuntimeProgress,
@@ -188,6 +189,7 @@ export type StartAgentRuntimeForkInput = {
   providerToolNames?: string[];
   runtimeTools: Record<string, Tool | boolean>;
   providerOptions?: Record<string, unknown>;
+  reasoning?: RuntimeReasoningOption;
   buildInstructions: () => string;
   onBeforeStop?: ForkRuntimeContinuationPromptResolver;
   initialMessages?: readonly AgentMessage[];
@@ -257,6 +259,7 @@ export function startAgentRuntimeForkWithHostTools<
       providerToolNames,
       runtimeTools,
       providerOptions: input.providerOptions,
+      reasoning: input.reasoning,
       buildInstructions: input.buildInstructions,
       onBeforeStop: input.onBeforeStop,
       initialMessages: input.initialMessages,
@@ -321,6 +324,7 @@ export type RunAgentRuntimeForkStepInput = {
   providerToolNames?: string[];
   runtimeTools: Record<string, Tool | boolean>;
   providerOptions?: Record<string, unknown>;
+  reasoning?: RuntimeReasoningOption;
 };
 
 /** Input payload for run framework fork step. */
@@ -357,8 +361,13 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
     tools: input.runtimeTools,
     providerTools: input.providerToolNames ?? [],
     maxSteps: 1,
-    ...(input.providerOptions
-      ? { resolveModelTransport: () => ({ providerOptions: input.providerOptions }) }
+    ...(input.providerOptions || input.reasoning
+      ? {
+        resolveModelTransport: () => ({
+          providerOptions: input.providerOptions,
+          reasoning: input.reasoning,
+        }),
+      }
       : {}),
     __vfAllowedRemoteTools: input.forkToolNames,
   };
@@ -411,6 +420,7 @@ export function runFrameworkForkStep(input: RunFrameworkForkStepInput): Promise<
     ...(input.providerToolNames ? { providerToolNames: input.providerToolNames } : {}),
     runtimeTools: input.frameworkTools,
     ...(input.providerOptions ? { providerOptions: input.providerOptions } : {}),
+    ...(input.reasoning ? { reasoning: input.reasoning } : {}),
   });
 }
 
@@ -536,6 +546,7 @@ export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRu
             ...(input.providerToolNames ? { providerToolNames: input.providerToolNames } : {}),
             runtimeTools: input.runtimeTools,
             ...(input.providerOptions ? { providerOptions: input.providerOptions } : {}),
+            ...(input.reasoning ? { reasoning: input.reasoning } : {}),
           });
 
           for await (const event of streamDataStreamEvents(stream)) {

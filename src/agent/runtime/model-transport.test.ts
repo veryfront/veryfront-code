@@ -24,10 +24,10 @@ function createModel(modelId: string): ModelRuntime {
 
 describe("resolveAgentModelTransport", () => {
   it("resolves the configured runtime model when no host transport hook is present", async () => {
-    const config = {
+    const config: AgentConfig = {
       model: "local/qwen3.5-0.8b",
       system: "You are a helpful assistant.",
-    } as AgentConfig;
+    };
 
     const transport = await resolveAgentModelTransport({
       agentId: "agent-1",
@@ -42,10 +42,10 @@ describe("resolveAgentModelTransport", () => {
     assertEquals(transport.languageModel.modelId, "local/qwen3.5-0.8b");
   });
 
-  it("lets the host override model runtime, headers, and provider options", async () => {
+  it("lets the host override model runtime, headers, provider options, and reasoning", async () => {
     const hostModel = createModel("hosted/gateway-model");
     let capturedRequest: ModelTransportRequest | undefined;
-    const config = {
+    const config: AgentConfig = {
       model: "host/default-model",
       system: "You are a helpful assistant.",
       resolveModelTransport: (request: ModelTransportRequest) => {
@@ -54,9 +54,10 @@ describe("resolveAgentModelTransport", () => {
           model: hostModel,
           headers: { Authorization: "Bearer vf_test" },
           providerOptions: { veryfront: { projectSlug: request.context?.projectSlug } },
+          reasoning: { enabled: false },
         };
       },
-    } as AgentConfig;
+    };
 
     const transport = await resolveAgentModelTransport({
       agentId: "agent-1",
@@ -76,5 +77,46 @@ describe("resolveAgentModelTransport", () => {
     assertStrictEquals(transport.languageModel, hostModel);
     assertEquals(new Headers(transport.headers).get("Authorization"), "Bearer vf_test");
     assertEquals(transport.providerOptions, { veryfront: { projectSlug: "demo-project" } });
+    assertEquals((transport as { reasoning?: unknown }).reasoning, { enabled: false });
+  });
+
+  it("defaults reasoning for non-Anthropic thinking-capable Veryfront Cloud models", async () => {
+    const hostModel = createModel("veryfront-cloud/google-ai-studio/gemini-2.5-pro");
+    const config: AgentConfig = {
+      model: "veryfront-cloud/google-ai-studio/gemini-2.5-pro",
+      system: "You are a helpful assistant.",
+      resolveModelTransport: () => ({ model: hostModel }),
+    };
+
+    const transport = await resolveAgentModelTransport({
+      agentId: "agent-1",
+      config,
+      context: undefined,
+      mode: "stream",
+      modelOverride: undefined,
+    });
+
+    assertEquals((transport as { reasoning?: unknown }).reasoning, { enabled: true });
+  });
+
+  it("preserves provider option thinking opt-outs over Veryfront Cloud reasoning defaults", async () => {
+    const hostModel = createModel("veryfront-cloud/moonshotai/kimi-k2.6");
+    const providerOptions = { openai: { thinking: { type: "disabled" } } };
+    const config: AgentConfig = {
+      model: "veryfront-cloud/moonshotai/kimi-k2.6",
+      system: "You are a helpful assistant.",
+      resolveModelTransport: () => ({ model: hostModel, providerOptions }),
+    };
+
+    const transport = await resolveAgentModelTransport({
+      agentId: "agent-1",
+      config,
+      context: undefined,
+      mode: "stream",
+      modelOverride: undefined,
+    });
+
+    assertEquals(transport.providerOptions, providerOptions);
+    assertEquals(transport.reasoning, { enabled: false });
   });
 });

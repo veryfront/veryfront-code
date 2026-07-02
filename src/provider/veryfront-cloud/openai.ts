@@ -21,6 +21,18 @@ export function createVeryfrontCloudOpenAIModel(
   });
 }
 
+export function createVeryfrontCloudOpenAIResponsesModel(
+  modelId: string,
+  config: VeryfrontCloudOpenAIConfig,
+): ModelRuntime {
+  return openLLMProvider.createResponses(modelId, {
+    credential: config.apiToken,
+    baseURL: config.baseURL,
+    name: "veryfront-cloud",
+    fetch: config.fetch,
+  });
+}
+
 export function createVeryfrontCloudOpenAIEmbeddingModel(
   modelId: string,
   config: VeryfrontCloudOpenAIConfig,

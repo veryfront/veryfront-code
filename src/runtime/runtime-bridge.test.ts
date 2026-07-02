@@ -44,6 +44,25 @@ describe("runtime-bridge", () => {
     });
   });
 
+  it("forwards reasoning options to direct generate models", async () => {
+    const model = createGenerateModel("test", "test/reasoning-generate", async (options) => {
+      assertEquals(options.reasoning, { enabled: false });
+      return {
+        content: [{ type: "text", text: "ok" }],
+        finishReason: "stop",
+        usage: { inputTokens: 1, outputTokens: 1 },
+      };
+    });
+
+    const result = await generateText({
+      model,
+      messages: [{ role: "user", content: "Hello" }],
+      reasoning: { enabled: false },
+    });
+
+    assertEquals(result.text, "ok");
+  });
+
   it("buffers the stream path for models that prefer streamed generate", async () => {
     let called = false;
 
@@ -178,6 +197,26 @@ describe("runtime-bridge", () => {
         },
       },
     ]);
+  });
+
+  it("forwards reasoning options to direct stream models", async () => {
+    const model = createStreamModel("test", "test/reasoning-stream", async (options) => {
+      assertEquals(options.reasoning, { enabled: true, budgetTokens: 2048 });
+      return {
+        stream: ReadableStream.from([
+          { type: "text-delta", delta: "ok" },
+          { type: "finish", finishReason: "stop", usage: { inputTokens: 1, outputTokens: 1 } },
+        ]),
+      };
+    });
+
+    const result = streamText({
+      model,
+      messages: [{ role: "user", content: "Hello" }],
+      reasoning: { enabled: true, budgetTokens: 2048 },
+    });
+
+    assertEquals(await collectAsync(result.textStream), ["ok"]);
   });
 
   it("uses the direct generate path for ordinary function tools", async () => {
