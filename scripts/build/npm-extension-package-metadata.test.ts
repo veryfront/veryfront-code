@@ -1,6 +1,7 @@
 import { assertEquals, assertStringIncludes } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
 import {
+  bareImportPackageNames,
   createExtensionPackageSpec,
   createVeryfrontPeerTypeImportReplacements,
   type ExtensionManifest,
@@ -168,6 +169,90 @@ describe("createExtensionPackageSpec", () => {
       mappings.some((mapping) => mapping.subPath === "transforms/frontmatter"),
       false,
     );
+  });
+});
+
+describe("bareImportPackageNames", () => {
+  it("extracts bare specifiers from static, dynamic, side-effect, and require imports", () => {
+    const source = [
+      `import { z } from "zod";`,
+      `import defaultExport from "bash-tool";`,
+      `import "polyfill-package";`,
+      `export { helper } from "@scope/helpers";`,
+      `export * from "@scope/helpers/subpath";`,
+      `const lazy = await import("lazy-loaded/deep/module");`,
+      `const legacy = require("legacy-package");`,
+    ].join("\n");
+
+    assertEquals(bareImportPackageNames(source), [
+      "@scope/helpers",
+      "bash-tool",
+      "lazy-loaded",
+      "legacy-package",
+      "polyfill-package",
+      "zod",
+    ]);
+  });
+
+  it("reduces subpath imports to their package name, including scoped packages", () => {
+    const source = [
+      `import glue from "@kreuzberg/wasm/dist/pkg/kreuzberg_wasm.js";`,
+      `import worker from "just-bash/worker";`,
+    ].join("\n");
+
+    assertEquals(bareImportPackageNames(source), [
+      "@kreuzberg/wasm",
+      "just-bash",
+    ]);
+  });
+
+  it("handles multi-line static imports", () => {
+    const source = [
+      `import {`,
+      `  first,`,
+      `  second,`,
+      `} from "multi-line-package";`,
+    ].join("\n");
+
+    assertEquals(bareImportPackageNames(source), ["multi-line-package"]);
+  });
+
+  it("ignores relative, absolute, and scheme-prefixed specifiers", () => {
+    const source = [
+      `import local from "./local.js";`,
+      `import parent from "../parent.js";`,
+      `import "../side-effect.js";`,
+      `import absolute from "/absolute/path.js";`,
+      `import fs from "node:fs";`,
+      `import remote from "https://example.com/mod.js";`,
+      `const dynamicLocal = await import("./dynamic.js");`,
+      `const requiredLocal = require("./required.js");`,
+    ].join("\n");
+
+    assertEquals(bareImportPackageNames(source), []);
+  });
+
+  it("does not treat quoted strings in ordinary code as imports", () => {
+    const source = [
+      `const query = 'select * from "users"';`,
+      `const sql = \``,
+      `select *`,
+      `from "accounts"`,
+      `\`;`,
+      `const label = "import";`,
+    ].join("\n");
+
+    assertEquals(bareImportPackageNames(source), []);
+  });
+
+  it("deduplicates repeated imports of the same package", () => {
+    const source = [
+      `import { a } from "shared-package";`,
+      `import { b } from "shared-package/subpath";`,
+      `const c = await import("shared-package");`,
+    ].join("\n");
+
+    assertEquals(bareImportPackageNames(source), ["shared-package"]);
   });
 });
 
