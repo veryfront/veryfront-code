@@ -9,11 +9,11 @@
 
 import type { ExtensionFactory } from "veryfront/extensions";
 import type { DocumentExtractor, KreuzbergExtractor } from "veryfront/extensions/compat";
-import { loadKreuzberg } from "./kreuzberg.ts";
+import { isMissingPackageError, loadKreuzberg, loadKreuzbergNative } from "./kreuzberg.ts";
 import { isDeno } from "./runtime.ts";
 
-/** Maximum time to wait for document text extraction before aborting. */
-const EXTRACTION_TIMEOUT_MS = 30_000;
+/** Maximum time to wait for fallback worker extraction before aborting. */
+export const EXTRACTION_TIMEOUT_MS = 120_000;
 
 function extractInWorkerDeno(
   buffer: ArrayBuffer,
@@ -62,21 +62,59 @@ function extractInWorkerDeno(
   });
 }
 
+export interface KreuzbergDocumentExtractorDeps {
+  isDenoRuntime?: boolean;
+  loadNativeKreuzberg?: () => Promise<KreuzbergExtractor>;
+  extractInWorkerDeno?: typeof extractInWorkerDeno;
+}
+
+function isPdfMimeType(mimeType: string): boolean {
+  return mimeType.toLowerCase().split(";")[0]?.trim() === "application/pdf";
+}
+
+async function extractWithNativeKreuzberg(
+  buffer: ArrayBuffer,
+  mimeType: string,
+  loadNative: () => Promise<KreuzbergExtractor>,
+): Promise<string> {
+  const { extractBytes } = await loadNative();
+  const result = await extractBytes(new Uint8Array(buffer), mimeType);
+  return result.content;
+}
+
 export class KreuzbergDocumentExtractor implements DocumentExtractor {
+  constructor(private readonly deps: KreuzbergDocumentExtractorDeps = {}) {}
+
   importKreuzberg(): Promise<KreuzbergExtractor> {
     return loadKreuzberg();
   }
 
   async extractInWorker(buffer: ArrayBuffer, mimeType: string): Promise<string> {
-    // Only a real Deno runtime gets the isolated Worker; Node/Bun extract
-    // in-process via @kreuzberg/node. See ./runtime.ts for why a bare `Deno`
-    // check is unreliable in the dnt npm build.
-    if (!isDeno) {
+    const isDenoRuntime = this.deps.isDenoRuntime ?? isDeno;
+    const extractWithWorker = this.deps.extractInWorkerDeno ?? extractInWorkerDeno;
+
+    // Node/Bun extract in-process via @kreuzberg/node. Deno keeps the isolated
+    // Worker fallback, but PDFs first try the native extractor because the WASM
+    // PDF path can hang on valid large manuals.
+    if (!isDenoRuntime) {
       const { extractBytes } = await loadKreuzberg();
       const result = await extractBytes(new Uint8Array(buffer), mimeType);
       return result.content;
     }
-    return extractInWorkerDeno(buffer, mimeType);
+
+    if (isPdfMimeType(mimeType)) {
+      try {
+        return await extractWithNativeKreuzberg(
+          buffer,
+          mimeType,
+          this.deps.loadNativeKreuzberg ?? loadKreuzbergNative,
+        );
+      } catch (error) {
+        if (!isMissingPackageError(error)) throw error;
+      }
+    }
+
+    return extractWithWorker(buffer, mimeType);
   }
 }
 

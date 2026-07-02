@@ -20,15 +20,15 @@ type KreuzbergModule = {
   ) => Promise<{ content: string }>;
 };
 
-// deno-lint-ignore no-explicit-any
-async function loadKreuzbergNode(): Promise<any> {
+export async function loadKreuzbergNative(): Promise<KreuzbergExtractor> {
   try {
-    return await import("@kreuzberg/node");
+    return await import("@kreuzberg/node") as unknown as KreuzbergExtractor;
   } catch (error) {
     if (!isMissingPackageError(error)) throw error;
     throw new Error(
-      'Document extraction on Node requires the optional package "@kreuzberg/node". ' +
+      'Native document extraction requires the optional package "@kreuzberg/node". ' +
         "Install @kreuzberg/node@^4.4.2 or disable document extraction.",
+      { cause: error },
     );
   }
 }
@@ -37,7 +37,7 @@ export async function loadKreuzberg(): Promise<KreuzbergExtractor> {
   // Node/Bun load the native @kreuzberg/node; only a real Deno runtime uses the
   // WASM build. See ./runtime.ts for why a bare `Deno` check is unreliable here.
   if (!isDeno) {
-    return loadKreuzbergNode();
+    return loadKreuzbergNative();
   }
 
   const mod = await importKreuzbergWasm();
@@ -70,14 +70,30 @@ async function importKreuzbergWasm(): Promise<KreuzbergModule> {
     throw new Error(
       'Document extraction on Deno requires the optional package "@kreuzberg/wasm". ' +
         "Install @kreuzberg/wasm@4.5.2 or disable document extraction.",
+      { cause: error },
     );
   }
 }
 
-function isMissingPackageError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.includes("Cannot find package") ||
-    message.includes("Cannot find module") ||
-    message.includes("ERR_MODULE_NOT_FOUND") ||
-    message.includes("Module not found");
+export function isMissingPackageError(error: unknown): boolean {
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+
+  while (current !== undefined && current !== null && !seen.has(current)) {
+    seen.add(current);
+    const message = current instanceof Error ? current.message : String(current);
+    if (
+      message.includes("Cannot find package") ||
+      message.includes("Cannot find module") ||
+      message.includes("Cannot find native binding") ||
+      message.includes("ERR_MODULE_NOT_FOUND") ||
+      message.includes("Module not found")
+    ) {
+      return true;
+    }
+
+    current = current instanceof Error ? current.cause : undefined;
+  }
+
+  return false;
 }
