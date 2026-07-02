@@ -12,8 +12,14 @@ Deno.test("removes native sqlite support from root npm metadata", () => {
   });
 
   assertEquals(pkg.dependencies, undefined);
-  assertEquals(pkg.peerDependencies, {});
-  assertEquals(pkg.peerDependenciesMeta, {});
+  // @huggingface/transformers is always declared as an optional peer: its
+  // opaque import is invisible to dnt, so the fallback range supplies it.
+  assertEquals(pkg.peerDependencies, {
+    "@huggingface/transformers": "^4.2.0",
+  });
+  assertEquals(pkg.peerDependenciesMeta, {
+    "@huggingface/transformers": { optional: true },
+  });
   assertEquals(pkg.overrides, {
     protobufjs: "8.6.5",
   });
