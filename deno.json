@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.985",
+  "version": "0.1.986-rc.1",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "minimumDependencyAge": {
