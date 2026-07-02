@@ -50,7 +50,12 @@ export const ReasoningCard = React.forwardRef<
         {isOpen
           ? (
             <div className="mt-2 text-sm text-[var(--foreground)]">
-              <Markdown className="mb-0 space-y-2.5 text-sm">{text}</Markdown>
+              {
+                /* `text-sm!` overrides Markdown's base `text-base` (cn does not
+                  tw-merge) so reasoning renders at 14px like Studio's compact
+                  variant. */
+              }
+              <Markdown className="mb-0 space-y-2.5 text-sm!">{text}</Markdown>
             </div>
           )
           : null}

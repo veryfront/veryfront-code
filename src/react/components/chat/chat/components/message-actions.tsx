@@ -52,7 +52,9 @@ export const MessageActions = React.forwardRef<
       <div
         ref={ref}
         className={cn(
-          "flex items-center gap-0.5 mt-1.5 opacity-0 group-hover/msg:opacity-100 transition-all duration-200",
+          // No vertical margin here — the footer row owns spacing/alignment so
+          // the buttons stay centered with the token count beside them.
+          "flex items-center gap-0.5 opacity-0 group-hover/msg:opacity-100 transition-all duration-200",
           className,
         )}
       >
