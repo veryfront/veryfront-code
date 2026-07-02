@@ -26,7 +26,11 @@ import { useColorModeOptional } from "../color-mode.tsx";
 /** Light/dark, for switching the shiki + mermaid theme. */
 type CodeBlockMode = "light" | "dark";
 import { Skeleton } from "./skeleton.tsx";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./collapsible.tsx";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "./collapsible.tsx";
 import { IconButton } from "./icon-button.tsx";
 
 // ---------------------------------------------------------------------------
@@ -204,7 +208,9 @@ function MermaidDiagram(
   }
 
   if (!svg) {
-    return <Skeleton className={cn("h-32 rounded-[var(--radius-md)]", className)} />;
+    return (
+      <Skeleton className={cn("h-32 rounded-[var(--radius-md)]", className)} />
+    );
   }
 
   return (
@@ -278,7 +284,9 @@ function CopyButton({ code }: { code: string }): React.ReactElement {
       className="-mr-1 text-[var(--faint)] hover:text-[var(--foreground)]"
     >
       {/* icons render a half-step smaller than Studio: size-4 -> size-3.5 */}
-      {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+      {copied
+        ? <CheckIcon className="size-3.5" />
+        : <CopyIcon className="size-3.5" />}
     </IconButton>
   );
 }
@@ -303,7 +311,9 @@ function CodeSurface({
     if (!isBrowserEnvironment()) return;
 
     let cancelled = false;
-    const theme: ShikiTheme = resolvedMode === "dark" ? "github-dark" : "github-light";
+    const theme: ShikiTheme = resolvedMode === "dark"
+      ? "github-dark"
+      : "github-light";
 
     async function highlight(): Promise<void> {
       try {
@@ -387,7 +397,9 @@ export function CodeBlock({
     </div>
   );
 
-  const surface = <CodeSurface code={code} language={lang} resolvedMode={resolvedMode} />;
+  const surface = (
+    <CodeSurface code={code} language={lang} resolvedMode={resolvedMode} />
+  );
 
   if (collapsible) {
     return (
@@ -399,18 +411,18 @@ export function CodeBlock({
         )}
       >
         {
-          /* The whole header row toggles the body; the copy button sits on top
-            (absolute) so it stays a separate control (no button-in-button). */
+          /* Trigger + copy are siblings (not nested — that would be a
+            button-in-button). The trigger is `flex-1`, so the whole row toggles
+            the body; the in-flow copy button keeps the header the same height as
+            the flat variant. */
         }
-        <div className="relative text-xs text-[var(--faint)]">
-          <CollapsibleTrigger className="group flex w-full items-center gap-1.5 py-1.5 pl-3 pr-10 font-mono font-medium text-[var(--faint)] transition-colors hover:text-[var(--foreground)]">
+        <div className="flex items-center py-1.5 pl-3 pr-1.5 text-xs text-[var(--faint)]">
+          <CollapsibleTrigger className="group flex flex-1 items-center gap-1.5 font-mono font-medium text-[var(--faint)] transition-colors hover:text-[var(--foreground)]">
             {/* icons render a half-step smaller than Studio: size-4 -> size-3.5 */}
             <ChevronDownIcon className="size-3.5 shrink-0 transition-transform duration-100 group-data-[state=closed]:-rotate-90" />
             <span>{lang}</span>
           </CollapsibleTrigger>
-          <div className="absolute right-1.5 top-1/2 -translate-y-1/2">
-            <CopyButton code={code} />
-          </div>
+          <CopyButton code={code} />
         </div>
         <CollapsibleContent className="border-t border-[var(--outline-border)]">
           {surface}
