@@ -19,8 +19,10 @@ const compositionTree = `Message.Root  <- context: message, branch state
   +-- Message.Header  <- agent avatar + name + timestamp (assistant)
   +-- Message.BranchPicker  <- switch between regenerated responses
   +-- Message.Content  <- markdown body, sources, reasoning steps
+  +-- Message.Continuing  <- "Continuing…" shimmer while streaming
   +-- Message.Actions  <- copy / regenerate
   +-- Message.Tokens  <- token-usage popover (Model / Input / Output / Total)
+  +-- Message.BranchPicker  <- optional: switch between regenerated responses
 StandaloneMessage  <- non-compound convenience wrapper around Root
 StreamingMessage  <- live token + tool-call stream while generating`;
 
@@ -167,15 +169,10 @@ export const CompoundAssistant: Story = {
   tags: ["!dev"],
   render: () => (
     <StoryFrame maxWidth="760px">
-      <Message.Root
-        message={chatMessages[1]}
-        getBranches={() => ({ current: 1, total: 3 })}
-        switchBranch={() => undefined}
-      >
+      <Message.Root message={chatMessages[1]} onReload={() => undefined}>
         <Message.Header />
-        <Message.BranchPicker />
         <Message.Content showSources showSteps />
-        <div className="flex items-center gap-0.5">
+        <div className="mt-1.5 flex items-center gap-0.5">
           <Message.Actions />
           <Message.Tokens />
         </div>

@@ -36,6 +36,7 @@ import { MessageActions as ActionsImpl } from "../components/message-actions.tsx
 import { MessageFeedback as FeedbackImpl } from "../components/message-feedback.tsx";
 import { BranchPicker as BranchPickerImpl } from "../components/branch-picker.tsx";
 import { ReasoningCard } from "../components/reasoning.tsx";
+import { Shimmer } from "../../ui/shimmer.tsx";
 import { ToolCallCard } from "../components/tool-ui.tsx";
 import { StepIndicator } from "../components/step-indicator.tsx";
 import { Sources as SourcesImpl } from "../components/sources.tsx";
@@ -74,6 +75,8 @@ export interface MessageRootProps {
   switchBranch?: (messageId: string, branchIndex: number) => void;
   onFeedback?: (messageId: string, feedback: FeedbackValue) => void;
   feedback?: FeedbackValue | null;
+  /** Regenerate this turn — surfaces the retry button in `Message.Actions`. */
+  onReload?: () => void;
 }
 
 const MessageRoot = React.forwardRef<HTMLDivElement, MessageRootProps>(
@@ -102,6 +105,8 @@ const MessageRoot = React.forwardRef<HTMLDivElement, MessageRootProps>(
     const getBranches = overrides.getBranches ?? chat?.getBranches;
     const switchBranch = overrides.switchBranch ?? chat?.switchBranch;
     const onFeedbackProp = overrides.onFeedback ?? chat?.onFeedback;
+    // Regenerate only applies to assistant turns (Studio `chat.regenerate()`).
+    const onReload = overrides.onReload ?? chat?.onReload;
 
     const branch = React.useMemo(
       () => getBranches?.(message.id) ?? null,
@@ -145,6 +150,7 @@ const MessageRoot = React.forwardRef<HTMLDivElement, MessageRootProps>(
         onFeedback: onFeedbackProp
           ? (value: FeedbackValue) => onFeedbackProp(message.id, value)
           : undefined,
+        onRegenerate: role !== "user" && onReload ? onReload : undefined,
         feedback: overrides.feedback,
       }),
       [
@@ -153,6 +159,7 @@ const MessageRoot = React.forwardRef<HTMLDivElement, MessageRootProps>(
         role,
         isStreaming,
         parts,
+        onReload,
         textContent,
         branch,
         switchBranch,
@@ -245,7 +252,9 @@ function MessageHeader(
   const timestamp = formatTimestamp(message.createdAt);
 
   return (
-    <div className={cn("flex items-center gap-2 pt-px pb-1", className)}>
+    // `w-full` so the timestamp's `ml-auto` reaches the right edge — the Root
+    // is `items-start`, which would otherwise shrink the header to its content.
+    <div className={cn("flex w-full items-center gap-2 pt-px pb-1", className)}>
       <AvatarImpl
         name={displayName}
         avatarUrl={metadataString(message.metadata, "agentAvatarUrl")}
@@ -369,12 +378,8 @@ interface MessageActionsWrapperProps {
 function MessageActionsWrapper(
   { className }: MessageActionsWrapperProps,
 ): React.ReactElement | null {
-  const { textContent, onEdit, role } = useMessageContext();
-  const chat = useChatContextOptional();
+  const { textContent, onEdit, onRegenerate } = useMessageContext();
   if (!textContent) return null;
-  // Regenerate only makes sense for assistant turns, and only when the host
-  // wires a reload handler (Studio's `chat.regenerate()`).
-  const onRegenerate = role !== "user" ? chat?.onReload : undefined;
   return (
     <ActionsImpl
       content={textContent}
@@ -533,6 +538,24 @@ function MessageBranchPicker(): React.ReactElement | null {
 MessageBranchPicker.displayName = "Message.BranchPicker";
 
 // ---------------------------------------------------------------------------
+// Message.Continuing — "Continuing…" shimmer while the turn is still streaming
+// (Studio `ChatMessageView` showContinuing). Renders nothing when not streaming.
+// ---------------------------------------------------------------------------
+
+function MessageContinuing(
+  { className }: { className?: string },
+): React.ReactElement | null {
+  const { isStreaming } = useMessageContext();
+  if (!isStreaming) return null;
+  return (
+    <div className={cn("mt-3 text-sm", className)}>
+      <Shimmer duration={1}>Continuing...</Shimmer>
+    </div>
+  );
+}
+MessageContinuing.displayName = "Message.Continuing";
+
+// ---------------------------------------------------------------------------
 // Message — compound export
 // ---------------------------------------------------------------------------
 
@@ -585,9 +608,9 @@ export const StandaloneMessage = React.forwardRef<
       className={className}
     >
       <MessageHeader />
-      <MessageBranchPicker />
       <MessageContent showSources={showSources} showSteps={showSteps} />
-      <div className="flex items-center gap-0.5">
+      <MessageContinuing />
+      <div className="mt-1.5 flex items-center gap-0.5">
         <MessageActionsWrapper />
         <MessageTokens />
       </div>
@@ -606,4 +629,5 @@ export const Message = Object.assign(MessageRoot, {
   Feedback: MessageFeedbackWrapper,
   BranchPicker: MessageBranchPicker,
   Tokens: MessageTokens,
+  Continuing: MessageContinuing,
 });
