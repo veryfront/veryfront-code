@@ -8,6 +8,11 @@ import type {
   OpenAICompatibleLanguageOptions,
   RuntimeToolDefinition,
 } from "./openai-chat-request-builder.ts";
+import {
+  getDefaultOpenAIReasoningEffort,
+  isOpenAIReasoningModel,
+  type OpenAIReasoningEffort,
+} from "./openai-reasoning-models.ts";
 
 type ProviderReasoningOption = OpenAICompatibleLanguageOptions["reasoning"];
 
@@ -47,14 +52,14 @@ type WarningCollector = {
   }>;
 };
 
-function isOpenAIReasoningModel(modelId: string): boolean {
-  return /^o[134](-|$)/.test(modelId);
-}
-
 function resolveOpenAIReasoningEffort(
   option: ProviderReasoningOption | undefined,
-): "low" | "medium" | "high" | undefined {
-  if (!option || option.enabled !== true) {
+  defaultEffort: OpenAIReasoningEffort | undefined,
+): OpenAIReasoningEffort | undefined {
+  if (!option) {
+    return defaultEffort;
+  }
+  if (option.enabled !== true) {
     return undefined;
   }
   switch (option.effort) {
@@ -216,7 +221,10 @@ export function buildOpenAIResponsesRequest(
   warnings: WarningCollector,
 ): OpenAIResponsesRequest {
   const isReasoningModel = isOpenAIReasoningModel(modelId);
-  const reasoningEffort = resolveOpenAIReasoningEffort(options.reasoning);
+  const reasoningEffort = resolveOpenAIReasoningEffort(
+    options.reasoning,
+    getDefaultOpenAIReasoningEffort(modelId),
+  );
   const reasoningEnabled = isReasoningModel || reasoningEffort !== undefined;
 
   if (options.topK !== undefined) {

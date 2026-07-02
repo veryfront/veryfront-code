@@ -5,6 +5,11 @@ import {
   unwrapToolInputSchema,
 } from "veryfront/provider/shared";
 import type { OpenAICompatibleChatRequest, RuntimePromptMessage } from "veryfront/provider/shared";
+import {
+  getDefaultOpenAIReasoningEffort,
+  isOpenAIReasoningModel,
+  type OpenAIReasoningEffort,
+} from "./openai-reasoning-models.ts";
 
 type ProviderReasoningEffort = "low" | "medium" | "high" | "max";
 
@@ -75,10 +80,6 @@ type WarningCollector = {
   }>;
 };
 
-function isOpenAIReasoningModel(modelId: string): boolean {
-  return /^o[134](-|$)/.test(modelId);
-}
-
 function isNativeOpenAIModel(modelId: string): boolean {
   return /^(gpt-|o[134](-|$)|chatgpt-)/.test(modelId);
 }
@@ -89,8 +90,12 @@ function isFixedSamplingModel(modelId: string): boolean {
 
 function resolveOpenAIReasoningEffort(
   option: ProviderReasoningOption | undefined,
-): "low" | "medium" | "high" | undefined {
-  if (!option || option.enabled !== true) {
+  defaultEffort: OpenAIReasoningEffort | undefined,
+): OpenAIReasoningEffort | undefined {
+  if (!option) {
+    return defaultEffort;
+  }
+  if (option.enabled !== true) {
     return undefined;
   }
   switch (option.effort) {
@@ -113,7 +118,10 @@ export function buildOpenAIChatRequest(
   warnings: WarningCollector,
 ): OpenAICompatibleChatRequest {
   const isReasoningModel = isOpenAIReasoningModel(modelId);
-  const reasoningEffort = resolveOpenAIReasoningEffort(options.reasoning);
+  const reasoningEffort = resolveOpenAIReasoningEffort(
+    options.reasoning,
+    getDefaultOpenAIReasoningEffort(modelId),
+  );
   const reasoningEnabled = isReasoningModel || reasoningEffort !== undefined;
   const fixedSampling = isFixedSamplingModel(modelId);
   const dropSamplingParams = reasoningEnabled || fixedSampling;
@@ -128,7 +136,7 @@ export function buildOpenAIChatRequest(
     });
   }
 
-  // Reasoning models (o1 / o3 / o4) and models with fixed sampling params
+  // Reasoning models and models with fixed sampling params
   // reject sampling params outright. Emit warnings.
   if (dropSamplingParams) {
     const dropped: Array<[keyof typeof options, string]> = [

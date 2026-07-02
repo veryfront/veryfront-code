@@ -27,6 +27,25 @@ function createWarningCollector() {
 }
 
 describe("ext-llm-openai/openai-chat-request-builder", () => {
+  it("sets default reasoning effort for GPT-5.5 chat requests", () => {
+    const warnings = createWarningCollector();
+
+    const body = buildOpenAIChatRequest(
+      "gpt-5.5",
+      "openai",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Think carefully." }] }],
+        temperature: 0.2,
+      },
+      true,
+      warnings,
+    );
+
+    assertEquals(body.reasoning_effort, "medium");
+    assertEquals(body.temperature, undefined);
+    assertEquals(warnings.drain().map((warning) => warning.setting), ["temperature"]);
+  });
+
   it("preserves chat request shaping, provider option merge order, and warnings", () => {
     const prompt: RuntimePromptMessage[] = [
       { role: "system", content: "You are concise." },

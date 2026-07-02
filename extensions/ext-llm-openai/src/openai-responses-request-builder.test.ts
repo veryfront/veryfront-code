@@ -27,6 +27,25 @@ function createWarningCollector() {
 }
 
 describe("ext-llm-openai/openai-responses-request-builder", () => {
+  it("requests reasoning summaries by default for GPT-5.5 Responses models", () => {
+    const warnings = createWarningCollector();
+
+    const body = buildOpenAIResponsesRequest(
+      "gpt-5.5",
+      "openai",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Think carefully." }] }],
+        temperature: 0.2,
+      },
+      true,
+      warnings,
+    );
+
+    assertEquals(body.reasoning, { effort: "medium", summary: "auto" });
+    assertEquals(body.temperature, undefined);
+    assertEquals(warnings.drain().map((warning) => warning.setting), ["temperature"]);
+  });
+
   it("preserves Responses request shaping, provider option merge order, and warnings", () => {
     const prompt: RuntimePromptMessage[] = [
       { role: "system", content: "You are concise." },
