@@ -27,12 +27,12 @@ function createWarningCollector() {
 }
 
 describe("ext-llm-openai/openai-responses-request-builder", () => {
-  it("requests reasoning summaries by default for GPT-5.5 Responses models", () => {
+  it("requests reasoning summaries by default for Veryfront Cloud GPT-5.5 Responses models", () => {
     const warnings = createWarningCollector();
 
     const body = buildOpenAIResponsesRequest(
       "gpt-5.5",
-      "openai",
+      "veryfront-cloud",
       {
         prompt: [{ role: "user", content: [{ type: "text", text: "Think carefully." }] }],
         temperature: 0.2,
@@ -44,6 +44,58 @@ describe("ext-llm-openai/openai-responses-request-builder", () => {
     assertEquals(body.reasoning, { effort: "medium", summary: "auto" });
     assertEquals(body.temperature, undefined);
     assertEquals(warnings.drain().map((warning) => warning.setting), ["temperature"]);
+  });
+
+  it("omits reasoning summaries for direct OpenAI default reasoning requests", () => {
+    const warnings = createWarningCollector();
+
+    const body = buildOpenAIResponsesRequest(
+      "gpt-5.5",
+      "openai",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Think carefully." }] }],
+      },
+      true,
+      warnings,
+    );
+
+    assertEquals(body.reasoning, { effort: "medium" });
+  });
+
+  it("keeps explicit reasoning summaries for direct OpenAI requests", () => {
+    const warnings = createWarningCollector();
+
+    const body = buildOpenAIResponsesRequest(
+      "gpt-5.5",
+      "openai",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Think carefully." }] }],
+        reasoning: { enabled: true, effort: "high" },
+      },
+      true,
+      warnings,
+    );
+
+    assertEquals(body.reasoning, { effort: "high", summary: "auto" });
+  });
+
+  it("does not set default reasoning for OpenAI-compatible provider Responses requests", () => {
+    const warnings = createWarningCollector();
+
+    const body = buildOpenAIResponsesRequest(
+      "gpt-5.5",
+      "azure",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Think carefully." }] }],
+        temperature: 0.2,
+      },
+      true,
+      warnings,
+    );
+
+    assertEquals(body.reasoning, undefined);
+    assertEquals(body.temperature, 0.2);
+    assertEquals(warnings.drain(), []);
   });
 
   it("preserves Responses request shaping, provider option merge order, and warnings", () => {

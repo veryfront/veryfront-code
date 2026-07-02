@@ -6,18 +6,9 @@ import {
 } from "veryfront/provider/shared";
 import type { OpenAICompatibleChatRequest, RuntimePromptMessage } from "veryfront/provider/shared";
 import {
-  getDefaultOpenAIReasoningEffort,
-  isOpenAIReasoningModel,
-  type OpenAIReasoningEffort,
+  type OpenAIProviderReasoningOption,
+  resolveOpenAIReasoningConfig,
 } from "./openai-reasoning-models.ts";
-
-type ProviderReasoningEffort = "low" | "medium" | "high" | "max";
-
-type ProviderReasoningOption = {
-  enabled?: boolean;
-  effort?: ProviderReasoningEffort;
-  budgetTokens?: number;
-};
 
 export type RuntimeToolDefinition =
   | {
@@ -49,7 +40,7 @@ export type OpenAICompatibleLanguageOptions = {
   providerOptions?: Record<string, unknown>;
   includeRawChunks?: boolean;
   abortSignal?: AbortSignal;
-  reasoning?: ProviderReasoningOption;
+  reasoning?: OpenAIProviderReasoningOption;
   userId?: string;
   serviceTier?: "auto" | "default" | "flex" | "scale";
   parallelToolCalls?: boolean;
@@ -88,28 +79,6 @@ function isFixedSamplingModel(modelId: string): boolean {
   return /^kimi-k2\.5/.test(modelId);
 }
 
-function resolveOpenAIReasoningEffort(
-  option: ProviderReasoningOption | undefined,
-  defaultEffort: OpenAIReasoningEffort | undefined,
-): OpenAIReasoningEffort | undefined {
-  if (!option) {
-    return defaultEffort;
-  }
-  if (option.enabled !== true) {
-    return undefined;
-  }
-  switch (option.effort) {
-    case "low":
-      return "low";
-    case "high":
-    case "max":
-      return "high";
-    case "medium":
-    default:
-      return "medium";
-  }
-}
-
 export function buildOpenAIChatRequest(
   modelId: string,
   providerName: string,
@@ -117,12 +86,8 @@ export function buildOpenAIChatRequest(
   stream: boolean,
   warnings: WarningCollector,
 ): OpenAICompatibleChatRequest {
-  const isReasoningModel = isOpenAIReasoningModel(modelId);
-  const reasoningEffort = resolveOpenAIReasoningEffort(
-    options.reasoning,
-    getDefaultOpenAIReasoningEffort(modelId),
-  );
-  const reasoningEnabled = isReasoningModel || reasoningEffort !== undefined;
+  const reasoning = resolveOpenAIReasoningConfig(modelId, providerName, options.reasoning);
+  const reasoningEnabled = reasoning !== undefined;
   const fixedSampling = isFixedSamplingModel(modelId);
   const dropSamplingParams = reasoningEnabled || fixedSampling;
 
@@ -186,7 +151,7 @@ export function buildOpenAIChatRequest(
     ...(!dropSamplingParams && options.frequencyPenalty !== undefined
       ? { frequency_penalty: options.frequencyPenalty }
       : {}),
-    ...(reasoningEffort !== undefined ? { reasoning_effort: reasoningEffort } : {}),
+    ...(reasoning !== undefined ? { reasoning_effort: reasoning.effort } : {}),
     ...(typeof options.userId === "string" && options.userId.length > 0
       ? { user: options.userId }
       : {}),

@@ -46,6 +46,63 @@ describe("ext-llm-openai/openai-chat-request-builder", () => {
     assertEquals(warnings.drain().map((warning) => warning.setting), ["temperature"]);
   });
 
+  it("does not set default reasoning effort for GPT-5 chat snapshots", () => {
+    const warnings = createWarningCollector();
+
+    const body = buildOpenAIChatRequest(
+      "gpt-5-chat-latest",
+      "openai",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Be concise." }] }],
+        temperature: 0.2,
+      },
+      true,
+      warnings,
+    );
+
+    assertEquals(body.reasoning_effort, undefined);
+    assertEquals(body.temperature, 0.2);
+    assertEquals(warnings.drain(), []);
+  });
+
+  it("does not set default reasoning effort for legacy o1 chat variants", () => {
+    const warnings = createWarningCollector();
+
+    const body = buildOpenAIChatRequest(
+      "o1-mini",
+      "openai",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Be concise." }] }],
+        temperature: 0.2,
+      },
+      true,
+      warnings,
+    );
+
+    assertEquals(body.reasoning_effort, undefined);
+    assertEquals(body.temperature, 0.2);
+    assertEquals(warnings.drain(), []);
+  });
+
+  it("does not set default reasoning effort for OpenAI-compatible providers", () => {
+    const warnings = createWarningCollector();
+
+    const body = buildOpenAIChatRequest(
+      "gpt-5.5",
+      "azure",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Be concise." }] }],
+        temperature: 0.2,
+      },
+      true,
+      warnings,
+    );
+
+    assertEquals(body.reasoning_effort, undefined);
+    assertEquals(body.temperature, 0.2);
+    assertEquals(warnings.drain(), []);
+  });
+
   it("preserves chat request shaping, provider option merge order, and warnings", () => {
     const prompt: RuntimePromptMessage[] = [
       { role: "system", content: "You are concise." },
