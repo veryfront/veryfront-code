@@ -34,12 +34,38 @@ async function getAvailablePort(): Promise<number> {
 
 async function computeSourceHash(): Promise<string> {
   const decoder = new TextDecoder();
-  for (const args of [["rev-parse", "HEAD:src"], ["rev-parse", "HEAD"]]) {
-    try {
-      const r = await new Deno.Command("git", { args, stdout: "piped", stderr: "null" }).output();
-      if (r.success) return decoder.decode(r.stdout).trim();
-    } catch { /* fall through */ }
+
+  try {
+    const trees = ["HEAD:src", "HEAD:cli", "HEAD:scripts/build", "HEAD:extensions"];
+    const results = await Promise.all(
+      trees.map((ref) =>
+        new Deno.Command("git", {
+          args: ["rev-parse", ref],
+          stdout: "piped",
+          stderr: "null",
+        }).output()
+      ),
+    );
+
+    if (results.every((r) => r.success)) {
+      return results.map((r) => decoder.decode(r.stdout).trim()).join("-");
+    }
+  } catch {
+    // Fall through to the commit hash fallback.
   }
+
+  try {
+    const result = await new Deno.Command("git", {
+      args: ["rev-parse", "HEAD"],
+      stdout: "piped",
+      stderr: "null",
+    }).output();
+
+    if (result.success) return decoder.decode(result.stdout).trim();
+  } catch {
+    // Fall through to a fresh timestamp.
+  }
+
   return Date.now().toString();
 }
 
@@ -59,25 +85,19 @@ async function ensureBinaryCompiled(): Promise<void> {
   if (binaryExists) await Deno.remove(BINARY_PATH);
 
   const prep = await new Deno.Command(denoPath, {
-    args: ["run", "--allow-all", "scripts/build/prepare-framework-sources.ts"],
+    args: ["task", "build:prepare"],
     stdout: "inherit",
     stderr: "inherit",
   }).output();
-  if (!prep.success) throw new Error("Failed to prepare framework sources");
+  if (!prep.success) throw new Error("Failed to prepare build artifacts");
 
   const compile = await new Deno.Command(denoPath, {
     args: [
-      "compile",
-      "--allow-all",
-      "--include",
-      "src/platform/polyfills",
-      "--include",
-      "src/proxy/main.ts",
-      "--include",
-      "dist/framework-src",
+      "run",
+      "-A",
+      "scripts/build/compile-binary.ts",
       "--output",
       BINARY_PATH,
-      "cli/main.ts",
     ],
     stdout: "inherit",
     stderr: "inherit",

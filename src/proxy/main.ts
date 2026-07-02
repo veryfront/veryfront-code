@@ -25,7 +25,8 @@ import { createCacheFromEnv } from "./cache/index.ts";
 import { isRetryableConnectionError } from "./retry.ts";
 import { closeBridgePeer, getServerWebSocketErrorLogLevel } from "./websocket-bridge.ts";
 import { register } from "../extensions/contracts.ts";
-import { createAuthProvider } from "../../extensions/ext-auth-jwt/src/index.ts";
+import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
+import type { AuthProvider } from "#veryfront/extensions/auth/index.ts";
 import {
   endSpan,
   extractContext,
@@ -60,6 +61,10 @@ import {
   withProxyServerTimingHeader,
 } from "./server-timing.ts";
 import { removeStickyCookieFromPublicCacheableResponse } from "./response-headers.ts";
+
+type AuthJwtExtensionModule = {
+  createAuthProvider: (options?: Record<string, unknown>) => AuthProvider;
+};
 
 function getLocalProjects(): Record<string, string> {
   const raw = getEnv("LOCAL_PROJECTS");
@@ -128,6 +133,17 @@ const VERYFRONT_SERVER_RETRY_DELAY_MS = parseInt(
   getEnv("VERYFRONT_SERVER_RETRY_DELAY_MS") || String(DEFAULT_SERVER_RETRY_DELAY_MS),
 );
 
+const { createAuthProvider } = await importFirstPartyExtensionModule<AuthJwtExtensionModule>(
+  "ext-auth-jwt",
+  "@veryfront/ext-auth-jwt",
+).catch((error) => {
+  throw new Error(
+    `The Veryfront proxy requires the ext-auth-jwt extension. In npm deployments install @veryfront/ext-auth-jwt alongside veryfront. ${
+      error instanceof Error ? error.message : String(error)
+    }`,
+    { cause: error },
+  );
+});
 register("AuthProvider", createAuthProvider({}));
 
 // Initialize cache and proxy handler

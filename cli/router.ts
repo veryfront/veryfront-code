@@ -6,52 +6,10 @@
 
 import { cliErrorBoundary } from "veryfront/errors";
 import { cliLogger, VERSION } from "#cli/utils";
-import { handleAnalyzeChunksCommand } from "./commands/analyze-chunks/handler.ts";
-import { handleBuildCommand } from "./commands/build/handler.ts";
-import { handleCleanCommand } from "./commands/clean/handler.ts";
-import { handleDemoCommand } from "./commands/demo/handler.ts";
-import { handleDeployCommand } from "./commands/deploy/handler.ts";
-import { handleDevCommand } from "./commands/dev/handler.ts";
-import { handleDoctorCommand } from "./commands/doctor/handler.ts";
-import { handleExtensionCommand } from "./commands/extension/handler.ts";
-import { handleGenerateCommand } from "./commands/generate/handler.ts";
-import { handleInitCommand } from "./commands/init/handler.ts";
-import { handleInstallCommand, handleUninstallCommand } from "./commands/install/handler.ts";
-import { handleIssuesCommand } from "./commands/issues/index.ts";
-import { handleLockCommand } from "./commands/lock/handler.ts";
-import { handleMCPCommand } from "./commands/mcp/handler.ts";
-import { handleMergeCommand } from "./commands/merge/handler.ts";
-import { handlePullCommand } from "./commands/pull/index.ts";
-import { handlePushCommand } from "./commands/push/index.ts";
-import { handleUploadsCommand } from "./commands/uploads/index.ts";
-import { handleFilesCommand } from "./commands/files/index.ts";
-import { handleKnowledgeCommand } from "./commands/knowledge/index.ts";
-import { handleRoutesCommand } from "./commands/routes/handler.ts";
-import { handleScheduleCommand } from "./commands/schedule/handler.ts";
-import { handleSchedulesCommand } from "./commands/schedules/handler.ts";
-import { handleServeCommand } from "./commands/serve/handler.ts";
-import { handleStartCommand } from "./commands/start/handler.ts";
-import { handleStudioCommand } from "./commands/studio/handler.ts";
-import { handleStylesCommand } from "./commands/styles/handler.ts";
-import { handleUpCommand } from "./commands/up/index.ts";
-import { handleTaskCommand } from "./commands/task/handler.ts";
-import { handleEvalCommand } from "./commands/eval/handler.ts";
-import { handleWorkflowCommand } from "./commands/workflow/handler.ts";
-import { handleWorkerCommand } from "./commands/worker/handler.ts";
-import { handleSchemaCommand } from "./commands/schema/handler.ts";
-import { handleTestCommand } from "./commands/test/handler.ts";
-import { handleLintCommand } from "./commands/lint/handler.ts";
-import { handleSkillsCommand } from "./commands/skills/handler.ts";
-import { handleConfigCommand } from "./commands/config/handler.ts";
-import { handleOpenCommand } from "./commands/open/handler.ts";
-import { handleCompletionsCommand } from "./commands/completions/handler.ts";
-import { handleWebhookCommand } from "./commands/webhook/handler.ts";
-import { handleWebhooksCommand } from "./commands/webhooks/handler.ts";
-import { login, logout, whoami } from "./auth/index.ts";
-import { parseLoginMethod } from "./auth/utils.ts";
 import { showCommandHelp, showMainHelp } from "./help/index.ts";
 import { setColorOverride } from "./ui/colors.ts";
 import { exitProcess, setQuietMode, setVerboseMode } from "./utils/index.ts";
+import { ensureCliSchemaValidator } from "./shared/default-contracts.ts";
 import {
   createErrorEnvelope,
   createSuccessEnvelope,
@@ -63,37 +21,41 @@ import {
 import { detectCI, setNonInteractive } from "./shared/interactive.ts";
 import type { ParsedArgs } from "./shared/types.ts";
 
+type CommandHandler = (args: ParsedArgs) => Promise<void>;
+type CommandLoader = () => Promise<CommandHandler>;
+
 /**
  * Command registry mapping command names to their handlers.
  * Aliases (e.g. "preview" → serve, "g" → generate) are duplicate entries.
  */
-const commands: Record<string, (args: ParsedArgs) => Promise<void>> = {
-  "init": handleInitCommand,
-  "dev": handleDevCommand,
-  "build": handleBuildCommand,
-  "preview": handleServeCommand,
-  "serve": handleServeCommand,
-  "doctor": handleDoctorCommand,
-  "clean": handleCleanCommand,
-  "analyze-chunks": handleAnalyzeChunksCommand,
-  "routes": handleRoutesCommand,
-  "studio": handleStudioCommand,
-  "styles": handleStylesCommand,
-  "lock": handleLockCommand,
-  "generate": handleGenerateCommand,
-  "g": handleGenerateCommand,
-  "pull": handlePullCommand,
-  "push": handlePushCommand,
-  "uploads": handleUploadsCommand,
-  "files": handleFilesCommand,
-  "knowledge": handleKnowledgeCommand,
-  "merge": handleMergeCommand,
-  "deploy": handleDeployCommand,
-  "up": handleUpCommand,
-  "schedule": handleScheduleCommand,
-  "schedules": handleSchedulesCommand,
-  "login": async (args) => {
-    const { parseProvider } = await import("./auth/utils.ts");
+const commands: Record<string, CommandLoader> = {
+  "init": async () => (await import("./commands/init/handler.ts")).handleInitCommand,
+  "dev": async () => (await import("./commands/dev/handler.ts")).handleDevCommand,
+  "build": async () => (await import("./commands/build/handler.ts")).handleBuildCommand,
+  "preview": async () => (await import("./commands/serve/handler.ts")).handleServeCommand,
+  "serve": async () => (await import("./commands/serve/handler.ts")).handleServeCommand,
+  "doctor": async () => (await import("./commands/doctor/handler.ts")).handleDoctorCommand,
+  "clean": async () => (await import("./commands/clean/handler.ts")).handleCleanCommand,
+  "analyze-chunks": async () =>
+    (await import("./commands/analyze-chunks/handler.ts")).handleAnalyzeChunksCommand,
+  "routes": async () => (await import("./commands/routes/handler.ts")).handleRoutesCommand,
+  "studio": async () => (await import("./commands/studio/handler.ts")).handleStudioCommand,
+  "styles": async () => (await import("./commands/styles/handler.ts")).handleStylesCommand,
+  "lock": async () => (await import("./commands/lock/handler.ts")).handleLockCommand,
+  "generate": async () => (await import("./commands/generate/handler.ts")).handleGenerateCommand,
+  "g": async () => (await import("./commands/generate/handler.ts")).handleGenerateCommand,
+  "pull": async () => (await import("./commands/pull/index.ts")).handlePullCommand,
+  "push": async () => (await import("./commands/push/index.ts")).handlePushCommand,
+  "uploads": async () => (await import("./commands/uploads/index.ts")).handleUploadsCommand,
+  "files": async () => (await import("./commands/files/index.ts")).handleFilesCommand,
+  "knowledge": async () => (await import("./commands/knowledge/index.ts")).handleKnowledgeCommand,
+  "merge": async () => (await import("./commands/merge/handler.ts")).handleMergeCommand,
+  "deploy": async () => (await import("./commands/deploy/handler.ts")).handleDeployCommand,
+  "up": async () => (await import("./commands/up/index.ts")).handleUpCommand,
+  "schedule": async () => (await import("./commands/schedule/handler.ts")).handleScheduleCommand,
+  "schedules": async () => (await import("./commands/schedules/handler.ts")).handleSchedulesCommand,
+  "login": async () => async (args) => {
+    const { parseLoginMethod, parseProvider } = await import("./auth/utils.ts");
     const provider = parseProvider(args);
     if (provider === "anthropic") {
       const { loginAnthropic } = await import("./auth/providers/anthropic.ts");
@@ -105,9 +67,10 @@ const commands: Record<string, (args: ParsedArgs) => Promise<void>> = {
       await loginOpenAI(args["base-url"] as string | undefined);
       return;
     }
+    const { login } = await import("./auth/index.ts");
     await login(parseLoginMethod(args));
   },
-  "logout": async (args) => {
+  "logout": async () => async (args) => {
     const { parseProvider } = await import("./auth/utils.ts");
     const provider = parseProvider(args);
     if (provider) {
@@ -119,31 +82,34 @@ const commands: Record<string, (args: ParsedArgs) => Promise<void>> = {
       logSuccess(`${provider} API key removed`);
       return;
     }
+    const { logout } = await import("./auth/index.ts");
     await logout();
   },
-  "whoami": async () => {
+  "whoami": async () => async () => {
+    const { whoami } = await import("./auth/index.ts");
     await whoami();
   },
-  "install": handleInstallCommand,
-  "uninstall": handleUninstallCommand,
-  "demo": handleDemoCommand,
-  "extension": handleExtensionCommand,
-  "mcp": handleMCPCommand,
-  "issues": handleIssuesCommand,
-  "start": handleStartCommand,
-  "task": handleTaskCommand,
-  "eval": handleEvalCommand,
-  "workflow": handleWorkflowCommand,
-  "worker": handleWorkerCommand,
-  "schema": handleSchemaCommand,
-  "test": handleTestCommand,
-  "lint": handleLintCommand,
-  "skills": handleSkillsCommand,
-  "config": handleConfigCommand,
-  "open": handleOpenCommand,
-  "completions": handleCompletionsCommand,
-  "webhook": handleWebhookCommand,
-  "webhooks": handleWebhooksCommand,
+  "install": async () => (await import("./commands/install/handler.ts")).handleInstallCommand,
+  "uninstall": async () => (await import("./commands/install/handler.ts")).handleUninstallCommand,
+  "demo": async () => (await import("./commands/demo/handler.ts")).handleDemoCommand,
+  "extension": async () => (await import("./commands/extension/handler.ts")).handleExtensionCommand,
+  "mcp": async () => (await import("./commands/mcp/handler.ts")).handleMCPCommand,
+  "issues": async () => (await import("./commands/issues/index.ts")).handleIssuesCommand,
+  "start": async () => (await import("./commands/start/handler.ts")).handleStartCommand,
+  "task": async () => (await import("./commands/task/handler.ts")).handleTaskCommand,
+  "eval": async () => (await import("./commands/eval/handler.ts")).handleEvalCommand,
+  "workflow": async () => (await import("./commands/workflow/handler.ts")).handleWorkflowCommand,
+  "worker": async () => (await import("./commands/worker/handler.ts")).handleWorkerCommand,
+  "schema": async () => (await import("./commands/schema/handler.ts")).handleSchemaCommand,
+  "test": async () => (await import("./commands/test/handler.ts")).handleTestCommand,
+  "lint": async () => (await import("./commands/lint/handler.ts")).handleLintCommand,
+  "skills": async () => (await import("./commands/skills/handler.ts")).handleSkillsCommand,
+  "config": async () => (await import("./commands/config/handler.ts")).handleConfigCommand,
+  "open": async () => (await import("./commands/open/handler.ts")).handleOpenCommand,
+  "completions": async () =>
+    (await import("./commands/completions/handler.ts")).handleCompletionsCommand,
+  "webhook": async () => (await import("./commands/webhook/handler.ts")).handleWebhookCommand,
+  "webhooks": async () => (await import("./commands/webhooks/handler.ts")).handleWebhooksCommand,
 };
 
 /**
@@ -242,9 +208,17 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
     return;
   }
 
-  const handler = command ? commands[command] : undefined;
+  if (command === "help") {
+    const topic = args._[1];
+    showHelp(typeof topic === "string" ? topic : undefined);
+    await updateCheck;
+    exitProcess(0);
+    return;
+  }
 
-  if (command && !handler) {
+  const loader = command ? commands[command] : undefined;
+
+  if (command && !loader) {
     const { suggestCommand } = await import("./shared/suggest.ts");
     const { COMMANDS } = await import("./help/command-definitions.ts");
     // Use canonical command names from help registry (excludes aliases like "g", "preview")
@@ -275,12 +249,13 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
   }
 
   await cliErrorBoundary(async () => {
-    if (command === "help") {
-      showHelp();
-      return;
-    }
+    const handlerLoader = loader ?? commands.start;
+    if (!handlerLoader) throw new Error("Start command is not registered");
 
-    await (handler ?? handleStartCommand)(args);
+    await ensureCliSchemaValidator();
+
+    const handler = await handlerLoader();
+    await handler(args);
   }, {
     onError: async (error) => {
       if (!isJsonMode()) {

@@ -15,6 +15,10 @@ Extension availability is separate from contract requirement:
   feature.
 - A contract becomes required only when a feature or extension resolves it.
   Missing required contracts throw an install-suggestion error at first use.
+- Source and compiled-binary builds can load first-party extension source from
+  this workspace. npm installs load extension implementations from the matching
+  `@veryfront/ext-*` package, so services install only the extension packages
+  they need.
 
 ## Extension catalog
 
@@ -86,7 +90,10 @@ Extension availability is separate from contract requirement:
 ## Auto-enabled core extensions
 
 These extensions are loaded by `createBuiltinExtensions()` during app bootstrap
-unless a project disables or overrides them by name.
+unless a project disables or overrides them by name. In npm installs, the root
+`veryfront` package lazy-loads the matching `@veryfront/ext-*` package for
+feature-specific implementations instead of shipping those dependencies in the
+root package.
 
 | Package                              | Contracts                   |
 | ------------------------------------ | --------------------------- |
@@ -101,6 +108,27 @@ unless a project disables or overrides them by name.
 | `@veryfront/ext-llm-openai`          | `LLMProvider:openai`        |
 | `@veryfront/ext-llm-anthropic`       | `LLMProvider:anthropic`     |
 | `@veryfront/ext-llm-google`          | `LLMProvider:google`        |
+
+## npm service installs
+
+Install extension packages by the features a service executes. Do not install
+raw transitive dependencies such as `bash-tool`, `just-bash`, `jose`,
+`better-sqlite3`, `@kreuzberg/node`, `@mdx-js/mdx`, or `tailwindcss` directly
+to satisfy Veryfront runtime features.
+
+| Runtime or service role                    | Install these extension packages                                                                                               |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| CLI, build image, or project server runtime | `@veryfront/ext-bundler-esbuild`, `@veryfront/ext-content-mdx`, `@veryfront/ext-css-tailwind`, `@veryfront/ext-parser-babel`   |
+| Proxy or JWT-authenticated service          | `@veryfront/ext-auth-jwt`                                                                                                      |
+| Document upload or knowledge ingestion      | `@veryfront/ext-document-kreuzberg`                                                                                            |
+| Redis-backed cache or token store           | `@veryfront/ext-cache-redis`                                                                                                   |
+| SQLite-backed persistence                   | `@veryfront/ext-db-sqlite`                                                                                                     |
+| OpenTelemetry export or Node telemetry      | `@veryfront/ext-observability-opentelemetry`                                                                                   |
+| Local shell-tool agent runtime              | `@veryfront/ext-sandbox-shell-tools`                                                                                           |
+
+An agent runtime needs `@veryfront/ext-sandbox-shell-tools` only when it creates
+local bash or shell tools. MCP-only remote tool execution does not need that
+package unless the service also provides local shell tools.
 
 ## Contract requirements
 
@@ -206,6 +234,11 @@ other extensions.
 ## Dependency ownership
 
 Each extension owns its third-party dependencies through its own `deno.json`.
+`deno task build:npm` generates one publishable package per first-party
+extension under `npm/extensions/`. The generated package keeps public
+`veryfront/*` imports as peer imports and keeps feature-specific implementation
+dependencies inside the extension package.
+
 Run `deno task sbom:all --output-dir dist/dependency-sboms` from the repository
 root to generate one SBOM per extension plus aggregate, core, CLI, and React
 boundary views. Use `dependencies-by-manifest.json` in that output to inspect

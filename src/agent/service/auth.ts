@@ -1,4 +1,5 @@
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
+import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
 import type { AuthProvider, TokenPayload } from "#veryfront/extensions/auth/index.ts";
 
 /** Public API contract for hosted service auth error code. */
@@ -89,6 +90,10 @@ export type HostedServiceAuthFetch = (
 
 export type HostedServiceJwtVerifier = Pick<AuthProvider, "verifyWithPublicKey">;
 
+type AuthJwtExtensionModule = {
+  createAuthProvider: (options?: Record<string, unknown>) => HostedServiceJwtVerifier;
+};
+
 /** Options accepted by hosted service auth. */
 export type HostedServiceAuthOptions = {
   getConfig: () => HostedServiceAuthConfig;
@@ -142,8 +147,10 @@ function getProjectAccessTimeoutMs(options: HostedServiceAuthOptions): number {
 let defaultAuthProviderPromise: Promise<HostedServiceJwtVerifier> | undefined;
 
 async function getDefaultAuthProvider(): Promise<HostedServiceJwtVerifier> {
-  defaultAuthProviderPromise ??= import("../../../extensions/ext-auth-jwt/src/index.ts")
-    .then(({ createAuthProvider }) => createAuthProvider({}));
+  defaultAuthProviderPromise ??= importFirstPartyExtensionModule<AuthJwtExtensionModule>(
+    "ext-auth-jwt",
+    "@veryfront/ext-auth-jwt",
+  ).then(({ createAuthProvider }) => createAuthProvider({}));
   return await defaultAuthProviderPromise;
 }
 

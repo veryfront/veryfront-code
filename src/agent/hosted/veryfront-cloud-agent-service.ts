@@ -4,6 +4,10 @@ import type { AgentServiceSandboxToolsOptions } from "#veryfront/sandbox";
 import { createAgentServiceSandboxTools } from "#veryfront/sandbox";
 import { register, tryResolve } from "#veryfront/extensions/contracts.ts";
 import { MISSING_EXTENSION_ERROR } from "#veryfront/extensions/errors.ts";
+import {
+  importFirstPartyExtensionModule,
+  isMissingFirstPartyExtensionModule,
+} from "#veryfront/extensions/first-party-import.ts";
 import { dirname, resolve } from "#veryfront/platform/compat/path/index.ts";
 import { cwd, env } from "#veryfront/platform/compat/process.ts";
 import type { AuthProvider } from "#veryfront/extensions/auth/index.ts";
@@ -207,6 +211,18 @@ type ResolvedNodeVeryfrontCloudAgentServiceOptions =
     serviceName: string;
   };
 
+type SandboxShellToolsExtensionModule = {
+  createBashSandboxShellToolsProvider: AgentServiceSandboxToolsOptions["createBashTool"];
+};
+
+type AuthJwtExtensionModule = {
+  createAuthProvider: (options?: Record<string, unknown>) => AuthProvider;
+};
+
+type OpenTelemetryExtensionModule = {
+  OpenTelemetryNodeTelemetryProvider: new () => NodeTelemetryProvider;
+};
+
 /** Public API contract for node Veryfront Cloud agent service prepared execution. */
 export type NodeVeryfrontCloudAgentServicePreparedExecution = PreparedHostedChatExecution & {
   config: AgentServiceRuntimeConfig;
@@ -365,14 +381,17 @@ async function loadDefaultCreateBashTool(): Promise<
   if (provider) return provider;
 
   try {
-    const { createBashSandboxShellToolsProvider } = await import(
-      "../../../extensions/ext-sandbox-shell-tools/src/index.ts"
+    const { createBashSandboxShellToolsProvider } = await importFirstPartyExtensionModule<
+      SandboxShellToolsExtensionModule
+    >(
+      "ext-sandbox-shell-tools",
+      "@veryfront/ext-sandbox-shell-tools",
     );
     return createBashSandboxShellToolsProvider;
   } catch (error) {
     throw MISSING_EXTENSION_ERROR.create({
       message:
-        'Missing extension for contract "SandboxShellToolsProvider". Enable ext-sandbox-shell-tools or pass createBashTool explicitly.',
+        'Missing extension for contract "SandboxShellToolsProvider". Install @veryfront/ext-sandbox-shell-tools or pass createBashTool explicitly.',
       detail:
         `Veryfront cloud agent sandbox shell tools require a SandboxShellToolsProvider implementation: ${
           error instanceof Error ? error.message : String(error)
@@ -402,7 +421,10 @@ async function ensureDefaultSchemaValidator(): Promise<void> {
 
 async function ensureDefaultAuthProvider(): Promise<void> {
   if (tryResolve<AuthProvider>("AuthProvider")) return;
-  const { createAuthProvider } = await import("../../../extensions/ext-auth-jwt/src/index.ts");
+  const { createAuthProvider } = await importFirstPartyExtensionModule<AuthJwtExtensionModule>(
+    "ext-auth-jwt",
+    "@veryfront/ext-auth-jwt",
+  );
   register<AuthProvider>("AuthProvider", createAuthProvider({}));
 }
 
@@ -418,12 +440,17 @@ async function ensureDefaultNodeTelemetryProvider(): Promise<void> {
 
 async function importOpenTelemetryNodeTelemetryProvider() {
   try {
-    const { OpenTelemetryNodeTelemetryProvider } = await import(
-      "../../../extensions/ext-observability-opentelemetry/src/index.ts"
+    const { OpenTelemetryNodeTelemetryProvider } = await importFirstPartyExtensionModule<
+      OpenTelemetryExtensionModule
+    >(
+      "ext-observability-opentelemetry",
+      "@veryfront/ext-observability-opentelemetry",
     );
     return OpenTelemetryNodeTelemetryProvider;
   } catch (error) {
-    if (!isMissingOptionalPackageError(error)) throw error;
+    if (!isMissingOptionalPackageError(error) && !isMissingFirstPartyExtensionModule(error)) {
+      throw error;
+    }
     return null;
   }
 }

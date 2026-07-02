@@ -17,6 +17,7 @@ import type {
 } from "#veryfront/sandbox";
 import { createAgentServiceSandboxTools } from "#veryfront/sandbox";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
+import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
 import {
   type SandboxShellToolsProvider,
   SandboxShellToolsProviderName,
@@ -49,6 +50,10 @@ type RuntimeFilteredAgent = Agent & {
   config: Agent["config"] & {
     __vfForwardedIntegrationToolDefs?: ForwardedToolDef[];
   } & RuntimeRemoteToolConfig;
+};
+
+type SandboxShellToolsExtensionModule = {
+  createBashSandboxShellToolsProvider: AgentServiceSandboxToolsOptions["createBashTool"];
 };
 
 function getAgentAllowedRemoteToolNames(agent: Agent): string[] {
@@ -229,8 +234,11 @@ async function loadDefaultCreateBashTool(): Promise<
   const provider = tryResolve<SandboxShellToolsProvider>(SandboxShellToolsProviderName);
   if (provider) return provider;
 
-  const { createBashSandboxShellToolsProvider } = await import(
-    "../../extensions/ext-sandbox-shell-tools/src/index.ts"
+  const { createBashSandboxShellToolsProvider } = await importFirstPartyExtensionModule<
+    SandboxShellToolsExtensionModule
+  >(
+    "ext-sandbox-shell-tools",
+    "@veryfront/ext-sandbox-shell-tools",
   );
   return createBashSandboxShellToolsProvider;
 }

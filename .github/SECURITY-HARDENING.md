@@ -42,13 +42,14 @@ Recent npm compromises have used maintainer account takeover, malicious pull req
 
 Required controls:
 
-- Configure npm trusted publishing for package `veryfront`: GitHub Actions publisher, owner `veryfront`, repository `veryfront-code`, workflow filename `cicd.yml`, environment `production`, action `npm publish`.
+- Configure npm trusted publishing for package `veryfront` and every generated `@veryfront/ext-*` package: GitHub Actions publisher, owner `veryfront`, repository `veryfront-code`, workflow filename `cicd.yml`, environment `production`, action `npm publish`.
 - Keep `.github/workflows/cicd.yml` release jobs on `permissions: id-token: write` and publish with `npm publish --provenance --access public`.
 - Do not reference `secrets.NPM_TOKEN` or `NODE_AUTH_TOKEN` in npm publish steps.
 - Remove the repository or organization `NPM_TOKEN` secret after trusted publishing is configured and one dry release check confirms npm accepts OIDC authentication.
 - Keep release `actions/setup-node` caching disabled.
 - Keep generated npm package metadata pointed at `github.com/veryfront/veryfront-code` so npm provenance links to the publishing source.
 - Keep `scripts/build/build-npm-dnt.ts` npm install calls on `--ignore-scripts`.
+- Keep first-party extension implementation dependencies out of the root `veryfront` package. Feature-specific runtime packages such as `jose`, `esbuild`, `bash-tool`, `better-sqlite3`, `@kreuzberg/*`, `tailwindcss`, `@mdx-js/*`, Babel, and OpenTelemetry packages must live in the matching generated `@veryfront/ext-*` package.
 - Keep `deno task lint:deps` and `deno task audit` in CI.
 
 ## GitHub App release credentials
