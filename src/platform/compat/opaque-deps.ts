@@ -18,7 +18,10 @@
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import { isDeno } from "./runtime.ts";
 import { dynamicImport } from "./dynamic-import.ts";
-import type { DocumentExtractor } from "#veryfront/extensions/compat/native-services.ts";
+import type {
+  DocumentExtractor,
+  KreuzbergExtractor,
+} from "#veryfront/extensions/compat/native-services.ts";
 import { OPAQUE_DEPENDENCY_VERSIONS } from "./opaque-dependency-versions.ts";
 
 function resolve(pkg: string, version: string): string {
@@ -58,12 +61,7 @@ export function importClaudeAgentSDK(): Promise<OpaqueModule> {
  * Node/Bun path: `@kreuzberg/node` resolved from the project's node_modules at
  * runtime. The extension handles that dynamic import internally.
  */
-export async function importKreuzberg(): Promise<{
-  extractBytes: (
-    data: Uint8Array,
-    mimeType: string,
-  ) => Promise<{ content: string }>;
-}> {
+export async function importKreuzberg(): Promise<KreuzbergExtractor> {
   const extractor = tryResolve<DocumentExtractor>("DocumentExtractor");
   if (extractor?.importKreuzberg) {
     return extractor.importKreuzberg();

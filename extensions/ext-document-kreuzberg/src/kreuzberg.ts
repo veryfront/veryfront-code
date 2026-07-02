@@ -12,12 +12,8 @@
 import type { KreuzbergExtractor } from "veryfront/extensions/compat";
 import { isDeno } from "./runtime.ts";
 
-type KreuzbergModule = {
+type KreuzbergModule = KreuzbergExtractor & {
   initWasm?: () => Promise<void>;
-  extractBytes: (
-    data: Uint8Array,
-    mimeType: string,
-  ) => Promise<{ content: string }>;
 };
 
 export async function loadKreuzbergNative(): Promise<KreuzbergExtractor> {

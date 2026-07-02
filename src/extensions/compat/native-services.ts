@@ -42,6 +42,7 @@ export interface KreuzbergExtractor {
   extractBytes(
     data: Uint8Array,
     mimeType: string,
+    config?: Record<string, unknown> | null,
   ): Promise<{ content: string }>;
 }
 
