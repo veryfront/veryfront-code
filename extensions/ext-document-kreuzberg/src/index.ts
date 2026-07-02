@@ -12,8 +12,8 @@ import type { DocumentExtractor, KreuzbergExtractor } from "veryfront/extensions
 import { isMissingPackageError, loadKreuzberg, loadKreuzbergNative } from "./kreuzberg.ts";
 import { isDeno } from "./runtime.ts";
 
-/** Maximum time to wait for document text extraction before aborting. */
-const EXTRACTION_TIMEOUT_MS = 30_000;
+/** Maximum time to wait for fallback worker extraction before aborting. */
+export const EXTRACTION_TIMEOUT_MS = 120_000;
 
 function extractInWorkerDeno(
   buffer: ArrayBuffer,
