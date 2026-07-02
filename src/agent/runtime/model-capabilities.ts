@@ -26,7 +26,7 @@ function isThinkingDisabled(options: Record<string, unknown> | undefined): boole
   return thinking?.type === "disabled";
 }
 
-function hasDisabledThinking(providerOptions?: Record<string, unknown>): boolean {
+export function hasDisabledThinking(providerOptions?: Record<string, unknown>): boolean {
   if (!providerOptions) return false;
   if (isThinkingDisabled(providerOptions)) return true;
 

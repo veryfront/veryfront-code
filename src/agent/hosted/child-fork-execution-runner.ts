@@ -33,6 +33,7 @@ import type {
   ChildRunExecutionResult,
   ChildRunExecutionSnapshot,
 } from "../child-run/execution-snapshot.ts";
+import type { RuntimeReasoningOption } from "../types.ts";
 import type {
   HostedConversationRunChunkMirrorInstrumentation,
   HostedConversationRunChunkMirrorTraceAttributes,
@@ -117,6 +118,7 @@ export type ExecuteHostedChildForkWithPreparedToolsInput<
   logger?: HostedChildForkStreamLogger;
   instrumentation?: HostedChildForkExecutionInstrumentation<TAttributes>;
   providerOptions?: Record<string, unknown>;
+  reasoning?: RuntimeReasoningOption;
   maxContinuationSteps?: number;
   resolveSystem?: HostedChildForkRuntimeStepSystemResolver;
   buildInstructions?: () => string;
@@ -199,6 +201,7 @@ export type ExecuteHostedChildForkToolInputOptions<
     | "effectivePrompt"
     | "toolAssembly"
     | "providerOptions"
+    | "reasoning"
   >
   & {
     forkInput: HostedChildForkToolInput;
@@ -220,6 +223,11 @@ export type ExecuteHostedChildForkToolInputOptions<
       forkModel: string,
       thinkingConfig: HostedChildForkRuntimeConfig["thinkingConfig"],
     ) => Record<string, unknown> | undefined;
+    resolveReasoning?: (
+      forkModel: string,
+      thinkingConfig: HostedChildForkRuntimeConfig["thinkingConfig"],
+    ) => RuntimeReasoningOption | undefined;
+    resolveModelThinking?: ResolveHostedChildForkRuntimeConfigInput["resolveModelThinking"];
     onRuntimeConfig?: (runtimeConfig: HostedChildForkRuntimeConfig) => void | Promise<void>;
   };
 
@@ -246,6 +254,7 @@ export async function executeHostedChildForkToolInput<
     runId: input.durableChildRun?.childRunId ?? input.toolCallId,
     resolveModelId: input.resolveModelId,
     resolveProvider: input.resolveProvider,
+    resolveModelThinking: input.resolveModelThinking,
   });
 
   await input.onRuntimeConfig?.(runtimeConfig);
@@ -265,6 +274,10 @@ export async function executeHostedChildForkToolInput<
     effectivePrompt: runtimeConfig.effectivePrompt,
     toolAssembly,
     providerOptions: input.resolveProviderOptions?.(
+      runtimeConfig.forkModel,
+      runtimeConfig.thinkingConfig,
+    ),
+    reasoning: input.resolveReasoning?.(
       runtimeConfig.forkModel,
       runtimeConfig.thinkingConfig,
     ),
@@ -338,6 +351,7 @@ export async function executeHostedChildForkWithPreparedTools<
       forkTools: input.toolAssembly.forkTools,
       forkToolNames: input.toolAssembly.availableToolNames,
       providerOptions: input.providerOptions,
+      reasoning: input.reasoning,
       buildInstructions,
       onBeforeStop: input.onBeforeStop ?? (() => null),
       durableChildRun: input.durableChildRun,

@@ -185,6 +185,55 @@ Deno.test("resolveHostedChildForkRuntimeConfig resolves reusable child fork runt
   );
 });
 
+Deno.test("resolveHostedChildForkRuntimeConfig defaults child thinking from the resolved model", () => {
+  const result = resolveHostedChildForkRuntimeConfig(
+    {
+      forkInput: {
+        description: "write tests",
+        prompt: "Write focused tests.",
+        context: {},
+        model: "gpt-5.4-nano",
+      },
+      contextModel: "opus",
+      defaultModel: "haiku",
+      defaultMaxSteps: 80,
+      runId: "tool-call-1",
+      resolveModelId: (modelId) => modelId,
+      resolveProvider: (modelId) => `provider-for-${modelId}`,
+      resolveModelThinking: (modelId) => modelId === "gpt-5.4-nano" ? { enabled: true } : undefined,
+    } as Parameters<typeof resolveHostedChildForkRuntimeConfig>[0] & {
+      resolveModelThinking: (modelId: string) => { enabled: boolean } | undefined;
+    },
+  );
+
+  assertEquals(result.thinkingConfig, { enabled: true });
+});
+
+Deno.test("resolveHostedChildForkRuntimeConfig preserves explicit child thinking opt-out", () => {
+  const result = resolveHostedChildForkRuntimeConfig(
+    {
+      forkInput: {
+        description: "write tests",
+        prompt: "Write focused tests.",
+        context: {},
+        model: "gpt-5.4-nano",
+        thinking: 0,
+      },
+      contextModel: "opus",
+      defaultModel: "haiku",
+      defaultMaxSteps: 80,
+      runId: "tool-call-1",
+      resolveModelId: (modelId) => modelId,
+      resolveProvider: (modelId) => `provider-for-${modelId}`,
+      resolveModelThinking: () => ({ enabled: true }),
+    } as Parameters<typeof resolveHostedChildForkRuntimeConfig>[0] & {
+      resolveModelThinking: () => { enabled: boolean };
+    },
+  );
+
+  assertEquals(result.thinkingConfig, { enabled: false });
+});
+
 Deno.test("resolveHostedChildForkRuntimeConfig raises low requested child max steps to the hosted minimum", () => {
   const result = resolveHostedChildForkRuntimeConfig({
     forkInput: {

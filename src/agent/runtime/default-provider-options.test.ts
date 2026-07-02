@@ -43,10 +43,20 @@ describe("resolveProviderOptionsWithDefaults", () => {
     );
   });
 
-  it("does not enable extended thinking for Claude Opus 4.8", () => {
+  it("enables adaptive thinking for Claude Opus 4.8", () => {
     assertEquals(
       resolveProviderOptionsWithDefaults("anthropic/claude-opus-4-8", undefined),
-      undefined,
+      {
+        anthropic: {
+          thinking: {
+            type: "adaptive",
+            display: "summarized",
+          },
+          output_config: {
+            effort: "high",
+          },
+        },
+      },
     );
   });
 
