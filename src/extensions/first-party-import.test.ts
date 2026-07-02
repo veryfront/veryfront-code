@@ -61,6 +61,52 @@ describe("first-party extension imports", () => {
         false,
       );
     });
+
+    it("classifies by the stable Node error code, not just message text", () => {
+      // Node attaches ERR_MODULE_NOT_FOUND; the message wording is not stable
+      // across releases, so the code must be sufficient on its own.
+      const nodeError = Object.assign(
+        new Error("Unable to resolve '@veryfront/ext-auth-jwt' from /app/x.js"),
+        { code: "ERR_MODULE_NOT_FOUND" },
+      );
+      assertEquals(isMissingFirstPartyExtensionModule(nodeError), true);
+      assertEquals(
+        isMissingFirstPartyExtensionModule(nodeError, ["@veryfront/ext-auth-jwt"]),
+        true,
+      );
+
+      const unrelated = Object.assign(new Error("connection reset"), {
+        code: "ECONNRESET",
+      });
+      assertEquals(isMissingFirstPartyExtensionModule(unrelated), false);
+    });
+
+    it("walks the cause chain of wrapped errors", () => {
+      const wrapped = new Error("Failed to initialize auth provider", {
+        cause: Object.assign(
+          new Error("Cannot find package '@veryfront/ext-auth-jwt' imported from /app/x.js"),
+          { code: "ERR_MODULE_NOT_FOUND" },
+        ),
+      });
+      assertEquals(isMissingFirstPartyExtensionModule(wrapped), true);
+      assertEquals(
+        isMissingFirstPartyExtensionModule(wrapped, ["@veryfront/ext-auth-jwt"]),
+        true,
+      );
+
+      const wrappedTransitive = new Error("Failed to initialize auth provider", {
+        cause: Object.assign(
+          new Error("Cannot find package 'jose' imported from /app/y.js"),
+          { code: "ERR_MODULE_NOT_FOUND" },
+        ),
+      });
+      assertEquals(
+        isMissingFirstPartyExtensionModule(wrappedTransitive, [
+          "@veryfront/ext-auth-jwt",
+        ]),
+        false,
+      );
+    });
   });
 
   describe("importFirstPartyExtensionModule", () => {
