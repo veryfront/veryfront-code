@@ -2,10 +2,16 @@ import * as React from "react";
 import { cn } from "../../theme.ts";
 
 /** Props accepted by message edit form. */
-export interface MessageEditFormProps {
+export interface MessageEditFormProps
+  extends Omit<React.HTMLAttributes<HTMLDivElement>, "className"> {
   initialContent: string;
   onSave: (content: string) => void;
   onCancel: () => void;
+  className?: string;
+  /** Label for the save/submit button. Defaults to "Save & Submit". */
+  saveLabel?: string;
+  /** Label for the cancel button. Defaults to "Cancel". */
+  cancelLabel?: string;
 }
 
 /** Render message edit form. */
@@ -13,6 +19,10 @@ export function MessageEditForm({
   initialContent,
   onSave,
   onCancel,
+  className,
+  saveLabel = "Save & Submit",
+  cancelLabel = "Cancel",
+  ...props
 }: MessageEditFormProps): React.ReactElement {
   const [content, setContent] = React.useState(initialContent);
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
@@ -48,7 +58,7 @@ export function MessageEditForm({
   );
 
   return (
-    <div className="w-full">
+    <div {...props} className={cn("w-full", className)}>
       <textarea
         ref={textareaRef}
         value={content}
@@ -81,14 +91,14 @@ export function MessageEditForm({
             "disabled:opacity-50 disabled:pointer-events-none",
           )}
         >
-          Save & Submit
+          {saveLabel}
         </button>
         <button
           type="button"
           onClick={onCancel}
           className="px-3 py-1.5 text-xs font-medium rounded-full text-[var(--faint)] hover:bg-[var(--tertiary)] hover:text-[var(--foreground)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--background)]"
         >
-          Cancel
+          {cancelLabel}
         </button>
       </div>
     </div>

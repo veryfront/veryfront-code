@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import * as React from "react";
 import { AgentPicker, ChatInput } from "veryfront/chat";
-import type { AgentOption } from "veryfront/chat";
+import type { AgentOption, AttachmentInfo } from "veryfront/chat";
 import {
   DocsCode,
   DocsComposition,
@@ -14,9 +14,9 @@ import {
 import {
   attachments,
   createChangeHandler,
+  filesToAttachments,
   modelOptions,
 } from "../fixtures/chat";
-import { ReviewSurface, StoryFrame } from "../support/StoryFrame";
 
 const importCode = `import { ChatInput } from "veryfront/chat"`;
 
@@ -30,7 +30,7 @@ const compositionTree = `ChatInput  <- input form (forwardRef to the outer div)
   +-- InputBox  <- multiline message input
   +-- footer toolbar
       +-- + menu  <- attach files
-      +-- AgentPicker  <- agent selector pill (agentSelector slot)
+      +-- AgentPicker  <- agent selector pill (toolbarStart slot)
       +-- ModelSelector  <- shown when models + onModelChange are set
       +-- submit  <- send / stop`;
 
@@ -57,10 +57,24 @@ function ChatInputDocsPage() {
       </DocsSection>
 
       <DocsSection
+        title="Drag and drop"
+        description="Drag files onto the composer card (Studio `PromptForm`): a dashed border and a “Drop files” overlay appear, and on drop `onDrop` (falling back to `onAttach`) receives the `FileList`. Wire it to your attachment state and the dropped files become pills."
+      >
+        <DocsExampleAuto of={DragAndDrop} />
+      </DocsSection>
+
+      <DocsSection
         title="Streaming"
         description="While `isLoading` is true the input is disabled and the submit button becomes a stop control."
       >
         <DocsExampleAuto of={Streaming} />
+      </DocsSection>
+
+      <DocsSection
+        title="Composed"
+        description="`ChatInput` is render-or-compose. Drop to `ChatInput.Root` (provides ComposerContext) and arrange `ChatInput.Field` + the toolbar sub-parts (`Send`/`Attach`/`Model`/…) yourself — each takes `icon`, `className`, and an `onClick(e, next)`."
+      >
+        <DocsExampleAuto of={Composed} />
       </DocsSection>
 
       <DocsSection title="Import">
@@ -221,10 +235,20 @@ function ComposerReview({
   const [input, setInput] = React.useState(initialInput);
   const [model, setModel] = React.useState(modelOptions[0]?.value);
   const [agent, setAgent] = React.useState(agentOptions[0].id);
+  const [files, setFiles] = React.useState<AttachmentInfo[]>(
+    withAttachments ? attachments : [],
+  );
 
+  // Both the `+` menu upload and a drag-and-drop land here, so the composer is
+  // fully working: dropped files become attachment pills above the input.
+  const addFiles = (list: FileList) =>
+    setFiles((current) => [...current, ...filesToAttachments(list)]);
+
+  // Rendered exactly as it appears inside <Chat> — no review chrome — so the
+  // composer looks identical across the ChatInput and Chat docs.
   return (
-    <StoryFrame maxWidth="820px">
-      <ReviewSurface label="Composer">
+    <div className="vf-story-canvas">
+      <div className="mx-auto w-full max-w-[850px]">
         <ChatInput
           input={input}
           onChange={createChangeHandler(setInput)}
@@ -236,27 +260,44 @@ function ComposerReview({
           models={modelOptions}
           model={model}
           onModelChange={setModel}
-          agentSelector={
+          toolbarStart={
             <AgentPicker
               agents={agentOptions}
               value={agent}
               onValueChange={setAgent}
             />
           }
-          onAttach={() => undefined}
-          onSelectAttachment={() => undefined}
-          attachments={withAttachments ? attachments : undefined}
-          onRemoveAttachment={() => undefined}
-          className="pb-0"
+          onAttach={addFiles}
+          onDrop={addFiles}
+          attachments={files}
+          onRemoveAttachment={(id) =>
+            setFiles((current) => current.filter((file) => file.id !== id))}
         />
-      </ReviewSurface>
-    </StoryFrame>
+      </div>
+    </div>
   );
 }
 
 export const Default: Story = {
   tags: ["!dev"],
   render: () => <ComposerReview initialInput="" />,
+  parameters: {
+    docs: {
+      source: {
+        code: `<ChatInput
+  input={input}
+  onChange={onChange}
+  onSubmit={handleSubmit}
+  models={models}
+  model={model}
+  onModelChange={setModel}
+  onAttach={handleAttach}
+  onSelectAttachment={openPicker}
+  toolbarStart={<AgentPicker agents={agents} value={agent} onValueChange={setAgent} />}
+/>`,
+      },
+    },
+  },
 };
 
 export const WithAttachments: Story = {
@@ -264,6 +305,106 @@ export const WithAttachments: Story = {
   render: () => (
     <ComposerReview withAttachments initialInput="Review these files" />
   ),
+  parameters: {
+    docs: {
+      source: {
+        code: `<ChatInput
+  input={input}
+  onChange={onChange}
+  onSubmit={handleSubmit}
+  attachments={attachments}
+  onRemoveAttachment={handleRemove}
+  onAttach={handleAttach}
+/>`,
+      },
+    },
+  },
+};
+
+export const DragAndDrop: Story = {
+  name: "Drag and drop",
+  tags: ["!dev"],
+  render: () => <ComposerReview initialInput="Drag a file onto me" />,
+  parameters: {
+    docs: {
+      source: {
+        code: `const [files, setFiles] = React.useState<AttachmentInfo[]>([]);
+const addFiles = (list: FileList) =>
+  setFiles((cur) => [...cur, ...filesToAttachments(list)]);
+
+<ChatInput
+  input={input}
+  onChange={onChange}
+  onSubmit={handleSubmit}
+  onAttach={addFiles}   // + menu upload
+  onDrop={addFiles}     // drag onto the composer
+  attachments={files}
+  onRemoveAttachment={(id) =>
+    setFiles((cur) => cur.filter((f) => f.id !== id))}
+/>`,
+      },
+    },
+  },
+};
+
+function ComposedComposer(): React.ReactElement {
+  const [input, setInput] = React.useState("Composed from ChatInput.Root + parts");
+  return (
+    <div className="vf-story-canvas">
+      <div className="mx-auto w-full max-w-[850px]">
+        <ChatInput.Root
+          input={input}
+          onChange={createChangeHandler(setInput)}
+          onSubmit={() => undefined}
+          onAttach={() => undefined}
+          models={modelOptions}
+          model={modelOptions[0]?.value}
+          onModelChange={() => undefined}
+        >
+          <div className="rounded-[var(--radius-lg)] bg-[var(--secondary)] px-4 pt-3 pb-3 shadow-sm">
+            <ChatInput.Field placeholder="Composed composer…" />
+            <div className="mt-2.5 flex items-center justify-between">
+              <ChatInput.Attach />
+              <div className="flex items-center gap-1.5">
+                <ChatInput.Model />
+                <ChatInput.Send
+                  icon={<span className="text-[15px] leading-none">🚀</span>}
+                  onClick={(_e, next) => {
+                    console.log("send clicked");
+                    next();
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+        </ChatInput.Root>
+      </div>
+    </div>
+  );
+}
+
+export const Composed: Story = {
+  tags: ["!dev"],
+  render: () => <ComposedComposer />,
+  parameters: {
+    docs: {
+      source: {
+        code: `<ChatInput.Root input={input} onChange={onChange} onSubmit={submit} onAttach={attach}>
+  <div className="… card">
+    <ChatInput.Field placeholder="Composed composer…" />
+    <div className="toolbar">
+      <ChatInput.Attach />
+      <ChatInput.Model />
+      <ChatInput.Send
+        icon={<RocketIcon />}
+        onClick={(e, next) => { console.log("send"); next(); }}
+      />
+    </div>
+  </div>
+</ChatInput.Root>`,
+      },
+    },
+  },
 };
 
 export const Streaming: Story = {
@@ -274,4 +415,17 @@ export const Streaming: Story = {
       initialInput="Stop after this step"
     />
   ),
+  parameters: {
+    docs: {
+      source: {
+        code: `<ChatInput
+  input={input}
+  onChange={onChange}
+  onSubmit={handleSubmit}
+  isLoading
+  stop={handleStop}
+/>`,
+      },
+    },
+  },
 };

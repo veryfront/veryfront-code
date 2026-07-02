@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import * as React from "react";
-import { Chat } from "veryfront/chat";
-import type { ChatMessage } from "veryfront/chat";
+import { AgentAvatar, AgentPicker, Chat } from "veryfront/chat";
+import type { AgentOption, AttachmentInfo, ChatMessage } from "veryfront/chat";
 import {
   DocsCode,
   DocsComposition,
@@ -15,12 +15,47 @@ import {
   attachments,
   chatMessages,
   createChangeHandler,
+  filesToAttachments,
   loadingMessages,
   modelOptions,
-  quickActions,
 } from "../fixtures/chat";
 
 const importCode = `import { Chat } from "veryfront/chat"`;
+
+const agentOptions: AgentOption[] = [
+  { id: "veryfront", name: "Veryfront Agent" },
+  { id: "inbox-helper", name: "Inbox Helper" },
+  { id: "researcher", name: "Research Agent" },
+];
+
+/**
+ * Real `<Chat>` usage shown in each story's Code tab — driven by `useChat`, the
+ * way a consumer actually wires it. Empty / Loading / Error are backend state,
+ * not code differences; `extra` only adds real config props (models, sources…).
+ */
+function chatCode(extra = ""): string {
+  return `import { Chat, useChat } from "veryfront/chat";
+
+function ChatPanel() {
+  const chat = useChat({ agentId: "veryfront", api: "/api/ag-ui" });
+
+  return (
+    <Chat
+      messages={chat.messages}
+      input={chat.input}
+      onChange={chat.onChange}
+      onSubmit={chat.onSubmit}
+      isLoading={chat.isLoading}
+      error={chat.error}${extra}
+    />
+  );
+}`;
+}
+
+/** Attach a real-usage code snippet to a story's Docs "Code" tab. */
+function codeParams(extra = "") {
+  return { docs: { source: { code: chatCode(extra) } } };
+}
 
 const compositionTree =
   `Chat  <- preset assembly: wires the building blocks into a full chat UI
@@ -28,7 +63,7 @@ const compositionTree =
   +-- ConversationEmptyState  <- shown when messages is empty
   +-- ErrorBanner  <- shown when error is set
   +-- QuickActions / Suggestions  <- prompt chips above the composer
-  +-- ChatComposer  <- input, attachments, model selector, submit / stop`;
+  +-- ChatInput  <- input, attachments, model selector, submit / stop`;
 
 function ChatDocsPage() {
   return (
@@ -226,7 +261,7 @@ function ChatDocsPage() {
 }
 
 const meta = {
-  title: "Chat/Composition/Preset",
+  title: "Chat/Components/Chat",
   component: Chat,
   tags: ["autodocs"],
   parameters: {
@@ -242,10 +277,10 @@ type ChatReviewProps = {
   initialMessages?: ChatMessage[];
   initialInput?: string;
   isLoading?: boolean;
+  initializing?: boolean;
   error?: Error | null;
   showSources?: boolean;
   showSteps?: boolean;
-  withModels?: boolean;
   withAttachments?: boolean;
 };
 
@@ -253,10 +288,10 @@ function ChatReview({
   initialMessages = chatMessages,
   initialInput = "Can you turn this into a release checklist?",
   isLoading = false,
+  initializing = false,
   error = null,
   showSources = true,
   showSteps = true,
-  withModels = false,
   withAttachments = false,
 }: ChatReviewProps): React.ReactElement {
   const [messages, setMessages] = React.useState<ChatMessage[]>(
@@ -264,6 +299,15 @@ function ChatReview({
   );
   const [input, setInput] = React.useState(initialInput);
   const [model, setModel] = React.useState(modelOptions[0]?.value);
+  const [agent, setAgent] = React.useState(agentOptions[0].id);
+  const [files, setFiles] = React.useState<AttachmentInfo[]>(
+    withAttachments ? attachments : [],
+  );
+
+  // Drag a file onto the composer (or use the `+` menu) → it lands here and
+  // renders as a pill, so drag-to-attach is fully working inside <Chat>.
+  const addFiles = (list: FileList) =>
+    setFiles((current) => [...current, ...filesToAttachments(list)]);
 
   const submitMessage = React.useCallback((event?: React.FormEvent) => {
     event?.preventDefault();
@@ -292,22 +336,35 @@ function ChatReview({
           onSubmit={submitMessage}
           reload={() => setMessages(initialMessages)}
           stop={() => undefined}
+          onVoice={() => undefined}
           setInput={setInput}
           isLoading={isLoading}
+          initializing={initializing}
           error={error}
           placeholder="Ask Veryfront"
           showSources={showSources}
           showSteps={showSteps}
           showScrollButton
-          showExport
-          models={withModels ? modelOptions : undefined}
-          model={withModels ? model : undefined}
-          activeModel={withModels ? model : undefined}
+          models={modelOptions}
+          model={model}
+          activeModel={model}
           onModelChange={setModel}
-          attachments={withAttachments ? attachments : undefined}
-          onRemoveAttachment={() => undefined}
-          quickActions={quickActions}
-          onQuickAction={(action) => setInput(action.prompt ?? action.label)}
+          onAttach={addFiles}
+          onDrop={addFiles}
+          attachments={files}
+          onRemoveAttachment={(id) =>
+            setFiles((current) => current.filter((file) => file.id !== id))}
+          toolbarStart={
+            <AgentPicker
+              agents={agentOptions}
+              value={agent}
+              onValueChange={setAgent}
+            />
+          }
+          emptyState={{
+            icon: <AgentAvatar name="Veryfront Agent" className="size-16" />,
+            title: "What can I help with?",
+          }}
           suggestions={[
             "Show risky assumptions",
             "Draft a test plan",
@@ -323,6 +380,7 @@ function ChatReview({
 export const Conversation: Story = {
   tags: ["!dev"],
   render: () => <ChatReview />,
+  parameters: codeParams("\n      showSources\n      showSteps"),
 };
 
 export const Empty: Story = {
@@ -333,19 +391,31 @@ export const Empty: Story = {
       initialInput=""
       showSources={false}
       showSteps={false}
-      withModels
     />
   ),
+  parameters: codeParams(),
 };
 
 export const Loading: Story = {
   tags: ["!dev"],
   render: () => <ChatReview initialMessages={loadingMessages} isLoading />,
+  parameters: codeParams(),
 };
 
 export const Skeleton: Story = {
   tags: ["!dev"],
   render: () => <ChatReview initialMessages={[]} initialInput="" isLoading />,
+  parameters: codeParams(),
+};
+
+// App mode (`<Chat agentId>`) derives this automatically while agent metadata
+// resolves — the skeleton shows out of the box instead of flashing the idle
+// "What can I help with?" state. Here we drive it explicitly via `initializing`.
+export const Initializing: Story = {
+  name: "Initializing",
+  tags: ["!dev"],
+  render: () => <ChatReview initialMessages={[]} initialInput="" initializing />,
+  parameters: codeParams("\n      initializing"),
 };
 
 export const ErrorState: Story = {
@@ -354,19 +424,23 @@ export const ErrorState: Story = {
   render: () => (
     <ChatReview
       error={new Error("The hosted agent returned a recoverable stream error.")}
-      withModels
     />
   ),
+  parameters: codeParams(),
 };
 
 export const ToolAndSources: Story = {
   tags: ["!dev"],
   render: () => <ChatReview showSources showSteps />,
+  parameters: codeParams("\n      showSources\n      showSteps"),
 };
 
 export const ModelsAndAttachments: Story = {
   tags: ["!dev"],
   render: () => (
-    <ChatReview withModels withAttachments initialInput="Review these files" />
+    <ChatReview withAttachments initialInput="Review these files" />
+  ),
+  parameters: codeParams(
+    "\n      models={models}\n      onModelChange={chat.onModelChange}\n      onAttach={handleAttach}",
   ),
 };

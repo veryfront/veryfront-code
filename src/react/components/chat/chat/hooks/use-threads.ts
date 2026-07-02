@@ -58,7 +58,9 @@ function loadIndex(key: string): ThreadIndex {
 
 function saveIndex(key: string, index: ThreadIndex): void {
   if (!isBrowserEnvironment()) return;
-  localStorage.setItem(`${key}-index`, JSON.stringify(index));
+  try {
+    localStorage.setItem(`${key}-index`, JSON.stringify(index));
+  } catch (_) { /* expected: quota exceeded or blocked storage — skip write */ }
 }
 
 function loadThread(key: string, id: string): Thread | null {
@@ -72,7 +74,9 @@ function loadThread(key: string, id: string): Thread | null {
 
 function saveThread(key: string, thread: Thread): void {
   if (!isBrowserEnvironment()) return;
-  localStorage.setItem(`${key}-${thread.id}`, JSON.stringify(thread));
+  try {
+    localStorage.setItem(`${key}-${thread.id}`, JSON.stringify(thread));
+  } catch (_) { /* expected: quota exceeded or blocked storage — skip write */ }
 }
 
 function removeThread(key: string, id: string): void {

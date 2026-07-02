@@ -102,7 +102,7 @@ function ModelSelectorDocsPage() {
             {
               name: "label",
               type: "string",
-              description: "Display label (e.g. \"GPT-4o\")",
+              description: 'Display label (e.g. "GPT-4o")',
             },
             {
               name: "provider",
@@ -141,6 +141,22 @@ type Story = StoryObj<typeof meta>;
 
 export const Default: Story = {
   tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { ModelSelector } from "veryfront/chat";
+
+const [model, setModel] = React.useState("anthropic/claude-sonnet-4");
+
+<ModelSelector
+  variant="icon"
+  models={modelOptions}
+  value={model}
+  onChange={setModel}
+/>`,
+      },
+    },
+  },
   render: () => {
     const [model, setModel] = React.useState(modelOptions[0]?.value);
 
@@ -161,6 +177,17 @@ export const Default: Story = {
 
 export const Pill: Story = {
   tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { ModelSelector } from "veryfront/chat";
+
+const [model, setModel] = React.useState("anthropic/claude-sonnet-4");
+
+<ModelSelector models={modelOptions} value={model} onChange={setModel} />`,
+      },
+    },
+  },
   render: () => {
     const [model, setModel] = React.useState(modelOptions[0]?.value);
 
@@ -180,6 +207,20 @@ export const Pill: Story = {
 
 export const Disabled: Story = {
   tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { ModelSelector } from "veryfront/chat";
+
+<ModelSelector
+  models={modelOptions}
+  value="openai/gpt-4.1"
+  onChange={setModel}
+  disabled
+/>`,
+      },
+    },
+  },
   render: () => (
     <StoryFrame maxWidth="420px">
       <ReviewSurface label="Disabled">

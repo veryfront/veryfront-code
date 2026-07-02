@@ -73,12 +73,17 @@ const TOOL_STATUS_CONFIG: Record<
 
 /** Render tool status badge. */
 export function ToolStatusBadge(
-  { state }: { state: string },
+  { state, className }: { state: string; className?: string },
 ): React.JSX.Element {
   const config = TOOL_STATUS_CONFIG[state];
 
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--outline-border)] px-2 py-0.5 text-[11px] font-medium leading-none text-[var(--foreground)]">
+    <span
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full border border-[var(--outline-border)] px-2 py-0.5 text-[11px] font-medium leading-none text-[var(--foreground)]",
+        className,
+      )}
+    >
       {config?.icon ?? <CircleIcon className="size-3.5" />}
       {config?.label ?? state}
     </span>
@@ -181,31 +186,72 @@ function hasVisibleToolOutput(output: unknown): boolean {
  * and tools under one component — callers render `<ToolCall tool={part} />` for
  * either.
  */
+/** Props accepted by `ToolCall` (aka `ToolCallCard`). */
+export interface ToolCallProps {
+  tool: ChatToolPart | ChatDynamicToolPart;
+  className?: string;
+  /** Override the leading tool icon (card variant). */
+  icon?: React.ReactNode;
+  /**
+   * `card` (full params/result) or `compact` (single-line row). Defaults to
+   * `compact` for skill tools, `card` otherwise. This is a presentation axis —
+   * NOT a severity/type.
+   */
+  variant?: "card" | "compact";
+  /** Initial expanded state of the card (default: auto from tool state). */
+  defaultExpanded?: boolean;
+  /** Called when the card is toggled; receives the next state + event. */
+  onToggle?: (next: boolean, e: React.MouseEvent<HTMLButtonElement>) => void;
+  /** Override the compact/skill row rendering. */
+  renderSkill?: (tool: ChatToolPart | ChatDynamicToolPart) => React.ReactNode;
+}
+
 export function ToolCallCard({
   tool,
-}: {
-  tool: ChatToolPart | ChatDynamicToolPart;
-}): React.JSX.Element {
-  if (isSkillToolPart(tool)) {
-    return <SkillTool {...getSkillToolProps(tool)} />;
-  }
-
+  className,
+  icon,
+  variant,
+  defaultExpanded,
+  onToggle,
+  renderSkill,
+}: ToolCallProps): React.JSX.Element {
   const hasOutput = hasVisibleToolOutput(tool.output);
   const hasError = Boolean(tool.errorText);
   const shouldExpandByDefault = tool.state !== "output-available" ||
     hasOutput || hasError;
-  const [isExpanded, setIsExpanded] = React.useState(shouldExpandByDefault);
+  const [isExpanded, setIsExpanded] = React.useState(
+    defaultExpanded ?? shouldExpandByDefault,
+  );
   const tableOutput = hasOutput ? renderOutputAsTable(tool.output) : null;
 
+  // Compact row for skill tools (or when forced) — a presentation variant.
+  const isCompact = variant === "compact" ||
+    (variant !== "card" && isSkillToolPart(tool));
+  if (isCompact) {
+    if (renderSkill) return <>{renderSkill(tool)}</>;
+    return <SkillTool {...getSkillToolProps(tool)} />;
+  }
+
+  const handleToggle = (e: React.MouseEvent<HTMLButtonElement>) => {
+    const next = !isExpanded;
+    setIsExpanded(next);
+    onToggle?.(next, e);
+  };
+
   return (
-    <div className="not-prose mb-2 w-full overflow-hidden rounded-[var(--radius-md)] border border-[var(--outline-border)] bg-transparent p-4">
+    <div
+      className={cn(
+        "not-prose mb-2 w-full overflow-hidden rounded-[var(--radius-md)] border border-[var(--outline-border)] bg-transparent p-4",
+        className,
+      )}
+    >
       <button
         type="button"
-        onClick={() => setIsExpanded((v) => !v)}
+        onClick={handleToggle}
         className="group flex w-full items-center justify-between gap-3 text-left transition-colors hover:text-[var(--foreground)]"
       >
         <div className="flex min-w-0 items-center gap-2">
-          <WrenchIcon className="size-3.5 shrink-0 text-[var(--foreground)]" />
+          {icon ?? <WrenchIcon className="size-3.5 shrink-0 text-[var(--foreground)]" />}
           <span className="min-w-0 truncate text-sm font-medium leading-tight text-[var(--foreground)]">
             {tool.toolName}
           </span>

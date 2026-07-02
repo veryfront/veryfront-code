@@ -12,10 +12,15 @@ import type { ChatDynamicToolPart, ChatToolPart } from "#veryfront/agent/react";
 export interface SkillBadgeProps {
   tool: ChatToolPart | ChatDynamicToolPart;
   className?: string;
+  /**
+   * Override the state icon. When provided, it replaces the built-in
+   * loading/complete/error glyphs for all states.
+   */
+  icon?: React.ReactNode;
 }
 
 /** Render skill badge. */
-export function SkillBadge({ tool, className }: SkillBadgeProps): React.JSX.Element {
+export function SkillBadge({ tool, className, icon }: SkillBadgeProps): React.JSX.Element {
   const input = tool.input as Record<string, unknown> | undefined;
   const skillId = input?.skillId as string | undefined;
   const isComplete = tool.state === "output-available";
@@ -44,10 +49,18 @@ export function SkillBadge({ tool, className }: SkillBadgeProps): React.JSX.Elem
         className,
       )}
     >
-      <SparklesIcon className={cn("size-3", !isComplete && !isError && "animate-pulse")} />
+      {icon ?? (
+        <SparklesIcon
+          className={cn("size-3", !isComplete && !isError && "animate-pulse")}
+        />
+      )}
       <span>{label}</span>
-      {isComplete && <CheckCircleIcon className="size-3 text-[var(--success)]" />}
-      {isError && <XCircleIcon className="size-3 text-[var(--destructive)]" />}
+      {icon ? null : (
+        <>
+          {isComplete && <CheckCircleIcon className="size-3 text-[var(--success)]" />}
+          {isError && <XCircleIcon className="size-3 text-[var(--destructive)]" />}
+        </>
+      )}
     </span>
   );
 }

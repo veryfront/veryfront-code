@@ -1,12 +1,14 @@
 /**
- * ChatEmpty — Empty state for the chat conversation.
+ * ChatEmpty — the preset's empty state, composed from the `ChatEmptyState`
+ * primitive (`Root` + `Avatar`/icon + `Heading` + `Suggestions`/`Suggestion`)
+ * plus optional `QuickActions`. Prop-driven wrapper so `<Chat>` can render an
+ * empty state from data; drop to `ChatEmptyState.*` directly for full control.
  *
  * @module react/components/chat/composition/chat-empty
  */
 
 import * as React from "react";
-import { cn } from "../../theme.ts";
-import { ConversationEmptyState, Suggestion, Suggestions } from "../components/empty-state.tsx";
+import { ChatEmptyState } from "./chat-empty-state.tsx";
 import { type QuickAction, QuickActions } from "../components/quick-actions.tsx";
 
 /** Props accepted by chat empty. */
@@ -42,28 +44,25 @@ export const ChatEmpty = React.forwardRef<HTMLDivElement, ChatEmptyProps>(
     const showQuickActions = (quickActions?.length ?? 0) > 0;
 
     return (
-      <div
-        ref={ref}
-        className={cn("flex flex-col items-center justify-center h-full px-4", className)}
-      >
-        <div className="flex-1" />
-        <ConversationEmptyState
-          icon={icon}
-          title={title}
-          description={description}
-        />
+      <ChatEmptyState.Root ref={ref} className={className}>
+        {icon}
+        <ChatEmptyState.Heading>{title}</ChatEmptyState.Heading>
+        {description && (
+          <p className="max-w-md text-center text-sm text-[var(--foreground)]">
+            {description}
+          </p>
+        )}
         {showSuggestions && (
-          <div className="w-full max-w-2xl mt-6">
-            <Suggestions layout="grid">
-              {suggestions?.map((suggestion) => (
-                <Suggestion
-                  key={suggestion}
-                  suggestion={suggestion}
-                  onClick={onSuggestionClick}
-                />
-              ))}
-            </Suggestions>
-          </div>
+          <ChatEmptyState.Suggestions>
+            {suggestions?.map((suggestion) => (
+              <ChatEmptyState.Suggestion
+                key={suggestion}
+                onClick={() => onSuggestionClick?.(suggestion)}
+              >
+                {suggestion}
+              </ChatEmptyState.Suggestion>
+            ))}
+          </ChatEmptyState.Suggestions>
         )}
         {showQuickActions && (
           <div className="mt-4">
@@ -71,8 +70,7 @@ export const ChatEmpty = React.forwardRef<HTMLDivElement, ChatEmptyProps>(
           </div>
         )}
         {children}
-        <div className="flex-1" />
-      </div>
+      </ChatEmptyState.Root>
     );
   },
 );

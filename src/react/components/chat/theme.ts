@@ -179,8 +179,9 @@ export interface ChatTheme {
 export const defaultChatTheme: ChatTheme = {
   container: "flex flex-col h-full overflow-hidden bg-[var(--background)] text-[var(--foreground)]",
   message: {
-    user:
-      "max-w-[80%] rounded-[var(--radius-lg)] bg-[var(--chat-bubble)] px-4 py-3 text-base leading-relaxed text-[var(--chat-bubble-foreground)] shadow-sm",
+    // Plain right-aligned user turn (no bubble) — the Root handles alignment +
+    // max-width. A consumer can opt into a bubble via `theme.message.user`.
+    user: "text-[15px] leading-relaxed text-[var(--foreground)]",
     assistant: "max-w-none text-[var(--foreground)] [overflow-wrap:anywhere]",
     system: "text-[var(--faint)] text-sm mx-auto text-center py-2",
     tool:
@@ -249,6 +250,14 @@ export function mergeThemes<T>(
 
 /**
  * Utility to combine class names.
+ *
+ * NOTE: this is `clsx` only — it does NOT tailwind-merge. A `className` passed by
+ * a consumer is *appended*, not deduped, so it does not automatically beat a base
+ * utility of the same property (both end up in the class list, last-wins by
+ * CSS-source order, which is usually the base). To override a base utility from
+ * userland, use the `!` important suffix — e.g. `px-8!`, `rounded-xl!`, `size-6!`.
+ * Every cva-based primitive (Button, Card, Input, Textarea, Badge, Pill, Select,
+ * Tabs) inherits this behaviour.
  */
 export function cn(...inputs: ClassValue[]): string {
   return clsx(inputs);

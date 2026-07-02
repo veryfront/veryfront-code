@@ -8,6 +8,18 @@ type ReasoningCardProps = {
   text: string;
   isStreaming?: boolean;
   className?: string;
+  /** Overrides the chevron glyph. Rotation-on-open styling is applied to the
+   *  wrapper, so a custom icon does not need to know about open state. */
+  icon?: React.ReactNode;
+  /** Override the two labels; each defaults to the current string. */
+  labels?: { thinking?: string; thought?: string };
+  /** Controlled open state. When provided, the component is controlled and the
+   *  auto-collapse timer is disabled (the parent owns the state). */
+  open?: boolean;
+  /** Initial open value when uncontrolled. Defaults to `true`. */
+  defaultOpen?: boolean;
+  /** Called whenever the open state should change (both controlled and not). */
+  onOpenChange?: (open: boolean) => void;
 };
 
 /** Render reasoning card. */
@@ -15,18 +27,39 @@ export const ReasoningCard = React.forwardRef<
   HTMLDivElement,
   ReasoningCardProps
 >(
-  function ReasoningCard({ text, isStreaming = false, className }, ref) {
-    const [isOpen, setIsOpen] = React.useState(true);
+  function ReasoningCard(
+    {
+      text,
+      isStreaming = false,
+      className,
+      icon,
+      labels,
+      open,
+      defaultOpen = true,
+      onOpenChange,
+    },
+    ref,
+  ) {
+    const isControlled = open !== undefined;
+    const [uncontrolledOpen, setUncontrolledOpen] = React.useState(defaultOpen);
+    const isOpen = isControlled ? open : uncontrolledOpen;
     const userToggledRef = React.useRef(false);
 
     React.useEffect(() => {
+      // Parent owns state when controlled; skip the auto-collapse timer.
+      if (isControlled) return;
       if (isStreaming || !isOpen || userToggledRef.current) return;
 
-      const timer = setTimeout(() => setIsOpen(false), 1000);
+      const timer = setTimeout(() => {
+        setUncontrolledOpen(false);
+        onOpenChange?.(false);
+      }, 1000);
       return () => clearTimeout(timer);
-    }, [isStreaming, isOpen]);
+    }, [isControlled, isStreaming, isOpen, onOpenChange]);
 
-    const label = isStreaming ? <Shimmer>Thinking...</Shimmer> : <span>Thought process</span>;
+    const thinkingLabel = labels?.thinking ?? "Thinking...";
+    const thoughtLabel = labels?.thought ?? "Thought process";
+    const label = isStreaming ? <Shimmer>{thinkingLabel}</Shimmer> : <span>{thoughtLabel}</span>;
 
     return (
       <div ref={ref} className={cn("not-prose mb-3", className)}>
@@ -34,17 +67,21 @@ export const ReasoningCard = React.forwardRef<
           type="button"
           onClick={() => {
             userToggledRef.current = true;
-            setIsOpen((open) => !open);
+            const next = !isOpen;
+            if (!isControlled) setUncontrolledOpen(next);
+            onOpenChange?.(next);
           }}
           className="flex w-full items-center gap-2 rounded-sm text-sm text-[var(--foreground)] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)] focus-visible:ring-offset-0"
         >
           {label}
-          <ChevronDownIcon
+          <span
             className={cn(
-              "size-3.5 shrink-0 transition-transform duration-200",
+              "flex size-3.5 shrink-0 items-center justify-center transition-transform duration-200",
               !isOpen && "-rotate-90",
             )}
-          />
+          >
+            {icon ?? <ChevronDownIcon className="size-3.5 shrink-0" />}
+          </span>
         </button>
 
         {isOpen

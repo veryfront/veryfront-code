@@ -63,18 +63,6 @@ function GlyphSvg({
   );
 }
 
-function FigmaGlyph({ className }: { className?: string }): React.ReactElement {
-  return (
-    <GlyphSvg className={className}>
-      <path d="M5 5.5A3.5 3.5 0 0 1 8.5 2H12v7H8.5A3.5 3.5 0 0 1 5 5.5z" />
-      <path d="M12 2h3.5a3.5 3.5 0 1 1 0 7H12V2z" />
-      <path d="M12 12.5a3.5 3.5 0 1 1 7 0 3.5 3.5 0 1 1-7 0z" />
-      <path d="M5 19.5A3.5 3.5 0 0 1 8.5 16H12v3.5a3.5 3.5 0 1 1-7 0z" />
-      <path d="M5 12.5A3.5 3.5 0 0 1 8.5 9H12v7H8.5A3.5 3.5 0 0 1 5 12.5z" />
-    </GlyphSvg>
-  );
-}
-
 function SettingsGlyph(
   { className }: { className?: string },
 ): React.ReactElement {
@@ -237,12 +225,29 @@ function SettingsSubmenu({
  * ChatActions
  * -------------------------------------------------------------------------------------------------*/
 
+/** A single data-driven action row in the `<ChatActions>` menu. */
+export interface ChatActionItem {
+  /** Stable key. */
+  id?: string;
+  /** Leading icon. */
+  icon?: React.ReactNode;
+  /** Row label. */
+  label: string;
+  /** Native title/tooltip. */
+  title?: string;
+  disabled?: boolean;
+  onSelect: () => void;
+}
+
 /** Props accepted by `<ChatActions>`. */
 export interface ChatActionsProps {
-  /** Selecting "Attach Files or Photos". Row is hidden when omitted. */
+  /**
+   * Menu rows — fully data-driven, so callers own every action (no hardcoded
+   * app-specific rows like "Attach Figma"). Rows render in order.
+   */
+  actions?: ChatActionItem[];
+  /** Selecting "Attach Files or Photos" — a convenience built-in row. Hidden when omitted. */
   onAttachFiles?: () => void;
-  /** Selecting "Attach Figma File". Row is hidden when omitted. */
-  onAttachFigma?: () => void;
   /** Label for the built-in attach row. @default "Attach Files or Photos" */
   attachFilesLabel?: string;
   /** Settings submenu toggles. Submenu is hidden when omitted. */
@@ -267,8 +272,8 @@ export interface ChatActionsProps {
  * it never clips inside the composer or a Storybook iframe.
  */
 export function ChatActions({
+  actions,
   onAttachFiles,
-  onAttachFigma,
   attachFilesLabel = "Attach Files or Photos",
   settings,
   trigger,
@@ -277,7 +282,7 @@ export function ChatActions({
   onOpenChange,
   className,
 }: ChatActionsProps): React.ReactElement {
-  const hasAttach = Boolean(onAttachFiles || onAttachFigma);
+  const hasAttach = Boolean(onAttachFiles || (actions && actions.length > 0));
   return (
     <DropdownMenu
       open={open}
@@ -307,15 +312,17 @@ export function ChatActions({
             {attachFilesLabel}
           </DropdownMenuItem>
         )}
-        {onAttachFigma && (
+        {actions?.map((action, i) => (
           <DropdownMenuItem
-            onSelect={onAttachFigma}
-            title="Connect Figma file to chat"
+            key={action.id ?? `${action.label}-${i}`}
+            onSelect={action.onSelect}
+            title={action.title}
+            disabled={action.disabled}
           >
-            <FigmaGlyph />
-            Attach Figma File
+            {action.icon}
+            {action.label}
           </DropdownMenuItem>
-        )}
+        ))}
         {settings && (
           <>
             {hasAttach && <DropdownMenuSeparator className="my-2!" />}

@@ -13,7 +13,8 @@ import { ReviewSurface, StoryFrame } from "../support/StoryFrame";
 
 const importCode = `import { CodeBlock } from "veryfront/chat"`;
 
-const compositionTree = `CodeBlock  <- bordered surface: header + highlighted body
+const compositionTree =
+  `CodeBlock  <- bordered surface: header + highlighted body
   +-- header      <- language label + Copy button
   +-- CodeSurface <- shiki HTML (github-light/dark), Skeleton while loading
   (language="mermaid" -> MermaidDiagram, rendered as an SVG diagram)`;
@@ -107,12 +108,13 @@ function CodeBlockDocsPage() {
               name: "language",
               type: "string",
               description:
-                "Language id for highlighting (e.g. tsx, json). Use \"mermaid\" to render a diagram",
+                'Language id for highlighting (e.g. tsx, json). Use "mermaid" to render a diagram',
             },
             {
               name: "collapsible",
               type: "boolean",
-              description: "Render inside a collapsible shell (header stays, body toggles)",
+              description:
+                "Render inside a collapsible shell (header stays, body toggles)",
             },
             {
               name: "defaultCollapsed",
@@ -146,6 +148,24 @@ type Story = StoryObj<typeof meta>;
 
 export const TypeScript: Story = {
   tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { CodeBlock } from "veryfront/chat";
+
+<CodeBlock language="tsx" code={\`import { useState } from "react";
+
+export function Counter({ start = 0 }: { start?: number }) {
+  const [count, setCount] = useState(start);
+  return (
+    <button type="button" onClick={() => setCount((c) => c + 1)}>
+      Count: {count}
+    </button>
+  );
+}\`} />`,
+      },
+    },
+  },
   render: () => (
     <StoryFrame maxWidth="720px">
       <ReviewSurface label="TypeScript">
@@ -157,6 +177,26 @@ export const TypeScript: Story = {
 
 export const Json: Story = {
   tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { CodeBlock } from "veryfront/chat";
+
+<CodeBlock language="json" code={\`{
+  "name": "veryfront",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "react": "^19.2.4"
+  }
+}\`} />`,
+      },
+    },
+  },
   render: () => (
     <StoryFrame maxWidth="720px">
       <ReviewSurface label="JSON">
@@ -168,10 +208,29 @@ export const Json: Story = {
 
 export const Collapsible: Story = {
   tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { CodeBlock } from "veryfront/chat";
+
+<CodeBlock
+  language="tsx"
+  code={source}
+  collapsible
+  defaultCollapsed
+/>`,
+      },
+    },
+  },
   render: () => (
     <StoryFrame maxWidth="720px">
       <ReviewSurface label="Collapsible">
-        <CodeBlock language="tsx" code={tsxSample} collapsible defaultCollapsed />
+        <CodeBlock
+          language="tsx"
+          code={tsxSample}
+          collapsible
+          defaultCollapsed
+        />
       </ReviewSurface>
     </StoryFrame>
   ),
@@ -179,6 +238,20 @@ export const Collapsible: Story = {
 
 export const Mermaid: Story = {
   tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { CodeBlock } from "veryfront/chat";
+
+<CodeBlock language="mermaid" code={\`flowchart TD
+  A[Prompt] --> B{Tool call?}
+  B -- yes --> C[Run tool]
+  C --> D[Stream result]
+  B -- no --> D
+  D --> E[Render message]\`} />`,
+      },
+    },
+  },
   render: () => (
     <StoryFrame maxWidth="720px">
       <ReviewSurface label="Mermaid">

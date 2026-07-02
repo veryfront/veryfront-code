@@ -117,20 +117,30 @@ function normalizeSuggestions(value: unknown): AgentMetadataSuggestions | undefi
   };
 }
 
-/** Normalize the wire response from /api/agents/:id. */
-export function normalizeAgentMetadataResponse(value: unknown): AgentMetadata {
-  if (!isRecord(value) || !isRecord(value.agent)) {
-    throw new Error("Invalid agent metadata response");
+/**
+ * Normalize a single browser-safe agent record (the `agent` object inside the
+ * `/api/agents/:id` response, or one entry of the `/api/agents` list).
+ */
+export function normalizeAgentMetadata(value: unknown): AgentMetadata {
+  if (!isRecord(value)) {
+    throw new Error("Invalid agent metadata: agent must be an object");
   }
 
-  const agent = value.agent;
   return {
-    id: getRequiredString(agent, "id"),
-    name: getRequiredString(agent, "name"),
-    description: getNullableString(agent, "description"),
-    avatarUrl: getNullableString(agent, "avatar_url"),
-    suggestions: normalizeSuggestions(agent.suggestions),
+    id: getRequiredString(value, "id"),
+    name: getRequiredString(value, "name"),
+    description: getNullableString(value, "description"),
+    avatarUrl: getNullableString(value, "avatar_url"),
+    suggestions: normalizeSuggestions(value.suggestions),
   };
+}
+
+/** Normalize the wire response from /api/agents/:id. */
+export function normalizeAgentMetadataResponse(value: unknown): AgentMetadata {
+  if (!isRecord(value)) {
+    throw new Error("Invalid agent metadata response");
+  }
+  return normalizeAgentMetadata(value.agent);
 }
 
 /** Return prompt text suggestions that the current Chat component can render. */

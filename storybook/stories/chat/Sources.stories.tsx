@@ -124,6 +124,21 @@ type Story = StoryObj<typeof meta>;
 
 export const List: Story = {
   tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { Sources } from "veryfront/chat";
+
+<Sources
+  sources={[
+    { title: "Agent guide", url: "/docs/guides/agents", score: 0.92, snippet: "Agents accept messages, tools, and context, then emit AG-UI events." },
+    { title: "Workflow guide", url: "/docs/guides/workflows", score: 0.76, snippet: "Workflows model durable multi-step execution with explicit steps and runs." },
+  ]}
+  onSourceClick={(source, index) => open(source.url)}
+/>`,
+      },
+    },
+  },
   render: () => (
     <StoryFrame maxWidth="720px">
       <ReviewSurface label="Sources">
@@ -135,6 +150,20 @@ export const List: Story = {
 
 export const Inline: Story = {
   tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { InlineCitation } from "veryfront/chat";
+
+<p>
+  Agent runs emit AG-UI events and persist state{" "}
+  <InlineCitation index={0} source={sources[0]} />{" "}
+  while workflows keep durable step history{" "}
+  <InlineCitation index={1} source={sources[1]} />.
+</p>`,
+      },
+    },
+  },
   render: () => (
     <StoryFrame maxWidth="720px">
       <ReviewSurface label="InlineCitation">
@@ -151,6 +180,15 @@ export const Inline: Story = {
 
 export const Empty: Story = {
   tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { Sources } from "veryfront/chat";
+
+<Sources sources={[]} />`,
+      },
+    },
+  },
   render: () => (
     <StoryFrame maxWidth="720px">
       <ReviewSurface label="Empty">

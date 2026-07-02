@@ -88,6 +88,15 @@ type Story = StoryObj<typeof meta>;
 
 export const Document: Story = {
   tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { Markdown } from "veryfront/react/components/chat";
+
+<Markdown>{"## Heading\\n\\nProse with **bold**, a list, and a fenced code block."}</Markdown>`,
+      },
+    },
+  },
   render: () => (
     <StoryFrame maxWidth="760px">
       <ReviewSurface label="Markdown">

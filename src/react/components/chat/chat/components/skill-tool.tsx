@@ -51,7 +51,7 @@ export function SkillTool({
     <p className={cn(skillToolRow(), className)}>
       {isLoading
         ? <SparklesIcon className="size-3.5! shrink-0 animate-pulse" />
-        : <CheckIcon className="size-3.5! shrink-0 text-[var(--success)]" />}
+        : <CheckIcon className="size-3.5! shrink-0" />}
       {isLoading
         ? (
           <Shimmer as="span" duration={1} className="min-w-0 truncate">

@@ -179,7 +179,7 @@ describe("Storybook UI workbench", () => {
     const requiredStories = [
       {
         path: "storybook/stories/chat/Chat.stories.tsx",
-        title: "Chat/Composition/Preset",
+        title: "Chat/Components/Chat",
         imports: ['from "veryfront/chat"'],
         names: ["Chat", "modelOptions"],
       },
@@ -187,13 +187,13 @@ describe("Storybook UI workbench", () => {
         path: "storybook/stories/chat/ChatComposition.stories.tsx",
         title: "Chat/Composition/Anatomy",
         imports: ['from "veryfront/chat"'],
-        names: ["ChatRoot", "ChatMessageList", "ChatComposer", "Message"],
+        names: ["ChatRoot", "ChatMessageList", "ChatInput", "Message"],
       },
       {
         path: "storybook/stories/chat/ChatSubcomponents.stories.tsx",
         title: "Chat/Composition/Subcomponents",
         imports: ['from "veryfront/chat"'],
-        names: ["ToolCallCard", "Sources", "ReasoningCard", "MessageActions"],
+        names: ["ToolCall", "Sources", "Reasoning", "MessageActionBar"],
       },
       {
         path: "storybook/stories/chat/ChatWithSidebar.stories.tsx",
@@ -240,11 +240,11 @@ describe("Storybook UI workbench", () => {
     // until every component has a story at its target path/title exporting its
     // target name. Sub-agents take one row each and turn it green.
     const target = [
+      { file: "Chat", title: "Chat", names: ["Chat"] },
       { file: "Attachment", title: "Attachment", names: ["Attachment"] },
       { file: "Markdown", title: "Markdown", names: ["Markdown"] },
       { file: "Sources", title: "Sources", names: ["Sources"] },
       { file: "Reasoning", title: "Reasoning", names: ["Reasoning"] },
-      { file: "SkillTool", title: "SkillTool", names: ["SkillTool"] },
       { file: "ToolCall", title: "ToolCall", names: ["ToolCall"] },
       { file: "Message", title: "Message", names: ["Message"] },
       { file: "AgentCard", title: "AgentCard", names: ["AgentCard"] },
@@ -288,7 +288,7 @@ describe("Storybook UI workbench", () => {
   it("exports every target chat component from veryfront/chat (driver)", async () => {
     // The public API target. Fails until every component is exported under its
     // final name (renames landed + new components built). `\b` boundaries mean
-    // "Attachment" does NOT match "AttachmentPill", "CodeBlock" not "RichCodeBlock".
+    // "Attachment" does NOT match "Attachment", "CodeBlock" not "RichCodeBlock".
     const publicBarrel = await readText("src/chat/index.ts");
     const targetExports = [
       "Attachment",

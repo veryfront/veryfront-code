@@ -30,7 +30,7 @@
  *     <Chat.Root messages={chat.messages} input={chat.input}>
  *       <Chat.Empty title="Ask me anything" />
  *       <Chat.MessageList messages={chat.messages} />
- *       <Chat.Composer input={chat.input} onChange={chat.handleInputChange} onSubmit={chat.handleSubmit} />
+ *       <Chat.Input input={chat.input} onChange={chat.handleInputChange} onSubmit={chat.handleSubmit} />
  *     </Chat.Root>
  *   );
  * }
@@ -51,8 +51,6 @@
 export { Chat, ChatComponents, type ChatProps } from "#veryfront/react/components/chat/chat.tsx";
 
 export {
-  ChatComposer,
-  type ChatComposerProps,
   ChatEmpty,
   type ChatEmptyProps,
   ChatEmptyState,
@@ -96,11 +94,13 @@ export {
 } from "#veryfront/react/components/chat/chat.tsx";
 
 export {
+  AgentAvatar,
+  type AgentAvatarProps,
   type AttachmentInfo,
-  AttachmentPill,
-  type AttachmentPillProps,
   BranchPicker,
   type BranchPickerProps,
+  ChatMessagesSkeleton,
+  type ChatMessagesSkeletonProps,
   ChatSidebar,
   type ChatSidebarProps,
   type ChatTab,
@@ -138,8 +138,8 @@ export {
   isSkillToolPart,
   isToolPart,
   Loader,
-  MessageActions,
-  type MessageActionsProps,
+  MessageActionBar,
+  type MessageActionBarProps,
   MessageEditForm,
   type MessageEditFormProps,
   MessageFeedback,
@@ -151,12 +151,13 @@ export {
   type QuickAction,
   QuickActions,
   type QuickActionsProps,
-  ReasoningCard,
   RichCodeBlock,
   Shimmer,
   SkillBadge,
   type SkillBadgeProps,
   type Source,
+  SourcePill,
+  type SourcePillProps,
   Sources,
   type SourcesProps,
   StepIndicator,
@@ -168,11 +169,13 @@ export {
   TabSwitcher,
   type TabSwitcherProps,
   type Thread,
-  ToolCallCard,
   ToolStatusBadge,
   type UploadedFile,
   UploadsPanel,
   type UploadsPanelProps,
+  useStickToBottom,
+  type UseStickToBottomOptions,
+  type UseStickToBottomResult,
   useThreads,
   type UseThreadsOptions,
   type UseThreadsResult,
@@ -189,8 +192,8 @@ export {
 export {
   AttachmentPill as Attachment,
   type AttachmentPillProps as AttachmentProps,
-  ChatComposer as ChatInput,
-  type ChatComposerProps as ChatInputProps,
+  ChatInput,
+  type ChatInputProps,
   ReasoningCard as Reasoning,
   ToolCallCard as ToolCall,
 } from "#veryfront/react/components/chat/chat.tsx";
@@ -204,17 +207,30 @@ export {
   type AgentPickerSection,
 } from "#veryfront/react/components/chat/agent-picker.tsx";
 export {
+  agentsToPickerOptions,
+  ChatAgentPicker,
+  type ChatAgentPickerProps,
+} from "#veryfront/react/components/chat/chat-agent-picker.tsx";
+export {
+  type ChatActionItem,
   ChatActions,
   type ChatActionsProps,
   type ChatActionsSettings,
 } from "#veryfront/react/components/chat/chat-actions.tsx";
-export {
-  SkillTool,
-  type SkillToolProps,
-} from "#veryfront/react/components/chat/chat/components/skill-tool.tsx";
+// `SkillTool` retired as a standalone export — a skill tool is now a presentation
+// variant of `ToolCall` (`<ToolCall variant="compact" />`, auto-default for skill
+// parts). The row impl stays internal to `tool-ui.tsx`.
 // Shared syntax-highlight primitive (`CodeBlockProps` name is already taken by
 // the Markdown code-block props, so only the runtime `CodeBlock` is re-exported).
-export { CodeBlock } from "#veryfront/react/components/chat/ui/code-block.tsx";
+export {
+  CodeBlock,
+  CodeSurface,
+  type CodeSurfaceProps,
+  CopyButton,
+  type CopyButtonProps,
+  useClipboard,
+  type UseClipboardResult,
+} from "#veryfront/react/components/chat/ui/code-block.tsx";
 
 export { AgentCard, type AgentCardProps } from "#veryfront/react/components/chat/agent-card.tsx";
 export {
@@ -267,10 +283,18 @@ export {
   type AgentMetadataSuggestions,
   type AgentMetadataTaskSuggestion,
   getAgentPromptSuggestions,
+  normalizeAgentMetadata,
   normalizeAgentMetadataResponse,
   useAgentMetadata,
   type UseAgentMetadataResult,
 } from "#veryfront/agent/react/use-agent-metadata.ts";
+
+export {
+  normalizeAgentsListResponse,
+  useAgents,
+  type UseAgentsOptions,
+  type UseAgentsResult,
+} from "#veryfront/agent/react/use-agents.ts";
 
 export {
   buildChatStreamChunkMessageMetadata,

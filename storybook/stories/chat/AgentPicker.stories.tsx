@@ -22,7 +22,8 @@ const agents: AgentOption[] = [
 
 const importCode = `import { AgentPicker } from "veryfront/chat"`;
 
-const compositionTree = `AgentPicker  <- Pill (or input-style) trigger showing the selected agent
+const compositionTree =
+  `AgentPicker  <- Pill (or input-style) trigger showing the selected agent
   +-- Popover  <- portals via Floating so it never clips
   +-- Command  <- searchable list (search appears past 5 agents)
       +-- CommandGroup
@@ -170,6 +171,17 @@ export const Default: Story = {
       </StoryFrame>
     );
   },
+  parameters: {
+    docs: {
+      source: {
+        code: `<AgentPicker
+  agents={agents}
+  value={value}
+  onValueChange={setValue}
+/>`,
+      },
+    },
+  },
 };
 
 export const InputStyle: Story = {
@@ -188,5 +200,17 @@ export const InputStyle: Story = {
         </ReviewSurface>
       </StoryFrame>
     );
+  },
+  parameters: {
+    docs: {
+      source: {
+        code: `<AgentPicker
+  agents={agents}
+  value={value}
+  onValueChange={setValue}
+  inputStyle
+/>`,
+      },
+    },
   },
 };

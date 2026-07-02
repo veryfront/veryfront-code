@@ -8,6 +8,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "../../ui/dropdown-menu.tsx";
+import { List, ListItem, ListLabel } from "../../ui/list.tsx";
 import type { Thread } from "../hooks/use-threads.ts";
 
 /** Three-dots "more actions" glyph (not in the shared icons barrel). */
@@ -26,6 +27,16 @@ function MoreGlyph({ className }: { className?: string }): React.ReactElement {
   );
 }
 
+/**
+ * Icon overrides for {@link ChatSidebar}. Each defaults to the built-in glyph.
+ */
+export interface ChatSidebarIcons {
+  newThread?: React.ReactNode;
+  rename?: React.ReactNode;
+  delete?: React.ReactNode;
+  more?: React.ReactNode;
+}
+
 /** Props accepted by chat sidebar. */
 export interface ChatSidebarProps {
   threads: Thread[];
@@ -36,6 +47,28 @@ export interface ChatSidebarProps {
   onNewThread?: () => void;
   className?: string;
   isOpen?: boolean;
+  /**
+   * Fill the parent instead of owning a fixed width + mobile overlay chrome.
+   * Set when embedding inside a layout container (e.g. `AppShell.Sidebar`) that
+   * already provides width and the off-canvas overlay. Default `false`.
+   */
+  fill?: boolean;
+  /** Override any of the sidebar icons. */
+  icons?: ChatSidebarIcons;
+  /**
+   * Render each thread row yourself instead of the built-in {@link ThreadItem}.
+   * Receives the thread plus the per-row handlers/state the internal item uses.
+   * When omitted, rows render exactly as the default.
+   */
+  renderThreadItem?: (
+    thread: Thread,
+    opts: {
+      isActive: boolean;
+      onSelect: () => void;
+      onDelete?: () => void;
+      onRename?: (title: string) => void;
+    },
+  ) => React.ReactNode;
 }
 
 function getRelativeGroup(timestamp: number): string {
@@ -78,12 +111,14 @@ function ThreadItem({
   onSelect,
   onDelete,
   onRename,
+  icons,
 }: {
   thread: Thread;
   isActive: boolean;
   onSelect: () => void;
   onDelete: () => void;
   onRename?: (title: string) => void;
+  icons?: ChatSidebarIcons;
 }): React.ReactElement {
   const [editing, setEditing] = React.useState(false);
   const [editValue, setEditValue] = React.useState(thread.title);
@@ -110,7 +145,7 @@ function ThreadItem({
 
   if (editing) {
     return (
-      <div className="flex items-center rounded-[var(--radius-md)] bg-[var(--secondary)] px-2.5 py-1.5">
+      <div className="flex items-center rounded-[var(--radius-md)] bg-[var(--accent)] px-2.5 py-1.5">
         <input
           ref={inputRef}
           value={editValue}
@@ -127,26 +162,11 @@ function ThreadItem({
   }
 
   return (
-    <div
-      className={cn(
-        // Slimmer row (Studio conversation list): tighter padding, title-first.
-        "group/thread flex cursor-pointer items-center gap-1 rounded-[var(--radius-md)] px-2.5 py-1.5 transition-colors",
-        isActive || menuOpen
-          ? "bg-[var(--secondary)] text-[var(--foreground)]"
-          : "text-[var(--soft)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)]",
-      )}
+    <ListItem
+      title={thread.title}
+      active={isActive || menuOpen}
       onClick={onSelect}
-    >
-      <span className="min-w-0 flex-1 truncate text-[13px] leading-snug">
-        {thread.title}
-      </span>
-      <div
-        className={cn(
-          "shrink-0 transition-opacity",
-          menuOpen ? "opacity-100" : "opacity-0 group-hover/thread:opacity-100",
-        )}
-        onClick={(e) => e.stopPropagation()}
-      >
+      action={
         <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
           <DropdownMenuTrigger asChild>
             <Button
@@ -156,13 +176,13 @@ function ThreadItem({
               on="card"
               aria-label={`More actions for ${thread.title}`}
             >
-              <MoreGlyph />
+              {icons?.more ?? <MoreGlyph />}
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="min-w-[160px]">
             {onRename && (
               <DropdownMenuItem onSelect={startRename}>
-                <PencilIcon />
+                {icons?.rename ?? <PencilIcon />}
                 Rename
               </DropdownMenuItem>
             )}
@@ -170,13 +190,13 @@ function ThreadItem({
               onSelect={onDelete}
               className="text-[var(--destructive)] hover:bg-[color-mix(in_oklch,var(--destructive),transparent_92%)]"
             >
-              <TrashIcon />
+              {icons?.delete ?? <TrashIcon />}
               Delete
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-      </div>
-    </div>
+      }
+    />
   );
 }
 
@@ -190,6 +210,9 @@ export function ChatSidebar({
   onNewThread,
   className,
   isOpen = true,
+  fill = false,
+  icons,
+  renderThreadItem,
 }: ChatSidebarProps): React.ReactElement | null {
   const visibleThreads = React.useMemo(
     () => threads.filter((t) => t.messages.length > 0 || t.id === activeThreadId),
@@ -205,45 +228,66 @@ export function ChatSidebar({
   return (
     <div
       className={cn(
-        "flex flex-col h-full shrink-0 max-sm:absolute max-sm:z-20 max-sm:shadow-xl max-sm:bg-[var(--background)]",
+        "flex flex-col h-full",
+        fill
+          ? "w-full"
+          : "shrink-0 max-sm:absolute max-sm:z-20 max-sm:shadow-xl max-sm:bg-[var(--background)]",
         className,
       )}
-      style={{ width: 240 }}
+      style={fill ? undefined : { width: 240 }}
     >
       {onNewThread && (
         <div className="px-3 pt-4 pb-1">
-          <button
+          <Button
             type="button"
+            variant="secondary"
             onClick={onNewThread}
-            className="inline-flex h-[38px] w-full items-center justify-center gap-1.5 rounded-full bg-[var(--secondary)] px-4 text-sm font-normal text-[var(--foreground)] shadow-sm transition-colors hover:bg-[var(--primary)] hover:text-[var(--secondary)]"
+            className="w-full shadow-sm"
           >
-            <PlusIcon className="size-4" />
-            <span>New chat</span>
-          </button>
+            {icons?.newThread ?? <PlusIcon className="size-4" />}
+            New chat
+          </Button>
         </div>
       )}
       <div className="flex-1 overflow-y-auto px-2 pt-2 pb-3 space-y-3">
         {hasThreads
           ? Array.from(grouped.entries()).map(([label, items]) => (
-            <div key={label}>
-              <div className="px-2.5 py-1 text-[11px] font-medium uppercase tracking-wider text-[var(--faint)]">
-                {label}
-              </div>
-              <div className="space-y-0.5">
-                {items.map((thread) => (
+            <List key={label}>
+              <ListLabel>{label}</ListLabel>
+              {items.map((thread) => {
+                const isActive = thread.id === activeThreadId;
+                const onSelect = () => onSelectThread(thread.id);
+                const onDelete = () => onDeleteThread(thread.id);
+                const onRename = onRenameThread
+                  ? (title: string) => onRenameThread(thread.id, title)
+                  : undefined;
+
+                if (renderThreadItem) {
+                  return (
+                    <React.Fragment key={thread.id}>
+                      {renderThreadItem(thread, {
+                        isActive,
+                        onSelect,
+                        onDelete,
+                        onRename,
+                      })}
+                    </React.Fragment>
+                  );
+                }
+
+                return (
                   <ThreadItem
                     key={thread.id}
                     thread={thread}
-                    isActive={thread.id === activeThreadId}
-                    onSelect={() => onSelectThread(thread.id)}
-                    onDelete={() => onDeleteThread(thread.id)}
-                    onRename={onRenameThread
-                      ? (title) => onRenameThread(thread.id, title)
-                      : undefined}
+                    isActive={isActive}
+                    onSelect={onSelect}
+                    onDelete={onDelete}
+                    onRename={onRename}
+                    icons={icons}
                   />
-                ))}
-              </div>
-            </div>
+                );
+              })}
+            </List>
           ))
           : (
             <div className="flex h-full flex-col items-center justify-center px-4 text-center text-[var(--faint)]">

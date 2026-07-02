@@ -109,6 +109,7 @@ export interface ConversationScrollButtonProps {
   onClick?: () => void;
   visible?: boolean;
   className?: string;
+  icon?: React.ReactNode;
 }
 
 /** Render conversation scroll button. */
@@ -116,6 +117,7 @@ export function ConversationScrollButton({
   onClick,
   visible = true,
   className,
+  icon,
 }: ConversationScrollButtonProps): React.ReactElement | null {
   if (!visible) return null;
 
@@ -129,7 +131,7 @@ export function ConversationScrollButton({
         className,
       )}
     >
-      <ArrowDownIcon className="size-4" />
+      {icon ?? <ArrowDownIcon className="size-4" />}
     </button>
   );
 }

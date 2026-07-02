@@ -3,9 +3,10 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { handleAgUiStreamingResponse } from "#veryfront/agent/react/use-chat/streaming/index.ts";
 import type { ChatProps } from "#veryfront/react/components/chat/chat.tsx";
-import type { ChatMessage } from "./types.ts";
+import type { ChatFilePart, ChatMessage } from "./types.ts";
 import type { UseChatResult } from "./types.ts";
 import {
+  buildUserMessageParts,
   findBranchUserMessageIndex,
   isLatestRequest,
   resolveBranchKey,
@@ -74,6 +75,25 @@ describe("use-chat internal state helpers", () => {
   it("defaults to AG-UI streaming when no transport is specified", () => {
     assertEquals(resolveUseChatStreamHandler(undefined), handleAgUiStreamingResponse);
     assertEquals(resolveUseChatStreamHandler("ag-ui"), handleAgUiStreamingResponse);
+  });
+
+  it("buildUserMessageParts puts file attachments before the text", () => {
+    const file: ChatFilePart = {
+      type: "file",
+      mediaType: "image/png",
+      url: "https://cdn.example.com/a.png",
+      filename: "a.png",
+    };
+    assertEquals(
+      buildUserMessageParts("describe this", [file]),
+      [file, { type: "text", text: "describe this" }],
+      "file parts should lead, followed by the text part",
+    );
+  });
+
+  it("buildUserMessageParts returns a text-only part when there are no files", () => {
+    assertEquals(buildUserMessageParts("just text"), [{ type: "text", text: "just text" }]);
+    assertEquals(buildUserMessageParts("also text", []), [{ type: "text", text: "also text" }]);
   });
 
   it("preserves AG-UI custom data events as assistant message parts", async () => {

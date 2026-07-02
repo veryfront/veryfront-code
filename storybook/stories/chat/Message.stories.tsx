@@ -141,6 +141,18 @@ type Story = StoryObj<typeof meta>;
 
 export const RenderPair: Story = {
   tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { Message } from "veryfront/chat";
+
+<div className="space-y-4">
+  <Message message={userMessage} />
+  <Message message={assistantMessage} onReload={() => regenerate()} />
+</div>`,
+      },
+    },
+  },
   render: () => (
     <StoryFrame maxWidth="760px">
       <div className="space-y-4">
@@ -153,6 +165,22 @@ export const RenderPair: Story = {
 
 export const CompoundAssistant: Story = {
   tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { Message } from "veryfront/chat";
+
+<Message.Root message={assistantMessage} onReload={() => regenerate()}>
+  <Message.Header />
+  <Message.Content showSources showSteps />
+  <div className="mt-1.5 flex items-center gap-0.5">
+    <Message.Actions />
+    <Message.Tokens />
+  </div>
+</Message.Root>`,
+      },
+    },
+  },
   render: () => (
     <StoryFrame maxWidth="760px">
       <Message.Root message={chatMessages[1]} onReload={() => undefined}>
@@ -169,6 +197,18 @@ export const CompoundAssistant: Story = {
 
 export const CompoundUser: Story = {
   tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { Message } from "veryfront/chat";
+
+<Message.Root message={userMessage}>
+  <Message.Content />
+  <Message.Actions />
+</Message.Root>`,
+      },
+    },
+  },
   render: () => (
     <StoryFrame maxWidth="760px">
       <Message.Root message={chatMessages[0]}>
@@ -181,6 +221,15 @@ export const CompoundUser: Story = {
 
 export const Streaming: Story = {
   tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { Message } from "veryfront/chat";
+
+<Message message={assistantMessage} isStreaming />`,
+      },
+    },
+  },
   render: () => (
     <StoryFrame maxWidth="760px">
       <Message message={chatMessages[1]} isStreaming />

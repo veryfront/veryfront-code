@@ -24,7 +24,8 @@ import { ReviewSurface, StoryFrame } from "../support/StoryFrame";
 
 const importCode = `import { Alert } from "veryfront/chat/ui"`;
 
-const compositionTree = `Alert  <- soft-fill status callout (default / warning / error / success)
+const compositionTree =
+  `Alert  <- soft-fill status callout (default / warning / error / success)
   +-- AlertIcon     <- leading status glyph
   +-- AlertContent  <- message body
   +-- AlertAction   <- trailing action (button / link)`;
@@ -96,6 +97,29 @@ type Story = StoryObj<typeof meta>;
 
 export const Variants: Story = {
   tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import {
+  Alert,
+  AlertContent,
+  AlertIcon,
+} from "veryfront/chat/ui";
+import { InfoIcon } from "veryfront/chat/icons";
+
+<Alert>
+  <AlertIcon>
+    <InfoIcon className="size-4" />
+  </AlertIcon>
+  <AlertContent>Heads up — this is an informational message.</AlertContent>
+</Alert>
+
+<Alert variant="warning">…</Alert>
+<Alert variant="error">…</Alert>
+<Alert variant="success">…</Alert>`,
+      },
+    },
+  },
   render: () => (
     <StoryFrame maxWidth="560px">
       <ReviewSurface label="Alert variants">
@@ -104,7 +128,9 @@ export const Variants: Story = {
             <AlertIcon>
               <InfoIcon className="size-4" />
             </AlertIcon>
-            <AlertContent>Heads up — this is an informational message.</AlertContent>
+            <AlertContent>
+              Heads up — this is an informational message.
+            </AlertContent>
           </Alert>
           <Alert variant="warning">
             <AlertIcon>
@@ -132,6 +158,34 @@ export const Variants: Story = {
 
 export const WithAction: Story = {
   tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import {
+  Alert,
+  AlertAction,
+  AlertContent,
+  AlertIcon,
+} from "veryfront/chat/ui";
+import { XCircleIcon } from "veryfront/chat/icons";
+
+<Alert variant="error">
+  <AlertIcon>
+    <XCircleIcon className="size-4" />
+  </AlertIcon>
+  <AlertContent>Upload failed. Try again.</AlertContent>
+  <AlertAction>
+    <button
+      type="button"
+      className="rounded-md px-2 py-1 text-sm font-medium underline underline-offset-2"
+    >
+      Retry
+    </button>
+  </AlertAction>
+</Alert>`,
+      },
+    },
+  },
   render: () => (
     <StoryFrame maxWidth="560px">
       <ReviewSurface label="Alert with action">

@@ -47,6 +47,16 @@ export interface AgentPickerSection {
   agents: AgentOption[];
 }
 
+/**
+ * Icon overrides for {@link AgentPicker}. Each defaults to the built-in glyph.
+ */
+export interface AgentPickerIcons {
+  check?: React.ReactNode;
+  chevron?: React.ReactNode;
+  create?: React.ReactNode;
+  more?: React.ReactNode;
+}
+
 /** Props accepted by `<AgentPicker>`. */
 export interface AgentPickerProps {
   /** Agents shown in the default (top) group. */
@@ -71,6 +81,8 @@ export interface AgentPickerProps {
   isLoading?: boolean;
   /** Additional class names for the trigger. */
   className?: string;
+  /** Override any of the picker icons. */
+  icons?: AgentPickerIcons;
 }
 
 /** Search box appears once the combined agent count crosses this. */
@@ -128,10 +140,12 @@ function AgentRow({
   agent,
   selected,
   onSelect,
+  checkIcon,
 }: {
   agent: AgentOption;
   selected: boolean;
   onSelect: (id: string) => void;
+  checkIcon?: React.ReactNode;
 }): React.ReactElement {
   return (
     <CommandItem
@@ -147,7 +161,8 @@ function AgentRow({
         className="size-5! bg-[var(--background)]"
       />
       <span className="min-w-0 flex-1 truncate">{agent.name}</span>
-      {selected && <CheckIcon className="ml-auto opacity-70" />}
+      {selected &&
+        (checkIcon ?? <CheckIcon className="ml-auto opacity-70" />)}
     </CommandItem>
   );
 }
@@ -165,6 +180,7 @@ export function AgentPicker({
   invalid = false,
   isLoading = false,
   className,
+  icons,
 }: AgentPickerProps): React.ReactElement {
   const [open, setOpen] = React.useState(false);
   const showSearch = totalAgentCount(agents, sections) > SEARCH_THRESHOLD;
@@ -219,7 +235,7 @@ export function AgentPicker({
           />
         )}
         <span className="min-w-0 truncate">{triggerLabel}</span>
-        <ChevronDownIcon className="ml-auto size-3.5 opacity-50" />
+        {icons?.chevron ?? <ChevronDownIcon className="ml-auto size-3.5 opacity-50" />}
       </button>
     )
     : (
@@ -234,7 +250,7 @@ export function AgentPicker({
           />
         )}
         <span className="min-w-0 truncate">{triggerLabel}</span>
-        <ChevronDownIcon className="ml-auto" />
+        {icons?.chevron ?? <ChevronDownIcon className="ml-auto" />}
       </Pill>
     );
 
@@ -257,6 +273,7 @@ export function AgentPicker({
                     agent={agent}
                     selected={agent.id === value}
                     onSelect={handleSelect}
+                    checkIcon={icons?.check}
                   />
                 ))}
               </CommandGroup>
@@ -273,6 +290,7 @@ export function AgentPicker({
                     agent={agent}
                     selected={agent.id === value}
                     onSelect={handleSelect}
+                    checkIcon={icons?.check}
                   />
                 ))}
               </CommandGroup>
@@ -281,13 +299,13 @@ export function AgentPicker({
               <CommandGroup>
                 {onCreate && (
                   <CommandItem value="Create Agent" onSelect={handleCreate}>
-                    <PlusIcon />
+                    {icons?.create ?? <PlusIcon />}
                     Create Agent
                   </CommandItem>
                 )}
                 {onManage && (
                   <CommandItem value="Manage Agents" onSelect={handleManage}>
-                    <SparklesIcon />
+                    {icons?.more ?? <SparklesIcon />}
                     Manage Agents
                   </CommandItem>
                 )}

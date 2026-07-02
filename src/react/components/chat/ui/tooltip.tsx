@@ -55,10 +55,14 @@ export function Tooltip(
 
 /** Tooltip trigger. `asChild` merges onto the child element (e.g. a Button). */
 export function TooltipTrigger(
-  { children, asChild }: { children: React.ReactNode; asChild?: boolean },
+  { children, asChild, ...props }:
+    & React.HTMLAttributes<HTMLElement>
+    & { children: React.ReactNode; asChild?: boolean },
 ): React.ReactElement {
   const Comp = asChild ? Slot : "span";
-  return <Comp>{children}</Comp>;
+  // Forward native props (onClick, aria-*, data-*) to the trigger element —
+  // without this they were dropped unless `asChild` was used.
+  return <Comp {...props}>{children}</Comp>;
 }
 
 /** Which viewport edge each side would collide with, and its opposite. */
@@ -159,6 +163,12 @@ export function TooltipContent(
 
   if (!open) return null;
 
+  // Portal into the nearest chat root, not <body>: the design tokens live on
+  // `[data-vf-chat]`, so a surface under <body> resolves every `var(--…)` to
+  // nothing (transparent, wrong colors).
+  const container = anchorRef?.current?.closest<HTMLElement>("[data-vf-chat]") ??
+    document.body;
+
   return createPortal(
     <div
       ref={ref}
@@ -185,6 +195,6 @@ export function TooltipContent(
         )}
       />
     </div>,
-    document.body,
+    container,
   );
 }

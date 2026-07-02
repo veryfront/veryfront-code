@@ -1,17 +1,17 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import * as React from "react";
 import {
-  AttachmentPill,
+  Attachment,
   InferenceBadge,
   InlineCitation,
-  MessageActions,
+  MessageActionBar,
   ModelSelector,
   QuickActions,
-  ReasoningCard,
+  Reasoning,
   SkillBadge,
   Sources,
   StepIndicator,
-  ToolCallCard,
+  ToolCall,
   ToolStatusBadge,
   UploadsPanel,
 } from "veryfront/chat";
@@ -35,20 +35,20 @@ import {
 } from "../fixtures/chat";
 
 const importCode =
-  `import { ToolCallCard, Sources, ReasoningCard, MessageActions } from "veryfront/chat"`;
+  `import { ToolCall, Sources, Reasoning, MessageActionBar } from "veryfront/chat"`;
 
 const compositionTree = `Message.Content  <- composes the subcomponents per message
-  +-- ReasoningCard  <- collapsible reasoning / thinking trace
-  +-- ToolCallCard  <- tool invocation with input + output
+  +-- Reasoning  <- collapsible reasoning / thinking trace
+  +-- ToolCall  <- tool invocation with input + output
   +-- Sources  <- source pills (with InlineCitation in body text)
-  +-- MessageActions  <- copy / edit controls on hover`;
+  +-- MessageActionBar  <- copy / edit controls on hover`;
 
 function ChatSubcomponentsDocsPage() {
   return (
     <DocsPage>
       <DocsHero
         title="Composition — Subcomponents"
-        lead="The standalone pieces a message is built from — `ToolCallCard`, `Sources`, `ReasoningCard`, and `MessageActions` — plus the supporting badges and selectors."
+        lead="The standalone pieces a message is built from — `ToolCall`, `Sources`, `Reasoning`, and `MessageActionBar` — plus the supporting badges and selectors."
       />
 
       <DocsSection
@@ -68,7 +68,7 @@ function ChatSubcomponentsDocsPage() {
 
       <DocsSection title="API Reference">
         <DocsPropsTable
-          component="ToolCallCard"
+          component="ToolCall"
           description="Renders a tool invocation with parameters and results"
           props={[
             {
@@ -100,7 +100,7 @@ function ChatSubcomponentsDocsPage() {
           ]}
         />
         <DocsPropsTable
-          component="ReasoningCard"
+          component="Reasoning"
           description="Collapsible reasoning / thinking trace"
           props={[
             {
@@ -122,8 +122,8 @@ function ChatSubcomponentsDocsPage() {
           ]}
         />
         <DocsPropsTable
-          component="MessageActions"
-          description="Copy / edit controls shown on a message"
+          component="MessageActionBar"
+          description="Context-free copy / edit / regenerate bar (inside a Message, prefer Message.Actions + Message.CopyAction)"
           props={[
             {
               name: "content",
@@ -134,6 +134,16 @@ function ChatSubcomponentsDocsPage() {
               name: "onEdit",
               type: "(content: string) => void",
               description: "When provided, renders an edit button",
+            },
+            {
+              name: "icons",
+              type: "{ copy?, copied?, edit?, regenerate? }",
+              description: "Override any of the action icons",
+            },
+            {
+              name: "onCopy",
+              type: "(e, next) => void",
+              description: "Wrap the built-in copy; call next() to run it",
             },
             {
               name: "className",
@@ -169,10 +179,10 @@ export const ComponentGallery: Story = {
         <div className="mx-auto max-w-6xl space-y-4">
           <div className="vf-component-grid">
             <section className="vf-component-surface">
-              <p className="vf-component-label">ToolCallCard</p>
+              <p className="vf-component-label">ToolCall</p>
               <div className="space-y-3">
-                <ToolCallCard tool={completedToolPart} />
-                <ToolCallCard tool={erroredToolPart} />
+                <ToolCall tool={completedToolPart} />
+                <ToolCall tool={erroredToolPart} />
               </div>
             </section>
 
@@ -187,19 +197,26 @@ export const ComponentGallery: Story = {
             </section>
 
             <section className="vf-component-surface">
-              <p className="vf-component-label">ReasoningCard</p>
-              <ReasoningCard
+              <p className="vf-component-label">Reasoning</p>
+              <Reasoning
                 text="I checked the run state, the tool calls, and the user-facing copy before recommending the release path."
                 isStreaming
               />
             </section>
 
             <section className="vf-component-surface">
-              <p className="vf-component-label">MessageActions</p>
+              <p className="vf-component-label">MessageActionBar</p>
               <div className="group/msg inline-flex rounded-[var(--radius-md)] border border-[var(--outline-border)] p-2">
-                <MessageActions
+                {/* Compose demo: a swapped copy icon + a logged click that still
+                    runs the default copy — no ejecting required. */}
+                <MessageActionBar
                   content="Copy or edit this assistant answer."
                   onEdit={() => undefined}
+                  icons={{ copy: <span className="text-[13px] leading-none">✨</span> }}
+                  onCopy={(_e, next) => {
+                    console.log("copy clicked");
+                    next();
+                  }}
                 />
               </div>
             </section>
@@ -227,7 +244,7 @@ export const ComponentGallery: Story = {
               <p className="vf-component-label">Attachments</p>
               <div className="flex flex-wrap gap-2">
                 {attachments.map((attachment) => (
-                  <AttachmentPill
+                  <Attachment
                     key={attachment.id}
                     attachment={attachment}
                     onRemove={() => undefined}

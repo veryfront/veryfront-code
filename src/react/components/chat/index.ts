@@ -45,8 +45,6 @@ export { Chat, ChatComponents, type ChatProps } from "./chat.tsx";
 // Chat — Composition building blocks
 // ---------------------------------------------------------------------------
 export {
-  ChatComposer,
-  type ChatComposerProps,
   ChatEmpty,
   type ChatEmptyProps,
   ChatEmptyState,
@@ -57,6 +55,8 @@ export {
   type ChatEmptyStateSuggestionsProps,
   ChatIf,
   type ChatIfProps,
+  ChatInput,
+  type ChatInputProps,
   ChatMessageList,
   type ChatMessageListProps,
   ChatRoot,
@@ -115,7 +115,7 @@ export {
   isSkillToolPart,
   isToolPart,
   Loader,
-  MessageActions,
+  MessageActionBar,
   MessageEditForm,
   MessageFeedback,
   ModelSelector,
@@ -158,7 +158,7 @@ export type {
   FeedbackValue,
   InferenceBadgeProps,
   InlineCitationProps,
-  MessageActionsProps,
+  MessageActionBarProps,
   MessageEditFormProps,
   MessageFeedbackProps,
   ModelOption,

@@ -283,6 +283,17 @@ const PANEL_LEFT_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
   { type: "line", props: { x1: "9", y1: "3", x2: "9", y2: "21" } },
 ];
 
+const PANEL_RIGHT_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
+  { type: "rect", props: { width: "18", height: "18", x: "3", y: "3", rx: "2" } },
+  { type: "line", props: { x1: "15", y1: "3", x2: "15", y2: "21" } },
+];
+
+const MORE_HORIZONTAL_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
+  { type: "circle", props: { cx: "12", cy: "12", r: "1" } },
+  { type: "circle", props: { cx: "19", cy: "12", r: "1" } },
+  { type: "circle", props: { cx: "5", cy: "12", r: "1" } },
+];
+
 const PENCIL_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
   { type: "path", props: { d: "M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" } },
   { type: "path", props: { d: "m15 5 4 4" } },
@@ -334,6 +345,16 @@ export function TrashIcon({ className }: IconProps): React.ReactElement {
 
 export function PanelLeftIcon({ className }: IconProps): React.ReactElement {
   return renderIcon(className, PANEL_LEFT_ICON_ELEMENTS);
+}
+
+export function PanelRightIcon({ className }: IconProps): React.ReactElement {
+  return renderIcon(className, PANEL_RIGHT_ICON_ELEMENTS);
+}
+
+export function MoreHorizontalIcon(
+  { className }: IconProps,
+): React.ReactElement {
+  return renderIcon(className, MORE_HORIZONTAL_ICON_ELEMENTS);
 }
 
 export function PencilIcon({ className }: IconProps): React.ReactElement {

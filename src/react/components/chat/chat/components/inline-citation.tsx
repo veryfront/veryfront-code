@@ -8,6 +8,14 @@ export interface InlineCitationProps {
   source?: Source;
   className?: string;
   onClick?: (index: number) => void;
+  /**
+   * When provided, replaces the entire default hover-card body with the
+   * consumer's node. The positioning/visibility timing wrapper is preserved;
+   * only the card contents are replaced.
+   */
+  renderCard?: (source: Source, index: number) => React.ReactNode;
+  /** Merged onto the hover-card container. */
+  cardClassName?: string;
 }
 
 /** Render inline citation. */
@@ -16,6 +24,8 @@ export function InlineCitation({
   source,
   className,
   onClick,
+  renderCard,
+  cardClassName,
 }: InlineCitationProps): React.ReactElement {
   const [showCard, setShowCard] = React.useState(false);
   const timerRef = React.useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -61,10 +71,10 @@ export function InlineCitation({
           onMouseLeave={hide}
           className={cn(
             "inline-flex items-center justify-center",
-            "size-4 rounded-full border border-[var(--outline-border)] text-[10px] font-medium leading-none",
-            "bg-transparent text-[var(--foreground)]",
-            "hover:bg-[var(--tertiary)] transition-colors",
-            "align-super -translate-y-0.5 mx-0.5",
+            "size-[15px] rounded-full border border-[var(--outline-border)] text-[10px] font-semibold leading-none tabular-nums",
+            "bg-[var(--secondary)] text-[var(--soft)] shadow-sm",
+            "hover:border-[var(--faint)] hover:text-[var(--foreground)] transition-colors",
+            "cursor-pointer align-super -translate-y-px ml-0.5",
             className,
           )}
         >
@@ -75,75 +85,74 @@ export function InlineCitation({
       {showCard && source && (
         <div
           style={cardStyle}
-          className="w-80 animate-in fade-in duration-150"
+          className={cn("w-80 animate-in fade-in duration-150", cardClassName)}
           onMouseEnter={show}
           onMouseLeave={hide}
         >
-          <div className="rounded-lg bg-[var(--popover)] p-3.5 text-left shadow-sm">
-            {/* Title */}
-            <div className="flex items-start gap-2">
-              <span className="mt-0.5 flex size-5 flex-shrink-0 items-center justify-center rounded-full border border-[var(--outline-border)] text-[10px] font-medium text-[var(--foreground)]">
-                {index + 1}
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-[var(--foreground)] line-clamp-2">
-                  {source.title}
-                </p>
-                {source.url && (
-                  <p className="text-[10px] text-[var(--faint)] truncate mt-0.5 flex items-center gap-1">
-                    <svg
-                      className="size-2.5 shrink-0"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-                      <polyline points="15 3 21 3 21 9" />
-                      <line x1="10" y1="14" x2="21" y2="3" />
-                    </svg>
-                    {source.url}
+          {renderCard
+            ? renderCard(source, index)
+            : (
+              <div className="rounded-lg bg-[var(--popover)] p-3.5 text-left shadow-sm">
+                {/* Title + URL */}
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-[var(--foreground)] line-clamp-2">
+                    {source.title}
                   </p>
+                  {source.url && (
+                    <p className="text-[10px] text-[var(--faint)] truncate mt-1 flex items-center gap-1">
+                      <svg
+                        className="size-2.5 shrink-0"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                        <polyline points="15 3 21 3 21 9" />
+                        <line x1="10" y1="14" x2="21" y2="3" />
+                      </svg>
+                      {source.url}
+                    </p>
+                  )}
+                </div>
+
+                {/* Snippet as blockquote */}
+                {source.snippet && (
+                  <div className="mt-2.5 border-l-2 border-[var(--outline-border)] pl-3">
+                    <p className="text-xs text-[var(--foreground)] line-clamp-4 leading-relaxed italic">
+                      {source.snippet}
+                    </p>
+                  </div>
+                )}
+
+                {/* Score bar */}
+                {source.score != null && (
+                  <div className="mt-2.5 flex items-center gap-2">
+                    <span className="text-[10px] text-[var(--faint)] shrink-0">
+                      Relevance
+                    </span>
+                    <div className="flex-1 h-1 rounded-full bg-[var(--edge-medium)] overflow-hidden">
+                      <div
+                        className={cn(
+                          "h-full rounded-full transition-all",
+                          source.score >= 0.7
+                            ? "bg-emerald-500"
+                            : source.score >= 0.4
+                            ? "bg-amber-500"
+                            : "bg-neutral-400",
+                        )}
+                        style={{ width: `${Math.round(source.score * 100)}%` }}
+                      />
+                    </div>
+                    <span className="text-[10px] tabular-nums text-[var(--faint)]">
+                      {Math.round(source.score * 100)}%
+                    </span>
+                  </div>
                 )}
               </div>
-            </div>
-
-            {/* Snippet as blockquote */}
-            {source.snippet && (
-              <div className="mt-2.5 border-l-2 border-[var(--outline-border)] pl-3">
-                <p className="text-xs text-[var(--foreground)] line-clamp-4 leading-relaxed italic">
-                  {source.snippet}
-                </p>
-              </div>
             )}
-
-            {/* Score bar */}
-            {source.score != null && (
-              <div className="mt-2.5 flex items-center gap-2">
-                <span className="text-[10px] text-[var(--faint)] shrink-0">
-                  Relevance
-                </span>
-                <div className="flex-1 h-1 rounded-full bg-[var(--edge-medium)] overflow-hidden">
-                  <div
-                    className={cn(
-                      "h-full rounded-full transition-all",
-                      source.score >= 0.7
-                        ? "bg-emerald-500"
-                        : source.score >= 0.4
-                        ? "bg-amber-500"
-                        : "bg-neutral-400",
-                    )}
-                    style={{ width: `${Math.round(source.score * 100)}%` }}
-                  />
-                </div>
-                <span className="text-[10px] tabular-nums text-[var(--faint)]">
-                  {Math.round(source.score * 100)}%
-                </span>
-              </div>
-            )}
-          </div>
         </div>
       )}
     </>
