@@ -2,6 +2,7 @@ import * as React from "react";
 import { cn } from "../../theme.ts";
 import { CheckIcon, ClockIcon, FileTextIcon, RefreshCwIcon } from "../../icons/index.ts";
 import { Button } from "../../ui/button.tsx";
+import { Floating } from "../../ui/floating.tsx";
 import { Shimmer } from "./animations.tsx";
 
 /** Upload lifecycle state (shadcn-style). Drives the icon, label, and treatment. */
@@ -29,12 +30,23 @@ export interface AttachmentInfo {
   url?: string;
 }
 
+/** Icon overrides for {@link AttachmentPill}. Each defaults to its glyph. */
+export interface AttachmentPillIcons {
+  /** Override the remove (✕) glyph. */
+  remove?: React.ReactNode;
+  /** Override the retry glyph. */
+  retry?: React.ReactNode;
+}
+
 /** Props accepted by attachment pill. */
-export interface AttachmentPillProps {
+export interface AttachmentPillProps
+  extends Omit<React.HTMLAttributes<HTMLDivElement>, "onMouseEnter" | "onMouseLeave"> {
   attachment: AttachmentInfo;
   onRemove?: (id: string) => void;
   /** Retry handler — surfaces a retry button in the `error` state. */
   onRetry?: (id: string) => void;
+  /** Override the remove / retry button icons. */
+  icons?: AttachmentPillIcons;
 }
 
 const FILE_TYPE_COLORS: Record<string, string> = {
@@ -123,7 +135,11 @@ export function AttachmentPill({
   attachment,
   onRemove,
   onRetry,
+  icons,
+  className,
+  ...props
 }: AttachmentPillProps): React.ReactElement {
+  const anchorRef = React.useRef<HTMLDivElement>(null);
   const [showPreview, setShowPreview] = React.useState(false);
   const mediaType = attachment.type ?? "";
   const ext = getExtension(attachment.name) ||
@@ -135,6 +151,11 @@ export function AttachmentPill({
 
   const state = attachment.state;
   const isError = state === "error";
+  // Prefer the local object-URL `preview`; fall back to the resolved `url`
+  // (set on sent-message pills) so an uploaded image still shows a thumbnail.
+  const imageSrc = isImage ? (attachment.preview ?? attachment.url) : undefined;
+  const isBusy = state === "uploading" || state === "processing" ||
+    attachment.status === "uploading";
   const shimmerTitle = state === "uploading" || state === "processing";
   const label = getStateLabel(attachment, ext, mediaType);
   // Legacy dimming only applies to the old `status` API (new states stay solid).
@@ -164,6 +185,8 @@ export function AttachmentPill({
 
   return (
     <div
+      {...props}
+      ref={anchorRef}
       className={cn(
         "group relative flex w-[200px] items-center gap-3 rounded-[var(--radius-md)] border bg-[var(--secondary)] py-1 pl-1 pr-2 text-[var(--foreground)]",
         state === "selected"
@@ -172,19 +195,20 @@ export function AttachmentPill({
           ? "border-[var(--destructive)] bg-[color-mix(in_oklch,var(--destructive),transparent_94%)]"
           : "border-[var(--edge-medium)]",
         legacyUploading && "opacity-70",
+        className,
       )}
       onMouseEnter={() => setShowPreview(true)}
       onMouseLeave={() => setShowPreview(false)}
     >
-      {isImage && attachment.preview && !state
+      {imageSrc && !isError
         ? (
           <div className="relative size-10 shrink-0 overflow-hidden rounded-[var(--radius-sm)] bg-[var(--tertiary)]">
             <img
               alt=""
               className="size-full object-cover"
-              src={attachment.preview}
+              src={imageSrc}
             />
-            {attachment.status === "uploading" && (
+            {isBusy && (
               <div className="absolute inset-0 flex items-center justify-center rounded-[var(--radius-sm)] bg-[var(--overlay)]">
                 <span className="size-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
               </div>
@@ -233,7 +257,7 @@ export function AttachmentPill({
           aria-label={`Retry ${attachment.name}`}
           className="shrink-0"
         >
-          <RefreshCwIcon />
+          {icons?.retry ?? <RefreshCwIcon />}
         </Button>
       )}
 
@@ -247,32 +271,52 @@ export function AttachmentPill({
           aria-label={`Remove ${attachment.name}`}
           className="shrink-0 opacity-100 md:opacity-0 md:group-hover:opacity-100"
         >
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-          >
-            <line x1="18" y1="6" x2="6" y2="18" />
-            <line x1="6" y1="6" x2="18" y2="18" />
-          </svg>
+          {icons?.remove ?? (
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+            >
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          )}
         </Button>
       )}
 
-      {/* Hover preview */}
-      {showPreview && attachment.preview && (
-        <div className="absolute bottom-full left-0 mb-2 z-50 w-64 pointer-events-none">
-          <div className="rounded-lg bg-[var(--popover)] p-3 text-left shadow-sm">
-            <p className="mb-1 text-[10px] font-medium uppercase text-[var(--faint)]">
-              Preview
-            </p>
-            <p className="text-xs text-[var(--foreground)] line-clamp-4 whitespace-pre-wrap">
-              {attachment.preview}
-            </p>
-          </div>
-        </div>
-      )}
+      {/* Hover preview — routed through the shared `Floating` primitive so it
+          portals out of the composer's overflow, flips above/below, and clamps
+          to the viewport (a bare `absolute` popover rendered off-screen). Shows
+          the image for image attachments, else the text snippet in `preview`. */}
+      <Floating
+        anchorRef={anchorRef}
+        open={showPreview && Boolean(imageSrc || attachment.preview)}
+        onDismiss={() => setShowPreview(false)}
+        className="pointer-events-none z-50 w-64"
+      >
+        {imageSrc
+          ? (
+            <div className="overflow-hidden rounded-lg bg-[var(--popover)] p-1 shadow-sm">
+              <img
+                alt={attachment.name}
+                className="max-h-64 w-full rounded-md object-contain"
+                src={imageSrc}
+              />
+            </div>
+          )
+          : (
+            <div className="rounded-lg bg-[var(--popover)] p-3 text-left shadow-sm">
+              <p className="mb-1 text-[10px] font-medium uppercase text-[var(--faint)]">
+                Preview
+              </p>
+              <p className="text-xs text-[var(--foreground)] line-clamp-4 whitespace-pre-wrap">
+                {attachment.preview}
+              </p>
+            </div>
+          )}
+      </Floating>
     </div>
   );
 }

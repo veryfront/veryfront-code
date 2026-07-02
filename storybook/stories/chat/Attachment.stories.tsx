@@ -172,6 +172,19 @@ export const Ready: Story = {
       </ReviewSurface>
     </StoryFrame>
   ),
+  parameters: {
+    docs: {
+      source: {
+        code: `{attachments.map((attachment) => (
+  <Attachment
+    key={attachment.id}
+    attachment={attachment}
+    onRemove={handleRemove}
+  />
+))}`,
+      },
+    },
+  },
 };
 
 export const Uploading: Story = {
@@ -191,6 +204,21 @@ export const Uploading: Story = {
       </ReviewSurface>
     </StoryFrame>
   ),
+  parameters: {
+    docs: {
+      source: {
+        code: `<Attachment
+  attachment={{
+    id: "uploading",
+    name: "run-export.csv",
+    size: 48492,
+    type: "csv",
+    status: "uploading",
+  }}
+/>`,
+      },
+    },
+  },
 };
 
 export const WithPreview: Story = {
@@ -212,6 +240,22 @@ export const WithPreview: Story = {
       </ReviewSurface>
     </StoryFrame>
   ),
+  parameters: {
+    docs: {
+      source: {
+        code: `<Attachment
+  attachment={{
+    id: "preview",
+    name: "handoff-notes.md",
+    type: "md",
+    size: 2418,
+    preview: "Release notes: validate the agent run state...",
+  }}
+  onRemove={handleRemove}
+/>`,
+      },
+    },
+  },
 };
 
 export const States: Story = {
@@ -271,4 +315,31 @@ export const States: Story = {
       </ReviewSurface>
     </StoryFrame>
   ),
+  parameters: {
+    docs: {
+      source: {
+        code: `<>
+  <Attachment
+    attachment={{ id: "selected", name: "agent-prd.md", type: "md", size: 18432, state: "selected" }}
+    onRemove={handleRemove}
+  />
+  <Attachment
+    attachment={{ id: "uploading", name: "run-export.csv", type: "csv", state: "uploading", progress: 62 }}
+  />
+  <Attachment
+    attachment={{ id: "processing", name: "handoff-notes.md", type: "md", state: "processing" }}
+  />
+  <Attachment
+    attachment={{ id: "uploaded", name: "release-log.txt", type: "txt", size: 8102, state: "uploaded" }}
+    onRemove={handleRemove}
+  />
+  <Attachment
+    attachment={{ id: "error", name: "screenshot.png", type: "png", state: "error" }}
+    onRetry={handleRetry}
+    onRemove={handleRemove}
+  />
+</>`,
+      },
+    },
+  },
 };

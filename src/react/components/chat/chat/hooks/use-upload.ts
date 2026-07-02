@@ -17,7 +17,10 @@ import type { AttachmentInfo } from "../components/attachment-pill.tsx";
 
 /** Options for {@link useUpload}. */
 export interface UseUploadOptions {
-  /** Upload endpoint. @default "/api/uploads" */
+  /**
+   * Upload endpoint (multipart `file` → `{ url }`). When omitted, files are
+   * inlined as base64 `data:` URLs instead — no backend required (guest mode).
+   */
   api?: string;
   /** Extra headers to send with each upload request. */
   headers?: Record<string, string>;
@@ -58,7 +61,7 @@ function nextId(): string {
 
 /** Drive file uploads and expose the resulting attachment lifecycle. */
 export function useUpload(
-  { api = "/api/uploads", headers }: UseUploadOptions = {},
+  { api, headers }: UseUploadOptions = {},
 ): UseUploadResult {
   const [tracked, setTracked] = React.useState<Tracked[]>([]);
   const trackedRef = React.useRef<Tracked[]>(tracked);
@@ -73,8 +76,32 @@ export function useUpload(
     [],
   );
 
+  // No endpoint → inline the file as a base64 `data:` URL (guest mode). The
+  // data URL rides along as the `file` part's `url` so the model sees it
+  // without any backend or fetchable upload URL.
+  const startInline = React.useCallback(
+    (entry: Tracked) => {
+      const { file, info } = entry;
+      patch(info.id, { state: "uploading", progress: 0 });
+      const reader = new FileReader();
+      reader.onload = () =>
+        patch(info.id, {
+          state: "uploaded",
+          progress: 100,
+          url: typeof reader.result === "string" ? reader.result : undefined,
+        });
+      reader.onerror = () => patch(info.id, { state: "error" });
+      reader.readAsDataURL(file);
+    },
+    [patch],
+  );
+
   const start = React.useCallback(
     (entry: Tracked) => {
+      if (!api) {
+        startInline(entry);
+        return;
+      }
       const { file, info } = entry;
       const xhr = new XMLHttpRequest();
       entry.xhr = xhr;
@@ -114,7 +141,7 @@ export function useUpload(
       form.append("file", file, file.name);
       xhr.send(form);
     },
-    [api, headers, patch],
+    [api, headers, patch, startInline],
   );
 
   const upload = React.useCallback(

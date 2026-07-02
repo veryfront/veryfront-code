@@ -169,7 +169,9 @@ function buildAttachmentContextFromParts(parts: Message["parts"]): string {
       mediaType,
       ...(uploadId ? { uploadId } : {}),
       ...(uploadPath ? { path: uploadPath } : {}),
-      ...(url ? { url } : {}),
+      // Never inline a `data:` URL here — it would dump the whole base64 blob
+      // into the prompt as text. The bytes ride in the native file part below.
+      ...(url && !url.startsWith("data:") ? { url } : {}),
     }];
   });
 
@@ -204,7 +206,9 @@ function getUserFileParts(parts: Message["parts"]): TextGenerationRuntimeFilePar
 
     const mediaType = getStringPartField(part, "mediaType");
     const url = getStringPartField(part, "url");
-    if (!mediaType || !url || url.startsWith("data:")) return [];
+    // `data:` URLs (inline base64) are kept so the model receives the bytes as a
+    // native image/file part (guest / no-project attachments have no fetchable URL).
+    if (!mediaType || !url) return [];
 
     return [{
       type,
