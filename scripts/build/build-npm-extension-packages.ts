@@ -308,7 +308,7 @@ async function transpileDocumentExtractionWorker(
       await Deno.mkdir(dirname(workerDest), { recursive: true });
       await Deno.writeTextFile(
         workerDest,
-        transpiled.code.replaceAll("./kreuzberg.ts", "./kreuzberg.js"),
+        rewriteLocalTypeScriptImports(transpiled.code),
       );
     }
     console.log(
@@ -317,6 +317,22 @@ async function transpileDocumentExtractionWorker(
   } finally {
     await esbuild.stop();
   }
+}
+
+function rewriteLocalTypeScriptImports(code: string): string {
+  const rewritten = code.replaceAll(
+    /(["'])\.\/([^"']+)\.ts\1/g,
+    "$1./$2.js$1",
+  );
+
+  const leftoverLocalTypeScriptImport = /["']\.\/[^"']+\.ts["']/;
+  if (leftoverLocalTypeScriptImport.test(rewritten)) {
+    throw new Error(
+      "Transpiled extraction worker still contains a local .ts import",
+    );
+  }
+
+  return rewritten;
 }
 
 async function* walkFiles(root: string): AsyncGenerator<string> {
