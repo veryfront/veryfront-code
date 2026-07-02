@@ -128,7 +128,22 @@ export {
 } from "./components/attachment-pill.tsx";
 export { type CodeBlockProps, RichCodeBlock } from "./components/code-block.tsx";
 export { StepIndicator, type StepIndicatorProps } from "./components/step-indicator.tsx";
-export { ChatSidebar, type ChatSidebarProps } from "./components/sidebar.tsx";
+// The sub-components (`ChatSidebar.Root` / `.Item` / …) hang off the compound
+// object, so only the preset needs to be a runtime export. The rest are
+// type-only — they annotate props without widening the public runtime surface.
+export {
+  ChatSidebar,
+  type ChatSidebarComponent,
+  type ChatSidebarEmptyProps,
+  type ChatSidebarGroupProps,
+  type ChatSidebarIcons,
+  type ChatSidebarItemProps,
+  type ChatSidebarListProps,
+  type ChatSidebarNewButtonProps,
+  type ChatSidebarProps,
+  type ChatSidebarRootProps,
+  type ChatSidebarThreadItemRenderOptions,
+} from "./components/sidebar.tsx";
 export { type ChatTab, TabSwitcher, type TabSwitcherProps } from "./components/tab-switcher.tsx";
 export {
   type QuickAction,

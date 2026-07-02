@@ -34,7 +34,7 @@ function ReasoningDocsPage() {
 
       <DocsSection
         title="Complete"
-        description="Once streaming ends the card auto-collapses after a beat; clicking the toggle re-opens the rendered reasoning."
+        description="A completed or reloaded reasoning (`isStreaming` never true) mounts collapsed and static — no open-then-collapse animation. Clicking the toggle reveals the rendered reasoning. It only auto-collapses after streaming that happened live in the same session."
       >
         <DocsExampleAuto of={Complete} />
       </DocsSection>
