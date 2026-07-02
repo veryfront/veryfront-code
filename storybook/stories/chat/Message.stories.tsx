@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { Message, StandaloneMessage, StreamingMessage } from "veryfront/chat";
+import { Message } from "veryfront/chat";
 import {
   DocsCode,
   DocsComposition,
@@ -9,47 +9,44 @@ import {
   DocsPropsTable,
   DocsSection,
 } from "../../.storybook/docs";
-import { chatMessages, completedToolPart } from "../fixtures/chat";
+import { chatMessages } from "../fixtures/chat";
 import { StoryFrame } from "../support/StoryFrame";
 
-const importCode =
-  `import { Message, StandaloneMessage, StreamingMessage } from "veryfront/chat"`;
+const importCode = `import { Message } from "veryfront/chat"`;
 
-const compositionTree = `Message.Root  <- context: message, branch state
+const compositionTree = `Message  <- render it: <Message message={msg} />
+Message.Root  <- or compose it: context (message, branch state)
   +-- Message.Header  <- agent avatar + name + timestamp (assistant)
-  +-- Message.BranchPicker  <- switch between regenerated responses
   +-- Message.Content  <- markdown body, sources, reasoning steps
   +-- Message.Continuing  <- "Continuing…" shimmer while streaming
   +-- Message.Actions  <- copy / regenerate
   +-- Message.Tokens  <- token-usage popover (Model / Input / Output / Total)
-  +-- Message.BranchPicker  <- optional: switch between regenerated responses
-StandaloneMessage  <- non-compound convenience wrapper around Root
-StreamingMessage  <- live token + tool-call stream while generating`;
+  +-- Message.BranchPicker  <- optional: switch between regenerated responses`;
 
 function MessageDocsPage() {
   return (
     <DocsPage>
       <DocsHero
         title="Message"
-        lead="A single chat turn — `StandaloneMessage` for the common case, or the `Message.*` compound parts when you need to recompose the layout."
+        lead="A single chat turn. Render `<Message message={msg} />` for the default anatomy, or compose `Message.Root` + `Message.*` parts for a custom layout — like the `Chat` preset, userland decides."
       />
 
       <DocsSection
-        title="Standalone"
-        description="`StandaloneMessage` renders a user/assistant turn with role and timestamp — no composition required."
+        title="Render"
+        description="`<Message message={msg} />` renders the full turn — header, content, reasoning, tools, actions — no composition required."
       >
-        <DocsExampleAuto of={StandalonePair} />
+        <DocsExampleAuto of={RenderPair} />
       </DocsSection>
 
       <DocsSection
-        title="Compound — Assistant"
-        description="Compose `Message.Root` with the parts you need: branch picker, content with sources and steps, actions, and feedback."
+        title="Compose — Assistant"
+        description="Drop to `Message.Root` + parts to recompose the layout: content with sources and steps, actions, tokens."
       >
         <DocsExampleAuto of={CompoundAssistant} />
       </DocsSection>
 
       <DocsSection
-        title="Compound — User"
+        title="Compose — User"
         description="A minimal user turn — just content and actions."
       >
         <DocsExampleAuto of={CompoundUser} />
@@ -57,7 +54,7 @@ function MessageDocsPage() {
 
       <DocsSection
         title="Streaming"
-        description="`StreamingMessage` renders text and tool-call parts live as they arrive."
+        description="Pass `isStreaming` to surface the `Continuing…` shimmer while the turn is still generating."
       >
         <DocsExampleAuto of={Streaming} />
       </DocsSection>
@@ -72,8 +69,8 @@ function MessageDocsPage() {
 
       <DocsSection title="API Reference">
         <DocsPropsTable
-          component="StandaloneMessage"
-          description="Self-contained message turn"
+          component="Message"
+          description="Render the default turn, or compose via Message.Root"
           props={[
             {
               name: "message",
@@ -81,16 +78,21 @@ function MessageDocsPage() {
               description: "The message to render",
             },
             {
-              name: "showRole",
+              name: "isStreaming",
               type: "boolean",
               default: "false",
-              description: "Show the user / assistant role label",
+              description: "Show the 'Continuing…' shimmer while generating",
             },
             {
-              name: "showTimestamp",
-              type: "boolean",
-              default: "false",
-              description: "Show the message timestamp",
+              name: "children",
+              type: "ReactNode",
+              description:
+                "Compose your own layout; omit to render the default anatomy",
+            },
+            {
+              name: "onReload",
+              type: "() => void",
+              description: "Regenerate handler — surfaces the retry action",
             },
           ]}
         />
@@ -102,11 +104,6 @@ function MessageDocsPage() {
               name: "message",
               type: "ChatMessage",
               description: "The message to render",
-            },
-            {
-              name: "feedback",
-              type: "'positive' | 'negative' | null",
-              description: "Current feedback state",
             },
             {
               name: "onFeedback",
@@ -122,17 +119,6 @@ function MessageDocsPage() {
               name: "switchBranch",
               type: "(direction) => void",
               description: "Navigate between regenerated responses",
-            },
-          ]}
-        />
-        <DocsPropsTable
-          component="StreamingMessage"
-          description="Live message rendered from streaming parts"
-          props={[
-            {
-              name: "parts",
-              type: "MessagePart[]",
-              description: "Text and tool-call parts to render in order",
             },
           ]}
         />
@@ -153,13 +139,13 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const StandalonePair: Story = {
+export const RenderPair: Story = {
   tags: ["!dev"],
   render: () => (
     <StoryFrame maxWidth="760px">
       <div className="space-y-4">
-        <StandaloneMessage message={chatMessages[0]} showRole showTimestamp />
-        <StandaloneMessage message={chatMessages[1]} showRole showTimestamp />
+        <Message message={chatMessages[0]} />
+        <Message message={chatMessages[1]} />
       </div>
     </StoryFrame>
   ),
@@ -197,15 +183,7 @@ export const Streaming: Story = {
   tags: ["!dev"],
   render: () => (
     <StoryFrame maxWidth="760px">
-      <StreamingMessage
-        parts={[
-          {
-            type: "text",
-            text: "I am checking the run state and tool results now",
-          },
-          completedToolPart,
-        ]}
-      />
+      <Message message={chatMessages[1]} isStreaming />
     </StoryFrame>
   ),
 };

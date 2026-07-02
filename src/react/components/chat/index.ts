@@ -64,6 +64,7 @@ export {
   ErrorBanner,
   type ErrorBannerProps,
   Message,
+  type MessageProps,
   type MessageRootProps,
   ModelAvatar,
   type ModelAvatarProps,
@@ -186,13 +187,6 @@ export type {
 // ---------------------------------------------------------------------------
 export { AgentCard } from "./agent-card.tsx";
 export type { AgentCardProps } from "./agent-card.tsx";
-
-// ---------------------------------------------------------------------------
-// Message (standalone bubble component — not the chat compound)
-// ---------------------------------------------------------------------------
-export { StreamingMessage } from "./message.tsx";
-export type { MessageProps, StreamingMessageProps } from "./message.tsx";
-export { StandaloneMessage, type StandaloneMessageProps } from "./chat.tsx";
 
 // ---------------------------------------------------------------------------
 // Markdown

@@ -22,10 +22,5 @@ export { AgentAvatar, type AgentAvatarProps } from "./agent-avatar.tsx";
 export { ModelAvatar, type ModelAvatarProps } from "./model-avatar.tsx";
 export { ErrorBanner, type ErrorBannerProps } from "./error-banner.tsx";
 
-// Message compound
-export {
-  Message,
-  type MessageRootProps,
-  StandaloneMessage,
-  type StandaloneMessageProps,
-} from "./message.tsx";
+// Message — render-or-compose (`<Message />` or `Message.Root` + parts)
+export { Message, type MessageProps, type MessageRootProps } from "./message.tsx";

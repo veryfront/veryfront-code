@@ -113,11 +113,10 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       const menu = document.querySelector('[role="menu"]');
       assert(uploadAction, "Expected upload action to render");
       assert(selectAction, "Expected select action to render");
+      // The menu is now the portalled DropdownMenu primitive (escapes the
+      // composer overflow) — it renders under <body>, not inline.
       assert(menu, "Expected attachment menu to render");
-      assertEquals(
-        (menu as HTMLElement).style.minWidth,
-        "224px",
-      );
+      assertEquals(menu.parentElement, document.body);
 
       flushSync(() => {
         selectAction.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -221,8 +220,10 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       });
 
       const composer = document.querySelector("form > div");
+      // The submit control is now the shared `Button` primitive (icon-primary),
+      // labelled "Send" — no more bespoke `data-submit-button` element.
       const submitButton = document.querySelector<HTMLButtonElement>(
-        'button[data-submit-button=""]',
+        'button[aria-label="Send"]',
       );
       assert(composer, "Expected composer shell to render");
       assert(submitButton, "Expected submit button to render");
@@ -239,7 +240,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
         (composer as HTMLElement).className.includes("focus-within:border"),
         false,
       );
-      assert(submitButton.className.includes("hover:bg-[var(--secondary)]"));
+      // Studio's submit button does not scale on press.
       assertEquals(submitButton.className.includes("active:scale"), false);
       root.unmount();
     } finally {

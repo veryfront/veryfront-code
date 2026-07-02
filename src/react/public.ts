@@ -67,6 +67,7 @@ export {
   ChatRoot,
   ErrorBanner,
   Message,
+  type MessageProps,
   ModelAvatar,
 } from "./components/chat/chat.tsx";
 export type {
@@ -183,10 +184,6 @@ export type {
   UseThreadsOptions,
   UseThreadsResult,
 } from "./components/chat/chat.tsx";
-
-// Standalone message components
-export { Message as StandaloneMessage, StreamingMessage } from "./components/chat/message.tsx";
-export type { MessageProps, StreamingMessageProps } from "./components/chat/message.tsx";
 
 export { AgentCard } from "./components/chat/agent-card.tsx";
 export type { AgentCardProps } from "./components/chat/agent-card.tsx";

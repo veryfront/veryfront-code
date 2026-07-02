@@ -1,9 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import * as chatModule from "./index.ts";
 import * as chatUI from "#veryfront/react/components/chat/chat.tsx";
-import * as messageModule from "#veryfront/react/components/chat/message.tsx";
 import * as agentCardModule from "#veryfront/react/components/chat/agent-card.tsx";
 import * as errorBoundaryModule from "#veryfront/react/components/chat/error-boundary.tsx";
 import * as useChatModule from "#veryfront/agent/react/use-chat/index.ts";
@@ -64,9 +63,7 @@ const expectedRuntimeExports = [
   "Shimmer",
   "SkillBadge",
   "Sources",
-  "StandaloneMessage",
   "StepIndicator",
-  "StreamingMessage",
   "Suggestion",
   "Suggestions",
   "TabSwitcher",
@@ -143,16 +140,14 @@ describe("chat/index.ts exports", () => {
     );
   });
 
-  it("keeps standalone message aliases separate from the chat compound export", () => {
+  it("exposes a single render-or-compose Message (no StandaloneMessage/StreamingMessage)", () => {
+    // `Message` is both the default component (`<Message message={…} />`) and
+    // the compound root (`<Message.Root>…`). The old `StandaloneMessage` and
+    // `StreamingMessage` split is gone.
     assertEquals(chatModule.Message, chatUI.Message);
-    // StandaloneMessage is the Studio-anatomy wrapper (assembled from the
-    // Message.* compound parts), NOT the old monolithic `message.tsx` renderer.
-    assertEquals(chatModule.StandaloneMessage, chatUI.StandaloneMessage);
-    assertNotEquals(
-      chatModule.StandaloneMessage as unknown,
-      chatModule.Message as unknown,
-    );
-    assertEquals(chatModule.StreamingMessage, messageModule.StreamingMessage);
+    assertEquals("StandaloneMessage" in chatModule, false);
+    assertEquals("StreamingMessage" in chatModule, false);
+    assertEquals(typeof (chatModule.Message as { Root?: unknown }).Root, "object");
   });
 
   it("does not widen the barrel with react-only non-chat exports", () => {

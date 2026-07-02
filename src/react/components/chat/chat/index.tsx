@@ -178,11 +178,10 @@ export {
   ErrorBanner,
   type ErrorBannerProps,
   Message,
+  type MessageProps,
   type MessageRootProps,
   ModelAvatar,
   type ModelAvatarProps,
-  StandaloneMessage,
-  type StandaloneMessageProps,
 } from "./composition/api.tsx";
 
 // Re-exports — contexts
