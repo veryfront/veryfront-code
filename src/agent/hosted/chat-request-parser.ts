@@ -10,6 +10,7 @@ import {
   hostedChatRequestSchema,
 } from "./chat-request.ts";
 import { RuntimeAgentRunInvocationSchema } from "../runtime/agent-invocation-contract.ts";
+import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 
 /** Public API contract for hosted chat request principal. */
 export type HostedChatRequestPrincipal = {
@@ -49,6 +50,7 @@ export type ParsedHostedChatRequest = {
   runtimeOverrides: ChatRuntimeOverrides | undefined;
   durableRootRun: DurableRootRunDescriptor | undefined;
   persistLatestUserMessageBeforeDurableRun: boolean;
+  agentConfig?: RuntimeAgentMarkdownDefinition;
 };
 
 /** Options accepted by parse hosted chat request. */
@@ -108,6 +110,7 @@ async function verifyHostedChatProjectAccess(input: {
 export async function buildParsedHostedChatRequest(input: {
   chatRequest: HostedChatRequest;
   agentId?: string;
+  agentConfig?: RuntimeAgentMarkdownDefinition;
   authToken: string;
   userId: string;
   verifyProjectAccess?: ParseHostedChatRequestOptions["verifyProjectAccess"];
@@ -124,6 +127,13 @@ export async function buildParsedHostedChatRequest(input: {
   const projectId = chatContext.projectId;
   const projectSlug = chatContext.projectSlug;
   const conversationId = chatContext.conversationId;
+
+  if (input.agentConfig && input.agentId && input.agentConfig.id !== input.agentId) {
+    return createValidationErrorResponse({
+      messagePrefix: "Invalid runtime agent invocation",
+      validationMessage: "agentConfig.id must match the requested agent id",
+    });
+  }
 
   const accessError = await verifyHostedChatProjectAccess({
     projectId,
@@ -153,6 +163,7 @@ export async function buildParsedHostedChatRequest(input: {
     runtimeOverrides,
     durableRootRun,
     persistLatestUserMessageBeforeDurableRun: false,
+    ...(input.agentConfig ? { agentConfig: input.agentConfig } : {}),
   };
 }
 
@@ -215,6 +226,7 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
     userId: invocation.data.run.requestedByUserId,
     chatRequest: chatRequest.data,
     agentId: invocation.data.run.agentId,
+    agentConfig: invocation.data.agentConfig,
     verifyProjectAccess: options.verifyProjectAccess,
   });
 }
