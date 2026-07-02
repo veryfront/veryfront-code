@@ -137,7 +137,7 @@ export const ChatMessageList = React.forwardRef<
           <div
             ref={contentRef as React.Ref<HTMLDivElement>}
             className={cn(
-              "max-w-[850px] mx-auto px-4 py-6 space-y-6",
+              "max-w-[850px] mx-auto px-9 py-6 space-y-6",
               contentClassName,
             )}
           >

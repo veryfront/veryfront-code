@@ -2,7 +2,6 @@ import * as React from "react";
 import { cn } from "../../theme.ts";
 import { CheckIcon, ClockIcon, FileTextIcon, RefreshCwIcon } from "../../icons/index.ts";
 import { Button } from "../../ui/button.tsx";
-import { Floating } from "../../ui/floating.tsx";
 import { Shimmer } from "./animations.tsx";
 
 /** Upload lifecycle state (shadcn-style). Drives the icon, label, and treatment. */
@@ -39,8 +38,7 @@ export interface AttachmentPillIcons {
 }
 
 /** Props accepted by attachment pill. */
-export interface AttachmentPillProps
-  extends Omit<React.HTMLAttributes<HTMLDivElement>, "onMouseEnter" | "onMouseLeave"> {
+export interface AttachmentPillProps extends React.HTMLAttributes<HTMLDivElement> {
   attachment: AttachmentInfo;
   onRemove?: (id: string) => void;
   /** Retry handler — surfaces a retry button in the `error` state. */
@@ -139,8 +137,6 @@ export function AttachmentPill({
   className,
   ...props
 }: AttachmentPillProps): React.ReactElement {
-  const anchorRef = React.useRef<HTMLDivElement>(null);
-  const [showPreview, setShowPreview] = React.useState(false);
   const mediaType = attachment.type ?? "";
   const ext = getExtension(attachment.name) ||
     mediaType.split("/").pop()?.toLowerCase() || "";
@@ -186,7 +182,6 @@ export function AttachmentPill({
   return (
     <div
       {...props}
-      ref={anchorRef}
       className={cn(
         "group relative flex w-[200px] items-center gap-3 rounded-[var(--radius-md)] border bg-[var(--secondary)] py-1 pl-1 pr-2 text-[var(--foreground)]",
         state === "selected"
@@ -197,8 +192,6 @@ export function AttachmentPill({
         legacyUploading && "opacity-70",
         className,
       )}
-      onMouseEnter={() => setShowPreview(true)}
-      onMouseLeave={() => setShowPreview(false)}
     >
       {imageSrc && !isError
         ? (
@@ -285,38 +278,6 @@ export function AttachmentPill({
           )}
         </Button>
       )}
-
-      {/* Hover preview — routed through the shared `Floating` primitive so it
-          portals out of the composer's overflow, flips above/below, and clamps
-          to the viewport (a bare `absolute` popover rendered off-screen). Shows
-          the image for image attachments, else the text snippet in `preview`. */}
-      <Floating
-        anchorRef={anchorRef}
-        open={showPreview && Boolean(imageSrc || attachment.preview)}
-        onDismiss={() => setShowPreview(false)}
-        className="pointer-events-none z-50 w-64"
-      >
-        {imageSrc
-          ? (
-            <div className="overflow-hidden rounded-lg bg-[var(--popover)] p-1 shadow-sm">
-              <img
-                alt={attachment.name}
-                className="max-h-64 w-full rounded-md object-contain"
-                src={imageSrc}
-              />
-            </div>
-          )
-          : (
-            <div className="rounded-lg bg-[var(--popover)] p-3 text-left shadow-sm">
-              <p className="mb-1 text-[10px] font-medium uppercase text-[var(--faint)]">
-                Preview
-              </p>
-              <p className="text-xs text-[var(--foreground)] line-clamp-4 whitespace-pre-wrap">
-                {attachment.preview}
-              </p>
-            </div>
-          )}
-      </Floating>
     </div>
   );
 }

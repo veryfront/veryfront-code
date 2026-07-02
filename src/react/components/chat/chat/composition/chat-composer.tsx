@@ -488,7 +488,25 @@ const ChatInputBase = React.forwardRef<HTMLDivElement, ChatInputProps>(
     },
     ref,
   ) {
-    const { isDragActive, dragProps } = useDropZone(onDrop ?? onAttach);
+    // Return focus to the editor after attaching (menu pick or drop) so the
+    // user can keep typing without clicking back into the field.
+    const fieldContainerRef = React.useRef<HTMLDivElement>(null);
+    const focusField = React.useCallback(() => {
+      fieldContainerRef.current?.querySelector("textarea")?.focus();
+    }, []);
+    const withFocus = React.useCallback(
+      (fn: ((files: FileList) => void) | undefined) =>
+        fn
+          ? (files: FileList) => {
+            fn(files);
+            focusField();
+          }
+          : undefined,
+      [focusField],
+    );
+    const handleAttach = withFocus(onAttach);
+
+    const { isDragActive, dragProps } = useDropZone(withFocus(onDrop ?? onAttach));
     const ctxValue = useComposerValue({
       input,
       onChange,
@@ -501,7 +519,7 @@ const ChatInputBase = React.forwardRef<HTMLDivElement, ChatInputProps>(
       models,
       model,
       onModelChange,
-      onAttach,
+      onAttach: handleAttach,
       onSelectAttachment,
       attachAccept,
       attachments,
@@ -514,9 +532,9 @@ const ChatInputBase = React.forwardRef<HTMLDivElement, ChatInputProps>(
 
     return (
       <ComposerContextProvider value={ctxValue}>
-        <div ref={ref} className={cn("flex-shrink-0 pb-6 pt-2", className)}>
+        <div ref={ref} className={cn("flex-shrink-0 pb-6", className)}>
           <div className="mx-auto w-full max-w-[850px] px-4">
-            {children && (
+            {React.Children.toArray(children).length > 0 && (
               <div className="flex flex-wrap items-center gap-1.5 pb-3">
                 {children}
               </div>
@@ -540,8 +558,9 @@ const ChatInputBase = React.forwardRef<HTMLDivElement, ChatInputProps>(
             >
               <div
                 {...dragProps}
+                ref={fieldContainerRef}
                 className={cn(
-                  "relative overflow-hidden rounded-[var(--radius-lg)] border border-transparent bg-[var(--secondary)] px-3 pt-2 pb-2 shadow-sm transition-all md:px-4 md:pt-3 md:pb-3",
+                  "relative overflow-hidden rounded-[var(--radius-lg)] border border-transparent bg-[var(--secondary)] px-3 py-2 shadow-sm transition-all md:px-4 md:py-3",
                   isDragActive && "border-dashed border-[var(--edge-medium)]",
                 )}
               >
