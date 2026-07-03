@@ -21,8 +21,6 @@ export { vectorStore } from "./vector-store.ts";
 export { ragStore } from "./rag-store.ts";
 export { createUploadHandler } from "./upload-handler.ts";
 export { loadUpload } from "./upload-loader.ts";
-export { useUploads } from "./react/use-uploads.ts";
-export type { UseUploadsOptions, UseUploadsResult } from "./react/use-uploads.ts";
 export {
   clearEmbeddingProviders,
   registerEmbeddingProvider,

@@ -21,7 +21,6 @@ Primary source areas:
 - [`src/provider/veryfront-cloud/`](../../src/provider/veryfront-cloud/)
 - [`src/agent/runtime/model-resolution.ts`](../../src/agent/runtime/model-resolution.ts)
 - [`src/embedding/`](../../src/embedding/)
-- [`src/embedding/react/`](../../src/embedding/react/)
 - [`src/embedding/veryfront-cloud/`](../../src/embedding/veryfront-cloud/)
 - [`src/embedding/model-resolution.ts`](../../src/embedding/model-resolution.ts)
 - [`src/provider/local/local-embedding-engine.ts`](../../src/provider/local/local-embedding-engine.ts)

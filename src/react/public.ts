@@ -266,9 +266,3 @@ export type {
   UseVoiceInputOptions,
   UseVoiceInputResult,
 } from "#veryfront/agent/react/use-voice-input.ts";
-
-// ---------------------------------------------------------------------------
-// Uploads (veryfront/embedding)
-// ---------------------------------------------------------------------------
-export { useUploads } from "#veryfront/embedding/react/index.ts";
-export type { UseUploadsOptions, UseUploadsResult } from "#veryfront/embedding/react/index.ts";
