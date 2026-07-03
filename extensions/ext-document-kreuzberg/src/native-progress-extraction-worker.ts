@@ -179,7 +179,11 @@ async function extractPptxBySlide(buffer: ArrayBuffer, mimeType: string): Promis
 
   if (!slidePaths.length) {
     const { extractBytes } = await loadKreuzbergNative();
-    const result = await extractBytes(new Uint8Array(buffer), mimeType);
+    const result = await extractBytes(
+      new Uint8Array(buffer),
+      mimeType,
+      extractionConfigForMimeType(mimeType),
+    );
     postProgress({ unit: "file", current: 1, total: 1, characters: result.content.length });
     return result.content;
   }
@@ -203,7 +207,11 @@ async function extractPptxBySlide(buffer: ArrayBuffer, mimeType: string): Promis
 
 async function extractWholeFile(buffer: ArrayBuffer, mimeType: string): Promise<string> {
   const { extractBytes } = await loadKreuzbergNative();
-  const result = await extractBytes(new Uint8Array(buffer), mimeType);
+  const result = await extractBytes(
+    new Uint8Array(buffer),
+    mimeType,
+    extractionConfigForMimeType(mimeType),
+  );
   postProgress({ unit: "file", current: 1, total: 1, characters: result.content.length });
   return result.content;
 }

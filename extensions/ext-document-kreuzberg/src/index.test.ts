@@ -16,6 +16,7 @@ import factory, {
   KreuzbergDocumentExtractor,
   type KreuzbergDocumentExtractorDeps,
 } from "./index.ts";
+import { extractionConfigForMimeType } from "./extraction-config.ts";
 
 function silentLogger(): ExtensionLogger {
   return {
@@ -148,6 +149,20 @@ describe("ext-document-kreuzberg extension", () => {
     assertEquals(EXTRACTION_TIMEOUT_MS, 10 * 60_000);
   });
 
+  it("requests markdown extraction for rich document types", () => {
+    assertEquals(extractionConfigForMimeType(PPTX_MIME_TYPE), { outputFormat: "markdown" });
+    assertEquals(extractionConfigForMimeType("application/pdf"), {
+      outputFormat: "markdown",
+      images: { extractImages: false },
+      pdfOptions: {
+        extractImages: false,
+        extractMetadata: false,
+        extractAnnotations: false,
+        hierarchy: { enabled: false, includeBbox: false },
+      },
+    });
+  });
+
   it("uses native extraction for PDFs in Deno before falling back to the WASM worker", async () => {
     const calls: Array<{ bytes: string; mimeType: string; config: unknown }> = [];
     const deps: KreuzbergDocumentExtractorDeps = {
@@ -172,6 +187,7 @@ describe("ext-document-kreuzberg extension", () => {
       bytes: "%PDF-1.4\n",
       mimeType: "application/pdf",
       config: {
+        outputFormat: "markdown",
         images: { extractImages: false },
         pdfOptions: {
           extractImages: false,
@@ -280,6 +296,7 @@ describe("ext-document-kreuzberg extension", () => {
       bytes: "%PDF-1.4\n",
       mimeType: "application/pdf",
       config: {
+        outputFormat: "markdown",
         images: { extractImages: false },
         pdfOptions: {
           extractImages: false,
