@@ -1184,6 +1184,44 @@ describe("runKnowledgeParser", () => {
     }
   });
 
+  it("preserves markdown returned by rich document extraction without inferring headings", async () => {
+    const tempDir = await Deno.makeTempDir({ prefix: "veryfront-knowledge-parser-headings-" });
+    const filePath = join(tempDir, "manual.pdf");
+    const outputDir = join(tempDir, "knowledge-output");
+
+    try {
+      await Deno.writeTextFile(filePath, "stub pdf bytes");
+
+      const result = await runKnowledgeParser(
+        {
+          filePath,
+          outputDir,
+          slug: "manual",
+          sourceReference: "uploads/manuals/manual.pdf",
+        },
+        {
+          extractDocumentText: () =>
+            Promise.resolve([
+              "## Extracted Markdown Heading",
+              "Extractor body text.",
+              "1\u2002Sicherheit",
+              "1.1\u2002Allgemeine Hinweise",
+            ].join("\n")),
+        },
+      );
+
+      const markdown = await Deno.readTextFile(result.sandbox_output_path);
+      assertStringIncludes(markdown, "\n## Extracted Markdown Heading\n");
+      assertStringIncludes(markdown, "\nExtractor body text.\n");
+      assertStringIncludes(markdown, "\n1\u2002Sicherheit\n");
+      assertStringIncludes(markdown, "\n1.1\u2002Allgemeine Hinweise\n");
+      assertEquals(markdown.includes("\n## 1\u2002Sicherheit\n"), false);
+      assertEquals(markdown.includes("\n### 1.1\u2002Allgemeine Hinweise\n"), false);
+    } finally {
+      await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
   it("forwards real extraction progress without changing the single markdown output contract", async () => {
     const tempDir = await Deno.makeTempDir({ prefix: "veryfront-knowledge-parser-progress-" });
     const filePath = join(tempDir, "manual.pdf");
