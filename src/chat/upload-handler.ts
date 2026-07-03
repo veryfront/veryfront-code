@@ -1,5 +1,5 @@
 /**
- * Chat upload handler — the server side of `<Chat>`'s batteries-included
+ * Chat upload handler: the server side of `<Chat>`'s batteries-included
  * attachments. Mount it at `app/api/uploads/route.ts` (the same endpoint the
  * composer POSTs to) and files "just work": stored on the local disk in dev,
  * on Veryfront Cloud (or a `BlobStorage` you pass) once deployed.
@@ -7,12 +7,18 @@
  * ```ts
  * // app/api/uploads/route.ts
  * import { createChatUploadHandler } from "veryfront/chat/uploads";
- * export const { POST, GET, DELETE } = createChatUploadHandler();
+ *
+ * function authorize(request: Request) {
+ *   const token = Deno.env.get("UPLOAD_TOKEN");
+ *   return Boolean(token && request.headers.get("authorization") === `Bearer ${token}`);
+ * }
+ *
+ * export const { POST, GET, DELETE } = createChatUploadHandler({ authorize });
  * ```
  *
  * `POST` stores the multipart `file` field and returns `{ id, url, name,
  * mediaType, size }`. The composer sends that `url` as a `file` message part,
- * which the runtime fetches — so the URL must be reachable by the runtime
+ * which the runtime fetches, so the URL must be reachable by the runtime
  * (true for local dev, where `GET` streams the file back from the same origin).
  *
  * @module chat/upload-handler
@@ -23,11 +29,9 @@ import { VeryfrontCloudBlobStorage } from "#veryfront/workflow/blob/veryfront-cl
 import type { BlobRef, BlobStorage } from "#veryfront/workflow/blob/types.ts";
 import { isVeryfrontCloudEnabled } from "#veryfront/platform/cloud/resolver.ts";
 import { isProduction } from "#veryfront/platform/environment.ts";
-import { serverLogger } from "#veryfront/utils";
+import { CONFIG_INVALID } from "#veryfront/errors";
 
-const logger = serverLogger.component?.("chat-upload-handler") ?? serverLogger;
-
-/** 25 MB default cap — attachments are references, not bulk transfer. */
+/** 25 MB default cap. Attachments are references, not bulk transfer. */
 const DEFAULT_MAX_FILE_SIZE = 25 * 1024 * 1024;
 const MAX_FILE_NAME_LENGTH = 200;
 /** Ids are storage-issued UUIDs; this guards the `GET ?id=` path against traversal. */
@@ -36,30 +40,24 @@ const CLOUD_PREFIX = ".veryfront/chat-uploads/";
 
 const FileCtor: typeof File | undefined = globalThis.File;
 
-/** Configuration for {@link createChatUploadHandler}. All fields optional. */
+/** Configuration for {@link createChatUploadHandler}. */
 export interface ChatUploadHandlerConfig {
   /** Max accepted file size in bytes. @default 25 MB */
   maxFileSize?: number;
   /** Storage backend. Defaults to local disk in dev, Veryfront Cloud when deployed. */
   storage?: BlobStorage;
   /**
-   * Gate every request — return `false`/a `Response` to reject. Omit for an
-   * open endpoint (logs a warning); fine in dev, wire auth before deploying.
+   * Gate every request. Return `false` or a `Response` to reject.
+   * Required unless `allowUnauthenticated` is explicitly set.
    */
   authorize?: (
     request: Request,
   ) => boolean | Response | void | Promise<boolean | Response | void>;
-}
-
-let openEndpointWarned = false;
-
-function warnOpenEndpoint(): void {
-  if (openEndpointWarned) return;
-  openEndpointWarned = true;
-  logger.warn(
-    "createChatUploadHandler mounted without `authorize` — the upload endpoint " +
-      "is open. Pass `authorize` to protect it before deploying.",
-  );
+  /**
+   * Allow POST, GET, and DELETE without an authorization callback.
+   * Use this only for local prototypes or deliberately public upload routes.
+   */
+  allowUnauthenticated?: boolean;
 }
 
 /** Strip path separators, HTML-significant and control chars from a filename. */
@@ -76,7 +74,7 @@ function sanitizeFileName(raw: string): string {
 
 function resolveStorage(config: ChatUploadHandlerConfig): BlobStorage {
   if (config.storage) return config.storage;
-  // Cloud storage only when actually deployed — in local dev the cloud bootstrap
+  // Cloud storage only when actually deployed. In local dev the cloud bootstrap
   // is present (you're logged in) but the project isn't, so default to disk.
   if (isProduction() && isVeryfrontCloudEnabled()) {
     return new VeryfrontCloudBlobStorage({ prefix: CLOUD_PREFIX });
@@ -104,8 +102,8 @@ async function reject(
 
 /**
  * Build `{ POST, GET, DELETE }` route handlers for chat attachments.
- * Auto-selects local disk storage in dev and Veryfront Cloud once deployed (or
- * the `storage` you provide). `DELETE ?id=` removes the file from storage.
+ * Auto-selects local disk storage in dev and Veryfront Cloud once deployed, or
+ * the `storage` you provide. `DELETE ?id=` removes the file from storage.
  */
 export function createChatUploadHandler(
   config: ChatUploadHandlerConfig = {},
@@ -115,7 +113,13 @@ export function createChatUploadHandler(
   DELETE: (request: Request) => Promise<Response>;
 } {
   const maxFileSize = config.maxFileSize ?? DEFAULT_MAX_FILE_SIZE;
-  if (!config.authorize) warnOpenEndpoint();
+  if (!config.authorize && config.allowUnauthenticated !== true) {
+    throw CONFIG_INVALID.create({
+      message: "createChatUploadHandler requires `authorize` or `allowUnauthenticated: true`.",
+      detail:
+        "Pass authorize to protect upload requests, or set allowUnauthenticated: true for a deliberately public endpoint.",
+    });
+  }
   const storage = resolveStorage(config);
 
   async function POST(request: Request): Promise<Response> {

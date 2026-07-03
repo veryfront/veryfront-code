@@ -389,6 +389,13 @@ export interface ComposerStateProps {
 
 /** Build the ComposerContext value from composer state props. */
 function useComposerValue(p: ComposerStateProps): ComposerContextValue {
+  const hasResolvedAttachment = p.attachments?.some((attachment) =>
+    Boolean(attachment.url) &&
+    attachment.state !== "uploading" &&
+    attachment.state !== "processing" &&
+    attachment.state !== "error"
+  ) ?? false;
+
   return React.useMemo<ComposerContextValue>(() => ({
     input: p.input,
     setInput: () => {},
@@ -400,7 +407,7 @@ function useComposerValue(p: ComposerStateProps): ComposerContextValue {
     attachAccept: p.attachAccept,
     onSubmit: (e?: React.FormEvent) => p.onSubmit?.(e),
     isLoading: p.isLoading ?? false,
-    canSubmit: p.input.trim().length > 0,
+    canSubmit: p.input.trim().length > 0 || hasResolvedAttachment,
     onStop: p.stop,
     onVoice: p.onVoice,
     isListening: p.isListening ?? false,
@@ -418,6 +425,7 @@ function useComposerValue(p: ComposerStateProps): ComposerContextValue {
     p.attachAccept,
     p.onSubmit,
     p.isLoading,
+    hasResolvedAttachment,
     p.stop,
     p.onVoice,
     p.isListening,

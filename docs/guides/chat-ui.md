@@ -88,17 +88,31 @@ Pass props to enable common chat features:
 />;
 ```
 
-For attachments, keep upload handling in your app:
+For durable attachments, mount the upload handler behind your app's auth and
+point `Chat` at that route:
+
+```ts
+// app/api/uploads/route.ts
+import { createChatUploadHandler } from "veryfront/chat/uploads";
+
+function authorize(request: Request) {
+  const token = Deno.env.get("UPLOAD_TOKEN");
+  return Boolean(token && request.headers.get("authorization") === `Bearer ${token}`);
+}
+
+export const { POST, GET, DELETE } = createChatUploadHandler({ authorize });
+```
 
 ```tsx
 <Chat
   {...chat}
-  onAttach={(files) => uploadFiles(files)}
+  uploadApi="/api/uploads"
   attachAccept=".pdf,.docx,.txt"
-  attachments={uploadedFiles}
-  onRemoveAttachment={(id) => removeFile(id)}
 />;
 ```
+
+For local prototypes or intentionally public upload routes, pass
+`allowUnauthenticated: true` explicitly.
 
 ## Compose a custom layout
 

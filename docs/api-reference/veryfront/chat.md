@@ -646,7 +646,7 @@ import { buildDataFileAnnotation, isImageFile, isTextPreviewFile } from "veryfro
 
 ### `veryfront/chat/uploads`
 
-Chat upload handler - the server side of `<Chat>`'s batteries-included attachments. Mount it at `app/api/uploads/route.ts` (the same endpoint the composer POSTs to) and files "just work": stored on the local disk in dev, on Veryfront Cloud (or a `BlobStorage` you pass) once deployed. ```ts // app/api/uploads/route.ts import { createChatUploadHandler } from "veryfront/chat/uploads"; export const { POST, GET, DELETE } = createChatUploadHandler(); ``` `POST` stores the multipart `file` field and returns `{ id, url, name, mediaType, size }`. The composer sends that `url` as a `file` message part, which the runtime fetches - so the URL must be reachable by the runtime (true for local dev, where `GET` streams the file back from the same origin).
+Chat upload handler: the server side of `<Chat>`'s batteries-included attachments. Mount it at `app/api/uploads/route.ts` (the same endpoint the composer POSTs to) and files work with local disk in dev, Veryfront Cloud once deployed, or a `BlobStorage` you pass. The handler requires `authorize` unless you explicitly pass `allowUnauthenticated: true`. ```ts // app/api/uploads/route.ts import { createChatUploadHandler } from "veryfront/chat/uploads"; function authorize(request: Request) { const token = Deno.env.get("UPLOAD_TOKEN"); return Boolean(token && request.headers.get("authorization") === `Bearer ${token}`); } export const { POST, GET, DELETE } = createChatUploadHandler({ authorize }); ``` `POST` stores the multipart `file` field and returns `{ id, url, name, mediaType, size }`. The composer sends that `url` as a `file` message part, which the runtime fetches, so the URL must be reachable by the runtime (true for local dev, where `GET` streams the file back from the same origin).
 
 ```ts
 import { createChatUploadHandler } from "veryfront/chat/uploads";
@@ -656,10 +656,10 @@ import { createChatUploadHandler } from "veryfront/chat/uploads";
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `createChatUploadHandler` | Build `{ POST, GET, DELETE }` route handlers for chat attachments. Auto-selects local disk storage in dev and Veryfront Cloud once deployed (or the `storage` you provide). `DELETE ?id=` removes the file from storage. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/upload-handler.ts#L103) |
+| `createChatUploadHandler` | Build `{ POST, GET, DELETE }` route handlers for chat attachments. Auto-selects local disk storage in dev and Veryfront Cloud once deployed, or the `storage` you provide. `DELETE ?id=` removes the file from storage. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/upload-handler.ts#L108) |
 
 #### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `ChatUploadHandlerConfig` | Configuration for {@link createChatUploadHandler}. All fields optional. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/upload-handler.ts#L40) |
+| `ChatUploadHandlerConfig` | Configuration for {@link createChatUploadHandler}. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/upload-handler.ts#L43) |

@@ -15,6 +15,34 @@ const txt = (body: string, name = "note.txt", type = "text/plain") =>
   new File([body], name, { type });
 
 describe("chat/upload-handler", () => {
+  it("requires explicit unauthenticated mode when authorize is omitted", () =>
+    withTempDir((dir) => {
+      assert(
+        (() => {
+          try {
+            createChatUploadHandler({ storage: new LocalBlobStorage(dir) });
+            return false;
+          } catch (error) {
+            return error instanceof Error &&
+              error.message.includes("requires `authorize`") &&
+              error.message.includes("allowUnauthenticated");
+          }
+        })(),
+        "createChatUploadHandler should reject accidental open endpoints",
+      );
+    }));
+
+  it("allows unauthenticated handlers only when explicitly requested", () =>
+    withTempDir(async (dir) => {
+      const { POST } = createChatUploadHandler({
+        storage: new LocalBlobStorage(dir),
+        allowUnauthenticated: true,
+      });
+
+      const res = await POST(postFile(txt("hello")));
+      assertEquals(res.status, 200, "explicit unauthenticated mode should still work");
+    }));
+
   describe("POST", () => {
     it("stores a file and returns id, url, name, mediaType, and size", () =>
       withTempDir(async (dir) => {

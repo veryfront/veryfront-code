@@ -197,6 +197,55 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
     }
   });
 
+  it("enables send for a resolved attachment without text", () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { url: "https://example.com/" },
+    );
+    const restore = installDomGlobals(dom);
+    let submitCalls = 0;
+
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement, "Expected root element to exist");
+
+      const root = createRoot(rootElement);
+      flushSync(() => {
+        root.render(
+          <ChatInput
+            input=""
+            onChange={() => {}}
+            onSubmit={() => {
+              submitCalls += 1;
+            }}
+            attachments={[{
+              id: "file-1",
+              name: "brief.pdf",
+              state: "uploaded",
+              type: "application/pdf",
+              url: "https://example.com/brief.pdf",
+            }]}
+          />,
+        );
+      });
+
+      const submitButton = document.querySelector<HTMLButtonElement>(
+        'button[aria-label="Send"]',
+      );
+      assert(submitButton, "Expected submit button to render for attachment-only input");
+      assertEquals(submitButton.disabled, false, "resolved attachments should be submittable");
+
+      flushSync(() => {
+        submitButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+
+      assertEquals(submitCalls, 1, "attachment-only send should submit");
+      root.unmount();
+    } finally {
+      restore();
+    }
+  });
+
   it("uses the copied Studio prompt shell and non-scaling primary submit button", () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
