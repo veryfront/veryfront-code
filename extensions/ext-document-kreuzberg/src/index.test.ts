@@ -144,8 +144,8 @@ describe("ext-document-kreuzberg extension", () => {
     assertEquals(typeof extractor.extractInWorker, "function");
   });
 
-  it("uses a two minute timeout for fallback worker extraction", () => {
-    assertEquals(EXTRACTION_TIMEOUT_MS, 120_000);
+  it("uses a ten-minute timeout for fallback worker extraction", () => {
+    assertEquals(EXTRACTION_TIMEOUT_MS, 10 * 60_000);
   });
 
   it("uses native extraction for PDFs in Deno before falling back to the WASM worker", async () => {

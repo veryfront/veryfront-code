@@ -18,10 +18,10 @@ import { isMissingPackageError, loadKreuzberg, loadKreuzbergNative } from "./kre
 import { extractionConfigForMimeType } from "./extraction-config.ts";
 import { isDeno } from "./runtime.ts";
 
-/** Maximum time to wait for fallback worker extraction before aborting. */
-export const EXTRACTION_TIMEOUT_MS = 120_000;
 export const NATIVE_PROGRESS_IDLE_TIMEOUT_MS = 120_000;
 export const NATIVE_PROGRESS_HARD_TIMEOUT_MS = 10 * 60_000;
+/** Maximum time to wait for fallback worker extraction before aborting. */
+export const EXTRACTION_TIMEOUT_MS = NATIVE_PROGRESS_HARD_TIMEOUT_MS;
 
 function extractInWorkerDeno(
   buffer: ArrayBuffer,
