@@ -46,6 +46,11 @@ export interface AttachmentPillProps extends React.HTMLAttributes<HTMLDivElement
   onRetry?: (id: string) => void;
   /** Override the remove / retry button icons. */
   icons?: AttachmentPillIcons;
+  /**
+   * Draw the outline + surrounding box. `false` gives a flat, borderless row
+   * (e.g. `AttachmentsPanel`, where the pills are a plain list). @default true
+   */
+  bordered?: boolean;
   /** Compose your own pill; when omitted, the default anatomy is rendered. */
   children?: React.ReactNode;
 }
@@ -203,6 +208,7 @@ const AttachmentPillRoot = React.forwardRef<
   onRemove,
   onRetry,
   icons,
+  bordered = true,
   className,
   children,
   ...props
@@ -276,12 +282,13 @@ const AttachmentPillRoot = React.forwardRef<
         className={cn(
           // No width here on purpose — width is the container's decision
           // (composer uses a fixed chip, AttachmentsPanel fills the row).
-          "group relative flex items-center gap-3 rounded-[var(--radius-md)] border bg-[var(--secondary)] py-1 pl-1 pr-2 text-[var(--foreground)]",
-          state === "selected"
+          "group relative flex items-center gap-3 rounded-[var(--radius-md)] bg-[var(--secondary)] py-1 pl-1 pr-2 text-[var(--foreground)]",
+          bordered && "border",
+          bordered && (state === "selected"
             ? "border-dashed border-[var(--edge-medium)]"
             : isError
             ? "border-[var(--destructive)] bg-[color-mix(in_oklch,var(--destructive),transparent_94%)]"
-            : "border-[var(--edge-medium)]",
+            : "border-[var(--edge-medium)]"),
           legacyUploading && "opacity-70",
           className,
         )}

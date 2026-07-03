@@ -131,6 +131,22 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
     }
   });
 
+  it("is loading until the initial list fetch resolves", async () => {
+    const restoreDom = installDom();
+    const fetchStub = stubFetch();
+    try {
+      const reg = mount("test-uploads-loading");
+      // The mount effect fired the GET but its promise hasn't settled yet.
+      assertEquals(reg.get().isLoading, true, "loading immediately after mount");
+      await flush(() => {});
+      assertEquals(reg.get().isLoading, false, "cleared once the initial fetch resolves");
+      flushSync(() => reg.root.unmount());
+    } finally {
+      fetchStub.restore();
+      restoreDom();
+    }
+  });
+
   it("remove() deletes from storage and drops the item", async () => {
     const restoreDom = installDom();
     const fetchStub = stubFetch();

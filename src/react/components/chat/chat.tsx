@@ -93,6 +93,7 @@ export {
   type AttachmentsPanelHeaderProps,
   type AttachmentsPanelItemProps,
   type AttachmentsPanelListProps,
+  type AttachmentsPanelLoadingProps,
   type AttachmentsPanelProps,
   BranchPicker,
   type BranchPickerProps,

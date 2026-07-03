@@ -21,6 +21,20 @@ describe("AttachmentsPanel", () => {
     assertStringIncludes(html, "No files uploaded");
   });
 
+  it("renders the loading placeholder — not the empty state — while the list loads", () => {
+    const html = renderToString(<AttachmentsPanel uploads={[]} loading />);
+    assertStringIncludes(html, 'aria-label="Loading files"');
+    assert(!html.includes("No files uploaded"), "empty state must not flash while loading");
+  });
+
+  it("prefers a cached list over the loading placeholder", () => {
+    // A non-empty list paints immediately even mid-refresh — no skeleton flash
+    // over real content.
+    const html = renderToString(<AttachmentsPanel uploads={uploads} loading />);
+    assertStringIncludes(html, "run-analysis.csv");
+    assert(!html.includes('aria-label="Loading files"'), "list wins over the loading state");
+  });
+
   it("renders a ⋯ overflow menu per row instead of the pill's ✕", () => {
     const html = renderToString(
       <AttachmentsPanel uploads={uploads} onRemoveUpload={() => undefined} />,

@@ -1,8 +1,15 @@
 import * as React from "react";
 import { cn } from "../../theme.ts";
 import { ChatTokens } from "../../chat-tokens-style.tsx";
-import { FileTextIcon, MoreHorizontalIcon, TrashIcon, XIcon } from "../../icons/index.ts";
+import {
+  FileTextIcon,
+  MoreHorizontalIcon,
+  PaperclipIcon,
+  TrashIcon,
+  XIcon,
+} from "../../icons/index.ts";
 import { Button } from "../../ui/button.tsx";
+import { Skeleton } from "../../ui/skeleton.tsx";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -34,6 +41,8 @@ export interface UploadedFile {
 /** Per-panel state shared with `AttachmentsPanel.*` sub-parts. */
 export interface AttachmentsPanelContextValue {
   uploads: UploadedFile[];
+  /** `true` while the initial list is loading; shows the placeholder state. */
+  loading?: boolean;
   onRemoveUpload?: (id: string) => void;
   onAttach?: (files: FileList) => void;
   attachAccept?: string;
@@ -64,6 +73,11 @@ export function useAttachmentsPanel(): AttachmentsPanelContextValue {
 /** Props accepted by `AttachmentsPanel` / `AttachmentsPanel.Root`. */
 export interface AttachmentsPanelProps {
   uploads?: UploadedFile[];
+  /**
+   * `true` while the initial list is still loading. When set and there are no
+   * uploads yet, the panel shows the `Loading` placeholder instead of `Empty`.
+   */
+  loading?: boolean;
   onRemoveUpload?: (id: string) => void;
   onAttach?: (files: FileList) => void;
   attachAccept?: string;
@@ -83,6 +97,7 @@ const AttachmentsPanelRoot = React.forwardRef<HTMLDivElement, AttachmentsPanelPr
   function AttachmentsPanel(
     {
       uploads = [],
+      loading = false,
       onRemoveUpload,
       onAttach,
       attachAccept,
@@ -97,6 +112,7 @@ const AttachmentsPanelRoot = React.forwardRef<HTMLDivElement, AttachmentsPanelPr
 
     const context: AttachmentsPanelContextValue = {
       uploads,
+      loading,
       onRemoveUpload,
       onAttach,
       attachAccept,
@@ -112,7 +128,11 @@ const AttachmentsPanelRoot = React.forwardRef<HTMLDivElement, AttachmentsPanelPr
             <>
               {onClose && <AttachmentsPanelHeader />}
               <div className="flex-1 overflow-y-auto px-4 py-4">
-                {uploads.length === 0 ? <AttachmentsPanelEmpty /> : <AttachmentsPanelList />}
+                {uploads.length > 0
+                  ? <AttachmentsPanelList />
+                  : loading
+                  ? <AttachmentsPanelLoading />
+                  : <AttachmentsPanelEmpty />}
               </div>
             </>
           )}
@@ -236,7 +256,8 @@ function AttachmentsPanelItem(
   { file: doc, className }: AttachmentsPanelItemProps,
 ): React.JSX.Element {
   return (
-    <AttachmentPill attachment={doc} className={cn("w-full", className)}>
+    // Borderless rows here — the panel is a plain list, not a field of chips.
+    <AttachmentPill attachment={doc} bordered={false} className={cn("w-full", className)}>
       <AttachmentsPanelItemMedia />
       <AttachmentPill.Label />
       <AttachmentsPanelItemMenu file={doc} />
@@ -301,6 +322,45 @@ function AttachmentsPanelItemMenu(
   );
 }
 
+/** Props for `AttachmentsPanel.Loading` — the initial-fetch placeholder. */
+export interface AttachmentsPanelLoadingProps {
+  className?: string;
+  /** How many skeleton rows to render. Default `3`. */
+  count?: number;
+}
+
+/**
+ * The loading state: skeleton rows shaped like `AttachmentsPanel.Item` cards,
+ * shown while the initial list is fetched so the panel doesn't flash `Empty`.
+ */
+function AttachmentsPanelLoading(
+  { className, count = 3 }: AttachmentsPanelLoadingProps,
+): React.JSX.Element {
+  return (
+    <div
+      className={cn("mx-auto flex max-w-2xl flex-col gap-2", className)}
+      aria-busy="true"
+      aria-live="polite"
+      aria-label="Loading files"
+    >
+      {Array.from(
+        { length: count },
+        (_, i) => (
+          <div key={i} className="flex w-full items-center gap-3 py-1">
+            {/* Bare skeleton shapes — no card surface, just the shimmer. */}
+            <Skeleton className="size-10 shrink-0 rounded-[var(--radius-sm)]" />
+            <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+              <Skeleton className="h-3.5 w-1/2" />
+              <Skeleton className="h-3 w-1/4" />
+            </div>
+          </div>
+        ),
+      )}
+    </div>
+  );
+}
+AttachmentsPanelLoading.displayName = "AttachmentsPanel.Loading";
+
 /** Props for `AttachmentsPanel.Empty` — the no-files state. */
 export interface AttachmentsPanelEmptyProps {
   className?: string;
@@ -322,11 +382,14 @@ function AttachmentsPanelEmpty(
     >
       {children ?? (
         <>
+          <div className="mb-4 flex size-14 items-center justify-center rounded-full bg-[var(--secondary)] text-[var(--faint)]">
+            <PaperclipIcon className="size-6" />
+          </div>
           <h1 className="text-base font-medium text-[var(--foreground)]">
             No files uploaded
           </h1>
-          <p className="mt-1 max-w-sm text-sm leading-6 text-[var(--faint)]">
-            Upload files to start asking questions
+          <p className="mt-1 max-w-xs text-sm leading-6 text-[var(--faint)]">
+            Upload files to start asking questions about them
           </p>
           {onAttach && (
             <AttachmentsPanelAction variant="empty">
@@ -399,6 +462,7 @@ export const AttachmentsPanel = Object.assign(AttachmentsPanelRoot, {
   Header: AttachmentsPanelHeader,
   List: AttachmentsPanelList,
   Item: AttachmentsPanelItem,
+  Loading: AttachmentsPanelLoading,
   Empty: AttachmentsPanelEmpty,
   Action: AttachmentsPanelAction,
 });

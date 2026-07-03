@@ -182,6 +182,7 @@ export {
   type AttachmentsPanelHeaderProps,
   type AttachmentsPanelItemProps,
   type AttachmentsPanelListProps,
+  type AttachmentsPanelLoadingProps,
   type AttachmentsPanelProps,
   type UploadedFile,
   useAttachmentsPanel,

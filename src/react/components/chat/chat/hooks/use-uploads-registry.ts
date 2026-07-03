@@ -45,6 +45,8 @@ export interface UseUploadsRegistryOptions {
 export interface UseUploadsRegistryResult {
   /** All uploaded files, newest first. */
   items: UploadedFile[];
+  /** `true` until the initial list fetch resolves (localStorage cache aside). */
+  isLoading: boolean;
   /** `true` while at least one upload is in flight. */
   isUploading: boolean;
   /** Upload files (from an input or a drop) and add them to the registry. */
@@ -108,6 +110,10 @@ export function useUploadsRegistry(
 
   const [items, setItems] = React.useState<UploadedFile[]>(() => load(storageKey));
   const [inFlight, setInFlight] = React.useState(0);
+  // The localStorage cache paints instantly, but the storage adapter is the
+  // source of truth — stay "loading" until the first GET lands so surfaces can
+  // show a placeholder instead of flashing the empty state.
+  const [isLoading, setIsLoading] = React.useState(true);
 
   // Persist whenever the list changes.
   React.useEffect(() => {
@@ -194,8 +200,23 @@ export function useUploadsRegistry(
   }, [endpoint, headers]);
 
   React.useEffect(() => {
-    void refresh();
+    let active = true;
+    void refresh().finally(() => {
+      if (active) setIsLoading(false);
+    });
+    return () => {
+      active = false;
+    };
   }, [refresh]);
 
-  return { items, isUploading: inFlight > 0, upload, add, remove, clear, refresh };
+  return {
+    items,
+    isLoading,
+    isUploading: inFlight > 0,
+    upload,
+    add,
+    remove,
+    clear,
+    refresh,
+  };
 }

@@ -46,6 +46,13 @@ function AttachmentsPanelDocsPage() {
       </DocsSection>
 
       <DocsSection
+        title="Loading"
+        description="While the initial list is fetched, pass `loading` to show skeleton rows instead of flashing the empty state. A non-empty `uploads` list always wins, so a cached list paints without a skeleton flash."
+      >
+        <DocsExampleAuto of={Loading} />
+      </DocsSection>
+
+      <DocsSection
         title="Compose"
         description="Drop to `AttachmentsPanel.Root` + parts to recompose the panel — reorder or restyle the list, swap in your own `Item` rows, or replace the empty state. Every part takes `className`."
       >
@@ -80,6 +87,13 @@ function AttachmentsPanelDocsPage() {
               name: "onAttach",
               type: "(files: FileList) => void",
               description: "Called with new files; enables the upload actions",
+            },
+            {
+              name: "loading",
+              type: "boolean",
+              default: "false",
+              description:
+                "Show skeleton rows while the initial list loads (only when uploads is empty)",
             },
             {
               name: "attachAccept",
@@ -197,6 +211,35 @@ export const Empty: Story = {
       <ReviewSurface label="Empty">
         <div className="h-[280px]">
           <AttachmentsPanel uploads={[]} onAttach={() => undefined} />
+        </div>
+      </ReviewSurface>
+    </StoryFrame>
+  ),
+};
+
+export const Loading: Story = {
+  tags: ["!dev"],
+  parameters: {
+    docs: {
+      source: {
+        code: `import { AttachmentsPanel, useUploadsRegistry } from "veryfront/chat";
+
+const uploads = useUploadsRegistry({ url: "/api/uploads" });
+
+<AttachmentsPanel
+  uploads={uploads.items}
+  loading={uploads.isLoading}
+  onRemoveUpload={(id) => uploads.remove(id)}
+  onAttach={(files) => uploads.upload(files)}
+/>`,
+      },
+    },
+  },
+  render: () => (
+    <StoryFrame maxWidth="720px">
+      <ReviewSurface label="Loading">
+        <div className="h-[280px]">
+          <AttachmentsPanel uploads={[]} loading onAttach={() => undefined} />
         </div>
       </ReviewSurface>
     </StoryFrame>
