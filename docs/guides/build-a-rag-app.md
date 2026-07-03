@@ -102,7 +102,10 @@ Upload ingestion does three things:
 
 OCR is not a separate step. For scanned PDFs or image-only files, run OCR before
 calling `store.ingest()`. Local mode fills embeddings on first search. Cloud
-mode chunks and embeds during ingestion.
+mode chunks and embeds during ingestion. When extraction behavior changes or an
+uploaded document needs reprocessing, call
+`store.refreshDocument(id, text, meta)` to keep the document ID while replacing
+its chunks and embeddings.
 
 ## Add bundled content ingestion
 

@@ -1,10 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { FileSystemAdapter, RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import { clearTranspileCache } from "#veryfront/discovery/transpiler.ts";
+import { clearConfigCache } from "#veryfront/config";
+import { toolRegistry } from "#veryfront/tool/registry.ts";
 import { deriveTaskId, discoverTasks, findTaskById } from "./discovery.ts";
+import { discoverProjectTaskRuntime } from "./project-runtime.ts";
+import { runTriggerTarget } from "../trigger/local-runner.ts";
 import { isTaskDefinition } from "./types.ts";
 
 function createMockAdapter(files: Record<string, string>): FileSystemAdapter {
@@ -99,11 +103,32 @@ function createRuntimeAdapter(files: Record<string, string>): RuntimeAdapter {
   };
 }
 
+function makeTaskSource(name: string): string {
+  return [
+    "export default {",
+    `  name: "${name}",`,
+    "  run: () => ({ ok: true }),",
+    "};",
+    "",
+  ].join("\n");
+}
+
+function markAdapterAsVirtual(adapter: RuntimeAdapter): void {
+  Object.assign(adapter.fs, {
+    getUnderlyingAdapter: () => adapter.fs,
+    getAdapterType: () => "VeryfrontFSAdapter",
+    isVeryfrontAdapter: () => true,
+    isMultiProjectMode: () => true,
+  });
+}
+
 // Discovery uses the shared esbuild service under the hood, which outlives
 // individual test cases until stopEsbuild() runs in afterAll.
 describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () => {
   afterEach(() => {
     clearTranspileCache();
+    clearConfigCache();
+    toolRegistry.clear();
   });
 
   afterAll(async () => {
@@ -287,5 +312,142 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
     assertEquals(task?.id, "ping");
     assertEquals(task?.name, "Ping task");
     assertEquals(task?.exportName, "pingTask");
+  });
+
+  it("discovers runtime tasks through adapter-backed project paths", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/remote-tasks/sync.ts": makeTaskSource("Remote Sync"),
+    });
+
+    const discovery = await discoverProjectTaskRuntime({
+      projectDir: "/local-checkout",
+      adapter,
+      config: {
+        fs: { type: "veryfront-api" },
+        ai: { tasks: { discovery: { paths: ["remote-tasks"] } } },
+      },
+      fsAdapter: adapter.fs,
+    });
+
+    assertEquals([...discovery.tasks.keys()], ["sync"]);
+  });
+
+  it("isolates virtual project runtime config by cache key", async () => {
+    const firstAdapter = createRuntimeAdapter({
+      "/veryfront.config.ts": [
+        "export default {",
+        '  fs: { type: "veryfront-api" },',
+        '  ai: { tasks: { discovery: { paths: ["first-tasks"] } } },',
+        "};",
+        "",
+      ].join("\n"),
+      "/project/first-tasks/first.ts": makeTaskSource("First"),
+    });
+    markAdapterAsVirtual(firstAdapter);
+
+    const first = await discoverProjectTaskRuntime({
+      projectDir: "/same-local-dir",
+      adapter: firstAdapter,
+      fsAdapter: firstAdapter.fs,
+      cacheKey: "project-a",
+    });
+    assertEquals([...first.tasks.keys()], ["first"]);
+
+    const secondAdapter = createRuntimeAdapter({
+      "/veryfront.config.ts": [
+        "export default {",
+        '  fs: { type: "veryfront-api" },',
+        '  ai: { tasks: { discovery: { paths: ["second-tasks"] } } },',
+        "};",
+        "",
+      ].join("\n"),
+      "/project/second-tasks/second.ts": makeTaskSource("Second"),
+    });
+    markAdapterAsVirtual(secondAdapter);
+
+    const second = await discoverProjectTaskRuntime({
+      projectDir: "/same-local-dir",
+      adapter: secondAdapter,
+      fsAdapter: secondAdapter.fs,
+      cacheKey: "project-b",
+    });
+
+    assertEquals([...second.tasks.keys()], ["second"]);
+  });
+
+  it("returns runtime tasks alongside unrelated discovery errors by default", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/sync.ts": makeTaskSource("Sync"),
+      "/project/tools/broken.ts": 'import "./missing.ts"; export default {};\n',
+    });
+
+    const discovery = await discoverProjectTaskRuntime({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } },
+      fsAdapter: adapter.fs,
+    });
+
+    assertEquals([...discovery.tasks.keys()], ["sync"]);
+    assertEquals(discovery.errors.length, 1);
+  });
+
+  it("reports all runtime discovery errors in strict mode", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tools/first.ts": 'import "./missing-one.ts";\n',
+      "/project/tools/second.ts": 'import "./missing-two.ts";\n',
+    });
+
+    await assertRejects(
+      () =>
+        discoverProjectTaskRuntime({
+          projectDir: "/project",
+          adapter,
+          config: { fs: { type: "veryfront-api" } },
+          fsAdapter: adapter.fs,
+          throwOnErrors: true,
+        }),
+      Error,
+      "Runtime discovery failed with 2 errors",
+    );
+  });
+
+  it("runs task targets after project runtime discovery", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tools/runtime-marker.ts": [
+        'import { tool } from "veryfront/tool";',
+        'import { defineSchema } from "veryfront/schemas";',
+        "",
+        "export default tool({",
+        '  id: "runtime_marker",',
+        '  description: "Marks project runtime discovery.",',
+        "  inputSchema: defineSchema((v) => v.object({}))(),",
+        "  execute: () => ({ ok: true }),",
+        "});",
+        "",
+      ].join("\n"),
+      "/project/tasks/probe-runtime.ts": [
+        'import { toolRegistry } from "veryfront/tool";',
+        "",
+        "export default {",
+        '  name: "Probe runtime",',
+        "  run() {",
+        '    return { hasRuntimeTool: toolRegistry.has("runtime_marker") };',
+        "  },",
+        "};",
+        "",
+      ].join("\n"),
+    });
+
+    const result = await runTriggerTarget({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } },
+      target: { kind: "task", id: "probe-runtime" },
+    });
+
+    assertEquals(result.kind, "task");
+    assertEquals(result.id, "probe-runtime");
+    assertEquals(result.output, { hasRuntimeTool: true });
   });
 });
