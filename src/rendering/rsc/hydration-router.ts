@@ -26,7 +26,9 @@ function normalizeParams(
   if (!params) return {};
   const flat: Record<string, string> = {};
   for (const [key, value] of Object.entries(params)) {
-    flat[key] = Array.isArray(value) ? (value[0] ?? "") : value;
+    // Catch-all segments arrive as arrays (`[...slug]` -> ["guides","intro"]).
+    // Join them (matching the SPA normalizer) so no route information is lost.
+    flat[key] = Array.isArray(value) ? value.join("/") : value;
   }
   return flat;
 }

@@ -38,6 +38,25 @@ describe("rendering/rsc/wrapWithRouterProvider", () => {
     assertStringIncludes(html, "5:hi");
   });
 
+  it("preserves all catch-all route segments (joins array params)", async () => {
+    const doc = docWithImportMap({ "veryfront/router": "https://example.com/router.js" });
+
+    const Consumer = (): React.ReactElement => {
+      const r = useRouter();
+      return <i>slug:{r.params.slug}</i>;
+    };
+
+    const wrapped = await wrapWithRouterProvider(
+      React.createElement(Consumer),
+      { params: { slug: ["guides", "intro"] }, frontmatter: {} },
+      doc,
+    );
+
+    // The full catch-all path survives — not just the first segment.
+    const html = renderToStaticMarkup(wrapped as React.ReactElement);
+    assertStringIncludes(html, "slug:guides/intro");
+  });
+
   it("falls back to the bare child when the import map does not own veryfront/router", async () => {
     const doc = docWithImportMap({ "react": "https://example.com/react.js" });
     const child = React.createElement("div", null, "bare");
