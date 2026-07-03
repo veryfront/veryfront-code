@@ -118,7 +118,7 @@ export default function CustomLayout() {
         <h1>Assistant</h1>
       </header>
       <Chat.MessageList messages={chat.messages} />
-      <Chat.Composer
+      <Chat.Input
         input={chat.input}
         onChange={chat.handleInputChange}
         onSubmit={chat.handleSubmit}

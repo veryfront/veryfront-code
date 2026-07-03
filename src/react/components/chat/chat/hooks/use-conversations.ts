@@ -188,6 +188,12 @@ export function useConversations(options: UseConversationsOptions = {}): UseConv
     }
   }, [store]);
   const scheduleSave = React.useCallback((conversation: Conversation) => {
+    // A pending save for a *different* conversation must be flushed, not
+    // clobbered: switching threads inside the debounce window would
+    // otherwise drop the previous thread's final messages.
+    if (pendingSave.current && pendingSave.current.id !== conversation.id) {
+      flushSave();
+    }
     pendingSave.current = conversation;
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(flushSave, SAVE_DEBOUNCE_MS);
@@ -272,10 +278,29 @@ export function useConversations(options: UseConversationsOptions = {}): UseConv
   }, [store, scheduleSave]);
 
   const save = React.useCallback((conversation: Conversation) => {
-    setSummaries((prev) => upsertSummary(prev, conversationSummary(conversation)));
+    const summary = conversationSummary(conversation);
+    // Streaming emits once per token; the list (and everything reading this
+    // context) only cares when something it shows (title, count, order)
+    // actually changes. Returning `prev` bails out of the re-render.
+    setSummaries((prev) => {
+      const existing = prev.find((s) => s.id === summary.id);
+      if (
+        existing && existing.title === summary.title &&
+        existing.messageCount === summary.messageCount
+      ) return prev;
+      return upsertSummary(prev, summary);
+    });
     // Keep the in-memory active thread in sync when it's the one being saved,
     // so a re-open reads the just-saved messages instead of the loaded blob.
-    if (activeRef.current?.id === conversation.id) setActive(conversation);
+    // Same churn gate: mid-stream token growth is captured by the debounced
+    // store write below; `active` consumers only read it on remount.
+    if (activeRef.current?.id === conversation.id) {
+      const current = activeRef.current;
+      if (
+        current.title !== conversation.title ||
+        current.messages.length !== conversation.messages.length
+      ) setActive(conversation);
+    }
     scheduleSave(conversation);
   }, [scheduleSave]);
 
@@ -306,7 +331,10 @@ export function useConversations(options: UseConversationsOptions = {}): UseConv
     }
   }, [store, activeId, select, create]);
 
-  return {
+  // Memoized so `ConversationsProvider` can pass this straight through as a
+  // context value: consumers re-render only when the state above changes, not
+  // on every render of the provider.
+  return React.useMemo(() => ({
     conversations: summaries,
     active,
     activeId,
@@ -318,5 +346,17 @@ export function useConversations(options: UseConversationsOptions = {}): UseConv
     update,
     save,
     bind,
-  };
+  }), [
+    summaries,
+    active,
+    activeId,
+    isLoading,
+    select,
+    create,
+    rename,
+    remove,
+    update,
+    save,
+    bind,
+  ]);
 }

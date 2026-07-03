@@ -611,6 +611,12 @@ const ControlledChat = React.forwardRef<HTMLDivElement, ChatProps>(
     // `sendMessage` is available.
     const handleSubmit = React.useCallback((e?: React.FormEvent) => {
       if (manageAttachments && sendMessage) {
+        // Wait for pending uploads: sending now would carry only the resolved
+        // files and silently drop the one still in flight.
+        if (hasPendingAttachments(upload.attachments)) {
+          e?.preventDefault();
+          return;
+        }
         const files = attachmentsToFileParts(upload.attachments);
         if (files.length > 0) {
           e?.preventDefault();
@@ -820,6 +826,12 @@ function attachmentsToFileParts(items: AttachmentInfo[]): ChatFilePart[] {
     }));
 }
 
+/** True while any attachment is still resolving its `url`; submits must wait
+ * or the fold above would silently drop the pending file. */
+function hasPendingAttachments(items: AttachmentInfo[]): boolean {
+  return items.some((a) => a.state === "uploading" || a.state === "processing");
+}
+
 const UncontrolledChat = React.forwardRef<HTMLDivElement, ChatProps>(
   function UncontrolledChat(
     {
@@ -889,10 +901,16 @@ const UncontrolledChat = React.forwardRef<HTMLDivElement, ChatProps>(
     // Emit the whole conversation when the live messages change. Keyed on
     // `chat.messages` + `boundId` only (sink/identity read via refs) so the
     // save→setActive round-trip inside a provider can't feed a render loop.
+    // Seeded with the mount-time messages so merely *opening* a thread never
+    // re-saves it (a fresh `updatedAt` would jump it to the top of the sidebar).
     const boundId = bound?.id;
+    const lastEmittedRef = React.useRef<ChatMessage[] | null>(null);
+    if (lastEmittedRef.current === null) lastEmittedRef.current = chat.messages;
     React.useEffect(() => {
       const sink = persistRef.current;
       if (!sink) return;
+      if (chat.messages === lastEmittedRef.current) return;
+      lastEmittedRef.current = chat.messages;
       let base = boundRef.current;
       if (!base) {
         syntheticRef.current ??= createEmptyConversation({ agentId: agentIdRef.current });
@@ -966,6 +984,10 @@ const UncontrolledChat = React.forwardRef<HTMLDivElement, ChatProps>(
     const submitWithAttachments = React.useCallback((e?: React.FormEvent) => {
       e?.preventDefault();
       if (chat.isLoading) return;
+      // Never send while a file is still uploading: the fold below only
+      // carries resolved urls, so submitting now would silently drop the
+      // pending attachment (and `clear()` would abort its upload).
+      if (hasPendingAttachments(upload.attachments)) return;
       const text = chat.input.trim();
       const files = attachmentsToFileParts(upload.attachments);
       if (!text && files.length === 0) return;

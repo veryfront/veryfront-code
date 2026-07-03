@@ -114,7 +114,14 @@ export function useUploadsRegistry(
     save(storageKey, items);
   }, [storageKey, items]);
 
+  // Items add()-ed while a refresh is in flight would be wiped by the fetched
+  // snapshot (the GET may have started before their POST landed), so remember
+  // them and let refresh fold them back in.
+  const refreshInFlightRef = React.useRef(0);
+  const pendingAddsRef = React.useRef<UploadedFile[]>([]);
+
   const add = React.useCallback((file: UploadedFile) => {
+    if (refreshInFlightRef.current > 0) pendingAddsRef.current.push(file);
     setItems((prev) => {
       if (prev.some((f) => f.id === file.id)) return prev;
       return [file, ...prev];
@@ -163,6 +170,7 @@ export function useUploadsRegistry(
   // the surface shows everything (other sessions, chat uploads, this tab),
   // not just what this browser's localStorage happens to remember.
   const refresh = React.useCallback(async () => {
+    refreshInFlightRef.current += 1;
     try {
       const response = await fetch(endpoint, { headers });
       if (!response.ok) return;
@@ -171,9 +179,17 @@ export function useUploadsRegistry(
       const serverItems = (body.items ?? [])
         .map(toUploadedFile)
         .filter((f): f is UploadedFile => f !== null);
-      setItems(serverItems);
+      // The server list wins, except for items added while this fetch was in
+      // flight: the snapshot predates them, so fold them back on top.
+      const concurrent = pendingAddsRef.current.filter(
+        (f) => !serverItems.some((s) => s.id === f.id),
+      );
+      setItems([...concurrent, ...serverItems]);
     } catch (_) {
       /* offline / endpoint without listing — keep the cached list */
+    } finally {
+      refreshInFlightRef.current -= 1;
+      if (refreshInFlightRef.current === 0) pendingAddsRef.current = [];
     }
   }, [endpoint, headers]);
 

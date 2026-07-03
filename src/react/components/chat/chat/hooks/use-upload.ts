@@ -40,6 +40,14 @@ export interface UseUploadResult {
   clear: () => void;
 }
 
+/**
+ * Max file size for inline (base64 `data:` URL) attachments. Guest mode has no
+ * upload endpoint, and the encoded conversation is persisted to localStorage
+ * (~5MB quota) on every save, so larger files must error up front instead of
+ * silently breaking persistence for the whole conversation.
+ */
+export const INLINE_ATTACHMENT_MAX_BYTES = 2 * 1024 * 1024;
+
 interface Tracked {
   info: AttachmentInfo;
   file: File;
@@ -82,6 +90,10 @@ export function useUpload(
   const startInline = React.useCallback(
     (entry: Tracked) => {
       const { file, info } = entry;
+      if (file.size > INLINE_ATTACHMENT_MAX_BYTES) {
+        patch(info.id, { state: "error" });
+        return;
+      }
       patch(info.id, { state: "uploading", progress: 0 });
       const reader = new FileReader();
       reader.onload = () =>
