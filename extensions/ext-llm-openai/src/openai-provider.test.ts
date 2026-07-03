@@ -12,6 +12,7 @@ import {
   createOpenAIEmbeddingRuntime,
   createOpenAIModelRuntime,
   createOpenAIResponsesRuntime,
+  OpenAIProvider,
 } from "./openai-provider.ts";
 
 // ---------------------------------------------------------------------------
@@ -325,6 +326,120 @@ describe("openai-provider", () => {
           totalTokens: 10,
         },
       },
+    ]);
+  });
+
+  it("routes direct OpenAI reasoning models with custom labels through Responses", async () => {
+    const encoder = new TextEncoder();
+    let requestedUrl = "";
+    let requestedInit: RequestInit | undefined;
+    const provider = new OpenAIProvider();
+    const runtime = provider.createModel("gpt-5.4-nano", {
+      credential: "test-openai-key",
+      baseURL: "https://example.openai.test/v1",
+      name: "prod-openai",
+      fetch: (input, init) => {
+        requestedUrl = String(input);
+        requestedInit = init;
+        return Promise.resolve(
+          new Response(
+            ReadableStream.from([
+              encoder.encode(
+                'data: {"type":"response.output_item.added","item":{"id":"rs_1","type":"reasoning"}}\n\n',
+              ),
+              encoder.encode(
+                'data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_1","delta":"Thinking."}\n\n',
+              ),
+              encoder.encode(
+                'data: {"type":"response.output_item.done","item":{"id":"rs_1","type":"reasoning"}}\n\n',
+              ),
+              encoder.encode(
+                'data: {"type":"response.output_item.added","item":{"id":"msg_1","type":"message"}}\n\n',
+              ),
+              encoder.encode(
+                'data: {"type":"response.output_text.delta","item_id":"msg_1","delta":"Done."}\n\n',
+              ),
+              encoder.encode(
+                'data: {"type":"response.output_item.done","item":{"id":"msg_1","type":"message"}}\n\n',
+              ),
+              encoder.encode(
+                'data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":2,"output_tokens":3,"output_tokens_details":{"reasoning_tokens":2},"total_tokens":5}}}\n\n',
+              ),
+              encoder.encode("data: [DONE]\n\n"),
+            ]),
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          ),
+        );
+      },
+    });
+
+    const result = await runtime.doStream({
+      prompt: [{
+        role: "user",
+        content: [{ type: "text", text: "Solve a logic check." }],
+      }],
+    });
+
+    const requestBody = JSON.parse(readRequestBody(requestedInit) ?? "{}");
+    const parts = await collectAsync(result.stream);
+
+    assertEquals(runtime.provider, "prod-openai");
+    assertEquals(requestedUrl, "https://example.openai.test/v1/responses");
+    assertEquals(requestBody.reasoning, { effort: "medium", summary: "auto" });
+    assertEquals(parts.map((part) => (part as { type: string }).type), [
+      "reasoning-start",
+      "reasoning-delta",
+      "reasoning-end",
+      "text-delta",
+      "finish",
+    ]);
+  });
+
+  it("keeps OpenAI-compatible provider identity separate from display labels", async () => {
+    const encoder = new TextEncoder();
+    let requestedUrl = "";
+    let requestedInit: RequestInit | undefined;
+    const provider = new OpenAIProvider();
+    const runtime = provider.createModel("gpt-5.4-nano", {
+      credential: "test-openai-compatible-key",
+      baseURL: "https://example.compatible.test/v1",
+      name: "prod-compatible-openai",
+      providerName: "openai-compatible",
+      fetch: (input, init) => {
+        requestedUrl = String(input);
+        requestedInit = init;
+        return Promise.resolve(
+          new Response(
+            ReadableStream.from([
+              encoder.encode('data: {"choices":[{"delta":{"content":"Done."}}]}\n\n'),
+              encoder.encode(
+                'data: {"choices":[{"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}\n\n',
+              ),
+              encoder.encode("data: [DONE]\n\n"),
+            ]),
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          ),
+        );
+      },
+    });
+
+    const result = await runtime.doStream({
+      prompt: [{
+        role: "user",
+        content: [{ type: "text", text: "Use an OpenAI-compatible endpoint." }],
+      }],
+    });
+
+    const requestBody = JSON.parse(readRequestBody(requestedInit) ?? "{}");
+    const parts = await collectAsync(result.stream);
+
+    assertEquals(runtime.provider, "prod-compatible-openai");
+    assertEquals(requestedUrl, "https://example.compatible.test/v1/chat/completions");
+    assertEquals(requestBody.reasoning, undefined);
+    assertEquals(requestBody.reasoning_effort, undefined);
+    assertEquals(parts.map((part) => (part as { type: string }).type), [
+      "text-delta",
+      "finish",
     ]);
   });
 

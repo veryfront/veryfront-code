@@ -15,8 +15,9 @@ export type ResolvedOpenAIReasoning = {
 
 const DEFAULT_REASONING_EFFORT: OpenAIReasoningEffort = "medium";
 
-function supportsDefaultReasoningParams(providerName: string): boolean {
-  return providerName === "openai" || providerName === "veryfront-cloud";
+export function supportsDefaultReasoningParams(providerName: string): boolean {
+  const normalizedProvider = providerName.toLowerCase();
+  return normalizedProvider === "openai" || normalizedProvider === "veryfront-cloud";
 }
 
 function isGpt5ChatSnapshot(modelId: string): boolean {
@@ -45,9 +46,7 @@ export function getDefaultOpenAIReasoningEffort(
   providerName = "openai",
 ): OpenAIReasoningEffort | undefined {
   const normalized = modelId.toLowerCase();
-  const normalizedProvider = providerName.toLowerCase();
-
-  if (!supportsDefaultReasoningParams(normalizedProvider)) {
+  if (!supportsDefaultReasoningParams(providerName)) {
     return undefined;
   }
 
@@ -101,7 +100,7 @@ export function shouldRequestOpenAIReasoningSummary(
   providerName: string,
   reasoning: ResolvedOpenAIReasoning,
 ): boolean {
-  return reasoning.source === "explicit" || providerName.toLowerCase() === "veryfront-cloud";
+  return reasoning.source === "explicit" || supportsDefaultReasoningParams(providerName);
 }
 
 export function isOpenAIReasoningModel(modelId: string, providerName = "openai"): boolean {

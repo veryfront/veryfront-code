@@ -17,6 +17,7 @@ export function createVeryfrontCloudOpenAIModel(
     credential: config.apiToken,
     baseURL: config.baseURL,
     name: "veryfront-cloud",
+    providerName: "veryfront-cloud",
     fetch: config.fetch,
   });
 }
@@ -29,6 +30,7 @@ export function createVeryfrontCloudOpenAIResponsesModel(
     credential: config.apiToken,
     baseURL: config.baseURL,
     name: "veryfront-cloud",
+    providerName: "veryfront-cloud",
     fetch: config.fetch,
   });
 }
