@@ -974,7 +974,21 @@ export const getRouterScript = () => `
       },
       pathname: window.location.pathname,
       query: Object.fromEntries(new URLSearchParams(window.location.search)),
-      params: {},
+      // Seed route params from the hydration data (issue #2741). Catch-all
+      // segments arrive as arrays and are joined so no path info is lost.
+      params: (function () {
+        try {
+          const el = document.getElementById('veryfront-hydration-data');
+          const raw = (JSON.parse(el && el.textContent ? el.textContent : '{}') || {}).params || {};
+          const out = {};
+          for (const key in raw) {
+            out[key] = Array.isArray(raw[key]) ? raw[key].join('/') : raw[key];
+          }
+          return out;
+        } catch (_) {
+          return {};
+        }
+      })(),
       isPreview: false,
       isMounted: true,
       navigate: (path) => navigateSPA(path, true),
