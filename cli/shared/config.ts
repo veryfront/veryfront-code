@@ -13,7 +13,7 @@ import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 import { cliLogger, VERSION } from "#cli/utils";
 import { readToken } from "../auth/token-store.ts";
 import { ensureAuthenticated } from "../auth/login.ts";
-import { DEFAULT_API_URL } from "./constants.ts";
+import { resolveCliApiUrl } from "./constants.ts";
 import { isRetryableConnectionError } from "../../src/proxy/retry.ts";
 
 // Delays for exponential backoff with jitter: attempt 1 = ~300ms, 2 = ~1s, 3 = ~3s
@@ -63,6 +63,7 @@ export type ResolvedConfig = InferSchema<ReturnType<typeof getResolvedConfigSche
 export async function readConfigFile(projectDir: string): Promise<VeryfrontConfig | null> {
   const fs = createFileSystem();
 
+  let moduleProjectSlug: string | undefined;
   for (const ext of [".ts", ".js"]) {
     const configPath = join(projectDir, `veryfront.config${ext}`);
 
@@ -72,23 +73,36 @@ export async function readConfigFile(projectDir: string): Promise<VeryfrontConfi
       const module = await import(`file://${configPath}`);
       const config = module.default ?? module;
 
-      if (config?.projectSlug) return { projectSlug: config.projectSlug };
+      if (config?.projectSlug) {
+        moduleProjectSlug = config.projectSlug;
+        break;
+      }
     } catch (error) {
       cliLogger.debug(`Failed to import config file ${configPath}:`, error);
     }
   }
 
+  // veryfront.json is always merged in: veryfront.config.ts owns the
+  // projectSlug when both define one, but apiUrl/apiToken only live in
+  // veryfront.json and must not be dropped because a TS config exists.
   const configJsonPath = join(projectDir, "veryfront.json");
+  let jsonConfig: VeryfrontConfig | null = null;
 
   try {
-    if (!(await fs.exists(configJsonPath))) return null;
-    const content = await fs.readTextFile(configJsonPath);
-    const parsed = VeryfrontConfigSchema.safeParse(JSON.parse(content));
-    return parsed.success ? parsed.data : null;
+    if (await fs.exists(configJsonPath)) {
+      const content = await fs.readTextFile(configJsonPath);
+      const parsed = VeryfrontConfigSchema.safeParse(JSON.parse(content));
+      jsonConfig = parsed.success ? parsed.data : null;
+    }
   } catch (error) {
     cliLogger.debug(`Failed to read veryfront.json:`, error);
-    return null;
   }
+
+  if (!moduleProjectSlug && !jsonConfig) return null;
+  return {
+    ...jsonConfig,
+    ...(moduleProjectSlug ? { projectSlug: moduleProjectSlug } : {}),
+  };
 }
 
 export async function writeProjectSlug(projectDir: string, slug: string): Promise<void> {
@@ -145,7 +159,7 @@ async function resolveConfigBase(
   const dir = projectDir ?? cwd();
   const configFile = await readConfigFile(dir);
 
-  const apiUrl = env.apiUrl ?? configFile?.apiUrl ?? DEFAULT_API_URL;
+  const apiUrl = resolveCliApiUrl(env, configFile?.apiUrl);
 
   let apiToken = env.apiToken ?? configFile?.apiToken ?? (await readToken(env));
 
