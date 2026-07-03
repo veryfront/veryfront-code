@@ -209,6 +209,9 @@ export {
   useConversationsContext,
   useConversationsContextOptional,
 } from "./contexts/conversations-context.tsx";
+// Local binding for the `<Chat>` optional-provider integration below (the line
+// above only re-exports; it does not import the name for use in this module).
+import { useConversationsContextOptional } from "./contexts/conversations-context.tsx";
 
 // Re-exports — conversation persistence adapters
 export {
@@ -780,20 +783,36 @@ const UncontrolledChat = React.forwardRef<HTMLDivElement, ChatProps>(
     },
     ref,
   ): React.ReactElement {
+    // Inside a `ConversationsProvider`, bind to the active conversation — seed
+    // from its messages/agent and persist changes back. No props: the context
+    // carries it, so standalone `<Chat>` (no provider) is unchanged. `active`
+    // must match `activeId` so we never seed from a still-loading thread.
+    const conversations = useConversationsContextOptional();
+    const bound = conversations?.active && conversations.active.id === conversations.activeId
+      ? conversations.active
+      : null;
+    const resolvedAgentId = bound?.agentId ?? agentId;
+
     const chat = useChat({
       api,
-      initialMessages,
+      initialMessages: bound ? bound.messages : initialMessages,
       onError,
-      body: agentId ? { agentId } : undefined,
+      body: resolvedAgentId ? { agentId: resolvedAgentId } : undefined,
     });
-    const { agent, error: agentError } = useAgentMetadata(agentId);
+    const { agent, error: agentError } = useAgentMetadata(resolvedAgentId);
+
+    // Persist the live thread back to its conversation (persist + auto-title).
+    const boundId = bound?.id;
+    React.useEffect(() => {
+      if (conversations && boundId) conversations.bind(boundId, { messages: chat.messages });
+    }, [chat.messages, conversations, boundId]);
 
     // App mode owns the loading signal: from the very first paint until the
     // agent resolves (or errors) we render the skeleton — never flash an idle
     // placeholder first. Keyed off "agent not yet here" rather than the hook's
     // `isLoading` flag so there's no one-frame gap on mount. Works out of the
     // box — no `isLoading` wiring from the consumer.
-    const agentInitializing = Boolean(agentId) && !agent && !agentError;
+    const agentInitializing = Boolean(resolvedAgentId) && !agent && !agentError;
 
     // Agent-driven empty state: avatar + name + description, shown once the
     // agent resolves (the skeleton covers the load, so the generic
@@ -889,10 +908,35 @@ const UncontrolledChat = React.forwardRef<HTMLDivElement, ChatProps>(
 UncontrolledChat.displayName = "UncontrolledChat";
 
 /**
+ * App-mode `<Chat>` with conversation-thread lifecycle when a
+ * `ConversationsProvider` is present: keys by the active id so switching threads
+ * remounts `UncontrolledChat` (fresh `useChat` seed), and holds the skeleton
+ * while the active thread's messages load from the store. No provider → renders
+ * `UncontrolledChat` unchanged.
+ */
+const ConversationBoundChat = React.forwardRef<HTMLDivElement, ChatProps>(
+  function ConversationBoundChat(props, ref): React.ReactElement {
+    const conversations = useConversationsContextOptional();
+    if (!conversations || conversations.activeId == null) {
+      return <UncontrolledChat ref={ref} {...props} />;
+    }
+    const { active, activeId } = conversations;
+    // Wait for the active thread's messages before mounting, so `useChat` seeds
+    // from the right thread rather than a still-loading one.
+    if (active?.id !== activeId) {
+      return <>{props.skeleton ?? <ChatMessagesSkeleton />}</>;
+    }
+    return <UncontrolledChat key={activeId} ref={ref} {...props} />;
+  },
+);
+ConversationBoundChat.displayName = "ConversationBoundChat";
+
+/**
  * Chat — batteries-included chat surface.
  *
  * - **App mode (uncontrolled):** omit `messages`/`input` and pass `agentId` +
- *   `api`; `<Chat>` wires `useChat` + `useAgentMetadata` internally.
+ *   `api`; `<Chat>` wires `useChat` + `useAgentMetadata` internally. Inside a
+ *   `ConversationsProvider` it also binds to the active conversation.
  * - **Controlled mode:** pass `messages` + `input` to drive it yourself.
  */
 const ChatBase = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
@@ -905,7 +949,7 @@ const ChatBase = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
     props.input !== undefined;
   return isControlled
     ? <ControlledChat ref={ref} {...props} />
-    : <UncontrolledChat ref={ref} {...props} />;
+    : <ConversationBoundChat ref={ref} {...props} />;
 });
 ChatBase.displayName = "Chat";
 

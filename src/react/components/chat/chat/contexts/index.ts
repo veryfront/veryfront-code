@@ -36,3 +36,11 @@ export {
   useThreadListContext,
   useThreadListContextOptional,
 } from "./thread-list-context.tsx";
+
+export {
+  ConversationsContextProvider,
+  ConversationsProvider,
+  type ConversationsProviderProps,
+  useConversationsContext,
+  useConversationsContextOptional,
+} from "./conversations-context.tsx";
