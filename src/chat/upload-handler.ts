@@ -84,6 +84,13 @@ function resolveStorage(config: ChatUploadHandlerConfig): BlobStorage {
   return new LocalBlobStorage(`${Deno.cwd()}/.veryfront/uploads`);
 }
 
+function fallbackUrl(requestUrl: string, id: string): string {
+  const url = new URL(requestUrl);
+  url.search = "";
+  url.searchParams.set("id", id);
+  return url.href;
+}
+
 async function reject(
   request: Request,
   authorize: ChatUploadHandlerConfig["authorize"],
@@ -137,7 +144,7 @@ export function createChatUploadHandler(
     // Use the backend's own URL when it has one (cloud/S3); otherwise serve the
     // bytes back ourselves from the same origin (local disk in dev).
     const external = ref.url ?? (await storage.stat(ref.id))?.url;
-    const url = external ?? new URL(`/api/uploads?id=${ref.id}`, request.url).href;
+    const url = external ?? fallbackUrl(request.url, ref.id);
 
     return Response.json({ id: ref.id, url, name, mediaType, size: file.size });
   }
@@ -145,7 +152,7 @@ export function createChatUploadHandler(
   function toListItem(ref: BlobRef, requestUrl: string) {
     return {
       id: ref.id,
-      url: ref.url ?? new URL(`/api/uploads?id=${ref.id}`, requestUrl).href,
+      url: ref.url ?? fallbackUrl(requestUrl, ref.id),
       name: ref.metadata?.filename ?? ref.id,
       mediaType: ref.mimeType,
       size: ref.size,

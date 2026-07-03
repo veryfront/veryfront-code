@@ -145,6 +145,22 @@ import { Message } from "veryfront/chat";
 </Message.Root>;
 ```
 
+## Migrate from older chat APIs
+
+This release completes the chat API migration. Use the new conversation and
+composition names instead of the older Thread and Composer exports:
+
+| Older export                | Use instead                                           |
+| --------------------------- | ----------------------------------------------------- |
+| `ChatComposer`              | `ChatInput` or `Chat.Input`                           |
+| `MessageActions`            | `MessageActionBar` or `Message.Actions`               |
+| `UploadsPanel`              | `AttachmentsPanel`                                    |
+| `StandaloneMessage`         | `Message`                                             |
+| `StreamingMessage`          | `Message`                                             |
+| `ChatWithSidebar`           | `ConversationsProvider` with `ChatSidebar` and `Chat` |
+| `useThreads`                | `useConversations`                                    |
+| `ThreadListContextProvider` | `ConversationsProvider`                               |
+
 For conversation navigation, wrap the chat + sidebar in a `ConversationsProvider`.
 The provider owns the conversation list and persistence; `<ChatSidebar>` and
 `<Chat>` both read it from context, so neither needs wiring:

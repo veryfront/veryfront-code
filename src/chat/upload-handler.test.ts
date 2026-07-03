@@ -47,6 +47,27 @@ describe("chat/upload-handler", () => {
         );
       }));
 
+    it("uses the mounted route path for fallback GET urls", () =>
+      withTempDir(async (dir) => {
+        const { POST } = createChatUploadHandler({
+          storage: new LocalBlobStorage(dir),
+          authorize: () => true,
+        });
+        const form = new FormData();
+        form.append("file", txt("x"), "note.txt");
+        const body = await (await POST(
+          new Request("http://localhost:3000/api/chat/uploads?source=composer", {
+            method: "POST",
+            body: form,
+          }),
+        )).json() as { url: string; id: string };
+        assertEquals(
+          body.url,
+          `http://localhost:3000/api/chat/uploads?id=${body.id}`,
+          "fallback URLs should follow the route where the handler is mounted",
+        );
+      }));
+
     it("prefers the backend's own url when the store provides one (cloud/S3)", () =>
       withTempDir(async (dir) => {
         // A store that returns an external URL from stat() — like a signed CDN url.
@@ -192,6 +213,24 @@ describe("chat/upload-handler", () => {
           assertEquals(item.mediaType, "text/plain", "media type is reported");
           assertEquals(item.size, 3, "byte size is reported");
         }
+      }));
+
+    it("lists fallback urls on the mounted route path", () =>
+      withTempDir(async (dir) => {
+        const { POST, GET } = createChatUploadHandler({
+          storage: new LocalBlobStorage(dir),
+          authorize: () => true,
+        });
+        await POST(postFile(txt("one")));
+
+        const res = await GET(new Request("http://localhost:3000/api/chat/uploads"));
+        assertEquals(res.status, 200, "GET without an id lists stored files");
+        const body = await res.json() as { items: { url: string }[] };
+        assertStringIncludes(
+          body.items[0]?.url ?? "",
+          "/api/chat/uploads?id=",
+          "listed fallback urls should follow the route where the handler is mounted",
+        );
       }));
 
     it("returns 501 with an empty list when the backend cannot list", () =>

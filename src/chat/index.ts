@@ -217,9 +217,9 @@ export {
 } from "#veryfront/react/components/chat/chat.tsx";
 
 // ---------------------------------------------------------------------------
-// Target component names — the renamed public API (see
-// .context/chat-components-checklist.md). The v1 names above stay exported as
-// back-compat aliases; these are the names the component set is standardizing on.
+// Target component names. This chat surface intentionally completes the
+// migration away from the old Thread, Composer, and standalone message exports.
+// Use these names for new code and see the chat UI guide for migration notes.
 // ---------------------------------------------------------------------------
 export {
   AttachmentPill as Attachment,

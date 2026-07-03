@@ -78,6 +78,25 @@ function conversation(overrides: Partial<Conversation> = {}): Conversation {
 }
 
 describe("react/components/chat/hooks/useConversations — save", () => {
+  it("selects the newest stored conversation in uncontrolled mode", async () => {
+    const restoreDom = installDom();
+    const store = memoryConversationStore([
+      conversation({ id: "older", title: "Older", updatedAt: 10 }),
+      conversation({ id: "newer", title: "Newer", updatedAt: 20 }),
+    ]);
+    try {
+      const view = mount(store);
+      await settle();
+
+      assertEquals(view.get().activeId, "newer", "newest stored conversation should be active");
+      assertEquals(view.get().active?.title, "Newer", "active conversation should load");
+
+      view.root.unmount();
+    } finally {
+      restoreDom();
+    }
+  });
+
   it("upserts a new conversation into the list and persists it", async () => {
     const restoreDom = installDom();
     const store = memoryConversationStore([conversation()]);

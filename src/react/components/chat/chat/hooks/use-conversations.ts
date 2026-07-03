@@ -243,7 +243,15 @@ export function useConversations(options: UseConversationsOptions = {}): UseConv
       setIsLoading(false);
       if (!didInit.current) {
         if (list.length === 0) create();
-        else if (!isControlled && activeRef.current == null) select(list[0]!.id);
+        else if (!isControlled && activeRef.current == null) {
+          const firstId = list[0]?.id ?? null;
+          select(firstId);
+          if (firstId) {
+            void store.load(firstId).then((conversation) => {
+              if (!cancelled) setActive(conversation);
+            });
+          }
+        }
       }
       didInit.current = true;
     });
