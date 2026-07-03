@@ -128,6 +128,30 @@ describe("html/html-injection", () => {
       assertEquals(hydrationData.params, { slug: ["guides", "intro"] });
     });
 
+    it("escapes </script> in route params so the hydration payload cannot break out (XSS)", () => {
+      const payload = "</script><script>globalThis.pwned=1</script>";
+      const html = injectHTMLContent(
+        baseTemplate,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "production",
+          slug: "test",
+          pagePath: "/app/page.tsx",
+          isClientPage: true,
+          params: { slug: [payload] },
+        },
+      );
+
+      // The literal breakout sequence must not appear anywhere in the output;
+      // jsonForInlineScript encodes `<` as \\u003c inside the JSON value.
+      assertEquals(html.includes("<script>globalThis.pwned=1</script>"), false);
+      // Round-trips losslessly: if the payload had broken out of the tag, the
+      // extractor's non-greedy `</script>` match would truncate the JSON and
+      // JSON.parse would throw here.
+      assertEquals(extractHydrationData(html).params, { slug: [payload] });
+    });
+
     it("defaults client-page hydration params to an empty object when unset", () => {
       const html = injectHTMLContent(
         baseTemplate,
