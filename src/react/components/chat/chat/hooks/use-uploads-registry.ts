@@ -167,6 +167,7 @@ export function useUploadsRegistry(
       const response = await fetch(endpoint, { headers });
       if (!response.ok) return;
       const body = (await response.json()) as ListResponse;
+      if (!Array.isArray(body.items)) return;
       const serverItems = (body.items ?? [])
         .map(toUploadedFile)
         .filter((f): f is UploadedFile => f !== null);

@@ -360,7 +360,7 @@ export default function AdvancedChat() {
 - Chat component with theme system (parts-based ChatMessage support)
 - AgentCard component
 - Message component
-- StreamingMessage component
+- Message streaming state
 - Theme system with defaults
 - Composition API
 - Dark mode support

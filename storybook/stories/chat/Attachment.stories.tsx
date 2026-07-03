@@ -40,7 +40,7 @@ function AttachmentDocsPage() {
 
       <DocsSection
         title="Uploading (legacy status)"
-        description="The legacy `status: \"uploading\"` dims the chip and spins over the icon box. Prefer `state` for new code — see Upload states below."
+        description="The legacy `status: 'uploading'` dims the chip and spins over the icon box. Prefer `state` for new code. See Upload states below."
       >
         <DocsExampleAuto of={Uploading} />
       </DocsSection>
