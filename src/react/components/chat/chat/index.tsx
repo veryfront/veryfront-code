@@ -162,6 +162,7 @@ export {
   type ChatSidebarGroupProps,
   type ChatSidebarIcons,
   type ChatSidebarItemProps,
+  type ChatSidebarItemRenderOptions,
   type ChatSidebarListProps,
   type ChatSidebarNewButtonProps,
   type ChatSidebarProps,
