@@ -611,6 +611,7 @@ export const getRouterScript = () => `
         currentPath = targetPath;
         window.__veryfrontRouter.pathname = targetPath;
         window.__veryfrontRouter.query = Object.fromEntries(new URLSearchParams(window.location.search));
+        window.__veryfrontRouter.params = normalizeRouteParams(pageData.params);
 
         if (restoreScroll) {
           restoreScrollPosition(targetPath);
@@ -952,6 +953,22 @@ export const getRouterScript = () => `
     }
 
     // ============================================
+    // Route params normalization
+    // ============================================
+    // Catch-all segments arrive as arrays and are joined so no path info is
+    // lost, matching the server flattenRouteParams + RSC hydration normalizer.
+    function normalizeRouteParams(raw) {
+      const out = {};
+      if (!raw) return out;
+      for (const key in raw) {
+        const value = raw[key];
+        if (value === undefined) continue;
+        out[key] = Array.isArray(value) ? value.join('/') : value;
+      }
+      return out;
+    }
+
+    // ============================================
     // Router object
     // ============================================
     const router = {
@@ -980,11 +997,7 @@ export const getRouterScript = () => `
         try {
           const el = document.getElementById('veryfront-hydration-data');
           const raw = (JSON.parse(el && el.textContent ? el.textContent : '{}') || {}).params || {};
-          const out = {};
-          for (const key in raw) {
-            out[key] = Array.isArray(raw[key]) ? raw[key].join('/') : raw[key];
-          }
-          return out;
+          return normalizeRouteParams(raw);
         } catch (_) {
           return {};
         }
@@ -1017,6 +1030,7 @@ export const getRouterScript = () => `
         currentPath = path;
         window.__veryfrontRouter.pathname = path;
         window.__veryfrontRouter.query = Object.fromEntries(new URLSearchParams(window.location.search));
+        window.__veryfrontRouter.params = normalizeRouteParams(e.state.pageData.params);
 
         restoreScrollPosition(path);
         hideNavigationProgress();

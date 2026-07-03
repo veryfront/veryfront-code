@@ -317,6 +317,24 @@ describe("hydration-script-builder/templates/router", () => {
       assertIncludes(getRouterScript(), "window.__veryfrontRouter = router");
     });
 
+    it("should normalize route params joining catch-all segments", () => {
+      const result = getRouterScript();
+      assertIncludes(result, "function normalizeRouteParams(raw)");
+      assertIncludes(result, "Array.isArray(value) ? value.join('/') : value");
+    });
+
+    it("should refresh router params during SPA and popstate navigation", () => {
+      const result = getRouterScript();
+      assertIncludes(
+        result,
+        "window.__veryfrontRouter.params = normalizeRouteParams(pageData.params);",
+      );
+      assertIncludes(
+        result,
+        "window.__veryfrontRouter.params = normalizeRouteParams(e.state.pageData.params);",
+      );
+    });
+
     it("should handle popstate events for browser back/forward", () => {
       assertIncludes(getRouterScript(), "addEventListener('popstate'");
     });
