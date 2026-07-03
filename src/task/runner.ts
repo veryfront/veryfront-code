@@ -8,17 +8,28 @@
 import { logger as baseLogger } from "#veryfront/utils";
 import { env as getProcessEnv } from "#veryfront/compat/process.ts";
 import { buildTaskContextEnv } from "#veryfront/runs/runtime-env.ts";
-import type { DiscoveredTask } from "./discovery.ts";
 import type { TaskContext } from "./types.ts";
+import type { TaskDefinition } from "./types.ts";
 
 const logger = baseLogger.component("task-runner");
+
+export interface RunnableTask {
+  /** Stable task id used by CLI, triggers, and cloud runs. */
+  id: string;
+
+  /** Human-readable task name. */
+  name: string;
+
+  /** The task definition to execute. */
+  definition: TaskDefinition;
+}
 
 /**
  * Options for running a task
  */
 export interface RunTaskOptions {
   /** The discovered task to run */
-  task: DiscoveredTask;
+  task: RunnableTask;
 
   /** Additional config to pass to the task */
   config?: Record<string, unknown>;
