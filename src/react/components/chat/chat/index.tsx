@@ -196,6 +196,13 @@ export {
   type UseThreadsResult,
 } from "./hooks/use-threads.ts";
 
+export {
+  type ConversationPatch,
+  useConversations,
+  type UseConversationsOptions,
+  type UseConversationsResult,
+} from "./hooks/use-conversations.ts";
+
 // Re-exports — conversation persistence adapters
 export {
   type Conversation,

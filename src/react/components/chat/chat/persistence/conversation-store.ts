@@ -19,8 +19,8 @@
  */
 import type { ChatMessage } from "#veryfront/agent/react";
 
-/** Lightweight conversation metadata — what a list / sidebar needs (no messages). */
-export interface ConversationSummary {
+/** Fields shared by a conversation and its list summary. */
+interface ConversationMeta {
   id: string;
   title: string;
   /** Last agent this conversation talked to — lets a switcher restore per-thread. */
@@ -29,8 +29,15 @@ export interface ConversationSummary {
   updatedAt: number;
 }
 
-/** A full conversation — summary + its messages. Fetched via {@link ConversationStore.load}. */
-export interface Conversation extends ConversationSummary {
+/** Lightweight conversation metadata — what a list / sidebar needs (no messages). */
+export interface ConversationSummary extends ConversationMeta {
+  /** Number of messages, so a list can show "empty" / reuse an empty draft
+   *  without loading the message blob. Derived from the conversation on save. */
+  messageCount: number;
+}
+
+/** A full conversation — metadata + its messages. Fetched via {@link ConversationStore.load}. */
+export interface Conversation extends ConversationMeta {
   messages: ChatMessage[];
 }
 

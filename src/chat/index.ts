@@ -218,11 +218,15 @@ export {
 // (upcoming) `useConversations` hook. localStorage default; idb/api are follow-ups.
 export {
   type Conversation,
+  type ConversationPatch,
   type ConversationStore,
   type ConversationSummary,
   localConversationStore,
   memoryConversationStore,
   type StorageLike,
+  useConversations,
+  type UseConversationsOptions,
+  type UseConversationsResult,
 } from "#veryfront/react/components/chat/chat.tsx";
 
 // ---------------------------------------------------------------------------

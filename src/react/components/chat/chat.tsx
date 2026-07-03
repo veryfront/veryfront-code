@@ -41,11 +41,15 @@ export {
 } from "./chat/index.tsx";
 export {
   type Conversation,
+  type ConversationPatch,
   type ConversationStore,
   type ConversationSummary,
   localConversationStore,
   memoryConversationStore,
   type StorageLike,
+  useConversations,
+  type UseConversationsOptions,
+  type UseConversationsResult,
 } from "./chat/index.tsx";
 
 // ---------------------------------------------------------------------------

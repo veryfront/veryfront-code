@@ -12,6 +12,7 @@ function toSummary(c: Conversation): ConversationSummary {
     id: c.id,
     title: c.title,
     ...(c.agentId ? { agentId: c.agentId } : {}),
+    messageCount: c.messages.length,
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
   };

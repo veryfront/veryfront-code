@@ -44,8 +44,10 @@ function runContract(name: string, makeStore: () => ConversationStore): void {
 
       const summaries = await store.list();
       assertEquals(summaries.map((s) => s.id), ["b", "a"], "newest updatedAt first");
-      // Summaries are lightweight — no messages hauled for the list.
+      // Summaries are lightweight — no messages hauled for the list, but the
+      // count rides along so a list can show "empty" / reuse a draft.
       assert(!("messages" in summaries[0]!), "list() must not include messages");
+      assertEquals(summaries[0]?.messageCount, 1, "message count is reported");
     });
 
     it("load returns the full conversation with messages", async () => {

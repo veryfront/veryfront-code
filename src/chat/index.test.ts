@@ -113,6 +113,7 @@ const expectedRuntimeExports = [
   "useAgent",
   "useAgentMetadata",
   "useChat",
+  "useConversations",
   "useChatErrorHandler",
   "useChatContext",
   "useChatContextOptional",
