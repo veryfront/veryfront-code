@@ -39,7 +39,6 @@ const COMPONENTS: NavGridEntry[] = [
 
 const COMPOSITION: NavGridEntry[] = [
   { title: "Anatomy", id: "chat-composition-anatomy--docs" },
-  { title: "With Sidebar", id: "chat-composition-with-sidebar--docs" },
   { title: "Subcomponents", id: "chat-composition-subcomponents--docs" },
   {
     title: "React Primitives",

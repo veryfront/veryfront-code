@@ -3,10 +3,10 @@ import type {
   AttachmentInfo,
   ChatMessage,
   ChatToolPart,
+  ConversationSummary,
   ModelOption,
   QuickAction,
   Source,
-  Thread,
   UploadedFile,
 } from "veryfront/chat";
 
@@ -184,25 +184,25 @@ export const chatMessages: ChatMessage[] = [
 
 const now = Date.now();
 
-export const threads: Thread[] = [
+export const conversations: ConversationSummary[] = [
   {
     id: "thread-active",
     title: "Release review",
-    messages: chatMessages,
+    messageCount: chatMessages.length,
     createdAt: now - 45 * 60 * 1000,
     updatedAt: now - 5 * 60 * 1000,
   },
   {
     id: "thread-yesterday",
     title: "Agent run audit",
-    messages: chatMessages.slice(0, 2),
+    messageCount: 2,
     createdAt: now - 28 * 60 * 60 * 1000,
     updatedAt: now - 26 * 60 * 60 * 1000,
   },
   {
     id: "thread-older",
     title: "Workflow migration notes",
-    messages: chatMessages.slice(0, 1),
+    messageCount: 1,
     createdAt: now - 6 * 24 * 60 * 60 * 1000,
     updatedAt: now - 6 * 24 * 60 * 60 * 1000,
   },

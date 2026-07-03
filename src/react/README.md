@@ -86,7 +86,7 @@ react/
 - `Message` - Standalone message component (parts-based format)
 - `Markdown` - Markdown rendering with syntax highlighting
 - `ModelSelector` - Model selection UI component
-- `ChatWithSidebar` - Chat with sidebar layout
+- `ChatSidebar` - Conversation rail (pairs with `ConversationsProvider`)
 - `OptimizedImage` - Responsive image with lazy loading
 - `OptimizedBackgroundImage` - Background image optimization
 - `SimpleOptimizedImage` - Simple optimized image

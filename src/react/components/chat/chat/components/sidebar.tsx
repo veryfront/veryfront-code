@@ -54,7 +54,6 @@ import { List, ListItem, ListLabel } from "../../ui/list.tsx";
 import { Skeleton } from "../../ui/skeleton.tsx";
 import type { ConversationSummary } from "../persistence/conversation-store.ts";
 import { useConversationsContextOptional } from "../contexts/conversations-context.tsx";
-import type { Thread } from "../hooks/use-threads.ts";
 
 /** Three-dots "more actions" glyph (not in the shared icons barrel). */
 function MoreGlyph({ className }: { className?: string }): React.ReactElement {
@@ -78,8 +77,6 @@ function MoreGlyph({ className }: { className?: string }): React.ReactElement {
  */
 export interface ChatSidebarIcons {
   newConversation?: React.ReactNode;
-  /** @deprecated Renamed to `newConversation`. */
-  newThread?: React.ReactNode;
   rename?: React.ReactNode;
   delete?: React.ReactNode;
   more?: React.ReactNode;
@@ -93,34 +90,14 @@ export interface ChatSidebarItemRenderOptions {
   onRename?: (title: string) => void;
 }
 
-/** @deprecated Renamed to {@link ChatSidebarItemRenderOptions}. */
-export type ChatSidebarThreadItemRenderOptions = ChatSidebarItemRenderOptions;
-
-/** A conversation row accepts a summary or the deprecated {@link Thread} shape. */
-type ConversationLike = ConversationSummary | Thread;
-
-/** Normalize a conversation-or-thread into a {@link ConversationSummary}. */
-function toSummary(item: ConversationLike): ConversationSummary {
-  if ("messageCount" in item) return item;
-  // Deprecated Thread — derive the count from its messages.
-  return {
-    id: item.id,
-    title: item.title,
-    ...(item.agentId ? { agentId: item.agentId } : {}),
-    messageCount: item.messages.length,
-    createdAt: item.createdAt,
-    updatedAt: item.updatedAt,
-  };
-}
-
 // ---------------------------------------------------------------------------
-// Shared props — the conversation-native API + deprecated `thread*` aliases
+// Shared props — the conversation-native API
 // ---------------------------------------------------------------------------
 
 /** Data + action props shared by the preset and {@link ChatSidebarRoot}. */
 interface ChatSidebarControlProps {
   /** Conversations to list, newest first. Defaults to the provider's list. */
-  conversations?: ConversationLike[];
+  conversations?: ConversationSummary[];
   /** The currently selected conversation, or `null`. Defaults from context. */
   activeId?: string | null;
   /** Called when a conversation is chosen. Defaults to the provider's `select`. */
@@ -134,25 +111,6 @@ interface ChatSidebarControlProps {
   /** Render each row yourself instead of the built-in row (auto {@link ChatSidebarList}). */
   renderItem?: (
     conversation: ConversationSummary,
-    opts: ChatSidebarItemRenderOptions,
-  ) => React.ReactNode;
-
-  // --- Deprecated thread aliases (one-release fallback) --------------------
-  /** @deprecated Renamed to `conversations`. */
-  threads?: ConversationLike[];
-  /** @deprecated Renamed to `activeId`. */
-  activeThreadId?: string | null;
-  /** @deprecated Renamed to `onSelect`. */
-  onSelectThread?: (id: string) => void;
-  /** @deprecated Renamed to `onDelete`. */
-  onDeleteThread?: (id: string) => void;
-  /** @deprecated Renamed to `onRename`. */
-  onRenameThread?: (id: string, title: string) => void;
-  /** @deprecated Renamed to `onNew`. */
-  onNewThread?: () => void;
-  /** @deprecated Renamed to `renderItem`. */
-  renderThreadItem?: (
-    thread: Thread,
     opts: ChatSidebarItemRenderOptions,
   ) => React.ReactNode;
 }
@@ -193,9 +151,9 @@ function useChatSidebarContext(): ChatSidebarContextValue {
 const noop = (): void => {};
 
 /**
- * Resolve the sidebar's data + actions from (in order) the explicit
- * conversation props, the deprecated `thread*` aliases, then the surrounding
- * {@link ConversationsProvider}. Inside a provider the sidebar needs no props.
+ * Resolve the sidebar's data + actions from the explicit conversation props,
+ * falling back to the surrounding {@link ConversationsProvider}. Inside a
+ * provider the sidebar needs no props.
  */
 function useResolvedSidebar(props: ChatSidebarControlProps): {
   conversations: ConversationSummary[];
@@ -208,25 +166,13 @@ function useResolvedSidebar(props: ChatSidebarControlProps): {
 } {
   const ctx = useConversationsContextOptional();
 
-  const rawList = props.conversations ?? props.threads;
-  const conversations = React.useMemo(
-    () => (rawList ? rawList.map(toSummary) : ctx?.conversations ?? []),
-    [rawList, ctx?.conversations],
-  );
-
-  const activeId = props.activeId !== undefined
-    ? props.activeId
-    : props.activeThreadId !== undefined
-    ? props.activeThreadId
-    : ctx?.activeId ?? null;
-
-  const onSelect = props.onSelect ?? props.onSelectThread ?? ctx?.select ?? noop;
-  const onDelete = props.onDelete ?? props.onDeleteThread ?? ctx?.remove ?? noop;
-  const onRename = props.onRename ?? props.onRenameThread ?? ctx?.rename;
-  const explicitNew = props.onNew ?? props.onNewThread;
-  const onNew = explicitNew ?? (ctx ? () => void ctx.create() : undefined);
-  const renderItem = props.renderItem ??
-    (props.renderThreadItem as ChatSidebarContextValue["renderItem"] | undefined);
+  const conversations = props.conversations ?? ctx?.conversations ?? [];
+  const activeId = props.activeId !== undefined ? props.activeId : ctx?.activeId ?? null;
+  const onSelect = props.onSelect ?? ctx?.select ?? noop;
+  const onDelete = props.onDelete ?? ctx?.remove ?? noop;
+  const onRename = props.onRename ?? ctx?.rename;
+  const onNew = props.onNew ?? (ctx ? () => void ctx.create() : undefined);
+  const renderItem = props.renderItem;
 
   return { conversations, activeId, onSelect, onDelete, onRename, onNew, renderItem };
 }
@@ -363,7 +309,7 @@ export function ChatSidebarNewButton({
         onClick={onNew}
         className={cn("w-full", className)}
       >
-        {icons?.newConversation ?? icons?.newThread}
+        {icons?.newConversation}
         {children ?? "New chat"}
       </Button>
     </div>
@@ -377,16 +323,13 @@ ChatSidebarNewButton.displayName = "ChatSidebar.NewButton";
 
 /** Props accepted by {@link ChatSidebarItem}. */
 export interface ChatSidebarItemProps {
-  conversation?: ConversationLike;
-  /** @deprecated Renamed to `conversation`. */
-  thread?: ConversationLike;
+  conversation: ConversationSummary;
   className?: string;
 }
 
 /** A single conversation row — select on click, rename/delete via a "…" menu. */
 export function ChatSidebarItem({
-  conversation: conversationProp,
-  thread,
+  conversation,
   className,
 }: ChatSidebarItemProps): React.ReactElement {
   const {
@@ -396,14 +339,6 @@ export function ChatSidebarItem({
     onRename,
     icons,
   } = useChatSidebarContext();
-
-  const source = conversationProp ?? thread;
-  if (!source) {
-    throw COMPONENT_ERROR.create({
-      detail: "ChatSidebar.Item requires a `conversation` prop",
-    });
-  }
-  const conversation = toSummary(source);
 
   const isActive = conversation.id === activeId;
   const [editing, setEditing] = React.useState(false);
@@ -667,7 +602,7 @@ export interface ChatSidebarProps extends Omit<ChatSidebarRootProps, "children">
 function ChatSidebarBase(props: ChatSidebarProps): React.ReactElement | null {
   // Show the "new" button whenever an action is available (explicit or context).
   const ctx = useConversationsContextOptional();
-  const hasNew = props.onNew !== undefined || props.onNewThread !== undefined || ctx !== null;
+  const hasNew = props.onNew !== undefined || ctx !== null;
   return (
     <ChatSidebarRoot {...props}>
       {hasNew && <ChatSidebarNewButton />}

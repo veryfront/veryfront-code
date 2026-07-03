@@ -17,7 +17,6 @@ import {
 import {
   Chat,
   ChatContextProvider,
-  ChatWithSidebar,
   ComposerContextProvider,
   Message,
   MessageContextProvider,
@@ -222,7 +221,6 @@ describe("Guide: chat-ui.md", () => {
     assertExists(chatRecord.MessageList);
     assertExists(chatRecord.Composer);
     assertExists(messageRecord.Root);
-    assertExists(ChatWithSidebar);
     assertExists(ChatContextProvider);
     assertExists(ComposerContextProvider);
     assertExists(MessageContextProvider);

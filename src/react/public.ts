@@ -86,21 +86,17 @@ export {
   ChatContextProvider,
   ComposerContextProvider,
   MessageContextProvider,
-  ThreadListContextProvider,
   useChatContext,
   useChatContextOptional,
   useComposerContext,
   useComposerContextOptional,
   useMessageContext,
   useMessageContextOptional,
-  useThreadListContext,
-  useThreadListContextOptional,
 } from "./components/chat/chat.tsx";
 export type {
   ChatContextValue,
   ComposerContextValue,
   MessageContextValue,
-  ThreadListContextValue,
 } from "./components/chat/chat.tsx";
 
 // Chat — Sub-components
@@ -109,7 +105,6 @@ export {
   AttachmentsPanel,
   BranchPicker,
   ChatSidebar,
-  ChatWithSidebar,
   ConversationEmptyState,
   ConversationScrollButton,
   downloadMarkdown,
@@ -139,7 +134,6 @@ export {
   TabSwitcher,
   ToolCallCard,
   ToolStatusBadge,
-  useThreads,
 } from "./components/chat/chat.tsx";
 export type {
   AttachmentInfo,
@@ -155,19 +149,7 @@ export type {
   ChatSidebarNewButtonProps,
   ChatSidebarProps,
   ChatSidebarRootProps,
-  ChatSidebarThreadItemRenderOptions,
   ChatTab,
-  ChatWithSidebarAttachmentConfig,
-  ChatWithSidebarChatController,
-  ChatWithSidebarFeatureConfig,
-  ChatWithSidebarGroupedProps,
-  ChatWithSidebarMessageConfig,
-  ChatWithSidebarModelConfig,
-  ChatWithSidebarProps,
-  ChatWithSidebarQuickActionsConfig,
-  ChatWithSidebarSidebarConfig,
-  ChatWithSidebarTabsConfig,
-  ChatWithSidebarVoiceConfig,
   ConversationEmptyStateProps,
   ConversationScrollButtonProps,
   DropZoneOverlayProps,
@@ -188,10 +170,7 @@ export type {
   SuggestionProps,
   SuggestionsProps,
   TabSwitcherProps,
-  Thread,
   UploadedFile,
-  UseThreadsOptions,
-  UseThreadsResult,
 } from "./components/chat/chat.tsx";
 
 export { AgentCard } from "./components/chat/agent-card.tsx";

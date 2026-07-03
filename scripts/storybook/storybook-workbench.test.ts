@@ -196,10 +196,10 @@ describe("Storybook UI workbench", () => {
         names: ["ToolCall", "Sources", "Reasoning", "MessageActionBar"],
       },
       {
-        path: "storybook/stories/chat/ChatWithSidebar.stories.tsx",
-        title: "Chat/Composition/With Sidebar",
+        path: "storybook/stories/chat/ChatSidebar.stories.tsx",
+        title: "Chat/Components/ChatSidebar",
         imports: ['from "veryfront/chat"'],
-        names: ["ChatWithSidebar"],
+        names: ["ChatSidebar"],
       },
       {
         path: "storybook/stories/primitives/ReactPrimitives.stories.tsx",

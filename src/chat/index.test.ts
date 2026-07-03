@@ -51,7 +51,6 @@ const expectedRuntimeExports = [
   "ChatMessageList",
   "ChatRoot",
   "ChatSidebar",
-  "ChatWithSidebar",
   "DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS",
   "DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS",
   "ChatStreamIdleTimeoutError",
@@ -82,8 +81,6 @@ const expectedRuntimeExports = [
   "Suggestion",
   "Suggestions",
   "TabSwitcher",
-  "ThreadListContextProvider",
-  "ThreadsProvider",
   "ToolStatusBadge",
   "AttachmentsPanel",
   "buildChatStreamChunkMessageMetadata",
@@ -128,9 +125,6 @@ const expectedRuntimeExports = [
   "useMessageContext",
   "useMessageContextOptional",
   "useStreaming",
-  "useThreadListContext",
-  "useThreadListContextOptional",
-  "useThreads",
   "useUpload",
   "useUploadsRegistry",
   "useVoiceInput",
@@ -151,7 +145,6 @@ describe("chat/index.ts exports", () => {
 
   it("keeps core re-exports wired to their source modules", () => {
     assertEquals(chatModule.Chat, chatUI.Chat);
-    assertEquals(chatModule.ChatWithSidebar, chatUI.ChatWithSidebar);
     assertEquals(chatModule.useChat, useChatModule.useChat);
     assertEquals(chatModule.useAgent, useAgentModule.useAgent);
     assertEquals(

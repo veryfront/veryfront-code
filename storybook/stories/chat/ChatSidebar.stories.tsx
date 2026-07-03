@@ -10,7 +10,7 @@ import {
   DocsPropsTable,
   DocsSection,
 } from "../../.storybook/docs";
-import { threads } from "../fixtures/chat";
+import { conversations } from "../fixtures/chat";
 import { ReviewSurface, StoryFrame } from "../support/StoryFrame";
 
 const importCode = `import { ChatSidebar } from "veryfront/chat"`;
@@ -18,22 +18,22 @@ const importCode = `import { ChatSidebar } from "veryfront/chat"`;
 const compositionTree =
   `ChatSidebar            <- one-shot preset: Root + NewButton + auto List
   +-- ChatSidebar.Root      <- context provider + rail container
-       +-- ChatSidebar.NewButton  <- primary "new chat" action (onNewThread)
+       +-- ChatSidebar.NewButton  <- primary "new chat" action (onNew)
        +-- ChatSidebar.List       <- scroll region; auto-groups by recency
             +-- ChatSidebar.Group  <- a labeled recency bucket (Today / ...)
-                 +-- ChatSidebar.Item   <- a thread row (select / rename / delete)
-            +-- ChatSidebar.Empty  <- shown when there are no threads`;
+                 +-- ChatSidebar.Item   <- a conversation row (select / rename / delete)
+            +-- ChatSidebar.Empty  <- shown when there are no conversations`;
 
 const compositionCode = `import { ChatSidebar } from "veryfront/chat";
 
 // The preset composes these for you; drop to the parts for custom layouts.
 <ChatSidebar.Root
-  threads={items}
-  activeThreadId={activeThreadId}
-  onSelectThread={select}
-  onDeleteThread={remove}
-  onRenameThread={rename}
-  onNewThread={create}
+  conversations={items}
+  activeId={activeThreadId}
+  onSelect={select}
+  onDelete={remove}
+  onRename={rename}
+  onNew={create}
 >
   <ChatSidebar.NewButton>New chat</ChatSidebar.NewButton>
 
@@ -43,22 +43,22 @@ const compositionCode = `import { ChatSidebar } from "veryfront/chat";
   {/* …or bring your own grouping / rows: */}
   <ChatSidebar.List>
     <ChatSidebar.Group label="Pinned">
-      {pinned.map((t) => <ChatSidebar.Item key={t.id} thread={t} />)}
+      {pinned.map((t) => <ChatSidebar.Item key={t.id} conversation={t} />)}
     </ChatSidebar.Group>
   </ChatSidebar.List>
 </ChatSidebar.Root>`;
 
 const customGroupsCode = `import { ChatSidebar } from "veryfront/chat";
 
-// Group threads however you like — Item pulls select/rename/delete from Root.
+// Group conversations however you like — Item pulls select/rename/delete from Root.
 <ChatSidebar.Root {...ctx}>
   <ChatSidebar.NewButton />
   <ChatSidebar.List>
     <ChatSidebar.Group label="Pinned">
-      {pinned.map((t) => <ChatSidebar.Item key={t.id} thread={t} />)}
+      {pinned.map((t) => <ChatSidebar.Item key={t.id} conversation={t} />)}
     </ChatSidebar.Group>
     <ChatSidebar.Group label="Everything else">
-      {rest.map((t) => <ChatSidebar.Item key={t.id} thread={t} />)}
+      {rest.map((t) => <ChatSidebar.Item key={t.id} conversation={t} />)}
     </ChatSidebar.Group>
   </ChatSidebar.List>
 </ChatSidebar.Root>`;
@@ -68,7 +68,7 @@ function ChatSidebarDocsPage() {
     <DocsPage>
       <DocsHero
         title="ChatSidebar"
-        lead="A conversation rail for `ChatWithSidebar` — lists threads grouped by recency, with select, rename, delete, and new-thread actions."
+        lead="A conversation rail — lists conversations grouped by recency, with select, rename, delete, and new-conversation actions. Inside a `ConversationsProvider` it needs no props."
       />
 
       <DocsSection
@@ -116,35 +116,35 @@ function ChatSidebarDocsPage() {
       <DocsSection title="API Reference">
         <DocsPropsTable
           component="ChatSidebar"
-          description="Thread list rail"
+          description="Conversation list rail. All props are optional — inside a ConversationsProvider they default from context."
           props={[
             {
-              name: "threads",
-              type: "Thread[]",
-              description: "Conversation threads to list, newest first",
+              name: "conversations",
+              type: "ConversationSummary[]",
+              description: "Conversations to list, newest first (default: the provider's list)",
             },
             {
-              name: "activeThreadId",
+              name: "activeId",
               type: "string | null",
-              description: "The currently selected thread, or null",
+              description: "The currently selected conversation, or null",
             },
             {
-              name: "onSelectThread",
+              name: "onSelect",
               type: "(id: string) => void",
-              description: "Called when a thread is chosen",
+              description: "Called when a conversation is chosen",
             },
             {
-              name: "onDeleteThread",
+              name: "onDelete",
               type: "(id: string) => void",
-              description: "Called when a thread is deleted",
+              description: "Called when a conversation is deleted",
             },
             {
-              name: "onRenameThread",
+              name: "onRename",
               type: "(id: string, title: string) => void",
-              description: "Called when a thread title is edited",
+              description: "Called when a conversation title is edited",
             },
             {
-              name: "onNewThread",
+              name: "onNew",
               type: "() => void",
               description: "Called to start a new conversation",
             },
@@ -191,28 +191,28 @@ export const Default: Story = {
       source: {
         code: `import { ChatSidebar } from "veryfront/chat";
 
-const [activeThreadId, setActiveThreadId] = React.useState(threads[0]?.id ?? null);
-const [items, setItems] = React.useState(threads);
+const [activeThreadId, setActiveThreadId] = React.useState(conversations[0]?.id ?? null);
+const [items, setItems] = React.useState(conversations);
 
 <ChatSidebar
-  threads={items}
-  activeThreadId={activeThreadId}
-  onSelectThread={setActiveThreadId}
-  onDeleteThread={(id) =>
+  conversations={items}
+  activeId={activeThreadId}
+  onSelect={setActiveThreadId}
+  onDelete={(id) =>
     setItems((current) => current.filter((item) => item.id !== id))}
-  onRenameThread={(id, title) =>
+  onRename={(id, title) =>
     setItems((current) =>
       current.map((item) => (item.id === id ? { ...item, title } : item)))}
-  onNewThread={() => createThread()}
+  onNew={() => create()}
 />`,
       },
     },
   },
   render: () => {
     const [activeThreadId, setActiveThreadId] = React.useState(
-      threads[0]?.id ?? null,
+      conversations[0]?.id ?? null,
     );
-    const [items, setItems] = React.useState(threads);
+    const [items, setItems] = React.useState(conversations);
 
     return (
       <StoryFrame maxWidth="240px">
@@ -220,16 +220,16 @@ const [items, setItems] = React.useState(threads);
           <div className="h-[520px] overflow-hidden bg-[var(--sidebar-background)]">
             <ChatSidebar
               fill
-              threads={items}
-              activeThreadId={activeThreadId}
-              onSelectThread={setActiveThreadId}
-              onDeleteThread={(id) =>
+              conversations={items}
+              activeId={activeThreadId}
+              onSelect={setActiveThreadId}
+              onDelete={(id) =>
                 setItems((current) => current.filter((item) => item.id !== id))}
-              onRenameThread={(id, title) =>
+              onRename={(id, title) =>
                 setItems((current) =>
                   current.map((item) => item.id === id ? { ...item, title } : item)
                 )}
-              onNewThread={() => undefined}
+              onNew={() => undefined}
             />
           </div>
         </ReviewSurface>
@@ -246,11 +246,11 @@ export const Empty: Story = {
         code: `import { ChatSidebar } from "veryfront/chat";
 
 <ChatSidebar
-  threads={[]}
-  activeThreadId={null}
-  onSelectThread={(id) => selectThread(id)}
-  onDeleteThread={(id) => deleteThread(id)}
-  onNewThread={() => createThread()}
+  conversations={[]}
+  activeId={null}
+  onSelect={(id) => select(id)}
+  onDelete={(id) => remove(id)}
+  onNew={() => create()}
 />`,
       },
     },
@@ -261,11 +261,11 @@ export const Empty: Story = {
         <div className="h-[420px] overflow-hidden bg-[var(--sidebar-background)]">
           <ChatSidebar
             fill
-            threads={[]}
-            activeThreadId={null}
-            onSelectThread={() => undefined}
-            onDeleteThread={() => undefined}
-            onNewThread={() => undefined}
+            conversations={[]}
+            activeId={null}
+            onSelect={() => undefined}
+            onDelete={() => undefined}
+            onNew={() => undefined}
           />
         </div>
       </ReviewSurface>
@@ -281,9 +281,9 @@ export const Composed: Story = {
   },
   render: () => {
     const [activeThreadId, setActiveThreadId] = React.useState(
-      threads[0]?.id ?? null,
+      conversations[0]?.id ?? null,
     );
-    const [items, setItems] = React.useState(threads);
+    const [items, setItems] = React.useState(conversations);
 
     return (
       <StoryFrame maxWidth="240px">
@@ -291,16 +291,16 @@ export const Composed: Story = {
           <div className="h-[520px] overflow-hidden bg-[var(--sidebar-background)]">
             <ChatSidebar.Root
               fill
-              threads={items}
-              activeThreadId={activeThreadId}
-              onSelectThread={setActiveThreadId}
-              onDeleteThread={(id) =>
+              conversations={items}
+              activeId={activeThreadId}
+              onSelect={setActiveThreadId}
+              onDelete={(id) =>
                 setItems((current) => current.filter((item) => item.id !== id))}
-              onRenameThread={(id, title) =>
+              onRename={(id, title) =>
                 setItems((current) =>
                   current.map((item) => item.id === id ? { ...item, title } : item)
                 )}
-              onNewThread={() => undefined}
+              onNew={() => undefined}
             >
               <ChatSidebar.NewButton>New chat</ChatSidebar.NewButton>
               <ChatSidebar.List />
@@ -320,11 +320,11 @@ export const CustomGroups: Story = {
   },
   render: () => {
     const [activeThreadId, setActiveThreadId] = React.useState(
-      threads[0]?.id ?? null,
+      conversations[0]?.id ?? null,
     );
-    const [items, setItems] = React.useState(threads);
+    const [items, setItems] = React.useState(conversations);
     const [pinnedIds, setPinnedIds] = React.useState<string[]>(
-      threads[0]?.id ? [threads[0].id] : [],
+      conversations[0]?.id ? [conversations[0].id] : [],
     );
 
     const pinned = items.filter((t) => pinnedIds.includes(t.id));
@@ -336,30 +336,30 @@ export const CustomGroups: Story = {
           <div className="h-[520px] overflow-hidden bg-[var(--sidebar-background)]">
             <ChatSidebar.Root
               fill
-              threads={items}
-              activeThreadId={activeThreadId}
-              onSelectThread={setActiveThreadId}
-              onDeleteThread={(id) => {
+              conversations={items}
+              activeId={activeThreadId}
+              onSelect={setActiveThreadId}
+              onDelete={(id) => {
                 setItems((current) => current.filter((item) => item.id !== id));
                 setPinnedIds((current) => current.filter((pid) => pid !== id));
               }}
-              onRenameThread={(id, title) =>
+              onRename={(id, title) =>
                 setItems((current) =>
                   current.map((item) => item.id === id ? { ...item, title } : item)
                 )}
-              onNewThread={() => undefined}
+              onNew={() => undefined}
             >
               <ChatSidebar.NewButton />
               <ChatSidebar.List>
                 {pinned.length > 0 && (
                   <ChatSidebar.Group label="Pinned">
                     {pinned.map((t) => (
-                      <ChatSidebar.Item key={t.id} thread={t} />
+                      <ChatSidebar.Item key={t.id} conversation={t} />
                     ))}
                   </ChatSidebar.Group>
                 )}
                 <ChatSidebar.Group label="Everything else">
-                  {rest.map((t) => <ChatSidebar.Item key={t.id} thread={t} />)}
+                  {rest.map((t) => <ChatSidebar.Item key={t.id} conversation={t} />)}
                 </ChatSidebar.Group>
               </ChatSidebar.List>
             </ChatSidebar.Root>
@@ -374,7 +374,7 @@ export const RowStates: Story = {
   name: "Row states",
   tags: ["!dev"],
   render: () => {
-    const [items, setItems] = React.useState(threads.slice(0, 3));
+    const [items, setItems] = React.useState(conversations.slice(0, 3));
     const [activeThreadId, setActiveThreadId] = React.useState(items[0]?.id ?? null);
 
     return (
@@ -383,20 +383,20 @@ export const RowStates: Story = {
           <div className="h-[320px] overflow-hidden bg-[var(--sidebar-background)]">
             <ChatSidebar.Root
               fill
-              threads={items}
-              activeThreadId={activeThreadId}
-              onSelectThread={setActiveThreadId}
-              onDeleteThread={(id) =>
+              conversations={items}
+              activeId={activeThreadId}
+              onSelect={setActiveThreadId}
+              onDelete={(id) =>
                 setItems((current) => current.filter((item) => item.id !== id))}
-              onRenameThread={(id, title) =>
+              onRename={(id, title) =>
                 setItems((current) =>
                   current.map((item) => (item.id === id ? { ...item, title } : item))
                 )}
-              onNewThread={() => undefined}
+              onNew={() => undefined}
             >
               <ChatSidebar.List>
                 <ChatSidebar.Group label="Today">
-                  {items.map((t) => <ChatSidebar.Item key={t.id} thread={t} />)}
+                  {items.map((t) => <ChatSidebar.Item key={t.id} conversation={t} />)}
                 </ChatSidebar.Group>
               </ChatSidebar.List>
             </ChatSidebar.Root>
@@ -417,11 +417,11 @@ export const Loading: Story = {
           <ChatSidebar
             fill
             loading
-            threads={[]}
-            activeThreadId={null}
-            onSelectThread={() => undefined}
-            onDeleteThread={() => undefined}
-            onNewThread={() => undefined}
+            conversations={[]}
+            activeId={null}
+            onSelect={() => undefined}
+            onDelete={() => undefined}
+            onNew={() => undefined}
           />
         </div>
       </ReviewSurface>

@@ -122,7 +122,6 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "createAgUiHandler",
       "Chat.MessageList",
       "Message.Root",
-      "ChatWithSidebar",
       "theme",
       "attachments",
       "chat context providers",

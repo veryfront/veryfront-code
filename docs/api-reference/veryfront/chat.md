@@ -160,7 +160,6 @@ Result returned from use agent.
 | `ChatMessageList` | Render chat message list. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/composition/chat-message-list.tsx#L74) |
 | `ChatRoot` | Render chat root. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/composition/chat-root.tsx#L69) |
 | `ChatSidebar` | Render chat sidebar. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/sidebar.tsx#L135) |
-| `ChatWithSidebar` | Render chat with sidebar. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat-with-sidebar.tsx#L135) |
 | `ComposerContextProvider` | Render composer context provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/composer-context.tsx#L65) |
 | `ConversationEmptyState` | State for conversation empty. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/empty-state.tsx#L70) |
 | `ConversationScrollButton` | Render conversation scroll button. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/empty-state.tsx#L109) |
@@ -191,7 +190,6 @@ Result returned from use agent.
 | `Suggestion` | Render suggestion. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/empty-state.tsx#L13) |
 | `Suggestions` | Render suggestions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/empty-state.tsx#L48) |
 | `TabSwitcher` | Render tab switcher. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/tab-switcher.tsx#L27) |
-| `ThreadListContextProvider` | Render thread list context provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/thread-list-context.tsx#L46) |
 | `ToolCallCard` | Tool call card component - renders tool invocations with parameters and results Styled to match AI Elements (https://ai-sdk.dev/elements) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/tool-ui.tsx#L139) |
 | `ToolStatusBadge` | Render tool status badge. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/tool-ui.tsx#L44) |
 | `UploadsPanel` | Render uploads panel. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/uploads-panel.tsx#L29) |
@@ -231,9 +229,6 @@ Result returned from use agent.
 | `useMessageContext` | Context for use message. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/message-context.tsx#L39) |
 | `useMessageContextOptional` | React hook for message context optional. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/message-context.tsx#L50) |
 | `useStreaming` | React hook for streaming. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-streaming.ts#L40) |
-| `useThreadListContext` | Context for use thread list. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/thread-list-context.tsx#L30) |
-| `useThreadListContextOptional` | React hook for thread list context optional. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/thread-list-context.tsx#L41) |
-| `useThreads` | React hook for threads. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/hooks/use-threads.ts#L83) |
 | `useVoiceInput` | Input payload for use voice. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-voice-input.ts#L100) |
 
 ### Classes
@@ -282,17 +277,6 @@ Result returned from use agent.
 | `ChatToolResultPart` | Chat message part that carries a tool result. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L45) |
 | `ChatToolState` | State for chat tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L26) |
 | `ChatUiMessageChunk` | Public API contract for chat UI message chunk. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L341) |
-| `ChatWithSidebarAttachmentConfig` | Configuration used by chat with sidebar attachment. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat-with-sidebar.tsx#L59) |
-| `ChatWithSidebarChatController` | Public API contract for chat with sidebar chat controller. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat-with-sidebar.tsx#L17) |
-| `ChatWithSidebarFeatureConfig` | Configuration used by chat with sidebar feature. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat-with-sidebar.tsx#L86) |
-| `ChatWithSidebarGroupedProps` | Props accepted by chat with sidebar grouped. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat-with-sidebar.tsx#L113) |
-| `ChatWithSidebarMessageConfig` | Configuration used by chat with sidebar message. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat-with-sidebar.tsx#L78) |
-| `ChatWithSidebarModelConfig` | Configuration used by chat with sidebar model. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat-with-sidebar.tsx#L54) |
-| `ChatWithSidebarProps` | Props accepted by chat with sidebar. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat-with-sidebar.tsx#L132) |
-| `ChatWithSidebarQuickActionsConfig` | Configuration used by chat with sidebar quick actions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat-with-sidebar.tsx#L70) |
-| `ChatWithSidebarSidebarConfig` | Configuration used by chat with sidebar sidebar. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat-with-sidebar.tsx#L43) |
-| `ChatWithSidebarTabsConfig` | Configuration used by chat with sidebar tabs. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat-with-sidebar.tsx#L96) |
-| `ChatWithSidebarVoiceConfig` | Configuration used by chat with sidebar voice. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat-with-sidebar.tsx#L107) |
 | `ChildRunAudit` | Public API contract for child run audit. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L121) |
 | `ChildRunAuditToolCall` | Public API contract for child run audit tool call. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L106) |
 | `ChildRunAuditToolResult` | Result returned from child run audit tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L113) |
@@ -329,8 +313,6 @@ Result returned from use agent.
 | `SuggestionProps` | Props accepted by suggestion. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/empty-state.tsx#L5) |
 | `SuggestionsProps` | Props accepted by suggestions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/empty-state.tsx#L41) |
 | `TabSwitcherProps` | Props accepted by tab switcher. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/tab-switcher.tsx#L15) |
-| `Thread` | Public API contract for thread. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/hooks/use-threads.ts#L5) |
-| `ThreadListContextValue` | Public API contract for thread list context value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/thread-list-context.tsx#L14) |
 | `ToolOutput` | Output from tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-chat/types.ts#L32) |
 | `UploadedFile` | Public API contract for uploaded file. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/uploads-panel.tsx#L5) |
 | `UploadsPanelProps` | Props accepted by uploads panel. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/uploads-panel.tsx#L14) |
@@ -342,8 +324,6 @@ Result returned from use agent.
 | `UseCompletionResult` | Result returned from use completion. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-completion.ts#L31) |
 | `UseStreamingOptions` | Options accepted by use streaming. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-streaming.ts#L4) |
 | `UseStreamingResult` | Result returned from use streaming. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-streaming.ts#L19) |
-| `UseThreadsOptions` | Options accepted by use threads. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/hooks/use-threads.ts#L18) |
-| `UseThreadsResult` | Result returned from use threads. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/hooks/use-threads.ts#L24) |
 | `UseVoiceInputOptions` | Options accepted by use voice input. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-voice-input.ts#L3) |
 | `UseVoiceInputResult` | Result returned from use voice input. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-voice-input.ts#L27) |
 

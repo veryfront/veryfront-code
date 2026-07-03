@@ -167,7 +167,6 @@ export {
   type ChatSidebarNewButtonProps,
   type ChatSidebarProps,
   type ChatSidebarRootProps,
-  type ChatSidebarThreadItemRenderOptions,
 } from "./components/sidebar.tsx";
 export { type ChatTab, TabSwitcher, type TabSwitcherProps } from "./components/tab-switcher.tsx";
 export {
@@ -189,13 +188,6 @@ export {
 } from "./components/attachments-panel.tsx";
 
 // Re-exports — hooks
-export {
-  type Thread,
-  useThreads,
-  type UseThreadsOptions,
-  type UseThreadsResult,
-} from "./hooks/use-threads.ts";
-
 export {
   type ConversationPatch,
   useConversations,
@@ -291,18 +283,12 @@ export {
   type ComposerContextValue,
   MessageContextProvider,
   type MessageContextValue,
-  ThreadListContextProvider,
-  type ThreadListContextValue,
-  ThreadsProvider,
-  type ThreadsProviderProps,
   useChatContext,
   useChatContextOptional,
   useComposerContext,
   useComposerContextOptional,
   useMessageContext,
   useMessageContextOptional,
-  useThreadListContext,
-  useThreadListContextOptional,
 } from "./contexts/index.ts";
 
 // ---------------------------------------------------------------------------

@@ -145,14 +145,22 @@ import { Message } from "veryfront/chat";
 </Message.Root>;
 ```
 
-For thread navigation, use `ChatWithSidebar`:
+For conversation navigation, wrap the chat + sidebar in a `ConversationsProvider`.
+The provider owns the conversation list and persistence; `<ChatSidebar>` and
+`<Chat>` both read it from context, so neither needs wiring:
 
 ```tsx
-import { ChatWithSidebar, useChat } from "veryfront/chat";
+import { Chat, ChatSidebar, ConversationsProvider } from "veryfront/chat";
 
 function App() {
-  const chat = useChat();
-  return <ChatWithSidebar chat={chat} sidebar={{ storageKey: "my-app" }} />;
+  return (
+    <ConversationsProvider storageKey="my-app">
+      <div style={{ display: "flex" }}>
+        <ChatSidebar />
+        <Chat agentId="assistant" />
+      </div>
+    </ConversationsProvider>
+  );
 }
 ```
 
