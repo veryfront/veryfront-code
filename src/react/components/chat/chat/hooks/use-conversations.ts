@@ -201,6 +201,25 @@ export function useConversations(options: UseConversationsOptions = {}): UseConv
   React.useEffect(() => flushSave, [flushSave]);
 
   const create = React.useCallback((agentId?: string): Conversation => {
+    // Reuse an existing untouched draft instead of piling up "New Chat" rows —
+    // clicking "New chat" (or an auto-create) when a blank draft already exists
+    // just re-opens it.
+    const draft = summariesRef.current.find(
+      (s) => s.messageCount === 0 && s.title === DEFAULT_CONVERSATION_TITLE,
+    );
+    if (draft) {
+      const reused: Conversation = activeRef.current?.id === draft.id ? activeRef.current : {
+        id: draft.id,
+        title: draft.title,
+        ...(draft.agentId ? { agentId: draft.agentId } : {}),
+        messages: [],
+        createdAt: draft.createdAt,
+        updatedAt: draft.updatedAt,
+      };
+      setActive(reused);
+      select(draft.id);
+      return reused;
+    }
     const conversation = createEmptyConversation({ agentId });
     void store.save(conversation);
     setSummaries((prev) => upsertSummary(prev, conversationSummary(conversation)));
@@ -209,8 +228,10 @@ export function useConversations(options: UseConversationsOptions = {}): UseConv
     return conversation;
   }, [store, select]);
 
-  // Initial load: pull the list; auto-create a draft when empty so there's
-  // always something to open. Runs once per store.
+  // Initial load: pull the list; auto-create a draft only when there's nothing
+  // to open, otherwise land on the most-recent conversation (so a reload
+  // restores where you were instead of spawning a fresh "New Chat"). Runs once
+  // per store.
   const didInit = React.useRef(false);
   React.useEffect(() => {
     didInit.current = false;
@@ -220,7 +241,10 @@ export function useConversations(options: UseConversationsOptions = {}): UseConv
       if (cancelled) return;
       setSummaries(list);
       setIsLoading(false);
-      if (!didInit.current && list.length === 0) create();
+      if (!didInit.current) {
+        if (list.length === 0) create();
+        else if (!isControlled && activeRef.current == null) select(list[0]!.id);
+      }
       didInit.current = true;
     });
     const unsubscribe = store.subscribe?.(() => {

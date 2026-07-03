@@ -52,6 +52,7 @@ import {
 } from "../../ui/dropdown-menu.tsx";
 import { List, ListItem, ListLabel } from "../../ui/list.tsx";
 import { Skeleton } from "../../ui/skeleton.tsx";
+import { ChatTokens } from "../../chat-tokens-style.tsx";
 import type { ConversationSummary } from "../persistence/conversation-store.ts";
 import { useConversationsContextOptional } from "../contexts/conversations-context.tsx";
 
@@ -267,6 +268,7 @@ export function ChatSidebarRoot(props: ChatSidebarRootProps): React.ReactElement
 
   return (
     <ChatSidebarContext.Provider value={value}>
+      <ChatTokens />
       <div
         className={cn(
           "flex flex-col h-full",
@@ -540,14 +542,8 @@ export function ChatSidebarList({
   React.useEffect(() => setMounted(true), []);
 
   const visible = React.useMemo(
-    () =>
-      // A fresh empty draft ("New Chat") pins to the top; everything else is
-      // ordered by newest activity. (spread first — never sort the source array.)
-      [...conversations].sort((a, b) => {
-        const aDraft = a.messageCount === 0 ? 1 : 0;
-        const bDraft = b.messageCount === 0 ? 1 : 0;
-        return bDraft - aDraft || b.updatedAt - a.updatedAt;
-      }),
+    // Newest activity first. (spread first — never sort the source array.)
+    () => [...conversations].sort((a, b) => b.updatedAt - a.updatedAt),
     [conversations],
   );
   const grouped = React.useMemo(() => groupConversations(visible), [visible]);

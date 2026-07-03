@@ -1,5 +1,6 @@
 import * as React from "react";
 import { cn } from "../../theme.ts";
+import { ChatTokens } from "../../chat-tokens-style.tsx";
 import { FileTextIcon, MoreHorizontalIcon, TrashIcon, XIcon } from "../../icons/index.ts";
 import { Button } from "../../ui/button.tsx";
 import {
@@ -105,6 +106,7 @@ const AttachmentsPanelRoot = React.forwardRef<HTMLDivElement, AttachmentsPanelPr
 
     return (
       <AttachmentsPanelContext.Provider value={context}>
+        <ChatTokens />
         <div ref={ref} className={cn("flex flex-col h-full", className)}>
           {children ?? (
             <>

@@ -141,11 +141,18 @@ export function generateTokenCSS(): string {
   const light = tokensToCSS(TOKENS_LIGHT);
   const dark = tokensToCSS(TOKENS_DARK);
 
+  // The design tokens live on `:root` (global), not scoped to `[data-vf-chat]`:
+  // in a chat-first app the chat IS the app, so a `<ChatSidebar>`, `<AppShell>`,
+  // dialog, or any surface rendered *outside* `<Chat>` must still resolve
+  // `var(--primary)` etc. A host that pre-defines these on `:root` still wins —
+  // its rule sits after ours in the cascade. Only presentational chrome (font,
+  // antialiasing, button cursor) stays scoped so it never restyles a host page.
   return [
-    `[data-vf-chat]{font-family:Inter,ui-sans-serif,system-ui,sans-serif;font-weight:var(--font-weight-normal);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;${light}}`,
+    `:root{${light}}`,
+    `[data-vf-chat]{font-family:Inter,ui-sans-serif,system-ui,sans-serif;font-weight:var(--font-weight-normal);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;}`,
     `[data-vf-chat] button{cursor:pointer;}`,
-    `@media(prefers-color-scheme:dark){[data-vf-chat]:not([data-vf-theme]){${dark}}}`,
-    `.dark [data-vf-chat]:not([data-vf-theme]),[data-theme="dark"] [data-vf-chat]:not([data-vf-theme]){${dark}}`,
+    `@media(prefers-color-scheme:dark){:root:not([data-vf-theme]){${dark}}}`,
+    `.dark:not([data-vf-theme]),[data-theme="dark"]:not([data-vf-theme]){${dark}}`,
     ANIMATION_CSS,
   ].join("");
 }
