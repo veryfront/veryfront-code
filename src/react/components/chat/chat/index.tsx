@@ -212,6 +212,12 @@ export {
 // Local binding for the `<Chat>` optional-provider integration below (the line
 // above only re-exports; it does not import the name for use in this module).
 import { useConversationsContextOptional } from "./contexts/conversations-context.tsx";
+import {
+  createEmptyConversation,
+  DEFAULT_CONVERSATION_TITLE,
+  deriveTitle,
+} from "./hooks/use-conversations.ts";
+import type { Conversation } from "./persistence/conversation-store.ts";
 
 // Re-exports — conversation persistence adapters
 export {
@@ -318,6 +324,17 @@ export interface ChatProps {
   initialMessages?: ChatMessage[];
   /** Error callback for the self-driven `useChat`. */
   onError?: (error: Error) => void;
+  /**
+   * Persistence sink for the live thread (app mode). Fires with the whole
+   * updated `conversation` (`{ id, messages, title, updatedAt, … }`) whenever
+   * the messages change — point it at your store's `save`.
+   *
+   * Resolved by presence: an explicit `onUpdate` wins; otherwise a surrounding
+   * `ConversationsProvider`'s `save` is used; with neither, the thread is
+   * ephemeral. One optional prop, three behaviours — `<Chat>` is sugar over the
+   * explicit primitive.
+   */
+  onUpdate?: (conversation: Conversation) => void;
 
   // --- Controlled mode ------------------------------------------------------
   // Pass `messages` + `input` to drive `<Chat>` yourself (back-compat).
@@ -762,6 +779,7 @@ const UncontrolledChat = React.forwardRef<HTMLDivElement, ChatProps>(
       api = "/api/ag-ui",
       initialMessages,
       onError,
+      onUpdate,
       models,
       suggestions: suggestionsProp,
       onSuggestionClick,
@@ -801,11 +819,50 @@ const UncontrolledChat = React.forwardRef<HTMLDivElement, ChatProps>(
     });
     const { agent, error: agentError } = useAgentMetadata(resolvedAgentId);
 
-    // Persist the live thread back to its conversation (persist + auto-title).
+    // --- Persistence sink (explicit prop → provider default → ephemeral) ------
+    // Resolve WHERE the live thread persists: an explicit `onUpdate` wins, else
+    // a surrounding `ConversationsProvider`'s `save`, else nothing. The sink
+    // takes the whole updated conversation; `<Chat>` owns building it (title
+    // included) so `useConversations` stays dumb about titling and `useChat`
+    // never touches the store.
+    const persist = onUpdate ?? conversations?.save;
+
+    // Identity for the emitted conversation: in a provider we ride the bound
+    // conversation (id/agentId/createdAt); standalone (explicit `onUpdate`, no
+    // provider) we mint one stable id so updates target a single record.
+    const syntheticRef = React.useRef<Conversation | null>(null);
+    const persistRef = React.useRef(persist);
+    persistRef.current = persist;
+    const boundRef = React.useRef(bound);
+    boundRef.current = bound;
+    const agentIdRef = React.useRef(resolvedAgentId);
+    agentIdRef.current = resolvedAgentId;
+
+    // Emit the whole conversation when the live messages change. Keyed on
+    // `chat.messages` + `boundId` only (sink/identity read via refs) so the
+    // save→setActive round-trip inside a provider can't feed a render loop.
     const boundId = bound?.id;
     React.useEffect(() => {
-      if (conversations && boundId) conversations.bind(boundId, { messages: chat.messages });
-    }, [chat.messages, conversations, boundId]);
+      const sink = persistRef.current;
+      if (!sink) return;
+      let base = boundRef.current;
+      if (!base) {
+        syntheticRef.current ??= createEmptyConversation({ agentId: agentIdRef.current });
+        base = syntheticRef.current;
+      }
+      const keepTitle = base.title !== "" && base.title !== DEFAULT_CONVERSATION_TITLE;
+      const title = keepTitle ? base.title : (deriveTitle(chat.messages) || base.title);
+      const conversation: Conversation = {
+        ...base,
+        messages: chat.messages,
+        title,
+        updatedAt: Date.now(),
+      };
+      // Fold the derived title back onto the synthetic identity so later emits
+      // don't re-derive it every keystroke of a streamed reply.
+      if (base === syntheticRef.current) syntheticRef.current = conversation;
+      sink(conversation);
+    }, [chat.messages, boundId]);
 
     // App mode owns the loading signal: from the very first paint until the
     // agent resolves (or errors) we render the skeleton — never flash an idle

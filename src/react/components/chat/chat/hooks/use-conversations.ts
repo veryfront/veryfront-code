@@ -136,6 +136,13 @@ export interface UseConversationsResult {
   rename: (id: string, title: string) => void;
   remove: (id: string) => void;
   update: (id: string, patch: ConversationPatch) => void;
+  /**
+   * Upsert a whole conversation (create-or-update). The store default for
+   * `<Chat onUpdate>` — hand it the emitted `{ id, messages, title, updatedAt }`
+   * and it lands in the list + persists. The conversation arrives fully formed
+   * (title already derived by the emitter), so this stays dumb about titling.
+   */
+  save: (conversation: Conversation) => void;
   /** Persist a live chat's messages + auto-title from the first user message. */
   bind: (id: string, chat: { messages: ChatMessage[] }) => void;
 }
@@ -264,6 +271,14 @@ export function useConversations(options: UseConversationsOptions = {}): UseConv
     }
   }, [store, scheduleSave]);
 
+  const save = React.useCallback((conversation: Conversation) => {
+    setSummaries((prev) => upsertSummary(prev, conversationSummary(conversation)));
+    // Keep the in-memory active thread in sync when it's the one being saved,
+    // so a re-open reads the just-saved messages instead of the loaded blob.
+    if (activeRef.current?.id === conversation.id) setActive(conversation);
+    scheduleSave(conversation);
+  }, [scheduleSave]);
+
   const bind = React.useCallback((id: string, chat: { messages: ChatMessage[] }) => {
     const current = activeRef.current?.id === id
       ? activeRef.current
@@ -301,6 +316,7 @@ export function useConversations(options: UseConversationsOptions = {}): UseConv
     rename,
     remove,
     update,
+    save,
     bind,
   };
 }
