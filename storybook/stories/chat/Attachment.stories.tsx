@@ -39,15 +39,15 @@ function AttachmentDocsPage() {
       </DocsSection>
 
       <DocsSection
-        title="Uploading"
-        description="An `uploading` status dims the pill and shows a spinner over the thumbnail."
+        title="Uploading (legacy status)"
+        description="The legacy `status: \"uploading\"` dims the chip and spins over the icon box. Prefer `state` for new code — see Upload states below."
       >
         <DocsExampleAuto of={Uploading} />
       </DocsSection>
 
       <DocsSection
-        title="With preview"
-        description="Set `attachment.preview` to surface a hover preview of the file contents."
+        title="Image thumbnail"
+        description="Image attachments render an inline thumbnail from `attachment.preview` (falling back to the resolved `url`)."
       >
         <DocsExampleAuto of={WithPreview} />
       </DocsSection>
@@ -180,7 +180,7 @@ export const Ready: Story = {
   render: () => (
     <StoryFrame maxWidth="560px">
       <ReviewSurface label="Ready attachments">
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2 [&>*]:w-[200px]">
           {attachments.map((attachment) => (
             <Attachment
               key={attachment.id}
@@ -195,13 +195,15 @@ export const Ready: Story = {
   parameters: {
     docs: {
       source: {
-        code: `{attachments.map((attachment) => (
-  <Attachment
-    key={attachment.id}
-    attachment={attachment}
-    onRemove={handleRemove}
-  />
-))}`,
+        code: `<div className="flex flex-wrap gap-2 [&>*]:w-[200px]">
+  {attachments.map((attachment) => (
+    <Attachment
+      key={attachment.id}
+      attachment={attachment}
+      onRemove={handleRemove}
+    />
+  ))}
+</div>`,
       },
     },
   },
@@ -213,6 +215,7 @@ export const Uploading: Story = {
     <StoryFrame maxWidth="560px">
       <ReviewSurface label="Uploading">
         <Attachment
+          className="w-[200px]"
           attachment={{
             id: "uploading",
             name: "run-export.csv",
@@ -228,6 +231,7 @@ export const Uploading: Story = {
     docs: {
       source: {
         code: `<Attachment
+  className="w-[200px]"
   attachment={{
     id: "uploading",
     name: "run-export.csv",
@@ -245,15 +249,16 @@ export const WithPreview: Story = {
   tags: ["!dev"],
   render: () => (
     <StoryFrame maxWidth="560px">
-      <ReviewSurface label="Preview on hover">
+      <ReviewSurface label="Image thumbnail">
         <Attachment
+          className="w-[200px]"
           attachment={{
             id: "preview",
-            name: "handoff-notes.md",
-            type: "md",
-            size: 2418,
+            name: "cover.png",
+            type: "image/png",
+            size: 40218,
             preview:
-              "Release notes: validate the agent run state, audit tool input, and verify error copy before deploy.",
+              "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='40' height='40'><rect width='40' height='40' fill='indigo'/><circle cx='20' cy='20' r='9' fill='white'/></svg>",
           }}
           onRemove={() => undefined}
         />
@@ -264,12 +269,13 @@ export const WithPreview: Story = {
     docs: {
       source: {
         code: `<Attachment
+  className="w-[200px]"
   attachment={{
     id: "preview",
-    name: "handoff-notes.md",
-    type: "md",
-    size: 2418,
-    preview: "Release notes: validate the agent run state...",
+    name: "cover.png",
+    type: "image/png",
+    size: 40218,
+    preview: coverImageUrl, // image src → rendered as an inline thumbnail
   }}
   onRemove={handleRemove}
 />`,
@@ -284,6 +290,7 @@ export const Composed: Story = {
     <StoryFrame maxWidth="560px">
       <ReviewSurface label="Recomposed chip">
         <Attachment.Root
+          className="w-[200px]"
           attachment={{
             id: "composed",
             name: "handoff-notes.md",
@@ -305,7 +312,7 @@ export const Composed: Story = {
         code: `import { Attachment } from "veryfront/chat";
 
 // Recompose the chip: icon box + label, then a restyled remove control.
-<Attachment.Root attachment={info} onRemove={handleRemove}>
+<Attachment.Root className="w-[200px]" attachment={info} onRemove={handleRemove}>
   <Attachment.Icon />
   <Attachment.Label />
   <Attachment.Remove className="ring-1 ring-[var(--edge)]" />
@@ -320,7 +327,7 @@ export const States: Story = {
   render: () => (
     <StoryFrame maxWidth="560px">
       <ReviewSurface label="Upload lifecycle">
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-2 [&>*]:w-[200px]">
           <Attachment
             attachment={{
               id: "selected",
@@ -375,7 +382,7 @@ export const States: Story = {
   parameters: {
     docs: {
       source: {
-        code: `<>
+        code: `<div className="flex flex-col gap-2 [&>*]:w-[200px]">
   <Attachment
     attachment={{ id: "selected", name: "agent-prd.md", type: "md", size: 18432, state: "selected" }}
     onRemove={handleRemove}
@@ -395,7 +402,7 @@ export const States: Story = {
     onRetry={handleRetry}
     onRemove={handleRemove}
   />
-</>`,
+</div>`,
       },
     },
   },

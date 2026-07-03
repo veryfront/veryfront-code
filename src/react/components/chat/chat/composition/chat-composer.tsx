@@ -546,6 +546,7 @@ const ChatInputBase = React.forwardRef<HTMLDivElement, ChatInputProps>(
                     key={file.id}
                     attachment={file}
                     onRemove={onRemoveAttachment}
+                    className="w-[200px]"
                   />
                 ))}
               </div>

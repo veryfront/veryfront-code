@@ -29,10 +29,10 @@ function TabsDocsPage() {
       </DocsSection>
 
       <DocsSection
-        title="Chat / Uploads"
+        title="Chat / Attachments"
         description="Two-way toggle for switching the composer between chat and its uploads panel."
       >
-        <DocsExampleAuto of={ChatUploads} />
+        <DocsExampleAuto of={ChatAttachments} />
       </DocsSection>
 
       <DocsSection title="Small Size" description="Compact, flat, 32px.">
@@ -141,15 +141,15 @@ export const Default: Story = {
   },
 };
 
-export const ChatUploads: Story = {
-  name: "Chat / Uploads",
+export const ChatAttachments: Story = {
+  name: "Chat / Attachments",
   tags: ["!dev"],
   render: () => {
     const [active, setActive] = useState("chat");
     return (
       <Tabs value={active} onValueChange={setActive}>
         <TabsItem value="chat">Chat</TabsItem>
-        <TabsItem value="uploads">Uploads</TabsItem>
+        <TabsItem value="attachments">Attachments</TabsItem>
       </Tabs>
     );
   },

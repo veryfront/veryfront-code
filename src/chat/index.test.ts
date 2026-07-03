@@ -85,7 +85,7 @@ const expectedRuntimeExports = [
   "ThreadListContextProvider",
   "ThreadsProvider",
   "ToolStatusBadge",
-  "UploadsPanel",
+  "AttachmentsPanel",
   "buildChatStreamChunkMessageMetadata",
   "isLongRunningToolRunning",
   "isHeartbeatOnlyMetadataChunk",
@@ -134,7 +134,7 @@ const expectedRuntimeExports = [
   "useChatActions",
   "useModelSelector",
   "useStepIndicator",
-  "useUploadsPanel",
+  "useAttachmentsPanel",
 ].sort();
 
 describe("chat/index.ts exports", () => {

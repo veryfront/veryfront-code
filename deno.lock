@@ -3,14 +3,18 @@
   "specifiers": {
     "jsr:@std/assert@1.0.19": "1.0.19",
     "jsr:@std/assert@^1.0.17": "1.0.19",
+    "jsr:@std/assert@^1.0.19": "1.0.19",
+    "jsr:@std/async@1.2.0": "1.2.0",
     "jsr:@std/cli@1.0.28": "1.0.28",
+    "jsr:@std/data-structures@^1.0.10": "1.1.1",
     "jsr:@std/dotenv@0.225.6": "0.225.6",
+    "jsr:@std/expect@1.0.18": "1.0.18",
     "jsr:@std/fmt@1.0.9": "1.0.9",
     "jsr:@std/fs@1.0.23": "1.0.23",
     "jsr:@std/internal@^1.0.12": "1.0.14",
     "jsr:@std/internal@^1.0.14": "1.0.14",
     "jsr:@std/path@1.1.4": "1.1.4",
-    "jsr:@std/path@^1.1.4": "1.1.6",
+    "jsr:@std/path@^1.1.4": "1.1.4",
     "jsr:@std/testing@1.0.17": "1.0.17",
     "jsr:@std/yaml@1.1.0": "1.1.0",
     "npm:@babel/generator@7.29.1": "7.29.1",
@@ -72,11 +76,25 @@
         "jsr:@std/internal@^1.0.12"
       ]
     },
+    "@std/async@1.2.0": {
+      "integrity": "c059c6f6d95ca7cc012ae8e8d7164d1697113d54b0b679e4372b354b11c2dee5"
+    },
     "@std/cli@1.0.28": {
       "integrity": "74ef9b976db59ca6b23a5283469c9072be6276853807a83ec6c7ce412135c70a"
     },
+    "@std/data-structures@1.1.1": {
+      "integrity": "7e1fcf19771fb9c6dbcd7f65039d6d42ef8dc023cfbc0c4cdc74b24e09229380"
+    },
     "@std/dotenv@0.225.6": {
       "integrity": "1d6f9db72f565bd26790fa034c26e45ecb260b5245417be76c2279e5734c421b"
+    },
+    "@std/expect@1.0.18": {
+      "integrity": "8566eab35200466f8609eb7e7aed062ed0db314e9a258d5d201b1b8997ce801a",
+      "dependencies": [
+        "jsr:@std/assert@^1.0.19",
+        "jsr:@std/internal@^1.0.12",
+        "jsr:@std/path@^1.1.4"
+      ]
     },
     "@std/fmt@1.0.9": {
       "integrity": "2487343e8899fb2be5d0e3d35013e54477ada198854e52dd05ed0422eddcabe0"
@@ -107,6 +125,7 @@
       "integrity": "87bdc2700fa98249d48a17cd72413352d3d3680dcfbdb64947fd0982d6bbf681",
       "dependencies": [
         "jsr:@std/assert@^1.0.17",
+        "jsr:@std/data-structures",
         "jsr:@std/internal@^1.0.12"
       ]
     },
@@ -4375,7 +4394,7 @@
     "https://esm.sh/pkg?target=denonext": "https://esm.sh/pkg@5.8.1?target=denonext",
     "https://esm.sh/process-nextick-args@~2.0.0?target=denonext": "https://esm.sh/process-nextick-args@2.0.1?target=denonext",
     "https://esm.sh/progress@^2.0.3?target=denonext": "https://esm.sh/progress@2.0.3?target=denonext",
-    "https://esm.sh/pump@^3.0.0?target=denonext": "https://esm.sh/pump@3.0.4?target=denonext",
+    "https://esm.sh/pump@^3.0.0?target=denonext": "https://esm.sh/pump@3.0.3?target=denonext",
     "https://esm.sh/queue-microtask@^1.2.2?target=denonext": "https://esm.sh/queue-microtask@1.2.3?target=denonext",
     "https://esm.sh/readable-stream@^2.0.0?target=denonext": "https://esm.sh/readable-stream@2.3.8?target=denonext",
     "https://esm.sh/readable-stream@^2.1.4/transform?target=denonext": "https://esm.sh/readable-stream@2.3.8/transform?target=denonext",
@@ -4817,6 +4836,8 @@
     "https://esm.sh/process-nextick-args@2.0.1?target=denonext": "b80260031d83086964facc0efc6e2cc8fd878d9ce14dfcf6999e508a4d8d13d0",
     "https://esm.sh/progress@2.0.3/denonext/progress.mjs": "94f65d1a21fa67097c1c8a5da2b15af114f9791efc4339b2804d3bf273e58915",
     "https://esm.sh/progress@2.0.3?target=denonext": "82340244f52eae7910ed5b4d5251c8a4c94684a630313c93a56b132d5eaed6b5",
+    "https://esm.sh/pump@3.0.3/denonext/pump.mjs": "6f3fc6dfe9f295b377736fc6ed08dcc0b8249c86a99c0f367da630a9ac707be5",
+    "https://esm.sh/pump@3.0.3?target=denonext": "ea87f5044db6b40cf4ce9beb2c0355839c5d692878e506b13b459835cda266fe",
     "https://esm.sh/pump@3.0.4/denonext/pump.mjs": "0efeffd4ab826eafa9b3a75819888ef1bf722e9d79218a9c044a0d009d7bea8d",
     "https://esm.sh/pump@3.0.4?target=denonext": "c540c63b8be0465c6162ea3019efbc9e0a140af80212c7efa12c7686e218e3d5",
     "https://esm.sh/queue-microtask@1.2.3/denonext/queue-microtask.mjs": "b0e153a240d836527feea7b9ecfa99fa8e5a5ef7e48b43092b7cecd8649a8712",

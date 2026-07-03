@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { UploadsPanel } from "veryfront/chat";
+import { AttachmentsPanel } from "veryfront/chat";
 import {
   DocsCode,
   DocsComposition,
@@ -12,28 +12,28 @@ import {
 import { uploads } from "../fixtures/chat";
 import { ReviewSurface, StoryFrame } from "../support/StoryFrame";
 
-const importCode = `import { UploadsPanel } from "veryfront/chat"`;
+const importCode = `import { AttachmentsPanel } from "veryfront/chat"`;
 
 const compositionTree =
-  `UploadsPanel  <- render it: <UploadsPanel uploads={…} />
-UploadsPanel.Root  <- or compose it: context (uploads, callbacks, file picker)
-  +-- UploadsPanel.Header <- "Attachments" title + close button (when onClose set)
-  +-- UploadsPanel.List   <- scrollable list of file rows
-  |     +-- UploadsPanel.Item    <- one file row (icon, name, size, remove)
-  +-- UploadsPanel.Empty  <- empty state (heading, hint, upload action)
-  +-- UploadsPanel.Action <- upload/attach button (opens the native picker)`;
+  `AttachmentsPanel  <- render it: <AttachmentsPanel uploads={…} />
+AttachmentsPanel.Root  <- or compose it: context (uploads, callbacks, file picker)
+  +-- AttachmentsPanel.Header <- "Attachments" title + close button (when onClose set)
+  +-- AttachmentsPanel.List   <- flex-gap column of attachment cards
+  |     +-- AttachmentsPanel.Item    <- composes <Attachment> + a ⋯ menu (Open / Delete)
+  +-- AttachmentsPanel.Empty  <- empty state (heading, hint, upload action)
+  +-- AttachmentsPanel.Action <- upload/attach button (opens the native picker)`;
 
-function UploadsPanelDocsPage() {
+function AttachmentsPanelDocsPage() {
   return (
     <DocsPage>
       <DocsHero
-        title="UploadsPanel"
-        lead="A scrollable list of previously uploaded files with remove and add-more actions, plus an empty state."
+        title="AttachmentsPanel"
+        lead="A scrollable list of attachments with remove and add-more actions, plus an empty state."
       />
 
       <DocsSection
-        title="Uploaded files"
-        description="Each file shows an icon, name (linked when a url is present), and size."
+        title="Attachments"
+        description="Each row *composes* the shared `Attachment` card — a file-type badge (or image thumbnail), name, and size — swapping the default ✕ for a ⋯ overflow menu (Open / Delete)."
       >
         <DocsExampleAuto of={UploadedFiles} />
       </DocsSection>
@@ -47,7 +47,7 @@ function UploadsPanelDocsPage() {
 
       <DocsSection
         title="Compose"
-        description="Drop to `UploadsPanel.Root` + parts to recompose the panel — reorder or restyle the list, swap in your own `Item` rows, or replace the empty state. Every part takes `className`."
+        description="Drop to `AttachmentsPanel.Root` + parts to recompose the panel — reorder or restyle the list, swap in your own `Item` rows, or replace the empty state. Every part takes `className`."
       >
         <DocsExampleAuto of={Composed} />
       </DocsSection>
@@ -62,7 +62,7 @@ function UploadsPanelDocsPage() {
 
       <DocsSection title="API Reference">
         <DocsPropsTable
-          component="UploadsPanel"
+          component="AttachmentsPanel"
           description="List of uploaded files"
           props={[
             {
@@ -126,7 +126,7 @@ function UploadsPanelDocsPage() {
             {
               name: "url",
               type: "string",
-              description: "When set, the name becomes a link to the file",
+              description: "Resolved file URL; renders an image thumbnail when the file is an image",
             },
           ]}
         />
@@ -136,14 +136,14 @@ function UploadsPanelDocsPage() {
 }
 
 const meta = {
-  title: "Chat/Components/UploadsPanel",
-  component: UploadsPanel,
+  title: "Chat/Components/AttachmentsPanel",
+  component: AttachmentsPanel,
   tags: ["autodocs"],
   parameters: {
     layout: "fullscreen",
-    docs: { page: UploadsPanelDocsPage },
+    docs: { page: AttachmentsPanelDocsPage },
   },
-} satisfies Meta<typeof UploadsPanel>;
+} satisfies Meta<typeof AttachmentsPanel>;
 
 export default meta;
 type Story = StoryObj<typeof meta>;
@@ -153,16 +153,15 @@ export const UploadedFiles: Story = {
   parameters: {
     docs: {
       source: {
-        code: `import { UploadsPanel } from "veryfront/chat";
+        code: `import { AttachmentsPanel } from "veryfront/chat";
 
-<UploadsPanel
+<AttachmentsPanel
   uploads={[
     { id: "upload-1", name: "run-analysis.csv", size: 24424, type: "text/csv" },
     { id: "upload-2", name: "prompt-notes.md", size: 9812, type: "text/markdown" },
   ]}
   onRemoveUpload={(id) => removeUpload(id)}
   onAttach={(files) => attach(files)}
-  onClose={() => closePanel()}
 />`,
       },
     },
@@ -170,12 +169,11 @@ export const UploadedFiles: Story = {
   render: () => (
     <StoryFrame maxWidth="720px">
       <ReviewSurface label="Uploaded files">
-        <div className="h-[280px] rounded-[var(--radius-lg)] border border-[var(--outline-border)]">
-          <UploadsPanel
+        <div className="h-[280px]">
+          <AttachmentsPanel
             uploads={uploads}
             onRemoveUpload={() => undefined}
             onAttach={() => undefined}
-            onClose={() => undefined}
           />
         </div>
       </ReviewSurface>
@@ -188,17 +186,17 @@ export const Empty: Story = {
   parameters: {
     docs: {
       source: {
-        code: `import { UploadsPanel } from "veryfront/chat";
+        code: `import { AttachmentsPanel } from "veryfront/chat";
 
-<UploadsPanel uploads={[]} onAttach={(files) => attach(files)} />`,
+<AttachmentsPanel uploads={[]} onAttach={(files) => attach(files)} />`,
       },
     },
   },
   render: () => (
     <StoryFrame maxWidth="720px">
       <ReviewSurface label="Empty">
-        <div className="h-[280px] rounded-[var(--radius-lg)] border border-[var(--outline-border)]">
-          <UploadsPanel uploads={[]} onAttach={() => undefined} />
+        <div className="h-[280px]">
+          <AttachmentsPanel uploads={[]} onAttach={() => undefined} />
         </div>
       </ReviewSurface>
     </StoryFrame>
@@ -210,43 +208,42 @@ export const Composed: Story = {
   parameters: {
     docs: {
       source: {
-        code: `import { UploadsPanel } from "veryfront/chat";
+        code: `import { AttachmentsPanel } from "veryfront/chat";
 
 // Recompose the panel: a restyled list with the rows in reverse order.
-<UploadsPanel.Root uploads={uploads} onRemoveUpload={remove} onAttach={attach}>
+<AttachmentsPanel.Root uploads={uploads} onRemoveUpload={remove} onAttach={attach}>
   <div className="flex-1 overflow-y-auto px-4 py-4">
-    <UploadsPanel.List className="ring-1 ring-[var(--edge)] rounded-[var(--radius-md)] p-2">
+    <AttachmentsPanel.List>
       {[...uploads].reverse().map((file) => (
-        <UploadsPanel.Item key={file.id} file={file} />
+        <AttachmentsPanel.Item key={file.id} file={file} />
       ))}
-      <UploadsPanel.Action variant="more">+ Add another</UploadsPanel.Action>
-    </UploadsPanel.List>
+      <AttachmentsPanel.Action variant="more">Add another</AttachmentsPanel.Action>
+    </AttachmentsPanel.List>
   </div>
-</UploadsPanel.Root>`,
+</AttachmentsPanel.Root>`,
       },
     },
   },
   render: () => (
     <StoryFrame maxWidth="720px">
       <ReviewSurface label="Composed">
-        <div className="h-[280px] rounded-[var(--radius-lg)] border border-[var(--outline-border)]">
-          <UploadsPanel.Root
+        <div className="h-[280px]">
+          <AttachmentsPanel.Root
             uploads={uploads}
             onRemoveUpload={() => undefined}
             onAttach={() => undefined}
           >
             <div className="flex-1 overflow-y-auto px-4 py-4">
-              <UploadsPanel.List className="ring-1 ring-[var(--edge)] rounded-[var(--radius-md)] p-2">
+              <AttachmentsPanel.List>
                 {[...uploads].reverse().map((file) => (
-                  <UploadsPanel.Item key={file.id} file={file} />
+                  <AttachmentsPanel.Item key={file.id} file={file} />
                 ))}
-                <UploadsPanel.Action variant="more">
-                  <span className="text-xs">+</span>
+                <AttachmentsPanel.Action variant="more">
                   Add another
-                </UploadsPanel.Action>
-              </UploadsPanel.List>
+                </AttachmentsPanel.Action>
+              </AttachmentsPanel.List>
             </div>
-          </UploadsPanel.Root>
+          </AttachmentsPanel.Root>
         </div>
       </ReviewSurface>
     </StoryFrame>

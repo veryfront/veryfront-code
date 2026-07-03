@@ -86,6 +86,13 @@ function ChatSidebarDocsPage() {
       </DocsSection>
 
       <DocsSection
+        title="Loading"
+        description="Pass `loading` to show a skeleton in place of the list — e.g. while threads are being fetched. The auto `List` also shows this on its own until the client mounts, so threads loading from `localStorage` never flash the empty state."
+      >
+        <DocsExampleAuto of={Loading} />
+      </DocsSection>
+
+      <DocsSection
         title="Composition"
         description="`ChatSidebar` is also a compound. `ChatSidebar.Root` holds the shared state; the parts (`NewButton`, `List`, `Group`, `Item`, `Empty`) read it from context — so you can reorder, restyle, or swap any piece without a render prop."
       >
@@ -140,6 +147,12 @@ function ChatSidebarDocsPage() {
               name: "onNewThread",
               type: "() => void",
               description: "Called to start a new conversation",
+            },
+            {
+              name: "loading",
+              type: "boolean",
+              description:
+                "Show the loading skeleton instead of the list (auto until the client mounts)",
             },
             {
               name: "isOpen",

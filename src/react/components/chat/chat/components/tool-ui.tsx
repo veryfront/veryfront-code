@@ -255,8 +255,12 @@ const ToolCallRoot = React.forwardRef<HTMLDivElement, ToolCallProps>(
   ) {
     const hasOutput = hasVisibleToolOutput(tool.output);
     const hasError = Boolean(tool.errorText);
-    const shouldExpandByDefault = tool.state !== "output-available" ||
-      hasOutput || hasError;
+    // Collapse tool cards by default. Fast server-side tools (e.g.
+    // `search_knowledge`) resolve near-instantly and otherwise stack up
+    // expanded, burying the assistant's actual reply. The trigger row still
+    // shows the tool name + status badge, and the chevron expands on demand.
+    // Errors stay open so failures aren't hidden behind a click.
+    const shouldExpandByDefault = hasError;
     const [isExpanded, setIsExpanded] = React.useState(
       defaultExpanded ?? shouldExpandByDefault,
     );
@@ -288,7 +292,7 @@ const ToolCallRoot = React.forwardRef<HTMLDivElement, ToolCallProps>(
         <div
           ref={ref}
           className={cn(
-            "not-prose mb-2 w-full overflow-hidden rounded-[var(--radius-md)] border border-[var(--outline-border)] bg-transparent p-4",
+            "not-prose w-full overflow-hidden rounded-[var(--radius-md)] border border-[var(--outline-border)] bg-transparent px-4 py-2.5",
             className,
           )}
         >
