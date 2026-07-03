@@ -604,14 +604,18 @@ export const getRouterScript = () => `
           window.history.pushState({ pageData, scrollY: 0 }, '', href);
         }
 
-        perfStart('nav:render:' + href);
-        await renderPageFromData(pageData, targetPath);
-        perfEnd('nav:render:' + href);
-
+        // Update the shared router snapshot BEFORE rendering. RouterProvider
+        // reads router.params during render, so mutating after renderPageFromData
+        // would leave the new page's first render with the previous route's
+        // params (issue #2741). pathname/query move up for the same reason.
         currentPath = targetPath;
         window.__veryfrontRouter.pathname = targetPath;
         window.__veryfrontRouter.query = Object.fromEntries(new URLSearchParams(window.location.search));
         window.__veryfrontRouter.params = normalizeRouteParams(pageData.params);
+
+        perfStart('nav:render:' + href);
+        await renderPageFromData(pageData, targetPath);
+        perfEnd('nav:render:' + href);
 
         if (restoreScroll) {
           restoreScrollPosition(targetPath);
@@ -1026,11 +1030,14 @@ export const getRouterScript = () => `
 
       showNavigationProgress();
       try {
-        await renderPageFromData(e.state.pageData, path);
+        // Update the router snapshot before rendering so RouterProvider reads
+        // this route's params, not the previous route's (issue #2741).
         currentPath = path;
         window.__veryfrontRouter.pathname = path;
         window.__veryfrontRouter.query = Object.fromEntries(new URLSearchParams(window.location.search));
         window.__veryfrontRouter.params = normalizeRouteParams(e.state.pageData.params);
+
+        await renderPageFromData(e.state.pageData, path);
 
         restoreScrollPosition(path);
         hideNavigationProgress();

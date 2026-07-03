@@ -428,6 +428,10 @@ describe("hydration-script-builder/templates/router", () => {
       win: RuntimeWindow;
       listeners: Record<string, Array<(e: unknown) => void>>;
       setNextPageData: (data: unknown) => void;
+      // The router.params snapshot captured the moment renderPageFromData built
+      // the RouterProvider element — i.e. what the new page renders with. This is
+      // what the ordering bug (mutating params after render) would get wrong.
+      getRenderedParams: () => Record<string, string> | null;
     }
 
     function evaluateRouterRuntime(
@@ -500,8 +504,20 @@ describe("hydration-script-builder/templates/router", () => {
           json: () => Promise.resolve(nextPageData),
         });
 
-      const React = { createElement: () => ({}) };
-      const provider = () => ({});
+      const RouterProvider = () => ({});
+      const PageContextProvider = () => ({});
+      // Capture router.params exactly when the generated render builds the
+      // RouterProvider element, so the test reflects what the new page renders
+      // with (not the value the router settles on afterwards).
+      let renderedRouterParams: Record<string, string> | null = null;
+      const React = {
+        createElement: (type: unknown, props?: { router?: RuntimeRouter }) => {
+          if (type === RouterProvider && props?.router) {
+            renderedRouterParams = { ...props.router.params };
+          }
+          return {};
+        },
+      };
       const loadComponent = () => Promise.resolve(() => null);
 
       const factory = new Function(
@@ -522,8 +538,8 @@ describe("hydration-script-builder/templates/router", () => {
         doc,
         fetchStub,
         React,
-        provider,
-        provider,
+        RouterProvider,
+        PageContextProvider,
         loadComponent,
         () => 0,
         () => {},
@@ -537,6 +553,7 @@ describe("hydration-script-builder/templates/router", () => {
         setNextPageData: (data: unknown) => {
           nextPageData = data;
         },
+        getRenderedParams: () => renderedRouterParams,
       };
     }
 
@@ -561,6 +578,9 @@ describe("hydration-script-builder/templates/router", () => {
 
       assertEquals(runtime.router.params, { id: "99" });
       assertEquals(runtime.router.pathname, "/posts/99");
+      // The new page must render with the fresh params — not the previous
+      // route's — which only holds if params are updated before render.
+      assertEquals(runtime.getRenderedParams(), { id: "99" });
     });
 
     it("clears params when navigating to a static route", async () => {
@@ -574,6 +594,7 @@ describe("hydration-script-builder/templates/router", () => {
       await runtime.navigateSPA("/about", true);
 
       assertEquals(runtime.router.params, {});
+      assertEquals(runtime.getRenderedParams(), {});
     });
 
     it("refreshes params from history state on popstate navigation", async () => {
@@ -589,6 +610,7 @@ describe("hydration-script-builder/templates/router", () => {
       await popstate({ state: { pageData: { pagePath: "page", params: { id: "7" } } } });
 
       assertEquals(runtime.router.params, { id: "7" });
+      assertEquals(runtime.getRenderedParams(), { id: "7" });
     });
   });
 });
