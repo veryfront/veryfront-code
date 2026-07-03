@@ -8,8 +8,8 @@ import {
 } from "../.storybook/components";
 
 // Chat landing page — mirrors the Veryfront Studio "Overview" concept: a hero
-// plus a navigable grid of every chat surface, grouped by Components,
-// Composition, and Primitives. Tagged `showcase` so the addon panel is hidden.
+// plus a navigable grid of every chat surface, grouped by Components and UI.
+// Tagged `showcase` so the addon panel is hidden.
 const meta = {
   title: "Chat/Overview",
   tags: ["showcase"],
@@ -36,15 +36,6 @@ const COMPONENTS: NavGridEntry[] = [
   { title: "StepIndicator", id: "chat-components-stepindicator--docs" },
   { title: "ToolCall", id: "chat-components-toolcall--docs" },
   { title: "Markdown", id: "chat-components-markdown--docs" },
-];
-
-const COMPOSITION: NavGridEntry[] = [
-  { title: "Anatomy", id: "chat-composition-anatomy--docs" },
-  { title: "Subcomponents", id: "chat-composition-subcomponents--docs" },
-  {
-    title: "React Primitives",
-    id: "chat-composition-react-primitives--docs",
-  },
 ];
 
 // The private `chat/ui` primitives the chat components are built on (forked
@@ -102,10 +93,6 @@ function ChatOverviewPage() {
         <section>
           <SectionLabel>Components</SectionLabel>
           <NavGrid pages={COMPONENTS} />
-        </section>
-        <section>
-          <SectionLabel>Composition</SectionLabel>
-          <NavGrid pages={COMPOSITION} />
         </section>
         <section>
           <SectionLabel>UI</SectionLabel>

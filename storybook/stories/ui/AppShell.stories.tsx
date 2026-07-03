@@ -347,7 +347,7 @@ export const LeftAndRight: Story = {
             <AppShell.Header border className={`${HEADER_H} px-3`}>
               <AppShell.Trigger side="left" className="text-[var(--faint)]" />
               <div className="flex flex-1 justify-center">
-                <Tabs value={tab} onValueChange={setTab} size="sm">
+                <Tabs value={tab} onValueChange={setTab}>
                   <TabsItem value="chat">Chat</TabsItem>
                   <TabsItem value="attachments">Attachments</TabsItem>
                 </Tabs>

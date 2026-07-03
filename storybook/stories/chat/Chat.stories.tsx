@@ -22,6 +22,21 @@ import {
 
 const importCode = `import { Chat } from "veryfront/chat"`;
 
+const composeVsOverrideCode = `import { Chat } from "veryfront/chat";
+
+// Compose the structure — arrange the blocks yourself with Chat.Root.
+<Chat.Root messages={messages} input={input} onChange={onChange} onSubmit={onSubmit}>
+  <Chat.MessageList messages={messages} />
+  <Chat.Input placeholder="Ask Veryfront" />
+</Chat.Root>
+
+// Override how a part type renders — data-driven, applied across the whole list.
+<Chat
+  messages={messages}
+  renderTool={(tool) => <MyToolCard tool={tool} />}
+  renderMessage={(message) => <MyMessageRow message={message} />}
+/>`;
+
 const agentOptions: AgentOption[] = [
   { id: "veryfront", name: "Veryfront Agent" },
   { id: "inbox-helper", name: "Inbox Helper" },
@@ -124,8 +139,14 @@ function ChatDocsPage() {
 
       <DocsSection
         title="Compose vs override — two altitudes"
-        description="Two different jobs, two different tools. **Compose the structure** — arrange the transcript, empty state, and composer — with `Chat.Root` + the building blocks (or, per message, `Message.Root` + sub-parts). **Override how a part type renders** — swap every tool card or whole message — with `renderTool` / `renderMessage`: these take a part and return a node, the right shape for data-driven rendering across a dynamic list (the same pattern as `Message.Content`'s function child). Reach for children when you're laying out fixed structure; reach for `renderTool` / `renderMessage` when you're re-rendering a repeated part."
-      />
+        description={`Two different jobs, two different tools. **Compose the structure** — arrange the transcript, empty state, and composer — with \`Chat.Root\` + the building blocks (or, per message, \`Message.Root\` + sub-parts).
+
+**Override how a part type renders** — swap every tool card or whole message — with \`renderTool\` / \`renderMessage\`. These take a part and return a node, the right shape for data-driven rendering across a dynamic list (the same pattern as \`Message.Content\`'s function child).
+
+Reach for children when you're laying out fixed structure; reach for \`renderTool\` / \`renderMessage\` when you're re-rendering a repeated part.`}
+      >
+        <DocsCode code={composeVsOverrideCode} />
+      </DocsSection>
 
       <DocsSection title="Import">
         <DocsCode code={importCode} />

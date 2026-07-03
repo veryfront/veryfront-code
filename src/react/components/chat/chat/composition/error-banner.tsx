@@ -7,6 +7,8 @@
 import * as React from "react";
 import { cn } from "../../theme.ts";
 import { RefreshCwIcon } from "../../icons/index.ts";
+import { Alert, AlertAction, AlertContent } from "../../ui/alert.tsx";
+import { Button } from "../../ui/button.tsx";
 
 /** Props accepted by error banner. */
 export interface ErrorBannerProps {
@@ -26,20 +28,18 @@ export const ErrorBanner = React.forwardRef<HTMLDivElement, ErrorBannerProps>(
     ref,
   ) {
     return (
-      <div ref={ref} className={cn("max-w-2xl mx-auto px-4 pb-2", className)}>
-        <div className="px-4 py-3 bg-red-50 rounded-2xl text-red-600 text-sm flex items-center justify-between gap-3 border border-red-100">
-          <span>{error.message}</span>
+      <div ref={ref} className={cn("max-w-2xl mx-auto px-4 pb-3", className)}>
+        <Alert variant="error">
+          <AlertContent>{error.message}</AlertContent>
           {onRetry && (
-            <button
-              type="button"
-              onClick={onRetry}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-600 bg-red-100 hover:bg-red-200 rounded-full transition-colors"
-            >
-              {icon ?? <RefreshCwIcon className="size-3" />}
-              {retryLabel}
-            </button>
+            <AlertAction>
+              <Button variant="link" size="sm" onClick={onRetry}>
+                {icon ?? <RefreshCwIcon className="size-3.5" />}
+                {retryLabel}
+              </Button>
+            </AlertAction>
           )}
-        </div>
+        </Alert>
       </div>
     );
   },

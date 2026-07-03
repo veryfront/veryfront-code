@@ -181,18 +181,29 @@ export function DocsCodeInline({
 
 /**
  * Render a plain string as docs prose, turning `backtick` spans into inline
- * code. Components that accept a string `description`/`title` run it through
- * this so `foo` renders as a code pill, identical to markdown-authored inline
- * code. Non-string nodes are returned unchanged.
+ * code and `**bold**` spans into <strong>. Components that accept a string
+ * `description`/`title`/`lead` run it through this so `foo` renders as a code
+ * pill and **foo** renders bold, identical to markdown-authored inline markup.
+ * Inline-only (no paragraph handling) so it stays safe inside a wrapping <p>.
+ * Non-string nodes are returned unchanged.
  */
 export function renderInlineCode(text: React.ReactNode): React.ReactNode {
-  if (typeof text !== "string" || !text.includes("`")) return text;
-  // Split on backtick-delimited spans, keeping the captured inner text.
-  const parts = text.split(/`([^`]+)`/g);
-  return parts.map((part, i) =>
-    // Odd indices are the captured code spans; even indices are plain text.
-    i % 2 === 1 ? <DocsCodeInline key={i}>{part}</DocsCodeInline> : part
-  );
+  if (typeof text !== "string" || (!text.includes("`") && !text.includes("**"))) {
+    return text;
+  }
+  // Split on backtick-delimited code spans OR `**bold**` spans, keeping the
+  // delimiters so each token can be classified by its wrapper.
+  const parts = text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g);
+  return parts.map((part, i) => {
+    if (!part) return null;
+    if (part.startsWith("`") && part.endsWith("`")) {
+      return <DocsCodeInline key={i}>{part.slice(1, -1)}</DocsCodeInline>;
+    }
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return <DocsStrong key={i}>{part.slice(2, -2)}</DocsStrong>;
+    }
+    return part;
+  });
 }
 
 export function DocsTable(

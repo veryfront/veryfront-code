@@ -20,9 +20,21 @@ export function DocsSection({
     >
       <h2 className="text-xl font-semibold tracking-tight mb-2">{title}</h2>
       {description && (
-        <p className="text-base text-foreground mb-8">
-          {renderInlineCode(description)}
-        </p>
+        <div className="mb-8">
+          {(typeof description === "string"
+            ? description.split(/\n{2,}/)
+            : [description]).map((para, i, arr) => (
+              <p
+                key={i}
+                className={cn(
+                  "text-base text-foreground",
+                  i < arr.length - 1 && "mb-4",
+                )}
+              >
+                {renderInlineCode(para)}
+              </p>
+            ))}
+        </div>
       )}
       <div className={cn("docs-prose", description ? "" : "mt-6")}>
         {children}
