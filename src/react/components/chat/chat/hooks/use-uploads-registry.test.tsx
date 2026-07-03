@@ -40,9 +40,10 @@ function installDom(): () => void {
 }
 
 /** Stub fetch: POST → an upload response; DELETE → ok. Records DELETE ids. */
-function stubFetch(): { deletes: string[]; restore: () => void } {
+function stubFetch(): { deletes: string[]; gets: string[]; restore: () => void } {
   const previous = globalThis.fetch;
   const deletes: string[] = [];
+  const gets: string[] = [];
   let counter = 0;
   globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : String(input);
@@ -66,10 +67,12 @@ function stubFetch(): { deletes: string[]; restore: () => void } {
       deletes.push(new URL(url, "https://example.com").searchParams.get("id") ?? "");
       return Promise.resolve(new Response(JSON.stringify({ deleted: true }), { status: 200 }));
     }
+    gets.push(url);
     return Promise.resolve(new Response("{}", { status: 200 }));
   }) as typeof fetch;
   return {
     deletes,
+    gets,
     restore: () => {
       globalThis.fetch = previous;
     },
@@ -141,6 +144,33 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       await flush(() => {});
       assertEquals(reg.get().isLoading, false, "cleared once the initial fetch resolves");
       flushSync(() => reg.root.unmount());
+    } finally {
+      fetchStub.restore();
+      restoreDom();
+    }
+  });
+
+  it("does not refetch forever when headers are passed inline", async () => {
+    const restoreDom = installDom();
+    const fetchStub = stubFetch();
+    try {
+      let latest: UseUploadsRegistryResult | null = null;
+      const Capture = (): null => {
+        latest = useUploadsRegistry({
+          storageKey: "test-inline-headers",
+          headers: { authorization: "Bearer test" },
+        });
+        return null;
+      };
+      const root = createRoot(document.getElementById("root")!);
+      flushSync(() => root.render(<Capture />));
+
+      await flush(() => {});
+      await flush(() => {});
+
+      assertEquals(latest?.isLoading, false);
+      assertEquals(fetchStub.gets.length, 1, "inline headers should not retrigger refresh");
+      flushSync(() => root.unmount());
     } finally {
       fetchStub.restore();
       restoreDom();

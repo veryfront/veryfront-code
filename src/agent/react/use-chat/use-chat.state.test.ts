@@ -11,6 +11,7 @@ import {
   isLatestRequest,
   resolveBranchKey,
   resolveUseChatStreamHandler,
+  userMessagePayload,
 } from "./use-chat.ts";
 
 const _useChatResultMatchesChatProps: ChatProps = {} as UseChatResult;
@@ -94,6 +95,22 @@ describe("use-chat internal state helpers", () => {
   it("buildUserMessageParts returns a text-only part when there are no files", () => {
     assertEquals(buildUserMessageParts("just text"), [{ type: "text", text: "just text" }]);
     assertEquals(buildUserMessageParts("also text", []), [{ type: "text", text: "also text" }]);
+  });
+
+  it("userMessagePayload preserves file parts for regenerate", () => {
+    const file: ChatFilePart = {
+      type: "file",
+      mediaType: "application/pdf",
+      url: "https://example.com/report.pdf",
+      filename: "report.pdf",
+    };
+    const message: ChatMessage = {
+      id: "u1",
+      role: "user",
+      parts: [file, { type: "text", text: "summarize" }],
+    };
+
+    assertEquals(userMessagePayload(message), { text: "summarize", files: [file] });
   });
 
   it("preserves AG-UI custom data events as assistant message parts", async () => {

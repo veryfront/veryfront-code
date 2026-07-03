@@ -1127,6 +1127,8 @@ export type ChatComponentsType = typeof ChatBase & {
   Root: typeof ChatRoot;
   MessageList: typeof ChatMessageList;
   Input: typeof ChatInput;
+  /** @deprecated Use `Chat.Input`. */
+  Composer: typeof ChatInput;
   Empty: typeof ChatEmpty;
   Skeleton: typeof ChatMessagesSkeleton;
   If: typeof ChatIf;
@@ -1139,6 +1141,7 @@ export const Chat: ChatComponentsType = Object.assign(ChatBase, {
   Root: ChatRoot,
   MessageList: ChatMessageList,
   Input: ChatInput,
+  Composer: ChatInput,
   Empty: ChatEmpty,
   Skeleton: ChatMessagesSkeleton,
   If: ChatIf,

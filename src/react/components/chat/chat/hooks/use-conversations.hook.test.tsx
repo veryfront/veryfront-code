@@ -149,4 +149,32 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       restoreDom();
     }
   });
+
+  it("does not persist a pending save after that conversation is removed", async () => {
+    const restoreDom = installDom();
+    const store = memoryConversationStore([
+      conversation({ id: "seed", title: "Seed", updatedAt: 2 }),
+      conversation({ id: "other", title: "Other", updatedAt: 1 }),
+    ]);
+    try {
+      const view = mount(store);
+      await settle();
+
+      view.get().save(conversation({
+        id: "seed",
+        title: "Pending delete",
+        messages: [userMsg("soon gone")],
+        updatedAt: 3,
+      }));
+      await settle();
+      view.get().remove("seed");
+      await new Promise((r) => setTimeout(r, 350));
+      await settle();
+
+      assertEquals(await store.load("seed"), null, "removed conversation must stay deleted");
+      view.root.unmount();
+    } finally {
+      restoreDom();
+    }
+  });
 });

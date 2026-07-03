@@ -74,6 +74,23 @@ export function buildUserMessageParts(
   return [...(files ?? []), { type: "text", text }];
 }
 
+function isFilePart(part: ChatMessagePart): part is ChatFilePart {
+  return part.type === "file";
+}
+
+/** Extract the text and file payload from a user message for regenerate. */
+export function userMessagePayload(
+  message: ChatMessage,
+): { text: string; files?: ChatFilePart[] } | null {
+  const text = message.parts
+    .filter((part): part is { type: "text"; text: string } => part.type === "text")
+    .map((part) => part.text)
+    .join("");
+  const files = message.parts.filter(isFilePart);
+  if (!text && files.length === 0) return null;
+  return { text, ...(files.length > 0 ? { files } : {}) };
+}
+
 export function resolveUseChatStreamHandler(
   transport: UseChatOptions["transport"],
 ): UseChatStreamHandler {
@@ -342,11 +359,12 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     if (lastUserIndex === -1) return;
 
     const lastUserMessage = currentMessages[lastUserIndex];
-    const textPart = lastUserMessage?.parts.find((p) => p.type === "text");
-    if (!textPart || !("text" in textPart)) return;
+    if (!lastUserMessage) return;
+    const payload = userMessagePayload(lastUserMessage);
+    if (!payload) return;
 
     const base = currentMessages.slice(0, lastUserIndex);
-    await sendMessage({ text: textPart.text, baseMessages: base });
+    await sendMessage({ ...payload, baseMessages: base });
   }, [sendMessage]);
 
   /**

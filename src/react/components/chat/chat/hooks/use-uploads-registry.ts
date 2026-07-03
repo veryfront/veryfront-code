@@ -100,6 +100,11 @@ function save(storageKey: string, items: UploadedFile[]): void {
   } catch (_) { /* expected: quota exceeded or blocked storage */ }
 }
 
+function stableHeadersKey(headers: Record<string, string> | undefined): string {
+  if (!headers) return "";
+  return JSON.stringify(Object.entries(headers).sort(([a], [b]) => a.localeCompare(b)));
+}
+
 /** Persistent, cross-conversation registry of uploaded files. */
 export function useUploadsRegistry(
   options: UseUploadsRegistryOptions = {},
@@ -107,6 +112,9 @@ export function useUploadsRegistry(
   const { storageKey = "vf-uploads", headers } = options;
   // `url` is canonical; `api` is the deprecated alias.
   const endpoint = options.url ?? options.api ?? "/api/uploads";
+  const headersKey = stableHeadersKey(headers);
+  const headersRef = React.useRef(headers);
+  headersRef.current = headers;
 
   const [items, setItems] = React.useState<UploadedFile[]>(() => load(storageKey));
   const [inFlight, setInFlight] = React.useState(0);
@@ -140,7 +148,7 @@ export function useUploadsRegistry(
         setInFlight((n) => n + 1);
         const form = new FormData();
         form.append("file", file, file.name);
-        void fetch(endpoint, { method: "POST", body: form, headers })
+        void fetch(endpoint, { method: "POST", body: form, headers: headersRef.current })
           .then(async (response) => {
             if (!response.ok) throw new Error(`Upload failed: ${response.status}`);
             const body = (await response.json()) as UploadResponse;
@@ -157,17 +165,20 @@ export function useUploadsRegistry(
           .finally(() => setInFlight((n) => Math.max(0, n - 1)));
       }
     },
-    [endpoint, headers, add],
+    [endpoint, headersKey, add],
   );
 
   const remove = React.useCallback(
     async (id: string): Promise<void> => {
       try {
-        await fetch(`${endpoint}?id=${encodeURIComponent(id)}`, { method: "DELETE", headers });
+        await fetch(`${endpoint}?id=${encodeURIComponent(id)}`, {
+          method: "DELETE",
+          headers: headersRef.current,
+        });
       } catch (_) { /* best-effort server delete; still drop locally */ }
       setItems((prev) => prev.filter((f) => f.id !== id));
     },
-    [endpoint, headers],
+    [endpoint, headersKey],
   );
 
   const clear = React.useCallback(() => setItems([]), []);
@@ -178,7 +189,7 @@ export function useUploadsRegistry(
   const refresh = React.useCallback(async () => {
     refreshInFlightRef.current += 1;
     try {
-      const response = await fetch(endpoint, { headers });
+      const response = await fetch(endpoint, { headers: headersRef.current });
       if (!response.ok) return;
       const body = (await response.json()) as ListResponse;
       if (!Array.isArray(body.items)) return;
@@ -197,7 +208,7 @@ export function useUploadsRegistry(
       refreshInFlightRef.current -= 1;
       if (refreshInFlightRef.current === 0) pendingAddsRef.current = [];
     }
-  }, [endpoint, headers]);
+  }, [endpoint, headersKey]);
 
   React.useEffect(() => {
     let active = true;

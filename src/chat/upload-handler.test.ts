@@ -146,6 +146,25 @@ describe("chat/upload-handler", () => {
         assertEquals(res.status, 413, "oversized files should be rejected before storage");
       }));
 
+    it("rejects oversized Content-Length before trusting multipart parsing", () =>
+      withTempDir(async (dir) => {
+        const { POST } = createChatUploadHandler({
+          storage: new LocalBlobStorage(dir),
+          maxFileSize: 8,
+          authorize: () => true,
+        });
+        const form = new FormData();
+        form.append("file", txt("ok"), "note.txt");
+        const res = await POST(
+          new Request("http://localhost:3000/api/uploads", {
+            method: "POST",
+            body: form,
+            headers: { "content-length": "999" },
+          }),
+        );
+        assertEquals(res.status, 413, "declared oversized bodies should be rejected early");
+      }));
+
     it("returns 400 when no file field is present", () =>
       withTempDir(async (dir) => {
         const { POST } = createChatUploadHandler({
@@ -195,6 +214,16 @@ describe("chat/upload-handler", () => {
         assertEquals(served.status, 200, "the just-uploaded file should be retrievable");
         assertEquals(served.headers.get("content-type"), "text/plain", "media type preserved");
         assertEquals(served.headers.get("content-length"), "11", "byte length reported");
+        assertEquals(
+          served.headers.get("x-content-type-options"),
+          "nosniff",
+          "uploaded content should not be MIME-sniffed by browsers",
+        );
+        assertEquals(
+          served.headers.get("content-disposition"),
+          'attachment; filename="note.txt"',
+          "uploaded content should download rather than execute inline",
+        );
         assertEquals(await served.text(), "hello world", "the exact bytes should round-trip");
       }));
 

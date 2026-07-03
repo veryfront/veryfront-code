@@ -89,6 +89,13 @@ function fallbackUrl(requestUrl: string, id: string): string {
   return url.href;
 }
 
+function rejectsDeclaredSize(request: Request, maxFileSize: number): boolean {
+  const value = request.headers.get("content-length");
+  if (!value) return false;
+  const declared = Number.parseInt(value, 10);
+  return Number.isFinite(declared) && declared > maxFileSize;
+}
+
 async function reject(
   request: Request,
   authorize: ChatUploadHandlerConfig["authorize"],
@@ -125,6 +132,13 @@ export function createChatUploadHandler(
   async function POST(request: Request): Promise<Response> {
     const denied = await reject(request, config.authorize);
     if (denied) return denied;
+
+    if (rejectsDeclaredSize(request, maxFileSize)) {
+      return Response.json(
+        { error: `File exceeds ${Math.round(maxFileSize / 1024 / 1024)} MB limit` },
+        { status: 413 },
+      );
+    }
 
     const form = await request.formData();
     const file = form.get("file");
@@ -195,6 +209,8 @@ export function createChatUploadHandler(
       headers: {
         "Content-Type": ref.mimeType,
         "Content-Length": String(ref.size),
+        "Content-Disposition": `attachment; filename="${ref.metadata?.filename ?? ref.id}"`,
+        "X-Content-Type-Options": "nosniff",
         "Cache-Control": "private, max-age=3600",
       },
     });

@@ -223,11 +223,23 @@ export {
 // Use these names for new code and see the chat UI guide for migration notes.
 // ---------------------------------------------------------------------------
 export {
+  AttachmentPill,
   AttachmentPill as Attachment,
   type AttachmentPillContextValue,
+  type AttachmentPillProps,
   type AttachmentPillProps as AttachmentProps,
+  AttachmentsPanel as UploadsPanel,
+  type AttachmentsPanelProps as UploadsPanelProps,
   ChatInput,
+  ChatInput as ChatComposer,
   type ChatInputProps,
+  type ChatInputProps as ChatComposerProps,
+  Message as StandaloneMessage,
+  Message as StreamingMessage,
+  MessageActionBar as MessageActions,
+  type MessageActionBarProps as MessageActionsProps,
+  type MessageProps as StandaloneMessageProps,
+  type MessageProps as StreamingMessageProps,
   Reasoning,
   type ReasoningContextValue,
   type ReasoningProps,

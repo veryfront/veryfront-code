@@ -187,6 +187,11 @@ export function useConversations(options: UseConversationsOptions = {}): UseConv
       pendingSave.current = null;
     }
   }, [store]);
+  const discardPendingSave = React.useCallback((id: string) => {
+    if (pendingSave.current?.id !== id) return;
+    clearTimeout(saveTimer.current);
+    pendingSave.current = null;
+  }, []);
   const scheduleSave = React.useCallback((conversation: Conversation) => {
     // A pending save for a *different* conversation must be flushed, not
     // clobbered: switching threads inside the debounce window would
@@ -354,6 +359,7 @@ export function useConversations(options: UseConversationsOptions = {}): UseConv
   }, [update]);
 
   const remove = React.useCallback((id: string) => {
+    discardPendingSave(id);
     void store.delete(id);
     const next = nextActiveAfterRemove(summariesRef.current, id);
     setSummaries((prev) => prev.filter((s) => s.id !== id));
@@ -361,7 +367,7 @@ export function useConversations(options: UseConversationsOptions = {}): UseConv
       if (next) select(next);
       else create();
     }
-  }, [store, activeId, select, create]);
+  }, [store, activeId, select, create, discardPendingSave]);
 
   // Memoized so `ConversationsProvider` can pass this straight through as a
   // context value: consumers re-render only when the state above changes, not

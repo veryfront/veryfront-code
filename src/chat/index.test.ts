@@ -15,11 +15,13 @@ import * as useVoiceInputModule from "#veryfront/agent/react/use-voice-input.ts"
 const expectedRuntimeExports = [
   // Target component names (renamed public API; v1 aliases retained below).
   "Attachment",
+  "AttachmentPill",
   "Reasoning",
   "ToolCall",
   "useToolCall",
   "useReasoning",
   "ChatInput",
+  "ChatComposer",
   "AgentAvatar",
   "AgentPicker",
   "ChatActions",
@@ -65,6 +67,7 @@ const expectedRuntimeExports = [
   "Loader",
   "Message",
   "MessageActionBar",
+  "MessageActions",
   "MessageContextProvider",
   "MessageEditForm",
   "MessageFeedback",
@@ -85,6 +88,9 @@ const expectedRuntimeExports = [
   "ToolCallCard",
   "ToolStatusBadge",
   "AttachmentsPanel",
+  "UploadsPanel",
+  "StandaloneMessage",
+  "StreamingMessage",
   "buildChatStreamChunkMessageMetadata",
   "isLongRunningToolRunning",
   "isHeartbeatOnlyMetadataChunk",
@@ -168,13 +174,15 @@ describe("chat/index.ts exports", () => {
     );
   });
 
-  it("exposes a single render-or-compose Message (no StandaloneMessage/StreamingMessage)", () => {
+  it("exposes deprecated message aliases as the single render-or-compose Message", () => {
     // `Message` is both the default component (`<Message message={…} />`) and
-    // the compound root (`<Message.Root>…`). The old `StandaloneMessage` and
-    // `StreamingMessage` split is gone.
+    // the compound root (`<Message.Root>…`). The old standalone names stay as
+    // one-release aliases, not separate implementations.
     assertEquals(chatModule.Message, chatUI.Message);
-    assertEquals("StandaloneMessage" in chatModule, false);
-    assertEquals("StreamingMessage" in chatModule, false);
+    assertEquals(chatModule.StandaloneMessage, chatUI.Message);
+    assertEquals(chatModule.StreamingMessage, chatUI.Message);
+    assertEquals(chatModule.ChatComposer, chatUI.ChatInput);
+    assertEquals(chatModule.ChatComponents.Composer, chatUI.ChatInput);
     assertEquals(typeof (chatModule.Message as { Root?: unknown }).Root, "object");
   });
 
