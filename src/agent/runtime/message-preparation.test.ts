@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import type { ChatUiMessage } from "../../chat/types.ts";
 import { generateText } from "../../runtime/runtime-bridge.ts";
 import { createGenerateModel } from "../../runtime/runtime-bridge.test-helpers.ts";
@@ -128,6 +128,107 @@ Deno.test("prepareAgentRuntimeMessagesFromUiMessages decodes text data URL attac
   assertStringIncludes(text, "Summarize the attachment.");
   assertStringIncludes(text, "Order #4587");
   assertStringIncludes(text, "billing-note.txt");
+});
+
+Deno.test("prepareAgentRuntimeMessagesFromUiMessages does not fetch caller-controlled remote file URLs by default", async () => {
+  const requestedUrls: string[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (input, _init): Promise<Response> => {
+    requestedUrls.push(input.toString());
+    return Promise.reject(new Error("unexpected server-side attachment fetch"));
+  };
+
+  try {
+    const messages = await prepareAgentRuntimeMessagesFromUiMessages({
+      messages: [
+        userMessage([
+          { type: "text", text: "Summarize this attachment." },
+          {
+            type: "file",
+            mediaType: "text/plain",
+            filename: "notes.txt",
+            url: "http://127.0.0.1:9876/internal-notes.txt",
+          },
+        ]),
+      ],
+    });
+
+    assertEquals(requestedUrls, []);
+    const text = (messages[0]?.parts ?? [])
+      .flatMap((part) => part.type === "text" && "text" in part ? [part.text] : [])
+      .join("\n");
+    assertStringIncludes(text, "Summarize this attachment.");
+    assertEquals(text.includes("<file_content"), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("prepareAgentRuntimeMessagesFromUiMessages does not fetch original upload URL when resolver cannot sign it", async () => {
+  const requestedUrls: string[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (input, _init): Promise<Response> => {
+    requestedUrls.push(input.toString());
+    return Promise.reject(new Error("unexpected unresolved upload fetch"));
+  };
+
+  try {
+    const messages = await prepareAgentRuntimeMessagesFromUiMessages({
+      messages: [
+        userMessage([
+          { type: "text", text: "Use this upload." },
+          {
+            type: "file",
+            mediaType: "text/plain",
+            filename: "notes.txt",
+            uploadId: "upload-1",
+            url: "http://127.0.0.1:9876/internal-notes.txt",
+          },
+        ]),
+      ],
+      resolveFileUrl: async () => undefined,
+    });
+
+    assertEquals(requestedUrls, []);
+    const text = (messages[0]?.parts ?? [])
+      .flatMap((part) => part.type === "text" && "text" in part ? [part.text] : [])
+      .join("\n");
+    assertStringIncludes(text, "Use this upload.");
+    assertEquals(text.includes("<file_content"), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("prepareAgentRuntimeMessagesFromUiMessages surfaces trusted text attachment fetch failures", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (): Promise<Response> =>
+    Promise.reject(new Error("signed attachment unavailable"));
+
+  try {
+    await assertRejects(
+      () =>
+        prepareAgentRuntimeMessagesFromUiMessages({
+          messages: [
+            userMessage([
+              { type: "text", text: "Use this upload." },
+              {
+                type: "file",
+                mediaType: "text/plain",
+                filename: "notes.txt",
+                uploadId: "upload-1",
+                url: "https://files.example.com/original.txt",
+              },
+            ]),
+          ],
+          resolveFileUrl: async () => "https://signed.example.com/notes.txt",
+        }),
+      Error,
+      "signed attachment unavailable",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 Deno.test("prepareAgentRuntimeMessagesFromUiMessages preserves persisted uploaded image parts for vision models", async () => {

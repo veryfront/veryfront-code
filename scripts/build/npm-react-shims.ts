@@ -143,7 +143,7 @@ function assertNoReactInternalPackageImports(root: string): void {
 function findReactInternalPackageImports(root: string): string[] {
   const matches: string[] = [];
   for (const path of walkFiles(root)) {
-    if (!path.endsWith(".js")) continue;
+    if (!isShimFile(path)) continue;
 
     const content = Deno.readTextFileSync(path);
     if (content.includes('from "react/') && content.includes("/es2022/")) {

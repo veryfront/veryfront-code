@@ -5,6 +5,7 @@ import {
   convertProviderMessagesToAgentRuntimeMessages,
 } from "./message-adapter.ts";
 import {
+  createRuntimeFileContentFetcher,
   inlineRuntimeMessageFileContents,
   resolveRuntimeMessageFileUrls,
   type RuntimeFileContentFetcher,
@@ -36,12 +37,22 @@ export async function prepareAgentRuntimeMessagesFromUiMessages(
     ]);
   }
 
-  const refreshedMessages = options.resolveFileUrl
-    ? await resolveRuntimeMessageFileUrls(options.messages, options.resolveFileUrl)
+  const trustedFileContentUrls = new Set<string>();
+  const resolveFileUrl = options.resolveFileUrl;
+  const refreshedMessages = resolveFileUrl
+    ? await resolveRuntimeMessageFileUrls(options.messages, async (input) => {
+      const url = await resolveFileUrl(input);
+      if (url) {
+        trustedFileContentUrls.add(url);
+      }
+      return url;
+    })
     : [...options.messages];
   const messagesWithFileContent = await inlineRuntimeMessageFileContents(
     refreshedMessages,
-    options.fetchFileContent,
+    options.fetchFileContent ?? createRuntimeFileContentFetcher({
+      trustedUrls: trustedFileContentUrls,
+    }),
   );
 
   return convertProviderMessagesToAgentRuntimeMessages(

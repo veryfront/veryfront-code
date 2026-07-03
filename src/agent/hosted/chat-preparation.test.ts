@@ -31,6 +31,12 @@ function isRuntimeFilePart(
     "mediaType" in part && typeof part.mediaType === "string";
 }
 
+function isRuntimeTextPart(part: unknown): part is { type: "text"; text: string } {
+  return typeof part === "object" && part !== null &&
+    "type" in part && part.type === "text" &&
+    "text" in part && typeof part.text === "string";
+}
+
 function createParsedHostedChatRequest(
   overrides: Partial<ParsedHostedChatRequest> = {},
 ): ParsedHostedChatRequest {
@@ -773,11 +779,52 @@ Deno.test("prepareHostedChatRuntimeMessages refreshes uploaded file URLs through
     );
     assertEquals(
       messages[0]?.parts.some((part) =>
-        part.type === "text" &&
+        isRuntimeTextPart(part) &&
         part.text.includes('<file_content name="notes.txt" type="text/plain">') &&
         part.text.includes("Remember Order #4587.")
       ),
       true,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("prepareHostedChatRuntimeMessages does not fetch caller-controlled file URLs", async () => {
+  const requestedUrls: string[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (input, _init): Promise<Response> => {
+    requestedUrls.push(input.toString());
+    return Promise.reject(new Error("unexpected hosted attachment fetch"));
+  };
+
+  try {
+    const messages = await prepareHostedChatRuntimeMessages([
+      {
+        id: "message-1",
+        role: "user",
+        parts: [
+          { type: "text", text: "Use this file." },
+          {
+            type: "file",
+            mediaType: "text/plain",
+            filename: "notes.txt",
+            url: "http://127.0.0.1:9876/internal-notes.txt",
+          },
+        ],
+      },
+    ], {
+      apiUrl: "https://api.example.com",
+      authToken: "token-1",
+      projectId: "project-1",
+    });
+
+    assertEquals(requestedUrls, []);
+    assertEquals(
+      messages[0]?.parts.some((part) =>
+        isRuntimeTextPart(part) && part.text.includes("<file_content")
+      ),
+      false,
     );
   } finally {
     globalThis.fetch = originalFetch;

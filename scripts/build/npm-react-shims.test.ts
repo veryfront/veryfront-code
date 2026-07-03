@@ -112,3 +112,22 @@ Deno.test("normalizeEsmShReactNpmShims rejects unhandled React internal imports"
     await Deno.remove(root, { recursive: true });
   }
 });
+
+Deno.test("normalizeEsmShReactNpmShims rejects unhandled React internal declaration imports", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    await Deno.mkdir(`${root}/unhandled`);
+    await Deno.writeTextFile(
+      `${root}/unhandled/entry.d.ts`,
+      'export * from "react-dom/X-ZGNzc3R5cGVAMy4yLjMKZXJlYWN0/es2022/unknown.d.ts";\n',
+    );
+
+    assertThrows(
+      () => normalizeEsmShReactNpmShims(root),
+      Error,
+      "esm.sh React internals",
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});

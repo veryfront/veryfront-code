@@ -34,6 +34,20 @@ export type RuntimeFileContentFetcher = (
   input: RuntimeFileContentFetcherInput,
 ) => Promise<string | undefined>;
 
+/** Creates a safe runtime file content fetcher. */
+export function createRuntimeFileContentFetcher(
+  options: { trustedUrls?: ReadonlySet<string> } = {},
+): RuntimeFileContentFetcher {
+  const trustedUrls = options.trustedUrls;
+  return async (input) => {
+    if (!isFetchableRuntimeFileContentUrl(input.url, trustedUrls)) {
+      return undefined;
+    }
+
+    return await fetchRuntimeTextFileContent(input);
+  };
+}
+
 /** Resolves runtime message file urls. */
 export async function resolveRuntimeMessageFileUrls(
   messages: readonly ChatUiMessage[],
@@ -80,7 +94,7 @@ export async function resolveRuntimeMessageFileUrls(
 /** Fetches text attachment bodies and adds them as adjacent text parts. */
 export async function inlineRuntimeMessageFileContents(
   messages: readonly ChatUiMessage[],
-  fetchFileContent: RuntimeFileContentFetcher = fetchRuntimeTextFileContent,
+  fetchFileContent: RuntimeFileContentFetcher = createRuntimeFileContentFetcher(),
 ): Promise<ChatUiMessage[]> {
   const contentByUrl = new Map<string, Promise<string | undefined>>();
 
@@ -107,7 +121,7 @@ export async function inlineRuntimeMessageFileContents(
             ...(file.uploadPath ? { uploadPath: file.uploadPath } : {}),
             part: file,
             message,
-          }).then(normalizeInlineFileContent).catch(() => undefined);
+          }).then(normalizeInlineFileContent);
           contentByUrl.set(file.url, contentPromise);
         }
 
@@ -209,6 +223,17 @@ async function fetchRuntimeTextFileContent(
   const response = await fetch(input.url);
   if (!response.ok) return undefined;
   return await response.text();
+}
+
+function isFetchableRuntimeFileContentUrl(
+  url: string,
+  trustedUrls: ReadonlySet<string> | undefined,
+): boolean {
+  if (url.startsWith("data:")) {
+    return true;
+  }
+
+  return trustedUrls?.has(url) ?? false;
 }
 
 function normalizeInlineFileContent(content: string | undefined): string | undefined {
