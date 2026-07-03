@@ -248,22 +248,24 @@ function splitHref(href: string): { pathname: string; search: string } {
 }
 
 /**
- * Client-only reactive router provider. `pathname`/`query` track the live URL
- * through the shared navigation store's `useSyncExternalStore` surface;
- * `params`/`domain` are seeded from the `router` prop. Provides `RouterContext`
- * so `useRouter()` re-renders on client-side navigation.
+ * Provides the router context. `pathname`/`query` track the live URL through the
+ * shared navigation store's `useSyncExternalStore` surface; `params`/`domain`
+ * are seeded from the `router` prop. One component serves both sides: React uses
+ * `getServerSnapshot` (the seed href) during SSR and the live store on the
+ * client, so there is no environment branch — the server render and the first
+ * client render match by construction.
  *
  * The store is a stable singleton that exists on first access, so there is no
  * "is the router mounted yet?" race: the subscription is live from the first
- * render, and the router's navigations notify through the same object.
+ * render, and the router's navigations notify through the same object. Page
+ * context (frontmatter/slug/headings) is a separate concern, provided by
+ * `PageContextProvider`, which derives its live location from this router.
  */
-function ReactiveRouterProvider({
-  children,
-  router,
-}: RouterProviderProps): React.ReactElement {
+export function RouterProvider({ router, children }: RouterProviderProps): React.ReactElement {
   const store = getNavigationStore();
-  // The server-render snapshot is derived from the router itself, so the first
-  // client render matches the server exactly (both come from one `RouterValue`).
+  const seed = router ?? defaultRouter;
+  // The server snapshot is derived from the router itself, so the first client
+  // render matches the server exactly (both come from one `RouterValue`).
   const seedHref = hrefFromRouter(router) ?? "/";
   const getServerSnapshot = React.useCallback(() => seedHref, [seedHref]);
 
@@ -275,18 +277,21 @@ function ReactiveRouterProvider({
     [search],
   );
 
-  const seed = router ?? defaultRouter;
-  const seedParams = seed.params;
+  // `isMounted` is `false` on the server and the first client render (so they
+  // agree — hydration-safe), then flips `true` after mount. Consumers guard on
+  // this (e.g. `if (!router.isMounted) return null`).
+  const [isMounted, setIsMounted] = React.useState(false);
+  React.useEffect(() => setIsMounted(true), []);
 
   const routerValue = React.useMemo<RouterValue>(
     () => ({
       domain: seed.domain || (globalThis.location?.hostname ?? ""),
       path: pathname,
       pathname,
-      params: seedParams,
+      params: seed.params,
       query,
       isPreview: seed.isPreview,
-      isMounted: true,
+      isMounted,
       navigate: (url: string) => store.navigate(url, { history: "push" }),
       push: (url: string) => store.navigate(url, { history: "push" }),
       replace: (url: string) => store.navigate(url, { history: "replace" }),
@@ -294,31 +299,10 @@ function ReactiveRouterProvider({
         globalThis.location?.reload();
       },
     }),
-    [pathname, query, seedParams, seed.domain, seed.isPreview, store],
+    [pathname, query, seed.params, seed.domain, seed.isPreview, isMounted, store],
   );
 
-  // Router-only: page context (frontmatter/slug/headings) is provided by
-  // `PageContextProvider`, which derives its live location from this router.
   return React.createElement(RouterContext.Provider, { value: routerValue }, children);
-}
-
-/**
- * Provides the router context. On the server it renders the static `router`
- * snapshot verbatim so SSR output and the first client render match. On the
- * client it delegates to `ReactiveRouterProvider`, whose `pathname`/`query`
- * track the navigation store — so `useRouter()` re-renders on client-side
- * navigation. Page context (frontmatter/slug/headings) is a separate concern,
- * provided by `PageContextProvider`.
- */
-export function RouterProvider(props: RouterProviderProps): React.ReactElement {
-  if (isServerEnvironment()) {
-    return React.createElement(
-      RouterContext.Provider,
-      { value: props.router ?? defaultRouter },
-      props.children,
-    );
-  }
-  return React.createElement(ReactiveRouterProvider, props);
 }
 
 /** Options for {@link wrapForHydration}. */

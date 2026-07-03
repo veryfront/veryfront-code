@@ -364,6 +364,44 @@ describe("react/runtime/RouterProvider (reactive)", () => {
     }
   });
 
+  it("isMounted is false on the server render and true after mount (hydration-safe)", async () => {
+    const Consumer = (): React.ReactElement => {
+      const r = useRouter();
+      return <b>m:{String(r.isMounted)}</b>;
+    };
+
+    // Server render (no effects run) — must be false so it matches the first
+    // client render; a consumer's `if (!isMounted)` guard relies on this.
+    const restoreServer = installDom("https://example.com/");
+    const serverHtml = renderToStaticMarkup(
+      <RouterProvider router={seedRouter("/")}>
+        <Consumer />
+      </RouterProvider>,
+    );
+    restoreServer();
+    assertStringIncludes(serverHtml, "m:false");
+
+    // Client: after the mount effect flushes, it flips to true.
+    const restoreClient = installDom("https://example.com/");
+    installFakeRouter();
+    try {
+      const rootElement = document.getElementById("root")!;
+      const root = createRoot(rootElement);
+      flushSync(() => {
+        root.render(
+          <RouterProvider router={seedRouter("/")}>
+            <Consumer />
+          </RouterProvider>,
+        );
+      });
+      await tick();
+      assertStringIncludes(rootElement.textContent ?? "", "m:true");
+      root.unmount();
+    } finally {
+      restoreClient();
+    }
+  });
+
   it("first client render matches the SSR snapshot (no hydration mismatch)", () => {
     const url = "https://example.com/posts/42?tab=comments";
 
