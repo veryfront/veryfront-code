@@ -17,7 +17,10 @@ export const DEFAULT_API_URL = "https://api.veryfront.com";
 export const DEFAULT_LOCAL_API_URL = "https://api.veryfront.com";
 
 export function getApiUrl(env: EnvironmentConfig = getEnvironmentConfig()): string {
-  return env.apiUrl ?? DEFAULT_API_URL;
+  // VERYFRONT_API_URL wins, then VERYFRONT_API_BASE_URL (which itself
+  // defaults to the production URL), so both documented overrides retarget
+  // every CLI request — login, push, pull, slug reservation.
+  return env.apiUrl ?? env.apiBaseUrl ?? DEFAULT_API_URL;
 }
 
 export const DEFAULT_LOGIN_TIMEOUT_MS = 120_000;

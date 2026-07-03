@@ -11,6 +11,7 @@ import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { dirname, join, normalize, resolve } from "veryfront/platform/path";
 import { cliLogger } from "#cli/utils";
+import { getApiUrl } from "#cli/shared/constants";
 import { cwd } from "veryfront/platform";
 import { createFileSystem } from "veryfront/platform";
 import {
@@ -424,7 +425,7 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
         }
 
         config = {
-          apiUrl: configFile?.apiUrl ?? "https://api.veryfront.com",
+          apiUrl: configFile?.apiUrl ?? getApiUrl(),
           apiToken: token,
           projectSlug: "",
         };

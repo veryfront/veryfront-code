@@ -6,7 +6,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createApiClient, resolveConfig, resolveConfigWithAuth } from "./config.ts";
+import { createApiClient, readConfigFile, resolveConfig, resolveConfigWithAuth } from "./config.ts";
 import type { ResolvedConfig } from "./config.ts";
 import type { EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { join } from "veryfront/platform/path";
@@ -407,5 +407,45 @@ describe("createApiClient", () => {
         globalThis.fetch = originalFetch;
       }
     });
+  });
+});
+
+describe("readConfigFile", () => {
+  it("merges veryfront.json apiUrl with the module config projectSlug", async () => {
+    const tempDir = await Deno.makeTempDir();
+    try {
+      await Deno.writeTextFile(
+        join(tempDir, "veryfront.config.js"),
+        'export default { projectSlug: "from-module" };\n',
+      );
+      await Deno.writeTextFile(
+        join(tempDir, "veryfront.json"),
+        JSON.stringify({ projectSlug: "from-json", apiUrl: "https://api.veryfront.org" }),
+      );
+
+      const config = await readConfigFile(tempDir);
+
+      assertEquals(config?.projectSlug, "from-module");
+      assertEquals(config?.apiUrl, "https://api.veryfront.org");
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("reads veryfront.json alone when no module config exists", async () => {
+    const tempDir = await Deno.makeTempDir();
+    try {
+      await Deno.writeTextFile(
+        join(tempDir, "veryfront.json"),
+        JSON.stringify({ projectSlug: "json-only", apiUrl: "https://api.veryfront.org" }),
+      );
+
+      const config = await readConfigFile(tempDir);
+
+      assertEquals(config?.projectSlug, "json-only");
+      assertEquals(config?.apiUrl, "https://api.veryfront.org");
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
   });
 });
