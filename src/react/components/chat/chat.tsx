@@ -39,6 +39,14 @@ export {
   ModelAvatar,
   type ModelAvatarProps,
 } from "./chat/index.tsx";
+export {
+  type Conversation,
+  type ConversationStore,
+  type ConversationSummary,
+  localConversationStore,
+  memoryConversationStore,
+  type StorageLike,
+} from "./chat/index.tsx";
 
 // ---------------------------------------------------------------------------
 // Contexts

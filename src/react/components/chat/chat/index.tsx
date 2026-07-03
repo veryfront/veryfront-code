@@ -195,6 +195,18 @@ export {
   type UseThreadsOptions,
   type UseThreadsResult,
 } from "./hooks/use-threads.ts";
+
+// Re-exports — conversation persistence adapters
+export {
+  type Conversation,
+  type ConversationStore,
+  type ConversationSummary,
+} from "./persistence/conversation-store.ts";
+export {
+  localConversationStore,
+  type StorageLike,
+} from "./persistence/local-conversation-store.ts";
+export { memoryConversationStore } from "./persistence/memory-conversation-store.ts";
 export { useUpload, type UseUploadOptions, type UseUploadResult } from "./hooks/use-upload.ts";
 export {
   useUploadsRegistry,

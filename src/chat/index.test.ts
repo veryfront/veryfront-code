@@ -104,6 +104,8 @@ const expectedRuntimeExports = [
   "isReasoningPart",
   "isSkillToolPart",
   "isToolPart",
+  "localConversationStore",
+  "memoryConversationStore",
   "normalizeChatMessageMetadata",
   "normalizeAgentMetadataResponse",
   "normalizeChatUiMessageChunk",

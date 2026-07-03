@@ -214,6 +214,17 @@ export {
   type UseUploadsRegistryResult,
 } from "#veryfront/react/components/chat/chat.tsx";
 
+// Conversation persistence adapters — swappable async stores behind the
+// (upcoming) `useConversations` hook. localStorage default; idb/api are follow-ups.
+export {
+  type Conversation,
+  type ConversationStore,
+  type ConversationSummary,
+  localConversationStore,
+  memoryConversationStore,
+  type StorageLike,
+} from "#veryfront/react/components/chat/chat.tsx";
+
 // ---------------------------------------------------------------------------
 // Target component names — the renamed public API (see
 // .context/chat-components-checklist.md). The v1 names above stay exported as
