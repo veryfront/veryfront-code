@@ -1,7 +1,7 @@
 import { isVeryfrontCloudEnabled } from "#veryfront/platform/cloud/resolver.ts";
 import { VeryfrontCloudBlobStorage } from "#veryfront/workflow/blob/veryfront-cloud-storage.ts";
 import { serverLogger } from "#veryfront/utils";
-import type { RagStore } from "./types.ts";
+import type { RagDocumentMeta, RagStore } from "./types.ts";
 import { loadUpload } from "./upload-loader.ts";
 import * as nodeBuffer from "node:buffer";
 
@@ -192,6 +192,32 @@ function getSourceBlobStorage(): VeryfrontCloudBlobStorage | null {
     : null;
 }
 
+interface UploadRegistryItem {
+  id: string;
+  name: string;
+  mediaType: string;
+  size: number;
+  url?: string;
+}
+
+function toUploadRegistryItem(upload: RagDocumentMeta): UploadRegistryItem {
+  return {
+    id: upload.id,
+    name: upload.title,
+    mediaType: typeToMime(upload.type),
+    size: 0,
+    ...(upload.url ? { url: upload.url } : {}),
+  };
+}
+
+function resolveDeleteId(request: Request, context: { params: Record<string, string> }): string {
+  const fromParams = context.params.id;
+  if (fromParams) return fromParams;
+
+  const fromQuery = new URL(request.url).searchParams.get("id");
+  return fromQuery ?? "";
+}
+
 /**
  * Creates HTTP route handlers for upload, listing, and deletion.
  *
@@ -206,7 +232,7 @@ function getSourceBlobStorage(): VeryfrontCloudBlobStorage | null {
  * `loadUpload`, and ingests into the provided RAG store. When Veryfront Cloud
  * bootstrap is present, the original binary is also stored in the project's
  * uploads store via the cloud adapter. GET returns the upload list. DELETE
- * removes an upload by ID from route params.
+ * removes an upload by ID from the `id` query parameter or route params.
  *
  * @example
  * ```ts
@@ -215,7 +241,7 @@ function getSourceBlobStorage(): VeryfrontCloudBlobStorage | null {
  * import { getEnv } from "veryfront";
  * import { store } from "lib/store.ts";
  *
- * export const { POST, GET } = createUploadHandler(store, {
+ * export const { POST, GET, DELETE } = createUploadHandler(store, {
  *   auth: {
  *     authorize: (request) => {
  *       const token = getEnv("UPLOAD_TOKEN");
@@ -223,17 +249,6 @@ function getSourceBlobStorage(): VeryfrontCloudBlobStorage | null {
  *         request.headers.get("authorization") === `Bearer ${token}`;
  *     },
  *   },
- * });
- * ```
- *
- * @example
- * ```ts
- * // app/api/uploads/[id]/route.ts
- * import { createUploadHandler } from "veryfront/embedding";
- * import { store } from "lib/store.ts";
- *
- * export const { DELETE } = createUploadHandler(store, {
- *   auth: { type: "none", allowUnauthenticated: true },
  * });
  * ```
  */
@@ -316,8 +331,10 @@ export function createUploadHandler(
       }
 
       return Response.json({
-        success: true,
-        upload: { id, title: safeName, type: fileType },
+        id,
+        name: safeName,
+        mediaType: file.type || typeToMime(fileType),
+        size: file.size,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Upload failed";
@@ -331,7 +348,7 @@ export function createUploadHandler(
       if (unauthorized) return unauthorized;
 
       const uploads = await enrichUploadsWithSourceUrls(await store.listDocuments());
-      return Response.json({ uploads });
+      return Response.json({ items: uploads.map(toUploadRegistryItem) });
     } catch (error) {
       serverLogger.error("Upload list failed:", error);
       return Response.json({ error: "Failed to list uploads" }, { status: 500 });
@@ -346,7 +363,7 @@ export function createUploadHandler(
       const unauthorized = await authorizeUploadRequest(request, authorize);
       if (unauthorized) return unauthorized;
 
-      const id = context.params.id;
+      const id = resolveDeleteId(request, context);
       if (!id) {
         return Response.json({ error: "Missing upload ID" }, { status: 400 });
       }

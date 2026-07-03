@@ -15,6 +15,7 @@ import {
   veryfrontStudioMcpServer,
 } from "../../src/agent/index.ts";
 import {
+  AttachmentsPanel,
   Chat,
   ChatContextProvider,
   ChatThemeScope,
@@ -25,8 +26,9 @@ import {
   useChat,
   useChatContextOptional,
   useCompletion,
+  useUploadsRegistry,
 } from "../../src/chat/index.ts";
-import { createUploadHandler, ragStore, useUploads } from "../../src/embedding/index.ts";
+import { createUploadHandler, ragStore } from "../../src/embedding/index.ts";
 import { defineConfig } from "../../src/config/index.ts";
 import { datasets, evalAgent, metrics, runEval } from "../../src/eval/index.ts";
 import { metrics as projectMetrics } from "../../src/metrics/index.ts";
@@ -278,14 +280,17 @@ describe("Guide: build-a-rag-app.md", () => {
 
     assertEquals(typeof ragStore, "function");
     assertEquals(typeof createUploadHandler, "function");
-    assertEquals(typeof useUploads, "function");
+    assertEquals(typeof useUploadsRegistry, "function");
+    assertExists(AttachmentsPanel.Root);
     assertEquals(typeof useChat, "function");
     assertEquals(typeof ChatThemeScope, "function");
     assertEquals(typeof createAgUiHandler, "function");
     assertExists(template);
     const templatePage = template.find((file) => file.path === "app/page.tsx")?.content ?? "";
-    assertStringIncludes(templatePage, "ChatThemeScope");
-    assertStringIncludes(templatePage, 'className="flex h-screen min-h-0"');
+    const templateLayout = template.find((file) => file.path === "app/layout.tsx")?.content ?? "";
+    assertStringIncludes(templateLayout, "ChatThemeScope");
+    assertStringIncludes(templateLayout, "AppShell");
+    assertStringIncludes(templatePage, 'agentId="rag"');
     assert(
       template.some((file) => file.path === "store.ts"),
       "docs-agent template includes store.ts",
@@ -303,13 +308,12 @@ describe("Guide: build-a-rag-app.md", () => {
       "docs-agent template includes the upload route",
     );
     assert(
-      template.some((file) => file.path === "app/api/uploads/[id]/route.ts"),
-      "docs-agent template includes the upload delete route",
+      template.some((file) => file.path === "app/uploads/page.tsx"),
+      "docs-agent template includes the uploads page",
     );
-    assertStringIncludes(guide, 'useUploads({ api: "/api/uploads" })');
-    assertStringIncludes(guide, "disabled={uploads.uploading}");
+    assertStringIncludes(guide, 'useUploadsRegistry({ url: "/api/uploads" })');
+    assertStringIncludes(guide, "AttachmentsPanel");
     assertStringIncludes(guide, 'import { store } from "../../../store.ts";');
-    assertStringIncludes(guide, 'import { store } from "../../../../store.ts";');
     assertStringIncludes(guide, "await store.indexContentDir();");
     assertStringIncludes(guide, "const results = await store.search(query, { topK: 5 });");
     assertStringIncludes(guide, ".veryfront/rag/uploads/");

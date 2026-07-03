@@ -6,7 +6,7 @@ A simple conversational AI with tool support.
 
 - Single assistant agent with streaming chat UI
 - Example calculator tool
-- `useChat` hook for real-time responses
+- App-mode `Chat` component for real-time responses
 
 ## Structure
 

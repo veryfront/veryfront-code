@@ -162,6 +162,75 @@ describe("createUploadHandler", () => {
     assertEquals(removed, ["doc-123"]);
   });
 
+  it("returns chat upload registry fields for docs-agent uploads", async () => {
+    const store = createStubStore({
+      async ingest(): Promise<string> {
+        return "doc-123";
+      },
+      async listDocuments() {
+        return [
+          {
+            id: "doc-123",
+            title: "guide.txt",
+            source: "upload:guide.txt",
+            type: "txt",
+            createdAt: 1,
+          },
+        ];
+      },
+    });
+    const { POST, GET } = createUploadHandler(store, {
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+
+    const formData = new FormData();
+    formData.append(
+      "file",
+      new File(["hello world"], "guide.txt", { type: "text/plain" }),
+    );
+
+    const postResponse = await POST(
+      new Request("http://test/uploads", {
+        method: "POST",
+        body: formData,
+      }),
+    );
+    const postBody = await postResponse.json();
+    const getResponse = await GET(new Request("http://test/uploads", { method: "GET" }));
+    const getBody = await getResponse.json();
+
+    assertEquals(postBody.id, "doc-123");
+    assertEquals(postBody.name, "guide.txt");
+    assertEquals(postBody.mediaType, "text/plain");
+    assertEquals(postBody.size, 11);
+    assertEquals(getBody.items[0], {
+      id: "doc-123",
+      name: "guide.txt",
+      mediaType: "text/plain",
+      size: 0,
+    });
+  });
+
+  it("deletes docs-agent uploads from a query-string id", async () => {
+    const removed: string[] = [];
+    const store = createStubStore({
+      async removeDocument(id: string): Promise<void> {
+        removed.push(id);
+      },
+    });
+    const { DELETE } = createUploadHandler(store, {
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+
+    const response = await DELETE(
+      new Request("http://test/uploads?id=doc-123", { method: "DELETE" }),
+      { params: {} },
+    );
+
+    assertEquals(response.status, 200);
+    assertEquals(removed, ["doc-123"]);
+  });
+
   it("accepts explicit unauthenticated upload routes", async () => {
     const store = createStubStore();
     const { GET } = createUploadHandler(store, {
@@ -393,9 +462,11 @@ describe("createUploadHandler", () => {
 
       assertEquals(response.status, 200);
       const payload = await response.json();
-      const [upload] = payload.uploads as Array<Record<string, unknown>>;
+      const [upload] = payload.items as Array<Record<string, unknown>>;
       assertExists(upload);
       assertEquals(upload.id, "doc-123");
+      assertEquals(upload.name, "guide.txt");
+      assertEquals(upload.mediaType, "text/plain");
       assertEquals(
         upload.url,
         "https://download.test/demo-project/.veryfront%2Frag%2Fuploads%2Fdoc-123.blob",
@@ -489,11 +560,11 @@ describe("createUploadHandler", () => {
     assertEquals(response.status, 200);
     const body = await response.json();
     assertEquals(
-      body.upload.title,
+      body.name,
       "bbold_b.txt",
       "angle brackets must be stripped, / becomes _",
     );
-    assertEquals(ingestedTitle, body.upload.title);
+    assertEquals(ingestedTitle, body.name);
   });
 
   it("strips ampersands to prevent HTML entity injection", async () => {
@@ -574,7 +645,7 @@ describe("createUploadHandler", () => {
     assertEquals(response.status, 200);
     const body = await response.json();
     assertEquals(
-      body.upload.title,
+      body.name,
       ".txt",
       "only angle brackets removed, extension preserved",
     );
