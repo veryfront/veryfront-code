@@ -94,6 +94,8 @@ interface ChunkMutationInput {
 
 type ResolvedCloudRagStoreConfig = RagStoreConfig & { model: string };
 
+type CloudRagDocumentMeta = RagDocumentMeta & { filePath?: string };
+
 interface ContentFile {
   path: string;
   content?: string;
@@ -168,12 +170,28 @@ function buildDocumentFilePath(documentId: string, type?: string): string {
   return `${DOCUMENTS_DIR}/${documentId}.${extension || "txt"}`;
 }
 
+function buildRefreshDocumentFilePath(documentId: string, type?: string): string {
+  const extension = type?.trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+  return `${DOCUMENTS_DIR}/${documentId}.refresh-${crypto.randomUUID()}.${extension || "txt"}`;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
 function toStringValue(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
+}
+
+function toPublicRagDocumentMeta(document: CloudRagDocumentMeta): RagDocumentMeta {
+  return {
+    id: document.id,
+    title: document.title,
+    source: document.source,
+    type: document.type,
+    createdAt: document.createdAt,
+    url: document.url,
+  };
 }
 
 function buildDocumentChunks(
@@ -348,7 +366,7 @@ async function upsertEmbeddings(
 
 async function listRagDocuments(
   context: CloudStoreContext,
-): Promise<RagDocumentMeta[]> {
+): Promise<CloudRagDocumentMeta[]> {
   const response = await requestJson<CloudListRagDocumentsResponse>(
     context,
     getRagDocumentsPath(context),
@@ -360,6 +378,7 @@ async function listRagDocuments(
     source: doc.source,
     type: doc.type,
     createdAt: new Date(doc.created_at).getTime(),
+    filePath: typeof doc.metadata?.filePath === "string" ? doc.metadata.filePath : undefined,
   }));
 }
 
@@ -430,6 +449,10 @@ async function refreshCloudDocument(
     throw INVALID_ARGUMENT.create({ detail: `RAG document not found: ${documentId}` });
   }
 
+  const type = meta?.type ?? existing.type;
+  const previousFilePath = existing.filePath ?? buildDocumentFilePath(documentId, existing.type);
+  const filePath = buildRefreshDocumentFilePath(documentId, type);
+
   await writeDocumentContent(
     context,
     config,
@@ -438,10 +461,14 @@ async function refreshCloudDocument(
     text,
     {
       source: meta?.source ?? existing.source,
-      type: meta?.type ?? existing.type,
+      type,
     },
-    { replaceFilePath: buildDocumentFilePath(documentId, existing.type) },
+    { filePath },
   );
+
+  if (previousFilePath !== filePath) {
+    await deleteFileChunks(context, previousFilePath);
+  }
 }
 
 async function writeDocumentContent(
@@ -451,7 +478,7 @@ async function writeDocumentContent(
   title: string,
   text: string,
   meta?: { source?: string; type?: string },
-  options?: { replaceFilePath?: string },
+  options?: { filePath?: string },
 ): Promise<void> {
   if (text.length > MAX_TEXT_LENGTH) {
     throw INVALID_ARGUMENT.create({
@@ -464,7 +491,7 @@ async function writeDocumentContent(
     throw INVALID_ARGUMENT.create({ detail: "Upload contains no extractable text" });
   }
 
-  const filePath = buildDocumentFilePath(documentId, meta?.type);
+  const filePath = options?.filePath ?? buildDocumentFilePath(documentId, meta?.type);
   const embedder = createEmbedder(config);
   const vectors = await embedder.embedMany(chunkTexts);
   const dimension = toSupportedDimension(vectors[0]?.length ?? 0);
@@ -477,10 +504,6 @@ async function writeDocumentContent(
   });
 
   try {
-    if (options?.replaceFilePath) {
-      await deleteFileChunks(context, options.replaceFilePath);
-    }
-
     const createdChunks = await upsertFileChunks(context, filePath, chunkInputs);
     const chunkIds = createdChunks.map((entry) => entry.id);
 
@@ -730,7 +753,8 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
 
     async listDocuments(): Promise<RagDocumentMeta[]> {
       const context = getCloudStoreContext(config);
-      return listRagDocuments(context);
+      const documents = await listRagDocuments(context);
+      return documents.map(toPublicRagDocumentMeta);
     },
 
     async removeDocument(id: string): Promise<void> {
@@ -745,7 +769,7 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
 
       // Best-effort cleanup of file chunks
       if (target) {
-        const filePath = buildDocumentFilePath(id, target.type);
+        const filePath = target.filePath ?? buildDocumentFilePath(id, target.type);
         try {
           await deleteFileChunks(context, filePath);
         } catch (error) {

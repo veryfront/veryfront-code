@@ -130,7 +130,7 @@ export interface RagRefreshOptions {
 /** Public API contract for rag store. */
 export interface RagStore {
   ingest(title: string, text: string, meta?: { source?: string; type?: string }): Promise<string>;
-  refreshDocument(id: string, text: string, meta?: RagRefreshOptions): Promise<void>;
+  refreshDocument?(id: string, text: string, meta?: RagRefreshOptions): Promise<void>;
   search(query: string, options?: RagSearchOptions): Promise<RagSearchResult[]>;
   listDocuments(): Promise<RagDocumentMeta[]>;
   removeDocument(id: string): Promise<void>;

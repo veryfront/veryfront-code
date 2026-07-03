@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { exists, readTextFile, withTempDir } from "#veryfront/testing/deno-compat.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
@@ -118,7 +118,9 @@ describe("ragStore", () => {
       };
       assertEquals(embedded.chunks[0]?.embedding.length, 1536);
 
-      await store.refreshDocument(id, "# New Slide Title\n\nNew body text", {
+      const refresh = store.refreshDocument;
+      assert(refresh);
+      await refresh(id, "# New Slide Title\n\nNew body text", {
         title: "Deck Updated",
         source: "upload:deck-updated.pptx",
         type: "pptx",
@@ -661,23 +663,35 @@ describe("ragStore", () => {
           model: "test/demo",
         });
 
-        await store.refreshDocument("doc-pptx", "# Better Deck\n\nBody text", {
+        const refresh = store.refreshDocument;
+        assert(refresh);
+        await refresh("doc-pptx", "# Better Deck\n\nBody text", {
           title: "Better Deck",
           source: "upload:better.pptx",
           type: "pptx",
         });
 
         assertEquals(deletedFilePaths, [".veryfront/rag/documents/doc-pptx.pptx"]);
-        assertEquals([...ragDocuments.values()][0], {
+        const refreshedDocument = [...ragDocuments.values()][0];
+        const refreshedFilePath = refreshedDocument?.metadata?.filePath;
+        assertEquals(typeof refreshedFilePath, "string");
+        assertEquals(
+          (refreshedFilePath as string).startsWith(
+            ".veryfront/rag/documents/doc-pptx.refresh-",
+          ),
+          true,
+        );
+        assertEquals((refreshedFilePath as string).endsWith(".pptx"), true);
+        assertEquals(refreshedDocument, {
           id: "doc-pptx",
           title: "Better Deck",
           source: "upload:better.pptx",
           type: "pptx",
           created_at: "2026-06-25T00:00:00.000Z",
           updated_at: "2026-06-25T01:00:00.000Z",
-          metadata: { filePath: ".veryfront/rag/documents/doc-pptx.pptx" },
+          metadata: { filePath: refreshedFilePath },
         });
-        const chunks = fileChunks.get(".veryfront/rag/documents/doc-pptx.pptx") ?? [];
+        const chunks = fileChunks.get(refreshedFilePath as string) ?? [];
         assertEquals(chunks.length, 1);
         assertEquals(chunks[0]?.content, "# Better Deck\n\nBody text");
         assertEquals(chunks[0]?.metadata, {
@@ -688,6 +702,127 @@ describe("ragStore", () => {
           type: "pptx",
         });
         assertEquals(embeddingVectors.size, 1);
+
+        const listedDocuments = await store.listDocuments() as Array<Record<string, unknown>>;
+        assertEquals("filePath" in listedDocuments[0]!, false);
+      },
+    );
+  });
+
+  it("keeps old cloud chunks when refresh replacement embedding persistence fails", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
+    setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
+    registerTestEmbeddingProvider();
+
+    const fileChunks = new Map<
+      string,
+      Array<{ id: string; index: number; content: string; metadata?: Record<string, unknown> }>
+    >([
+      [
+        ".veryfront/rag/documents/doc-pptx.pptx",
+        [{
+          id: "old-chunk",
+          index: 0,
+          content: "Old flat PPTX content",
+          metadata: {
+            kind: "rag-document",
+            document_id: "doc-pptx",
+            title: "Old Deck",
+            source: "upload:old.pptx",
+            type: "pptx",
+          },
+        }],
+      ],
+    ]);
+    const ragDocuments = new Map<string, {
+      id: string;
+      title: string;
+      source: string;
+      type: string;
+      created_at: string;
+      updated_at: string;
+      metadata?: Record<string, unknown>;
+    }>([
+      [
+        "doc-pptx",
+        {
+          id: "doc-pptx",
+          title: "Old Deck",
+          source: "upload:old.pptx",
+          type: "pptx",
+          created_at: "2026-06-25T00:00:00.000Z",
+          updated_at: "2026-06-25T00:00:00.000Z",
+          metadata: { filePath: ".veryfront/rag/documents/doc-pptx.pptx" },
+        },
+      ],
+    ]);
+    const deletedFilePaths: string[] = [];
+
+    await withMockFetch(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        const url = new URL(request.url);
+        const path = url.pathname;
+
+        const ragDocMatch = path.match(/^\/projects\/[^/]+\/rag\/documents(?:\/(.+))?$/);
+        if (ragDocMatch !== null && request.method === "GET" && !ragDocMatch[1]) {
+          return Response.json({ documents: [...ragDocuments.values()] });
+        }
+
+        const fileMatch = path.match(/^\/projects\/[^/]+\/branches\/[^/]+\/files\/(.+)\/chunks$/);
+        const filePath = fileMatch ? decodeURIComponent(fileMatch[1]!) : null;
+
+        if (request.method === "DELETE" && filePath) {
+          deletedFilePaths.push(filePath);
+          fileChunks.delete(filePath);
+          return Response.json({ deleted: 1 });
+        }
+
+        if (request.method === "POST" && filePath) {
+          const body = await request.json() as {
+            chunks: Array<{
+              chunk_index: number;
+              content: string;
+              metadata?: Record<string, unknown>;
+            }>;
+          };
+          const stored = body.chunks.map((chunk) => ({
+            id: `${filePath}:${chunk.chunk_index}`,
+            index: chunk.chunk_index,
+            content: chunk.content,
+            metadata: chunk.metadata,
+          }));
+          fileChunks.set(filePath, stored);
+          return Response.json({
+            chunks: stored.map(({ id, index }) => ({ id, index })),
+            created: stored.length,
+            updated: 0,
+          });
+        }
+
+        if (request.method === "POST" && path.endsWith("/embeddings")) {
+          return new Response("embedding write failed", { status: 500 });
+        }
+
+        return new Response(`Unhandled ${request.method} ${path}`, { status: 404 });
+      },
+      async () => {
+        const store = ragStore({ model: "test/demo" });
+        const refresh = store.refreshDocument;
+        assert(refresh);
+
+        await assertRejects(
+          () => refresh("doc-pptx", "# Better Deck\n\nBody text"),
+          Error,
+          "embedding write failed",
+        );
+
+        assertEquals(deletedFilePaths.includes(".veryfront/rag/documents/doc-pptx.pptx"), false);
+        assertEquals(
+          fileChunks.get(".veryfront/rag/documents/doc-pptx.pptx")?.[0]?.content,
+          "Old flat PPTX content",
+        );
+        assertEquals(ragDocuments.get("doc-pptx")?.title, "Old Deck");
       },
     );
   });

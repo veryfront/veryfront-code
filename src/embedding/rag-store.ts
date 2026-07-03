@@ -193,7 +193,11 @@ export function ragStore(config: RagStoreConfig): RagStore {
       return getStore().ingest(title, text, meta);
     },
     refreshDocument(id, text, meta) {
-      return getStore().refreshDocument(id, text, meta);
+      const store = getStore();
+      if (!store.refreshDocument) {
+        throw INVALID_ARGUMENT.create({ detail: "RAG store does not support document refresh" });
+      }
+      return store.refreshDocument(id, text, meta);
     },
     search(query, options) {
       return getStore().search(query, options);

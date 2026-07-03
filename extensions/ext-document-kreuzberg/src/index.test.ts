@@ -196,6 +196,55 @@ async function buildPptxWithTitleBodyAndTextbox(): Promise<ArrayBuffer> {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
+async function buildPptxWithTitleAndTable(): Promise<ArrayBuffer> {
+  const zip = new JSZip();
+  zip.file(
+    "ppt/presentation.xml",
+    `<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+      <p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst>
+    </p:presentation>`,
+  );
+  zip.file(
+    "ppt/_rels/presentation.xml.rels",
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+      <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>
+    </Relationships>`,
+  );
+  zip.file(
+    "ppt/slides/slide1.xml",
+    `<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+      <p:cSld>
+        <p:spTree>
+          <p:sp>
+            <p:nvSpPr><p:cNvPr id="2" name="Title 1"/><p:cNvSpPr/><p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr>
+            <p:txBody><a:p><a:r><a:t>Quarterly Results</a:t></a:r></a:p></p:txBody>
+          </p:sp>
+          <p:graphicFrame>
+            <p:nvGraphicFramePr><p:cNvPr id="3" name="Table 2"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>
+            <a:graphic>
+              <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">
+                <a:tbl>
+                  <a:tr>
+                    <a:tc><a:txBody><a:p><a:r><a:t>Region</a:t></a:r></a:p></a:txBody></a:tc>
+                    <a:tc><a:txBody><a:p><a:r><a:t>Revenue</a:t></a:r></a:p></a:txBody></a:tc>
+                  </a:tr>
+                  <a:tr>
+                    <a:tc><a:txBody><a:p><a:r><a:t>EMEA</a:t></a:r></a:p></a:txBody></a:tc>
+                    <a:tc><a:txBody><a:p><a:r><a:t>4.2M</a:t></a:r></a:p></a:txBody></a:tc>
+                  </a:tr>
+                </a:tbl>
+              </a:graphicData>
+            </a:graphic>
+          </p:graphicFrame>
+        </p:spTree>
+      </p:cSld>
+    </p:sld>`,
+  );
+
+  const bytes = await zip.generateAsync({ type: "uint8array" });
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
 type NativeProgressWorkerResponse =
   | { type: "done"; content: string }
   | { type: "error"; error: string }
@@ -489,6 +538,26 @@ describe("ext-document-kreuzberg extension", () => {
     assertStringIncludes(result.content, "Freeform textbox content");
     assertEquals(result.content.includes("# Body paragraph from placeholder"), false);
     assertEquals(result.content.includes("# Freeform textbox content"), false);
+    assertEquals(
+      result.events.map((event) => ({
+        unit: event.unit,
+        current: event.current,
+        total: event.total,
+      })),
+      [{ unit: "slide", current: 1, total: 1 }],
+    );
+  });
+
+  it("keeps PPTX table text when normalizing slide headings", async () => {
+    const buffer = await buildPptxWithTitleAndTable();
+
+    const result = await extractPptxWithProgressWorker(buffer);
+
+    assertStringIncludes(result.content, "# Quarterly Results");
+    assertStringIncludes(result.content, "Region");
+    assertStringIncludes(result.content, "Revenue");
+    assertStringIncludes(result.content, "EMEA");
+    assertStringIncludes(result.content, "4.2M");
     assertEquals(
       result.events.map((event) => ({
         unit: event.unit,
