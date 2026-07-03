@@ -62,6 +62,14 @@ function extractPptxSlideText(xml: string): string {
     .trim();
 }
 
+function cleanExtractedMarkdown(value: string): string {
+  return value
+    .replace(/!\[[^\]\n]*\]\(\s*\)/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function slideNumber(path: string): number {
   return Number(path.match(/\/slide(\d+)\.xml$/)?.[1] ?? 0);
 }
@@ -143,6 +151,43 @@ async function pptxSlidePaths(zip: JSZip): Promise<string[]> {
   ];
 }
 
+async function buildSingleSlidePptx(slideXml: string): Promise<Uint8Array> {
+  const zip = new JSZip();
+  zip.file(
+    "[Content_Types].xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>
+  <Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>
+</Types>`,
+  );
+  zip.file(
+    "_rels/.rels",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/>
+</Relationships>`,
+  );
+  zip.file(
+    "ppt/presentation.xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst>
+</p:presentation>`,
+  );
+  zip.file(
+    "ppt/_rels/presentation.xml.rels",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>
+</Relationships>`,
+  );
+  zip.file("ppt/slides/slide1.xml", slideXml);
+  return await zip.generateAsync({ type: "uint8array" });
+}
+
 async function extractPdfByPage(buffer: ArrayBuffer): Promise<string> {
   const { extractBytes } = await loadKreuzbergNative();
   const source = await PDFDocument.load(buffer, { ignoreEncryption: true });
@@ -176,23 +221,43 @@ async function extractPdfByPage(buffer: ArrayBuffer): Promise<string> {
 async function extractPptxBySlide(buffer: ArrayBuffer, mimeType: string): Promise<string> {
   const zip = await JSZip.loadAsync(buffer);
   const slidePaths = await pptxSlidePaths(zip);
+  const config = extractionConfigForMimeType(mimeType);
+  let nativeExtractor: Awaited<ReturnType<typeof loadKreuzbergNative>> | undefined;
+
+  try {
+    nativeExtractor = await loadKreuzbergNative();
+  } catch (error) {
+    if (!slidePaths.length) throw error;
+  }
 
   if (!slidePaths.length) {
-    const { extractBytes } = await loadKreuzbergNative();
-    const result = await extractBytes(
+    const result = await nativeExtractor!.extractBytes(
       new Uint8Array(buffer),
       mimeType,
-      extractionConfigForMimeType(mimeType),
+      config,
     );
-    postProgress({ unit: "file", current: 1, total: 1, characters: result.content.length });
-    return result.content;
+    const content = cleanExtractedMarkdown(result.content);
+    postProgress({ unit: "file", current: 1, total: 1, characters: content.length });
+    return content;
   }
 
   const slides: string[] = [];
   for (const [index, path] of slidePaths.entries()) {
     const file = zip.file(path);
     const xml = file ? await file.async("text") : "";
-    const content = extractPptxSlideText(xml);
+    let content: string | undefined;
+
+    if (nativeExtractor) {
+      try {
+        const slideBytes = await buildSingleSlidePptx(xml);
+        const result = await nativeExtractor.extractBytes(slideBytes, mimeType, config);
+        content = cleanExtractedMarkdown(result.content);
+      } catch {
+        // Fall back below to direct slide text so this slide still reports progress.
+      }
+    }
+
+    content ??= extractPptxSlideText(xml);
     slides.push(content);
     postProgress({
       unit: "slide",
