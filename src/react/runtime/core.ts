@@ -46,11 +46,6 @@ export interface RouterProviderProps {
    * callers hand over one `RouterValue` rather than loose href/param fields.
    */
   router?: RouterValue;
-  /**
-   * Page frontmatter, exposed reactively through `usePageContext()`. This is the
-   * one page-level datum a `RouterValue` does not already carry.
-   */
-  frontmatter?: Record<string, unknown>;
 }
 
 /** Heading metadata extracted from MDX content. */
@@ -253,11 +248,10 @@ function splitHref(href: string): { pathname: string; search: string } {
 }
 
 /**
- * Client-only reactive router/page provider. `pathname`/`query` track the live
- * URL through the shared navigation store's `useSyncExternalStore` surface;
- * `params`/`frontmatter`/`domain` are seeded from props. Provides both
- * `RouterContext` and `PageContext` so `useRouter()` and `usePageContext()` are
- * reactive.
+ * Client-only reactive router provider. `pathname`/`query` track the live URL
+ * through the shared navigation store's `useSyncExternalStore` surface;
+ * `params`/`domain` are seeded from the `router` prop. Provides `RouterContext`
+ * so `useRouter()` re-renders on client-side navigation.
  *
  * The store is a stable singleton that exists on first access, so there is no
  * "is the router mounted yet?" race: the subscription is live from the first
@@ -266,7 +260,6 @@ function splitHref(href: string): { pathname: string; search: string } {
 function ReactiveRouterProvider({
   children,
   router,
-  frontmatter,
 }: RouterProviderProps): React.ReactElement {
   const store = getNavigationStore();
   // The server-render snapshot is derived from the router itself, so the first
@@ -284,7 +277,6 @@ function ReactiveRouterProvider({
 
   const seed = router ?? defaultRouter;
   const seedParams = seed.params;
-  const seedFrontmatter = frontmatter ?? {};
 
   const routerValue = React.useMemo<RouterValue>(
     () => ({
@@ -305,32 +297,18 @@ function ReactiveRouterProvider({
     [pathname, query, seedParams, seed.domain, seed.isPreview, store],
   );
 
-  const pageContextValue = React.useMemo<PageContextValue>(
-    () => ({
-      slug: seed.path || pathname,
-      path: pathname,
-      params: seedParams,
-      query,
-      frontmatter: seedFrontmatter,
-      headings: [],
-      mdxHeadings: [],
-    }),
-    [pathname, query, seedParams, seedFrontmatter, seed.path],
-  );
-
-  return React.createElement(
-    RouterContext.Provider,
-    { value: routerValue },
-    React.createElement(PageContextContext.Provider, { value: pageContextValue }, children),
-  );
+  // Router-only: page context (frontmatter/slug/headings) is provided by
+  // `PageContextProvider`, which derives its live location from this router.
+  return React.createElement(RouterContext.Provider, { value: routerValue }, children);
 }
 
 /**
- * Provides the router (and, on the client, page) context. On the server it
- * renders the static `router` snapshot verbatim so SSR output and the first
- * client render match. On the client it delegates to `ReactiveRouterProvider`,
- * whose `pathname`/`query` track `veryFrontRouter` — so `useRouter()` and
- * `usePageContext()` re-render on client-side navigation.
+ * Provides the router context. On the server it renders the static `router`
+ * snapshot verbatim so SSR output and the first client render match. On the
+ * client it delegates to `ReactiveRouterProvider`, whose `pathname`/`query`
+ * track the navigation store — so `useRouter()` re-renders on client-side
+ * navigation. Page context (frontmatter/slug/headings) is a separate concern,
+ * provided by `PageContextProvider`.
  */
 export function RouterProvider(props: RouterProviderProps): React.ReactElement {
   if (isServerEnvironment()) {
@@ -352,14 +330,15 @@ export interface HydrationWrapOptions {
 }
 
 /**
- * Wraps a hydrated client component in `RouterProvider`, seeded from the live
- * location plus the initial route match, as one `RouterValue`.
+ * Wraps a hydrated client component in `RouterProvider` (router state) nested
+ * with `PageContextProvider` (frontmatter), seeded from the live location plus
+ * the initial route match — mirroring how SSR wraps the tree.
  *
  * The RSC hydration path calls this through a runtime import of
  * `veryfront/router`, so it runs under the app's React instance — the same one
- * the hydrated component uses, and the same `RouterProvider` and `React` this
- * module already reference. That is why the caller does not (and must not) pass
- * a `React` across the module boundary: the wrapping happens here, inside the
+ * the hydrated component uses, and the same providers and `React` this module
+ * already reference. That is why the caller does not (and must not) pass a
+ * `React` across the module boundary: the wrapping happens here, inside the
  * module that owns React.
  */
 export function wrapForHydration(
@@ -368,6 +347,7 @@ export function wrapForHydration(
 ): React.ReactElement {
   const loc = globalThis.location;
   const pathname = loc?.pathname ?? "/";
+  const params = options.params ?? {};
   const query = loc
     ? (Object.fromEntries(new URLSearchParams(loc.search)) as Record<string, string>)
     : {};
@@ -376,48 +356,32 @@ export function wrapForHydration(
     domain: loc?.hostname ?? "",
     path: pathname,
     pathname,
-    params: options.params ?? {},
+    params,
     query,
+  };
+  // `PageContextProvider` derives its live location from the router above; only
+  // the page-authored bits (frontmatter/slug) are seeded here.
+  const pageContext: PageContextValue = {
+    ...defaultPageContext,
+    slug: pathname,
+    path: pathname,
+    params,
+    query,
+    frontmatter: options.frontmatter ?? {},
   };
   return React.createElement(RouterProvider, {
     router,
-    frontmatter: options.frontmatter,
-    children: child,
+    children: React.createElement(PageContextProvider, { pageContext, children: child }),
   });
 }
 
 /**
- * Reads the full router context. Kept as the backward-compatible surface; new
- * code should prefer the granular {@link usePathname} / {@link useSearchParams} /
- * {@link useParams} hooks, which re-render only on the slice they read.
+ * Reads the router context: `pathname`, `query`, `params`, and the navigation
+ * actions. Reactive across client-side navigation — this is the single hook for
+ * location and navigation state.
  */
 export function useRouter(): RouterValue {
   return React.useContext(RouterContext);
-}
-
-/** The current URL pathname. Reactive across client-side navigation. */
-export function usePathname(): string {
-  return React.useContext(RouterContext).pathname;
-}
-
-/** The current route params from the initial match. */
-export function useParams(): Record<string, string> {
-  return React.useContext(RouterContext).params;
-}
-
-/**
- * The current query as a `URLSearchParams` — preserving repeated keys, unlike
- * the flattened `useRouter().query`. Reads the live URL for full fidelity and is
- * reactive through the router context; falls back to the router snapshot's query
- * during SSR, where there is no live location.
- */
-export function useSearchParams(): URLSearchParams {
-  const { query } = React.useContext(RouterContext);
-  const search = globalThis.location?.search;
-  return React.useMemo(
-    () => new URLSearchParams(search || new URLSearchParams(query).toString()),
-    [search, query],
-  );
 }
 
 /** Renders an anchor element annotated for Veryfront prefetch handling. */
@@ -433,16 +397,31 @@ export function Link({
   );
 }
 
-/** Provides page context to route and MDX descendants. */
+/**
+ * Provides page context to route and MDX descendants. Page-authored fields
+ * (`frontmatter`, `slug`, `headings`) come from the `pageContext` prop; the
+ * location fields (`path`, `query`, `params`) are derived from the router so
+ * they stay reactive and there is a single source of truth — `usePageContext()`
+ * exposes the same `query`/`pathname` as `useRouter()`. When rendered outside a
+ * `RouterProvider` (no live router) it falls back to the seed's own location.
+ */
 export function PageContextProvider({
   children,
   pageContext,
 }: PageContextProviderProps): React.ReactElement {
-  return React.createElement(
-    PageContextContext.Provider,
-    { value: pageContext ?? defaultPageContext },
-    children,
+  const seed = pageContext ?? defaultPageContext;
+  const router = React.useContext(RouterContext);
+  const hasRouter = router !== defaultRouter;
+
+  const value = React.useMemo<PageContextValue>(
+    () =>
+      hasRouter
+        ? { ...seed, path: router.pathname, query: router.query, params: router.params }
+        : seed,
+    [seed, hasRouter, router.pathname, router.query, router.params],
   );
+
+  return React.createElement(PageContextContext.Provider, { value }, children);
 }
 
 /** Reads the current page context. */

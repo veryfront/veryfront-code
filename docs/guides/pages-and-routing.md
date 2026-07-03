@@ -203,25 +203,19 @@ export default function LoginForm() {
 
 ### Reading the live location
 
-`useRouter()` returns the full router value and stays backward compatible. For
-new code, prefer the granular hooks — each re-renders only when the slice it
-reads changes, and they update reactively on client-side navigation:
+`useRouter()` is the single hook for location and navigation. Its `pathname`,
+`query`, and `params` update reactively on client-side navigation:
 
 ```tsx
 "use client";
 
-import { useParams, usePathname, useSearchParams } from "veryfront/router";
+import { useRouter } from "veryfront/router";
 
 export default function Filters() {
-  const pathname = usePathname(); // "/products"
-  const params = useParams(); // { category: "shoes" }
-  const search = useSearchParams(); // URLSearchParams — preserves repeated keys
-  return <p>{pathname} · sort: {search.get("sort") ?? "none"}</p>;
+  const { pathname, query, params } = useRouter();
+  return <p>{pathname} · {params.category} · sort: {query.sort ?? "none"}</p>;
 }
 ```
-
-`useSearchParams()` returns a `URLSearchParams`, so repeated keys
-(`?tag=a&tag=b`) survive via `search.getAll("tag")`.
 
 By default a query-only navigation refetches the page so server data that
 depends on the query is never shown stale. If a page's query is purely

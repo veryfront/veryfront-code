@@ -7,14 +7,7 @@ order: 24
 ## Import
 
 ```ts
-import {
-  useRouter,
-  Link,
-  RouterProvider,
-  useParams,
-  usePathname,
-  useSearchParams,
-} from "veryfront/router";
+import { Link, Router, RouterProvider, useRouter } from "veryfront/router";
 ```
 
 ## Examples
@@ -27,25 +20,22 @@ import { Link, RouterProvider, useRouter } from "veryfront/router";
 
 ### Components
 
-| Name | Description | Source |
-|------|-------------|--------|
-| `Link` | Renders an anchor element annotated for Veryfront prefetch handling. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L424) |
-| `Router` | Provides the router (and, on the client, page) context. On the server it renders the static `router` snapshot verbatim so SSR output and the first client render match. On the client it delegates to `ReactiveRouterProvider`, whose `pathname`/`query` track `veryFrontRouter` - so `useRouter()` and `usePageContext()` re-render on client-side navigation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L335) |
-| `RouterProvider` | Provides the router (and, on the client, page) context. On the server it renders the static `router` snapshot verbatim so SSR output and the first client render match. On the client it delegates to `ReactiveRouterProvider`, whose `pathname`/`query` track `veryFrontRouter` - so `useRouter()` and `usePageContext()` re-render on client-side navigation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L335) |
+| Name             | Description                                                                                                                                                                                                                                                                                                                                                                                                          | Source                                                                                         |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `Link`           | Renders an anchor element annotated for Veryfront prefetch handling.                                                                                                                                                                                                                                                                                                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L388) |
+| `Router`         | Provides the router context. On the server it renders the static `router` snapshot verbatim so SSR output and the first client render match. On the client it delegates to `ReactiveRouterProvider`, whose `pathname`/`query` track the navigation store - so `useRouter()` re-renders on client-side navigation. Page context (frontmatter/slug/headings) is a separate concern, provided by `PageContextProvider`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L313) |
+| `RouterProvider` | Provides the router context. On the server it renders the static `router` snapshot verbatim so SSR output and the first client render match. On the client it delegates to `ReactiveRouterProvider`, whose `pathname`/`query` track the navigation store - so `useRouter()` re-renders on client-side navigation. Page context (frontmatter/slug/headings) is a separate concern, provided by `PageContextProvider`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L313) |
 
 ### Functions
 
-| Name | Description | Source |
-|------|-------------|--------|
-| `useParams` | The current route params from the initial match. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L404) |
-| `usePathname` | The current URL pathname. Reactive across client-side navigation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L399) |
-| `useRouter` | Reads the full router context. Kept as the backward-compatible surface; new code should prefer the granular {@link usePathname} / {@link useSearchParams} / {@link useParams} hooks, which re-render only on the slice they read. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L394) |
-| `useSearchParams` | The current query as a `URLSearchParams` - preserving repeated keys, unlike the flattened `useRouter().query`. Reads the live URL for full fidelity and is reactive through the router context; falls back to the router snapshot's query during SSR, where there is no live location. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L414) |
+| Name        | Description                                                                                                                                                                              | Source                                                                                         |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `useRouter` | Reads the router context: `pathname`, `query`, `params`, and the navigation actions. Reactive across client-side navigation - this is the single hook for location and navigation state. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L383) |
 
 ### Types
 
-| Name | Description | Source |
-|------|-------------|--------|
-| `LinkProps` | Props accepted by `<Link>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L30) |
-| `RouterProviderProps` | Props accepted by `<RouterProvider>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L36) |
-| `RouterValue` | Router state exposed through `useRouter()`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L4) |
+| Name                  | Description                                 | Source                                                                                        |
+| --------------------- | ------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `LinkProps`           | Props accepted by `<Link>`.                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L30) |
+| `RouterProviderProps` | Props accepted by `<RouterProvider>`.       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L36) |
+| `RouterValue`         | Router state exposed through `useRouter()`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L4)  |

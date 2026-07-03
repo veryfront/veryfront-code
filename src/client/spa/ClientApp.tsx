@@ -1,5 +1,6 @@
 import { type ComponentType, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { type Router, RouterProvider } from "veryfront/router";
+import { PageContextProvider, type PageContextValue } from "veryfront/context";
 import { type LayoutInfo, LayoutShell } from "./LayoutShell.tsx";
 import { getCachedComponent, loadComponent, preloadComponent } from "./component-loader.ts";
 import { PAGE_NOT_FOUND } from "#veryfront/errors/error-registry.ts";
@@ -203,6 +204,18 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
     },
   };
 
+  // Page context seed — page-authored fields; `PageContextProvider` derives the
+  // live `path`/`query`/`params` from the router above.
+  const pageContext: PageContextValue = {
+    slug: state.currentPath || "/",
+    path: state.currentPath,
+    params: normalizedParams,
+    query: getQuery(),
+    frontmatter: state.frontmatter,
+    headings: [],
+    mdxHeadings: [],
+  };
+
   const handleRetry = useCallback((): void => {
     globalThis.location.reload();
   }, []);
@@ -221,15 +234,17 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
   }
 
   return (
-    <RouterProvider router={routerValue} frontmatter={state.frontmatter}>
-      <div
-        className={`veryfront-app ${state.isNavigating ? "veryfront-navigating" : ""}`}
-        data-navigating={state.isNavigating}
-      >
-        <LayoutShell layouts={state.layouts} layoutProps={state.layoutProps}>
-          {renderPageContent()}
-        </LayoutShell>
-      </div>
+    <RouterProvider router={routerValue}>
+      <PageContextProvider pageContext={pageContext}>
+        <div
+          className={`veryfront-app ${state.isNavigating ? "veryfront-navigating" : ""}`}
+          data-navigating={state.isNavigating}
+        >
+          <LayoutShell layouts={state.layouts} layoutProps={state.layoutProps}>
+            {renderPageContent()}
+          </LayoutShell>
+        </div>
+      </PageContextProvider>
     </RouterProvider>
   );
 }

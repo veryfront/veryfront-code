@@ -6,13 +6,12 @@ import { JSDOM } from "npm:jsdom@28.0.0";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  PageContextProvider,
+  type PageContextValue,
   RouterProvider,
   type RouterValue,
   usePageContext,
-  useParams,
-  usePathname,
   useRouter,
-  useSearchParams,
   wrapForHydration,
 } from "./core.ts";
 import { getNavigationStore } from "../../rendering/client/navigation-store.ts";
@@ -54,6 +53,19 @@ function seedRouter(href: string, params: Record<string, string> = {}): RouterVa
     push: async () => {},
     replace: async () => {},
     reload: async () => {},
+  };
+}
+
+/** A page-context seed carrying only the page-authored fields. */
+function seedPage(frontmatter: Record<string, unknown> = {}): PageContextValue {
+  return {
+    slug: "/",
+    path: "/",
+    params: {},
+    query: {},
+    frontmatter,
+    headings: [],
+    mdxHeadings: [],
   };
 }
 
@@ -200,7 +212,9 @@ describe("react/runtime/RouterProvider (reactive)", () => {
       flushSync(() => {
         root.render(
           <RouterProvider router={seedRouter("/uploads")}>
-            <Consumer />
+            <PageContextProvider pageContext={seedPage()}>
+              <Consumer />
+            </PageContextProvider>
           </RouterProvider>,
         );
       });
@@ -210,6 +224,43 @@ describe("react/runtime/RouterProvider (reactive)", () => {
       await tick();
 
       assertStringIncludes(rootElement.textContent ?? "", "/|x");
+
+      root.unmount();
+    } finally {
+      restore();
+    }
+  });
+
+  it("usePageContext() derives location from the router (single source of truth)", async () => {
+    const restore = installDom("https://example.com/docs?v=1");
+    const router = installFakeRouter();
+    try {
+      const rootElement = document.getElementById("root")!;
+      const root = createRoot(rootElement);
+
+      const Consumer = (): React.ReactElement => {
+        const r = useRouter();
+        const page = usePageContext();
+        // Page context's query/path mirror the router; frontmatter is its own.
+        const same = page.query.v === r.query.v && page.path === r.pathname;
+        return <span>match:{String(same)}|v:{page.query.v}|fm:{String(page.frontmatter.k)}</span>;
+      };
+
+      flushSync(() => {
+        root.render(
+          <RouterProvider router={seedRouter("/docs?v=1")}>
+            <PageContextProvider pageContext={seedPage({ k: "kept" })}>
+              <Consumer />
+            </PageContextProvider>
+          </RouterProvider>,
+        );
+      });
+      assertStringIncludes(rootElement.textContent ?? "", "match:true|v:1|fm:kept");
+
+      await router.navigate("/docs?v=2");
+      await tick();
+      // Router changed → page context's query tracked it; frontmatter unchanged.
+      assertStringIncludes(rootElement.textContent ?? "", "match:true|v:2|fm:kept");
 
       root.unmount();
     } finally {
@@ -265,54 +316,15 @@ describe("react/runtime/RouterProvider (reactive)", () => {
 
       flushSync(() => {
         root.render(
-          <RouterProvider
-            router={seedRouter("/posts/42?tab=comments", { id: "42" })}
-            frontmatter={{ title: "Hello" }}
-          >
-            <Consumer />
+          <RouterProvider router={seedRouter("/posts/42?tab=comments", { id: "42" })}>
+            <PageContextProvider pageContext={seedPage({ title: "Hello" })}>
+              <Consumer />
+            </PageContextProvider>
           </RouterProvider>,
         );
       });
 
       assertStringIncludes(rootElement.textContent ?? "", "42|comments|Hello");
-
-      root.unmount();
-    } finally {
-      restore();
-    }
-  });
-
-  it("granular hooks are reactive and useSearchParams preserves repeated keys", async () => {
-    const restore = installDom("https://example.com/list?tag=a&tag=b");
-    const router = installFakeRouter();
-    try {
-      const rootElement = document.getElementById("root")!;
-      const root = createRoot(rootElement);
-
-      const Consumer = (): React.ReactElement => {
-        const pathname = usePathname();
-        const params = useParams();
-        const search = useSearchParams();
-        return (
-          <span>
-            {pathname}|id:{params.id}|tags:{search.getAll("tag").join("+")}
-          </span>
-        );
-      };
-
-      flushSync(() => {
-        root.render(
-          <RouterProvider router={seedRouter("/list?tag=a&tag=b", { id: "9" })}>
-            <Consumer />
-          </RouterProvider>,
-        );
-      });
-      // Repeated `tag` keys survive — the flattened `useRouter().query` could not.
-      assertStringIncludes(rootElement.textContent ?? "", "/list|id:9|tags:a+b");
-
-      await router.navigate("/list?tag=c");
-      await tick();
-      assertStringIncludes(rootElement.textContent ?? "", "/list|id:9|tags:c");
 
       root.unmount();
     } finally {
