@@ -15,6 +15,7 @@ import {
   wrapForHydration,
 } from "./core.ts";
 import { getNavigationStore } from "../../rendering/client/navigation-store.ts";
+import { VeryfrontRouter } from "../../rendering/client/router.ts";
 
 const NAVIGATION_STORE_KEY = Symbol.for("veryfront.navigation.store.v1");
 
@@ -399,6 +400,46 @@ describe("react/runtime/RouterProvider (reactive)", () => {
       root.unmount();
     } finally {
       restoreClient();
+    }
+  });
+
+  it("integration: a real VeryfrontRouter navigation re-renders a real useRouter() consumer", async () => {
+    const restore = installDom("https://example.com/dashboard?tab=a");
+    try {
+      // The REAL router and the REAL provider, wired only through the shared
+      // navigation store — the end-to-end path this PR fixes. Soft path so the
+      // navigation doesn't try to fetch a page in the test.
+      const router = new VeryfrontRouter({
+        baseUrl: "https://example.com",
+        shouldRevalidate: () => false,
+      });
+
+      const rootElement = document.getElementById("root")!;
+      const root = createRoot(rootElement);
+
+      const Consumer = (): React.ReactElement => {
+        const r = useRouter();
+        return <span>tab:{r.query.tab ?? "none"}</span>;
+      };
+
+      flushSync(() => {
+        root.render(
+          <RouterProvider router={seedRouter("/dashboard?tab=a")}>
+            <Consumer />
+          </RouterProvider>,
+        );
+      });
+      assertStringIncludes(rootElement.textContent ?? "", "tab:a");
+
+      // Drive the real router — its notify() must reach the provider's subscription.
+      await router.navigate("/dashboard?tab=b");
+      await tick();
+
+      assertStringIncludes(rootElement.textContent ?? "", "tab:b");
+
+      root.unmount();
+    } finally {
+      restore();
     }
   });
 
