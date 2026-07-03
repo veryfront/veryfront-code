@@ -39,6 +39,7 @@ import {
 } from "./openai-chat-request-builder.ts";
 import { streamOpenAICompatibleParts } from "./openai-chat-stream.ts";
 import { buildOpenAIResponsesRequest } from "./openai-responses-request-builder.ts";
+import { isOpenAIReasoningModel } from "./openai-reasoning-models.ts";
 import {
   extractOpenAIResponsesUsage,
   normalizeOpenAIResponsesFinishReason,
@@ -63,8 +64,27 @@ export {
 export interface OpenAIRuntimeConfig {
   apiKey: string;
   baseURL?: string;
+  /** Display/telemetry label. */
   name?: string;
+  /** Provider identity for OpenAI request defaults. Defaults to `name` in low-level factories. */
+  providerName?: string;
   fetch?: typeof globalThis.fetch;
+}
+
+function readNonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function getOpenAIProviderLabel(config: { name?: string }): string {
+  return readNonEmptyString(config.name) ?? "openai";
+}
+
+function getRuntimeOpenAIProviderName(config: OpenAIRuntimeConfig): string {
+  return readNonEmptyString(config.providerName) ?? getOpenAIProviderLabel(config);
+}
+
+function getLLMOpenAIProviderName(config: LLMProviderConfig): string {
+  return readNonEmptyString(config.providerName) ?? "openai";
 }
 
 type OpenAICompatibleChoice = {
@@ -408,8 +428,10 @@ export function createOpenAIModelRuntime(
   modelId: string,
 ): ModelRuntime {
   const fetchImpl = config.fetch ?? globalThis.fetch;
+  const providerLabel = getOpenAIProviderLabel(config);
+  const providerName = getRuntimeOpenAIProviderName(config);
   return {
-    provider: config.name ?? "openai",
+    provider: providerLabel,
     modelId,
     specificationVersion: "v3",
     supportedUrls: {},
@@ -419,7 +441,7 @@ export function createOpenAIModelRuntime(
       const warnings = createWarningCollector();
       const body = buildOpenAIChatRequest(
         modelId,
-        config.name ?? "openai",
+        providerName,
         options,
         false,
         warnings,
@@ -427,7 +449,7 @@ export function createOpenAIModelRuntime(
       return requestJson({
         url,
         fetchImpl,
-        providerLabel: config.name ?? "openai",
+        providerLabel,
         providerKind: "openai",
         init: createOpenAIRequestInit({
           apiKey: config.apiKey,
@@ -449,7 +471,7 @@ export function createOpenAIModelRuntime(
       const warnings = createWarningCollector();
       const body = buildOpenAIChatRequest(
         modelId,
-        config.name ?? "openai",
+        providerName,
         options,
         true,
         warnings,
@@ -457,7 +479,7 @@ export function createOpenAIModelRuntime(
       return requestStream({
         url,
         fetchImpl,
-        providerLabel: config.name ?? "openai",
+        providerLabel,
         providerKind: "openai",
         init: createOpenAIRequestInit({
           apiKey: config.apiKey,
@@ -483,8 +505,10 @@ export function createOpenAIResponsesRuntime(
   modelId: string,
 ): ModelRuntime {
   const fetchImpl = config.fetch ?? globalThis.fetch;
+  const providerLabel = getOpenAIProviderLabel(config);
+  const providerName = getRuntimeOpenAIProviderName(config);
   return {
-    provider: config.name ?? "openai",
+    provider: providerLabel,
     modelId,
     specificationVersion: "v3",
     supportedUrls: {},
@@ -494,7 +518,7 @@ export function createOpenAIResponsesRuntime(
       const warnings = createWarningCollector();
       const body = buildOpenAIResponsesRequest(
         modelId,
-        config.name ?? "openai",
+        providerName,
         options,
         false,
         warnings,
@@ -502,7 +526,7 @@ export function createOpenAIResponsesRuntime(
       return requestJson({
         url,
         fetchImpl,
-        providerLabel: config.name ?? "openai",
+        providerLabel,
         providerKind: "openai",
         init: createOpenAIRequestInit({
           apiKey: config.apiKey,
@@ -524,7 +548,7 @@ export function createOpenAIResponsesRuntime(
       const warnings = createWarningCollector();
       const body = buildOpenAIResponsesRequest(
         modelId,
-        config.name ?? "openai",
+        providerName,
         options,
         true,
         warnings,
@@ -532,7 +556,7 @@ export function createOpenAIResponsesRuntime(
       return requestStream({
         url,
         fetchImpl,
-        providerLabel: config.name ?? "openai",
+        providerLabel,
         providerKind: "openai",
         init: createOpenAIRequestInit({
           apiKey: config.apiKey,
@@ -558,8 +582,9 @@ export function createOpenAIEmbeddingRuntime(
   modelId: string,
 ): EmbeddingRuntime {
   const fetchImpl = config.fetch ?? globalThis.fetch;
+  const providerLabel = getOpenAIProviderLabel(config);
   return {
-    provider: config.name ?? "openai",
+    provider: providerLabel,
     modelId,
     supportsParallelCalls: true,
     doEmbed({ values, abortSignal }) {
@@ -575,7 +600,7 @@ export function createOpenAIEmbeddingRuntime(
       return requestJson({
         url,
         fetchImpl,
-        providerLabel: config.name ?? "openai",
+        providerLabel,
         providerKind: "openai",
         init: createOpenAIRequestInit({
           apiKey: config.apiKey,
@@ -601,11 +626,27 @@ export class OpenAIProvider implements LLMProvider {
   readonly id = "openai";
 
   createModel(modelId: string, config: LLMProviderConfig): ModelRuntime {
+    const providerLabel = getOpenAIProviderLabel(config);
+    const providerName = getLLMOpenAIProviderName(config);
+    if (isOpenAIReasoningModel(modelId, providerName)) {
+      return createOpenAIResponsesRuntime(
+        {
+          apiKey: config.credential,
+          baseURL: config.baseURL,
+          name: providerLabel,
+          providerName,
+          fetch: config.fetch,
+        },
+        modelId,
+      );
+    }
+
     return createOpenAIModelRuntime(
       {
         apiKey: config.credential,
         baseURL: config.baseURL,
-        name: config.name ?? "openai",
+        name: providerLabel,
+        providerName,
         fetch: config.fetch,
       },
       modelId,
@@ -617,7 +658,7 @@ export class OpenAIProvider implements LLMProvider {
       {
         apiKey: config.credential,
         baseURL: config.baseURL,
-        name: config.name ?? "openai",
+        name: getOpenAIProviderLabel(config),
         fetch: config.fetch,
       },
       modelId,
@@ -629,7 +670,8 @@ export class OpenAIProvider implements LLMProvider {
       {
         apiKey: config.credential,
         baseURL: config.baseURL,
-        name: config.name ?? "openai",
+        name: getOpenAIProviderLabel(config),
+        providerName: getLLMOpenAIProviderName(config),
         fetch: config.fetch,
       },
       modelId,

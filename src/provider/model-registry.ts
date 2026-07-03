@@ -87,6 +87,7 @@ function autoInitializeFromEnv(): void {
         return provider.createModel(id, {
           credential: config.apiKey,
           baseURL: config.baseURL,
+          providerName: "openai-compatible",
         });
       }
       throw toError(createError({

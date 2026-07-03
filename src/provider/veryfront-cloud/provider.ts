@@ -64,6 +64,7 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
             credential: apiToken,
             baseURL,
             name: "veryfront-cloud",
+            providerName: "veryfront-cloud",
             fetch,
           }));
         }
@@ -79,6 +80,7 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
           credential: apiToken,
           baseURL,
           name: "veryfront-cloud",
+          providerName: "veryfront-cloud",
           fetch,
         }));
       }
@@ -97,6 +99,7 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
           credential: apiToken,
           baseURL,
           name: "veryfront-cloud",
+          providerName: "openai-compatible",
           fetch,
         }));
       }

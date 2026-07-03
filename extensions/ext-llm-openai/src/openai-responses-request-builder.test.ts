@@ -46,7 +46,7 @@ describe("ext-llm-openai/openai-responses-request-builder", () => {
     assertEquals(warnings.drain().map((warning) => warning.setting), ["temperature"]);
   });
 
-  it("omits reasoning summaries for direct OpenAI default reasoning requests", () => {
+  it("requests reasoning summaries for direct OpenAI default reasoning requests", () => {
     const warnings = createWarningCollector();
 
     const body = buildOpenAIResponsesRequest(
@@ -59,7 +59,7 @@ describe("ext-llm-openai/openai-responses-request-builder", () => {
       warnings,
     );
 
-    assertEquals(body.reasoning, { effort: "medium" });
+    assertEquals(body.reasoning, { effort: "medium", summary: "auto" });
   });
 
   it("keeps explicit reasoning summaries for direct OpenAI requests", () => {
