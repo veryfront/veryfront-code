@@ -107,7 +107,7 @@ const AttachmentsPanelRoot = React.forwardRef<HTMLDivElement, AttachmentsPanelPr
     return (
       <AttachmentsPanelContext.Provider value={context}>
         <ChatTokens />
-        <div ref={ref} className={cn("flex flex-col h-full", className)}>
+        <div ref={ref} data-vf-chat="" className={cn("flex flex-col h-full", className)}>
           {children ?? (
             <>
               {onClose && <AttachmentsPanelHeader />}

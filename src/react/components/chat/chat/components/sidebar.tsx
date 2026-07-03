@@ -270,6 +270,7 @@ export function ChatSidebarRoot(props: ChatSidebarRootProps): React.ReactElement
     <ChatSidebarContext.Provider value={value}>
       <ChatTokens />
       <div
+        data-vf-chat=""
         className={cn(
           "flex flex-col h-full",
           fill

@@ -141,18 +141,20 @@ export function generateTokenCSS(): string {
   const light = tokensToCSS(TOKENS_LIGHT);
   const dark = tokensToCSS(TOKENS_DARK);
 
-  // The design tokens live on `:root` (global), not scoped to `[data-vf-chat]`:
-  // in a chat-first app the chat IS the app, so a `<ChatSidebar>`, `<AppShell>`,
-  // dialog, or any surface rendered *outside* `<Chat>` must still resolve
-  // `var(--primary)` etc. A host that pre-defines these on `:root` still wins —
-  // its rule sits after ours in the cascade. Only presentational chrome (font,
-  // antialiasing, button cursor) stays scoped so it never restyles a host page.
+  // The design tokens stay scoped to `[data-vf-chat]`, never `:root`: the
+  // names (`--primary`, `--background`, `--accent`, …) are the same generic
+  // convention host apps use for their own themes, and these style tags render
+  // in the body — after a host's <head> stylesheets — so a `:root` rule here
+  // would override the host's tokens page-wide (and the dark media query would
+  // repaint light-only host pages for OS-dark users). Surfaces that render
+  // *outside* `<Chat>` (`<ChatSidebar>`, `<AttachmentsPanel>`, `<AppShell>`)
+  // establish their own `data-vf-chat` scope and inject `<ChatTokens>`;
+  // portalled content re-anchors via `closest("[data-vf-chat]")`.
   return [
-    `:root{${light}}`,
-    `[data-vf-chat]{font-family:Inter,ui-sans-serif,system-ui,sans-serif;font-weight:var(--font-weight-normal);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;}`,
+    `[data-vf-chat]{font-family:Inter,ui-sans-serif,system-ui,sans-serif;font-weight:var(--font-weight-normal);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;${light}}`,
     `[data-vf-chat] button{cursor:pointer;}`,
-    `@media(prefers-color-scheme:dark){:root:not([data-vf-theme]){${dark}}}`,
-    `.dark:not([data-vf-theme]),[data-theme="dark"]:not([data-vf-theme]){${dark}}`,
+    `@media(prefers-color-scheme:dark){[data-vf-chat]:not([data-vf-theme]){${dark}}}`,
+    `.dark [data-vf-chat]:not([data-vf-theme]),[data-theme="dark"] [data-vf-chat]:not([data-vf-theme]),.dark[data-vf-chat]:not([data-vf-theme]),[data-theme="dark"][data-vf-chat]:not([data-vf-theme]){${dark}}`,
     ANIMATION_CSS,
   ].join("");
 }

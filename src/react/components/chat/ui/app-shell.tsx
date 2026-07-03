@@ -18,6 +18,7 @@
  */
 import * as React from "react";
 import { cn } from "../theme.ts";
+import { ChatTokens } from "../chat-tokens-style.tsx";
 import { PanelLeftIcon, PanelRightIcon } from "../icons/index.ts";
 import { Button, type ButtonProps } from "./button.tsx";
 
@@ -204,10 +205,12 @@ function AppShellRoot({
 
   return (
     <AppShellContext.Provider value={value}>
+      <ChatTokens />
       <div
         ref={ref}
         className={cn("flex h-full w-full", className)}
         data-vf-appshell=""
+        data-vf-chat=""
         {...props}
       >
         {children}
