@@ -108,6 +108,42 @@ describe("html/html-injection", () => {
       assertEquals(hydrationData.clientModuleStrategy, "rsc-module");
     });
 
+    it("seeds route params into client-page hydration data (issue #2741)", () => {
+      const html = injectHTMLContent(
+        baseTemplate,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "production",
+          slug: "docs/guides/intro",
+          pagePath: "/app/page.tsx",
+          isClientPage: true,
+          params: { slug: ["guides", "intro"] },
+        },
+      );
+
+      const hydrationData = extractHydrationData(html);
+      // Catch-all arrays are preserved in the payload; the client runtime joins
+      // them when seeding the router (issue #2742).
+      assertEquals(hydrationData.params, { slug: ["guides", "intro"] });
+    });
+
+    it("defaults client-page hydration params to an empty object when unset", () => {
+      const html = injectHTMLContent(
+        baseTemplate,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "production",
+          slug: "test",
+          pagePath: "/app/page.tsx",
+          isClientPage: true,
+        },
+      );
+
+      assertEquals(extractHydrationData(html).params, {});
+    });
+
     it("keeps production client-page injection on the RSC client boot script", () => {
       const html = injectHTMLContent(
         baseTemplate,

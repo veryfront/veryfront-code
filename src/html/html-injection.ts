@@ -26,6 +26,13 @@ export interface InjectHTMLContentOptions {
   projectDir?: string;
   /** Whether the page has 'use client' directive */
   isClientPage?: boolean;
+  /**
+   * Route params from the initial match, seeded into the 'use client' hydration
+   * payload so full-HTML-document client pages hydrate with their params
+   * instead of an empty object (issue #2741). Catch-all arrays are preserved;
+   * the client runtime joins them (issue #2742).
+   */
+  params?: Record<string, string | string[]>;
   /** Whether page is embedded in Studio iframe */
   studioEmbed?: boolean;
   /** Project ID for Studio communication */
@@ -118,6 +125,7 @@ export function injectHTMLContent(
       pagePath: toProjectRelativePath(options.pagePath, options.projectDir),
       slug: options.slug,
       isClientPage: true,
+      params: options.params ?? {},
       clientModuleStrategy: determineClientModuleStrategy({
         isLocalProject: options.isLocalProject ?? options.mode === "development",
         environment: options.environment,
