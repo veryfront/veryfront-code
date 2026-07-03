@@ -1,3 +1,4 @@
+import type { DiscoveryResult } from "#veryfront/discovery";
 import { serverLogger } from "#veryfront/utils";
 import { clearTrackedAgents, createProjectDiscoveryConfig } from "#veryfront/discovery";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
@@ -15,7 +16,7 @@ const logger = serverLogger.component("api-wrapper");
  * allows retry on failure (the key is deleted if discovery rejects).
  */
 interface DiscoveryRecord {
-  promise: Promise<void>;
+  promise: Promise<DiscoveryResult>;
 }
 
 const discoveredProjects = new Map<string, DiscoveryRecord>();
@@ -57,7 +58,7 @@ function shouldCacheCompletedDiscovery(ctx: HandlerContext): boolean {
  * the correct remote project files and the agent registry uses the
  * correct project scope.
  */
-export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<void> {
+export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<DiscoveryResult> {
   const key = discoveryKey(ctx);
   const cacheCompletedDiscovery = shouldCacheCompletedDiscovery(ctx);
 
@@ -107,13 +108,15 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<void>
       } else {
         logger.info("Primitive discovery completed", logData);
       }
+
+      return result;
     })(),
   };
 
   discoveredProjects.set(key, discovery);
 
   try {
-    await discovery.promise;
+    return await discovery.promise;
   } catch (error) {
     // Allow retry on next request
     discoveredProjects.delete(key);
@@ -122,6 +125,9 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<void>
       error: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,
     });
+    throw new Error(
+      `Runtime discovery failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
   } finally {
     if (!cacheCompletedDiscovery) {
       const current = discoveredProjects.get(key);

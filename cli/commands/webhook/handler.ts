@@ -33,7 +33,8 @@ export async function handleWebhookCommand(args: ParsedArgs): Promise<void> {
   const projectDir = Deno.cwd();
   const payload = await readJsonFile(opts.payload, "--payload JSON file");
 
-  await withProjectSourceContext(projectDir, async ({ adapter, config, projectId }) => {
+  await withProjectSourceContext(projectDir, async (context) => {
+    const { adapter, config, configCacheKey, projectId } = context;
     const result = await discoverWebhooks({ projectDir, adapter, config });
     if (result.errors.length > 0) {
       throw new Error(`Webhook discovery failed: ${result.errors[0]?.message}`);
@@ -48,6 +49,7 @@ export async function handleWebhookCommand(args: ParsedArgs): Promise<void> {
       projectDir,
       adapter,
       config,
+      cacheKey: configCacheKey,
       projectId,
       target: webhook.target,
       input: payload,
