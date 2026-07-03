@@ -432,6 +432,9 @@ describe("hydration-script-builder/templates/router", () => {
       // the RouterProvider element — i.e. what the new page renders with. This is
       // what the ordering bug (mutating params after render) would get wrong.
       getRenderedParams: () => Record<string, string> | null;
+      // The `params` prop handed to the page component during render — must be
+      // normalized (joined) so it matches the server render.
+      getRenderedPageParams: () => Record<string, string> | null;
     }
 
     function evaluateRouterRuntime(
@@ -506,14 +509,22 @@ describe("hydration-script-builder/templates/router", () => {
 
       const RouterProvider = () => ({});
       const PageContextProvider = () => ({});
-      // Capture router.params exactly when the generated render builds the
-      // RouterProvider element, so the test reflects what the new page renders
-      // with (not the value the router settles on afterwards).
+      // Capture params exactly when the generated render builds elements, so the
+      // test reflects what the new page renders with (not the value the router
+      // settles on afterwards). renderedRouterParams = what RouterProvider sees;
+      // renderedPageParams = what the page component receives as its `params`
+      // prop (must be normalized so it matches the server render, issue #2742).
       let renderedRouterParams: Record<string, string> | null = null;
+      let renderedPageParams: Record<string, string> | null = null;
       const React = {
-        createElement: (type: unknown, props?: { router?: RuntimeRouter }) => {
+        createElement: (
+          type: unknown,
+          props?: { router?: RuntimeRouter; params?: Record<string, string> },
+        ) => {
           if (type === RouterProvider && props?.router) {
             renderedRouterParams = { ...props.router.params };
+          } else if (props && "params" in props && renderedPageParams === null) {
+            renderedPageParams = { ...(props.params ?? {}) };
           }
           return {};
         },
@@ -554,6 +565,7 @@ describe("hydration-script-builder/templates/router", () => {
           nextPageData = data;
         },
         getRenderedParams: () => renderedRouterParams,
+        getRenderedPageParams: () => renderedPageParams,
       };
     }
 
@@ -581,6 +593,21 @@ describe("hydration-script-builder/templates/router", () => {
       // The new page must render with the fresh params — not the previous
       // route's — which only holds if params are updated before render.
       assertEquals(runtime.getRenderedParams(), { id: "99" });
+    });
+
+    it("normalizes catch-all params for both router and page props on SPA nav", () => {
+      const runtime = evaluateRouterRuntime({ pathname: "/", hydrationParams: {} });
+      runtime.win.__veryfrontHydrationComplete?.();
+
+      // Page data carries a raw catch-all array, as route matching produces it.
+      runtime.setNextPageData({ pagePath: "page", params: { slug: ["guides", "intro"] } });
+      return runtime.navigateSPA("/docs/guides/intro", true).then(() => {
+        // Both the router snapshot and the page component's `params` prop must
+        // be joined strings so client and server render identically (#2742).
+        assertEquals(runtime.router.params, { slug: "guides/intro" });
+        assertEquals(runtime.getRenderedParams(), { slug: "guides/intro" });
+        assertEquals(runtime.getRenderedPageParams(), { slug: "guides/intro" });
+      });
     });
 
     it("clears params when navigating to a static route", async () => {

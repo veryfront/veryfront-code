@@ -713,9 +713,15 @@ export const getRouterScript = () => `
         }
       }
 
+      // Normalize catch-all params (arrays -> joined strings) so page props and
+      // page context match the server render exactly. SSR emits joined strings
+      // via flattenRouteParams; without this the client would hand raw arrays to
+      // props and usePageContext() after navigation (issue #2742).
+      const normalizedParams = normalizeRouteParams(pageData.params);
+
       let tree = React.createElement(PageComponent, {
         ...pageData.props,
-        params: pageData.params
+        params: normalizedParams
       });
 
       if (pageData.layouts?.length) {
@@ -738,7 +744,7 @@ export const getRouterScript = () => `
       const pageContext = {
         slug: pageData.slug || '',
         path: pageData.pagePath || targetPath,
-        params: pageData.params || {},
+        params: normalizedParams,
         query: Object.fromEntries(new URLSearchParams(window.location.search)),
         frontmatter: pageData.frontmatter || {},
         headings: headingsArray,

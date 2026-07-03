@@ -22,4 +22,11 @@ describe("routing/flattenRouteParams", () => {
   it("returns an empty object for no params", () => {
     assertEquals(flattenRouteParams(undefined), {});
   });
+
+  it("maps an empty optional catch-all array to an empty string, keeping the key", () => {
+    // `[[...slug]]` matched at its base yields `{ slug: [] }`. Joining gives
+    // `""` (key retained) rather than dropping the key, matching the RSC/API/
+    // client normalizers so server and client agree on index routes.
+    assertEquals(flattenRouteParams({ slug: [] }), { slug: "" });
+  });
 });

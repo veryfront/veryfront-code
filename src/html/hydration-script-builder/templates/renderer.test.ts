@@ -72,8 +72,10 @@ describe("hydration-script-builder/templates/renderer", () => {
       assertIncludes(getRendererScript(), "pageModule.default || pageModule");
     });
 
-    it("should merge props with params", () => {
-      assertIncludes(getRendererScript(), "...(data.props || {}), params: data.params || {}");
+    it("should merge props with normalized params", () => {
+      const result = getRendererScript();
+      assertIncludes(result, "const normalizedParams = normalizeRouteParams(data.params)");
+      assertIncludes(result, "...(data.props || {}), params: normalizedParams");
     });
 
     it("should wrap with layouts from innermost to outermost", () => {
@@ -108,7 +110,7 @@ describe("hydration-script-builder/templates/renderer", () => {
       const result = getRendererScript();
       assertIncludes(result, "slug: data.slug");
       assertIncludes(result, "path: data.pagePath");
-      assertIncludes(result, "params: data.params");
+      assertIncludes(result, "params: normalizedParams");
       assertIncludes(result, "frontmatter: data.frontmatter");
       assertIncludes(result, "headings,");
     });
