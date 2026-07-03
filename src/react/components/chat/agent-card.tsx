@@ -226,7 +226,7 @@ function AgentCardTools(
   const { toolCalls, renderTool } = useAgentCard();
   if (toolCalls.length === 0) return null;
   return (
-    <div className={cn("flex flex-col", className)}>
+    <div className={cn("flex flex-col gap-2", className)}>
       {toolCalls.map((tool) => (
         <React.Fragment key={tool.id}>
           {renderTool ? renderTool(tool) : <ToolCallCard tool={toToolPart(tool)} />}

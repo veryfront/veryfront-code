@@ -63,7 +63,7 @@ import type { AttachmentInfo } from "./components/attachment-pill.tsx";
 import { useUpload } from "./hooks/use-upload.ts";
 import type { FeedbackValue } from "./components/message-feedback.tsx";
 import type { ChatTab } from "./components/tab-switcher.tsx";
-import type { UploadedFile } from "./components/uploads-panel.tsx";
+import type { UploadedFile } from "./components/attachments-panel.tsx";
 import type { QuickAction } from "./components/quick-actions.tsx";
 
 // Composition imports (used in the Chat preset)
@@ -77,7 +77,7 @@ import { ErrorBanner } from "./composition/error-banner.tsx";
 import { Message } from "./composition/message.tsx";
 import { ChatMessagesSkeleton } from "./components/chat-messages-skeleton.tsx";
 import { TabSwitcher } from "./components/tab-switcher.tsx";
-import { UploadsPanel } from "./components/uploads-panel.tsx";
+import { AttachmentsPanel } from "./components/attachments-panel.tsx";
 import { InferenceBadge } from "./components/inference-badge.tsx";
 import { QuickActions as QuickActionsComponent } from "./components/quick-actions.tsx";
 
@@ -176,17 +176,17 @@ export {
   type QuickActionsProps,
 } from "./components/quick-actions.tsx";
 export {
+  AttachmentsPanel,
+  type AttachmentsPanelActionProps,
+  type AttachmentsPanelContextValue,
+  type AttachmentsPanelEmptyProps,
+  type AttachmentsPanelHeaderProps,
+  type AttachmentsPanelItemProps,
+  type AttachmentsPanelListProps,
+  type AttachmentsPanelProps,
   type UploadedFile,
-  UploadsPanel,
-  type UploadsPanelActionProps,
-  type UploadsPanelContextValue,
-  type UploadsPanelEmptyProps,
-  type UploadsPanelHeaderProps,
-  type UploadsPanelItemProps,
-  type UploadsPanelListProps,
-  type UploadsPanelProps,
-  useUploadsPanel,
-} from "./components/uploads-panel.tsx";
+  useAttachmentsPanel,
+} from "./components/attachments-panel.tsx";
 
 // Re-exports — hooks
 export {
@@ -536,7 +536,7 @@ const ControlledChat = React.forwardRef<HTMLDivElement, ChatProps>(
     }, [onVoice, enableVoice, voice.isSupported, voice.toggle, setInput]);
 
     const isEmpty = messages.length === 0;
-    const isDocsTab = showTabs && currentTab === "uploads";
+    const isDocsTab = showTabs && currentTab === "attachments";
 
     return (
       <ChatRoot
@@ -572,7 +572,7 @@ const ControlledChat = React.forwardRef<HTMLDivElement, ChatProps>(
 
         {isDocsTab
           ? (
-            <UploadsPanel
+            <AttachmentsPanel
               uploads={uploads}
               onRemoveUpload={onRemoveUpload}
               onAttach={effectiveOnAttach}

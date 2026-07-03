@@ -27,7 +27,7 @@ import { StepIndicator, useStepIndicator } from "./components/step-indicator.tsx
 import { Message } from "./composition/message.tsx";
 import { useMessageContext } from "./contexts/message-context.tsx";
 import { AgentCard, useAgentCard } from "../agent-card.tsx";
-import { UploadsPanel, useUploadsPanel } from "./components/uploads-panel.tsx";
+import { AttachmentsPanel, useAttachmentsPanel } from "./components/attachments-panel.tsx";
 import { ChatActions, useChatActions } from "../chat-actions.tsx";
 import { AgentPicker, useAgentPicker } from "../agent-picker.tsx";
 import { ModelSelector, useModelSelector } from "../model-selector.tsx";
@@ -101,10 +101,10 @@ const COMPOUNDS: CompoundSpec[] = [
     hook: useStepIndicator,
   },
   {
-    name: "UploadsPanel",
-    component: UploadsPanel,
+    name: "AttachmentsPanel",
+    component: AttachmentsPanel,
     parts: ["Root", "Header", "List", "Item", "Empty", "Action"],
-    hook: useUploadsPanel,
+    hook: useAttachmentsPanel,
   },
   {
     name: "ChatActions",

@@ -30,7 +30,7 @@ const COMPONENTS: NavGridEntry[] = [
   { title: "ModelSelector", id: "chat-components-modelselector--docs" },
   { title: "AgentPicker", id: "chat-components-agentpicker--docs" },
   { title: "Attachment", id: "chat-components-attachment--docs" },
-  { title: "UploadsPanel", id: "chat-components-uploadspanel--docs" },
+  { title: "AttachmentsPanel", id: "chat-components-attachmentspanel--docs" },
   { title: "Sources", id: "chat-components-sources--docs" },
   { title: "Reasoning", id: "chat-components-reasoning--docs" },
   { title: "ToolCall", id: "chat-components-toolcall--docs" },

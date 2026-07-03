@@ -175,7 +175,7 @@ function AppShellDocsPage() {
 
       <DocsSection
         title="Left & Right"
-        description="Two independent sidebars with their own triggers, and centered Chat / Uploads tabs in the header. All column borders align."
+        description="Two independent sidebars with their own triggers, and centered Chat / Attachments tabs in the header. All column borders align."
       >
         <DocsExampleAuto of={LeftAndRight} className="!p-0" />
       </DocsSection>
@@ -349,7 +349,7 @@ export const LeftAndRight: Story = {
               <div className="flex flex-1 justify-center">
                 <Tabs value={tab} onValueChange={setTab} size="sm">
                   <TabsItem value="chat">Chat</TabsItem>
-                  <TabsItem value="uploads">Uploads</TabsItem>
+                  <TabsItem value="attachments">Attachments</TabsItem>
                 </Tabs>
               </div>
               <AppShell.Trigger side="right" className="text-[var(--faint)]" />

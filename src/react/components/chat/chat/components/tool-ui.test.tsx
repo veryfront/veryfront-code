@@ -42,7 +42,7 @@ describe("ToolCallCard", () => {
 describe("ToolCall — composability contract", () => {
   it("recomposes: a caller can reorder the body parts", () => {
     const html = renderToString(
-      <ToolCall tool={cardTool}>
+      <ToolCall tool={cardTool} defaultExpanded>
         <ToolCall.Body>
           <ToolCall.Output />
           <ToolCall.Input />
@@ -58,7 +58,7 @@ describe("ToolCall — composability contract", () => {
 
   it("injects a slot: Output children replace the default rendering", () => {
     const html = renderToString(
-      <ToolCall tool={cardTool}>
+      <ToolCall tool={cardTool} defaultExpanded>
         <ToolCall.Body>
           <ToolCall.Output>
             <span>CUSTOM_OUTPUT_NODE</span>
@@ -82,7 +82,7 @@ describe("ToolCall — composability contract", () => {
 
   it("restyles: className on a sub-part is merged onto its wrapper", () => {
     const html = renderToString(
-      <ToolCall tool={cardTool}>
+      <ToolCall tool={cardTool} defaultExpanded>
         <ToolCall.Body>
           <ToolCall.Output className="vf-custom-output-class" />
         </ToolCall.Body>

@@ -15,7 +15,16 @@ describe("AttachmentPill", () => {
   it("renders the default anatomy (icon box + label)", () => {
     const html = renderToString(<AttachmentPill attachment={readyFile} />);
     assertStringIncludes(html, "handoff-notes.md");
-    assertStringIncludes(html, "w-[200px]");
+  });
+
+  it("defines no width itself — width is the container's decision", () => {
+    const html = renderToString(<AttachmentPill attachment={readyFile} />);
+    assert(!html.includes("w-[200px]"));
+    // A caller-supplied width lands on the wrapper.
+    const sized = renderToString(
+      <AttachmentPill attachment={readyFile} className="w-full" />,
+    );
+    assertStringIncludes(sized, "w-full");
   });
 
   it("surfaces a remove control when onRemove is provided", () => {

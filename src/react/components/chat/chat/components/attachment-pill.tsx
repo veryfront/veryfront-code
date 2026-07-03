@@ -274,7 +274,9 @@ const AttachmentPillRoot = React.forwardRef<
         {...props}
         ref={ref}
         className={cn(
-          "group relative flex w-[200px] items-center gap-3 rounded-[var(--radius-md)] border bg-[var(--secondary)] py-1 pl-1 pr-2 text-[var(--foreground)]",
+          // No width here on purpose — width is the container's decision
+          // (composer uses a fixed chip, AttachmentsPanel fills the row).
+          "group relative flex items-center gap-3 rounded-[var(--radius-md)] border bg-[var(--secondary)] py-1 pl-1 pr-2 text-[var(--foreground)]",
           state === "selected"
             ? "border-dashed border-[var(--edge-medium)]"
             : isError

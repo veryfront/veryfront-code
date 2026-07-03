@@ -97,6 +97,7 @@ export {
 // ---------------------------------------------------------------------------
 export {
   AttachmentPill,
+  AttachmentsPanel,
   BranchPicker,
   ChatSidebar,
   ChatWithSidebar,
@@ -131,13 +132,13 @@ export {
   TabSwitcher,
   ToolCallCard,
   ToolStatusBadge,
-  UploadsPanel,
   useThreads,
   useUpload,
 } from "./chat.tsx";
 export type {
   AttachmentInfo,
   AttachmentPillProps,
+  AttachmentsPanelProps,
   BranchPickerProps,
   ChatSidebarComponent,
   ChatSidebarEmptyProps,
@@ -184,7 +185,6 @@ export type {
   TabSwitcherProps,
   Thread,
   UploadedFile,
-  UploadsPanelProps,
   UseThreadsOptions,
   UseThreadsResult,
   UseUploadOptions,

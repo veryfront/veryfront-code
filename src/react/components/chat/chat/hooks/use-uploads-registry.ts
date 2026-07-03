@@ -16,7 +16,7 @@
  */
 import * as React from "react";
 import { isBrowserEnvironment } from "#veryfront/platform/compat/runtime.ts";
-import type { UploadedFile } from "../components/uploads-panel.tsx";
+import type { UploadedFile } from "../components/attachments-panel.tsx";
 
 /** Options for {@link useUploadsRegistry}. */
 export interface UseUploadsRegistryOptions {

@@ -260,7 +260,7 @@ function MessageHeader(
   return (
     // `w-full` so the timestamp's `ml-auto` reaches the right edge — the Root
     // is `items-start`, which would otherwise shrink the header to its content.
-    <div className={cn("flex w-full items-center gap-2 pt-px pb-1", className)}>
+    <div className={cn("flex w-full items-center gap-2 pt-px pb-3", className)}>
       <AvatarImpl
         name={displayName}
         avatarUrl={avatarUrl}
@@ -322,9 +322,12 @@ function renderAnswerPart(
   opts: RenderPartOptions,
 ): React.ReactNode {
   if (group.type === "text") {
+    // `my-2` gives the answer text extra breathing room from an adjacent tool
+    // card. In the flex-col container the gap doesn't collapse with margins, so
+    // this widens text↔tool boundaries while tool↔tool stays at the base gap.
     return (
       <Markdown
-        className="text-[15px] leading-7"
+        className="my-2 text-[15px] leading-7"
         renderCodeBlock={opts.codeBlock}
         components={opts.markdownComponents}
       >
@@ -350,6 +353,7 @@ function renderAnswerPart(
     return (
       <div className="my-1.5">
         <AttachmentPill
+          className="w-[200px]"
           attachment={{
             id: "file",
             name: group.file.filename ?? "Attachment",
@@ -364,11 +368,7 @@ function renderAnswerPart(
   }
   // ToolCall renders the compact skill row for skill tools and the full
   // params/result card for everything else — one component either way.
-  return (
-    <div className="my-2">
-      {opts.renderTool ? opts.renderTool(group.tool) : <ToolCallCard tool={group.tool} />}
-    </div>
-  );
+  return opts.renderTool ? opts.renderTool(group.tool) : <ToolCallCard tool={group.tool} />;
 }
 
 export interface MessageContentProps {
@@ -421,6 +421,7 @@ function MessageContent({
             {fileParts.map((file, index) => (
               <AttachmentPill
                 key={`file-${index}`}
+                className="w-[200px]"
                 attachment={{
                   id: `file-${index}`,
                   name: file.filename ?? "Attachment",
@@ -450,7 +451,14 @@ function MessageContent({
     <div
       className={cn(
         chat?.theme.message?.assistant ?? defaultChatTheme.message?.assistant,
-        "flex-1 min-w-0",
+        // `w-full` because `Message.Root` is `items-start`, which would
+        // otherwise shrink this column to its widest child — a lone tool card
+        // (`w-full`) would render narrow until streamed text widened the
+        // column. Mirrors the same workaround on `Message.Header`.
+        // `flex flex-col gap-2.5` owns the spacing *between* parts (text,
+        // reasoning, tool cards) — gaps apply between siblings only, so there's
+        // no leading gap under the header and no per-part margins to juggle.
+        "flex w-full flex-col gap-2.5 flex-1 min-w-0",
         className,
       )}
     >

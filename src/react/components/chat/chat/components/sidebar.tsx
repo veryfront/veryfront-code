@@ -471,7 +471,7 @@ ChatSidebarEmpty.displayName = "ChatSidebar.Empty";
  */
 function ChatSidebarSkeleton(): React.ReactElement {
   return (
-    <output aria-label="Loading conversations" className="block">
+    <output aria-label="Loading conversations" className="block pt-1.5">
       <span className="sr-only">Loading conversations</span>
       <List aria-hidden="true">
         <ListLabel>

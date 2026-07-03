@@ -151,7 +151,10 @@ export const Completed: Story = {
       source: {
         code: `import { ToolCall } from "veryfront/chat";
 
+// Tool cards collapse by default (the trigger row shows name + status).
+// Pass \`defaultExpanded\` to open the params/result anatomy.
 <ToolCall
+  defaultExpanded
   tool={{
     type: "tool-search_docs",
     toolCallId: "tool-search-docs-1",
@@ -169,7 +172,7 @@ export const Completed: Story = {
   },
   render: () => (
     <StoryFrame maxWidth="720px">
-      <ToolCall tool={completedToolPart} />
+      <ToolCall tool={completedToolPart} defaultExpanded />
     </StoryFrame>
   ),
 };
@@ -182,7 +185,7 @@ export const Composed: Story = {
         code: `import { ToolCall } from "veryfront/chat";
 
 // Recompose the card: Result first, a custom icon, and a restyled Output.
-<ToolCall.Root tool={completedTool}>
+<ToolCall.Root tool={completedTool} defaultExpanded>
   <ToolCall.Trigger icon={<span aria-hidden>🔧</span>} />
   <ToolCall.Body>
     <ToolCall.Output className="ring-1 ring-[var(--edge)]" />
@@ -195,7 +198,7 @@ export const Composed: Story = {
   },
   render: () => (
     <StoryFrame maxWidth="720px">
-      <ToolCall.Root tool={completedToolPart}>
+      <ToolCall.Root tool={completedToolPart} defaultExpanded>
         <ToolCall.Trigger icon={<span aria-hidden>🔧</span>} />
         <ToolCall.Body>
           <ToolCall.Output className="ring-1 ring-[var(--edge)]" />
