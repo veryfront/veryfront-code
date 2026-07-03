@@ -201,6 +201,28 @@ export default function LoginForm() {
 }
 ```
 
+### Reading the live location
+
+`useRouter()` is the single hook for location and navigation. Its `pathname`,
+`query`, and `params` update reactively on client-side navigation:
+
+```tsx
+"use client";
+
+import { useRouter } from "veryfront/router";
+
+export default function Filters() {
+  const { pathname, query, params } = useRouter();
+  return <p>{pathname} · {params.category} · sort: {query.sort ?? "none"}</p>;
+}
+```
+
+By default a query-only navigation refetches the page so server data that
+depends on the query is never shown stale. If a page's query is purely
+client-side state (tabs, filters), opt into the soft fast path — updating the
+URL and re-rendering without a refetch — with the router's `shouldRevalidate`
+option.
+
 ## Verify it worked
 
 Start the dev server and request each page you added:

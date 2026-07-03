@@ -1,6 +1,6 @@
 import { type ComponentType, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { type Router, RouterProvider } from "veryfront/router";
-import { type PageContext, PageContextProvider } from "veryfront/context";
+import { PageContextProvider, type PageContextValue } from "veryfront/context";
 import { type LayoutInfo, LayoutShell } from "./LayoutShell.tsx";
 import { getCachedComponent, loadComponent, preloadComponent } from "./component-loader.ts";
 import { PAGE_NOT_FOUND } from "#veryfront/errors/error-registry.ts";
@@ -177,14 +177,17 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
   }, [handleNavigate]);
 
   const normalizedParams = useMemo(() => normalizeParams(state.params), [state.params]);
-  const query = useMemo(() => getQuery(), [state.currentPath]);
 
+  // Seed snapshot for `RouterProvider` — one `RouterValue` carrying everything
+  // the route match knows. On the client the provider derives the live
+  // `pathname`/`query` from the navigation store; `params`/`domain`/`isPreview`
+  // are seeded from here.
   const routerValue: Router = {
     domain: getDomain(),
     path: state.currentPath,
     pathname: state.currentPath,
     params: normalizedParams,
-    query,
+    query: getQuery(),
     isPreview: false,
     isMounted,
     navigate: async (path, _options) => {
@@ -201,12 +204,16 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
     },
   };
 
-  const pageContextValue: PageContext = {
-    slug: state.currentPath,
+  // Page context seed — page-authored fields; `PageContextProvider` derives the
+  // live `path`/`query`/`params` from the router above.
+  const pageContext: PageContextValue = {
+    slug: state.currentPath || "/",
     path: state.currentPath,
     params: normalizedParams,
-    query,
+    query: getQuery(),
     frontmatter: state.frontmatter,
+    headings: [],
+    mdxHeadings: [],
   };
 
   const handleRetry = useCallback((): void => {
@@ -228,7 +235,7 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
 
   return (
     <RouterProvider router={routerValue}>
-      <PageContextProvider pageContext={pageContextValue}>
+      <PageContextProvider pageContext={pageContext}>
         <div
           className={`veryfront-app ${state.isNavigating ? "veryfront-navigating" : ""}`}
           data-navigating={state.isNavigating}
