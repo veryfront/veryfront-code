@@ -112,7 +112,11 @@ export const getRendererScript = () => `
           return;
         }
 
-        const pageProps = { ...(data.props || {}), params: data.params || {} };
+        // Normalize catch-all params (arrays -> joined strings) so the hydrated
+        // props and page context match the server render. normalizeRouteParams
+        // is defined in router.ts, which loads first (issue #2742).
+        const normalizedParams = normalizeRouteParams(data.params);
+        const pageProps = { ...(data.props || {}), params: normalizedParams };
         let tree = React.createElement(PageComponent, pageProps);
 
         const layouts = data.layouts;
@@ -143,7 +147,7 @@ export const getRendererScript = () => `
         const pageContext = {
           slug: data.slug || '',
           path: data.pagePath || resolvedPathname,
-          params: data.params || {},
+          params: normalizedParams,
           query: Object.fromEntries(new URLSearchParams(window.location.search)),
           frontmatter: data.frontmatter || {},
           headings,

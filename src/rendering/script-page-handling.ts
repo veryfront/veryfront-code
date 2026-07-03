@@ -10,6 +10,7 @@ import { rewriteNpmImports } from "#veryfront/transforms/npm-import-rewrites.ts"
 import { dirname, join } from "#veryfront/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
+import { flattenRouteParams } from "#veryfront/routing";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import type {
   ComponentProps,
@@ -128,13 +129,7 @@ function buildPageContext(
   params?: Record<string, string | string[]>,
   url?: URL,
 ): PageContext {
-  const flatParams: Record<string, string> = params
-    ? Object.fromEntries(
-      Object.entries(params)
-        .map(([k, v]) => [k, Array.isArray(v) ? v[0] : v])
-        .filter((entry): entry is [string, string] => entry[1] !== undefined),
-    )
-    : {};
+  const flatParams = flattenRouteParams(params);
 
   return {
     params: flatParams,

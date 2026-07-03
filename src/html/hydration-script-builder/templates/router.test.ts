@@ -317,6 +317,24 @@ describe("hydration-script-builder/templates/router", () => {
       assertIncludes(getRouterScript(), "window.__veryfrontRouter = router");
     });
 
+    it("should normalize route params joining catch-all segments", () => {
+      const result = getRouterScript();
+      assertIncludes(result, "function normalizeRouteParams(raw)");
+      assertIncludes(result, "Array.isArray(value) ? value.join('/') : value");
+    });
+
+    it("should refresh router params during SPA and popstate navigation", () => {
+      const result = getRouterScript();
+      assertIncludes(
+        result,
+        "window.__veryfrontRouter.params = normalizeRouteParams(pageData.params);",
+      );
+      assertIncludes(
+        result,
+        "window.__veryfrontRouter.params = normalizeRouteParams(e.state.pageData.params);",
+      );
+    });
+
     it("should handle popstate events for browser back/forward", () => {
       assertIncludes(getRouterScript(), "addEventListener('popstate'");
     });
@@ -374,6 +392,252 @@ describe("hydration-script-builder/templates/router", () => {
 
     it("should update document title during SPA navigation", () => {
       assertIncludes(getRouterScript(), "document.title = pageData.frontmatter.title");
+    });
+  });
+
+  // Executable coverage: evaluate the generated browser runtime in a stubbed
+  // DOM so a future edit can't keep the string tokens while breaking the actual
+  // hydration-data parsing, param normalization, or SPA/popstate param updates.
+  describe("generated router runtime (executable)", () => {
+    interface RuntimeLocation {
+      origin: string;
+      pathname: string;
+      search: string;
+      readonly href: string;
+    }
+    interface RuntimeRouter {
+      params: Record<string, string>;
+      pathname: string;
+      query: Record<string, string>;
+      navigate(path: string): Promise<void>;
+      push(path: string): void;
+    }
+    interface RuntimeWindow {
+      location: RuntimeLocation;
+      history: { pushState(): void; back(): void; forward(): void };
+      addEventListener(type: string, fn: (e: unknown) => void): void;
+      dispatchEvent(): boolean;
+      scrollTo(): void;
+      scrollY: number;
+      __veryfrontRouter?: RuntimeRouter;
+      __veryfrontHydrationComplete?: () => void;
+    }
+    interface RuntimeHandle {
+      router: RuntimeRouter;
+      navigateSPA: (href: string, pushState?: boolean, restoreScroll?: boolean) => Promise<void>;
+      win: RuntimeWindow;
+      listeners: Record<string, Array<(e: unknown) => void>>;
+      setNextPageData: (data: unknown) => void;
+      // The router.params snapshot captured the moment renderPageFromData built
+      // the RouterProvider element — i.e. what the new page renders with. This is
+      // what the ordering bug (mutating params after render) would get wrong.
+      getRenderedParams: () => Record<string, string> | null;
+      // The `params` prop handed to the page component during render — must be
+      // normalized (joined) so it matches the server render.
+      getRenderedPageParams: () => Record<string, string> | null;
+    }
+
+    function evaluateRouterRuntime(
+      opts: {
+        pathname?: string;
+        search?: string;
+        hydrationParams?: Record<string, string | string[]>;
+      } = {},
+    ): RuntimeHandle {
+      const hydrationJson = JSON.stringify({ params: opts.hydrationParams ?? {} });
+      const listeners: Record<string, Array<(e: unknown) => void>> = {};
+      const addEventListener = (type: string, fn: (e: unknown) => void) => {
+        (listeners[type] ??= []).push(fn);
+      };
+
+      const makeEl = () => ({
+        style: {} as Record<string, unknown>,
+        id: "",
+        textContent: "",
+        setAttribute() {},
+        getAttribute() {
+          return null;
+        },
+        prepend() {},
+        remove() {},
+        appendChild() {},
+      });
+
+      const rootEl = { __reactRoot: { render() {} } };
+      const doc = {
+        readyState: "complete",
+        body: { prepend() {}, setAttribute() {}, removeAttribute() {}, appendChild() {} },
+        head: { appendChild() {} },
+        createElement: () => makeEl(),
+        querySelector: () => null,
+        querySelectorAll: () => [] as unknown[],
+        getElementById: (id: string) => {
+          if (id === "veryfront-hydration-data") return { textContent: hydrationJson };
+          if (id === "root") return rootEl;
+          return null;
+        },
+        addEventListener,
+      };
+
+      const win: RuntimeWindow = {
+        location: {
+          origin: "https://veryfront.test",
+          pathname: opts.pathname ?? "/",
+          search: opts.search ?? "",
+          get href() {
+            return "https://veryfront.test" + this.pathname + this.search;
+          },
+        },
+        history: { pushState() {}, back() {}, forward() {} },
+        addEventListener,
+        dispatchEvent() {
+          return true;
+        },
+        scrollTo() {},
+        scrollY: 0,
+      };
+
+      let nextPageData: unknown = { pagePath: "page", params: {} };
+      const fetchStub = () =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          url: "/_veryfront/page-data/page.json",
+          headers: { get: () => null },
+          json: () => Promise.resolve(nextPageData),
+        });
+
+      const RouterProvider = () => ({});
+      const PageContextProvider = () => ({});
+      // Capture params exactly when the generated render builds elements, so the
+      // test reflects what the new page renders with (not the value the router
+      // settles on afterwards). renderedRouterParams = what RouterProvider sees;
+      // renderedPageParams = what the page component receives as its `params`
+      // prop (must be normalized so it matches the server render, issue #2742).
+      let renderedRouterParams: Record<string, string> | null = null;
+      let renderedPageParams: Record<string, string> | null = null;
+      const React = {
+        createElement: (
+          type: unknown,
+          props?: { router?: RuntimeRouter; params?: Record<string, string> },
+        ) => {
+          if (type === RouterProvider && props?.router) {
+            renderedRouterParams = { ...props.router.params };
+          } else if (props && "params" in props && renderedPageParams === null) {
+            renderedPageParams = { ...(props.params ?? {}) };
+          }
+          return {};
+        },
+      };
+      const loadComponent = () => Promise.resolve(() => null);
+
+      const factory = new Function(
+        "window",
+        "document",
+        "fetch",
+        "React",
+        "RouterProvider",
+        "PageContextProvider",
+        "loadComponent",
+        "setTimeout",
+        "clearTimeout",
+        getRouterScript() + "\nreturn { router, navigateSPA };",
+      );
+
+      const handle = factory(
+        win,
+        doc,
+        fetchStub,
+        React,
+        RouterProvider,
+        PageContextProvider,
+        loadComponent,
+        () => 0,
+        () => {},
+      ) as { router: RuntimeRouter; navigateSPA: RuntimeHandle["navigateSPA"] };
+
+      return {
+        router: handle.router,
+        navigateSPA: handle.navigateSPA,
+        win,
+        listeners,
+        setNextPageData: (data: unknown) => {
+          nextPageData = data;
+        },
+        getRenderedParams: () => renderedRouterParams,
+        getRenderedPageParams: () => renderedPageParams,
+      };
+    }
+
+    it("seeds router params from hydration data, joining catch-all segments", () => {
+      const { router } = evaluateRouterRuntime({
+        pathname: "/docs/guides/intro",
+        hydrationParams: { slug: ["guides", "intro"], lang: "en" },
+      });
+      assertEquals(router.params, { slug: "guides/intro", lang: "en" });
+    });
+
+    it("replaces stale params with new page data on SPA navigation", async () => {
+      const runtime = evaluateRouterRuntime({
+        pathname: "/posts/42",
+        hydrationParams: { id: "42" },
+      });
+      runtime.win.__veryfrontHydrationComplete?.();
+
+      runtime.setNextPageData({ pagePath: "page", params: { id: "99" } });
+      runtime.win.location.pathname = "/posts/99";
+      await runtime.navigateSPA("/posts/99", true);
+
+      assertEquals(runtime.router.params, { id: "99" });
+      assertEquals(runtime.router.pathname, "/posts/99");
+      // The new page must render with the fresh params — not the previous
+      // route's — which only holds if params are updated before render.
+      assertEquals(runtime.getRenderedParams(), { id: "99" });
+    });
+
+    it("normalizes catch-all params for both router and page props on SPA nav", () => {
+      const runtime = evaluateRouterRuntime({ pathname: "/", hydrationParams: {} });
+      runtime.win.__veryfrontHydrationComplete?.();
+
+      // Page data carries a raw catch-all array, as route matching produces it.
+      runtime.setNextPageData({ pagePath: "page", params: { slug: ["guides", "intro"] } });
+      return runtime.navigateSPA("/docs/guides/intro", true).then(() => {
+        // Both the router snapshot and the page component's `params` prop must
+        // be joined strings so client and server render identically (#2742).
+        assertEquals(runtime.router.params, { slug: "guides/intro" });
+        assertEquals(runtime.getRenderedParams(), { slug: "guides/intro" });
+        assertEquals(runtime.getRenderedPageParams(), { slug: "guides/intro" });
+      });
+    });
+
+    it("clears params when navigating to a static route", async () => {
+      const runtime = evaluateRouterRuntime({
+        pathname: "/posts/42",
+        hydrationParams: { id: "42" },
+      });
+      runtime.win.__veryfrontHydrationComplete?.();
+
+      runtime.setNextPageData({ pagePath: "page", params: {} });
+      await runtime.navigateSPA("/about", true);
+
+      assertEquals(runtime.router.params, {});
+      assertEquals(runtime.getRenderedParams(), {});
+    });
+
+    it("refreshes params from history state on popstate navigation", async () => {
+      const runtime = evaluateRouterRuntime({
+        pathname: "/posts/42",
+        hydrationParams: { id: "42" },
+      });
+      runtime.win.__veryfrontHydrationComplete?.();
+
+      runtime.win.location.pathname = "/posts/7";
+      const popstate = runtime.listeners.popstate?.[0];
+      if (!popstate) throw new Error("popstate handler was not registered");
+      await popstate({ state: { pageData: { pagePath: "page", params: { id: "7" } } } });
+
+      assertEquals(runtime.router.params, { id: "7" });
+      assertEquals(runtime.getRenderedParams(), { id: "7" });
     });
   });
 });

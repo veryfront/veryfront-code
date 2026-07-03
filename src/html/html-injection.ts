@@ -8,6 +8,7 @@ import {
   generateStyleTags,
 } from "./tag-generators.ts";
 import { buildNonceAttribute } from "./html-escape.ts";
+import { jsonForInlineScript } from "#veryfront/security/client/html-sanitizer.ts";
 import {
   getDevScripts,
   getDevStyles,
@@ -26,6 +27,13 @@ export interface InjectHTMLContentOptions {
   projectDir?: string;
   /** Whether the page has 'use client' directive */
   isClientPage?: boolean;
+  /**
+   * Route params from the initial match, seeded into the 'use client' hydration
+   * payload so full-HTML-document client pages hydrate with their params
+   * instead of an empty object (issue #2741). Catch-all arrays are preserved;
+   * the client runtime joins them (issue #2742).
+   */
+  params?: Record<string, string | string[]>;
   /** Whether page is embedded in Studio iframe */
   studioEmbed?: boolean;
   /** Project ID for Studio communication */
@@ -114,10 +122,15 @@ export function injectHTMLContent(
 
   // Inject hydration data for 'use client' pages (before scripts, so client.js can find it)
   if (options.pagePath && options.isClientPage && hasBodyClose) {
-    const hydrationData = JSON.stringify({
+    // Serialize with jsonForInlineScript, not raw JSON.stringify: route params
+    // (and slug) are URL-derived and decoded, so a segment like `%3C/script%3E`
+    // would otherwise break out of the <script> tag (reflected XSS). This escapes
+    // `<`, `>`, `&`, and line separators, matching the main shell hydration path.
+    const hydrationData = jsonForInlineScript({
       pagePath: toProjectRelativePath(options.pagePath, options.projectDir),
       slug: options.slug,
       isClientPage: true,
+      params: options.params ?? {},
       clientModuleStrategy: determineClientModuleStrategy({
         isLocalProject: options.isLocalProject ?? options.mode === "development",
         environment: options.environment,

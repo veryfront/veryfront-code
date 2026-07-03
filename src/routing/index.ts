@@ -6,6 +6,7 @@
  */
 
 export type { Route, RouteMatch } from "./matchers/index.ts";
+export { flattenRouteParams } from "./flatten-route-params.ts";
 export {
   getSpecificityScore,
   matchRoute,
