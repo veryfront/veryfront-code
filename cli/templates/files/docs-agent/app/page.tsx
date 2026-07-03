@@ -4,6 +4,7 @@ import { useCallback, useMemo } from 'react'
 import {
   Chat,
   ChatSidebar,
+  ChatThemeScope,
   ConversationsProvider,
   useChat,
   useUploadsRegistry,
@@ -58,7 +59,7 @@ function DocsChatSurface() {
   }, [chat.setInput])
 
   return (
-    <div className="flex h-screen min-h-0 bg-[var(--background)] text-[var(--foreground)]">
+    <ChatThemeScope className="flex h-screen min-h-0">
       <ChatSidebar className="w-72 shrink-0 border-r border-[var(--border)]" />
       <Chat
         chat={chat}
@@ -81,7 +82,7 @@ function DocsChatSurface() {
         placeholder="Ask anything about your documents..."
         emptyState={{ title: 'Docs Agent', description: 'Upload files and ask questions' }}
       />
-    </div>
+    </ChatThemeScope>
   )
 }
 

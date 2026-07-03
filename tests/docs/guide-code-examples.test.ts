@@ -17,6 +17,7 @@ import {
 import {
   Chat,
   ChatContextProvider,
+  ChatThemeScope,
   ComposerContextProvider,
   Message,
   MessageContextProvider,
@@ -279,8 +280,12 @@ describe("Guide: build-a-rag-app.md", () => {
     assertEquals(typeof createUploadHandler, "function");
     assertEquals(typeof useUploads, "function");
     assertEquals(typeof useChat, "function");
+    assertEquals(typeof ChatThemeScope, "function");
     assertEquals(typeof createAgUiHandler, "function");
     assertExists(template);
+    const templatePage = template.find((file) => file.path === "app/page.tsx")?.content ?? "";
+    assertStringIncludes(templatePage, "ChatThemeScope");
+    assertStringIncludes(templatePage, 'className="flex h-screen min-h-0"');
     assert(
       template.some((file) => file.path === "store.ts"),
       "docs-agent template includes store.ts",
