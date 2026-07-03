@@ -250,9 +250,14 @@ function MessageHeader(
   const chat = useChatContextOptional();
   if (role === "user") return null;
 
-  const displayName = metadataString(message.metadata, "agentName") ??
+  // The avatar gets only REAL agent identity (like `Message.Avatar`): with no
+  // agent, `AgentAvatar` falls back to the provider logomark for
+  // `metadata.model`. Folding the "Assistant" placeholder into `name` would
+  // make that fallback unreachable — the label below still shows it.
+  const agentName = metadataString(message.metadata, "agentName") ??
     chat?.agent?.name ??
-    metadataString(message.metadata, "agentId") ?? "Assistant";
+    metadataString(message.metadata, "agentId");
+  const displayName = agentName ?? "Assistant";
   const avatarUrl = metadataString(message.metadata, "agentAvatarUrl") ??
     chat?.agent?.avatarUrl;
   const timestamp = formatTimestamp(message.createdAt);
@@ -262,7 +267,7 @@ function MessageHeader(
     // is `items-start`, which would otherwise shrink the header to its content.
     <div className={cn("flex w-full items-center gap-2 pt-px pb-3", className)}>
       <AvatarImpl
-        name={displayName}
+        name={agentName}
         avatarUrl={avatarUrl}
         model={metadataString(message.metadata, "model")}
         className="size-8"

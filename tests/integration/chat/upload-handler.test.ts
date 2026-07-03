@@ -7,10 +7,11 @@ import { createChatUploadHandler } from "veryfront/chat/uploads";
 /**
  * Exercises the handler over a real HTTP server: multipart parsing, the
  * absolute same-origin URL it hands back, and streaming the bytes out of GET —
- * the parts the in-process unit tests can't fully cover. Sanitizers are off
- * because `Deno.serve` + `fetch` keep ops open until shutdown.
+ * the parts the in-process unit tests can't fully cover. Every response body
+ * is consumed and the server is shut down (abort + `server.finished`) before
+ * each test returns, so the sanitizers stay on.
  */
-describe("chat/upload-handler over HTTP", { sanitizeResources: false, sanitizeOps: false }, () => {
+describe("chat/upload-handler over HTTP", () => {
   it("round-trips a real multipart upload and serves it back from the returned url", () =>
     withTempDir(async (dir) => {
       const { POST, GET } = createChatUploadHandler({

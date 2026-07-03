@@ -1,20 +1,24 @@
 import * as React from "react";
-// Types are sourced from react-markdown itself (the package `Markdown` already
-// loads at runtime via ESM URL). `PluggableList` is not re-exported by
-// react-markdown, so it is derived from the `remarkPlugins` slot of `Options`.
-import type {
-  Components,
-  Options as ReactMarkdownOptions,
-} from "https://esm.sh/react-markdown@9.0.3?target=es2022&pin=v135&deps=react@19.2.4";
 import { cn } from "./theme.ts";
 import { isBrowserEnvironment } from "#veryfront/platform/compat/runtime.ts";
 import { validateTrustedHtml } from "#veryfront/security/client/html-sanitizer.ts";
 import { CodeBlock as SyntaxCodeBlock } from "./ui/code-block.tsx";
 
-/** react-markdown's plugin list type (remark/rehype), derived from `Options`. */
-export type PluggableList = NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
+/**
+ * Custom element renderers keyed by HTML tag name, the shape of
+ * react-markdown's `Components` option. Declared locally instead of
+ * type-importing from the esm.sh URL: a static remote import (even
+ * type-only) pulls react-markdown's remote graph into the deno graph, and
+ * the dnt npm build cannot map esm.sh-internal specifiers (`stable/react`)
+ * onto valid npm package names. The package itself still loads at runtime
+ * via the ESM URL below.
+ */
+export type Components = Partial<
+  Record<keyof React.JSX.IntrinsicElements, React.ElementType>
+>;
 
-export type { Components };
+/** remark/rehype plugin list (react-markdown's `PluggableList`), opaque here. */
+export type PluggableList = readonly unknown[];
 
 /** Props accepted by markdown. */
 export interface MarkdownProps {

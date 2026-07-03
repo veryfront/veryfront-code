@@ -94,6 +94,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "quickstart.md",
   "sandbox.md",
   "skills.md",
+  "storybook-ui-workbench.md",
   "tasks.md",
   "work.md",
   "workflows-advanced.md",
@@ -209,6 +210,20 @@ describe("Guide: project-metrics.md", () => {
   });
 });
 
+describe("Guide: storybook-ui-workbench.md", () => {
+  it("documents deno tasks that exist in deno.json", async () => {
+    const guide = await readGuide("storybook-ui-workbench.md");
+    const denoJson = JSON.parse(await Deno.readTextFile("deno.json")) as {
+      tasks?: Record<string, string>;
+    };
+
+    for (const task of ["storybook", "build:storybook", "storybook:check"]) {
+      assertStringIncludes(guide, `deno task ${task}`);
+      assertExists(denoJson.tasks?.[task], `deno.json task "${task}" should exist`);
+    }
+  });
+});
+
 describe("Guide: chat-ui.md", () => {
   it("uses the preset Chat component with the documented hook and route helper", () => {
     assertEquals(typeof useChat, "function");
@@ -219,7 +234,7 @@ describe("Guide: chat-ui.md", () => {
     assertEquals(typeof chatRecord.render, "function");
     assertExists(chatRecord.Root);
     assertExists(chatRecord.MessageList);
-    assertExists(chatRecord.Composer);
+    assertExists(chatRecord.Input);
     assertExists(messageRecord.Root);
     assertExists(ChatContextProvider);
     assertExists(ComposerContextProvider);

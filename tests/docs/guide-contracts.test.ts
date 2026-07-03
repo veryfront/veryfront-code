@@ -640,6 +640,15 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     ],
     snippets: ["SKILL.md", "allowed_tools", "veryfront skills validate"],
   },
+  "guides/storybook-ui-workbench.md": {
+    references: [],
+    snippets: [
+      "deno task storybook",
+      "deno task build:storybook",
+      "deno task storybook:check",
+      "veryfront/chat",
+    ],
+  },
   "guides/tasks.md": {
     references: ["../api-reference/veryfront/runs.md"],
     snippets: [

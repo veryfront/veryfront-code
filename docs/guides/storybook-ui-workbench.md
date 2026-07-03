@@ -27,3 +27,9 @@ deno task storybook:check
 Storybook must import real Veryfront source modules, such as `veryfront/chat` or `src/react` barrels. Do not copy framework components into stories.
 
 Storybook must not become a public `deno.json` export.
+
+## Verify it worked
+
+- `deno task storybook` opens the workbench at the printed local URL and the chat stories render.
+- `deno task build:storybook` writes a static bundle to `storybook/dist` without errors.
+- `deno task storybook:check` passes, confirming the package boundary (no framework code copied into stories, no public export added).
