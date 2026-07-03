@@ -1,4 +1,5 @@
 import { createRoot } from "react-dom/client";
+import { flushSync } from "react-dom";
 import { JSDOM } from "jsdom";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -82,12 +83,21 @@ function mount(storageKey: string) {
     return null;
   }
   const root = createRoot(document.getElementById("root")!);
-  root.render(<Capture />);
+  // `flushSync` renders + runs effects synchronously. React 19 schedules
+  // passive effects on `MessageChannel`, which JSDOM never delivers, so plain
+  // `setTimeout` ticks never flush them — `flushSync` is what makes the hook's
+  // persist-to-localStorage effect actually run.
+  flushSync(() => root.render(<Capture />));
   return { root, get: () => latest! };
 }
 
-async function settle(): Promise<void> {
+/** Run an async interaction, then flush the resulting render + passive effects. */
+async function flush(fn: () => void): Promise<void> {
+  fn();
+  // Let the stubbed fetch promise chain settle so its setState is queued...
   for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0));
+  // ...then force React to flush that update and its passive effects.
+  flushSync(() => {});
 }
 
 function fakeFile(name: string): File {
@@ -101,22 +111,20 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
     try {
       const key = "test-uploads";
       const a = mount(key);
-      await settle();
 
-      a.get().upload([fakeFile("a.txt")]);
-      await settle();
+      await flush(() => a.get().upload([fakeFile("a.txt")]));
 
       const items = a.get().items;
       assertEquals(items.length, 1);
       assertEquals(items[0]!.id, "srv-1", "the server id is captured (needed for DELETE)");
       assertEquals(items[0]!.type, "text/plain");
-      a.root.unmount();
+      assert((localStorage.getItem(key) ?? "").includes("srv-1"), "persisted to localStorage");
+      flushSync(() => a.root.unmount());
 
       // Remount → the item is loaded back from localStorage.
       const b = mount(key);
-      await settle();
       assertEquals(b.get().items.map((f) => f.id), ["srv-1"]);
-      b.root.unmount();
+      flushSync(() => b.root.unmount());
     } finally {
       fetchStub.restore();
       restoreDom();
@@ -128,18 +136,17 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
     const fetchStub = stubFetch();
     try {
       const reg = mount("test-uploads-del");
-      await settle();
-      reg.get().upload([fakeFile("a.txt")]);
-      await settle();
+      await flush(() => reg.get().upload([fakeFile("a.txt")]));
       assertEquals(reg.get().items.length, 1);
       const id = reg.get().items[0]!.id;
 
       await reg.get().remove(id);
-      await settle();
+      for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0));
+      flushSync(() => {});
 
       assert(fetchStub.deletes.includes(id), "a DELETE was sent for the removed id");
       assertEquals(reg.get().items.length, 0, "the item is gone from the registry");
-      reg.root.unmount();
+      flushSync(() => reg.root.unmount());
     } finally {
       fetchStub.restore();
       restoreDom();
