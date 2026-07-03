@@ -219,7 +219,7 @@ export default function Filters() {
 
 By default a query-only navigation refetches the page so server data that
 depends on the query is never shown stale. If a page's query is purely
-client-side state (tabs, filters), opt into the soft fast path: updating the
+client-side state (tabs, filters), opt into the soft fast path, updating the
 URL and re-rendering without a refetch, with the router's `shouldRevalidate`
 option.
 
