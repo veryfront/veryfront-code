@@ -20,7 +20,7 @@
 
 import { LocalBlobStorage } from "#veryfront/workflow/blob/local-storage.ts";
 import { VeryfrontCloudBlobStorage } from "#veryfront/workflow/blob/veryfront-cloud-storage.ts";
-import type { BlobStorage } from "#veryfront/workflow/blob/types.ts";
+import type { BlobRef, BlobStorage } from "#veryfront/workflow/blob/types.ts";
 import { isVeryfrontCloudEnabled } from "#veryfront/platform/cloud/resolver.ts";
 import { isProduction } from "#veryfront/platform/environment.ts";
 import { serverLogger } from "#veryfront/utils";
@@ -142,12 +142,37 @@ export function createChatUploadHandler(
     return Response.json({ id: ref.id, url, name, mediaType, size: file.size });
   }
 
+  function toListItem(ref: BlobRef, requestUrl: string) {
+    return {
+      id: ref.id,
+      url: ref.url ?? new URL(`/api/uploads?id=${ref.id}`, requestUrl).href,
+      name: ref.metadata?.filename ?? ref.id,
+      mediaType: ref.mimeType,
+      size: ref.size,
+    };
+  }
+
   async function GET(request: Request): Promise<Response> {
     const denied = await reject(request, config.authorize);
     if (denied) return denied;
 
     const id = new URL(request.url).searchParams.get("id");
-    if (!id || !SAFE_ID.test(id)) {
+
+    // No `id` → list the adapter's stored files (newest first). This is the
+    // source of truth for an "Uploads" surface, so it survives across sessions
+    // and browsers, unlike a client-only index.
+    if (!id) {
+      if (!storage.list) {
+        return Response.json(
+          { error: "This storage backend does not support listing", items: [] },
+          { status: 501 },
+        );
+      }
+      const refs = await storage.list();
+      return Response.json({ items: refs.map((ref) => toListItem(ref, request.url)) });
+    }
+
+    if (!SAFE_ID.test(id)) {
       return Response.json({ error: "Invalid id" }, { status: 400 });
     }
     const ref = await storage.stat(id);

@@ -5,10 +5,12 @@
  * send; this hook instead keeps a durable list so an "Uploads" surface can show
  * everything and delete from storage.
  *
- * It owns its own upload (a direct multipart POST) so it captures the server's
- * `{ id, url, name, size, mediaType }` — `useUpload` only surfaces the `url`,
- * but the storage `id` is what `DELETE` needs.
+ * The list is sourced from the storage adapter itself: on mount it `GET`s the
+ * endpoint (no `id`) for everything actually stored, so the surface reflects
+ * server truth across sessions/browsers — not just what this tab uploaded.
+ * localStorage is kept only as an instant-paint cache before the fetch lands.
  *
+ *   GET    `{api}`                               → { items: [{ id, url, name, size, mediaType }] }
  *   POST   `{api}`            FormData { file }  → { id, url, name, size, mediaType }
  *   DELETE `{api}?id={id}`                        → removes from storage
  *
@@ -42,6 +44,8 @@ export interface UseUploadsRegistryResult {
   remove: (id: string) => Promise<void>;
   /** Clear the local registry (does not delete from storage). */
   clear: () => void;
+  /** Re-fetch the list from the storage adapter (runs once on mount). */
+  refresh: () => Promise<void>;
 }
 
 interface UploadResponse {
@@ -50,6 +54,21 @@ interface UploadResponse {
   name?: string;
   size?: number;
   mediaType?: string;
+}
+
+interface ListResponse {
+  items?: UploadResponse[];
+}
+
+function toUploadedFile(entry: UploadResponse): UploadedFile | null {
+  if (!entry.id) return null;
+  return {
+    id: entry.id,
+    name: entry.name ?? entry.id,
+    size: entry.size ?? 0,
+    type: entry.mediaType ?? "application/octet-stream",
+    ...(entry.url ? { url: entry.url } : {}),
+  };
 }
 
 function load(storageKey: string): UploadedFile[] {
@@ -127,5 +146,26 @@ export function useUploadsRegistry(
 
   const clear = React.useCallback(() => setItems([]), []);
 
-  return { items, isUploading: inFlight > 0, upload, add, remove, clear };
+  // The storage adapter is the source of truth: pull the full stored list so
+  // the surface shows everything (other sessions, chat uploads, this tab),
+  // not just what this browser's localStorage happens to remember.
+  const refresh = React.useCallback(async () => {
+    try {
+      const response = await fetch(api, { headers });
+      if (!response.ok) return;
+      const body = (await response.json()) as ListResponse;
+      const serverItems = (body.items ?? [])
+        .map(toUploadedFile)
+        .filter((f): f is UploadedFile => f !== null);
+      setItems(serverItems);
+    } catch (_) {
+      /* offline / endpoint without listing — keep the cached list */
+    }
+  }, [api, headers]);
+
+  React.useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  return { items, isUploading: inFlight > 0, upload, add, remove, clear, refresh };
 }
