@@ -195,6 +195,11 @@ export {
   type UseConversationsResult,
 } from "./hooks/use-conversations.ts";
 export {
+  useConversation,
+  type UseConversationOptions,
+  type UseConversationResult,
+} from "./hooks/use-conversation.ts";
+export {
   ConversationsContextProvider,
   ConversationsProvider,
   type ConversationsProviderProps,
