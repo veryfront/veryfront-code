@@ -3,7 +3,7 @@
  * conversation by id from the store and reports a missing id as `null`.
  */
 import { createRoot } from "react-dom/client";
-import { JSDOM } from "jsdom";
+import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { useConversation, type UseConversationResult } from "./use-conversation.ts";

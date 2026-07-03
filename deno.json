@@ -147,7 +147,6 @@
     "veryfront/chat": "./src/chat/index.ts",
     "veryfront/chat/types": "./src/chat/types.ts",
     "veryfront/chat/uploads": "./src/chat/upload-handler.ts",
-    "jsdom": "npm:jsdom@28.0.0",
     "veryfront/markdown": "./src/markdown/index.ts",
     "veryfront/mdx": "./src/mdx/index.ts",
     "veryfront/fs": "./src/fs/index.ts",
