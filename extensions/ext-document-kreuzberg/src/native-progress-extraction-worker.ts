@@ -62,6 +62,25 @@ function extractPptxSlideText(xml: string): string {
     .trim();
 }
 
+function normalizePptxText(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function cleanExtractedMarkdown(value: string): string {
+  return value
+    .replace(/!\[[^\]\n]*\]\(\s*\)/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+type PptxTextShapeRole = "title" | "subtitle" | "body";
+
+interface PptxTextShape {
+  role: PptxTextShapeRole;
+  text: string;
+}
+
 function slideNumber(path: string): number {
   return Number(path.match(/\/slide(\d+)\.xml$/)?.[1] ?? 0);
 }
@@ -69,6 +88,85 @@ function slideNumber(path: string): number {
 function getXmlAttribute(tag: string, name: string): string | undefined {
   const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return tag.match(new RegExp(`\\s${escapedName}=(["'])(.*?)\\1`))?.[2];
+}
+
+function pptxShapeRole(shapeXml: string): PptxTextShapeRole {
+  const placeholderTag = shapeXml.match(/<(?:\w+:)?ph\b[^>]*>/)?.[0] ?? "";
+  const placeholderType = getXmlAttribute(placeholderTag, "type");
+  if (placeholderType === "title" || placeholderType === "ctrTitle") return "title";
+  if (placeholderType === "subTitle") return "subtitle";
+
+  const propertyTag = shapeXml.match(/<(?:\w+:)?cNvPr\b[^>]*>/)?.[0] ?? "";
+  const name = getXmlAttribute(propertyTag, "name")?.toLowerCase() ?? "";
+  if (name.includes("subtitle")) return "subtitle";
+  if (name.includes("title")) return "title";
+
+  return "body";
+}
+
+function pptxTextShapes(xml: string): PptxTextShape[] {
+  const shapes = Array.from(xml.matchAll(/<p:sp\b[\s\S]*?<\/p:sp>/g))
+    .map((match) => {
+      const shapeXml = match[0];
+      return {
+        role: pptxShapeRole(shapeXml),
+        text: extractPptxSlideText(shapeXml),
+      };
+    })
+    .filter((shape) => shape.text.length > 0);
+
+  const hasExplicitHeading = shapes.some((shape) =>
+    shape.role === "title" || shape.role === "subtitle"
+  );
+  if (!hasExplicitHeading && shapes.length === 1) {
+    return [{ ...shapes[0]!, role: "title" }];
+  }
+  return shapes;
+}
+
+function pptxShapeRoleQueues(xml: string): Map<string, PptxTextShapeRole[]> {
+  const roles = new Map<string, PptxTextShapeRole[]>();
+  for (const shape of pptxTextShapes(xml)) {
+    const key = normalizePptxText(shape.text);
+    if (!key) continue;
+    const queue = roles.get(key) ?? [];
+    queue.push(shape.role);
+    roles.set(key, queue);
+  }
+  return roles;
+}
+
+function normalizePptxMarkdownHeadings(markdown: string, xml: string): string {
+  const roles = pptxShapeRoleQueues(xml);
+  if (roles.size === 0) return markdown;
+
+  return cleanExtractedMarkdown(
+    markdown.split("\n").map((line) => {
+      const heading = line.match(/^#{1,6}\s+(.+?)\s*$/);
+      if (!heading) return line;
+
+      const text = heading[1] ?? "";
+      const queue = roles.get(normalizePptxText(text));
+      const role = queue?.shift();
+      if (!role) return line;
+      if (role === "title") return `# ${text}`;
+      if (role === "subtitle") return `## ${text}`;
+      return text;
+    }).join("\n"),
+  );
+}
+
+function formatPptxShapeText(shape: PptxTextShape): string {
+  if (shape.role === "title") return `# ${shape.text}`;
+  if (shape.role === "subtitle") return `## ${shape.text}`;
+  return shape.text;
+}
+
+function formatPptxSlideText(xml: string): string {
+  const shapes = pptxTextShapes(xml);
+  const nonShapeText = extractPptxSlideText(xml.replace(/<p:sp\b[\s\S]*?<\/p:sp>/g, ""));
+  if (shapes.length === 0) return nonShapeText || extractPptxSlideText(xml);
+  return [...shapes.map(formatPptxShapeText), nonShapeText].filter(Boolean).join("\n\n").trim();
 }
 
 function normalizeZipPath(path: string): string {
@@ -143,6 +241,43 @@ async function pptxSlidePaths(zip: JSZip): Promise<string[]> {
   ];
 }
 
+async function buildSingleSlidePptx(slideXml: string): Promise<Uint8Array> {
+  const zip = new JSZip();
+  zip.file(
+    "[Content_Types].xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>
+  <Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>
+</Types>`,
+  );
+  zip.file(
+    "_rels/.rels",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/>
+</Relationships>`,
+  );
+  zip.file(
+    "ppt/presentation.xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst>
+</p:presentation>`,
+  );
+  zip.file(
+    "ppt/_rels/presentation.xml.rels",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>
+</Relationships>`,
+  );
+  zip.file("ppt/slides/slide1.xml", slideXml);
+  return await zip.generateAsync({ type: "uint8array" });
+}
+
 async function extractPdfByPage(buffer: ArrayBuffer): Promise<string> {
   const { extractBytes } = await loadKreuzbergNative();
   const source = await PDFDocument.load(buffer, { ignoreEncryption: true });
@@ -176,23 +311,43 @@ async function extractPdfByPage(buffer: ArrayBuffer): Promise<string> {
 async function extractPptxBySlide(buffer: ArrayBuffer, mimeType: string): Promise<string> {
   const zip = await JSZip.loadAsync(buffer);
   const slidePaths = await pptxSlidePaths(zip);
+  const config = extractionConfigForMimeType(mimeType);
+  let nativeExtractor: Awaited<ReturnType<typeof loadKreuzbergNative>> | undefined;
+
+  try {
+    nativeExtractor = await loadKreuzbergNative();
+  } catch (error) {
+    if (!slidePaths.length) throw error;
+  }
 
   if (!slidePaths.length) {
-    const { extractBytes } = await loadKreuzbergNative();
-    const result = await extractBytes(
+    const result = await nativeExtractor!.extractBytes(
       new Uint8Array(buffer),
       mimeType,
-      extractionConfigForMimeType(mimeType),
+      config,
     );
-    postProgress({ unit: "file", current: 1, total: 1, characters: result.content.length });
-    return result.content;
+    const content = cleanExtractedMarkdown(result.content);
+    postProgress({ unit: "file", current: 1, total: 1, characters: content.length });
+    return content;
   }
 
   const slides: string[] = [];
   for (const [index, path] of slidePaths.entries()) {
     const file = zip.file(path);
     const xml = file ? await file.async("text") : "";
-    const content = extractPptxSlideText(xml);
+    let content: string | undefined;
+
+    if (nativeExtractor) {
+      try {
+        const slideBytes = await buildSingleSlidePptx(xml);
+        const result = await nativeExtractor.extractBytes(slideBytes, mimeType, config);
+        content = normalizePptxMarkdownHeadings(cleanExtractedMarkdown(result.content), xml);
+      } catch {
+        // Fall back below to direct slide text so this slide still reports progress.
+      }
+    }
+
+    content ||= formatPptxSlideText(xml);
     slides.push(content);
     postProgress({
       unit: "slide",

@@ -38,6 +38,7 @@ function createStubStore(overrides: Partial<RagStore> = {}): RagStore {
     async listDocuments() {
       return [];
     },
+    async refreshDocument(_id: string, _text: string): Promise<void> {},
     async removeDocument(_id: string): Promise<void> {},
     async indexContentDir(): Promise<void> {},
     ...overrides,
