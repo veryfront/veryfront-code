@@ -1,6 +1,5 @@
 import { type ComponentType, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { type Router, RouterProvider } from "veryfront/router";
-import { type PageContext, PageContextProvider } from "veryfront/context";
 import { type LayoutInfo, LayoutShell } from "./LayoutShell.tsx";
 import { getCachedComponent, loadComponent, preloadComponent } from "./component-loader.ts";
 import { PAGE_NOT_FOUND } from "#veryfront/errors/error-registry.ts";
@@ -177,14 +176,16 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
   }, [handleNavigate]);
 
   const normalizedParams = useMemo(() => normalizeParams(state.params), [state.params]);
-  const query = useMemo(() => getQuery(), [state.currentPath]);
 
+  // Seed snapshot for `RouterProvider`. On the client the provider derives the
+  // live `pathname`/`query` from `veryFrontRouter`; `params`/`domain`/`isPreview`
+  // and the navigate delegates are seeded from here.
   const routerValue: Router = {
     domain: getDomain(),
     path: state.currentPath,
     pathname: state.currentPath,
     params: normalizedParams,
-    query,
+    query: getQuery(),
     isPreview: false,
     isMounted,
     navigate: async (path, _options) => {
@@ -201,13 +202,9 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
     },
   };
 
-  const pageContextValue: PageContext = {
-    slug: state.currentPath,
-    path: state.currentPath,
-    params: normalizedParams,
-    query,
-    frontmatter: state.frontmatter,
-  };
+  const initialHref = globalThis.location
+    ? `${globalThis.location.pathname}${globalThis.location.search}`
+    : state.currentPath;
 
   const handleRetry = useCallback((): void => {
     globalThis.location.reload();
@@ -227,17 +224,20 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
   }
 
   return (
-    <RouterProvider router={routerValue}>
-      <PageContextProvider pageContext={pageContextValue}>
-        <div
-          className={`veryfront-app ${state.isNavigating ? "veryfront-navigating" : ""}`}
-          data-navigating={state.isNavigating}
-        >
-          <LayoutShell layouts={state.layouts} layoutProps={state.layoutProps}>
-            {renderPageContent()}
-          </LayoutShell>
-        </div>
-      </PageContextProvider>
+    <RouterProvider
+      router={routerValue}
+      initialHref={initialHref}
+      params={normalizedParams}
+      frontmatter={state.frontmatter}
+    >
+      <div
+        className={`veryfront-app ${state.isNavigating ? "veryfront-navigating" : ""}`}
+        data-navigating={state.isNavigating}
+      >
+        <LayoutShell layouts={state.layouts} layoutProps={state.layoutProps}>
+          {renderPageContent()}
+        </LayoutShell>
+      </div>
     </RouterProvider>
   );
 }

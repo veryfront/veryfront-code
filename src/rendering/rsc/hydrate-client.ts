@@ -10,6 +10,7 @@ import {
   readHydrationData,
   resolveClientModuleStrategy,
 } from "./client-module-strategy.ts";
+import { wrapWithRouterProvider } from "./hydration-router.ts";
 type Manifest = {
   version: number;
   hash?: string;
@@ -143,7 +144,8 @@ export async function hydrateAllClientBoundaries(doc: Document = document): Prom
     return;
   }
 
-  const clientModuleStrategy = resolveClientModuleStrategy(readHydrationData(doc));
+  const hydrationData = readHydrationData(doc);
+  const clientModuleStrategy = resolveClientModuleStrategy(hydrationData);
 
   try {
     if (globalThis.__VF_TEST_MODE__) {
@@ -176,7 +178,13 @@ export async function hydrateAllClientBoundaries(doc: Document = document): Prom
 
     try {
       const root: ReactRoot = createRoot(el);
-      root.render(React.createElement(Cmp as React.FC, {}));
+      const tree = await wrapWithRouterProvider(
+        React,
+        React.createElement(Cmp as React.FC, {}),
+        hydrationData,
+        doc,
+      );
+      root.render(tree);
       el.dataset.hydrated = "true";
     } catch (e) {
       rscLogger.warn("hydrate: render failed", e);

@@ -36,8 +36,27 @@ export type LinkProps = React.AnchorHTMLAttributes<HTMLAnchorElement> & {
 export interface RouterProviderProps {
   /** React children rendered within the router context. */
   children: React.ReactNode;
-  /** Router value to expose to descendants. */
+  /**
+   * Router value to expose to descendants. On the server (and when no client
+   * router is mounted) this static snapshot is used verbatim. On the client it
+   * seeds `params`/`domain`/`isPreview` while `pathname`/`query` track the live
+   * URL.
+   */
   router?: RouterValue;
+  /**
+   * SSR href (`pathname` + `search`) used as the `useSyncExternalStore` server
+   * snapshot so the first client render matches the server. Falls back to the
+   * `router` snapshot, then the live location.
+   */
+  initialHref?: string;
+  /**
+   * Route params from the initial match. The URL alone cannot derive these, and
+   * they only change on a route navigation (which reloads with fresh data), so
+   * they are seeded rather than tracked.
+   */
+  params?: Record<string, string>;
+  /** Page frontmatter, exposed reactively through `usePageContext()`. */
+  frontmatter?: Record<string, unknown>;
 }
 
 /** Heading metadata extracted from MDX content. */
@@ -151,16 +170,152 @@ function collectHead(data: Parameters<CollectHeadFn>[0]): void {
   collector?.(data);
 }
 
-/** Provides the router context value used by `useRouter()`. */
-export function RouterProvider({
+/** Navigation surface `RouterProvider` subscribes to on the client. */
+interface ClientNavigationRouter {
+  subscribe: (listener: () => void) => () => void;
+  getCurrentHref: () => string;
+  navigate: (url: string, pushState?: boolean, replaceState?: boolean) => Promise<void>;
+}
+
+/**
+ * The mounted client router (`veryFrontRouter`), or `null` on the server / before
+ * it boots. Requires the reactive surface added in `rendering/client/router.ts`.
+ */
+function getClientRouter(): ClientNavigationRouter | null {
+  const candidate = (globalThis as { veryFrontRouter?: Partial<ClientNavigationRouter> })
+    .veryFrontRouter;
+  if (
+    candidate &&
+    typeof candidate.subscribe === "function" &&
+    typeof candidate.getCurrentHref === "function" &&
+    typeof candidate.navigate === "function"
+  ) {
+    return candidate as ClientNavigationRouter;
+  }
+  return null;
+}
+
+function hrefFromRouter(router: RouterValue | undefined): string | undefined {
+  if (!router) return undefined;
+  const search = new URLSearchParams(router.query ?? {}).toString();
+  return search ? `${router.pathname}?${search}` : router.pathname;
+}
+
+function splitHref(href: string): { pathname: string; search: string } {
+  const queryIndex = href.indexOf("?");
+  if (queryIndex === -1) {
+    const hashIndex = href.indexOf("#");
+    return { pathname: hashIndex === -1 ? href : href.slice(0, hashIndex), search: "" };
+  }
+  const afterQuery = href.slice(queryIndex + 1);
+  const hashIndex = afterQuery.indexOf("#");
+  return {
+    pathname: href.slice(0, queryIndex),
+    search: hashIndex === -1 ? afterQuery : afterQuery.slice(0, hashIndex),
+  };
+}
+
+const noopSubscribe = (): () => void => () => {};
+
+/**
+ * Client-only reactive router/page provider. `pathname`/`query` track the live
+ * URL through `veryFrontRouter`'s `useSyncExternalStore` surface; `params`/
+ * `frontmatter`/`domain` are seeded from props. Provides both `RouterContext`
+ * and `PageContext` so `useRouter()` and `usePageContext()` are reactive.
+ */
+function ReactiveRouterProvider({
   children,
   router,
+  initialHref,
+  params,
+  frontmatter,
 }: RouterProviderProps): React.ReactElement {
+  // Re-read the router on every render so a late-booting `veryFrontRouter` is
+  // picked up (the mount effect below forces one re-render if it wasn't ready).
+  const client = getClientRouter();
+  const seedHref = initialHref ?? hrefFromRouter(router) ?? "/";
+
+  const subscribe = client?.subscribe ?? noopSubscribe;
+  const getSnapshot = client?.getCurrentHref ?? (() => seedHref);
+  const getServerSnapshot = React.useCallback(() => seedHref, [seedHref]);
+
+  const href = React.useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  const { pathname, search } = splitHref(href);
+
+  const query = React.useMemo(
+    () => Object.fromEntries(new URLSearchParams(search)) as Record<string, string>,
+    [search],
+  );
+
+  // The router (`veryFrontRouter`) may boot after this first render. If it was
+  // not ready, force a single re-render so we subscribe once it is.
+  const [, forceUpdate] = React.useState(0);
+  React.useEffect(() => {
+    if (!client) {
+      const id = setTimeout(() => forceUpdate((n) => n + 1), 0);
+      return () => clearTimeout(id);
+    }
+  }, [client]);
+
+  const seed = router ?? defaultRouter;
+  const seedParams = params ?? seed.params;
+  const seedFrontmatter = frontmatter ?? {};
+
+  const routerValue = React.useMemo<RouterValue>(
+    () => ({
+      domain: seed.domain || (globalThis.location?.hostname ?? ""),
+      path: pathname,
+      pathname,
+      params: seedParams,
+      query,
+      isPreview: seed.isPreview,
+      isMounted: true,
+      navigate: (url: string) => client?.navigate(url, true) ?? Promise.resolve(),
+      push: (url: string) => client?.navigate(url, true) ?? Promise.resolve(),
+      replace: (url: string) => client?.navigate(url, false, true) ?? Promise.resolve(),
+      reload: async () => {
+        globalThis.location?.reload();
+      },
+    }),
+    [pathname, query, seedParams, seed.domain, seed.isPreview, client],
+  );
+
+  const pageContextValue = React.useMemo<PageContextValue>(
+    () => ({
+      slug: seed.path || pathname,
+      path: pathname,
+      params: seedParams,
+      query,
+      frontmatter: seedFrontmatter,
+      headings: [],
+      mdxHeadings: [],
+    }),
+    [pathname, query, seedParams, seedFrontmatter, seed.path],
+  );
+
   return React.createElement(
     RouterContext.Provider,
-    { value: router ?? defaultRouter },
-    children,
+    { value: routerValue },
+    React.createElement(PageContextContext.Provider, { value: pageContextValue }, children),
   );
+}
+
+/**
+ * Provides the router (and, on the client, page) context. On the server it
+ * renders the static `router` snapshot verbatim so SSR output and the first
+ * client render match. On the client it delegates to `ReactiveRouterProvider`,
+ * whose `pathname`/`query` track `veryFrontRouter` — so `useRouter()` and
+ * `usePageContext()` re-render on client-side navigation.
+ */
+export function RouterProvider(props: RouterProviderProps): React.ReactElement {
+  if (isServerEnvironment()) {
+    return React.createElement(
+      RouterContext.Provider,
+      { value: props.router ?? defaultRouter },
+      props.children,
+    );
+  }
+  return React.createElement(ReactiveRouterProvider, props);
 }
 
 /** Reads the current router context. */

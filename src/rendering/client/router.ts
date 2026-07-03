@@ -65,6 +65,9 @@ export class VeryfrontRouter {
   private pageTransition: PageTransition;
   private viewportPrefetch: ViewportPrefetch;
 
+  /** React (and other) subscribers notified after every completed navigation. */
+  private listeners = new Set<() => void>();
+
   private handleClick: (event: MouseEvent) => void;
   private handlePopState: (event: PopStateEvent) => void;
   private handleMouseOver: (event: MouseEvent) => void;
@@ -108,6 +111,46 @@ export class VeryfrontRouter {
     this.spaMode = true;
   }
 
+  /**
+   * Subscribe to navigation changes. The listener fires after every completed
+   * navigation — full page loads, soft same-route (query-only) changes, and
+   * popstate. Returns an unsubscribe function. Defined as an arrow property so
+   * the reference is stable and correctly bound for `useSyncExternalStore`.
+   */
+  subscribe = (listener: () => void): () => void => {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  };
+
+  /**
+   * The current href (`pathname` + `search`) — the snapshot React reads through
+   * `useSyncExternalStore`. Bound arrow property for a stable reference.
+   */
+  getCurrentHref = (): string => {
+    const loc = globalThis.location;
+    return loc ? `${loc.pathname}${loc.search}` : "/";
+  };
+
+  private notify(): void {
+    for (const listener of this.listeners) {
+      try {
+        listener();
+      } catch (error) {
+        logger.warn("router subscriber threw", error);
+      }
+    }
+  }
+
+  private pathnameOf(url: string): string {
+    try {
+      return new URL(url, this.baseUrl).pathname;
+    } catch {
+      return (url.split("?")[0]?.split("#")[0]) || this.currentPath;
+    }
+  }
+
   private loadGlobalOptions(): Partial<RouterOptions> {
     try {
       const options = globalThis.__VERYFRONT_ROUTER_OPTS__;
@@ -147,13 +190,27 @@ export class VeryfrontRouter {
     if (pageData) this.pageLoader.setCache(this.currentPath, pageData);
   }
 
-  async navigate(url: string, pushState = true): Promise<void> {
+  async navigate(url: string, pushState = true, replaceState = false): Promise<void> {
     logger.debug(`Navigating to ${url} (SPA mode: ${this.spaMode})`);
+
+    const isSameRoute = this.pathnameOf(url) === this.pathnameOf(this.currentPath);
 
     this.navigationHandlers.saveScrollPosition(this.currentPath);
     this.options.onStart?.(url);
 
-    if (pushState) globalThis.history.pushState({}, "", url);
+    if (replaceState) globalThis.history.replaceState({}, "", url);
+    else if (pushState) globalThis.history.pushState({}, "", url);
+
+    if (isSameRoute) {
+      // Soft same-route navigation: a query-only (or hash-only) change on the
+      // current page. Update the URL and notify subscribers so `useRouter()` /
+      // `usePageContext()` re-render, without reloading or refetching the page.
+      this.currentPath = url;
+      this.notify();
+      this.options.onComplete?.(url);
+      this.options.onNavigate?.(url);
+      return;
+    }
 
     if (this.spaMode && this.spaNavigationHandler) {
       await this.loadSpaPage(url);
@@ -161,6 +218,7 @@ export class VeryfrontRouter {
       await this.loadPage(url);
     }
 
+    this.notify();
     this.options.onNavigate?.(url);
   }
 
