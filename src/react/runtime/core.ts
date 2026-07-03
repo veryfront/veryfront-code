@@ -37,25 +37,19 @@ export interface RouterProviderProps {
   /** React children rendered within the router context. */
   children: React.ReactNode;
   /**
-   * Router value to expose to descendants. On the server (and when no client
-   * router is mounted) this static snapshot is used verbatim. On the client it
-   * seeds `params`/`domain`/`isPreview` while `pathname`/`query` track the live
-   * URL.
+   * The router snapshot. On the server it is exposed verbatim. On the client it
+   * seeds `params`/`domain`/`isPreview` and the initial `pathname`/`query` — the
+   * server-render snapshot the first client render must match — after which
+   * `pathname`/`query` track the live URL through the navigation store.
+   *
+   * This is the single source for everything the URL and route match know;
+   * callers hand over one `RouterValue` rather than loose href/param fields.
    */
   router?: RouterValue;
   /**
-   * SSR href (`pathname` + `search`) used as the `useSyncExternalStore` server
-   * snapshot so the first client render matches the server. Falls back to the
-   * `router` snapshot, then the live location.
+   * Page frontmatter, exposed reactively through `usePageContext()`. This is the
+   * one page-level datum a `RouterValue` does not already carry.
    */
-  initialHref?: string;
-  /**
-   * Route params from the initial match. The URL alone cannot derive these, and
-   * they only change on a route navigation (which reloads with fresh data), so
-   * they are seeded rather than tracked.
-   */
-  params?: Record<string, string>;
-  /** Page frontmatter, exposed reactively through `usePageContext()`. */
   frontmatter?: Record<string, unknown>;
 }
 
@@ -170,29 +164,72 @@ function collectHead(data: Parameters<CollectHeadFn>[0]): void {
   collector?.(data);
 }
 
-/** Navigation surface `RouterProvider` subscribes to on the client. */
-interface ClientNavigationRouter {
-  subscribe: (listener: () => void) => () => void;
-  getCurrentHref: () => string;
-  navigate: (url: string, pushState?: boolean, replaceState?: boolean) => Promise<void>;
+/** How a navigation should affect the history stack. */
+type HistoryMode = "push" | "replace" | "none";
+
+/** Options accepted by the navigation store's `navigate`. */
+interface NavigateOptions {
+  history?: HistoryMode;
 }
 
 /**
- * The mounted client router (`veryFrontRouter`), or `null` on the server / before
- * it boots. Requires the reactive surface added in `rendering/client/router.ts`.
+ * The cross-bundle navigation store the client router and this React runtime
+ * share. This is an inline mirror of `rendering/client/navigation-store.ts`,
+ * kept here so the public React runtime bundle does not import the rendering
+ * layer. The shared `Symbol.for` key guarantees both bundles resolve the *same*
+ * runtime object regardless of which one evaluates first — so `RouterProvider`
+ * can subscribe synchronously on its first render, with no boot-order race.
  */
-function getClientRouter(): ClientNavigationRouter | null {
-  const candidate = (globalThis as { veryFrontRouter?: Partial<ClientNavigationRouter> })
-    .veryFrontRouter;
-  if (
-    candidate &&
-    typeof candidate.subscribe === "function" &&
-    typeof candidate.getCurrentHref === "function" &&
-    typeof candidate.navigate === "function"
-  ) {
-    return candidate as ClientNavigationRouter;
-  }
-  return null;
+interface NavigationStore {
+  subscribe(listener: () => void): () => void;
+  getHref(): string;
+  notify(): void;
+  navigate(href: string, options?: NavigateOptions): Promise<void>;
+  setNavigator(navigator: (href: string, options?: NavigateOptions) => Promise<void>): void;
+}
+
+const NAVIGATION_STORE_KEY = Symbol.for("veryfront.navigation.store.v1");
+
+function getNavigationStore(): NavigationStore {
+  const holder = globalThis as Record<symbol, unknown>;
+  const existing = holder[NAVIGATION_STORE_KEY] as NavigationStore | undefined;
+  if (existing) return existing;
+
+  const listeners = new Set<() => void>();
+  let navigator: ((href: string, options?: NavigateOptions) => Promise<void>) | null = null;
+
+  const store: NavigationStore = {
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    getHref() {
+      const loc = globalThis.location;
+      return loc ? `${loc.pathname}${loc.search}${loc.hash}` : "/";
+    },
+    notify() {
+      for (const listener of [...listeners]) {
+        try {
+          listener();
+        } catch {
+          // A subscriber threw; ignore it and continue notifying the others.
+        }
+      }
+    },
+    navigate(href, options) {
+      if (navigator) return navigator(href, options);
+      globalThis.location?.assign(href);
+      return Promise.resolve();
+    },
+    setNavigator(next) {
+      navigator = next;
+    },
+  };
+
+  holder[NAVIGATION_STORE_KEY] = store;
+  return store;
 }
 
 function hrefFromRouter(router: RouterValue | undefined): string | undefined {
@@ -215,31 +252,29 @@ function splitHref(href: string): { pathname: string; search: string } {
   };
 }
 
-const noopSubscribe = (): () => void => () => {};
-
 /**
  * Client-only reactive router/page provider. `pathname`/`query` track the live
- * URL through `veryFrontRouter`'s `useSyncExternalStore` surface; `params`/
- * `frontmatter`/`domain` are seeded from props. Provides both `RouterContext`
- * and `PageContext` so `useRouter()` and `usePageContext()` are reactive.
+ * URL through the shared navigation store's `useSyncExternalStore` surface;
+ * `params`/`frontmatter`/`domain` are seeded from props. Provides both
+ * `RouterContext` and `PageContext` so `useRouter()` and `usePageContext()` are
+ * reactive.
+ *
+ * The store is a stable singleton that exists on first access, so there is no
+ * "is the router mounted yet?" race: the subscription is live from the first
+ * render, and the router's navigations notify through the same object.
  */
 function ReactiveRouterProvider({
   children,
   router,
-  initialHref,
-  params,
   frontmatter,
 }: RouterProviderProps): React.ReactElement {
-  // Re-read the router on every render so a late-booting `veryFrontRouter` is
-  // picked up (the mount effect below forces one re-render if it wasn't ready).
-  const client = getClientRouter();
-  const seedHref = initialHref ?? hrefFromRouter(router) ?? "/";
-
-  const subscribe = client?.subscribe ?? noopSubscribe;
-  const getSnapshot = client?.getCurrentHref ?? (() => seedHref);
+  const store = getNavigationStore();
+  // The server-render snapshot is derived from the router itself, so the first
+  // client render matches the server exactly (both come from one `RouterValue`).
+  const seedHref = hrefFromRouter(router) ?? "/";
   const getServerSnapshot = React.useCallback(() => seedHref, [seedHref]);
 
-  const href = React.useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  const href = React.useSyncExternalStore(store.subscribe, store.getHref, getServerSnapshot);
   const { pathname, search } = splitHref(href);
 
   const query = React.useMemo(
@@ -247,18 +282,8 @@ function ReactiveRouterProvider({
     [search],
   );
 
-  // The router (`veryFrontRouter`) may boot after this first render. If it was
-  // not ready, force a single re-render so we subscribe once it is.
-  const [, forceUpdate] = React.useState(0);
-  React.useEffect(() => {
-    if (!client) {
-      const id = setTimeout(() => forceUpdate((n) => n + 1), 0);
-      return () => clearTimeout(id);
-    }
-  }, [client]);
-
   const seed = router ?? defaultRouter;
-  const seedParams = params ?? seed.params;
+  const seedParams = seed.params;
   const seedFrontmatter = frontmatter ?? {};
 
   const routerValue = React.useMemo<RouterValue>(
@@ -270,14 +295,14 @@ function ReactiveRouterProvider({
       query,
       isPreview: seed.isPreview,
       isMounted: true,
-      navigate: (url: string) => client?.navigate(url, true) ?? Promise.resolve(),
-      push: (url: string) => client?.navigate(url, true) ?? Promise.resolve(),
-      replace: (url: string) => client?.navigate(url, false, true) ?? Promise.resolve(),
+      navigate: (url: string) => store.navigate(url, { history: "push" }),
+      push: (url: string) => store.navigate(url, { history: "push" }),
+      replace: (url: string) => store.navigate(url, { history: "replace" }),
       reload: async () => {
         globalThis.location?.reload();
       },
     }),
-    [pathname, query, seedParams, seed.domain, seed.isPreview, client],
+    [pathname, query, seedParams, seed.domain, seed.isPreview, store],
   );
 
   const pageContextValue = React.useMemo<PageContextValue>(
@@ -318,9 +343,81 @@ export function RouterProvider(props: RouterProviderProps): React.ReactElement {
   return React.createElement(ReactiveRouterProvider, props);
 }
 
-/** Reads the current router context. */
+/** Options for {@link wrapForHydration}. */
+export interface HydrationWrapOptions {
+  /** Route params from the initial match. */
+  params?: Record<string, string>;
+  /** Page frontmatter, exposed reactively through `usePageContext()`. */
+  frontmatter?: Record<string, unknown>;
+}
+
+/**
+ * Wraps a hydrated client component in `RouterProvider`, seeded from the live
+ * location plus the initial route match, as one `RouterValue`.
+ *
+ * The RSC hydration path calls this through a runtime import of
+ * `veryfront/router`, so it runs under the app's React instance — the same one
+ * the hydrated component uses, and the same `RouterProvider` and `React` this
+ * module already reference. That is why the caller does not (and must not) pass
+ * a `React` across the module boundary: the wrapping happens here, inside the
+ * module that owns React.
+ */
+export function wrapForHydration(
+  child: React.ReactNode,
+  options: HydrationWrapOptions = {},
+): React.ReactElement {
+  const loc = globalThis.location;
+  const pathname = loc?.pathname ?? "/";
+  const query = loc
+    ? (Object.fromEntries(new URLSearchParams(loc.search)) as Record<string, string>)
+    : {};
+  const router: RouterValue = {
+    ...defaultRouter,
+    domain: loc?.hostname ?? "",
+    path: pathname,
+    pathname,
+    params: options.params ?? {},
+    query,
+  };
+  return React.createElement(RouterProvider, {
+    router,
+    frontmatter: options.frontmatter,
+    children: child,
+  });
+}
+
+/**
+ * Reads the full router context. Kept as the backward-compatible surface; new
+ * code should prefer the granular {@link usePathname} / {@link useSearchParams} /
+ * {@link useParams} hooks, which re-render only on the slice they read.
+ */
 export function useRouter(): RouterValue {
   return React.useContext(RouterContext);
+}
+
+/** The current URL pathname. Reactive across client-side navigation. */
+export function usePathname(): string {
+  return React.useContext(RouterContext).pathname;
+}
+
+/** The current route params from the initial match. */
+export function useParams(): Record<string, string> {
+  return React.useContext(RouterContext).params;
+}
+
+/**
+ * The current query as a `URLSearchParams` — preserving repeated keys, unlike
+ * the flattened `useRouter().query`. Reads the live URL for full fidelity and is
+ * reactive through the router context; falls back to the router snapshot's query
+ * during SSR, where there is no live location.
+ */
+export function useSearchParams(): URLSearchParams {
+  const { query } = React.useContext(RouterContext);
+  const search = globalThis.location?.search;
+  return React.useMemo(
+    () => new URLSearchParams(search || new URLSearchParams(query).toString()),
+    [search, query],
+  );
 }
 
 /** Renders an anchor element annotated for Veryfront prefetch handling. */

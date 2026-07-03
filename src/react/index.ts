@@ -93,7 +93,10 @@ export {
   RouterProvider,
   type RouterProviderProps,
   type RouterValue,
+  useParams,
+  usePathname,
   useRouter,
+  useSearchParams,
 } from "./router/index.tsx";
 
 export { GoogleFonts } from "./fonts/index.ts";

@@ -175,7 +175,6 @@ async function hydratePageComponent(
       ? createPageHydrationRoot(bodyChildren, document.body)
       : root;
     const component = await wrapWithRouterProvider(
-      React,
       React.createElement(Component, {}),
       readHydrationData(document),
     );

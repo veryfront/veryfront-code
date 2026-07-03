@@ -201,6 +201,34 @@ export default function LoginForm() {
 }
 ```
 
+### Reading the live location
+
+`useRouter()` returns the full router value and stays backward compatible. For
+new code, prefer the granular hooks — each re-renders only when the slice it
+reads changes, and they update reactively on client-side navigation:
+
+```tsx
+"use client";
+
+import { useParams, usePathname, useSearchParams } from "veryfront/router";
+
+export default function Filters() {
+  const pathname = usePathname(); // "/products"
+  const params = useParams(); // { category: "shoes" }
+  const search = useSearchParams(); // URLSearchParams — preserves repeated keys
+  return <p>{pathname} · sort: {search.get("sort") ?? "none"}</p>;
+}
+```
+
+`useSearchParams()` returns a `URLSearchParams`, so repeated keys
+(`?tag=a&tag=b`) survive via `search.getAll("tag")`.
+
+By default a query-only navigation refetches the page so server data that
+depends on the query is never shown stale. If a page's query is purely
+client-side state (tabs, filters), opt into the soft fast path — updating the
+URL and re-rendering without a refetch — with the router's `shouldRevalidate`
+option.
+
 ## Verify it worked
 
 Start the dev server and request each page you added:

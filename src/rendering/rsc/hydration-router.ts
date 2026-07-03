@@ -4,8 +4,9 @@
  *
  * The provider is loaded via a runtime `import(specifier)` (not a static import)
  * so the bundler leaves it alone and it resolves through the page's import map —
- * the same React instance the hydrated component uses. Wrapping under a
- * different React copy would break hooks ("Invalid hook call").
+ * the same React instance the hydrated component uses. The wrapping itself is
+ * done by the module's own `wrapForHydration`, so no `React` is threaded across
+ * the boundary (which is what forced the old `any`-typed `ReactLike` shim).
  */
 
 import {
@@ -13,17 +14,11 @@ import {
   getHydrationRouterImportSpecifier,
 } from "./client-module-strategy.ts";
 
-interface ReactLike {
-  // Matches React's `createElement` loosely enough that either the statically
-  // imported React or the dynamically imported one satisfies it.
-  // deno-lint-ignore no-explicit-any
-  createElement: (type: any, props?: any, ...children: any[]) => any;
-}
-
-function currentHref(): string {
-  const loc = globalThis.location;
-  return loc ? `${loc.pathname}${loc.search}` : "/";
-}
+/** Signature of `veryfront/router`'s `wrapForHydration` export. */
+type WrapForHydration = <T>(
+  child: T,
+  options: { params?: Record<string, string>; frontmatter?: Record<string, unknown> },
+) => T;
 
 function normalizeParams(
   params: Record<string, string | string[]> | undefined,
@@ -42,7 +37,6 @@ function normalizeParams(
  * the import map does not own `veryfront/router`), so hydration still proceeds.
  */
 export async function wrapWithRouterProvider<T>(
-  React: ReactLike,
   child: T,
   hydrationData: ClientRuntimeHydrationData | null,
   doc: Document = document,
@@ -52,18 +46,13 @@ export async function wrapWithRouterProvider<T>(
     if (!specifier) return child;
 
     const mod = await import(specifier);
-    const RouterProvider = (mod as { RouterProvider?: unknown }).RouterProvider;
-    if (typeof RouterProvider !== "function") return child;
+    const wrap = (mod as { wrapForHydration?: unknown }).wrapForHydration;
+    if (typeof wrap !== "function") return child;
 
-    return React.createElement(
-      RouterProvider,
-      {
-        initialHref: currentHref(),
-        params: normalizeParams(hydrationData?.params),
-        frontmatter: hydrationData?.frontmatter ?? {},
-      },
-      child,
-    ) as T;
+    return (wrap as WrapForHydration)(child, {
+      params: normalizeParams(hydrationData?.params),
+      frontmatter: hydrationData?.frontmatter ?? {},
+    });
   } catch (error) {
     console.debug?.("[RSC] router provider wrap failed", error);
     return child;

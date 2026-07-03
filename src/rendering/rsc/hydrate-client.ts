@@ -179,7 +179,6 @@ export async function hydrateAllClientBoundaries(doc: Document = document): Prom
     try {
       const root: ReactRoot = createRoot(el);
       const tree = await wrapWithRouterProvider(
-        React,
         React.createElement(Cmp as React.FC, {}),
         hydrationData,
         doc,

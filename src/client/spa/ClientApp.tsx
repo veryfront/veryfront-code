@@ -177,9 +177,10 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
 
   const normalizedParams = useMemo(() => normalizeParams(state.params), [state.params]);
 
-  // Seed snapshot for `RouterProvider`. On the client the provider derives the
-  // live `pathname`/`query` from `veryFrontRouter`; `params`/`domain`/`isPreview`
-  // and the navigate delegates are seeded from here.
+  // Seed snapshot for `RouterProvider` — one `RouterValue` carrying everything
+  // the route match knows. On the client the provider derives the live
+  // `pathname`/`query` from the navigation store; `params`/`domain`/`isPreview`
+  // are seeded from here.
   const routerValue: Router = {
     domain: getDomain(),
     path: state.currentPath,
@@ -202,10 +203,6 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
     },
   };
 
-  const initialHref = globalThis.location
-    ? `${globalThis.location.pathname}${globalThis.location.search}`
-    : state.currentPath;
-
   const handleRetry = useCallback((): void => {
     globalThis.location.reload();
   }, []);
@@ -224,12 +221,7 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
   }
 
   return (
-    <RouterProvider
-      router={routerValue}
-      initialHref={initialHref}
-      params={normalizedParams}
-      frontmatter={state.frontmatter}
-    >
+    <RouterProvider router={routerValue} frontmatter={state.frontmatter}>
       <div
         className={`veryfront-app ${state.isNavigating ? "veryfront-navigating" : ""}`}
         data-navigating={state.isNavigating}
