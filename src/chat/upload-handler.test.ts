@@ -1,4 +1,4 @@
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withTempDir } from "#veryfront/testing";
 import { LocalBlobStorage } from "#veryfront/workflow/blob/local-storage.ts";
@@ -171,14 +171,52 @@ describe("chat/upload-handler", () => {
         assertEquals(res.status, 404, "a missing blob should be a 404");
       }));
 
-    it("returns 400 when no id is provided", () =>
+    it("lists the adapter's stored files (newest first) when no id is given", () =>
       withTempDir(async (dir) => {
-        const { GET } = createChatUploadHandler({
+        const { POST, GET } = createChatUploadHandler({
           storage: new LocalBlobStorage(dir),
           authorize: () => true,
         });
+        await (await POST(postFile(txt("one")))).json();
+        await (await POST(postFile(txt("two")))).json();
+
         const res = await GET(new Request("http://localhost:3000/api/uploads"));
-        assertEquals(res.status, 400, "GET without an id is a client error");
+        assertEquals(res.status, 200, "GET without an id lists stored files");
+        const body = await res.json() as {
+          items: { id: string; url: string; name: string; size: number; mediaType: string }[];
+        };
+        assertEquals(body.items.length, 2, "both stored files are listed");
+        for (const item of body.items) {
+          assertEquals(typeof item.id, "string");
+          assertStringIncludes(item.url, "/api/uploads?id=", "serves via same-origin GET url");
+          assertEquals(item.mediaType, "text/plain", "media type is reported");
+          assertEquals(item.size, 3, "byte size is reported");
+        }
+      }));
+
+    it("returns 501 with an empty list when the backend cannot list", () =>
+      withTempDir(async () => {
+        // A minimal store without `list` — feature detection must not throw.
+        const store: BlobStorage = {
+          put: () =>
+            Promise.resolve({
+              __kind: "blob",
+              id: "x",
+              size: 0,
+              mimeType: "text/plain",
+              createdAt: new Date(0),
+            }),
+          getStream: () => Promise.resolve(null),
+          getText: () => Promise.resolve(null),
+          getBytes: () => Promise.resolve(null),
+          delete: () => Promise.resolve(),
+          exists: () => Promise.resolve(false),
+          stat: () => Promise.resolve(null),
+        };
+        const { GET } = createChatUploadHandler({ storage: store, authorize: () => true });
+        const res = await GET(new Request("http://localhost:3000/api/uploads"));
+        assertEquals(res.status, 501, "no-list backend reports unsupported");
+        assertEquals((await res.json()).items.length, 0, "and an empty list");
       }));
   });
 

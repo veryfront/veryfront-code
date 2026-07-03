@@ -298,6 +298,14 @@ export interface ChatProps {
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
   ) => void;
   onSubmit?: (e?: React.FormEvent) => void | Promise<void>;
+  /**
+   * Send a message (text + optional file parts). In controlled mode `<Chat>`
+   * uses this to fold self-managed attachments into the submitted turn — spread
+   * a `useChat()` result (`{...chat}`) and uploads work with no extra wiring.
+   */
+  sendMessage?: (
+    message: { text: string; files?: ChatFilePart[] },
+  ) => void | Promise<void>;
   stop?: () => void;
   reload?: () => void;
   setInput?: (value: string) => void;
@@ -404,6 +412,7 @@ const ControlledChat = React.forwardRef<HTMLDivElement, ChatProps>(
       input = "",
       onChange = () => {},
       onSubmit,
+      sendMessage,
       stop,
       reload,
       enableVoice = false,
@@ -433,6 +442,7 @@ const ControlledChat = React.forwardRef<HTMLDivElement, ChatProps>(
       showSources = false,
       onSourceClick,
       enableAttachments = true,
+      uploadApi,
       onAttach,
       onSelectAttachment,
       onDrop,
@@ -475,46 +485,49 @@ const ControlledChat = React.forwardRef<HTMLDivElement, ChatProps>(
       attachments !== undefined ||
       onRemoveAttachment !== undefined ||
       onSelectAttachment !== undefined;
-    const [internalAttachments, setInternalAttachments] = React.useState<
-      AttachmentInfo[]
-    >([]);
-    const attachIdRef = React.useRef(0);
-    const defaultAttach = React.useCallback((files: FileList) => {
-      const mapped = Array.from(files).map((file) => ({
-        id: `chat-attachment-${attachIdRef.current++}`,
-        name: file.name,
-        size: file.size,
-        type: file.type,
-      }));
-      setInternalAttachments((current) => [...current, ...mapped]);
-    }, []);
-    const defaultRemove = React.useCallback((id: string) => {
-      setInternalAttachments((current) => current.filter((a) => a.id !== id));
-    }, []);
+    // When the caller wires no attachment props, `<Chat>` self-manages pending
+    // files through `useUpload` — the SAME hook app-mode uses — so drag/`+`
+    // uploads get an instant thumbnail (`preview`) and a resolved `url` (base64
+    // `data:` by default, or a durable POST when `uploadApi` is set). The old
+    // path only recorded name/size, so pills had no preview and never sent.
+    const upload = useUpload({ api: uploadApi });
+    const manageAttachments = enableAttachments && !isAttachControlled;
 
     const effectiveOnAttach = !enableAttachments
       ? undefined
       : isAttachControlled
       ? onAttach
-      : defaultAttach;
+      : upload.upload;
     const effectiveOnDrop = !enableAttachments
       ? undefined
       : isAttachControlled
       ? onDrop
-      : defaultAttach;
-    const effectiveAttachments = isAttachControlled ? attachments : internalAttachments;
+      : upload.upload;
+    const effectiveAttachments = isAttachControlled ? attachments : upload.attachments;
     const effectiveOnRemove = !enableAttachments
       ? undefined
       : isAttachControlled
       ? onRemoveAttachment
-      : defaultRemove;
+      : upload.remove;
 
-    // Clear pending files on submit. App mode already clears its own upload
-    // state; this covers the self-managed (uncontrolled attachment) path.
+    // Self-managed attachments must ride along on submit: the caller's
+    // `onSubmit` only carries the input text, so fold the uploaded files into
+    // `sendMessage({ text, files })` (then clear). Falls back to `onSubmit` for
+    // a text-only turn, when the caller controls attachments, or when no
+    // `sendMessage` is available.
     const handleSubmit = React.useCallback((e?: React.FormEvent) => {
+      if (manageAttachments && sendMessage) {
+        const files = attachmentsToFileParts(upload.attachments);
+        if (files.length > 0) {
+          e?.preventDefault();
+          void sendMessage({ text: input.trim(), files });
+          setInput?.("");
+          upload.clear();
+          return;
+        }
+      }
       onSubmit?.(e);
-      if (!isAttachControlled) setInternalAttachments([]);
-    }, [onSubmit, isAttachControlled]);
+    }, [manageAttachments, sendMessage, upload, input, setInput, onSubmit]);
 
     // --- Tab state ---
     const [internalTab, setInternalTab] = React.useState<ChatTab>("chat");
@@ -546,7 +559,7 @@ const ControlledChat = React.forwardRef<HTMLDivElement, ChatProps>(
         isLoading={isLoading}
         error={error}
         setInput={setInput}
-        onSubmit={onSubmit}
+        onSubmit={handleSubmit}
         onStop={stop}
         onReload={reload}
         model={model}
@@ -709,6 +722,7 @@ function attachmentsToFileParts(items: AttachmentInfo[]): ChatFilePart[] {
       mediaType: a.type ?? "application/octet-stream",
       url: a.url,
       filename: a.name,
+      ...(a.size != null ? { size: a.size } : {}),
     }));
 }
 

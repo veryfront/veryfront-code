@@ -77,7 +77,7 @@ function getTypeLabel(
 ): string {
   if (attachment.status === "uploading") return "Uploading";
   if (attachment.size != null) return formatSize(attachment.size);
-  return mediaType || ext.toUpperCase() || "File";
+  return ext ? ext.toUpperCase() : (mediaType || "File");
 }
 
 /** Secondary line for the current lifecycle state. */

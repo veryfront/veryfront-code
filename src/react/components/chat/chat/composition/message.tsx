@@ -359,7 +359,9 @@ function renderAnswerPart(
             name: group.file.filename ?? "Attachment",
             type: group.file.mediaType,
             url: group.file.url,
-            state: "uploaded",
+            // No lifecycle `state`: this is a sent, read-only attachment, so
+            // the pill shows the file type/size rather than an "Uploaded" badge.
+            ...(group.file.size != null ? { size: group.file.size } : {}),
             preview: isImage ? group.file.url : undefined,
           }}
         />
@@ -427,7 +429,8 @@ function MessageContent({
                   name: file.filename ?? "Attachment",
                   type: file.mediaType,
                   url: file.url,
-                  state: "uploaded",
+                  // Read-only sent attachment → show type/size, not "Uploaded".
+                  ...(file.size != null ? { size: file.size } : {}),
                   preview: file.mediaType.startsWith("image/") ? file.url : undefined,
                 }}
               />

@@ -32,6 +32,8 @@ export interface ChatFilePart {
   url: string;
   /** Original filename shown to the user. */
   filename?: string;
+  /** File size in bytes, when known — shown in the read-only message pill. */
+  size?: number;
 }
 
 /** State for chat tool. */
