@@ -219,12 +219,17 @@ export {
 export {
   type Conversation,
   type ConversationPatch,
+  ConversationsContextProvider,
+  ConversationsProvider,
+  type ConversationsProviderProps,
   type ConversationStore,
   type ConversationSummary,
   localConversationStore,
   memoryConversationStore,
   type StorageLike,
   useConversations,
+  useConversationsContext,
+  useConversationsContextOptional,
   type UseConversationsOptions,
   type UseConversationsResult,
 } from "#veryfront/react/components/chat/chat.tsx";

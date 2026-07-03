@@ -202,6 +202,13 @@ export {
   type UseConversationsOptions,
   type UseConversationsResult,
 } from "./hooks/use-conversations.ts";
+export {
+  ConversationsContextProvider,
+  ConversationsProvider,
+  type ConversationsProviderProps,
+  useConversationsContext,
+  useConversationsContextOptional,
+} from "./contexts/conversations-context.tsx";
 
 // Re-exports — conversation persistence adapters
 export {
