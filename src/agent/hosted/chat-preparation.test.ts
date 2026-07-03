@@ -724,7 +724,12 @@ Deno.test("prepareHostedChatRuntimeMessages refreshes uploaded file URLs through
   const requestedUrls: string[] = [];
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (input, _init): Promise<Response> => {
-    requestedUrls.push(input.toString());
+    const url = input.toString();
+    requestedUrls.push(url);
+    if (url === "https://signed.example.com/notes.txt") {
+      return Promise.resolve(new Response("Remember Order #4587.", { status: 200 }));
+    }
+
     return Promise.resolve(
       new Response(JSON.stringify({ signed_url: "https://signed.example.com/notes.txt" }), {
         status: 200,
@@ -756,12 +761,21 @@ Deno.test("prepareHostedChatRuntimeMessages refreshes uploaded file URLs through
 
     assertEquals(requestedUrls, [
       "https://api.example.com/projects/project-1/uploads/upload-1/url",
+      "https://signed.example.com/notes.txt",
     ]);
     assertEquals(
       messages[0]?.parts.some((part) =>
         isRuntimeFilePart(part) &&
         part.url === "https://signed.example.com/notes.txt" &&
         part.mediaType === "text/plain"
+      ),
+      true,
+    );
+    assertEquals(
+      messages[0]?.parts.some((part) =>
+        part.type === "text" &&
+        part.text.includes('<file_content name="notes.txt" type="text/plain">') &&
+        part.text.includes("Remember Order #4587.")
       ),
       true,
     );

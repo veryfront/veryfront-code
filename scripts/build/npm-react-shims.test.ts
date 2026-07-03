@@ -61,6 +61,39 @@ Deno.test("normalizeEsmShReactNpmShims rewrites React ecosystem esm.sh shims to 
   }
 });
 
+Deno.test("normalizeEsmShReactNpmShims rewrites React ecosystem esm.sh declaration shims to npm package exports", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    await Deno.mkdir(`${root}/react@19.2.4`);
+    await Deno.mkdir(`${root}/react-dom@19.2.4`);
+    await Deno.writeTextFile(`${root}/react@19.2.4.d.ts`, "export {};\n");
+    await Deno.writeTextFile(
+      `${root}/react@19.2.4/jsx-runtime.d.ts`,
+      "export {};\n",
+    );
+    await Deno.writeTextFile(
+      `${root}/react-dom@19.2.4/client.d.ts`,
+      "export {};\n",
+    );
+
+    assertEquals(normalizeEsmShReactNpmShims(root), 3);
+    assertEquals(
+      await Deno.readTextFile(`${root}/react@19.2.4.d.ts`),
+      '/* npm package shim for esm.sh react@19.2.4.d.ts */\nexport * from "react";\nexport { default } from "react";\n',
+    );
+    assertEquals(
+      await Deno.readTextFile(`${root}/react@19.2.4/jsx-runtime.d.ts`),
+      '/* npm package shim for esm.sh react@19.2.4/jsx-runtime.d.ts */\nexport * from "react/jsx-runtime";\nexport { default } from "react/jsx-runtime";\n',
+    );
+    assertEquals(
+      await Deno.readTextFile(`${root}/react-dom@19.2.4/client.d.ts`),
+      '/* npm package shim for esm.sh react-dom@19.2.4/client.d.ts */\nexport * from "react-dom/client";\nexport { default } from "react-dom/client";\n',
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("normalizeEsmShReactNpmShims rejects unhandled React internal imports", async () => {
   const root = await Deno.makeTempDir();
   try {

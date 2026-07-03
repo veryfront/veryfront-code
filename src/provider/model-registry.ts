@@ -36,6 +36,20 @@ const manager = new ProjectScopedRegistryManager<ModelProviderFactory>(
 );
 let autoInitialized = false;
 
+function isOpenAIBaseURL(baseURL: string | undefined): boolean {
+  if (!baseURL) return true;
+  try {
+    const hostname = new URL(baseURL).hostname.toLowerCase();
+    return hostname === "api.openai.com" || hostname.endsWith(".api.openai.com");
+  } catch {
+    return false;
+  }
+}
+
+function getOpenAIEnvProviderName(baseURL: string | undefined): "openai" | "openai-compatible" {
+  return isOpenAIBaseURL(baseURL) ? "openai" : "openai-compatible";
+}
+
 /**
  * Register a custom model provider factory for the current project.
  *
@@ -87,7 +101,7 @@ function autoInitializeFromEnv(): void {
         return provider.createModel(id, {
           credential: config.apiKey,
           baseURL: config.baseURL,
-          providerName: "openai-compatible",
+          providerName: getOpenAIEnvProviderName(config.baseURL),
         });
       }
       throw toError(createError({

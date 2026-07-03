@@ -5,7 +5,9 @@ import {
   convertProviderMessagesToAgentRuntimeMessages,
 } from "./message-adapter.ts";
 import {
+  inlineRuntimeMessageFileContents,
   resolveRuntimeMessageFileUrls,
+  type RuntimeFileContentFetcher,
   type RuntimeFileUrlResolver,
 } from "./message-file-url-refresh.ts";
 
@@ -17,6 +19,7 @@ export type PrepareAgentRuntimeMessagesFromUiMessagesOptions = {
   messages: readonly ChatUiMessage[];
   emptyConversationPrompt?: string;
   resolveFileUrl?: RuntimeFileUrlResolver;
+  fetchFileContent?: RuntimeFileContentFetcher;
   providerOwnedToolNames?: readonly string[];
 };
 
@@ -36,9 +39,13 @@ export async function prepareAgentRuntimeMessagesFromUiMessages(
   const refreshedMessages = options.resolveFileUrl
     ? await resolveRuntimeMessageFileUrls(options.messages, options.resolveFileUrl)
     : [...options.messages];
+  const messagesWithFileContent = await inlineRuntimeMessageFileContents(
+    refreshedMessages,
+    options.fetchFileContent,
+  );
 
   return convertProviderMessagesToAgentRuntimeMessages(
-    prepareProviderModelMessagesFromUiMessages(refreshedMessages, {
+    prepareProviderModelMessagesFromUiMessages(messagesWithFileContent, {
       providerOwnedToolNames: options.providerOwnedToolNames,
     }),
   );

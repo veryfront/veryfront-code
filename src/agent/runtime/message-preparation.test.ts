@@ -58,6 +58,7 @@ Deno.test("prepareAgentRuntimeMessagesFromUiMessages preserves source message id
 
 Deno.test("prepareAgentRuntimeMessagesFromUiMessages refreshes upload file URLs before conversion", async () => {
   const resolvedUploadIds: string[] = [];
+  const fetchedUrls: string[] = [];
   const messages = await prepareAgentRuntimeMessagesFromUiMessages({
     messages: [
       userMessage([
@@ -75,9 +76,14 @@ Deno.test("prepareAgentRuntimeMessagesFromUiMessages refreshes upload file URLs 
       resolvedUploadIds.push(uploadId);
       return "https://signed.example.com/file.txt";
     },
+    fetchFileContent: async ({ url }) => {
+      fetchedUrls.push(url);
+      return "Billing note: Order #4587 needs a refund.";
+    },
   });
 
   assertEquals(resolvedUploadIds, ["upload-1"]);
+  assertEquals(fetchedUrls, ["https://signed.example.com/file.txt"]);
   const parts = messages[0]?.parts ?? [];
   assertEquals(
     parts.some((part) =>
@@ -92,10 +98,36 @@ Deno.test("prepareAgentRuntimeMessagesFromUiMessages refreshes upload file URLs 
   const text = parts.flatMap((part) => part.type === "text" && "text" in part ? [part.text] : [])
     .join("\n");
   assertStringIncludes(text, "Use these files.");
+  assertStringIncludes(text, "Order #4587");
   assertStringIncludes(text, "<uploaded_files>");
   assertStringIncludes(text, "notes.txt");
   assertStringIncludes(text, "upload-1");
   assertStringIncludes(text, "https://signed.example.com/file.txt");
+});
+
+Deno.test("prepareAgentRuntimeMessagesFromUiMessages decodes text data URL attachments into prompt content", async () => {
+  const content = btoa("Inline note: Order #4587 was shipped twice.");
+  const messages = await prepareAgentRuntimeMessagesFromUiMessages({
+    messages: [
+      userMessage([
+        { type: "text", text: "Summarize the attachment." },
+        {
+          type: "file",
+          mediaType: "text/plain",
+          filename: "billing-note.txt",
+          url: `data:text/plain;base64,${content}`,
+        },
+      ]),
+    ],
+  });
+
+  const text = (messages[0]?.parts ?? [])
+    .flatMap((part) => part.type === "text" && "text" in part ? [part.text] : [])
+    .join("\n");
+
+  assertStringIncludes(text, "Summarize the attachment.");
+  assertStringIncludes(text, "Order #4587");
+  assertStringIncludes(text, "billing-note.txt");
 });
 
 Deno.test("prepareAgentRuntimeMessagesFromUiMessages preserves persisted uploaded image parts for vision models", async () => {

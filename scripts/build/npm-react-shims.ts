@@ -8,7 +8,7 @@ export function normalizeEsmShReactNpmShims(root: string): number {
   for (const entry of Deno.readDirSync(root)) {
     if (
       entry.isFile && entry.name.startsWith(REACT_ROOT_PREFIX) &&
-      entry.name.endsWith(".js")
+      isShimFile(entry.name)
     ) {
       patchedCount += writeNpmShim(
         `${root}/${entry.name}`,
@@ -20,7 +20,7 @@ export function normalizeEsmShReactNpmShims(root: string): number {
 
     if (
       entry.isFile && entry.name.startsWith(REACT_DOM_ROOT_PREFIX) &&
-      entry.name.endsWith(".js")
+      isShimFile(entry.name)
     ) {
       // The chat UI portals import `react-dom` (createPortal), so dnt now
       // emits a top-level react-dom root file too — shim it like react's.
@@ -34,7 +34,7 @@ export function normalizeEsmShReactNpmShims(root: string): number {
 
     if (
       entry.isFile && entry.name.startsWith(SCHEDULER_ROOT_PREFIX) &&
-      entry.name.endsWith(".js")
+      isShimFile(entry.name)
     ) {
       patchedCount += writeNpmShim(
         `${root}/${entry.name}`,
@@ -54,9 +54,19 @@ export function normalizeEsmShReactNpmShims(root: string): number {
         `${entry.name}/jsx-runtime.js`,
       );
       patchedCount += writeNpmShimIfExists(
+        `${packageRoot}/jsx-runtime.d.ts`,
+        "react/jsx-runtime",
+        `${entry.name}/jsx-runtime.d.ts`,
+      );
+      patchedCount += writeNpmShimIfExists(
         `${packageRoot}/jsx-dev-runtime.js`,
         "react/jsx-dev-runtime",
         `${entry.name}/jsx-dev-runtime.js`,
+      );
+      patchedCount += writeNpmShimIfExists(
+        `${packageRoot}/jsx-dev-runtime.d.ts`,
+        "react/jsx-dev-runtime",
+        `${entry.name}/jsx-dev-runtime.d.ts`,
       );
       continue;
     }
@@ -69,15 +79,29 @@ export function normalizeEsmShReactNpmShims(root: string): number {
         `${entry.name}/client.js`,
       );
       patchedCount += writeNpmShimIfExists(
+        `${packageRoot}/client.d.ts`,
+        "react-dom/client",
+        `${entry.name}/client.d.ts`,
+      );
+      patchedCount += writeNpmShimIfExists(
         `${packageRoot}/server.js`,
         "react-dom/server",
         `${entry.name}/server.js`,
+      );
+      patchedCount += writeNpmShimIfExists(
+        `${packageRoot}/server.d.ts`,
+        "react-dom/server",
+        `${entry.name}/server.d.ts`,
       );
     }
   }
 
   assertNoReactInternalPackageImports(root);
   return patchedCount;
+}
+
+function isShimFile(name: string): boolean {
+  return name.endsWith(".js") || name.endsWith(".d.ts");
 }
 
 function writeNpmShimIfExists(
