@@ -10,15 +10,13 @@
  *
  * export default function Page() {
  *   const chat = useChat();
- *   return (
- *     <Chat
- *       messages={chat.messages}
- *       input={chat.input}
- *       onChange={chat.handleInputChange}
- *       onSubmit={chat.handleSubmit}
- *     />
- *   );
+ *   return <Chat chat={chat} />;
  * }
+ * ```
+ *
+ * @example App mode (black box — no wiring)
+ * ```tsx
+ * <Chat agentId="support" api="/api/ag-ui" />
  * ```
  *
  * @example Custom layout (composition)
@@ -55,6 +53,7 @@ import type {
   ChatMessage,
   ChatToolPart,
   InferenceMode,
+  UseChatResult,
 } from "#veryfront/agent/react";
 import { type ChatTheme, defaultChatTheme, mergeThemes } from "../theme.ts";
 import type { ModelOption } from "../model-selector.tsx";
@@ -309,6 +308,25 @@ export {
 // ChatProps — Preset interface
 // ---------------------------------------------------------------------------
 
+/**
+ * Agent identity + agent-driven content for `<Chat>`. Collapses the old
+ * `agent` / `models` / suggestion props into one object. In app mode
+ * (`agentId`) this is derived from agent metadata automatically; pass it
+ * yourself to drive a controlled chat.
+ */
+export interface ChatAgentInfo {
+  /** Assistant display name for message headers + the idle hero. */
+  name?: string;
+  /** Assistant avatar. */
+  avatarUrl?: string;
+  /** Blurb under the name in the idle hero. */
+  description?: string;
+  /** Prompt suggestions shown on an empty thread. */
+  suggestions?: string[];
+  /** Model options for the composer's model selector. */
+  models?: ModelOption[];
+}
+
 /** Props accepted by chat. */
 export interface ChatProps {
   // --- App mode (uncontrolled) ---------------------------------------------
@@ -337,32 +355,55 @@ export interface ChatProps {
   onUpdate?: (conversation: Conversation) => void;
 
   // --- Controlled mode ------------------------------------------------------
-  // Pass `messages` + `input` to drive `<Chat>` yourself (back-compat).
+  /**
+   * Drive `<Chat>` from a `useChat()` session you own: `<Chat chat={useChat()}>`.
+   * Supersedes spreading the individual `messages`/`input`/`onChange`/… props —
+   * pass the whole result object and everything wires up (input, submit,
+   * attachments, model, branches).
+   */
+  chat?: UseChatResult;
+
+  // The individual session props below are the legacy flat controlled API,
+  // kept working for one release. Prefer `chat={useChat()}`.
+  /** @deprecated Pass `chat={useChat()}` instead. */
   messages?: ChatMessage[];
+  /** @deprecated Pass `chat={useChat()}` instead. */
   input?: string;
+  /** @deprecated Pass `chat={useChat()}` instead. */
   onChange?: (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
   ) => void;
+  /** @deprecated Pass `chat={useChat()}` instead. */
   onSubmit?: (e?: React.FormEvent) => void | Promise<void>;
   /**
-   * Send a message (text + optional file parts). In controlled mode `<Chat>`
-   * uses this to fold self-managed attachments into the submitted turn — spread
-   * a `useChat()` result (`{...chat}`) and uploads work with no extra wiring.
+   * Send a message (text + optional file parts). `<Chat>` uses this to fold
+   * self-managed attachments into the submitted turn.
+   * @deprecated Pass `chat={useChat()}` instead.
    */
   sendMessage?: (
     message: { text: string; files?: ChatFilePart[] },
   ) => void | Promise<void>;
+  /** @deprecated Pass `chat={useChat()}` instead. */
   stop?: () => void;
+  /** @deprecated Pass `chat={useChat()}` instead. */
   reload?: () => void;
+  /** @deprecated Pass `chat={useChat()}` instead. */
   setInput?: (value: string) => void;
+  /** @deprecated Pass `chat={useChat()}` instead. */
   isLoading?: boolean;
+  /** @deprecated Pass `chat={useChat()}` instead. */
   error?: Error | null;
   placeholder?: string;
   maxHeight?: string;
   className?: string;
   theme?: Partial<ChatTheme>;
   renderMessage?: (message: ChatMessage) => React.ReactNode;
+  /**
+   * @deprecated Tool cards render with the built-in `ToolCall` UI. Compose
+   * `<Chat.Root>` + a custom `Message` if you need bespoke tool rendering.
+   */
   renderTool?: (tool: ChatToolPart | ChatDynamicToolPart) => React.ReactNode;
+  /** Prompt suggestions for an empty thread. Also fillable via `agent.suggestions`. */
   suggestions?: string[];
   onSuggestionClick?: (suggestion: string) => void;
   /**
@@ -387,19 +428,27 @@ export interface ChatProps {
   /** Override the loading skeleton (defaults to `<Chat.Skeleton />`). */
   skeleton?: React.ReactNode;
   /**
-   * Agent identity fallback for assistant message headers when a message's own
-   * metadata omits `agentName` / `agentAvatarUrl`. In app mode (`agentId`) this
-   * is filled from agent metadata automatically.
+   * Agent identity + agent-driven content (name / avatar / description /
+   * suggestions / models). Backs assistant message headers and the idle hero;
+   * in app mode (`agentId`) it's filled from agent metadata automatically.
    */
-  agent?: { name?: string; avatarUrl?: string };
+  agent?: ChatAgentInfo;
   showScrollButton?: boolean;
   showMessageActions?: boolean;
+  /** @deprecated Provide model options via `agent={{ models }}`. */
   models?: ModelOption[];
+  /** @deprecated Part of the session — pass `chat={useChat()}`. */
   model?: string;
-  /** The actual resolved model used for avatar display. */
+  /**
+   * The actual resolved model used for avatar display.
+   * @deprecated Part of the session — pass `chat={useChat()}`.
+   */
   activeModel?: string;
+  /** @deprecated Part of the session — pass `chat={useChat()}`. */
   onModelChange?: (model: string) => void;
+  /** @deprecated Part of the session — pass `chat={useChat()}`. */
   inferenceMode?: InferenceMode;
+  /** @deprecated Sources render automatically when a message carries them. */
   showSources?: boolean;
   onSourceClick?: (source: Source, index: number) => void;
   /**
@@ -420,18 +469,25 @@ export interface ChatProps {
   attachAccept?: string;
   attachments?: AttachmentInfo[];
   onRemoveAttachment?: (id: string) => void;
+  /** @deprecated Export is available from the composer by default. */
   showExport?: boolean;
   onFeedback?: (messageId: string, feedback: FeedbackValue) => void;
+  /** @deprecated Part of the session — pass `chat={useChat()}`. */
   editMessage?: (messageId: string, newText: string) => Promise<void>;
+  /** @deprecated Part of the session — pass `chat={useChat()}`. */
   getBranches?: (messageId: string) => BranchInfo;
+  /** @deprecated Part of the session — pass `chat={useChat()}`. */
   switchBranch?: (messageId: string, branchIndex: number) => void;
+  /** @deprecated Reasoning steps render automatically when present. */
   showSteps?: boolean;
   showTabs?: boolean;
   activeTab?: ChatTab;
   onTabChange?: (tab: ChatTab) => void;
   uploads?: UploadedFile[];
   onRemoveUpload?: (id: string) => void;
+  /** @deprecated Removed — use prompt `suggestions` instead. */
   quickActions?: QuickAction[];
+  /** @deprecated Removed — use prompt `suggestions` instead. */
   onQuickAction?: (action: QuickAction) => void;
   enableVoice?: boolean;
   onVoice?: () => void;
@@ -989,23 +1045,59 @@ const ConversationBoundChat = React.forwardRef<HTMLDivElement, ChatProps>(
 ConversationBoundChat.displayName = "ConversationBoundChat";
 
 /**
+ * Normalize the consolidated `chat={useChat()}` / `agent={…}` objects onto the
+ * flat props `ControlledChat` consumes. The object API wins; the legacy flat
+ * props remain as a one-release fallback. Agent-driven content (`models`,
+ * `suggestions`) folds in too.
+ */
+function resolveControlledProps(props: ChatProps): ChatProps {
+  const { chat, agent } = props;
+  const merged: ChatProps = {
+    ...props,
+    models: agent?.models ?? props.models,
+    suggestions: props.suggestions ?? agent?.suggestions,
+  };
+  if (chat) {
+    merged.messages = chat.messages;
+    merged.input = chat.input;
+    merged.onChange = chat.onChange;
+    merged.onSubmit = props.onSubmit ?? chat.onSubmit;
+    merged.sendMessage = chat.sendMessage;
+    merged.stop = chat.stop;
+    merged.reload = () => void chat.reload();
+    merged.setInput = chat.setInput;
+    merged.isLoading = chat.isLoading;
+    merged.error = chat.error;
+    merged.model = chat.model;
+    merged.activeModel = chat.activeModel;
+    merged.onModelChange = chat.onModelChange;
+    merged.inferenceMode = chat.inferenceMode;
+    merged.editMessage = chat.editMessage;
+    merged.getBranches = chat.getBranches;
+    merged.switchBranch = chat.switchBranch;
+  }
+  return merged;
+}
+
+/**
  * Chat — batteries-included chat surface.
  *
- * - **App mode (uncontrolled):** omit `messages`/`input` and pass `agentId` +
+ * - **App mode (uncontrolled):** omit `chat`/`messages` and pass `agentId` +
  *   `api`; `<Chat>` wires `useChat` + `useAgentMetadata` internally. Inside a
  *   `ConversationsProvider` it also binds to the active conversation.
- * - **Controlled mode:** pass `messages` + `input` to drive it yourself.
+ * - **Controlled mode:** pass `chat={useChat()}` (preferred) or the legacy
+ *   flat `messages` + `input` props to drive it yourself.
  */
 const ChatBase = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
   props,
   ref,
 ): React.ReactElement {
-  // Controlled when the caller supplies the message/input state; otherwise the
-  // component self-drives (app mode).
-  const isControlled = props.messages !== undefined &&
-    props.input !== undefined;
+  // Controlled when the caller supplies a `chat` session (or the legacy flat
+  // message/input state); otherwise the component self-drives (app mode).
+  const isControlled = props.chat !== undefined ||
+    (props.messages !== undefined && props.input !== undefined);
   return isControlled
-    ? <ControlledChat ref={ref} {...props} />
+    ? <ControlledChat ref={ref} {...resolveControlledProps(props)} />
     : <ConversationBoundChat ref={ref} {...props} />;
 });
 ChatBase.displayName = "Chat";
