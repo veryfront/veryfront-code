@@ -156,6 +156,46 @@ async function buildPptxWithoutSlides(): Promise<ArrayBuffer> {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
+async function buildPptxWithTitleBodyAndTextbox(): Promise<ArrayBuffer> {
+  const zip = new JSZip();
+  zip.file(
+    "ppt/presentation.xml",
+    `<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+      <p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst>
+    </p:presentation>`,
+  );
+  zip.file(
+    "ppt/_rels/presentation.xml.rels",
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+      <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>
+    </Relationships>`,
+  );
+  zip.file(
+    "ppt/slides/slide1.xml",
+    `<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+      <p:cSld>
+        <p:spTree>
+          <p:sp>
+            <p:nvSpPr><p:cNvPr id="2" name="Title 1"/><p:cNvSpPr/><p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr>
+            <p:txBody><a:p><a:r><a:t>Real Slide Title</a:t></a:r></a:p></p:txBody>
+          </p:sp>
+          <p:sp>
+            <p:nvSpPr><p:cNvPr id="3" name="Content Placeholder 2"/><p:cNvSpPr/><p:nvPr><p:ph type="body"/></p:nvPr></p:nvSpPr>
+            <p:txBody><a:p><a:r><a:t>Body paragraph from placeholder</a:t></a:r></a:p></p:txBody>
+          </p:sp>
+          <p:sp>
+            <p:nvSpPr><p:cNvPr id="4" name="TextBox 3"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+            <p:txBody><a:p><a:r><a:t>Freeform textbox content</a:t></a:r></a:p></p:txBody>
+          </p:sp>
+        </p:spTree>
+      </p:cSld>
+    </p:sld>`,
+  );
+
+  const bytes = await zip.generateAsync({ type: "uint8array" });
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
 type NativeProgressWorkerResponse =
   | { type: "done"; content: string }
   | { type: "error"; error: string }
@@ -437,6 +477,26 @@ describe("ext-document-kreuzberg extension", () => {
 
     assertEquals(typeof result.content, "string");
     assertEquals(result.events, [{ unit: "file", current: 1, total: 1, characters: 0 }]);
+  });
+
+  it("keeps PPTX body and textbox text out of top-level Markdown headings", async () => {
+    const buffer = await buildPptxWithTitleBodyAndTextbox();
+
+    const result = await extractPptxWithProgressWorker(buffer);
+
+    assertStringIncludes(result.content, "# Real Slide Title");
+    assertStringIncludes(result.content, "Body paragraph from placeholder");
+    assertStringIncludes(result.content, "Freeform textbox content");
+    assertEquals(result.content.includes("# Body paragraph from placeholder"), false);
+    assertEquals(result.content.includes("# Freeform textbox content"), false);
+    assertEquals(
+      result.events.map((event) => ({
+        unit: event.unit,
+        current: event.current,
+        total: event.total,
+      })),
+      [{ unit: "slide", current: 1, total: 1 }],
+    );
   });
 
   it("falls back to the Deno worker when native PDF extraction is unavailable", async () => {

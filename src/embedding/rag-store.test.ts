@@ -98,6 +98,52 @@ describe("ragStore", () => {
     });
   });
 
+  it("refreshes an existing local document while preserving its id", async () => {
+    registerTestEmbeddingProvider();
+
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const store = ragStore({
+        model: "test/demo",
+        storagePath,
+      });
+      const id = await store.ingest("Deck", "Old slide text", {
+        source: "upload:deck.pptx",
+        type: "pptx",
+      });
+
+      await store.search("old");
+      const embedded = JSON.parse(await readTextFile(storagePath)) as {
+        chunks: Array<{ embedding: number[] }>;
+      };
+      assertEquals(embedded.chunks[0]?.embedding.length, 1536);
+
+      await store.refreshDocument(id, "# New Slide Title\n\nNew body text", {
+        title: "Deck Updated",
+        source: "upload:deck-updated.pptx",
+        type: "pptx",
+      });
+
+      const refreshed = JSON.parse(await readTextFile(storagePath)) as {
+        documents: Array<
+          { id: string; title: string; source: string; type: string; createdAt: number }
+        >;
+        chunks: Array<{ documentId: string; text: string; embedding: number[]; index: number }>;
+      };
+      assertEquals(refreshed.documents.length, 1);
+      assertEquals(refreshed.documents[0]?.id, id);
+      assertEquals(refreshed.documents[0]?.title, "Deck Updated");
+      assertEquals(refreshed.documents[0]?.source, "upload:deck-updated.pptx");
+      assertEquals(refreshed.documents[0]?.type, "pptx");
+      assertEquals(typeof refreshed.documents[0]?.createdAt, "number");
+      assertEquals(refreshed.chunks.length, 1);
+      assertEquals(refreshed.chunks[0]?.documentId, id);
+      assertEquals(refreshed.chunks[0]?.text, "# New Slide Title\n\nNew body text");
+      assertEquals(refreshed.chunks[0]?.embedding, []);
+      assertEquals(refreshed.chunks[0]?.index, 0);
+    });
+  });
+
   it("returns empty results for whitespace-only local queries", async () => {
     await withTempDir(async (tempDir) => {
       const storagePath = join(tempDir, "data", "index.json");
@@ -462,6 +508,186 @@ describe("ragStore", () => {
 
         await store.removeDocument(id);
         assertEquals(await store.listDocuments(), []);
+      },
+    );
+  });
+
+  it("refreshes cloud document chunks and embeddings under the existing id", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
+    setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
+    registerTestEmbeddingProvider();
+
+    const fileChunks = new Map<
+      string,
+      Array<{
+        id: string;
+        index: number;
+        content: string;
+        metadata?: Record<string, unknown>;
+      }>
+    >([
+      [
+        ".veryfront/rag/documents/doc-pptx.pptx",
+        [{
+          id: "old-chunk",
+          index: 0,
+          content: "Old flat PPTX content",
+          metadata: {
+            kind: "rag-document",
+            document_id: "doc-pptx",
+            title: "Old Deck",
+            source: "upload:old.pptx",
+            type: "pptx",
+          },
+        }],
+      ],
+    ]);
+    const ragDocuments = new Map<string, {
+      id: string;
+      title: string;
+      source: string;
+      type: string;
+      created_at: string;
+      updated_at: string;
+      metadata?: Record<string, unknown>;
+    }>([
+      [
+        "doc-pptx",
+        {
+          id: "doc-pptx",
+          title: "Old Deck",
+          source: "upload:old.pptx",
+          type: "pptx",
+          created_at: "2026-06-25T00:00:00.000Z",
+          updated_at: "2026-06-25T00:00:00.000Z",
+          metadata: { filePath: ".veryfront/rag/documents/doc-pptx.pptx" },
+        },
+      ],
+    ]);
+    const embeddingVectors = new Map<string, number[]>();
+    const deletedFilePaths: string[] = [];
+
+    await withMockFetch(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        const url = new URL(request.url);
+        const path = url.pathname;
+
+        const ragDocMatch = path.match(/^\/projects\/[^/]+\/rag\/documents(?:\/(.+))?$/);
+        if (ragDocMatch !== null) {
+          const docId = ragDocMatch[1] ? decodeURIComponent(ragDocMatch[1]) : null;
+
+          if (request.method === "GET" && !docId) {
+            return Response.json({
+              documents: [...ragDocuments.values()],
+            });
+          }
+
+          if (request.method === "POST" && !docId) {
+            const body = await request.json() as {
+              id: string;
+              title: string;
+              source: string;
+              type: string;
+              metadata?: Record<string, unknown>;
+            };
+            ragDocuments.set(body.id, {
+              ...body,
+              created_at: ragDocuments.get(body.id)?.created_at ??
+                "2026-06-25T00:00:00.000Z",
+              updated_at: "2026-06-25T01:00:00.000Z",
+            });
+            return Response.json({ document: ragDocuments.get(body.id) });
+          }
+        }
+
+        const fileMatch = path.match(/^\/projects\/[^/]+\/branches\/[^/]+\/files\/(.+)\/chunks$/);
+        const filePath = fileMatch ? decodeURIComponent(fileMatch[1]!) : null;
+
+        if (request.method === "DELETE" && filePath) {
+          deletedFilePaths.push(filePath);
+          fileChunks.delete(filePath);
+          return Response.json({ deleted: 1 });
+        }
+
+        if (request.method === "POST" && filePath) {
+          const body = await request.json() as {
+            chunks: Array<{
+              chunk_index: number;
+              content: string;
+              metadata?: Record<string, unknown>;
+            }>;
+          };
+          const stored = body.chunks.map((chunk) => ({
+            id: `${filePath}:${chunk.chunk_index}`,
+            index: chunk.chunk_index,
+            content: chunk.content,
+            metadata: chunk.metadata,
+          }));
+          fileChunks.set(filePath, stored);
+
+          return Response.json({
+            chunks: stored.map(({ id, index }) => ({ id, index })),
+            created: stored.length,
+            updated: 0,
+          });
+        }
+
+        if (request.method === "POST" && path.endsWith("/embeddings")) {
+          const body = await request.json() as {
+            chunk_ids: string[];
+            vectors: number[][];
+          };
+          body.chunk_ids.forEach((chunkId, index) => {
+            embeddingVectors.set(chunkId, body.vectors[index]!);
+          });
+
+          return Response.json({
+            embeddings: body.chunk_ids.map((chunkId) => ({
+              id: `embedding:${chunkId}`,
+              model: "test/demo",
+              status: "ready",
+              created_at: new Date().toISOString(),
+            })),
+            created: body.chunk_ids.length,
+            updated: 0,
+          });
+        }
+
+        return new Response(`Unhandled ${request.method} ${path}`, { status: 404 });
+      },
+      async () => {
+        const store = ragStore({
+          model: "test/demo",
+        });
+
+        await store.refreshDocument("doc-pptx", "# Better Deck\n\nBody text", {
+          title: "Better Deck",
+          source: "upload:better.pptx",
+          type: "pptx",
+        });
+
+        assertEquals(deletedFilePaths, [".veryfront/rag/documents/doc-pptx.pptx"]);
+        assertEquals([...ragDocuments.values()][0], {
+          id: "doc-pptx",
+          title: "Better Deck",
+          source: "upload:better.pptx",
+          type: "pptx",
+          created_at: "2026-06-25T00:00:00.000Z",
+          updated_at: "2026-06-25T01:00:00.000Z",
+          metadata: { filePath: ".veryfront/rag/documents/doc-pptx.pptx" },
+        });
+        const chunks = fileChunks.get(".veryfront/rag/documents/doc-pptx.pptx") ?? [];
+        assertEquals(chunks.length, 1);
+        assertEquals(chunks[0]?.content, "# Better Deck\n\nBody text");
+        assertEquals(chunks[0]?.metadata, {
+          kind: "rag-document",
+          document_id: "doc-pptx",
+          title: "Better Deck",
+          source: "upload:better.pptx",
+          type: "pptx",
+        });
+        assertEquals(embeddingVectors.size, 1);
       },
     );
   });

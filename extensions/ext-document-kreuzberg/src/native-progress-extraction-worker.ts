@@ -70,6 +70,13 @@ function cleanExtractedMarkdown(value: string): string {
     .trim();
 }
 
+type PptxTextShapeRole = "title" | "subtitle" | "body";
+
+interface PptxTextShape {
+  role: PptxTextShapeRole;
+  text: string;
+}
+
 function slideNumber(path: string): number {
   return Number(path.match(/\/slide(\d+)\.xml$/)?.[1] ?? 0);
 }
@@ -77,6 +84,52 @@ function slideNumber(path: string): number {
 function getXmlAttribute(tag: string, name: string): string | undefined {
   const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return tag.match(new RegExp(`\\s${escapedName}=(["'])(.*?)\\1`))?.[2];
+}
+
+function pptxShapeRole(shapeXml: string): PptxTextShapeRole {
+  const placeholderTag = shapeXml.match(/<(?:\w+:)?ph\b[^>]*>/)?.[0] ?? "";
+  const placeholderType = getXmlAttribute(placeholderTag, "type");
+  if (placeholderType === "title" || placeholderType === "ctrTitle") return "title";
+  if (placeholderType === "subTitle") return "subtitle";
+
+  const propertyTag = shapeXml.match(/<(?:\w+:)?cNvPr\b[^>]*>/)?.[0] ?? "";
+  const name = getXmlAttribute(propertyTag, "name")?.toLowerCase() ?? "";
+  if (name.includes("subtitle")) return "subtitle";
+  if (name.includes("title")) return "title";
+
+  return "body";
+}
+
+function pptxTextShapes(xml: string): PptxTextShape[] {
+  const shapes = Array.from(xml.matchAll(/<p:sp\b[\s\S]*?<\/p:sp>/g))
+    .map((match) => {
+      const shapeXml = match[0];
+      return {
+        role: pptxShapeRole(shapeXml),
+        text: extractPptxSlideText(shapeXml),
+      };
+    })
+    .filter((shape) => shape.text.length > 0);
+
+  const hasExplicitHeading = shapes.some((shape) =>
+    shape.role === "title" || shape.role === "subtitle"
+  );
+  if (!hasExplicitHeading && shapes.length === 1) {
+    return [{ ...shapes[0]!, role: "title" }];
+  }
+  return shapes;
+}
+
+function formatPptxShapeText(shape: PptxTextShape): string {
+  if (shape.role === "title") return `# ${shape.text}`;
+  if (shape.role === "subtitle") return `## ${shape.text}`;
+  return shape.text;
+}
+
+function formatPptxSlideText(xml: string): string {
+  const shapes = pptxTextShapes(xml);
+  if (shapes.length === 0) return extractPptxSlideText(xml);
+  return shapes.map(formatPptxShapeText).join("\n\n").trim();
 }
 
 function normalizeZipPath(path: string): string {
@@ -245,9 +298,9 @@ async function extractPptxBySlide(buffer: ArrayBuffer, mimeType: string): Promis
   for (const [index, path] of slidePaths.entries()) {
     const file = zip.file(path);
     const xml = file ? await file.async("text") : "";
-    let content: string | undefined;
+    let content = formatPptxSlideText(xml);
 
-    if (nativeExtractor) {
+    if (!content && nativeExtractor) {
       try {
         const slideBytes = await buildSingleSlidePptx(xml);
         const result = await nativeExtractor.extractBytes(slideBytes, mimeType, config);
@@ -257,7 +310,7 @@ async function extractPptxBySlide(buffer: ArrayBuffer, mimeType: string): Promis
       }
     }
 
-    content ??= extractPptxSlideText(xml);
+    content ||= extractPptxSlideText(xml);
     slides.push(content);
     postProgress({
       unit: "slide",

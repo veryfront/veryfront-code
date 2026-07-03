@@ -11,6 +11,7 @@ import { chunk } from "../chunk.ts";
 import { embedding } from "../embedding.ts";
 import type {
   RagDocumentMeta,
+  RagRefreshOptions,
   RagSearchOptions,
   RagSearchResult,
   RagStore,
@@ -411,6 +412,47 @@ async function ingestDocument(
   text: string,
   meta?: { source?: string; type?: string },
 ): Promise<string> {
+  const documentId = crypto.randomUUID();
+  await writeDocumentContent(context, config, documentId, title, text, meta);
+  return documentId;
+}
+
+async function refreshCloudDocument(
+  context: CloudStoreContext,
+  config: ResolvedCloudRagStoreConfig,
+  documentId: string,
+  text: string,
+  meta?: RagRefreshOptions,
+): Promise<void> {
+  const documents = await listRagDocuments(context);
+  const existing = documents.find((doc) => doc.id === documentId);
+  if (!existing) {
+    throw INVALID_ARGUMENT.create({ detail: `RAG document not found: ${documentId}` });
+  }
+
+  await writeDocumentContent(
+    context,
+    config,
+    documentId,
+    meta?.title ?? existing.title,
+    text,
+    {
+      source: meta?.source ?? existing.source,
+      type: meta?.type ?? existing.type,
+    },
+    { replaceFilePath: buildDocumentFilePath(documentId, existing.type) },
+  );
+}
+
+async function writeDocumentContent(
+  context: CloudStoreContext,
+  config: ResolvedCloudRagStoreConfig,
+  documentId: string,
+  title: string,
+  text: string,
+  meta?: { source?: string; type?: string },
+  options?: { replaceFilePath?: string },
+): Promise<void> {
   if (text.length > MAX_TEXT_LENGTH) {
     throw INVALID_ARGUMENT.create({
       detail: `Upload text exceeds ${MAX_TEXT_LENGTH / 1024 / 1024} MB limit`,
@@ -422,7 +464,6 @@ async function ingestDocument(
     throw INVALID_ARGUMENT.create({ detail: "Upload contains no extractable text" });
   }
 
-  const documentId = crypto.randomUUID();
   const filePath = buildDocumentFilePath(documentId, meta?.type);
   const embedder = createEmbedder(config);
   const vectors = await embedder.embedMany(chunkTexts);
@@ -436,6 +477,10 @@ async function ingestDocument(
   });
 
   try {
+    if (options?.replaceFilePath) {
+      await deleteFileChunks(context, options.replaceFilePath);
+    }
+
     const createdChunks = await upsertFileChunks(context, filePath, chunkInputs);
     const chunkIds = createdChunks.map((entry) => entry.id);
 
@@ -470,8 +515,6 @@ async function ingestDocument(
     type: meta?.type ?? "",
     metadata: { filePath },
   });
-
-  return documentId;
 }
 
 function createEmbedder(config: ResolvedCloudRagStoreConfig) {
@@ -628,6 +671,15 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
     ): Promise<string> {
       const context = getCloudStoreContext(config);
       return ingestDocument(context, config, title, text, meta);
+    },
+
+    async refreshDocument(
+      id: string,
+      text: string,
+      meta?: RagRefreshOptions,
+    ): Promise<void> {
+      const context = getCloudStoreContext(config);
+      await refreshCloudDocument(context, config, id, text, meta);
     },
 
     async search(
