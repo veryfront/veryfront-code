@@ -32,11 +32,6 @@ function getVeryfrontSsrImportMap(): Record<string, string> {
   // veryfront/react is a barrel that re-exports all browser-side modules.
   const react = `${base}/react/public.js${ssr}`;
 
-  // Map veryfront/embedding to the React hooks submodule for SSR.
-  // The full embedding/index.ts imports heavy server-side code (vectorStore, ragStore)
-  // that fails to transform. SSR only needs the React hook (useUploads).
-  const embedding = `${base}/embedding/react/index.js${ssr}`;
-
   return {
     "veryfront/react": react,
     "veryfront/head": head,
@@ -46,7 +41,6 @@ function getVeryfrontSsrImportMap(): Record<string, string> {
     "veryfront/markdown": markdown,
     "veryfront/chat": chat,
     "veryfront/mdx": mdx,
-    "veryfront/embedding": embedding,
     "veryfront/workflow": workflowReact,
     "veryfront/react/head": head,
     "veryfront/react/router": router,

@@ -27,7 +27,7 @@ Veryfront splits a RAG app into three flows:
   agent responds.
 
 The `docs-agent` template wires these flows with `ragStore()`,
-`createUploadHandler()`, `useUploads()`, and `createAgUiHandler()`.
+`createUploadHandler()`, `useUploadsRegistry()`, and `createAgUiHandler()`.
 
 ## Create the store
 
@@ -65,17 +65,7 @@ import { createUploadHandler } from "veryfront/embedding";
 import { authorizeUploads } from "../../../lib/upload-auth.ts";
 import { store } from "../../../store.ts";
 
-export const { POST, GET } = createUploadHandler(store, {
-  auth: { authorize: authorizeUploads },
-});
-```
-
-```ts title="app/api/uploads/[id]/route.ts"
-import { createUploadHandler } from "veryfront/embedding";
-import { authorizeUploads } from "../../../../lib/upload-auth.ts";
-import { store } from "../../../../store.ts";
-
-export const { DELETE } = createUploadHandler(store, {
+export const { POST, GET, DELETE } = createUploadHandler(store, {
   auth: { authorize: authorizeUploads },
 });
 ```
@@ -174,36 +164,33 @@ documents as reference data, not instructions.
 
 ## Add the chat UI
 
-Use `useUploads()` with the preset `Chat` component:
+Use the app-mode `Chat` component with `useUploadsRegistry()` and
+`AttachmentsPanel`:
 
 ```tsx title="app/page.tsx"
 "use client";
 
-import { Chat, useChat } from "veryfront/chat";
-import { useUploads } from "veryfront/embedding";
+import { AttachmentsPanel, Chat, useUploadsRegistry } from "veryfront/chat";
 
 export default function RagPage() {
-  const chat = useChat();
-  const uploads = useUploads({ api: "/api/uploads" });
+  const uploads = useUploadsRegistry({ url: "/api/uploads" });
 
   return (
-    <main>
-      <Chat {...chat} showSources placeholder="Ask about your documents..." />
+    <main className="flex min-h-screen">
+      <Chat
+        agentId="rag"
+        api="/api/ag-ui"
+        uploadApi="/api/uploads"
+        showSources
+        placeholder="Ask about your documents..."
+      />
 
-      <form
-        onSubmit={async (event) => {
-          event.preventDefault();
-          const input = event.currentTarget.elements.namedItem("file");
-          if (!(input instanceof HTMLInputElement) || !input.files?.[0]) return;
-          await uploads.upload(input.files[0]);
-          event.currentTarget.reset();
-        }}
-      >
-        <input name="file" type="file" />
-        <button type="submit" disabled={uploads.uploading}>
-          Upload
-        </button>
-      </form>
+      <AttachmentsPanel
+        uploads={uploads.items}
+        loading={uploads.isLoading}
+        onAttach={uploads.upload}
+        onRemoveUpload={uploads.remove}
+      />
     </main>
   );
 }
