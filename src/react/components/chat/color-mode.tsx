@@ -116,6 +116,15 @@ export function useColorMode(): ColorModeContextValue {
 }
 
 /**
+ * Non-throwing variant — returns `null` when there is no `ColorModeProvider`.
+ * Use for components that should render standalone (e.g. a `CodeBlock` dropped
+ * into markdown) and fall back to light mode.
+ */
+export function useColorModeOptional(): ColorModeContextValue | null {
+  return React.useContext(ColorModeContext);
+}
+
+/**
  * Inline script to prevent flash of wrong color mode on SSR.
  * Render this in <head> before any content.
  *

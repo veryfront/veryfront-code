@@ -1,136 +1,95 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
-import { ChatWithSidebar, useChat, type QuickAction } from 'veryfront/chat'
+import { useCallback, useMemo } from 'react'
+import {
+  Chat,
+  ChatSidebar,
+  ChatThemeScope,
+  ConversationsProvider,
+  useChat,
+  useUploadsRegistry,
+} from 'veryfront/chat'
 
 const UPLOAD_API = '/api/uploads'
 const ACCEPT = '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.txt,.md,.mdx,.html,.rtf,.epub,.json,.xml'
 
-const QUICK_ACTIONS: QuickAction[] = [
-  { id: 'ask-question', label: 'Ask Question', prompt: 'I have a question about this document: ' },
-  { id: 'extract-insights', label: 'Extract Insights', prompt: 'Extract the key insights from the uploaded documents.' },
-  { id: 'find-sources', label: 'Find Sources', prompt: 'Find relevant sources and references in the documents for: ' },
+const SUGGESTIONS = [
+  {
+    label: 'Ask Question',
+    prompt: 'I have a question about this document: ',
+  },
+  {
+    label: 'Extract Insights',
+    prompt: 'Extract the key insights from the uploaded documents.',
+  },
+  {
+    label: 'Find Sources',
+    prompt: 'Find relevant sources and references in the documents for: ',
+  },
 ]
 
-interface Doc { id: string; title: string; source: string; url?: string }
+const MODELS = [
+  {
+    value: 'anthropic/claude-sonnet-4-6',
+    label: 'Claude Sonnet',
+  },
+  {
+    value: 'openai/gpt-4.1-mini',
+    label: 'GPT-4.1 Mini',
+  },
+  {
+    value: 'google/gemini-2.5-flash',
+    label: 'Gemini 2.5 Flash',
+    badge: 'Fast',
+  },
+]
 
-function useUploads(api: string) {
-  const [docs, setDocs] = useState<Doc[]>([])
-  const [uploading, setUploading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const refresh = useCallback(async () => {
-    try {
-      const res = await fetch(api)
-      if (res.ok) {
-        const data = await res.json()
-        setDocs(Array.isArray(data) ? data : data.uploads ?? [])
-      }
-    } catch { /* ignore */ }
-  }, [api])
-
-  useEffect(() => { refresh() }, [refresh])
-
-  const upload = useCallback(async (file: File) => {
-    setUploading(true)
-    setError(null)
-    try {
-      const form = new FormData()
-      form.append('file', file)
-      const res = await fetch(api, { method: 'POST', body: form })
-      if (!res.ok) throw new Error(await res.text())
-      await refresh()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Upload failed')
-    } finally {
-      setUploading(false)
-    }
-  }, [api, refresh])
-
-  const remove = useCallback(async (id: string) => {
-    await fetch(`${api}/${id}`, { method: 'DELETE' })
-    await refresh()
-  }, [api, refresh])
-
-  const uploads = useMemo(
-    () => docs.filter((d) => d.source.startsWith('upload:')),
-    [docs],
-  )
-
-  return { uploads, uploading, error, upload, remove }
-}
-
-export default function DocsChat() {
+function DocsChatSurface() {
   const chat = useChat({ api: '/api/ag-ui' })
-  const docs = useUploads(UPLOAD_API)
+  const uploads = useUploadsRegistry({ url: UPLOAD_API, storageKey: 'rag-uploads' })
 
-  const attachmentItems = useMemo(() => {
-    const items = docs.uploads.map((d) => ({
-      id: d.id,
-      name: d.title,
-      status: 'ready' as const,
-    }))
-    if (docs.uploading) {
-      items.push({ id: '__uploading', name: 'Uploading...', status: 'uploading' as const })
-    }
-    return items
-  }, [docs.uploads, docs.uploading])
-
-  const uploadFiles = useMemo(
-    () => docs.uploads.map((d) => ({ id: d.id, name: d.title, url: d.url })),
-    [docs.uploads],
+  const suggestionLabels = useMemo(
+    () => SUGGESTIONS.map((suggestion) => suggestion.label),
+    [],
   )
 
-  const handleAttach = useCallback((files: FileList) => {
-    for (const file of Array.from(files)) {
-      docs.upload(file)
-    }
-  }, [docs.upload])
-
-  const handleQuickAction = useCallback((action: QuickAction) => {
-    if (action.prompt) chat.setInput(action.prompt)
+  const handleSuggestionClick = useCallback((label: string) => {
+    const suggestion = SUGGESTIONS.find((item) => item.label === label)
+    chat.setInput(suggestion?.prompt ?? label)
   }, [chat.setInput])
 
   return (
-    <ChatWithSidebar
-      chat={chat}
-      sidebar={{ storageKey: 'rag-threads' }}
-      features={{ steps: true, tabs: true, sources: true, export: true }}
-      models={{
-        options: [
-          {
-            value: 'anthropic/claude-sonnet-4-6',
-            label: 'Claude Sonnet',
-          },
-          {
-            value: 'openai/gpt-4.1-mini',
-            label: 'GPT-4.1 Mini',
-          },
-          {
-            value: 'google/gemini-2.5-flash',
-            label: 'Gemini 2.5 Flash',
-            badge: 'Fast',
-          },
-        ],
-      }}
-      attachments={{
-        uploads: uploadFiles,
-        onRemoveUpload: docs.remove,
-        onAttach: handleAttach,
-        accept: ACCEPT,
-        items: attachmentItems,
-        onRemoveItem: docs.remove,
-      }}
-      quickActions={{
-        actions: QUICK_ACTIONS,
-        onAction: handleQuickAction,
-      }}
-      message={{
-        renderTool: () => null,
-      }}
-      className="flex-1 min-h-0"
-      placeholder="Ask anything about your documents..."
-      emptyState={{ title: 'Docs Agent', description: 'Upload files and ask questions' }}
-    />
+    <ChatThemeScope className="flex h-screen min-h-0">
+      <ChatSidebar className="w-72 shrink-0 border-r border-[var(--border)]" />
+      <Chat
+        chat={chat}
+        showSteps
+        showTabs
+        showSources
+        agent={{
+          name: 'Docs Agent',
+          description: 'Upload files and ask questions',
+          models: MODELS,
+        }}
+        suggestions={suggestionLabels}
+        onSuggestionClick={handleSuggestionClick}
+        uploads={uploads.items}
+        onRemoveUpload={uploads.remove}
+        onAttach={uploads.upload}
+        onDrop={uploads.upload}
+        attachAccept={ACCEPT}
+        className="flex-1 min-h-0"
+        placeholder="Ask anything about your documents..."
+        emptyState={{ title: 'Docs Agent', description: 'Upload files and ask questions' }}
+      />
+    </ChatThemeScope>
+  )
+}
+
+export default function DocsChat() {
+  return (
+    <ConversationsProvider storageKey="rag-conversations">
+      <DocsChatSurface />
+    </ConversationsProvider>
   )
 }

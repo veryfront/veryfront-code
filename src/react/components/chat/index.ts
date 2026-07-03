@@ -45,12 +45,18 @@ export { Chat, ChatComponents, type ChatProps } from "./chat.tsx";
 // Chat — Composition building blocks
 // ---------------------------------------------------------------------------
 export {
-  ChatComposer,
-  type ChatComposerProps,
   ChatEmpty,
   type ChatEmptyProps,
+  ChatEmptyState,
+  type ChatEmptyStateAvatarProps,
+  type ChatEmptyStateHeadingProps,
+  type ChatEmptyStateRootProps,
+  type ChatEmptyStateSuggestionProps,
+  type ChatEmptyStateSuggestionsProps,
   ChatIf,
   type ChatIfProps,
+  ChatInput,
+  type ChatInputProps,
   ChatMessageList,
   type ChatMessageListProps,
   ChatRoot,
@@ -58,6 +64,7 @@ export {
   ErrorBanner,
   type ErrorBannerProps,
   Message,
+  type MessageProps,
   type MessageRootProps,
   ModelAvatar,
   type ModelAvatarProps,
@@ -73,16 +80,12 @@ export {
   type ComposerContextValue,
   MessageContextProvider,
   type MessageContextValue,
-  ThreadListContextProvider,
-  type ThreadListContextValue,
   useChatContext,
   useChatContextOptional,
   useComposerContext,
   useComposerContextOptional,
   useMessageContext,
   useMessageContextOptional,
-  useThreadListContext,
-  useThreadListContextOptional,
 } from "./chat.tsx";
 
 // ---------------------------------------------------------------------------
@@ -90,9 +93,9 @@ export {
 // ---------------------------------------------------------------------------
 export {
   AttachmentPill,
+  AttachmentsPanel,
   BranchPicker,
   ChatSidebar,
-  ChatWithSidebar,
   ConversationEmptyState,
   ConversationScrollButton,
   downloadMarkdown,
@@ -108,7 +111,7 @@ export {
   isSkillToolPart,
   isToolPart,
   Loader,
-  MessageActions,
+  MessageActionBar,
   MessageEditForm,
   MessageFeedback,
   ModelSelector,
@@ -124,33 +127,30 @@ export {
   TabSwitcher,
   ToolCallCard,
   ToolStatusBadge,
-  UploadsPanel,
-  useThreads,
+  useUpload,
 } from "./chat.tsx";
 export type {
   AttachmentInfo,
   AttachmentPillProps,
+  AttachmentsPanelProps,
   BranchPickerProps,
+  ChatSidebarComponent,
+  ChatSidebarEmptyProps,
+  ChatSidebarGroupProps,
+  ChatSidebarIcons,
+  ChatSidebarItemProps,
+  ChatSidebarListProps,
+  ChatSidebarNewButtonProps,
   ChatSidebarProps,
+  ChatSidebarRootProps,
   ChatTab,
-  ChatWithSidebarAttachmentConfig,
-  ChatWithSidebarChatController,
-  ChatWithSidebarFeatureConfig,
-  ChatWithSidebarGroupedProps,
-  ChatWithSidebarMessageConfig,
-  ChatWithSidebarModelConfig,
-  ChatWithSidebarProps,
-  ChatWithSidebarQuickActionsConfig,
-  ChatWithSidebarSidebarConfig,
-  ChatWithSidebarTabsConfig,
-  ChatWithSidebarVoiceConfig,
   ConversationEmptyStateProps,
   ConversationScrollButtonProps,
   DropZoneOverlayProps,
   FeedbackValue,
   InferenceBadgeProps,
   InlineCitationProps,
-  MessageActionsProps,
+  MessageActionBarProps,
   MessageEditFormProps,
   MessageFeedbackProps,
   ModelOption,
@@ -165,11 +165,9 @@ export type {
   SuggestionProps,
   SuggestionsProps,
   TabSwitcherProps,
-  Thread,
   UploadedFile,
-  UploadsPanelProps,
-  UseThreadsOptions,
-  UseThreadsResult,
+  UseUploadOptions,
+  UseUploadResult,
 } from "./chat.tsx";
 
 // ---------------------------------------------------------------------------
@@ -177,12 +175,6 @@ export type {
 // ---------------------------------------------------------------------------
 export { AgentCard } from "./agent-card.tsx";
 export type { AgentCardProps } from "./agent-card.tsx";
-
-// ---------------------------------------------------------------------------
-// Message (standalone bubble component — not the chat compound)
-// ---------------------------------------------------------------------------
-export { Message as StandaloneMessage, StreamingMessage } from "./message.tsx";
-export type { MessageProps, StreamingMessageProps } from "./message.tsx";
 
 // ---------------------------------------------------------------------------
 // Markdown

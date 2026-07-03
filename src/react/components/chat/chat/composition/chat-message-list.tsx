@@ -1,14 +1,15 @@
 /**
- * ChatMessageList — Message rendering loop with component injection.
+ * ChatMessageList — Message rendering loop, composed from the `Message` primitive.
  *
- * Renders user and assistant messages with support for branching, editing,
- * feedback, sources, reasoning, tool calls, and step indicators.
+ * Every turn renders through `<Message message={…} />` so the `<Chat>` transcript
+ * is identical to the standalone `Message` component (header, reasoning, tools,
+ * sources, tokens, hover actions). Pass `renderMessage` to override a row.
  *
  * @module react/components/chat/composition/chat-message-list
  */
 
 import * as React from "react";
-import { MessageItem, MessageList } from "#veryfront/react/primitives/index.ts";
+import { MessageList } from "#veryfront/react/primitives/index.ts";
 import type {
   BranchInfo,
   ChatDynamicToolPart,
@@ -18,51 +19,12 @@ import type {
 } from "#veryfront/agent/react";
 import type { ChatTheme } from "../../theme.ts";
 import { cn } from "../../theme.ts";
-import { Markdown } from "../../markdown.tsx";
-import {
-  extractSourcesFromParts,
-  getTextContent,
-  groupPartsInOrder,
-  isSkillToolPart,
-} from "../utils/message-parts.ts";
-import { ConversationScrollButton } from "../components/empty-state.tsx";
-import { MessageActions } from "../components/message-actions.tsx";
-import { ReasoningCard } from "../components/reasoning.tsx";
-import { SkillBadge } from "../components/skill-badge.tsx";
-import { ToolCallCard } from "../components/tool-ui.tsx";
-
-import { Sources } from "../components/sources.tsx";
 import type { Source } from "../components/sources.tsx";
-import { MessageEditForm } from "../components/message-edit-form.tsx";
-import { BranchPicker } from "../components/branch-picker.tsx";
-import { MessageFeedback } from "../components/message-feedback.tsx";
 import type { FeedbackValue } from "../components/message-feedback.tsx";
-import { StepIndicator } from "../components/step-indicator.tsx";
-import { AgentAvatar } from "./agent-avatar.tsx";
-import { ModelAvatar } from "./model-avatar.tsx";
-
-type AssistantIdentity = {
-  model?: string;
-  agentName?: string;
-  agentAvatarUrl?: string;
-};
-
-function metadataString(
-  metadata: ChatMessage["metadata"] | undefined,
-  key: string,
-): string | undefined {
-  const value = metadata?.[key];
-  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
-}
-
-function getAssistantIdentity(message: ChatMessage): AssistantIdentity {
-  return {
-    model: metadataString(message.metadata, "model"),
-    agentName: metadataString(message.metadata, "agentName") ??
-      metadataString(message.metadata, "agentId"),
-    agentAvatarUrl: metadataString(message.metadata, "agentAvatarUrl"),
-  };
-}
+import { ConversationScrollButton } from "../components/empty-state.tsx";
+import { useStickToBottom } from "../hooks/use-stick-to-bottom.ts";
+import { PendingMessage } from "./pending-message.tsx";
+import { Message } from "./message.tsx";
 
 /** Props accepted by chat message list. */
 export interface ChatMessageListProps {
@@ -80,6 +42,10 @@ export interface ChatMessageListProps {
   showSources?: boolean;
   showSteps?: boolean;
   showScrollButton?: boolean;
+  /** Override the scroll-to-bottom button; receives the click handler + pin state. */
+  renderScrollButton?: (
+    opts: { onClick: () => void; isAtBottom: boolean },
+  ) => React.ReactNode;
   onSourceClick?: (source: Source, index: number) => void;
   inferenceMode?: InferenceMode;
 
@@ -92,23 +58,26 @@ export interface ChatMessageListProps {
   onFeedback?: (messageId: string, feedback: FeedbackValue) => void;
 
   className?: string;
+  /** Classes for the inner centered content column (default `max-w-[850px]`). */
+  contentClassName?: string;
   children?: React.ReactNode;
 }
 
 /** Render chat message list. */
-export const ChatMessageList = React.forwardRef<HTMLDivElement, ChatMessageListProps>(
+export const ChatMessageList = React.forwardRef<
+  HTMLDivElement,
+  ChatMessageListProps
+>(
   function ChatMessageList(
     {
       messages,
       isLoading,
-      theme,
       renderMessage,
       renderTool,
-      model,
-      showMessageActions = true,
       showSources = false,
       showSteps = false,
       showScrollButton = false,
+      renderScrollButton,
       onSourceClick,
       inferenceMode: _inferenceMode,
       editMessage,
@@ -116,261 +85,140 @@ export const ChatMessageList = React.forwardRef<HTMLDivElement, ChatMessageListP
       switchBranch,
       onFeedback,
       className,
+      contentClassName,
       children,
     },
     ref,
   ) {
-    const messagesEndRef = React.useRef<HTMLDivElement>(null!);
-    const [editingMessageId, setEditingMessageId] = React.useState<string | null>(null);
-    const [feedbackMap, setFeedbackMap] = React.useState<Record<string, FeedbackValue>>({});
-
-    const handleFeedback = React.useCallback(
-      (msgId: string, value: FeedbackValue) => {
-        setFeedbackMap((prev) => ({ ...prev, [msgId]: value }));
-        onFeedback?.(msgId, value);
-      },
-      [onFeedback],
+    // Stick-to-bottom: auto-scroll on new messages only while pinned, and drive
+    // the scroll-to-bottom button's visibility off `isAtBottom`.
+    const { scrollRef, contentRef, isAtBottom, scrollToBottom } = useStickToBottom<HTMLDivElement>(
+      messages.length,
     );
 
-    const messageCount = messages.length;
+    // Fade the top edge once the user scrolls down, so messages dissolve under
+    // whatever sits above the list (e.g. a borderless header) instead of a hard
+    // cut. Top-only: the bottom is never masked, so nothing is clipped at rest.
+    const [topFaded, setTopFaded] = React.useState(false);
     React.useEffect(() => {
-      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    }, [messageCount]);
+      const el = scrollRef.current;
+      if (!el) return undefined;
+      const onScroll = () => setTopFaded(el.scrollTop > 8);
+      onScroll();
+      el.addEventListener("scroll", onScroll, { passive: true });
+      return () => el.removeEventListener("scroll", onScroll);
+    }, [scrollRef]);
+
+    // Merge the forwarded ref with the stick-to-bottom scroll container ref.
+    const setListRef = React.useCallback(
+      (node: HTMLDivElement | null) => {
+        scrollRef.current = node;
+        if (typeof ref === "function") ref(node);
+        else if (ref) {
+          (ref as React.MutableRefObject<HTMLDivElement | null>).current = node;
+        }
+      },
+      [ref, scrollRef],
+    );
+
+    const lastMessage = messages[messages.length - 1];
+
+    // Force-scroll to the bottom when the user submits a new message, even if
+    // they'd scrolled up into history. `useStickToBottom` only *follows* growth
+    // while already pinned, so a fresh user turn from a scrolled-up position
+    // would otherwise stay off-screen. Scrolling re-pins the view (the scroll
+    // listener flips `isAtBottom` back to true), so the streaming response then
+    // follows normally.
+    const lastUserIdRef = React.useRef<string | undefined>(undefined);
+    React.useEffect(() => {
+      if (lastMessage?.role !== "user") return;
+      if (lastMessage.id === lastUserIdRef.current) return;
+      lastUserIdRef.current = lastMessage.id;
+      scrollToBottom("smooth");
+    }, [lastMessage, scrollToBottom]);
 
     return (
-      <MessageList ref={ref} className={cn("flex-1 min-h-0 overflow-y-auto relative", className)}>
-        <div className="max-w-2xl mx-auto px-4 py-6 space-y-6">
-          {messages.map((msg) => {
-            if (renderMessage) {
-              return <React.Fragment key={msg.id}>{renderMessage(msg)}</React.Fragment>;
-            }
-
-            if (msg.role === "user") {
+      // The scroll button must overlay the *visible* viewport, so it lives in a
+      // non-scrolling `relative` wrapper as a sibling of the scroll container —
+      // not inside it, where `absolute bottom-4` would anchor to the bottom of
+      // the full scrollable content and scroll away with the messages.
+      <div className={cn("relative flex-1 min-h-0 flex flex-col", className)}>
+        <MessageList
+          ref={setListRef}
+          className={cn(
+            "flex-1 min-h-0 overflow-y-auto",
+            topFaded && "[mask-image:linear-gradient(to_bottom,transparent,black_1.5rem)]",
+          )}
+        >
+          <div
+            ref={contentRef as React.Ref<HTMLDivElement>}
+            className={cn(
+              "max-w-[850px] mx-auto px-9 py-6 space-y-6",
+              contentClassName,
+            )}
+          >
+            {messages.map((msg) => {
+              if (renderMessage) {
+                return (
+                  <React.Fragment key={msg.id}>
+                    {renderMessage(msg)}
+                  </React.Fragment>
+                );
+              }
+              // The last assistant turn shimmers while a response is streaming.
+              const isStreaming = Boolean(
+                isLoading && msg === lastMessage && msg.role === "assistant",
+              );
               return (
-                <UserMessage
+                <Message
                   key={msg.id}
                   message={msg}
-                  theme={theme}
-                  isEditing={editingMessageId === msg.id}
-                  onStartEdit={() => setEditingMessageId(msg.id)}
-                  onCancelEdit={() =>
-                    setEditingMessageId(null)}
+                  isStreaming={isStreaming}
+                  showSources={showSources}
+                  showSteps={showSteps}
                   editMessage={editMessage}
                   getBranches={getBranches}
                   switchBranch={switchBranch}
-                />
+                  onFeedback={onFeedback}
+                >
+                  {renderTool
+                    ? (
+                      <>
+                        <Message.Header />
+                        <Message.Content
+                          showSources={showSources}
+                          showSteps={showSteps}
+                          renderTool={renderTool}
+                          onSourceClick={onSourceClick}
+                        />
+                        <Message.Continuing />
+                        <div className="mt-1.5 flex items-center gap-0.5">
+                          <Message.Actions />
+                          <Message.Tokens />
+                        </div>
+                      </>
+                    )
+                    : undefined}
+                </Message>
               );
-            }
+            })}
 
-            return (
-              <AssistantMessage
-                key={msg.id}
-                message={msg}
-                theme={theme}
-                renderTool={renderTool}
-                showMessageActions={showMessageActions}
-                showSources={showSources}
-                showSteps={showSteps}
-                onSourceClick={onSourceClick}
-                onFeedback={onFeedback ? handleFeedback : undefined}
-                feedbackMap={feedbackMap}
-              />
-            );
-          })}
+            {isLoading && lastMessage?.role !== "assistant" && <PendingMessage />}
+          </div>
 
-          {isLoading && messages[messages.length - 1]?.role !== "assistant" && (
-            <div className="flex items-start gap-3">
-              <ModelAvatar model={model} />
-              <div className="flex gap-1.5 items-center py-3">
-                <span className={cn(theme?.loading)} />
-                <span className={cn(theme?.loading)} style={{ animationDelay: "0.15s" }} />
-                <span className={cn(theme?.loading)} style={{ animationDelay: "0.3s" }} />
-              </div>
-            </div>
-          )}
-
-          <div ref={messagesEndRef} />
-        </div>
-
-        {children}
+          {children}
+        </MessageList>
 
         {showScrollButton && (
-          <ConversationScrollButton
-            onClick={() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })}
-          />
+          renderScrollButton
+            ? renderScrollButton({
+              onClick: () => scrollToBottom("smooth"),
+              isAtBottom,
+            })
+            : (!isAtBottom && <ConversationScrollButton onClick={() => scrollToBottom("smooth")} />)
         )}
-      </MessageList>
+      </div>
     );
   },
 );
 ChatMessageList.displayName = "ChatMessageList";
-
-// --- Internal sub-components ---
-
-interface UserMessageProps {
-  message: ChatMessage;
-  theme?: ChatTheme;
-  isEditing: boolean;
-  onStartEdit: () => void;
-  onCancelEdit: () => void;
-  editMessage?: (messageId: string, newText: string) => Promise<void>;
-  getBranches?: (messageId: string) => BranchInfo;
-  switchBranch?: (messageId: string, branchIndex: number) => void;
-}
-
-function UserMessage({
-  message: msg,
-  theme,
-  isEditing,
-  onStartEdit,
-  onCancelEdit,
-  editMessage,
-  getBranches,
-  switchBranch,
-}: UserMessageProps): React.ReactElement {
-  const content = getTextContent(msg);
-  const branches = getBranches?.(msg.id);
-  const hasBranches = branches && branches.total > 1;
-
-  return (
-    <MessageItem role={msg.role} className={cn("flex flex-col items-end", "group/msg")}>
-      {isEditing
-        ? (
-          <div className="w-full max-w-md">
-            <MessageEditForm
-              initialContent={content}
-              onSave={(text) => {
-                onCancelEdit();
-                editMessage?.(msg.id, text);
-              }}
-              onCancel={onCancelEdit}
-            />
-          </div>
-        )
-        : (
-          <div className={theme?.message?.user}>
-            <p className="whitespace-pre-wrap text-[15px] leading-relaxed">{content}</p>
-          </div>
-        )}
-      {!isEditing && (
-        <div className="flex items-center gap-2 mt-1">
-          {hasBranches && (
-            <BranchPicker
-              current={branches.current}
-              total={branches.total}
-              onPrev={() => switchBranch?.(msg.id, branches.current - 2)}
-              onNext={() => switchBranch?.(msg.id, branches.current)}
-            />
-          )}
-          {editMessage && <MessageActions content={content} onEdit={onStartEdit} />}
-        </div>
-      )}
-    </MessageItem>
-  );
-}
-
-interface AssistantMessageProps {
-  message: ChatMessage;
-  theme?: ChatTheme;
-  renderTool?: (tool: ChatToolPart | ChatDynamicToolPart) => React.ReactNode;
-  showMessageActions?: boolean;
-  showSources?: boolean;
-  showSteps?: boolean;
-  onSourceClick?: (source: Source, index: number) => void;
-  onFeedback?: (messageId: string, feedback: FeedbackValue) => void;
-  feedbackMap: Record<string, FeedbackValue>;
-}
-
-function AssistantMessage({
-  message: msg,
-  theme,
-  renderTool,
-  showMessageActions = true,
-  showSources = false,
-  showSteps = false,
-  onSourceClick,
-  onFeedback,
-  feedbackMap,
-}: AssistantMessageProps): React.ReactElement {
-  const partGroups = groupPartsInOrder(msg.parts);
-  const stepCount = partGroups.filter((g) => g.type === "step").length;
-  const textContent = getTextContent(msg);
-  const messageSources = showSources ? extractSourcesFromParts(msg.parts) : [];
-  const identity = getAssistantIdentity(msg);
-
-  return (
-    <MessageItem
-      role={msg.role}
-      className={cn("flex items-start gap-3", "justify-start", "group/msg")}
-    >
-      <AgentAvatar
-        name={identity.agentName}
-        avatarUrl={identity.agentAvatarUrl}
-        model={identity.model}
-      />
-      <div className={cn(theme?.message?.assistant, "flex-1 min-w-0")}>
-        {identity.agentName && (
-          <div className="mb-1 text-xs font-medium text-[var(--muted-foreground)]">
-            {identity.agentName}
-          </div>
-        )}
-        {partGroups.map((group, index) => {
-          if (group.type === "text") {
-            return (
-              <Markdown key={`text-${index}`} className="text-[15px] leading-7">
-                {group.content}
-              </Markdown>
-            );
-          }
-          if (group.type === "reasoning") {
-            return (
-              <ReasoningCard
-                key={`reasoning-${index}`}
-                text={group.text}
-                isStreaming={group.isStreaming}
-              />
-            );
-          }
-          if (group.type === "step") {
-            return showSteps && stepCount > 1
-              ? (
-                <StepIndicator
-                  key={`step-${group.stepIndex}`}
-                  stepIndex={group.stepIndex}
-                  isComplete={group.isComplete}
-                />
-              )
-              : null;
-          }
-          const isSkill = isSkillToolPart(group.tool);
-          return (
-            <div key={group.tool.toolCallId} className={isSkill ? "my-2" : "my-3"}>
-              {renderTool
-                ? renderTool(group.tool)
-                : isSkill
-                ? <SkillBadge tool={group.tool} />
-                : <ToolCallCard tool={group.tool} />}
-            </div>
-          );
-        })}
-
-        {(showMessageActions || onFeedback) && textContent && (
-          <div className="flex items-center gap-1 mt-1">
-            {showMessageActions && <MessageActions content={textContent} />}
-            {onFeedback && (
-              <MessageFeedback
-                messageId={msg.id}
-                feedback={feedbackMap[msg.id]}
-                onFeedback={onFeedback}
-              />
-            )}
-          </div>
-        )}
-
-        {messageSources.length > 0 && (
-          <Sources sources={messageSources} onSourceClick={onSourceClick} />
-        )}
-      </div>
-    </MessageItem>
-  );
-}

@@ -178,16 +178,65 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
 
   const normalizedParams = useMemo(() => normalizeParams(state.params), [state.params]);
 
+  // Keep the router's URL view (pathname + query) in lock-step with the live URL.
+  // The router changes the URL via `history.pushState`, which fires no event and
+  // only reflects into `state.currentPath` after an async page load, so `pathname`
+  // and `query` would lag a navigation by a beat (the "two clicks" tab/thread bug,
+  // where the view changes but the active tab/link doesn't). We hold the live
+  // pathname+search in state and refresh them by patching pushState/replaceState
+  // (plus popstate for back/forward), so they update the instant the URL does.
+  const [liveUrl, setLiveUrl] = useState(() =>
+    typeof globalThis.location === "undefined"
+      ? { pathname: state.currentPath, search: "" }
+      : { pathname: globalThis.location.pathname, search: globalThis.location.search }
+  );
+  useEffect(() => {
+    if (typeof globalThis.location === "undefined") return;
+    const sync = () =>
+      setLiveUrl({
+        pathname: globalThis.location.pathname,
+        search: globalThis.location.search,
+      });
+    const { history } = globalThis;
+    const originalPush = history.pushState;
+    const originalReplace = history.replaceState;
+    history.pushState = function (
+      this: History,
+      ...args: Parameters<History["pushState"]>
+    ): void {
+      originalPush.apply(this, args);
+      sync();
+    };
+    history.replaceState = function (
+      this: History,
+      ...args: Parameters<History["replaceState"]>
+    ): void {
+      originalReplace.apply(this, args);
+      sync();
+    };
+    globalThis.addEventListener("popstate", sync);
+    sync();
+    return () => {
+      history.pushState = originalPush;
+      history.replaceState = originalReplace;
+      globalThis.removeEventListener("popstate", sync);
+    };
+  }, []);
+  const query = useMemo(() => getQuery(), [liveUrl.search]);
+  // Use the live pathname once mounted so tabs/links reflect navigation immediately;
+  // fall back to the SSR path for the first (hydrating) render.
+  const activePathname = isMounted ? liveUrl.pathname : state.currentPath;
+
   // Seed snapshot for `RouterProvider` — one `RouterValue` carrying everything
   // the route match knows. On the client the provider derives the live
   // `pathname`/`query` from the navigation store; `params`/`domain`/`isPreview`
   // are seeded from here.
   const routerValue: Router = {
     domain: getDomain(),
-    path: state.currentPath,
-    pathname: state.currentPath,
+    path: activePathname,
+    pathname: activePathname,
     params: normalizedParams,
-    query: getQuery(),
+    query,
     isPreview: false,
     isMounted,
     navigate: async (path, _options) => {
@@ -210,7 +259,7 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
     slug: state.currentPath || "/",
     path: state.currentPath,
     params: normalizedParams,
-    query: getQuery(),
+    query,
     frontmatter: state.frontmatter,
     headings: [],
     mdxHeadings: [],

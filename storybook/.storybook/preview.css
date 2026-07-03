@@ -1,0 +1,371 @@
+@import "tailwindcss";
+@source "../../src/**/*.{ts,tsx}";
+@source "../stories/**/*.{ts,tsx}";
+@source "./**/*.{ts,tsx}";
+
+/* Tailwind v4 token bridge for the Studio docs kit. The docs primitives use
+   semantic utilities (bg-background, text-foreground, border-edge, bg-card,
+   border-outline-border, text-muted-foreground, bg-tint, bg-surface-soft,
+   text-destructive, rounded-md). The underlying CSS vars are defined in :root /
+   [data-theme="dark"] below; this @theme inline block maps each to the Tailwind
+   utility namespace (--color-* / --radius-*) so the utilities resolve. */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-edge: var(--edge);
+  --color-outline-border: var(--outline-border);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-tint: var(--tint);
+  --color-destructive: var(--destructive);
+  --color-surface-soft: var(--surface-soft);
+  --color-secondary: var(--secondary);
+  --color-faint: var(--faint);
+  /* NOTE: deliberately NO --color-card. Studio never defines it, so `bg-card`
+     is an inert utility there and every docs surface (DocsSurface, the
+     DocsExampleAuto toolbar, DocsComposition nodes, DocsPropsTable) renders
+     flat against the page background. Defining it whitens those surfaces and
+     diverges from Studio — do not add it back. */
+
+  --radius-xs: var(--radius-xs);
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+}
+
+:root {
+  color-scheme: light;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+  --background: #f0efe9;
+  --foreground: #010101;
+  --primary: #282828;
+  --secondary: #ffffff;
+  --tertiary: #f0efe9;
+  --accent: #e8e6db;
+  --muted: #f7f6f4;
+  --destructive: #d40c1a;
+  --outline-border: #dcdad0;
+  --status-neutral: #9f9f9f;
+  --status-info: #0071df;
+  --status-success: #098926;
+  --status-warning: #f99100;
+  --status-error: #d40924;
+  --alert-warning-bg: #f1e3cd;
+  --alert-error-bg: #ecd3d1;
+  --alert-success-bg: #d4e2d2;
+  --alert-info-bg: #e6e6e0;
+  --faint: oklch(from var(--foreground) l c h / 0.25);
+  --soft: oklch(from var(--foreground) l c h / 0.7);
+  --tint: oklch(from var(--foreground) l c h / 0.04);
+  --surface-soft: var(--muted);
+  --edge: oklch(from var(--foreground) l c h / 0.06);
+  --edge-medium: oklch(from var(--foreground) l c h / 0.1);
+  --separator: #eeeeed;
+  --shadow-sm: 0 1.5px 3px rgb(0 0 0 / 8%);
+  --code-bg: var(--secondary);
+  --input-bg: var(--secondary);
+  --popover: var(--secondary);
+  --dialog: var(--background);
+  --drawer: var(--background);
+  --overlay: rgb(0 0 0 / 50%);
+  --card: var(--secondary);
+  --card-foreground: var(--foreground);
+  --popover-foreground: var(--foreground);
+  --primary-foreground: var(--secondary);
+  /* Studio leaves --muted-foreground undefined, so `text-muted-foreground` and
+     the code-panel line numbers inherit the full foreground and are dimmed only
+     by their own `opacity` (line numbers use 0.4). Pointing this at --faint
+     (foreground @ 25%) double-dimmed them to ~10% — far too light. Match Studio
+     by resolving to the full foreground. */
+  --muted-foreground: var(--foreground);
+  --accent-foreground: var(--foreground);
+  --destructive-foreground: #ffffff;
+  --border: var(--outline-border);
+  --input: var(--input-bg);
+  --input-border: var(--edge-medium);
+  --input-placeholder: var(--faint);
+  --ring: var(--edge-medium);
+  --chat-bubble: var(--primary);
+  --chat-bubble-foreground: var(--secondary);
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-xl: 35px;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --background: #282828;
+  --foreground: #f0efe9;
+  --primary: #f1f0ea;
+  --secondary: #333333;
+  --tertiary: #262626;
+  --accent: #303030;
+  --muted: #0d1315;
+  --outline-border: #3a3a3a;
+  --separator: oklch(from var(--foreground) l c h / 0.06);
+  --code-bg: oklch(0.08 0.005 280);
+  --input-bg: #40403f;
+  --card: var(--secondary);
+  --card-foreground: var(--foreground);
+  --border: var(--outline-border);
+  --chat-bubble: var(--primary);
+  --chat-bubble-foreground: var(--secondary);
+}
+
+/* Keyframes for the chat UI primitives (Spinner, Shimmer, ProgressBar,
+   LoadingButton). Mirrors the KEYFRAMES injected by chat `theme.ts` so stories
+   animate identically to the shipped package. */
+@keyframes bounce-spin {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+    animation-timing-function: ease-in-out;
+  }
+  25% {
+    transform: translateY(-30%) rotate(90deg);
+    animation-timing-function: ease-in;
+  }
+  50% {
+    transform: translateY(0) rotate(180deg);
+    animation-timing-function: ease-out;
+  }
+  75% {
+    transform: translateY(-15%) rotate(270deg);
+    animation-timing-function: ease-in;
+  }
+}
+@keyframes button-loading {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+@keyframes shimmer-sweep {
+  0% {
+    background-position: 100% center;
+  }
+  100% {
+    background-position: 0% center;
+  }
+}
+@keyframes progress-indeterminate {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+/* Named animation utilities — mirror the self-contained set the npm package
+   injects via chat `theme.ts`, so components use Studio's clean class names. */
+.animate-bounce-spin {
+  animation: bounce-spin 2.5s cubic-bezier(0.25, 1, 0.5, 1) infinite;
+}
+.animate-button-loading {
+  animation: button-loading 1.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+.animate-progress-indeterminate {
+  animation: progress-indeterminate 1.2s ease-in-out infinite;
+}
+
+html,
+body,
+#storybook-root {
+  min-height: 100%;
+}
+
+/* Page chrome follows the themed tokens, so dark mode reaches full height and
+   the docs/canvas backgrounds switch with [data-theme="dark"] on <html>. */
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* Standalone story canvas fills the viewport (so the themed background always
+   reaches full height). #storybook-root only exists in the canvas iframe, not
+   in docs, so docs previews stay content-sized. */
+#storybook-root .vf-story-shell {
+  min-height: 100vh;
+}
+
+/* Paint the autodocs page on the same flat background as the story previews so
+   examples sit seamlessly on the page (matching the Veryfront Studio docs),
+   instead of a white page with grey preview blocks. */
+.sbdocs-wrapper {
+  background: var(--background, #f0efe9) !important;
+  padding: 72px 32px 96px !important;
+}
+
+.sbdocs.sbdocs-content {
+  max-width: 1024px;
+  margin: 0 auto;
+  background: transparent;
+}
+
+/* Docs typography uses the Inter stack (this repo's font; the licensed Studio
+   typeface is banned here) instead of Storybook's default docs typeface. */
+.sbdocs,
+.sbdocs.sbdocs-h1,
+.sbdocs.sbdocs-h2,
+.sbdocs.sbdocs-h3,
+.sbdocs.sbdocs-p {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+
+/* Docs text follows the theme so dark mode is readable. The docs Title/
+   Subtitle/heading blocks set their colour from Storybook's (light) docs
+   theme, so override with the themed token. */
+.sbdocs-title,
+.sbdocs-subtitle,
+.sbdocs-h1,
+.sbdocs-h2,
+.sbdocs-h3,
+.sbdocs-p,
+.sbdocs-li {
+  color: var(--foreground) !important;
+}
+
+.sbdocs-subtitle {
+  opacity: 0.7;
+}
+
+/* The Controls/args table renders on Storybook's own (light) docs theme; make
+   it transparent + themed so it follows the page background in dark mode. */
+.docblock-argstable,
+.docblock-argstable th,
+.docblock-argstable td,
+.docblock-argstable tr,
+.docblock-argstable thead,
+.docblock-argstable tbody {
+  background: transparent !important;
+  color: var(--foreground) !important;
+  box-shadow: none !important;
+}
+
+.docblock-argstable th,
+.docblock-argstable td {
+  border-color: var(--outline-border) !important;
+}
+
+.sbdocs.sbdocs-h1,
+.sbdocs.sbdocs-h2,
+.sbdocs.sbdocs-h3 {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* Code panel uses a monospace stack (the .sbdocs Inter rule above otherwise
+   cascades into the shiki output) at a fixed size. */
+.vf-code,
+.vf-code pre,
+.vf-code code,
+.vf-code span {
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace !important;
+  font-size: 13px !important;
+}
+
+/* Hide the code block scrollbar (it still scrolls horizontally). */
+.vf-code,
+.vf-code pre {
+  scrollbar-width: none;
+}
+
+.vf-code::-webkit-scrollbar,
+.vf-code pre::-webkit-scrollbar {
+  display: none;
+}
+
+/* Preview/Code tab + copy button colours follow the theme tokens (matching
+   Studio's DocsExample), with a hover affordance. */
+.vf-doc-tab {
+  color: var(--muted-foreground, rgba(0, 0, 0, 0.45));
+}
+
+.vf-doc-tab:hover {
+  color: var(--foreground);
+}
+
+.vf-doc-tab--active,
+.vf-doc-tab--active:hover {
+  color: var(--foreground);
+  background: oklch(from var(--foreground) l c h / 0.07);
+}
+
+.vf-doc-copy {
+  color: oklch(from var(--foreground) l c h / 0.5);
+}
+
+.vf-doc-copy:hover {
+  color: var(--foreground);
+}
+
+
+.vf-story-shell {
+  min-height: 100%;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* Every story renders inside `.vf-story-shell` (our own wrapper, in both the
+   canvas and the docs preview). Setting the chat library's font (Inter, loaded
+   via preview-head.html) on that wrapper establishes the font context the way a
+   consuming app would — descendants inherit it from this nearest setter, which
+   sits BELOW Storybook's runtime-injected Nunito Sans (Nunito ships only
+   400/700, so font-medium=500 collapsed to regular). No `!important`, no
+   universal selector — and code blocks are outside `.vf-story-shell`, so they
+   keep their monospace. This mirrors how Studio's own component context carries
+   the font. */
+.vf-story-shell {
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+}
+
+.vf-story-canvas {
+  min-height: 100%;
+  padding: 32px;
+}
+
+/* Chat panels keep their sizing so the chat lays out correctly, but drop the
+   card border/background so the component renders itself without wrapper chrome. */
+.vf-chat-panel {
+  width: min(100%, 960px);
+  height: min(760px, calc(100vh - 64px));
+  margin: 0 auto;
+  overflow: hidden;
+  background: var(--background);
+}
+
+.vf-wide-panel {
+  width: min(100%, 1180px);
+  height: min(760px, calc(100vh - 64px));
+  margin: 0 auto;
+  overflow: hidden;
+  background: var(--background);
+}
+
+.vf-component-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+/* The component renders itself — no review card chrome (border/bg/label) that
+   distracts from what is actually being shown. */
+.vf-component-surface {
+  min-width: 0;
+  color: var(--foreground, #010101);
+}
+
+.vf-component-label {
+  display: none;
+}

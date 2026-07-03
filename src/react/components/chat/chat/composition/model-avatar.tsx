@@ -14,6 +14,11 @@ import { SparklesIcon } from "../../icons/index.ts";
 export interface ModelAvatarProps {
   model?: string;
   className?: string;
+  /**
+   * Fallback glyph shown when the provider can't be resolved to a brand logo.
+   * Defaults to the built-in {@link SparklesIcon}.
+   */
+  icon?: React.ReactNode;
 }
 
 // Official Anthropic logomark — Simple Icons (viewBox 0 0 24 24)
@@ -58,12 +63,12 @@ const PROVIDER_STYLES = {
   anthropic: "bg-[#181818]",
   openai: "bg-[var(--foreground)]",
   google: "bg-[var(--foreground)]",
-  unknown: "bg-[var(--muted-foreground)]",
+  unknown: "bg-[var(--faint)]",
 } as const;
 
 /** Render model avatar. */
 export function ModelAvatar(
-  { model, className }: ModelAvatarProps,
+  { model, className, icon }: ModelAvatarProps,
 ): React.ReactElement {
   const provider = resolveProvider(model ?? "");
 
@@ -99,7 +104,7 @@ export function ModelAvatar(
 
   return (
     <div className={base}>
-      <SparklesIcon className="size-4 text-[var(--background)]" />
+      {icon ?? <SparklesIcon className="size-4 text-[var(--background)]" />}
     </div>
   );
 }

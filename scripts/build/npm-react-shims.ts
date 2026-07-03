@@ -19,6 +19,20 @@ export function normalizeEsmShReactNpmShims(root: string): number {
     }
 
     if (
+      entry.isFile && entry.name.startsWith(REACT_DOM_ROOT_PREFIX) &&
+      entry.name.endsWith(".js")
+    ) {
+      // The chat UI portals import `react-dom` (createPortal), so dnt now
+      // emits a top-level react-dom root file too — shim it like react's.
+      patchedCount += writeNpmShim(
+        `${root}/${entry.name}`,
+        "react-dom",
+        entry.name,
+      );
+      continue;
+    }
+
+    if (
       entry.isFile && entry.name.startsWith(SCHEDULER_ROOT_PREFIX) &&
       entry.name.endsWith(".js")
     ) {

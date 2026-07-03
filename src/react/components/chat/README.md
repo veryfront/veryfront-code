@@ -94,7 +94,7 @@ import { ChatComponents as Chat } from "veryfront/react";
 <Chat>
   <Chat.Header>
     <h1>Customer Support</h1>
-    <StatusBadge />
+    <Status />
   </Chat.Header>
 
   <Chat.Messages>
@@ -155,21 +155,15 @@ import { Message } from "veryfront/react";
 />;
 ```
 
-### StreamingMessage
+### Streaming
 
-Display streaming text with cursor.
+Pass `isStreaming` to any `<Message>` to surface the "Continuing…" shimmer while
+the turn is still generating (there is no separate `StreamingMessage`).
 
 ```tsx
-import { StreamingMessage } from "veryfront/react";
+import { Message } from "veryfront/react";
 
-{
-  streamingText && (
-    <StreamingMessage
-      content={streamingText}
-      showCursor={true}
-    />
-  );
-}
+<Message message={message} isStreaming />;
 ```
 
 ## Theme System
@@ -366,7 +360,7 @@ export default function AdvancedChat() {
 - Chat component with theme system (parts-based ChatMessage support)
 - AgentCard component
 - Message component
-- StreamingMessage component
+- Message streaming state
 - Theme system with defaults
 - Composition API
 - Dark mode support

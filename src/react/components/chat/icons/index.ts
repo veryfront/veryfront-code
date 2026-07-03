@@ -80,6 +80,23 @@ const X_CIRCLE_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
   { type: "line", props: { x1: "9", y1: "9", x2: "15", y2: "15" } },
 ];
 
+const INFO_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
+  { type: "circle", props: { cx: "12", cy: "12", r: "10" } },
+  { type: "line", props: { x1: "12", y1: "16", x2: "12", y2: "12" } },
+  { type: "line", props: { x1: "12", y1: "8", x2: "12.01", y2: "8" } },
+];
+
+const ALERT_TRIANGLE_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
+  {
+    type: "path",
+    props: {
+      d: "M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z",
+    },
+  },
+  { type: "line", props: { x1: "12", y1: "9", x2: "12", y2: "13" } },
+  { type: "line", props: { x1: "12", y1: "17", x2: "12.01", y2: "17" } },
+];
+
 const WRENCH_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
   {
     type: "path",
@@ -190,6 +207,14 @@ export function CheckCircleIcon({ className }: IconProps): React.ReactElement {
   return renderIcon(className, CHECK_CIRCLE_ICON_ELEMENTS);
 }
 
+export function InfoIcon({ className }: IconProps): React.ReactElement {
+  return renderIcon(className, INFO_ICON_ELEMENTS);
+}
+
+export function AlertTriangleIcon({ className }: IconProps): React.ReactElement {
+  return renderIcon(className, ALERT_TRIANGLE_ICON_ELEMENTS);
+}
+
 export function XCircleIcon({ className }: IconProps): React.ReactElement {
   return renderIcon(className, X_CIRCLE_ICON_ELEMENTS);
 }
@@ -258,6 +283,17 @@ const PANEL_LEFT_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
   { type: "line", props: { x1: "9", y1: "3", x2: "9", y2: "21" } },
 ];
 
+const PANEL_RIGHT_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
+  { type: "rect", props: { width: "18", height: "18", x: "3", y: "3", rx: "2" } },
+  { type: "line", props: { x1: "15", y1: "3", x2: "15", y2: "21" } },
+];
+
+const MORE_HORIZONTAL_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
+  { type: "circle", props: { cx: "12", cy: "12", r: "1" } },
+  { type: "circle", props: { cx: "19", cy: "12", r: "1" } },
+  { type: "circle", props: { cx: "5", cy: "12", r: "1" } },
+];
+
 const PENCIL_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
   { type: "path", props: { d: "M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" } },
   { type: "path", props: { d: "m15 5 4 4" } },
@@ -267,12 +303,58 @@ export function PlusIcon({ className }: IconProps): React.ReactElement {
   return renderIcon(className, PLUS_ICON_ELEMENTS);
 }
 
+const SEARCH_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
+  { type: "circle", props: { cx: "11", cy: "11", r: "8" } },
+  { type: "line", props: { x1: "21", y1: "21", x2: "16.65", y2: "16.65" } },
+];
+
+export function SearchIcon({ className }: IconProps): React.ReactElement {
+  return renderIcon(className, SEARCH_ICON_ELEMENTS);
+}
+
+const X_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
+  { type: "line", props: { x1: "18", y1: "6", x2: "6", y2: "18" } },
+  { type: "line", props: { x1: "6", y1: "6", x2: "18", y2: "18" } },
+];
+
+export function XIcon({ className }: IconProps): React.ReactElement {
+  return renderIcon(className, X_ICON_ELEMENTS);
+}
+
+const ARROW_RIGHT_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
+  { type: "line", props: { x1: "5", y1: "12", x2: "19", y2: "12" } },
+  { type: "polyline", props: { points: "12 5 19 12 12 19" } },
+];
+
+export function ArrowRightIcon({ className }: IconProps): React.ReactElement {
+  return renderIcon(className, ARROW_RIGHT_ICON_ELEMENTS);
+}
+
+const ARROW_UP_ICON_ELEMENTS: ReadonlyArray<IconElementSpec> = [
+  { type: "line", props: { x1: "12", y1: "19", x2: "12", y2: "5" } },
+  { type: "polyline", props: { points: "5 12 12 5 19 12" } },
+];
+
+export function ArrowUpIcon({ className }: IconProps): React.ReactElement {
+  return renderIcon(className, ARROW_UP_ICON_ELEMENTS);
+}
+
 export function TrashIcon({ className }: IconProps): React.ReactElement {
   return renderIcon(className, TRASH_ICON_ELEMENTS);
 }
 
 export function PanelLeftIcon({ className }: IconProps): React.ReactElement {
   return renderIcon(className, PANEL_LEFT_ICON_ELEMENTS);
+}
+
+export function PanelRightIcon({ className }: IconProps): React.ReactElement {
+  return renderIcon(className, PANEL_RIGHT_ICON_ELEMENTS);
+}
+
+export function MoreHorizontalIcon(
+  { className }: IconProps,
+): React.ReactElement {
+  return renderIcon(className, MORE_HORIZONTAL_ICON_ELEMENTS);
 }
 
 export function PencilIcon({ className }: IconProps): React.ReactElement {

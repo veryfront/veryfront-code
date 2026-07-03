@@ -275,6 +275,21 @@ function normalizeMessagePart(
     };
   }
 
+  // Attachments: keep `file`/`image` parts (multimodal input). The composer
+  // sends every attachment as `type: "file"`, so route by media type — images
+  // become `image` parts the model can view, everything else stays `file`.
+  // The `url` may be a fetchable URL or an inline `data:` base64 URL.
+  if (
+    (part.type === "file" || part.type === "image") &&
+    typeof part.url === "string" && part.url.length > 0 &&
+    typeof part.mediaType === "string" && part.mediaType.length > 0
+  ) {
+    const isImage = part.type === "image" || part.mediaType.startsWith("image/");
+    return isImage
+      ? { type: "image", url: part.url, mediaType: part.mediaType }
+      : { type: "file", url: part.url, mediaType: part.mediaType };
+  }
+
   return null;
 }
 

@@ -22,6 +22,7 @@ export interface ComposerContextValue {
   // Attachments
   attachments: AttachmentInfo[];
   onAttach?: (files: FileList) => void;
+  onSelectAttachment?: () => void;
   onRemoveAttachment?: (id: string) => void;
   attachAccept?: string;
 

@@ -60,19 +60,20 @@ export type { ChatProps } from "./components/chat/chat.tsx";
 
 // Chat — Composition building blocks
 export {
-  ChatComposer,
   ChatEmpty,
   ChatIf,
+  ChatInput,
   ChatMessageList,
   ChatRoot,
   ErrorBanner,
   Message,
+  type MessageProps,
   ModelAvatar,
 } from "./components/chat/chat.tsx";
 export type {
-  ChatComposerProps,
   ChatEmptyProps,
   ChatIfProps,
+  ChatInputProps,
   ChatMessageListProps,
   ChatRootProps,
   ErrorBannerProps,
@@ -85,29 +86,25 @@ export {
   ChatContextProvider,
   ComposerContextProvider,
   MessageContextProvider,
-  ThreadListContextProvider,
   useChatContext,
   useChatContextOptional,
   useComposerContext,
   useComposerContextOptional,
   useMessageContext,
   useMessageContextOptional,
-  useThreadListContext,
-  useThreadListContextOptional,
 } from "./components/chat/chat.tsx";
 export type {
   ChatContextValue,
   ComposerContextValue,
   MessageContextValue,
-  ThreadListContextValue,
 } from "./components/chat/chat.tsx";
 
 // Chat — Sub-components
 export {
   AttachmentPill,
+  AttachmentsPanel,
   BranchPicker,
   ChatSidebar,
-  ChatWithSidebar,
   ConversationEmptyState,
   ConversationScrollButton,
   downloadMarkdown,
@@ -122,7 +119,7 @@ export {
   isReasoningPart,
   isToolPart,
   Loader,
-  MessageActions,
+  MessageActionBar,
   MessageEditForm,
   MessageFeedback,
   ModelSelector,
@@ -137,33 +134,29 @@ export {
   TabSwitcher,
   ToolCallCard,
   ToolStatusBadge,
-  UploadsPanel,
-  useThreads,
 } from "./components/chat/chat.tsx";
 export type {
   AttachmentInfo,
   AttachmentPillProps,
+  AttachmentsPanelProps,
   BranchPickerProps,
+  ChatSidebarComponent,
+  ChatSidebarEmptyProps,
+  ChatSidebarGroupProps,
+  ChatSidebarIcons,
+  ChatSidebarItemProps,
+  ChatSidebarListProps,
+  ChatSidebarNewButtonProps,
   ChatSidebarProps,
+  ChatSidebarRootProps,
   ChatTab,
-  ChatWithSidebarAttachmentConfig,
-  ChatWithSidebarChatController,
-  ChatWithSidebarFeatureConfig,
-  ChatWithSidebarGroupedProps,
-  ChatWithSidebarMessageConfig,
-  ChatWithSidebarModelConfig,
-  ChatWithSidebarProps,
-  ChatWithSidebarQuickActionsConfig,
-  ChatWithSidebarSidebarConfig,
-  ChatWithSidebarTabsConfig,
-  ChatWithSidebarVoiceConfig,
   ConversationEmptyStateProps,
   ConversationScrollButtonProps,
   DropZoneOverlayProps,
   FeedbackValue,
   InferenceBadgeProps,
   InlineCitationProps,
-  MessageActionsProps,
+  MessageActionBarProps,
   MessageEditFormProps,
   MessageFeedbackProps,
   ModelOption,
@@ -177,16 +170,8 @@ export type {
   SuggestionProps,
   SuggestionsProps,
   TabSwitcherProps,
-  Thread,
   UploadedFile,
-  UploadsPanelProps,
-  UseThreadsOptions,
-  UseThreadsResult,
 } from "./components/chat/chat.tsx";
-
-// Standalone message components
-export { Message as StandaloneMessage, StreamingMessage } from "./components/chat/message.tsx";
-export type { MessageProps, StreamingMessageProps } from "./components/chat/message.tsx";
 
 export { AgentCard } from "./components/chat/agent-card.tsx";
 export type { AgentCardProps } from "./components/chat/agent-card.tsx";
@@ -248,6 +233,7 @@ export type { UseAgentOptions, UseAgentResult } from "#veryfront/agent/react/use
 
 export {
   getAgentPromptSuggestions,
+  normalizeAgentMetadata,
   normalizeAgentMetadataResponse,
   useAgentMetadata,
 } from "#veryfront/agent/react/use-agent-metadata.ts";
@@ -259,6 +245,9 @@ export type {
   AgentMetadataTaskSuggestion,
   UseAgentMetadataResult,
 } from "#veryfront/agent/react/use-agent-metadata.ts";
+
+export { normalizeAgentsListResponse, useAgents } from "#veryfront/agent/react/use-agents.ts";
+export type { UseAgentsOptions, UseAgentsResult } from "#veryfront/agent/react/use-agents.ts";
 
 export { useCompletion } from "#veryfront/agent/react/use-completion.ts";
 export type {

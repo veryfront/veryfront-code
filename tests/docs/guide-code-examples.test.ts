@@ -17,7 +17,7 @@ import {
 import {
   Chat,
   ChatContextProvider,
-  ChatWithSidebar,
+  ChatThemeScope,
   ComposerContextProvider,
   Message,
   MessageContextProvider,
@@ -95,6 +95,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "quickstart.md",
   "sandbox.md",
   "skills.md",
+  "storybook-ui-workbench.md",
   "tasks.md",
   "work.md",
   "workflows-advanced.md",
@@ -210,6 +211,20 @@ describe("Guide: project-metrics.md", () => {
   });
 });
 
+describe("Guide: storybook-ui-workbench.md", () => {
+  it("documents deno tasks that exist in deno.json", async () => {
+    const guide = await readGuide("storybook-ui-workbench.md");
+    const denoJson = JSON.parse(await Deno.readTextFile("deno.json")) as {
+      tasks?: Record<string, string>;
+    };
+
+    for (const task of ["storybook", "build:storybook", "storybook:check"]) {
+      assertStringIncludes(guide, `deno task ${task}`);
+      assertExists(denoJson.tasks?.[task], `deno.json task "${task}" should exist`);
+    }
+  });
+});
+
 describe("Guide: chat-ui.md", () => {
   it("uses the preset Chat component with the documented hook and route helper", () => {
     assertEquals(typeof useChat, "function");
@@ -220,9 +235,8 @@ describe("Guide: chat-ui.md", () => {
     assertEquals(typeof chatRecord.render, "function");
     assertExists(chatRecord.Root);
     assertExists(chatRecord.MessageList);
-    assertExists(chatRecord.Composer);
+    assertExists(chatRecord.Input);
     assertExists(messageRecord.Root);
-    assertExists(ChatWithSidebar);
     assertExists(ChatContextProvider);
     assertExists(ComposerContextProvider);
     assertExists(MessageContextProvider);
@@ -266,8 +280,12 @@ describe("Guide: build-a-rag-app.md", () => {
     assertEquals(typeof createUploadHandler, "function");
     assertEquals(typeof useUploads, "function");
     assertEquals(typeof useChat, "function");
+    assertEquals(typeof ChatThemeScope, "function");
     assertEquals(typeof createAgUiHandler, "function");
     assertExists(template);
+    const templatePage = template.find((file) => file.path === "app/page.tsx")?.content ?? "";
+    assertStringIncludes(templatePage, "ChatThemeScope");
+    assertStringIncludes(templatePage, 'className="flex h-screen min-h-0"');
     assert(
       template.some((file) => file.path === "store.ts"),
       "docs-agent template includes store.ts",

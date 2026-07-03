@@ -33,4 +33,9 @@ export interface BlobStorage {
   delete(id: string): Promise<void>;
   exists(id: string): Promise<boolean>;
   stat(id: string): Promise<BlobRef | null>;
+  /**
+   * Enumerate stored blobs, newest first. Optional — only backends that can
+   * cheaply list (e.g. local disk) implement it; callers must feature-detect.
+   */
+  list?(): Promise<BlobRef[]>;
 }

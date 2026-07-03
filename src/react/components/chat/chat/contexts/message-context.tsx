@@ -28,6 +28,8 @@ export interface MessageContextValue {
 
   // Actions
   onCopy: () => Promise<void>;
+  /** True briefly after `onCopy` — lifted here so composed layouts keep the tick. */
+  copied: boolean;
   onEdit?: (content: string) => void;
   onRegenerate?: () => void;
   onFeedback?: (value: FeedbackValue) => void;
