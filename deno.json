@@ -98,6 +98,7 @@
     "./runs": "./src/runs/index.ts",
     "./skill": "./src/skill/index.ts",
     "./trigger": "./src/trigger/index.ts",
+    "./task": "./src/task/index.ts",
     "./schedule": "./src/schedule/index.ts",
     "./webhook": "./src/webhook/index.ts",
     "./mcp": "./src/mcp/index.ts",
