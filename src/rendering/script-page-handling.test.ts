@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { handleScriptPage } from "./script-page-handling.ts";
+import { flattenRouteParams } from "#veryfront/routing";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
 type ScriptModuleOutput =
@@ -47,13 +48,9 @@ function buildPageContext(
   params?: Record<string, string | string[]>,
   url?: URL,
 ): PageContext {
-  const flatParams: Record<string, string> = params
-    ? Object.fromEntries(
-      Object.entries(params)
-        .map(([k, v]) => [k, Array.isArray(v) ? v[0] : v])
-        .filter((entry): entry is [string, string] => entry[1] !== undefined),
-    )
-    : {};
+  // Mirror production: reuse the shared helper so this test can't drift back
+  // to the old first-segment-only contract (issue #2742).
+  const flatParams = flattenRouteParams(params);
 
   return {
     params: flatParams,
@@ -165,9 +162,9 @@ describe("script-page-handling helpers", () => {
       assertEquals(ctx.frontmatter, { title: "About" });
     });
 
-    it("should flatten array params to first element", () => {
+    it("should join catch-all array params instead of dropping segments", () => {
       const ctx = buildPageContext(mockPageInfo, "blog", { tags: ["a", "b"] });
-      assertEquals(ctx.params, { tags: "a" });
+      assertEquals(ctx.params, { tags: "a/b" });
     });
 
     it("should handle empty params", () => {
