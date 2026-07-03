@@ -5,14 +5,20 @@
  * send; this hook instead keeps a durable list so an "Uploads" surface can show
  * everything and delete from storage.
  *
- * The list is sourced from the storage adapter itself: on mount it `GET`s the
- * endpoint (no `id`) for everything actually stored, so the surface reflects
- * server truth across sessions/browsers — not just what this tab uploaded.
- * localStorage is kept only as an instant-paint cache before the fetch lands.
+ * The list is sourced from the endpoint itself: on mount it `GET`s the `url`
+ * (no `id`) for everything actually stored, so the surface reflects server
+ * truth across sessions/browsers — not just what this tab uploaded. localStorage
+ * is kept only as an instant-paint cache before the fetch lands.
  *
- *   GET    `{api}`                               → { items: [{ id, url, name, size, mediaType }] }
- *   POST   `{api}`            FormData { file }  → { id, url, name, size, mediaType }
- *   DELETE `{api}?id={id}`                        → removes from storage
+ *   GET    `{url}`                               → { items: [{ id, url, name, size, mediaType }] }
+ *   POST   `{url}`            FormData { file }  → { id, url, name, size, mediaType }
+ *   DELETE `{url}?id={id}`                        → removes from storage
+ *
+ * The endpoint is normally {@link createChatUploadHandler} (`veryfront/chat/uploads`),
+ * which is where pluggable *storage* lives: it resolves a `BlobStorage`
+ * (Veryfront Cloud when deployed, local disk in dev; or S3/GCS/your own). So
+ * this hook needs only the `url` — "point storage anywhere" is the handler's
+ * job, not the client's.
  *
  * @module react/components/chat/hooks/use-uploads-registry
  */
@@ -22,7 +28,12 @@ import type { UploadedFile } from "../components/attachments-panel.tsx";
 
 /** Options for {@link useUploadsRegistry}. */
 export interface UseUploadsRegistryOptions {
-  /** Upload endpoint (multipart `file` → `{ id, url, ... }`). @default "/api/uploads" */
+  /**
+   * Upload endpoint — `GET` lists, `POST` (multipart `file`) uploads, `DELETE`
+   * removes. Usually {@link createChatUploadHandler}'s route. @default "/api/uploads"
+   */
+  url?: string;
+  /** @deprecated Renamed to `url`. */
   api?: string;
   /** localStorage key for the persisted list. @default "vf-uploads" */
   storageKey?: string;
@@ -91,7 +102,9 @@ function save(storageKey: string, items: UploadedFile[]): void {
 export function useUploadsRegistry(
   options: UseUploadsRegistryOptions = {},
 ): UseUploadsRegistryResult {
-  const { api = "/api/uploads", storageKey = "vf-uploads", headers } = options;
+  const { storageKey = "vf-uploads", headers } = options;
+  // `url` is canonical; `api` is the deprecated alias.
+  const endpoint = options.url ?? options.api ?? "/api/uploads";
 
   const [items, setItems] = React.useState<UploadedFile[]>(() => load(storageKey));
   const [inFlight, setInFlight] = React.useState(0);
@@ -114,7 +127,7 @@ export function useUploadsRegistry(
         setInFlight((n) => n + 1);
         const form = new FormData();
         form.append("file", file, file.name);
-        void fetch(api, { method: "POST", body: form, headers })
+        void fetch(endpoint, { method: "POST", body: form, headers })
           .then(async (response) => {
             if (!response.ok) throw new Error(`Upload failed: ${response.status}`);
             const body = (await response.json()) as UploadResponse;
@@ -131,17 +144,17 @@ export function useUploadsRegistry(
           .finally(() => setInFlight((n) => Math.max(0, n - 1)));
       }
     },
-    [api, headers, add],
+    [endpoint, headers, add],
   );
 
   const remove = React.useCallback(
     async (id: string): Promise<void> => {
       try {
-        await fetch(`${api}?id=${encodeURIComponent(id)}`, { method: "DELETE", headers });
+        await fetch(`${endpoint}?id=${encodeURIComponent(id)}`, { method: "DELETE", headers });
       } catch (_) { /* best-effort server delete; still drop locally */ }
       setItems((prev) => prev.filter((f) => f.id !== id));
     },
-    [api, headers],
+    [endpoint, headers],
   );
 
   const clear = React.useCallback(() => setItems([]), []);
@@ -151,7 +164,7 @@ export function useUploadsRegistry(
   // not just what this browser's localStorage happens to remember.
   const refresh = React.useCallback(async () => {
     try {
-      const response = await fetch(api, { headers });
+      const response = await fetch(endpoint, { headers });
       if (!response.ok) return;
       const body = (await response.json()) as ListResponse;
       const serverItems = (body.items ?? [])
@@ -161,7 +174,7 @@ export function useUploadsRegistry(
     } catch (_) {
       /* offline / endpoint without listing — keep the cached list */
     }
-  }, [api, headers]);
+  }, [endpoint, headers]);
 
   React.useEffect(() => {
     void refresh();
