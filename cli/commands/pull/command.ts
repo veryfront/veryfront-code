@@ -11,7 +11,7 @@ import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { dirname, join, normalize, resolve } from "veryfront/platform/path";
 import { cliLogger } from "#cli/utils";
-import { getApiUrl } from "#cli/shared/constants";
+import { resolveCliApiUrl } from "#cli/shared/constants";
 import { cwd } from "veryfront/platform";
 import { createFileSystem } from "veryfront/platform";
 import {
@@ -22,7 +22,7 @@ import {
 } from "#cli/shared/config";
 import { confirmPrompt, logInfo, logSuccess, logWarning } from "#cli/utils";
 import { createNoopSpinner, createSpinner } from "#cli/ui";
-import { getApiTokenEnv } from "veryfront/config";
+import { getApiTokenEnv, getEnvironmentConfig } from "veryfront/config";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 
@@ -417,7 +417,8 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
 
         if (!projects?.length) throw error;
 
-        const token = getApiTokenEnv() ?? configFile?.apiToken;
+        const env = getEnvironmentConfig();
+        const token = getApiTokenEnv(env) ?? configFile?.apiToken;
         if (!token) {
           throw new Error(
             "VERYFRONT_API_TOKEN environment variable or apiToken in veryfront.json is required when using --projects",
@@ -425,7 +426,7 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
         }
 
         config = {
-          apiUrl: configFile?.apiUrl ?? getApiUrl(),
+          apiUrl: resolveCliApiUrl(env, configFile?.apiUrl),
           apiToken: token,
           projectSlug: "",
         };

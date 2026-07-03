@@ -67,6 +67,54 @@ describe("resolveConfig", () => {
 
     assertEquals(config.apiUrl, "https://custom.api.com");
   });
+
+  it("prefers explicit apiBaseUrl over veryfront.json apiUrl", async () => {
+    const tempDir = await Deno.makeTempDir();
+    try {
+      await Deno.writeTextFile(
+        join(tempDir, "veryfront.json"),
+        JSON.stringify({
+          projectSlug: "from-json",
+          apiUrl: "https://api.from-file.test",
+        }),
+      );
+
+      const env = createMockEnv({
+        apiBaseUrl: "https://api.from-env.test",
+        apiToken: "env-token",
+      });
+
+      const config = await resolveConfig(tempDir, env);
+
+      assertEquals(config.apiUrl, "https://api.from-env.test");
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("uses veryfront.json apiUrl before the default apiBaseUrl", async () => {
+    const tempDir = await Deno.makeTempDir();
+    try {
+      await Deno.writeTextFile(
+        join(tempDir, "veryfront.json"),
+        JSON.stringify({
+          projectSlug: "from-json",
+          apiUrl: "https://api.from-file.test",
+        }),
+      );
+
+      const env = createMockEnv({
+        apiBaseUrl: "https://api.veryfront.com",
+        apiToken: "env-token",
+      });
+
+      const config = await resolveConfig(tempDir, env);
+
+      assertEquals(config.apiUrl, "https://api.from-file.test");
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
 });
 
 describe("resolveConfigWithAuth", () => {

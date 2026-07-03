@@ -13,7 +13,7 @@ import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 import { cliLogger, VERSION } from "#cli/utils";
 import { readToken } from "../auth/token-store.ts";
 import { ensureAuthenticated } from "../auth/login.ts";
-import { DEFAULT_API_URL } from "./constants.ts";
+import { resolveCliApiUrl } from "./constants.ts";
 import { isRetryableConnectionError } from "../../src/proxy/retry.ts";
 
 // Delays for exponential backoff with jitter: attempt 1 = ~300ms, 2 = ~1s, 3 = ~3s
@@ -159,9 +159,7 @@ async function resolveConfigBase(
   const dir = projectDir ?? cwd();
   const configFile = await readConfigFile(dir);
 
-  // Explicit VERYFRONT_API_URL wins, then the project's veryfront.json,
-  // then apiBaseUrl (VERYFRONT_API_BASE_URL or the production default).
-  const apiUrl = env.apiUrl ?? configFile?.apiUrl ?? env.apiBaseUrl ?? DEFAULT_API_URL;
+  const apiUrl = resolveCliApiUrl(env, configFile?.apiUrl);
 
   let apiToken = env.apiToken ?? configFile?.apiToken ?? (await readToken(env));
 

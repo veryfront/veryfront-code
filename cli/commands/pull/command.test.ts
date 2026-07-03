@@ -6,16 +6,19 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import {
   buildFileContentUrl,
   buildFilesListUrl,
   getFileContent,
   listAllFiles,
+  pullCommand,
   type PullOptions,
   type PullSource,
   resolvePullSource,
 } from "./command.ts";
 import type { ApiClient } from "#cli/shared/config";
+import { join } from "veryfront/platform/path";
 
 function createMockClient(overrides: {
   get?: (url: string, params?: unknown) => Promise<unknown>;
@@ -48,6 +51,14 @@ function mockFileContentResponse(content: string): Promise<unknown> {
     content,
     size: content.length,
   });
+}
+
+function restoreEnv(name: string, value: string | undefined): void {
+  if (value === undefined) {
+    Deno.env.delete(name);
+    return;
+  }
+  Deno.env.set(name, value);
 }
 
 describe("resolvePullSource", () => {
@@ -327,5 +338,70 @@ describe("getFileContent", () => {
 
     assertEquals(content, "export default function Home() {}\n");
     assertEquals(content.endsWith("\n\n"), false);
+  });
+});
+
+describe("pullCommand", () => {
+  it("uses explicit env API base URL before veryfront.json apiUrl in the --projects fallback", async () => {
+    const tempDir = await Deno.makeTempDir();
+    const originalFetch = globalThis.fetch;
+    const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
+    const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
+    const originalProjectSlug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
+    const originalTenantProjectSlug = Deno.env.get("TENANT_PROJECT_SLUG");
+    const originalTenantProjectId = Deno.env.get("TENANT_PROJECT_ID");
+    const requestedUrls: string[] = [];
+
+    try {
+      await Deno.writeTextFile(
+        join(tempDir, "veryfront.json"),
+        JSON.stringify({
+          projects: ["alpha"],
+          apiToken: "file-token",
+          apiUrl: "https://api.from-file.test",
+        }),
+      );
+
+      Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.from-env.test");
+      Deno.env.delete("VERYFRONT_API_URL");
+      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      Deno.env.delete("TENANT_PROJECT_SLUG");
+      Deno.env.delete("TENANT_PROJECT_ID");
+      _resetEnvironmentConfig();
+
+      globalThis.fetch = ((input: string | URL | Request) => {
+        requestedUrls.push(String(input));
+        return Promise.resolve(
+          new Response(JSON.stringify({ data: [], page_info: {} }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }) as typeof fetch;
+
+      await pullCommand({
+        projectDir: tempDir + "/",
+        dryRun: true,
+        quiet: true,
+      });
+
+      assertEquals(
+        requestedUrls.some((url) => url.startsWith("https://api.from-env.test/projects/alpha/")),
+        true,
+      );
+      assertEquals(
+        requestedUrls.some((url) => url.startsWith("https://api.from-file.test/projects/alpha/")),
+        false,
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      restoreEnv("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
+      restoreEnv("VERYFRONT_API_URL", originalApiUrl);
+      restoreEnv("VERYFRONT_PROJECT_SLUG", originalProjectSlug);
+      restoreEnv("TENANT_PROJECT_SLUG", originalTenantProjectSlug);
+      restoreEnv("TENANT_PROJECT_ID", originalTenantProjectId);
+      _resetEnvironmentConfig();
+      await Deno.remove(tempDir, { recursive: true });
+    }
   });
 });
