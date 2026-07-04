@@ -221,8 +221,19 @@ async function fetchRuntimeTextFileContent(
   input: RuntimeFileContentFetcherInput,
 ): Promise<string | undefined> {
   const response = await fetch(input.url);
-  if (!response.ok) return undefined;
+  if (!response.ok) {
+    throw new Error(
+      `Failed to fetch text attachment content${
+        formatFileContentFetchLabel(input)
+      }: HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ""}`,
+    );
+  }
   return await response.text();
+}
+
+function formatFileContentFetchLabel(input: RuntimeFileContentFetcherInput): string {
+  const label = input.filename ?? input.uploadId ?? input.uploadPath;
+  return label ? ` for ${label}` : "";
 }
 
 function isFetchableRuntimeFileContentUrl(

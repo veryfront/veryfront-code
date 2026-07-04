@@ -231,6 +231,37 @@ Deno.test("prepareAgentRuntimeMessagesFromUiMessages surfaces trusted text attac
   }
 });
 
+Deno.test("prepareAgentRuntimeMessagesFromUiMessages surfaces trusted text attachment non-ok responses", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (): Promise<Response> =>
+    Promise.resolve(new Response("forbidden", { status: 403, statusText: "Forbidden" }));
+
+  try {
+    await assertRejects(
+      () =>
+        prepareAgentRuntimeMessagesFromUiMessages({
+          messages: [
+            userMessage([
+              { type: "text", text: "Use this upload." },
+              {
+                type: "file",
+                mediaType: "text/plain",
+                filename: "notes.txt",
+                uploadId: "upload-1",
+                url: "https://files.example.com/original.txt",
+              },
+            ]),
+          ],
+          resolveFileUrl: async () => "https://signed.example.com/notes.txt",
+        }),
+      Error,
+      "Failed to fetch text attachment content for notes.txt: HTTP 403 Forbidden",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 Deno.test("prepareAgentRuntimeMessagesFromUiMessages preserves persisted uploaded image parts for vision models", async () => {
   const resolvedUploadIds: string[] = [];
   const messages = await prepareAgentRuntimeMessagesFromUiMessages({
