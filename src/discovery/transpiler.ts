@@ -225,7 +225,12 @@ export async function importModule(
       contents: source,
       loader,
       resolveDir: fileDir,
-      sourcefile: filePath,
+      // Must be a basename: esbuild joins resolveDir + sourcefile to form the
+      // entry module path when sourcefile is relative. Passing the full
+      // relative filePath (e.g. "tools/foo.ts") on VFS runs (baseDir === "")
+      // doubles the prefix to "tools/tools/foo.ts", which anchors ../ imports
+      // one directory too deep.
+      sourcefile: pathHelper.basename(filePath),
     },
   });
 
