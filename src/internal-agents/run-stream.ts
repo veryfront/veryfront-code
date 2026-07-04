@@ -74,6 +74,7 @@ function mergeRemoteToolNames(source: string[], forwarded: string[]): string[] {
 
 export interface RuntimeAgentStreamExecutionDeps {
   sessionManager: AgentRunSessionManager;
+  localTools?: Record<string, Tool | boolean>;
   projectAgentSandbox?: {
     apiUrl?: string;
     authToken?: string;
@@ -426,12 +427,16 @@ export async function createRuntimeAgentStreamResponse(
   const forwardedIntegrationToolDefs = getForwardedIntegrationToolDefinitions(input.forwardedProps);
   const availableForwardedToolNames = forwardedIntegrationToolDefs?.map((tool) => tool.name);
   const sandboxTools = await buildProjectAgentSandboxTools({ agent, deps });
+  const availableLocalTools = {
+    ...(deps.localTools ?? {}),
+    ...(sandboxTools.tools ?? {}),
+  };
   const mergedTools = buildMergedTools(
     agent,
     input,
     deps.sessionManager,
     availableForwardedToolNames,
-    sandboxTools.tools,
+    Object.keys(availableLocalTools).length > 0 ? availableLocalTools : undefined,
   );
   const runtimeAgent: RuntimeFilteredAgent = {
     ...agent,
