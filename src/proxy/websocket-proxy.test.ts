@@ -2,7 +2,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
-import { closeBridgePeer, getServerWebSocketErrorLogLevel } from "./websocket-bridge.ts";
+import {
+  closeBridgePeer,
+  createProxyClientWebSocketUpgradeOptions,
+  getServerWebSocketErrorLogLevel,
+} from "./websocket-bridge.ts";
 
 function isWebSocketUpgrade(req: Request): boolean {
   return req.headers.get("upgrade")?.toLowerCase() === "websocket";
@@ -164,6 +168,12 @@ describe("Proxy WebSocket Handler Tests", () => {
       closeBridgePeer(socket, 1011, "Server connection error");
 
       assertEquals(calls, [{ code: 1011, reason: "Server connection error" }]);
+    });
+  });
+
+  describe("Proxy client WebSocket upgrade options", () => {
+    it("disables Deno transport idle timeout for proxied browser sockets", () => {
+      assertEquals(createProxyClientWebSocketUpgradeOptions(), { idleTimeout: 0 });
     });
   });
 });
