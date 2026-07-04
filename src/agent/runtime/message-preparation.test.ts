@@ -301,6 +301,276 @@ Deno.test("prepareAgentRuntimeMessagesFromUiMessages surfaces trusted text attac
   }
 });
 
+Deno.test("prepareAgentRuntimeMessagesFromUiMessages degrades history attachment fetch failures to unavailable markers", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (input, _init): Promise<Response> => {
+    if (input.toString() === "https://signed.example.com/notes.txt") {
+      return Promise.reject(new Error("signed attachment unavailable"));
+    }
+    return Promise.resolve(new Response("Latest attachment body.", { status: 200 }));
+  };
+
+  try {
+    const messages = await prepareAgentRuntimeMessagesFromUiMessages({
+      messages: [
+        {
+          id: "user-1",
+          role: "user",
+          parts: [
+            { type: "text", text: "Old question." },
+            {
+              type: "file",
+              mediaType: "text/plain",
+              filename: "notes.txt",
+              uploadId: "upload-1",
+              url: "https://files.example.com/notes.txt",
+            },
+          ],
+        },
+        {
+          id: "assistant-1",
+          role: "assistant",
+          parts: [{ type: "text", text: "Old answer." }],
+        },
+        {
+          id: "user-2",
+          role: "user",
+          parts: [
+            { type: "text", text: "New question." },
+            {
+              type: "file",
+              mediaType: "text/plain",
+              filename: "latest.txt",
+              uploadId: "upload-2",
+              url: "https://files.example.com/latest.txt",
+            },
+          ],
+        },
+      ],
+      resolveFileUrl: async ({ uploadId }) =>
+        uploadId === "upload-1"
+          ? "https://signed.example.com/notes.txt"
+          : "https://signed.example.com/latest.txt",
+    });
+
+    const historyText = (messages[0]?.parts ?? [])
+      .flatMap((part) => part.type === "text" && "text" in part ? [part.text] : [])
+      .join("\n");
+    assertStringIncludes(historyText, "[attachment unavailable: notes.txt]");
+    assertEquals(historyText.includes("<file_content"), false);
+
+    const newestText = (messages[2]?.parts ?? [])
+      .flatMap((part) => part.type === "text" && "text" in part ? [part.text] : [])
+      .join("\n");
+    assertStringIncludes(newestText, "Latest attachment body.");
+    assertEquals(newestText.includes("[attachment unavailable"), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("prepareAgentRuntimeMessagesFromUiMessages still propagates caller aborts for history attachment fetches", async () => {
+  const requestedUrls: string[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = createAbortAwarePendingFetch(requestedUrls);
+  const abortController = new AbortController();
+  let cancelPendingGuard = () => {};
+
+  try {
+    const preparation = prepareAgentRuntimeMessagesFromUiMessages({
+      messages: [
+        {
+          id: "user-1",
+          role: "user",
+          parts: [
+            { type: "text", text: "Old question." },
+            {
+              type: "file",
+              mediaType: "text/plain",
+              filename: "notes.txt",
+              uploadId: "upload-1",
+              url: "https://files.example.com/notes.txt",
+            },
+          ],
+        },
+        {
+          id: "assistant-1",
+          role: "assistant",
+          parts: [{ type: "text", text: "Old answer." }],
+        },
+        {
+          id: "user-2",
+          role: "user",
+          parts: [{ type: "text", text: "Follow up." }],
+        },
+      ],
+      resolveFileUrl: async () => "https://signed.example.com/notes.txt",
+      abortSignal: abortController.signal,
+    });
+    const guarded = rejectIfStillPending(preparation, 50, "still pending after abort");
+    cancelPendingGuard = guarded.cancel;
+
+    abortController.abort(new Error("caller aborted"));
+
+    await assertRejects(
+      () => guarded.promise,
+      Error,
+      "Failed to fetch text attachment content for notes.txt: request aborted",
+    );
+    assertEquals(requestedUrls, ["https://signed.example.com/notes.txt"]);
+  } finally {
+    cancelPendingGuard();
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("prepareAgentRuntimeMessagesFromUiMessages allocates the aggregate inline budget newest-first", async () => {
+  const contentByUrl: Record<string, string> = {
+    "https://signed.example.com/a.txt": "X".repeat(180_000),
+    "https://signed.example.com/b.txt": "Y".repeat(180_000),
+    "https://signed.example.com/c.txt": "Z".repeat(180_000),
+  };
+
+  const messages = await prepareAgentRuntimeMessagesFromUiMessages({
+    messages: [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{
+          type: "file",
+          mediaType: "text/plain",
+          filename: "a.txt",
+          url: "https://signed.example.com/a.txt",
+        }],
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{ type: "text", text: "Noted." }],
+      },
+      {
+        id: "user-2",
+        role: "user",
+        parts: [{
+          type: "file",
+          mediaType: "text/plain",
+          filename: "b.txt",
+          url: "https://signed.example.com/b.txt",
+        }],
+      },
+      {
+        id: "assistant-2",
+        role: "assistant",
+        parts: [{ type: "text", text: "Noted." }],
+      },
+      {
+        id: "user-3",
+        role: "user",
+        parts: [{
+          type: "file",
+          mediaType: "text/plain",
+          filename: "c.txt",
+          url: "https://signed.example.com/c.txt",
+        }],
+      },
+    ],
+    fetchFileContent: async ({ url }) => contentByUrl[url],
+  });
+
+  const textOf = (index: number) =>
+    (messages[index]?.parts ?? [])
+      .flatMap((part) => part.type === "text" && "text" in part ? [part.text] : [])
+      .join("\n");
+
+  const inlinedChars = (index: number, filler: string) =>
+    (textOf(index).match(new RegExp(filler, "g")) ?? []).length;
+
+  // Newest two fit fully; the oldest only gets the remaining budget.
+  assertEquals(inlinedChars(4, "Z"), 180_000);
+  assertEquals(inlinedChars(2, "Y"), 180_000);
+  assertEquals(inlinedChars(0, "X"), 40_000);
+  assertStringIncludes(textOf(0), "[Attachment content truncated]");
+  assertEquals(textOf(2).includes("[Attachment content truncated]"), false);
+  assertEquals(
+    inlinedChars(0, "X") + inlinedChars(2, "Y") + inlinedChars(4, "Z") <= 400_000,
+    true,
+  );
+});
+
+Deno.test("prepareAgentRuntimeMessagesFromUiMessages omits older attachments without fetching once the inline budget is spent", async () => {
+  const fetchedUrls: string[] = [];
+  const contentByUrl: Record<string, string> = {
+    "https://signed.example.com/a.txt": "X".repeat(250_000),
+    "https://signed.example.com/b.txt": "Y".repeat(250_000),
+    "https://signed.example.com/c.txt": "Z".repeat(250_000),
+  };
+
+  const messages = await prepareAgentRuntimeMessagesFromUiMessages({
+    messages: [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{
+          type: "file",
+          mediaType: "text/plain",
+          filename: "a.txt",
+          url: "https://signed.example.com/a.txt",
+        }],
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{ type: "text", text: "Noted." }],
+      },
+      {
+        id: "user-2",
+        role: "user",
+        parts: [{
+          type: "file",
+          mediaType: "text/plain",
+          filename: "b.txt",
+          url: "https://signed.example.com/b.txt",
+        }],
+      },
+      {
+        id: "assistant-2",
+        role: "assistant",
+        parts: [{ type: "text", text: "Noted." }],
+      },
+      {
+        id: "user-3",
+        role: "user",
+        parts: [{
+          type: "file",
+          mediaType: "text/plain",
+          filename: "c.txt",
+          url: "https://signed.example.com/c.txt",
+        }],
+      },
+    ],
+    fetchFileContent: async ({ url }) => {
+      fetchedUrls.push(url);
+      return contentByUrl[url];
+    },
+  });
+
+  const textOf = (index: number) =>
+    (messages[index]?.parts ?? [])
+      .flatMap((part) => part.type === "text" && "text" in part ? [part.text] : [])
+      .join("\n");
+
+  // Newest two exhaust the budget at the per-URL cap; the oldest is omitted
+  // and never fetched (budget allocation intentionally skips the fetch).
+  assertEquals((textOf(4).match(/Z/g) ?? []).length, 200_000);
+  assertEquals((textOf(2).match(/Y/g) ?? []).length, 200_000);
+  assertStringIncludes(textOf(0), "[attachment content omitted: inline budget exceeded]");
+  assertEquals(textOf(0).includes("X"), false);
+  assertEquals(fetchedUrls, [
+    "https://signed.example.com/c.txt",
+    "https://signed.example.com/b.txt",
+  ]);
+});
+
 Deno.test("prepareAgentRuntimeMessagesFromUiMessages aborts stalled trusted text attachment fetches", async () => {
   const requestedUrls: string[] = [];
   const originalFetch = globalThis.fetch;

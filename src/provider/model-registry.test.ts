@@ -75,11 +75,88 @@ describe("provider/model-registry", () => {
 
     assertEquals(requestedUrl, "https://api.openai.com/v1/responses");
     assertEquals(requestedBody?.model, "gpt-5.4-nano");
-    assertEquals(requestedBody?.reasoning, { effort: "medium", summary: "auto" });
+    assertEquals(requestedBody?.store, false);
+    assertEquals(requestedBody?.reasoning, { effort: "medium" });
     assertEquals(
       (requestedBody?.tools as Array<{ name?: string }> | undefined)?.[0]?.name,
       "lookup_order",
     );
     assertEquals(result.content, [{ type: "text", text: "Found order." }]);
+  });
+
+  it("keeps reasoning summaries for explicit reasoning on env-backed OpenAI Responses models", async () => {
+    setEnv("OPENAI_API_KEY", "sk-test-openai");
+    let requestedBody: Record<string, unknown> | undefined;
+
+    globalThis.fetch = (async (input: URL | Request | string, init?: RequestInit) => {
+      const request = new Request(input, init);
+      requestedBody = JSON.parse(await request.text()) as Record<string, unknown>;
+
+      return new Response(
+        JSON.stringify({
+          status: "completed",
+          output: [{
+            type: "message",
+            content: [{ type: "output_text", text: "Done." }],
+          }],
+          usage: { input_tokens: 4, output_tokens: 2, total_tokens: 6 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as typeof fetch;
+
+    const runtime = resolveModel("openai/gpt-5.4-nano");
+    await runtime.doGenerate({
+      prompt: [{
+        role: "user",
+        content: [{ type: "text", text: "Think hard." }],
+      }],
+      reasoning: { enabled: true, effort: "high" },
+    });
+
+    assertEquals(requestedBody?.store, false);
+    assertEquals(requestedBody?.reasoning, { effort: "high", summary: "auto" });
+  });
+
+  it("merges legacy openai-compatible provider options into env-backed OpenAI request bodies", async () => {
+    setEnv("OPENAI_API_KEY", "sk-test-openai");
+    let requestedBody: Record<string, unknown> | undefined;
+
+    globalThis.fetch = (async (input: URL | Request | string, init?: RequestInit) => {
+      const request = new Request(input, init);
+      requestedBody = JSON.parse(await request.text()) as Record<string, unknown>;
+
+      return new Response(
+        JSON.stringify({
+          status: "completed",
+          output: [{
+            type: "message",
+            content: [{ type: "output_text", text: "Done." }],
+          }],
+          usage: { input_tokens: 4, output_tokens: 2, total_tokens: 6 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as typeof fetch;
+
+    const runtime = resolveModel("openai/gpt-5.4-nano");
+    await runtime.doGenerate({
+      prompt: [{
+        role: "user",
+        content: [{ type: "text", text: "Hi" }],
+      }],
+      providerOptions: {
+        "openai-compatible": {
+          custom_compat: true,
+          service_tier: "flex",
+        },
+        openai: {
+          service_tier: "default",
+        },
+      },
+    });
+
+    assertEquals(requestedBody?.custom_compat, true);
+    assertEquals(requestedBody?.service_tier, "default");
   });
 });

@@ -182,7 +182,14 @@ export function buildOpenAIChatRequest(
       : {}),
   };
 
-  const providerOpts = readProviderOptions(options.providerOptions, "openai", providerName);
+  // Env-BYOK users historically registered options under "openai-compatible";
+  // keep merging that bucket at the lowest precedence.
+  const providerOpts = readProviderOptions(
+    options.providerOptions,
+    ...(providerName === "openai" ? ["openai-compatible"] : []),
+    "openai",
+    providerName,
+  );
 
   // Normalize max_tokens to max_completion_tokens for native OpenAI models.
   if (isNativeOpenAIModel(modelId) && "max_tokens" in providerOpts) {

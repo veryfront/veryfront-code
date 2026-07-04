@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import type { ChatUiMessage } from "../../chat/types.ts";
-import { resolveRuntimeMessageFileUrls } from "./message-file-url-refresh.ts";
+import { composeAbortSignals, resolveRuntimeMessageFileUrls } from "./message-file-url-refresh.ts";
 
 function userMessage(parts: ChatUiMessage["parts"]): ChatUiMessage {
   return {
@@ -76,4 +76,30 @@ Deno.test("resolveRuntimeMessageFileUrls keeps existing parts when resolver retu
     await resolveRuntimeMessageFileUrls(messages, () => Promise.resolve(undefined)),
     messages,
   );
+});
+
+Deno.test("composeAbortSignals aborts immediately when a source signal is already aborted", () => {
+  const alreadyAborted = new AbortController();
+  const reason = new Error("already aborted");
+  alreadyAborted.abort(reason);
+  const pending = new AbortController();
+
+  const signal = composeAbortSignals([pending.signal, alreadyAborted.signal]);
+
+  assertEquals(signal.aborted, true);
+  assertEquals(signal.reason, reason);
+});
+
+Deno.test("composeAbortSignals propagates aborts from any source signal", () => {
+  const first = new AbortController();
+  const second = new AbortController();
+
+  const signal = composeAbortSignals([first.signal, second.signal]);
+  assertEquals(signal.aborted, false);
+
+  const reason = new Error("second source aborted");
+  second.abort(reason);
+
+  assertEquals(signal.aborted, true);
+  assertEquals(signal.reason, reason);
 });

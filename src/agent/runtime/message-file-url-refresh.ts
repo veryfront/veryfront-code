@@ -5,6 +5,7 @@ import {
 } from "../../chat/types.ts";
 
 const MAX_INLINE_FILE_CONTENT_CHARS = 200_000;
+const MAX_TOTAL_INLINE_FILE_CONTENT_CHARS = 400_000;
 const DEFAULT_RUNTIME_FILE_CONTENT_FETCH_TIMEOUT_MS = 15_000;
 
 /** Input payload for runtime file URL resolver. */
@@ -113,49 +114,109 @@ export async function inlineRuntimeMessageFileContents(
     fetchTimeoutMs?: number;
   } = {},
 ): Promise<ChatUiMessage[]> {
-  const contentByUrl = new Map<string, Promise<string | undefined>>();
+  const contentByUrl = new Map<string, Promise<InlineFileContent | undefined>>();
+  const newestUserMessageIndex = findNewestUserMessageIndex(messages);
+  const inlineTextByPart = new Map<string, string>();
+  let remainingBudget = MAX_TOTAL_INLINE_FILE_CONTENT_CHARS;
 
-  return Promise.all(
-    messages.map(async (message) => {
-      if (!message.parts.some((part) => shouldInlineFileContent(part))) {
-        return message;
+  // Allocate the aggregate inline budget newest-first so the most recent
+  // attachments win, then skip fetching entirely once the budget is spent.
+  for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex--) {
+    const message = messages[messageIndex]!;
+    for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+      const file = getInlineableFilePart(message.parts[partIndex]);
+      if (!file) continue;
+
+      if (remainingBudget <= 0) {
+        inlineTextByPart.set(
+          `${messageIndex}:${partIndex}`,
+          "[attachment content omitted: inline budget exceeded]",
+        );
+        continue;
       }
 
-      const parts: ChatUiMessage["parts"] = [];
-      for (const part of message.parts) {
-        parts.push(part);
+      let contentPromise = contentByUrl.get(file.url);
+      if (!contentPromise) {
+        contentPromise = fetchFileContent({
+          url: file.url,
+          mediaType: file.mediaType,
+          ...(file.filename ? { filename: file.filename } : {}),
+          ...(file.uploadId ? { uploadId: file.uploadId } : {}),
+          ...(file.uploadPath ? { uploadPath: file.uploadPath } : {}),
+          ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
+          ...(options.fetchTimeoutMs != null ? { timeoutMs: options.fetchTimeoutMs } : {}),
+          part: file,
+          message,
+        }).then(normalizeInlineFileContent);
+        contentByUrl.set(file.url, contentPromise);
+      }
 
-        const file = getInlineableFilePart(part);
-        if (!file) continue;
-
-        let contentPromise = contentByUrl.get(file.url);
-        if (!contentPromise) {
-          contentPromise = fetchFileContent({
-            url: file.url,
-            mediaType: file.mediaType,
-            ...(file.filename ? { filename: file.filename } : {}),
-            ...(file.uploadId ? { uploadId: file.uploadId } : {}),
-            ...(file.uploadPath ? { uploadPath: file.uploadPath } : {}),
-            ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
-            ...(options.fetchTimeoutMs != null ? { timeoutMs: options.fetchTimeoutMs } : {}),
-            part: file,
-            message,
-          }).then(normalizeInlineFileContent);
-          contentByUrl.set(file.url, contentPromise);
+      let inlineContent: InlineFileContent | undefined;
+      try {
+        inlineContent = await contentPromise;
+      } catch (error) {
+        // Attachments on the newest user message must stay hard failures, and
+        // caller aborts always propagate; stale history attachments degrade.
+        if (messageIndex === newestUserMessageIndex || options.abortSignal?.aborted) {
+          throw error;
         }
-
-        const content = await contentPromise;
-        if (!content) continue;
-
-        parts.push({
-          type: "text",
-          text: buildInlineFileContentText(file, content),
-        });
+        inlineTextByPart.set(
+          `${messageIndex}:${partIndex}`,
+          `[attachment unavailable: ${file.filename ?? file.uploadId ?? "file"}]`,
+        );
+        continue;
       }
+      if (!inlineContent) continue;
 
-      return { ...message, parts };
-    }),
-  );
+      let content = inlineContent.content;
+      let truncated = inlineContent.truncated;
+      if (content.length > remainingBudget) {
+        content = content.slice(0, remainingBudget);
+        truncated = true;
+      }
+      remainingBudget -= content.length;
+
+      inlineTextByPart.set(
+        `${messageIndex}:${partIndex}`,
+        buildInlineFileContentText(
+          file,
+          truncated ? `${content}\n\n[Attachment content truncated]` : content,
+        ),
+      );
+    }
+  }
+
+  return messages.map((message, messageIndex) => {
+    if (!message.parts.some((part) => shouldInlineFileContent(part))) {
+      return message;
+    }
+
+    const parts: ChatUiMessage["parts"] = [];
+    for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+      parts.push(message.parts[partIndex]!);
+
+      const text = inlineTextByPart.get(`${messageIndex}:${partIndex}`);
+      if (text) {
+        parts.push({ type: "text", text });
+      }
+    }
+
+    return { ...message, parts };
+  });
+}
+
+type InlineFileContent = {
+  content: string;
+  truncated: boolean;
+};
+
+function findNewestUserMessageIndex(messages: readonly ChatUiMessage[]): number {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    if (messages[index]?.role === "user") {
+      return index;
+    }
+  }
+  return -1;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -324,6 +385,26 @@ function appendRuntimeTextContentUntilInlineLimit(
   return { content: `${content}${decoded}`, reachedLimit: false };
 }
 
+/** Composes abort signals manually for runtimes without AbortSignal.any (Node < 20.3). */
+export function composeAbortSignals(signals: readonly AbortSignal[]): AbortSignal {
+  const controller = new AbortController();
+  for (const signal of signals) {
+    if (signal.aborted) {
+      controller.abort(signal.reason);
+      return controller.signal;
+    }
+    signal.addEventListener("abort", () => controller.abort(signal.reason), { once: true });
+  }
+  return controller.signal;
+}
+
+function anyAbortSignal(signals: readonly AbortSignal[]): AbortSignal {
+  if (typeof AbortSignal.any === "function") {
+    return AbortSignal.any([...signals]);
+  }
+  return composeAbortSignals(signals);
+}
+
 function createRuntimeFileContentFetchSignal(
   abortSignal: AbortSignal | undefined,
   timeoutMs: number,
@@ -342,7 +423,7 @@ function createRuntimeFileContentFetchSignal(
   }
 
   return {
-    signal: AbortSignal.any([abortSignal, timeoutSignal]),
+    signal: anyAbortSignal([abortSignal, timeoutSignal]),
     wasAbortedByCaller: () => abortSignal.aborted,
     didTimeout: () => timeoutSignal.aborted,
   };
@@ -436,14 +517,14 @@ function isFetchableRuntimeFileContentUrl(
   return trustedUrls?.has(url) ?? false;
 }
 
-function normalizeInlineFileContent(content: string | undefined): string | undefined {
+function normalizeInlineFileContent(content: string | undefined): InlineFileContent | undefined {
   if (!content || content.trim().length === 0) return undefined;
 
   if (content.length <= MAX_INLINE_FILE_CONTENT_CHARS) {
-    return content;
+    return { content, truncated: false };
   }
 
-  return `${content.slice(0, MAX_INLINE_FILE_CONTENT_CHARS)}\n\n[Attachment content truncated]`;
+  return { content: content.slice(0, MAX_INLINE_FILE_CONTENT_CHARS), truncated: true };
 }
 
 function escapeXmlAttr(value: string): string {

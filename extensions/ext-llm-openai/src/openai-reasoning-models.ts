@@ -100,7 +100,9 @@ export function shouldRequestOpenAIReasoningSummary(
   providerName: string,
   reasoning: ResolvedOpenAIReasoning,
 ): boolean {
-  return reasoning.source === "explicit" || supportsDefaultReasoningParams(providerName);
+  // Default-reasoning BYOK "openai" requests must not ask for summaries:
+  // unverified customer organizations get a 400 from the Responses API.
+  return reasoning.source === "explicit" || providerName.toLowerCase() === "veryfront-cloud";
 }
 
 export function isOpenAIReasoningModel(modelId: string, providerName = "openai"): boolean {

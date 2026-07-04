@@ -123,6 +123,32 @@ describe("ext-llm-openai/openai-chat-request-builder", () => {
     assertEquals(warnings.drain().map((warning) => warning.setting), ["temperature"]);
   });
 
+  it("merges the legacy openai-compatible provider options bucket below openai keys", () => {
+    const warnings = createWarningCollector();
+
+    const body = buildOpenAIChatRequest(
+      "gpt-4o-mini",
+      "openai",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        providerOptions: {
+          "openai-compatible": {
+            custom_compat: true,
+            service_tier: "flex",
+          },
+          openai: {
+            service_tier: "default",
+          },
+        },
+      },
+      true,
+      warnings,
+    );
+
+    assertEquals(body.custom_compat, true);
+    assertEquals(body.service_tier, "default");
+  });
+
   it("preserves chat request shaping, provider option merge order, and warnings", () => {
     const prompt: RuntimePromptMessage[] = [
       { role: "system", content: "You are concise." },

@@ -19,6 +19,7 @@ export type OpenAIResponsesInputItem = Record<string, unknown>;
 export type OpenAIResponsesRequest = {
   model: string;
   input: OpenAIResponsesInputItem[];
+  store?: boolean;
   instructions?: string;
   stream?: boolean;
   max_output_tokens?: number;
@@ -236,6 +237,8 @@ export function buildOpenAIResponsesRequest(
   const body: OpenAIResponsesRequest = {
     model: modelId,
     input,
+    // Stay stateless: encrypted reasoning content is never round-tripped via include.
+    store: false,
     ...(instructions !== undefined ? { instructions } : {}),
     ...(stream ? { stream: true } : {}),
     ...(options.maxOutputTokens !== undefined
@@ -283,6 +286,16 @@ export function buildOpenAIResponsesRequest(
       : {}),
   };
 
-  Object.assign(body, readProviderOptions(options.providerOptions, "openai", providerName));
+  // Env-BYOK users historically registered options under "openai-compatible";
+  // keep merging that bucket at the lowest precedence.
+  Object.assign(
+    body,
+    readProviderOptions(
+      options.providerOptions,
+      ...(providerName === "openai" ? ["openai-compatible"] : []),
+      "openai",
+      providerName,
+    ),
+  );
   return body;
 }
