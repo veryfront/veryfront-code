@@ -60,5 +60,18 @@ describe("cli/shared/constants", () => {
       const env = { apiUrl: "https://custom.api.com" } as EnvironmentConfig;
       assertEquals(getApiUrl(env), "https://custom.api.com");
     });
+
+    it("should fall back to env apiBaseUrl when apiUrl is unset", () => {
+      const env = { apiBaseUrl: "https://api.veryfront.org" } as EnvironmentConfig;
+      assertEquals(getApiUrl(env), "https://api.veryfront.org");
+    });
+
+    it("should prefer env apiUrl over apiBaseUrl", () => {
+      const env = {
+        apiUrl: "https://custom.api.com",
+        apiBaseUrl: "https://api.veryfront.org",
+      } as EnvironmentConfig;
+      assertEquals(getApiUrl(env), "https://custom.api.com");
+    });
   });
 });
