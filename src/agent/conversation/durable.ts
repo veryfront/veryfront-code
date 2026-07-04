@@ -357,10 +357,10 @@ export async function recoverConversationRunAppendExecution(input: {
     latestEventId: number;
     latestExternalEventSequence: number;
     disableReason?:
-    | "cursor_resyncs_exhausted"
-    | "non_appendable"
-    | "ignorable_append_rejection"
-    | "payload_too_large";
+      | "cursor_resyncs_exhausted"
+      | "non_appendable"
+      | "ignorable_append_rejection"
+      | "payload_too_large";
   }
   | {
     outcome: "retry_scheduled";
@@ -487,10 +487,10 @@ export async function flushConversationRunEventBatches(input: {
     latestEventId: number;
     latestExternalEventSequence: number;
     disableReason?:
-    | "cursor_resyncs_exhausted"
-    | "non_appendable"
-    | "ignorable_append_rejection"
-    | "payload_too_large";
+      | "cursor_resyncs_exhausted"
+      | "non_appendable"
+      | "ignorable_append_rejection"
+      | "payload_too_large";
   }
 > {
   const batches = buildConversationRunEventBatches({
@@ -590,10 +590,10 @@ export async function flushConversationRunEventQueue(input: {
     latestEventId: number;
     latestExternalEventSequence: number;
     disableReason?:
-    | "cursor_resyncs_exhausted"
-    | "non_appendable"
-    | "ignorable_append_rejection"
-    | "payload_too_large";
+      | "cursor_resyncs_exhausted"
+      | "non_appendable"
+      | "ignorable_append_rejection"
+      | "payload_too_large";
   }
   | {
     outcome: "retry_scheduled";
