@@ -385,7 +385,7 @@ describe("openai-provider", () => {
 
     assertEquals(runtime.provider, "prod-openai");
     assertEquals(requestedUrl, "https://example.openai.test/v1/responses");
-    assertEquals(requestBody.reasoning, { effort: "medium", summary: "auto" });
+    assertEquals(requestBody.reasoning, { effort: "medium" });
     assertEquals(parts.map((part) => (part as { type: string }).type), [
       "reasoning-start",
       "reasoning-delta",
