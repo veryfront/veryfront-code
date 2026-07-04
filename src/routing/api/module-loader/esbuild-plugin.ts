@@ -167,6 +167,14 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
         return new Promise((resolve) => setTimeout(resolve, ms));
       }
 
+      function describePersistenceError(error: unknown): string {
+        if (!(error instanceof Error)) return typeof error;
+
+        const code = (error as { code?: unknown }).code;
+        const name = error.name || "Error";
+        return typeof code === "string" && code ? `${name}(${code})` : name;
+      }
+
       async function persistLockfileEntry(
         url: string,
         entry: {
@@ -182,7 +190,11 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
           await lockfile.flush();
           logger.debug(`[http] lockfile updated: ${url} -> ${entry.resolved}`);
         } catch (error) {
-          logger.warn(`[http] could not persist lockfile entry for ${url}: ${error}`);
+          logger.warn(
+            `[http] could not persist lockfile entry for ${url}: ${
+              describePersistenceError(error)
+            }`,
+          );
         }
       }
 
