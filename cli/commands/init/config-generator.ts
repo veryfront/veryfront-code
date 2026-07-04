@@ -7,6 +7,7 @@ const DEFAULT_INIT_REACT_VERSION = "19.2.4";
 const REQUIRED_INIT_EXTENSION_PACKAGES = [
   "@veryfront/ext-bundler-esbuild",
   "@veryfront/ext-content-mdx",
+  "@veryfront/ext-css-tailwind",
 ] as const;
 
 export interface CreatePackageJsonOptions {

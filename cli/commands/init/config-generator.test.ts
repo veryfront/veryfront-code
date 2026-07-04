@@ -51,6 +51,7 @@ describe("config-generator", () => {
           pkg.dependencies.veryfront,
         );
         assertEquals(pkg.dependencies["@veryfront/ext-content-mdx"], pkg.dependencies.veryfront);
+        assertEquals(pkg.dependencies["@veryfront/ext-css-tailwind"], pkg.dependencies.veryfront);
       } finally {
         await Deno.remove(tmpDir, { recursive: true });
       }
@@ -93,6 +94,7 @@ describe("config-generator", () => {
         assertEquals(Object.keys(pkg.dependencies).sort(), [
           "@veryfront/ext-bundler-esbuild",
           "@veryfront/ext-content-mdx",
+          "@veryfront/ext-css-tailwind",
           "react",
           "react-dom",
           "veryfront",
