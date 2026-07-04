@@ -294,6 +294,20 @@ function recordHostedChunkMirrorStopped(input: {
     return;
   }
 
+  if (input.flushAttempt.disableReason === "payload_too_large") {
+    input.instrumentation?.error?.(
+      "Disabling durable run mirroring after an oversized event was rejected; " +
+        "an event exceeded the durable payload limit despite normalization",
+      {
+        conversationId: input.conversationId,
+        runId: input.runId,
+        latestEventId: input.flushAttempt.latestEventId,
+        latestExternalEventSequence: input.flushAttempt.latestExternalEventSequence,
+      },
+    );
+    return;
+  }
+
   if (input.flushAttempt.disableReason === "ignorable_append_rejection") {
     input.instrumentation?.warn?.(
       "Disabling durable run mirroring after external append rejection",

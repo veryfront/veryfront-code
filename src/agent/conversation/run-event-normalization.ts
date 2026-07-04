@@ -1,4 +1,4 @@
-const MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES = 240 * 1024;
+export const MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES = 240 * 1024;
 const MAX_SUMMARY_DEPTH = 4;
 const MAX_SUMMARY_ARRAY_ITEMS = 8;
 const MAX_SUMMARY_OBJECT_KEYS = 24;
@@ -32,6 +32,14 @@ export function normalizeConversationRunEvent(
     return [event];
   }
 
+  // Every summarizer output passes through enforceEventSizeLimit so the byte-limit
+  // invariant holds regardless of which branch (or future event type) ran.
+  return summarizeOversizedEvent(event).map(enforceEventSizeLimit);
+}
+
+function summarizeOversizedEvent(
+  event: ConversationRunEventRecord,
+): ConversationRunEventRecord[] {
   switch (event.type) {
     case "TEXT_MESSAGE_CONTENT":
     case "REASONING_CONTENT":
@@ -47,6 +55,34 @@ export function normalizeConversationRunEvent(
   }
 }
 
+/**
+ * Final invariant guard. Forces any event a type-specific summarizer left oversized
+ * (escape-heavy split parts, or a large non-string field) under the byte limit, so
+ * no normalization path can emit an event the API will reject.
+ */
+function enforceEventSizeLimit(event: ConversationRunEventRecord): ConversationRunEventRecord {
+  if (getConversationRunEventJsonByteLength(event) <= MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES) {
+    return event;
+  }
+
+  for (const field of ["delta", "content"] as const) {
+    if (typeof event[field] === "string") {
+      const clamped = truncateEventStringFieldToLimit(event, field, " [truncated]");
+      if (clamped) {
+        return clamped;
+      }
+    }
+  }
+
+  return {
+    type: event.type,
+    ...(typeof event.messageId === "string" ? { messageId: event.messageId } : {}),
+    ...(typeof event.toolCallId === "string" ? { toolCallId: event.toolCallId } : {}),
+    truncated: true,
+    note: "Conversation-run event payload exceeded the size limit and was omitted.",
+  };
+}
+
 /** Normalizes conversation run events. */
 export function normalizeConversationRunEvents(
   events: ConversationRunEventRecord[],
@@ -59,32 +95,37 @@ function summarizeToolResultEvent(event: ConversationRunEventRecord): Conversati
     return event;
   }
 
-  if (typeof event.content === "string") {
-    const maxResultBytes = getStringFieldBudget(event, "content");
-    return {
-      ...event,
-      content: truncateUtf8String(
-        event.content,
-        maxResultBytes,
-        " [tool result truncated in conversation-run event]",
-      ),
-    };
-  }
+  // The original tool `input` is redundant with the TOOL_CALL_ARGS event and can
+  // itself exceed the budget, so truncating only `content` would leave the event
+  // oversized. Drop it before measuring.
+  const { input: _input, ...eventWithoutInput } = event;
 
-  const summarizedEvent = {
-    ...event,
-    content: summarizeValue(event.content),
-  } satisfies ConversationRunEventRecord;
+  if (typeof eventWithoutInput.content === "string") {
+    const clamped = truncateEventStringFieldToLimit(
+      eventWithoutInput,
+      "content",
+      " [tool result truncated in conversation-run event]",
+    );
+    if (clamped) {
+      return clamped;
+    }
+    // The envelope alone exceeds the limit — fall through to the omitted-content placeholder.
+  } else {
+    const summarizedEvent = {
+      ...eventWithoutInput,
+      content: summarizeValue(eventWithoutInput.content),
+    } satisfies ConversationRunEventRecord;
 
-  if (
-    getConversationRunEventJsonByteLength(summarizedEvent) <=
-      MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES
-  ) {
-    return summarizedEvent;
+    if (
+      getConversationRunEventJsonByteLength(summarizedEvent) <=
+        MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES
+    ) {
+      return summarizedEvent;
+    }
   }
 
   return {
-    ...event,
+    ...eventWithoutInput,
     content: {
       truncated: true,
       originalType: describeValueType(event.content),
@@ -94,11 +135,67 @@ function summarizeToolResultEvent(event: ConversationRunEventRecord): Conversati
   };
 }
 
+/**
+ * Truncate a string field so the WHOLE event serializes within the byte limit.
+ * Measures the JSON-serialized event (not the raw string), so it stays correct
+ * for escape-heavy content that expands under JSON.stringify — the same unit the
+ * API enforces. Returns null when the envelope alone already exceeds the limit.
+ */
+function truncateEventStringFieldToLimit(
+  event: ConversationRunEventRecord,
+  field: "content" | "delta",
+  suffix: string,
+): ConversationRunEventRecord | null {
+  const value = event[field];
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const buildCandidate = (prefixLength: number): ConversationRunEventRecord =>
+    prefixLength >= value.length
+      ? event
+      : { ...event, [field]: `${value.slice(0, prefixLength)}${suffix}` };
+
+  if (
+    getConversationRunEventJsonByteLength(buildCandidate(value.length)) <=
+      MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES
+  ) {
+    return event;
+  }
+
+  if (
+    getConversationRunEventJsonByteLength(buildCandidate(0)) >
+      MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES
+  ) {
+    return null;
+  }
+
+  let low = 0;
+  let high = value.length;
+  let best = 0;
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    if (
+      getConversationRunEventJsonByteLength(buildCandidate(mid)) <=
+        MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES
+    ) {
+      best = mid;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  return buildCandidate(best);
+}
+
 function summarizeGenericEvent(event: ConversationRunEventRecord): ConversationRunEventRecord {
+  const { type, ...rest } = event;
   return {
-    ...event,
+    type,
     truncated: true,
     note: "Conversation-run event payload was summarized to stay within storage limits.",
+    summary: summarizeValue(rest),
   };
 }
 
