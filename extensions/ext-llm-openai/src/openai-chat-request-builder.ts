@@ -183,22 +183,39 @@ export function buildOpenAIChatRequest(
   };
 
   // Env-BYOK users historically registered options under "openai-compatible";
-  // keep merging that bucket at the lowest precedence.
-  const providerOpts = readProviderOptions(
-    options.providerOptions,
+  // keep merging that bucket at the lowest precedence. max_tokens is normalized
+  // per bucket BEFORE merging so a higher-precedence bucket's max_tokens
+  // override still beats a lower bucket's max_completion_tokens.
+  const bucketNames = [
     ...(providerName === "openai" ? ["openai-compatible"] : []),
     "openai",
     providerName,
-  );
-
-  // Normalize max_tokens to max_completion_tokens for native OpenAI models.
-  if (isNativeOpenAIModel(modelId) && "max_tokens" in providerOpts) {
-    if (!("max_completion_tokens" in providerOpts)) {
-      providerOpts.max_completion_tokens = providerOpts.max_tokens;
-    }
-    delete providerOpts.max_tokens;
+  ];
+  const providerOpts: Record<string, unknown> = {};
+  for (const bucketName of bucketNames) {
+    Object.assign(
+      providerOpts,
+      normalizeNativeMaxTokens(readProviderOptions(options.providerOptions, bucketName), modelId),
+    );
   }
 
   Object.assign(body, providerOpts);
   return body;
+}
+
+/** Normalizes max_tokens to max_completion_tokens for native OpenAI models. */
+function normalizeNativeMaxTokens(
+  bucket: Record<string, unknown>,
+  modelId: string,
+): Record<string, unknown> {
+  if (!isNativeOpenAIModel(modelId) || !("max_tokens" in bucket)) {
+    return bucket;
+  }
+
+  const normalized = { ...bucket };
+  if (!("max_completion_tokens" in normalized)) {
+    normalized.max_completion_tokens = normalized.max_tokens;
+  }
+  delete normalized.max_tokens;
+  return normalized;
 }

@@ -149,6 +149,31 @@ describe("ext-llm-openai/openai-chat-request-builder", () => {
     assertEquals(body.service_tier, "default");
   });
 
+  it("lets an openai max_tokens override beat a legacy openai-compatible max_completion_tokens", () => {
+    const warnings = createWarningCollector();
+
+    const body = buildOpenAIChatRequest(
+      "gpt-4o-mini",
+      "openai",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        providerOptions: {
+          "openai-compatible": {
+            max_completion_tokens: 111,
+          },
+          openai: {
+            max_tokens: 222,
+          },
+        },
+      },
+      true,
+      warnings,
+    );
+
+    assertEquals(body.max_completion_tokens, 222);
+    assertEquals(body.max_tokens, undefined);
+  });
+
   it("preserves chat request shaping, provider option merge order, and warnings", () => {
     const prompt: RuntimePromptMessage[] = [
       { role: "system", content: "You are concise." },

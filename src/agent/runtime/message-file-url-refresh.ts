@@ -388,13 +388,26 @@ function appendRuntimeTextContentUntilInlineLimit(
 /** Composes abort signals manually for runtimes without AbortSignal.any (Node < 20.3). */
 export function composeAbortSignals(signals: readonly AbortSignal[]): AbortSignal {
   const controller = new AbortController();
+  const removeListeners: Array<() => void> = [];
+  const detachAll = () => {
+    for (const removeListener of removeListeners) {
+      removeListener();
+    }
+    removeListeners.length = 0;
+  };
   for (const signal of signals) {
     if (signal.aborted) {
+      detachAll();
       controller.abort(signal.reason);
       return controller.signal;
     }
-    signal.addEventListener("abort", () => controller.abort(signal.reason), { once: true });
+    const onAbort = () => controller.abort(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    removeListeners.push(() => signal.removeEventListener("abort", onAbort));
   }
+  // Detach listeners from the still-pending source signals once any of them
+  // fires, so long-lived caller signals don't accumulate stale listeners.
+  controller.signal.addEventListener("abort", detachAll, { once: true });
   return controller.signal;
 }
 
