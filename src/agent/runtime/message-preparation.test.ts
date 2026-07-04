@@ -18,6 +18,45 @@ function userMessage(parts: ChatUiMessage["parts"]): ChatUiMessage {
   };
 }
 
+function rejectIfStillPending<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+): { promise: Promise<T>; cancel: () => void } {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+
+  return {
+    promise: Promise.race([promise, timeout]),
+    cancel: () => {
+      if (timeoutId) clearTimeout(timeoutId);
+    },
+  };
+}
+
+function createAbortAwarePendingFetch(requestedUrls: string[] = []): typeof fetch {
+  return (input, init): Promise<Response> => {
+    requestedUrls.push(input.toString());
+    const signal = init?.signal;
+    if (!(signal instanceof AbortSignal)) {
+      return new Promise(() => {});
+    }
+
+    return new Promise((_resolve, reject) => {
+      const rejectAbort = () => {
+        reject(signal.reason instanceof Error ? signal.reason : new Error("fetch aborted"));
+      };
+      if (signal.aborted) {
+        rejectAbort();
+        return;
+      }
+      signal.addEventListener("abort", rejectAbort, { once: true });
+    });
+  };
+}
+
 Deno.test("prepareAgentRuntimeMessagesFromUiMessages returns an empty-conversation prompt", async () => {
   const messages = await prepareAgentRuntimeMessagesFromUiMessages({
     messages: [],
@@ -258,6 +297,129 @@ Deno.test("prepareAgentRuntimeMessagesFromUiMessages surfaces trusted text attac
       "Failed to fetch text attachment content for notes.txt: HTTP 403 Forbidden",
     );
   } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("prepareAgentRuntimeMessagesFromUiMessages aborts stalled trusted text attachment fetches", async () => {
+  const requestedUrls: string[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = createAbortAwarePendingFetch(requestedUrls);
+  const abortController = new AbortController();
+  let cancelPendingGuard = () => {};
+
+  try {
+    const preparation = prepareAgentRuntimeMessagesFromUiMessages({
+      messages: [
+        userMessage([
+          { type: "text", text: "Use this upload." },
+          {
+            type: "file",
+            mediaType: "text/plain",
+            filename: "notes.txt",
+            uploadId: "upload-1",
+            url: "https://files.example.com/original.txt",
+          },
+        ]),
+      ],
+      resolveFileUrl: async () => "https://signed.example.com/notes.txt",
+      abortSignal: abortController.signal,
+    });
+    const guarded = rejectIfStillPending(preparation, 50, "still pending after abort");
+    cancelPendingGuard = guarded.cancel;
+
+    abortController.abort(new Error("caller aborted"));
+
+    await assertRejects(
+      () => guarded.promise,
+      Error,
+      "Failed to fetch text attachment content for notes.txt: request aborted",
+    );
+    assertEquals(requestedUrls, ["https://signed.example.com/notes.txt"]);
+  } finally {
+    cancelPendingGuard();
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("prepareAgentRuntimeMessagesFromUiMessages times out stalled trusted text attachment fetches", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = createAbortAwarePendingFetch();
+  let cancelPendingGuard = () => {};
+
+  try {
+    const preparation = prepareAgentRuntimeMessagesFromUiMessages({
+      messages: [
+        userMessage([
+          { type: "text", text: "Use this upload." },
+          {
+            type: "file",
+            mediaType: "text/plain",
+            filename: "notes.txt",
+            uploadId: "upload-1",
+            url: "https://files.example.com/original.txt",
+          },
+        ]),
+      ],
+      resolveFileUrl: async () => "https://signed.example.com/notes.txt",
+      fileContentFetchTimeoutMs: 5,
+    });
+    const guarded = rejectIfStillPending(preparation, 100, "still pending after timeout");
+    cancelPendingGuard = guarded.cancel;
+
+    await assertRejects(
+      () => guarded.promise,
+      Error,
+      "Failed to fetch text attachment content for notes.txt: request timed out after 5ms",
+    );
+  } finally {
+    cancelPendingGuard();
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("prepareAgentRuntimeMessagesFromUiMessages times out stalled trusted text attachment body reads", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (): Promise<Response> =>
+    Promise.resolve(
+      new Response(
+        new ReadableStream({
+          start() {
+            // Leave the body open to simulate a signed URL that sends headers then stalls.
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+  let cancelPendingGuard = () => {};
+
+  try {
+    const preparation = prepareAgentRuntimeMessagesFromUiMessages({
+      messages: [
+        userMessage([
+          { type: "text", text: "Use this upload." },
+          {
+            type: "file",
+            mediaType: "text/plain",
+            filename: "notes.txt",
+            uploadId: "upload-1",
+            url: "https://files.example.com/original.txt",
+          },
+        ]),
+      ],
+      resolveFileUrl: async () => "https://signed.example.com/notes.txt",
+      fileContentFetchTimeoutMs: 5,
+    });
+    const guarded = rejectIfStillPending(preparation, 100, "still pending after body timeout");
+    cancelPendingGuard = guarded.cancel;
+
+    await assertRejects(
+      () => guarded.promise,
+      Error,
+      "Failed to fetch text attachment content for notes.txt: request timed out after 5ms",
+    );
+  } finally {
+    cancelPendingGuard();
     globalThis.fetch = originalFetch;
   }
 });

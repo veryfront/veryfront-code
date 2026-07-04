@@ -5,6 +5,7 @@ import {
 } from "../../chat/types.ts";
 
 const MAX_INLINE_FILE_CONTENT_CHARS = 200_000;
+const DEFAULT_RUNTIME_FILE_CONTENT_FETCH_TIMEOUT_MS = 15_000;
 
 /** Input payload for runtime file URL resolver. */
 export type RuntimeFileUrlResolverInput = {
@@ -25,6 +26,8 @@ export type RuntimeFileContentFetcherInput = {
   filename?: string;
   uploadId?: string;
   uploadPath?: string;
+  abortSignal?: AbortSignal;
+  timeoutMs?: number;
   part: FileUIPartWithUpload;
   message: ChatUiMessage;
 };
@@ -36,7 +39,11 @@ export type RuntimeFileContentFetcher = (
 
 /** Creates a safe runtime file content fetcher. */
 export function createRuntimeFileContentFetcher(
-  options: { trustedUrls?: ReadonlySet<string> } = {},
+  options: {
+    trustedUrls?: ReadonlySet<string>;
+    abortSignal?: AbortSignal;
+    timeoutMs?: number;
+  } = {},
 ): RuntimeFileContentFetcher {
   const trustedUrls = options.trustedUrls;
   return async (input) => {
@@ -44,7 +51,13 @@ export function createRuntimeFileContentFetcher(
       return undefined;
     }
 
-    return await fetchRuntimeTextFileContent(input);
+    const abortSignal = input.abortSignal ?? options.abortSignal;
+    const timeoutMs = input.timeoutMs ?? options.timeoutMs;
+    return await fetchRuntimeTextFileContent({
+      ...input,
+      ...(abortSignal ? { abortSignal } : {}),
+      ...(timeoutMs != null ? { timeoutMs } : {}),
+    });
   };
 }
 
@@ -95,6 +108,10 @@ export async function resolveRuntimeMessageFileUrls(
 export async function inlineRuntimeMessageFileContents(
   messages: readonly ChatUiMessage[],
   fetchFileContent: RuntimeFileContentFetcher = createRuntimeFileContentFetcher(),
+  options: {
+    abortSignal?: AbortSignal;
+    fetchTimeoutMs?: number;
+  } = {},
 ): Promise<ChatUiMessage[]> {
   const contentByUrl = new Map<string, Promise<string | undefined>>();
 
@@ -119,6 +136,8 @@ export async function inlineRuntimeMessageFileContents(
             ...(file.filename ? { filename: file.filename } : {}),
             ...(file.uploadId ? { uploadId: file.uploadId } : {}),
             ...(file.uploadPath ? { uploadPath: file.uploadPath } : {}),
+            ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
+            ...(options.fetchTimeoutMs != null ? { timeoutMs: options.fetchTimeoutMs } : {}),
             part: file,
             message,
           }).then(normalizeInlineFileContent);
@@ -220,7 +239,14 @@ function getInlineableFilePart(part: unknown): FileUIPartWithUpload | null {
 async function fetchRuntimeTextFileContent(
   input: RuntimeFileContentFetcherInput,
 ): Promise<string | undefined> {
-  const response = await fetch(input.url);
+  const timeoutMs = input.timeoutMs ?? DEFAULT_RUNTIME_FILE_CONTENT_FETCH_TIMEOUT_MS;
+  const fetchSignal = createRuntimeFileContentFetchSignal(input.abortSignal, timeoutMs);
+  const response = await waitForRuntimeFileContentFetchOperation(
+    fetch(input.url, { signal: fetchSignal.signal }),
+    input,
+    fetchSignal,
+    timeoutMs,
+  );
   if (!response.ok) {
     throw new Error(
       `Failed to fetch text attachment content${
@@ -228,7 +254,108 @@ async function fetchRuntimeTextFileContent(
       }: HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ""}`,
     );
   }
-  return await response.text();
+  return await waitForRuntimeFileContentFetchOperation(
+    response.text(),
+    input,
+    fetchSignal,
+    timeoutMs,
+  );
+}
+
+function createRuntimeFileContentFetchSignal(
+  abortSignal: AbortSignal | undefined,
+  timeoutMs: number,
+): {
+  signal: AbortSignal;
+  wasAbortedByCaller: () => boolean;
+  didTimeout: () => boolean;
+} {
+  const timeoutSignal = AbortSignal.timeout(Math.max(0, timeoutMs));
+  if (!abortSignal) {
+    return {
+      signal: timeoutSignal,
+      wasAbortedByCaller: () => false,
+      didTimeout: () => timeoutSignal.aborted,
+    };
+  }
+
+  return {
+    signal: AbortSignal.any([abortSignal, timeoutSignal]),
+    wasAbortedByCaller: () => abortSignal.aborted,
+    didTimeout: () => timeoutSignal.aborted,
+  };
+}
+
+async function waitForRuntimeFileContentFetchOperation<T>(
+  operation: Promise<T>,
+  input: RuntimeFileContentFetcherInput,
+  fetchSignal: ReturnType<typeof createRuntimeFileContentFetchSignal>,
+  timeoutMs: number,
+): Promise<T> {
+  let abortError: Error | undefined;
+  let removeAbortListener = () => {};
+  const abortPromise = new Promise<never>((_, reject) => {
+    const rejectAbort = () => {
+      abortError = createRuntimeFileContentAbortError(
+        input,
+        fetchSignal,
+        timeoutMs,
+      );
+      reject(abortError);
+    };
+    if (fetchSignal.signal.aborted) {
+      rejectAbort();
+      return;
+    }
+
+    fetchSignal.signal.addEventListener("abort", rejectAbort, { once: true });
+    removeAbortListener = () => fetchSignal.signal.removeEventListener("abort", rejectAbort);
+  });
+
+  try {
+    return await Promise.race([operation, abortPromise]);
+  } catch (error) {
+    if (error === abortError) {
+      throw error;
+    }
+    const abortFailure = createRuntimeFileContentAbortError(
+      input,
+      fetchSignal,
+      timeoutMs,
+      error,
+    );
+    if (abortFailure) {
+      throw abortFailure;
+    }
+    throw error;
+  } finally {
+    removeAbortListener();
+  }
+}
+
+function createRuntimeFileContentAbortError(
+  input: RuntimeFileContentFetcherInput,
+  fetchSignal: ReturnType<typeof createRuntimeFileContentFetchSignal>,
+  timeoutMs: number,
+  cause?: unknown,
+): Error | undefined {
+  if (fetchSignal.wasAbortedByCaller()) {
+    return new Error(
+      `Failed to fetch text attachment content${
+        formatFileContentFetchLabel(input)
+      }: request aborted`,
+      { cause },
+    );
+  }
+  if (fetchSignal.didTimeout()) {
+    return new Error(
+      `Failed to fetch text attachment content${
+        formatFileContentFetchLabel(input)
+      }: request timed out after ${timeoutMs}ms`,
+      { cause },
+    );
+  }
+  return undefined;
 }
 
 function formatFileContentFetchLabel(input: RuntimeFileContentFetcherInput): string {

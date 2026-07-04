@@ -21,6 +21,8 @@ export type PrepareAgentRuntimeMessagesFromUiMessagesOptions = {
   emptyConversationPrompt?: string;
   resolveFileUrl?: RuntimeFileUrlResolver;
   fetchFileContent?: RuntimeFileContentFetcher;
+  abortSignal?: AbortSignal;
+  fileContentFetchTimeoutMs?: number;
   providerOwnedToolNames?: readonly string[];
 };
 
@@ -53,6 +55,12 @@ export async function prepareAgentRuntimeMessagesFromUiMessages(
     options.fetchFileContent ?? createRuntimeFileContentFetcher({
       trustedUrls: trustedFileContentUrls,
     }),
+    {
+      ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
+      ...(options.fileContentFetchTimeoutMs != null
+        ? { fetchTimeoutMs: options.fileContentFetchTimeoutMs }
+        : {}),
+    },
   );
 
   return convertProviderMessagesToAgentRuntimeMessages(
