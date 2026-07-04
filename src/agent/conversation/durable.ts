@@ -22,6 +22,7 @@ import {
   AppendConversationRunEventsError,
   isCursorMismatchConversationRunAppendError,
   isIgnorableConversationRunAppendError,
+  isPayloadTooLargeConversationRunAppendError,
   parseAppendConversationRunEventsErrorBody,
 } from "./durable-append-errors.ts";
 
@@ -46,6 +47,7 @@ export {
   isIgnorableConversationRunAppendError,
   parseAppendConversationRunEventsErrorBody,
 } from "./durable-append-errors.ts";
+import { normalizeConversationRunEvents } from "./run-event-normalization.ts";
 export type {
   ActiveConversationRunStatus,
   AppendConversationRunEventsResponse,
@@ -256,7 +258,11 @@ export async function recoverConversationRunAppendFailure(input: {
   outcome: ConversationRunAppendFailureOutcome;
   latestEventId: number;
   latestExternalEventSequence: number;
-  disableReason?: "cursor_resyncs_exhausted" | "non_appendable" | "ignorable_append_rejection";
+  disableReason?:
+    | "cursor_resyncs_exhausted"
+    | "non_appendable"
+    | "ignorable_append_rejection"
+    | "payload_too_large";
   errorMessage?: string;
   run?: ConversationRunProjection;
 }> {
@@ -302,6 +308,18 @@ export async function recoverConversationRunAppendFailure(input: {
     };
   }
 
+  // Permanent: the same bytes fail every retry. Stop instead of retry-storming the
+  // API (the runtime normalizes under the limit before appending, so this is a bug).
+  if (isPayloadTooLargeConversationRunAppendError(input.error)) {
+    return {
+      outcome: "stopped",
+      latestEventId: cursorRecovery.latestEventId,
+      latestExternalEventSequence: cursorRecovery.latestExternalEventSequence,
+      disableReason: "payload_too_large",
+      ...(cursorRecovery.run ? { run: cursorRecovery.run } : {}),
+    };
+  }
+
   return {
     outcome: "retry_scheduled",
     latestEventId: cursorRecovery.latestEventId,
@@ -338,7 +356,11 @@ export async function recoverConversationRunAppendExecution(input: {
     outcome: "stopped";
     latestEventId: number;
     latestExternalEventSequence: number;
-    disableReason?: "cursor_resyncs_exhausted" | "non_appendable" | "ignorable_append_rejection";
+    disableReason?:
+    | "cursor_resyncs_exhausted"
+    | "non_appendable"
+    | "ignorable_append_rejection"
+    | "payload_too_large";
   }
   | {
     outcome: "retry_scheduled";
@@ -464,7 +486,11 @@ export async function flushConversationRunEventBatches(input: {
     outcome: "stopped";
     latestEventId: number;
     latestExternalEventSequence: number;
-    disableReason?: "cursor_resyncs_exhausted" | "non_appendable" | "ignorable_append_rejection";
+    disableReason?:
+    | "cursor_resyncs_exhausted"
+    | "non_appendable"
+    | "ignorable_append_rejection"
+    | "payload_too_large";
   }
 > {
   const batches = buildConversationRunEventBatches({
@@ -563,7 +589,11 @@ export async function flushConversationRunEventQueue(input: {
     outcome: "stopped";
     latestEventId: number;
     latestExternalEventSequence: number;
-    disableReason?: "cursor_resyncs_exhausted" | "non_appendable" | "ignorable_append_rejection";
+    disableReason?:
+    | "cursor_resyncs_exhausted"
+    | "non_appendable"
+    | "ignorable_append_rejection"
+    | "payload_too_large";
   }
   | {
     outcome: "retry_scheduled";
@@ -953,7 +983,14 @@ export async function appendConversationRunEvents(input: {
                 input.expectedPreviousExternalEventSequence,
             }
             : {}),
-          events: input.events,
+          // Chokepoint guard: every append path funnels through here, so enforce the
+          // per-event size limit here too. Upstream mirrors already normalize, but
+          // direct callers (hosted lifecycle, child-run progress) do not — this makes
+          // it impossible to POST an event the API would reject for size. Idempotent
+          // on already-normalized events.
+          events: normalizeConversationRunEvents(
+            input.events as Parameters<typeof normalizeConversationRunEvents>[0],
+          ),
         }),
         signal: timedAbort.signal,
       },

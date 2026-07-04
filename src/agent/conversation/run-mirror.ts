@@ -19,7 +19,11 @@ export interface ConversationRunMirrorStoppedState {
   pendingEventCount: 0;
   consecutiveFailures: number;
   disabled: true;
-  disableReason?: "cursor_resyncs_exhausted" | "non_appendable" | "ignorable_append_rejection";
+  disableReason?:
+    | "cursor_resyncs_exhausted"
+    | "non_appendable"
+    | "ignorable_append_rejection"
+    | "payload_too_large";
 }
 
 /** State for conversation run mirror retry scheduled. */
