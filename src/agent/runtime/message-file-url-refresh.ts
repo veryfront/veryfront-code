@@ -254,12 +254,74 @@ async function fetchRuntimeTextFileContent(
       }: HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ""}`,
     );
   }
-  return await waitForRuntimeFileContentFetchOperation(
-    response.text(),
-    input,
-    fetchSignal,
-    timeoutMs,
-  );
+  return await readRuntimeTextFileContent(response, input, fetchSignal, timeoutMs);
+}
+
+async function readRuntimeTextFileContent(
+  response: Response,
+  input: RuntimeFileContentFetcherInput,
+  fetchSignal: ReturnType<typeof createRuntimeFileContentFetchSignal>,
+  timeoutMs: number,
+): Promise<string | undefined> {
+  if (!response.body) {
+    return "";
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let content = "";
+  let shouldCancelReader = false;
+
+  try {
+    while (content.length <= MAX_INLINE_FILE_CONTENT_CHARS) {
+      const result = await waitForRuntimeFileContentFetchOperation(
+        reader.read(),
+        input,
+        fetchSignal,
+        timeoutMs,
+      );
+      if (result.done) {
+        return appendRuntimeTextContentUntilInlineLimit(content, decoder.decode()).content;
+      }
+
+      const nextContent = appendRuntimeTextContentUntilInlineLimit(
+        content,
+        decoder.decode(result.value, { stream: true }),
+      );
+      content = nextContent.content;
+      if (nextContent.reachedLimit) {
+        shouldCancelReader = true;
+        return content;
+      }
+    }
+
+    return content;
+  } finally {
+    if (shouldCancelReader || fetchSignal.signal.aborted) {
+      void reader.cancel().catch(() => {});
+    }
+    try {
+      reader.releaseLock();
+    } catch {
+      // Ignore release failures after cancellation has already been requested.
+    }
+  }
+}
+
+function appendRuntimeTextContentUntilInlineLimit(
+  content: string,
+  decoded: string,
+): { content: string; reachedLimit: boolean } {
+  const readLimit = MAX_INLINE_FILE_CONTENT_CHARS + 1;
+  const remainingChars = readLimit - content.length;
+  if (decoded.length >= remainingChars) {
+    return {
+      content: `${content}${decoded.slice(0, Math.max(0, remainingChars))}`,
+      reachedLimit: true,
+    };
+  }
+
+  return { content: `${content}${decoded}`, reachedLimit: false };
 }
 
 function createRuntimeFileContentFetchSignal(
