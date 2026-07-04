@@ -167,6 +167,25 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
         return new Promise((resolve) => setTimeout(resolve, ms));
       }
 
+      async function persistLockfileEntry(
+        url: string,
+        entry: {
+          resolved: string;
+          integrity: string;
+          fetchedAt: string;
+        },
+      ): Promise<void> {
+        if (!lockfile) return;
+
+        try {
+          await lockfile.set(url, entry);
+          await lockfile.flush();
+          logger.debug(`[http] lockfile updated: ${url} -> ${entry.resolved}`);
+        } catch (error) {
+          logger.warn(`[http] could not persist lockfile entry for ${url}: ${error}`);
+        }
+      }
+
       async function fetchRemoteModule(url: string): Promise<Response> {
         for (let attempt = 1; attempt <= HTTP_MODULE_FETCH_MAX_ATTEMPTS; attempt += 1) {
           const response = await fetchWithTimeout(url).catch((error) =>
@@ -352,15 +371,11 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
         const resolvedUrl = res.url || requestUrl;
         const integrity = await computeIntegrity(text);
 
-        if (lockfile) {
-          await lockfile.set(args.path, {
-            resolved: resolvedUrl,
-            integrity,
-            fetchedAt: new Date().toISOString(),
-          });
-          await lockfile.flush();
-          logger.debug(`[http] lockfile updated: ${args.path} -> ${resolvedUrl}`);
-        }
+        await persistLockfileEntry(args.path, {
+          resolved: resolvedUrl,
+          integrity,
+          fetchedAt: new Date().toISOString(),
+        });
         await moduleCache?.write(args.path, text, resolvedUrl, integrity);
         await moduleCache?.write(requestUrl, text, resolvedUrl, integrity);
         await moduleCache?.write(resolvedUrl, text, resolvedUrl, integrity);

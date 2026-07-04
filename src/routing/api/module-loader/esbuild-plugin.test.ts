@@ -361,6 +361,48 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
       }
     });
 
+    it("serves fetched modules when lockfile persistence fails", async () => {
+      const originalFetch = globalThis.fetch;
+      const moduleSource = "export const ok = true;";
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      const plugin = createHTTPPlugin({
+        allowedHosts: ["https://esm.sh"],
+        lockfile: {
+          read: () => Promise.resolve(null),
+          write: () => Promise.reject(new Error("read-only filesystem")),
+          get: () => Promise.resolve(null),
+          set: () => Promise.resolve(),
+          has: () => Promise.resolve(false),
+          clear: () => Promise.resolve(),
+          flush: () => Promise.reject(new Error("read-only filesystem")),
+        },
+      });
+      const mockBuild = createMockBuild(
+        () => {},
+        (_opts, fn) => {
+          loadHandler = fn;
+        },
+      );
+      plugin.setup(mockBuild);
+      assertExists(loadHandler);
+
+      try {
+        globalThis.fetch = (async () =>
+          new Response(moduleSource, { status: 200 })) as typeof fetch;
+
+        const result = await loadHandler({
+          path: "https://esm.sh/yaml@2",
+          namespace: "http-url",
+          pluginData: undefined,
+          suffix: "",
+        });
+
+        assertEquals((result as { contents: string }).contents, moduleSource);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
     it("rejects cached remote modules whose integrity no longer matches the lockfile", async () => {
       const originalFetch = globalThis.fetch;
       const projectDir = await Deno.makeTempDir();
