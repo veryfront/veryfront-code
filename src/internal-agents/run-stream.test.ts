@@ -126,6 +126,65 @@ describe("internal-agents/run-stream", () => {
     assertEquals(capturedToolNames, ["gmail__list_emails", "web_search"]);
   });
 
+  it("uses supplied local tool objects for boolean source tool declarations", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedTool: unknown;
+
+    const agent = {
+      id: "ops-agent",
+      config: {
+        id: "ops-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        tools: {
+          read_baseline: true,
+        },
+      },
+    } as unknown as Agent;
+
+    const readBaselineTool = {
+      id: "read_baseline",
+      description: "Read baseline",
+      inputSchema: { parse: (value: unknown) => value },
+      execute: () => ({ ok: true }),
+    } as unknown as Tool;
+
+    const input = {
+      agentId: "ops-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(
+      input,
+      agent,
+      {
+        sessionManager,
+        localTools: {
+          read_baseline: readBaselineTool,
+        },
+        createRuntime: (_agent, mergedTools) => {
+          capturedTool = typeof mergedTools === "object" && mergedTools !== null
+            ? (mergedTools as Record<string, unknown>).read_baseline
+            : undefined;
+          return {
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              }),
+          };
+        },
+      },
+    );
+
+    assertEquals(capturedTool, readBaselineTool);
+  });
+
   it("preserves explicitly allowed source remote tool declarations before constructing the runtime", async () => {
     const sessionManager = new AgentRunSessionManager();
     let capturedToolNames: string[] = [];
