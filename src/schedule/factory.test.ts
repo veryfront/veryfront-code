@@ -28,6 +28,33 @@ describe("schedule/factory", () => {
     assertEquals(isScheduleDefinition(definition), true);
   });
 
+  it("preserves task targets for scheduled tasks", () => {
+    const definition = schedule({
+      id: "triage-sweep",
+      name: "Triage sweep",
+      schedule: "0 */6 * * *",
+      timezone: "Etc/UTC",
+      target: { kind: "task", id: "run-triage-sweep" },
+      input: { windowHours: 6 },
+      timeoutSeconds: 900,
+      backoffLimit: 1,
+      concurrencyPolicy: "Forbid",
+    });
+
+    assertEquals(definition, {
+      id: "triage-sweep",
+      name: "Triage sweep",
+      schedule: "0 */6 * * *",
+      timezone: "Etc/UTC",
+      target: { kind: "task", id: "run-triage-sweep" },
+      input: { windowHours: 6 },
+      timeoutSeconds: 900,
+      backoffLimit: 1,
+      concurrencyPolicy: "Forbid",
+    });
+    assertEquals(isScheduleDefinition(definition), true);
+  });
+
   it("rejects invalid ids and targets", () => {
     assertThrows(
       () =>
