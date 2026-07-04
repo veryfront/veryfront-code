@@ -190,6 +190,22 @@ describe(
           ].join("\n"),
         );
         await Deno.writeTextFile(
+          `${tempDir}/schedules/triage-sweep.ts`,
+          [
+            'import { schedule } from "veryfront/schedule";',
+            "",
+            "export default schedule({",
+            '  id: "triage-sweep",',
+            '  name: "Triage sweep",',
+            '  schedule: "0 */6 * * *",',
+            '  timezone: "Etc/UTC",',
+            '  target: { kind: "task", id: "run-triage-sweep" },',
+            "  input: { windowHours: 6 },",
+            '  concurrencyPolicy: "Forbid",',
+            "});",
+          ].join("\n"),
+        );
+        await Deno.writeTextFile(
           `${tempDir}/webhooks/ticket-created.ts`,
           [
             'import { webhook } from "veryfront/webhook";',
@@ -219,6 +235,15 @@ describe(
         assertEquals(result.schedules.get("daily-triage")?.target, {
           kind: "workflow",
           id: "escalate-ticket",
+        });
+        assertEquals(result.schedules.get("triage-sweep"), {
+          id: "triage-sweep",
+          name: "Triage sweep",
+          schedule: "0 */6 * * *",
+          timezone: "Etc/UTC",
+          target: { kind: "task", id: "run-triage-sweep" },
+          input: { windowHours: 6 },
+          concurrencyPolicy: "Forbid",
         });
         assertEquals(result.webhooks.get("ticket-created")?.target, {
           kind: "workflow",
