@@ -11,18 +11,31 @@ import * as knowledgeMod from "#veryfront/knowledge";
 
 /**
  * Creates a mock FileSystemAdapter backed by an in-memory file map.
+ *
+ * When `projectDir` is given, absolute paths under it are converted back to
+ * project-relative keys, mirroring the real veryfront adapter's
+ * PathNormalizer (hosted runs address the VFS with relative paths while the
+ * transpiler resolves imports against the process cwd).
  */
 function createMockAdapter(
   files: Record<string, string>,
+  options: { projectDir?: string } = {},
 ): FileSystemAdapter {
+  const normalize = (path: string): string => {
+    const { projectDir } = options;
+    if (projectDir && path.startsWith(projectDir)) {
+      return path.slice(projectDir.length).replace(/^\/+/, "");
+    }
+    return path;
+  };
   return {
     async readFile(path: string): Promise<string> {
-      const content = files[path];
+      const content = files[normalize(path)];
       if (content === undefined) throw new Error(`File not found: ${path}`);
       return content;
     },
     async exists(path: string): Promise<boolean> {
-      return path in files;
+      return normalize(path) in files;
     },
     async *readDir(path: string) {
       const prefix = path.endsWith("/") ? path : `${path}/`;
@@ -205,6 +218,35 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       ) as { default: { value: number } };
 
       assertEquals(mod.default.value, 42);
+    });
+
+    it("should resolve parent-directory imports on hosted runs with relative baseDir", async () => {
+      // Hosted (cloud) discovery uses baseDir "" and addresses the VFS with
+      // project-relative paths like "tools/foo.ts". Regression test for the
+      // esbuild stdin sourcefile doubling the directory prefix
+      // ("tools/tools/foo.ts"), which anchored ../ imports one directory too
+      // deep and made discovery skip every tool/agent.
+      const files: Record<string, string> = {
+        "tools/read-baseline.ts": [
+          `import { helper } from "../lib/util";`,
+          `export default { value: helper() };`,
+        ].join("\n"),
+        "lib/util.ts": `export function helper() { return "baseline"; }`,
+      };
+
+      const adapter = createMockAdapter(files, { projectDir: Deno.cwd() });
+      const context: FileDiscoveryContext = {
+        platform: "node",
+        fsAdapter: adapter,
+        baseDir: "",
+      };
+
+      const mod = await importModule(
+        "file://tools/read-baseline.ts",
+        context,
+      ) as { default: { value: string } };
+
+      assertEquals(mod.default.value, "baseline");
     });
 
     it("should throw when file is not found via fsAdapter", async () => {
