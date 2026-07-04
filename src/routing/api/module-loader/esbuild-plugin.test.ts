@@ -361,6 +361,58 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
       }
     });
 
+    it("serves fetched modules when lockfile persistence fails", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalWarn = console.warn;
+      const moduleSource = "export const ok = true;";
+      const warnings: string[] = [];
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      const plugin = createHTTPPlugin({
+        allowedHosts: ["https://esm.sh"],
+        lockfile: {
+          read: () => Promise.resolve(null),
+          write: () => Promise.reject(new Error("read-only filesystem")),
+          get: () => Promise.resolve(null),
+          set: () => Promise.resolve(),
+          has: () => Promise.resolve(false),
+          clear: () => Promise.resolve(),
+          flush: () =>
+            Promise.reject(new Error("read-only filesystem: /app/project/veryfront.lock")),
+        },
+      });
+      const mockBuild = createMockBuild(
+        () => {},
+        (_opts, fn) => {
+          loadHandler = fn;
+        },
+      );
+      plugin.setup(mockBuild);
+      assertExists(loadHandler);
+
+      try {
+        console.warn = ((...args: unknown[]) => {
+          warnings.push(args.map(String).join(" "));
+        }) as typeof console.warn;
+        globalThis.fetch = (async () =>
+          new Response(moduleSource, { status: 200 })) as typeof fetch;
+
+        const result = await loadHandler({
+          path: "https://esm.sh/yaml@2",
+          namespace: "http-url",
+          pluginData: undefined,
+          suffix: "",
+        });
+
+        assertEquals((result as { contents: string }).contents, moduleSource);
+        assertEquals(warnings.some((warning) => warning.includes("Error")), true);
+        assertEquals(warnings.some((warning) => warning.includes("veryfront.lock")), false);
+        assertEquals(warnings.some((warning) => warning.includes("/app/project")), false);
+      } finally {
+        globalThis.fetch = originalFetch;
+        console.warn = originalWarn;
+      }
+    });
+
     it("rejects cached remote modules whose integrity no longer matches the lockfile", async () => {
       const originalFetch = globalThis.fetch;
       const projectDir = await Deno.makeTempDir();

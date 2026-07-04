@@ -790,6 +790,52 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       /escapes project|Failed to load/i,
     );
   });
+
+  it("loads API handlers with remote imports when the project lockfile cannot be written", async () => {
+    const originalFetch = globalThis.fetch;
+    const realDir = await makeTempDir();
+    await fs.mkdir(join(realDir, "pages", "api"), { recursive: true });
+
+    await fs.writeTextFile(
+      join(realDir, "pages", "api", "articles-2.ts"),
+      [
+        `import { parse as parseYaml } from "https://esm.sh/yaml@2";`,
+        `export function GET() { return new Response(typeof parseYaml); }`,
+      ].join("\n"),
+    );
+
+    const tempRoot = await makeTempDir();
+    const virtualBase = join(tempRoot, `vf-nonexistent-${Date.now()}`);
+    const toReal = (path: string): string => path.replace(virtualBase, realDir);
+
+    const virtualAdapter: RuntimeAdapter = {
+      ...adapter,
+      fs: {
+        ...adapter.fs,
+        readFile: (path: string) => fs.readTextFile(toReal(path)),
+        exists: (path: string) => fs.exists(toReal(path)),
+      },
+    };
+
+    try {
+      globalThis.fetch = (async () =>
+        new Response(`export function parse() { return {}; }`, {
+          status: 200,
+          headers: { "content-type": "application/javascript" },
+        })) as typeof fetch;
+
+      const route = await loadHandlerModule({
+        projectDir: virtualBase,
+        modulePath: join(virtualBase, "pages", "api", "articles-2.ts"),
+        adapter: virtualAdapter,
+        config: undefined,
+      });
+
+      assertEquals(typeof route?.GET, "function");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
 
 // VULN-FS-5: compiled-binary CJS loader must enforce project-root containment
