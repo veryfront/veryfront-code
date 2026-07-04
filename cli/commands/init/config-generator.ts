@@ -8,6 +8,7 @@ const REQUIRED_INIT_EXTENSION_PACKAGES = [
   "@veryfront/ext-bundler-esbuild",
   "@veryfront/ext-content-mdx",
   "@veryfront/ext-css-tailwind",
+  "@veryfront/ext-parser-babel",
 ] as const;
 
 export interface CreatePackageJsonOptions {
