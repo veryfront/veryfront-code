@@ -46,7 +46,10 @@ export type NormalizedHostedChatRequest = {
 export type PrepareHostedChatRuntimeMessagesOptions =
   & Pick<
     PrepareAgentRuntimeMessagesFromUiMessagesOptions,
-    "emptyConversationPrompt" | "providerOwnedToolNames"
+    | "emptyConversationPrompt"
+    | "providerOwnedToolNames"
+    | "abortSignal"
+    | "fileContentFetchTimeoutMs"
   >
   & {
     authToken?: string;
@@ -411,6 +414,7 @@ export async function prepareHostedChatExecution<
       apiUrl: input.apiUrl,
       projectId: input.request.projectId,
       providerOwnedToolNames: getProviderToolNames(input.agentConfig),
+      abortSignal: input.abortSignal,
     },
   );
   let budgetedContext: Awaited<ReturnType<typeof applyContextBudget>> | undefined;
@@ -462,6 +466,8 @@ export async function prepareHostedChatRuntimeMessages(
       messages,
       emptyConversationPrompt: options.emptyConversationPrompt,
       providerOwnedToolNames: options.providerOwnedToolNames,
+      abortSignal: options.abortSignal,
+      fileContentFetchTimeoutMs: options.fileContentFetchTimeoutMs,
     });
   }
   const authToken = options.authToken;
@@ -471,6 +477,8 @@ export async function prepareHostedChatRuntimeMessages(
     messages,
     emptyConversationPrompt: options.emptyConversationPrompt,
     providerOwnedToolNames: options.providerOwnedToolNames,
+    abortSignal: options.abortSignal,
+    fileContentFetchTimeoutMs: options.fileContentFetchTimeoutMs,
     resolveFileUrl: ({ uploadId }) =>
       getRuntimeUploadUrl({
         apiUrl,

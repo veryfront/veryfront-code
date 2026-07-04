@@ -6,6 +6,7 @@
  */
 
 import type { Plugin, PluginBuild } from "veryfront/extensions/bundler";
+import { ensureDefaultBundlerContracts } from "#veryfront/extensions/bundler/defaults.ts";
 import { isDeno, isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
@@ -180,6 +181,7 @@ export async function importModule(
   }
 
   const loader = getEsbuildLoader(filePath);
+  await ensureDefaultBundlerContracts();
   const { build } = await import("veryfront/extensions/bundler");
   const fileDir = pathHelper.dirname(filePath);
 

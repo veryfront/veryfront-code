@@ -5,6 +5,7 @@ import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { clearTranspileCache, importModule } from "./transpiler.ts";
 import type { FileDiscoveryContext } from "./types.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
+import { reset, tryResolve } from "#veryfront/extensions/contracts.ts";
 import * as embeddingMod from "#veryfront/embedding/index.ts";
 import * as knowledgeMod from "#veryfront/knowledge";
 
@@ -137,6 +138,33 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       ) as { default: { name: string } };
 
       assertEquals(mod.default.name, "test-agent");
+    });
+
+    it("lazily registers the installed default bundler before discovery transpilation", async () => {
+      reset();
+      assertEquals(tryResolve("Bundler"), undefined);
+      assertEquals(tryResolve("ModuleLexer"), undefined);
+
+      const files: Record<string, string> = {
+        "/project/schedules/daily.ts":
+          `export default { id: "daily", schedule: "0 8 * * *", target: "noop" };`,
+      };
+
+      const adapter = createMockAdapter(files);
+      const context: FileDiscoveryContext = {
+        platform: "node",
+        fsAdapter: adapter,
+        baseDir: "/project",
+      };
+
+      const mod = await importModule(
+        "file:///project/schedules/daily.ts",
+        context,
+      ) as { default: { id: string } };
+
+      assertEquals(mod.default.id, "daily");
+      assertEquals(typeof tryResolve<{ bundle?: unknown }>("Bundler")?.bundle, "function");
+      assertEquals(typeof tryResolve<{ parse?: unknown }>("ModuleLexer")?.parse, "function");
     });
 
     it("should resolve relative imports via fsAdapter plugin", async () => {

@@ -31,6 +31,47 @@ function isRuntimeFilePart(
     "mediaType" in part && typeof part.mediaType === "string";
 }
 
+function isRuntimeTextPart(part: unknown): part is { type: "text"; text: string } {
+  return typeof part === "object" && part !== null &&
+    "type" in part && part.type === "text" &&
+    "text" in part && typeof part.text === "string";
+}
+
+function rejectIfStillPending<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+): { promise: Promise<T>; cancel: () => void } {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+
+  return {
+    promise: Promise.race([promise, timeout]),
+    cancel: () => {
+      if (timeoutId) clearTimeout(timeoutId);
+    },
+  };
+}
+
+function pendingResponseUntilAbort(signal: AbortSignal | null | undefined): Promise<Response> {
+  if (!(signal instanceof AbortSignal)) {
+    return new Promise(() => {});
+  }
+
+  return new Promise((_resolve, reject) => {
+    const rejectAbort = () => {
+      reject(signal.reason instanceof Error ? signal.reason : new Error("fetch aborted"));
+    };
+    if (signal.aborted) {
+      rejectAbort();
+      return;
+    }
+    signal.addEventListener("abort", rejectAbort, { once: true });
+  });
+}
+
 function createParsedHostedChatRequest(
   overrides: Partial<ParsedHostedChatRequest> = {},
 ): ParsedHostedChatRequest {
@@ -724,7 +765,12 @@ Deno.test("prepareHostedChatRuntimeMessages refreshes uploaded file URLs through
   const requestedUrls: string[] = [];
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (input, _init): Promise<Response> => {
-    requestedUrls.push(input.toString());
+    const url = input.toString();
+    requestedUrls.push(url);
+    if (url === "https://signed.example.com/notes.txt") {
+      return Promise.resolve(new Response("Remember Order #4587.", { status: 200 }));
+    }
+
     return Promise.resolve(
       new Response(JSON.stringify({ signed_url: "https://signed.example.com/notes.txt" }), {
         status: 200,
@@ -756,6 +802,7 @@ Deno.test("prepareHostedChatRuntimeMessages refreshes uploaded file URLs through
 
     assertEquals(requestedUrls, [
       "https://api.example.com/projects/project-1/uploads/upload-1/url",
+      "https://signed.example.com/notes.txt",
     ]);
     assertEquals(
       messages[0]?.parts.some((part) =>
@@ -764,6 +811,173 @@ Deno.test("prepareHostedChatRuntimeMessages refreshes uploaded file URLs through
         part.mediaType === "text/plain"
       ),
       true,
+    );
+    assertEquals(
+      messages[0]?.parts.some((part) =>
+        isRuntimeTextPart(part) &&
+        part.text.includes('<file_content name="notes.txt" type="text/plain">') &&
+        part.text.includes("Remember Order #4587.")
+      ),
+      true,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("prepareHostedChatExecution aborts stalled signed attachment fetch before runtime creation", async () => {
+  const originalFetch = globalThis.fetch;
+  const abortController = new AbortController();
+  let resolveSignedFetchStarted: (() => void) | undefined;
+  const signedFetchStarted = new Promise<void>((resolve) => {
+    resolveSignedFetchStarted = resolve;
+  });
+  let createRuntimeCalls = 0;
+  let cancelStartGuard = () => {};
+  let cancelPreparationGuard = () => {};
+
+  globalThis.fetch = (input, init): Promise<Response> => {
+    const url = input.toString();
+    if (url === "https://api.example.com/projects/project-1/uploads/upload-1/url") {
+      return Promise.resolve(
+        new Response(JSON.stringify({ signed_url: "https://signed.example.com/notes.txt" }), {
+          status: 200,
+        }),
+      );
+    }
+    if (url === "https://signed.example.com/notes.txt") {
+      resolveSignedFetchStarted?.();
+      return pendingResponseUntilAbort(init?.signal);
+    }
+
+    return Promise.reject(new Error(`unexpected fetch ${url}`));
+  };
+
+  try {
+    const preparation = prepareHostedChatExecution({
+      request: createParsedHostedChatRequest({
+        conversationId: "conversation-1",
+        projectId: "project-1",
+        durableRootRun: {
+          runId: "run-1",
+          messageId: "message-1",
+          latestEventId: 3,
+          latestExternalEventSequence: 2,
+        },
+        messages: [{
+          id: "message-1",
+          role: "user",
+          parts: [
+            { type: "text", text: "Use this file." },
+            {
+              type: "file",
+              mediaType: "text/plain",
+              filename: "notes.txt",
+              uploadId: "upload-1",
+              url: "https://files.example.com/original.txt",
+            },
+          ],
+        }],
+      }),
+      agentConfig: {
+        id: "agent-1",
+        model: "configured-model",
+      },
+      apiUrl: "https://api.example.com",
+      abortSignal: abortController.signal,
+      resolveModelId: (modelId) => modelId ? `resolved:${modelId}` : undefined,
+      fetchSteering: () =>
+        Promise.resolve({
+          instructions: "Project instructions",
+          skills: [],
+        }),
+      buildInstructions: (input) => [
+        {
+          role: "system",
+          content: `${input.agentConfig.id}:${input.instructions}`,
+        },
+      ],
+      createRuntime: (options) => {
+        createRuntimeCalls++;
+        return Promise.resolve({
+          runtimeKind: "framework",
+          modelId: options.model ?? "resolved:configured-model",
+          cleanup: () => Promise.resolve(),
+          agent: {
+            stream: () =>
+              Promise.resolve({
+                steps: Promise.resolve([]),
+                toUIMessageStream: async function* () {},
+              }),
+          },
+        });
+      },
+    });
+
+    const startGuard = rejectIfStillPending(
+      signedFetchStarted,
+      50,
+      "signed content fetch was not started",
+    );
+    cancelStartGuard = startGuard.cancel;
+    await startGuard.promise;
+
+    const preparationGuard = rejectIfStillPending(
+      preparation,
+      50,
+      "hosted execution still pending after abort",
+    );
+    cancelPreparationGuard = preparationGuard.cancel;
+    abortController.abort(new Error("caller aborted"));
+
+    await assertRejects(
+      () => preparationGuard.promise,
+      Error,
+      "Failed to fetch text attachment content for notes.txt: request aborted",
+    );
+    assertEquals(createRuntimeCalls, 0);
+  } finally {
+    cancelStartGuard();
+    cancelPreparationGuard();
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("prepareHostedChatRuntimeMessages does not fetch caller-controlled file URLs", async () => {
+  const requestedUrls: string[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (input, _init): Promise<Response> => {
+    requestedUrls.push(input.toString());
+    return Promise.reject(new Error("unexpected hosted attachment fetch"));
+  };
+
+  try {
+    const messages = await prepareHostedChatRuntimeMessages([
+      {
+        id: "message-1",
+        role: "user",
+        parts: [
+          { type: "text", text: "Use this file." },
+          {
+            type: "file",
+            mediaType: "text/plain",
+            filename: "notes.txt",
+            url: "http://127.0.0.1:9876/internal-notes.txt",
+          },
+        ],
+      },
+    ], {
+      apiUrl: "https://api.example.com",
+      authToken: "token-1",
+      projectId: "project-1",
+    });
+
+    assertEquals(requestedUrls, []);
+    assertEquals(
+      messages[0]?.parts.some((part) =>
+        isRuntimeTextPart(part) && part.text.includes("<file_content")
+      ),
+      false,
     );
   } finally {
     globalThis.fetch = originalFetch;
