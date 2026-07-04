@@ -37,6 +37,17 @@ import * as chatUploadsMod from "#veryfront/chat/uploads";
 
 const transpileCache = new Map<string, unknown>();
 
+async function hashSource(source: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(source),
+  );
+  return Array.from(
+    new Uint8Array(digest),
+    (byte) => byte.toString(16).padStart(2, "0"),
+  ).join("");
+}
+
 // Setup veryfront modules as globals for compiled binary support
 let veryfrontGlobalsInitialized = false;
 
@@ -160,9 +171,6 @@ export async function importModule(
   file: string,
   context: FileDiscoveryContext,
 ): Promise<unknown> {
-  const cached = transpileCache.get(file);
-  if (cached) return cached;
-
   // Ensure veryfront modules are available as globals for compiled binaries
   await ensureVeryfrontGlobals();
 
@@ -179,6 +187,15 @@ export async function importModule(
       cause: error,
     });
   }
+
+  // The cache key must include the source content: a shared hosted runtime
+  // process serves many projects and releases, and the same relative path
+  // (e.g. "tools/foo.ts") recurs across them. A path-only key keeps serving
+  // the stale module after a deploy and can hand one project's module to
+  // another project's discovery.
+  const cacheKey = `${file} ${await hashSource(source)}`;
+  const cached = transpileCache.get(cacheKey);
+  if (cached) return cached;
 
   const loader = getEsbuildLoader(filePath);
   await ensureDefaultBundlerContracts();
@@ -258,7 +275,7 @@ export async function importModule(
     const moduleUrl = pathHelper.toFileUrl(tempFile);
     moduleUrl.searchParams.set("v", String(Date.now()));
     const module = await import(moduleUrl.href);
-    transpileCache.set(file, module);
+    transpileCache.set(cacheKey, module);
     return module;
   } finally {
     await localFs.remove(tempDir, { recursive: true });

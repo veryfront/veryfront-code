@@ -249,6 +249,37 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assertEquals(mod.default.value, "baseline");
     });
 
+    it("should not serve a stale cached module when content changes at the same path", async () => {
+      // The shared hosted runtime serves many projects and releases from one
+      // process; the same relative path recurs across them. A path-only cache
+      // key kept serving the previous release's module after a deploy.
+      const path = "/project/agents/assistant.ts";
+      const contextFor = (content: string): FileDiscoveryContext => ({
+        platform: "node",
+        fsAdapter: createMockAdapter({ [path]: content }),
+        baseDir: "/project",
+      });
+
+      const first = await importModule(
+        `file://${path}`,
+        contextFor(`export default { version: "release-1" };`),
+      ) as { default: { version: string } };
+      assertEquals(first.default.version, "release-1");
+
+      const second = await importModule(
+        `file://${path}`,
+        contextFor(`export default { version: "release-2" };`),
+      ) as { default: { version: string } };
+      assertEquals(second.default.version, "release-2");
+
+      // Unchanged content is still served from the cache (same module object).
+      const third = await importModule(
+        `file://${path}`,
+        contextFor(`export default { version: "release-2" };`),
+      );
+      assertEquals(third === second, true);
+    });
+
     it("should throw when file is not found via fsAdapter", async () => {
       const adapter = createMockAdapter({});
       const context: FileDiscoveryContext = {
