@@ -41,6 +41,21 @@ describe("config-generator", () => {
       }
     });
 
+    it("includes first-party extension packages required by npm CLI dev and build", async () => {
+      const tmpDir = await Deno.makeTempDir();
+      try {
+        await createPackageJson(tmpDir, "test-project");
+        const pkg = JSON.parse(await Deno.readTextFile(join(tmpDir, "package.json")));
+        assertEquals(
+          pkg.dependencies["@veryfront/ext-bundler-esbuild"],
+          pkg.dependencies.veryfront,
+        );
+        assertEquals(pkg.dependencies["@veryfront/ext-content-mdx"], pkg.dependencies.veryfront);
+      } finally {
+        await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+
     it("merges npmDependencies from selected integrations", async () => {
       const tmpDir = await Deno.makeTempDir();
       try {
@@ -76,6 +91,8 @@ describe("config-generator", () => {
         });
         const pkg = JSON.parse(await Deno.readTextFile(join(tmpDir, "package.json")));
         assertEquals(Object.keys(pkg.dependencies).sort(), [
+          "@veryfront/ext-bundler-esbuild",
+          "@veryfront/ext-content-mdx",
           "react",
           "react-dom",
           "veryfront",
