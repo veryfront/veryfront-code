@@ -280,6 +280,46 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assertEquals(third === second, true);
     });
 
+    it("should not serve a stale cached module when a bundled dependency changes", async () => {
+      // esbuild inlines relative imports into the bundle, so an unchanged
+      // entry file does not mean an unchanged module: a release that only
+      // edits lib/ code (or another project sharing the same entry source)
+      // must not be served the previously bundled dependency contents.
+      const entryPath = "/project/agents/assistant.ts";
+      const entrySource = [
+        `import { CONFIG } from "./config";`,
+        `export default { model: CONFIG.model };`,
+      ].join("\n");
+      const contextFor = (depSource: string): FileDiscoveryContext => ({
+        platform: "node",
+        fsAdapter: createMockAdapter({
+          [entryPath]: entrySource,
+          "/project/agents/config.ts": depSource,
+        }),
+        baseDir: "/project",
+      });
+
+      const first = await importModule(
+        `file://${entryPath}`,
+        contextFor(`export const CONFIG = { model: "gpt-4" };`),
+      ) as { default: { model: string } };
+      assertEquals(first.default.model, "gpt-4");
+
+      const second = await importModule(
+        `file://${entryPath}`,
+        contextFor(`export const CONFIG = { model: "gpt-5.5" };`),
+      ) as { default: { model: string } };
+      assertEquals(second.default.model, "gpt-5.5");
+
+      // Both dependency versions stay cached: reverting to the original
+      // dependency contents serves the originally built module object.
+      const third = await importModule(
+        `file://${entryPath}`,
+        contextFor(`export const CONFIG = { model: "gpt-4" };`),
+      );
+      assertEquals(third === first, true);
+    });
+
     it("should throw when file is not found via fsAdapter", async () => {
       const adapter = createMockAdapter({});
       const context: FileDiscoveryContext = {

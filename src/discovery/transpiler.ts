@@ -35,17 +35,65 @@ import * as metricsMod from "#veryfront/metrics";
 import * as schemasMod from "#veryfront/schemas";
 import * as chatUploadsMod from "#veryfront/chat/uploads";
 
-const transpileCache = new Map<string, unknown>();
+type TranspileCacheEntry = {
+  /** Content hashes of every file esbuild bundled into the module besides the entry. */
+  deps: ReadonlyArray<{ path: string; hash: string }>;
+  module: unknown;
+};
+
+// Keyed by entry file + entry source hash; each entry additionally records the
+// bundled dependency contents it was built from and is only served while those
+// still match (see findCachedModuleWithFreshDeps).
+const transpileCache = new Map<string, TranspileCacheEntry[]>();
+
+const textEncoder = new TextEncoder();
 
 async function hashSource(source: string): Promise<string> {
   const digest = await crypto.subtle.digest(
     "SHA-256",
-    new TextEncoder().encode(source),
+    textEncoder.encode(source),
   );
   return Array.from(
     new Uint8Array(digest),
     (byte) => byte.toString(16).padStart(2, "0"),
   ).join("");
+}
+
+/**
+ * Returns the first cached module whose recorded bundled-dependency contents
+ * still match what the current adapter serves. esbuild inlines relative
+ * imports into the bundle, so an unchanged entry file does not guarantee an
+ * unchanged module: a dependency edited by a new release (or differing between
+ * two projects that share the same entry source) must invalidate the entry.
+ */
+async function findCachedModuleWithFreshDeps(
+  entries: readonly TranspileCacheEntry[],
+  context: FileDiscoveryContext,
+): Promise<unknown | undefined> {
+  const hashByPath = new Map<string, string | undefined>();
+  for (const entry of entries) {
+    let depsMatch = true;
+    for (const dep of entry.deps) {
+      let hash = hashByPath.get(dep.path);
+      if (!hashByPath.has(dep.path)) {
+        try {
+          const content = context.fsAdapter
+            ? await context.fsAdapter.readFile(dep.path)
+            : await createFileSystem().readTextFile(dep.path);
+          hash = await hashSource(content);
+        } catch {
+          hash = undefined;
+        }
+        hashByPath.set(dep.path, hash);
+      }
+      if (hash === undefined || hash !== dep.hash) {
+        depsMatch = false;
+        break;
+      }
+    }
+    if (depsMatch) return entry.module;
+  }
+  return undefined;
 }
 
 // Setup veryfront modules as globals for compiled binary support
@@ -81,7 +129,10 @@ async function ensureVeryfrontGlobals(): Promise<void> {
 /**
  * Create an esbuild plugin for resolving files via fsAdapter
  */
-function createFsAdapterPlugin(fsAdapter: FileSystemAdapter): Plugin {
+function createFsAdapterPlugin(
+  fsAdapter: FileSystemAdapter,
+  onDependencyLoaded?: (path: string, content: string) => void,
+): Plugin {
   const existsCache = new Map<string, boolean>();
 
   async function checkExists(filePath: string): Promise<boolean> {
@@ -144,6 +195,7 @@ function createFsAdapterPlugin(fsAdapter: FileSystemAdapter): Plugin {
         wrapWithCurrentContext(async (args) => {
           try {
             const content = await fsAdapter.readFile(args.path);
+            onDependencyLoaded?.(args.path, content);
             return {
               contents: content,
               loader: getEsbuildLoader(args.path),
@@ -192,10 +244,15 @@ export async function importModule(
   // process serves many projects and releases, and the same relative path
   // (e.g. "tools/foo.ts") recurs across them. A path-only key keeps serving
   // the stale module after a deploy and can hand one project's module to
-  // another project's discovery.
+  // another project's discovery. The entry hash alone is still not enough —
+  // bundled relative imports are inlined into the module — so cached entries
+  // are only served after their recorded dependency contents re-verify.
   const cacheKey = `${file} ${await hashSource(source)}`;
-  const cached = transpileCache.get(cacheKey);
-  if (cached) return cached;
+  const cachedEntries = transpileCache.get(cacheKey);
+  if (cachedEntries) {
+    const cached = await findCachedModuleWithFreshDeps(cachedEntries, context);
+    if (cached) return cached;
+  }
 
   const loader = getEsbuildLoader(filePath);
   await ensureDefaultBundlerContracts();
@@ -210,8 +267,16 @@ export async function importModule(
     ? [...source.matchAll(/from\s+["'](\.\.[^"']+)["']/g)].map((m) => m[1]!).filter(Boolean)
     : [];
 
-  // Use fsAdapter plugin whenever a VFS adapter is available (regardless of runtime)
-  const plugins = hasFsAdapter ? [createFsAdapterPlugin(context.fsAdapter!)] : [];
+  // Use fsAdapter plugin whenever a VFS adapter is available (regardless of
+  // runtime), recording every bundled dependency for cache re-validation.
+  const bundledDeps: Array<{ path: string; content: string }> = [];
+  const plugins = hasFsAdapter
+    ? [
+      createFsAdapterPlugin(context.fsAdapter!, (path, content) => {
+        bundledDeps.push({ path, content });
+      }),
+    ]
+    : [];
 
   const result = await build({
     bundle: true,
@@ -275,7 +340,12 @@ export async function importModule(
     const moduleUrl = pathHelper.toFileUrl(tempFile);
     moduleUrl.searchParams.set("v", String(Date.now()));
     const module = await import(moduleUrl.href);
-    transpileCache.set(cacheKey, module);
+    const deps = await Promise.all(
+      bundledDeps.map(async ({ path, content }) => ({ path, hash: await hashSource(content) })),
+    );
+    const entries = transpileCache.get(cacheKey) ?? [];
+    entries.push({ deps, module });
+    transpileCache.set(cacheKey, entries);
     return module;
   } finally {
     await localFs.remove(tempDir, { recursive: true });
