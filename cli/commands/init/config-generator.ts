@@ -14,6 +14,8 @@ const REQUIRED_INIT_EXTENSION_PACKAGES = [
 export interface CreatePackageJsonOptions {
   /** Template-owned dependencies that must be installed for generated apps. */
   dependencies?: Record<string, string>;
+  /** Template-owned first-party extension packages aligned to the Veryfront version. */
+  firstPartyExtensions?: readonly string[];
   /**
    * Selected integrations whose `connector.json#npmDependencies` should be
    * merged into the generated project's `package.json#dependencies`.
@@ -61,8 +63,15 @@ export async function createPackageJson(
 
   const dirName = projectDir.split(/[/\\]/).pop();
   const veryfrontVersionRange = `^${VERSION}`;
+  const firstPartyExtensionPackages = [
+    ...REQUIRED_INIT_EXTENSION_PACKAGES,
+    ...(options.firstPartyExtensions ?? []),
+  ];
   const requiredExtensionDeps = Object.fromEntries(
-    REQUIRED_INIT_EXTENSION_PACKAGES.map((packageName) => [packageName, veryfrontVersionRange]),
+    [...new Set(firstPartyExtensionPackages)].map((packageName) => [
+      packageName,
+      veryfrontVersionRange,
+    ]),
   );
   const packageJson = {
     name: projectName ?? dirName ?? "veryfront-project",

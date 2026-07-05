@@ -58,6 +58,22 @@ describe("config-generator", () => {
       }
     });
 
+    it("aligns template-owned first-party extensions to the framework version", async () => {
+      const tmpDir = await Deno.makeTempDir();
+      try {
+        await createPackageJson(tmpDir, "test-project", {
+          firstPartyExtensions: ["@veryfront/ext-document-kreuzberg"],
+        });
+        const pkg = JSON.parse(await Deno.readTextFile(join(tmpDir, "package.json")));
+        assertEquals(
+          pkg.dependencies["@veryfront/ext-document-kreuzberg"],
+          pkg.dependencies.veryfront,
+        );
+      } finally {
+        await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+
     it("merges npmDependencies from selected integrations", async () => {
       const tmpDir = await Deno.makeTempDir();
       try {

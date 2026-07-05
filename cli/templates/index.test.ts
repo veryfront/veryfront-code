@@ -52,6 +52,9 @@ describe("cli/templates", () => {
     );
     assertEquals(templateConfigs["docs-agent"]?.npmDependencies?.["@kreuzberg/node"], "^4.4.2");
     assertEquals(templateConfigs["docs-agent"]?.npmDependencies?.["@kreuzberg/wasm"], "4.5.2");
+    assertEquals(templateConfigs["docs-agent"]?.firstPartyExtensions, [
+      "@veryfront/ext-document-kreuzberg",
+    ]);
   });
 
   it("ships a Tailwind entry stylesheet for styled starter templates", async () => {

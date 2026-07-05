@@ -261,6 +261,10 @@ describe("init command integration", () => {
       const pkg = JSON.parse(await readTextFile(join(projectDir, "package.json")));
       assertEquals(pkg.dependencies["@kreuzberg/node"], "^4.4.2");
       assertEquals(pkg.dependencies["@kreuzberg/wasm"], "4.5.2");
+      assertEquals(
+        pkg.dependencies["@veryfront/ext-document-kreuzberg"],
+        pkg.dependencies.veryfront,
+      );
     });
 
     it("does not write a partial package.json for quiet docs-agent projects", async () => {
