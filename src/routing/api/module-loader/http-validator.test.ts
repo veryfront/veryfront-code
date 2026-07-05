@@ -27,6 +27,18 @@ describe("routing/api/module-loader/http-validator", () => {
       );
     });
 
+    it("should reject prefix-domain bypasses of allowed hosts", () => {
+      assertThrows(
+        () => {
+          validateHTTPImports('import malware from "https://esm.sh.evil.example/bad.js";', [
+            "https://esm.sh",
+          ]);
+        },
+        Error,
+        "Remote import blocked",
+      );
+    });
+
     it("should check dynamic imports", () => {
       assertThrows(
         () => {

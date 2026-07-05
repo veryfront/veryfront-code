@@ -10,6 +10,7 @@ import {
 import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
 import type { Message, Plugin } from "veryfront/extensions/bundler";
+import { isAllowedRemoteHost } from "./http-validator.ts";
 
 const logger = serverLogger.component("api");
 const HTTP_MODULE_CACHE_DIR = ".veryfront/cache/api-http-imports";
@@ -175,6 +176,15 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
         return typeof code === "string" && code ? `${name}(${code})` : name;
       }
 
+      function isReadOnlyFileSystemError(error: unknown): boolean {
+        if (error == null) return false;
+
+        const message = error instanceof Error ? error.message : String(error);
+        if (/read-only file ?system|os error 30|erofs/i.test(message)) return true;
+
+        return error instanceof Error && isReadOnlyFileSystemError(error.cause);
+      }
+
       async function persistLockfileEntry(
         url: string,
         entry: {
@@ -185,11 +195,13 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
       ): Promise<void> {
         if (!lockfile) return;
 
+        await lockfile.set(url, entry);
+
         try {
-          await lockfile.set(url, entry);
           await lockfile.flush();
           logger.debug(`[http] lockfile updated: ${url} -> ${entry.resolved}`);
         } catch (error) {
+          if (!isReadOnlyFileSystemError(error)) throw error;
           logger.warn(
             `[http] could not persist lockfile entry for ${url}: ${
               describePersistenceError(error)
@@ -266,15 +278,13 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
           const u = new URL(args.path);
 
           if (allowedHosts?.length) {
-            const hostUrl = `${u.protocol}//${u.host}`;
-            const isAllowed = allowedHosts.some((h) => hostUrl.startsWith(h));
-            if (!isAllowed) {
+            if (!isAllowedRemoteHost(u, allowedHosts)) {
               const remediation =
-                `Add "${hostUrl}" to security.remoteHosts in veryfront.config.(ts|js) or replace with an approved CDN (e.g., https://esm.sh).`;
+                `Add "${u.origin}" to security.remoteHosts in veryfront.config.(ts|js) or replace with an approved CDN (e.g., https://esm.sh).`;
               return {
                 errors: [
                   {
-                    text: `Remote import blocked by allow-list: ${hostUrl}. ${remediation}`,
+                    text: `Remote import blocked by allow-list: ${u.origin}. ${remediation}`,
                   } as Message,
                 ],
               };

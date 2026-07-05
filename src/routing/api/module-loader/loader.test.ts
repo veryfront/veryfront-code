@@ -791,7 +791,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
   });
 
-  it("loads API handlers with remote imports when the project lockfile cannot be written", async () => {
+  it("rejects API handlers with remote imports when the project lockfile cannot be written for non-read-only reasons", async () => {
     const originalFetch = globalThis.fetch;
     const realDir = await makeTempDir();
     await fs.mkdir(join(realDir, "pages", "api"), { recursive: true });
@@ -824,14 +824,18 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
           headers: { "content-type": "application/javascript" },
         })) as typeof fetch;
 
-      const route = await loadHandlerModule({
-        projectDir: virtualBase,
-        modulePath: join(virtualBase, "pages", "api", "articles-2.ts"),
-        adapter: virtualAdapter,
-        config: undefined,
-      });
-
-      assertEquals(typeof route?.GET, "function");
+      await assertRejects(
+        async () => {
+          await loadHandlerModule({
+            projectDir: virtualBase,
+            modulePath: join(virtualBase, "pages", "api", "articles-2.ts"),
+            adapter: virtualAdapter,
+            config: undefined,
+          });
+        },
+        Error,
+        "No such file or directory",
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }
