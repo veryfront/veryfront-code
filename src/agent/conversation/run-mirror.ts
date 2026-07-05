@@ -93,6 +93,12 @@ export function createConversationRunMirror(input: {
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let inFlightFlush: Promise<void> | null = null;
+  // Failures that escaped the queue controller (which only counts append
+  // failures it recovered itself) still need to back off exponentially, and
+  // explicit flush() calls must surface them so callers do not finalize a run
+  // while its last events are still queued.
+  let escapedFlushFailures = 0;
+  let escapedFlushError: { error: unknown } | null = null;
 
   function getSnapshot(): ConversationRunMirrorSnapshot {
     const snapshot = input.queueController.getSnapshot();
@@ -170,7 +176,9 @@ export function createConversationRunMirror(input: {
       return;
     }
 
-    const retryDelayMs = getRetryDelayMs(snapshot.consecutiveFailures);
+    const retryDelayMs = getRetryDelayMs(
+      Math.max(snapshot.consecutiveFailures, escapedFlushFailures),
+    );
     clearRetryTimer();
     retryTimer = scheduleMirrorTimer({
       delayMs: retryDelayMs,
@@ -184,6 +192,8 @@ export function createConversationRunMirror(input: {
   async function runFlushLoop(): Promise<void> {
     emitHighBacklogIfNeeded();
     const flushed = await input.queueController.flush();
+    escapedFlushFailures = 0;
+    escapedFlushError = null;
 
     if (flushed.outcome === "idle" || flushed.outcome === "flushed") {
       return;
@@ -213,12 +223,23 @@ export function createConversationRunMirror(input: {
       return;
     }
 
-    inFlightFlush = runFlushLoop().finally(() => {
-      inFlightFlush = null;
-      if (shouldContinueFlushLoop()) {
-        startFlushLoop();
-      }
-    });
+    inFlightFlush = runFlushLoop()
+      .catch((error) => {
+        // The queue controller re-queues its events before rethrowing, so an
+        // error escaping here (unexpected controller failure or a throwing
+        // observability callback) must not become an unhandled rejection from
+        // a timer-triggered loop — back off and retry instead. Explicit
+        // flush() rethrows it from the recorded value.
+        escapedFlushFailures += 1;
+        escapedFlushError = { error };
+        scheduleRetry();
+      })
+      .finally(() => {
+        inFlightFlush = null;
+        if (shouldContinueFlushLoop()) {
+          startFlushLoop();
+        }
+      });
   }
 
   function scheduleFlush(delayMs: number): void {
@@ -267,8 +288,26 @@ export function createConversationRunMirror(input: {
         return snapshot;
       }
 
+      // An already-in-flight loop may have snapshotted the queue before the
+      // caller's events were enqueued, and its completion can chain another
+      // loop; keep draining until the queue is empty or a retry backoff or
+      // stop takes over.
       startFlushLoop();
-      await inFlightFlush;
+      while (inFlightFlush !== null) {
+        await inFlightFlush;
+        const drained = getSnapshot();
+        if (!drained.disabled && drained.pendingEventCount > 0 && !drained.hasRetryTimer) {
+          startFlushLoop();
+        }
+      }
+
+      if (escapedFlushError !== null) {
+        // Callers like hosted finalization treat a resolved flush() as "safe
+        // to complete the run"; a flush error that escaped the controller
+        // must reject here instead of silently leaving events queued.
+        throw escapedFlushError.error;
+      }
+
       return getSnapshot();
     },
     getSnapshot,

@@ -166,27 +166,21 @@ export function buildInvokeAgentChildRunProgressEvents(
 }
 
 /** Publish invoke agent child run progress helper. */
-export async function publishInvokeAgentChildRunProgress(input: {
-  authToken: string;
-  apiUrl: string;
-  conversationId: string;
-  runId: string;
-  expectedPreviousEventId?: number;
-  expectedPreviousExternalEventSequence?: number;
-  toolCallId: string;
-  childAgentId: string;
-  childConversationId: string;
-  childRunId: string;
-  childMessageId: string;
-  description?: string;
-  status: "pending" | "running" | "waiting_for_tool" | "completed" | "failed" | "cancelled";
-  sourceTargetKind?: "project" | "main_branch" | "environment" | "preview_branch" | null;
-  runtimeTargetKind?: "main_branch" | "environment" | "preview_branch" | null;
-  targetEnvironmentId?: string | null;
-  targetBranchId?: string | null;
-  publishParentRunEvents?: (events: InvokeAgentChildRunProgressEvent[]) => Promise<void> | void;
-  abortSignal?: AbortSignal;
-}): Promise<void> {
+export async function publishInvokeAgentChildRunProgress(
+  // Reuse the shared progress-input shape so callers composing from it never
+  // drift from this signature; the lifecycle schema still validates target
+  // kinds at runtime.
+  input: InvokeAgentChildRunProgressInput & {
+    authToken: string;
+    apiUrl: string;
+    conversationId: string;
+    runId: string;
+    expectedPreviousEventId?: number;
+    expectedPreviousExternalEventSequence?: number;
+    publishParentRunEvents?: (events: InvokeAgentChildRunProgressEvent[]) => Promise<void> | void;
+    abortSignal?: AbortSignal;
+  },
+): Promise<void> {
   const events = [...buildInvokeAgentChildRunProgressEvents(input)];
 
   if (input.publishParentRunEvents) {

@@ -321,7 +321,9 @@ export function enforceTokenBudgetWithTurnCompression(
       continue;
     }
 
-    const compressed = compressTurn(messages, turn.startIdx, turn.endIdx);
+    // Read from `result`: after the first splice, turn indices are positions
+    // in the mutated array, not in the original `messages`.
+    const compressed = compressTurn(result, turn.startIdx, turn.endIdx);
     const compressedTokens = compressed.reduce(
       (sum, message) => sum + estimateTokens(message.content),
       0,

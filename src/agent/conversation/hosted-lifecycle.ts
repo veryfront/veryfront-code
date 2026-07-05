@@ -49,27 +49,42 @@ export interface CreateConversationHostedLifecycleAdapterOptions<TChunk> {
 export function createConversationHostedLifecycleAdapter<TChunk>(
   options: CreateConversationHostedLifecycleAdapterOptions<TChunk>,
 ): HostedLifecycleAdapter<ConversationRunProjection, TChunk> {
+  // Appends read run.latestEventId as the expected cursor and write it back,
+  // so overlapping calls would race the read-modify-write and trip the
+  // server-side cursor check. Chain them so each append sees the previous
+  // cursor update.
+  let appendChain: Promise<void> = Promise.resolve();
+
+  const appendChunkEvents = async (
+    run: ConversationRunProjection,
+    chunk: TChunk,
+  ): Promise<void> => {
+    const events = [...await options.mapChunkToEvents!(chunk, run)];
+    if (events.length === 0) {
+      return;
+    }
+
+    const appended = await appendConversationRunEvents({
+      authToken: options.authToken,
+      apiUrl: options.apiUrl,
+      conversationId: run.conversationId,
+      runId: run.runId,
+      expectedPreviousEventId: run.latestEventId,
+      expectedPreviousExternalEventSequence: run.latestExternalEventSequence,
+      events,
+    });
+
+    run.latestEventId = appended.latestEventId;
+    run.latestExternalEventSequence = appended.latestExternalEventSequence;
+  };
+
   return {
     startRun: options.startRun,
     appendEvents: options.mapChunkToEvents
-      ? async (run, chunk) => {
-        const events = [...await options.mapChunkToEvents!(chunk, run)];
-        if (events.length === 0) {
-          return;
-        }
-
-        const appended = await appendConversationRunEvents({
-          authToken: options.authToken,
-          apiUrl: options.apiUrl,
-          conversationId: run.conversationId,
-          runId: run.runId,
-          expectedPreviousEventId: run.latestEventId,
-          expectedPreviousExternalEventSequence: run.latestExternalEventSequence,
-          events,
-        });
-
-        run.latestEventId = appended.latestEventId;
-        run.latestExternalEventSequence = appended.latestExternalEventSequence;
+      ? (run, chunk) => {
+        const result = appendChain.then(() => appendChunkEvents(run, chunk));
+        appendChain = result.catch(() => {});
+        return result;
       }
       : undefined,
     finalizeRun: async (run, terminalState) => {
@@ -151,18 +166,38 @@ async function publishConversationChildProgress(
   ctx: ConversationChildLifecycleContext,
   status: InvokeAgentChildRunProgressInput["status"],
 ): Promise<void> {
-  await publishInvokeAgentChildRunProgress(
-    {
-      authToken: ctx.authToken,
-      apiUrl: ctx.apiUrl,
-      conversationId: ctx.parentConversationId,
-      runId: ctx.parentRunId,
-      ...(ctx.projectId !== undefined ? { projectId: ctx.projectId } : {}),
-      ...ctx.progress,
-      status,
-      ...(ctx.publishParentRunEvents ? { publishParentRunEvents: ctx.publishParentRunEvents } : {}),
-    } as Parameters<typeof publishInvokeAgentChildRunProgress>[0],
-  );
+  await publishInvokeAgentChildRunProgress({
+    authToken: ctx.authToken,
+    apiUrl: ctx.apiUrl,
+    conversationId: ctx.parentConversationId,
+    runId: ctx.parentRunId,
+    ...ctx.progress,
+    status,
+    ...(ctx.publishParentRunEvents ? { publishParentRunEvents: ctx.publishParentRunEvents } : {}),
+  });
+}
+
+async function finalizeChildRunThenPublish(
+  ctx: ConversationChildLifecycleContext,
+  status: "completed" | "failed" | "cancelled",
+  finalize: () => Promise<void>,
+): Promise<void> {
+  let failed = false;
+  let finalizeError: unknown;
+  try {
+    await finalize();
+  } catch (error) {
+    failed = true;
+    finalizeError = error;
+  }
+
+  // The parent must learn the terminal status even when finalization fails;
+  // otherwise its projection shows the child as running forever.
+  await publishConversationChildProgress(ctx, status);
+
+  if (failed) {
+    throw finalizeError;
+  }
 }
 
 /** Create conversation child lifecycle adapter. */
@@ -172,50 +207,47 @@ export function createConversationChildLifecycleAdapter(
   return {
     pending: () => publishConversationChildProgress(ctx, "pending"),
     running: () => publishConversationChildProgress(ctx, "running"),
-    completed: async (terminalState) => {
-      await finalizeConversationAgentRun({
-        authToken: ctx.authToken,
-        apiUrl: ctx.apiUrl,
-        conversationId: ctx.progress.childConversationId,
-        runId: ctx.progress.childRunId,
-        status: "completed",
-        model: ctx.model,
-        provider: ctx.provider,
-        usage: toConversationChildUsage(terminalState.usage),
-        terminalErrorCode: null,
-        terminalErrorMessage: null,
-      });
-      await publishConversationChildProgress(ctx, "completed");
-    },
-    failed: async (terminalState) => {
-      await finalizeConversationAgentRun({
-        authToken: ctx.authToken,
-        apiUrl: ctx.apiUrl,
-        conversationId: ctx.progress.childConversationId,
-        runId: ctx.progress.childRunId,
-        status: "failed",
-        model: ctx.model,
-        provider: ctx.provider,
-        usage: toConversationChildUsage(terminalState.usage),
-        terminalErrorCode: terminalState.terminalErrorCode ?? "FAILED",
-        terminalErrorMessage: terminalState.terminalErrorMessage ?? "Unknown error",
-      });
-      await publishConversationChildProgress(ctx, "failed");
-    },
-    cancelled: async (terminalState) => {
-      await finalizeConversationAgentRun({
-        authToken: ctx.authToken,
-        apiUrl: ctx.apiUrl,
-        conversationId: ctx.progress.childConversationId,
-        runId: ctx.progress.childRunId,
-        status: "cancelled",
-        model: ctx.model,
-        provider: ctx.provider,
-        usage: toConversationChildUsage(terminalState.usage),
-        terminalErrorCode: terminalState.terminalErrorCode ?? "CANCELLED",
-        terminalErrorMessage: terminalState.terminalErrorMessage ?? "Child run cancelled",
-      });
-      await publishConversationChildProgress(ctx, "cancelled");
-    },
+    completed: (terminalState) =>
+      finalizeChildRunThenPublish(ctx, "completed", () =>
+        finalizeConversationAgentRun({
+          authToken: ctx.authToken,
+          apiUrl: ctx.apiUrl,
+          conversationId: ctx.progress.childConversationId,
+          runId: ctx.progress.childRunId,
+          status: "completed",
+          model: ctx.model,
+          provider: ctx.provider,
+          usage: toConversationChildUsage(terminalState.usage),
+          terminalErrorCode: null,
+          terminalErrorMessage: null,
+        })),
+    failed: (terminalState) =>
+      finalizeChildRunThenPublish(ctx, "failed", () =>
+        finalizeConversationAgentRun({
+          authToken: ctx.authToken,
+          apiUrl: ctx.apiUrl,
+          conversationId: ctx.progress.childConversationId,
+          runId: ctx.progress.childRunId,
+          status: "failed",
+          model: ctx.model,
+          provider: ctx.provider,
+          usage: toConversationChildUsage(terminalState.usage),
+          terminalErrorCode: terminalState.terminalErrorCode ?? "FAILED",
+          terminalErrorMessage: terminalState.terminalErrorMessage ?? "Unknown error",
+        })),
+    cancelled: (terminalState) =>
+      finalizeChildRunThenPublish(ctx, "cancelled", () =>
+        finalizeConversationAgentRun({
+          authToken: ctx.authToken,
+          apiUrl: ctx.apiUrl,
+          conversationId: ctx.progress.childConversationId,
+          runId: ctx.progress.childRunId,
+          status: "cancelled",
+          model: ctx.model,
+          provider: ctx.provider,
+          usage: toConversationChildUsage(terminalState.usage),
+          terminalErrorCode: terminalState.terminalErrorCode ?? "CANCELLED",
+          terminalErrorMessage: terminalState.terminalErrorMessage ?? "Child run cancelled",
+        })),
   };
 }
