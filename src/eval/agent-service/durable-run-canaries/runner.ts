@@ -470,6 +470,15 @@ function isTerminalRunStatus(status: string): boolean {
   return status === "completed" || status === "failed" || status === "cancelled";
 }
 
+function assertCompletedSetupRunBeforeFollowUp(run: DurableRunCanaryRunSummary): void {
+  if (run.status === "completed") {
+    return;
+  }
+
+  const reason = run.terminalErrorMessage ?? run.terminalErrorCode ?? `status ${run.status}`;
+  throw new Error(`Setup durable run did not complete before follow-up: ${reason}`);
+}
+
 function createDurableRunCanaryRunId(): string {
   return `run_${crypto.randomUUID()}`;
 }
@@ -588,6 +597,9 @@ export function createDurableRunCanaryRunner(
         prompt: prepared.prompt,
       });
       runId = initialRun.runId;
+      if (prepared.followUpPrompt) {
+        assertCompletedSetupRunBeforeFollowUp(initialRun.run);
+      }
       const terminalRun = prepared.followUpPrompt
         ? await executeDurableRunPrompt({
           conversationId: prepared.conversationId,
