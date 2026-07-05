@@ -1,4 +1,6 @@
 import { parseProviderError } from "../../chat/provider-errors.ts";
+import { compactHistoricalUiMessageToolInputs } from "../../chat/message-prep.ts";
+import type { ChatUiMessage } from "../../chat/types.ts";
 import {
   AgUiDetachedStartAcceptedSchema,
   buildDetachedAgUiStartRequest,
@@ -131,6 +133,11 @@ async function parseAcceptedDetachedStartResponse(
   };
 }
 
+/** Prepare durable detached-start messages without carrying completed large historical tool inputs. */
+export function prepareDetachedStartMessages(messages: ChatUiMessage[]): ChatUiMessage[] {
+  return compactHistoricalUiMessageToolInputs(messages);
+}
+
 async function executeHostedDurableChatRunStart<TExecution>(
   input: ExecuteHostedDurableChatRunInput<TExecution>,
 ): Promise<Response | HostedDurableRunAccepted> {
@@ -143,7 +150,7 @@ async function executeHostedDurableChatRunStart<TExecution>(
   const detachedStartRequest = buildDetachedAgUiStartRequest({
     runId: durableRootRun.runId,
     threadId: conversationId,
-    messages: input.req.messages,
+    messages: prepareDetachedStartMessages(input.req.messages),
     model: input.req.model,
     forwardedProps: input.req.forwardedProps,
   });
