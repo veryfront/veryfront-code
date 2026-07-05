@@ -122,6 +122,46 @@ describe("agent/conversation-run-event-normalization", () => {
     }
   });
 
+  it("preserves all data when splitting escape-heavy delta events", () => {
+    // Splitting by raw UTF-8 bytes would leave each part oversized once JSON-escaped,
+    // forcing the size-limit backstop to truncate (drop) the tail. The split must be
+    // escape-aware so the concatenated parts reconstruct the original delta losslessly.
+    const escapeHeavyDelta = '"'.repeat(300 * 1024);
+    const parts = normalizeConversationRunEvent({
+      type: "TEXT_MESSAGE_CONTENT",
+      messageId: "m1",
+      delta: escapeHeavyDelta,
+    });
+
+    assertEquals(parts.length > 1, true);
+    assertEquals(parts.map((part) => part.delta).join(""), escapeHeavyDelta);
+    for (const part of parts) {
+      assertEquals(
+        getConversationRunEventJsonByteLength(part) <= MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES,
+        true,
+      );
+    }
+  });
+
+  it("preserves all data when splitting escape-heavy TOOL_CALL_ARGS deltas", () => {
+    // TOOL_CALL_ARGS reassembles into a tool's JSON arguments; a dropped tail would
+    // corrupt them, so escape-heavy args must split losslessly across parts.
+    const escapeHeavyArgs = '"'.repeat(300 * 1024);
+    const parts = normalizeConversationRunEvent({
+      type: "TOOL_CALL_ARGS",
+      toolCallId: "tc_args",
+      delta: escapeHeavyArgs,
+    });
+
+    assertEquals(parts.map((part) => part.delta).join(""), escapeHeavyArgs);
+    for (const part of parts) {
+      assertEquals(
+        getConversationRunEventJsonByteLength(part) <= MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES,
+        true,
+      );
+    }
+  });
+
   it("normalizes whole event lists", () => {
     const events = [
       { type: "TEXT_MESSAGE_CONTENT", delta: "ok" },
