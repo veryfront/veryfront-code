@@ -689,6 +689,95 @@ export function createConversationRunEventQueueController(input: {
   let pendingEvents: unknown[] = [];
   let consecutiveFailures = 0;
   let disabled = false;
+  let flushTail: Promise<unknown> | null = null;
+
+  async function flushOnce() {
+    if (disabled) {
+      return {
+        outcome: "idle" as const,
+        latestEventId,
+        latestExternalEventSequence,
+        pendingEventCount: 0,
+        consecutiveFailures,
+        disabled,
+      };
+    }
+
+    if (pendingEvents.length === 0) {
+      return {
+        outcome: "idle" as const,
+        latestEventId,
+        latestExternalEventSequence,
+        pendingEventCount: 0,
+        consecutiveFailures,
+        disabled,
+      };
+    }
+
+    const queuedEvents = pendingEvents;
+    pendingEvents = [];
+
+    let flushed;
+    try {
+      flushed = await flushConversationRunEventQueue({
+        authToken: input.authToken,
+        apiUrl: input.apiUrl,
+        conversationId: input.conversationId,
+        runId: input.runId,
+        latestEventId,
+        latestExternalEventSequence,
+        events: queuedEvents,
+        maxEventsPerBatch: input.maxEventsPerBatch,
+        maxBatchPayloadBytes: input.maxBatchPayloadBytes,
+        maxCursorResyncsPerFlush: input.maxCursorResyncsPerFlush ?? 3,
+        consecutiveFailures,
+      });
+    } catch (error) {
+      pendingEvents = [...queuedEvents, ...pendingEvents];
+      throw error;
+    }
+
+    latestEventId = flushed.latestEventId;
+    latestExternalEventSequence = flushed.latestExternalEventSequence;
+
+    if (flushed.outcome === "flushed") {
+      consecutiveFailures = 0;
+      return {
+        outcome: "flushed" as const,
+        latestEventId,
+        latestExternalEventSequence,
+        pendingEventCount: pendingEvents.length,
+        consecutiveFailures,
+        disabled,
+      };
+    }
+
+    if (flushed.outcome === "stopped") {
+      pendingEvents = [];
+      disabled = true;
+      return {
+        outcome: "stopped" as const,
+        latestEventId,
+        latestExternalEventSequence,
+        pendingEventCount: 0 as const,
+        consecutiveFailures,
+        disabled: true as const,
+        ...(flushed.disableReason ? { disableReason: flushed.disableReason } : {}),
+      };
+    }
+
+    pendingEvents = [...flushed.pendingEvents, ...pendingEvents];
+    consecutiveFailures = flushed.consecutiveFailures;
+    return {
+      outcome: "retry_scheduled" as const,
+      latestEventId,
+      latestExternalEventSequence,
+      pendingEventCount: pendingEvents.length,
+      consecutiveFailures,
+      disabled: false as const,
+      errorMessage: flushed.errorMessage,
+    };
+  }
 
   return {
     enqueue(events) {
@@ -698,92 +787,21 @@ export function createConversationRunEventQueueController(input: {
 
       pendingEvents.push(...events);
     },
-    async flush() {
-      if (disabled) {
-        return {
-          outcome: "idle" as const,
-          latestEventId,
-          latestExternalEventSequence,
-          pendingEventCount: 0,
-          consecutiveFailures,
-          disabled,
-        };
-      }
-
-      if (pendingEvents.length === 0) {
-        return {
-          outcome: "idle" as const,
-          latestEventId,
-          latestExternalEventSequence,
-          pendingEventCount: 0,
-          consecutiveFailures,
-          disabled,
-        };
-      }
-
-      const queuedEvents = pendingEvents;
-      pendingEvents = [];
-
-      let flushed;
-      try {
-        flushed = await flushConversationRunEventQueue({
-          authToken: input.authToken,
-          apiUrl: input.apiUrl,
-          conversationId: input.conversationId,
-          runId: input.runId,
-          latestEventId,
-          latestExternalEventSequence,
-          events: queuedEvents,
-          maxEventsPerBatch: input.maxEventsPerBatch,
-          maxBatchPayloadBytes: input.maxBatchPayloadBytes,
-          maxCursorResyncsPerFlush: input.maxCursorResyncsPerFlush ?? 3,
-          consecutiveFailures,
-        });
-      } catch (error) {
-        pendingEvents = [...queuedEvents, ...pendingEvents];
-        throw error;
-      }
-
-      latestEventId = flushed.latestEventId;
-      latestExternalEventSequence = flushed.latestExternalEventSequence;
-
-      if (flushed.outcome === "flushed") {
-        consecutiveFailures = 0;
-        return {
-          outcome: "flushed" as const,
-          latestEventId,
-          latestExternalEventSequence,
-          pendingEventCount: pendingEvents.length,
-          consecutiveFailures,
-          disabled,
-        };
-      }
-
-      if (flushed.outcome === "stopped") {
-        pendingEvents = [];
-        disabled = true;
-        return {
-          outcome: "stopped" as const,
-          latestEventId,
-          latestExternalEventSequence,
-          pendingEventCount: 0 as const,
-          consecutiveFailures,
-          disabled: true as const,
-          ...(flushed.disableReason ? { disableReason: flushed.disableReason } : {}),
-        };
-      }
-
-      pendingEvents = [...flushed.pendingEvents, ...pendingEvents];
-      consecutiveFailures = flushed.consecutiveFailures;
-      return {
-        outcome: "retry_scheduled" as const,
-        latestEventId,
-        latestExternalEventSequence,
-        pendingEventCount: pendingEvents.length,
-        consecutiveFailures,
-        disabled: false as const,
-        errorMessage: flushed.errorMessage,
-      };
+    flush() {
+      // Serialize overlapping flushes: a second call while one is still
+      // awaiting the network would read stale cursors and burn resync budget
+      // on a self-inflicted cursor mismatch. Start synchronously when idle so
+      // events enqueued right after flush() still hit the in-flight merge
+      // path.
+      const result = flushTail === null ? flushOnce() : flushTail.then(flushOnce);
+      const tail = result.catch(() => {});
+      flushTail = tail;
+      tail.then(() => {
+        if (flushTail === tail) {
+          flushTail = null;
+        }
+      });
+      return result;
     },
     getSnapshot() {
       return {
@@ -836,9 +854,10 @@ async function controlPlaneJson<T>(input: {
 
   const timedAbort = createTimedAbortSignal(AGENT_RUN_API_TIMEOUT_MS, input.abortSignal);
 
-  let response: Response;
+  // The timed abort must stay armed while the body is read: a server that
+  // stalls mid-body would otherwise hang past the timeout.
   try {
-    response = await fetch(input.url, {
+    const response = await fetch(input.url, {
       method: input.method ?? "GET",
       headers: {
         Authorization: `Bearer ${input.authToken}`,
@@ -847,6 +866,15 @@ async function controlPlaneJson<T>(input: {
       ...(input.body !== undefined ? { body: JSON.stringify(input.body) } : {}),
       signal: timedAbort.signal,
     });
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(
+        `${input.operation} failed (${response.status}): ${body || response.statusText}`,
+      );
+    }
+
+    return input.responseSchema.parse(await response.json());
   } catch (error) {
     if (
       error instanceof DOMException &&
@@ -859,15 +887,6 @@ async function controlPlaneJson<T>(input: {
   } finally {
     timedAbort.cleanup();
   }
-
-  if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    throw new Error(
-      `${input.operation} failed (${response.status}): ${body || response.statusText}`,
-    );
-  }
-
-  return input.responseSchema.parse(await response.json());
 }
 
 /** Return conversation run. */
@@ -963,9 +982,10 @@ export async function appendConversationRunEvents(input: {
 
   const timedAbort = createTimedAbortSignal(AGENT_RUN_API_TIMEOUT_MS, input.abortSignal);
 
-  let response: Response;
+  // The timed abort must stay armed while the body is read: a server that
+  // stalls mid-body would otherwise hang past the timeout.
   try {
-    response = await fetch(
+    const response = await fetch(
       `${input.apiUrl}/conversations/${input.conversationId}/runs/${input.runId}/events`,
       {
         method: "POST",
@@ -995,6 +1015,17 @@ export async function appendConversationRunEvents(input: {
         signal: timedAbort.signal,
       },
     );
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new AppendConversationRunEventsError({
+        status: response.status,
+        detail: parseAppendConversationRunEventsErrorBody(body),
+        statusText: response.statusText,
+      });
+    }
+
+    return AppendConversationRunEventsResponseSchema.parse(await response.json());
   } catch (error) {
     if (
       error instanceof DOMException &&
@@ -1009,17 +1040,6 @@ export async function appendConversationRunEvents(input: {
   } finally {
     timedAbort.cleanup();
   }
-
-  if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    throw new AppendConversationRunEventsError({
-      status: response.status,
-      detail: parseAppendConversationRunEventsErrorBody(body),
-      statusText: response.statusText,
-    });
-  }
-
-  return AppendConversationRunEventsResponseSchema.parse(await response.json());
 }
 
 /** Create conversation agent run. */
@@ -1077,6 +1097,7 @@ export async function createConversationAgentRun(
     },
     responseSchema: CreateConversationRunAcceptedSchema,
     operation: "Create canonical durable run",
+    abortSignal: input.abortSignal,
   });
 
   return getConversationRun({
@@ -1084,6 +1105,7 @@ export async function createConversationAgentRun(
     apiUrl: input.apiUrl,
     conversationId: input.conversationId,
     runId,
+    abortSignal: input.abortSignal,
   });
 }
 
@@ -1097,7 +1119,7 @@ export async function finalizeConversationAgentRun(
       model: input.model,
       inputTokens: input.usage?.inputTokens ?? 0,
       outputTokens: input.usage?.outputTokens ?? 0,
-      finishReason: "stop",
+      finishReason: input.finishReason ?? "stop",
     }
     : null;
 

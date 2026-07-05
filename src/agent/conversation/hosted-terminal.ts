@@ -207,18 +207,25 @@ export function createConversationHostedTerminalAdapter(
     durableRunFinalized = true;
     const modelId = terminalState.metadata?.modelId ?? options.fallbackModelId;
 
-    await finalizeConversationAgentRun({
-      authToken: options.authToken,
-      apiUrl: options.apiUrl,
-      conversationId: options.run.conversationId,
-      runId: options.run.runId,
-      status,
-      model: modelId,
-      provider: options.resolveProvider(modelId),
-      usage: buildConversationAgentRunUsage(terminalState.metadata?.usage),
-      terminalErrorCode: terminalState.terminalErrorCode,
-      terminalErrorMessage: terminalState.terminalErrorMessage,
-    });
+    try {
+      await finalizeConversationAgentRun({
+        authToken: options.authToken,
+        apiUrl: options.apiUrl,
+        conversationId: options.run.conversationId,
+        runId: options.run.runId,
+        status,
+        model: modelId,
+        provider: options.resolveProvider(modelId),
+        usage: buildConversationAgentRunUsage(terminalState.metadata?.usage),
+        terminalErrorCode: terminalState.terminalErrorCode,
+        terminalErrorMessage: terminalState.terminalErrorMessage,
+      });
+    } catch (error) {
+      // Allow a later dispatch to retry; keeping the flag set on failure would
+      // leave the durable run active forever with no way to complete it.
+      durableRunFinalized = false;
+      throw error;
+    }
   };
 
   return {
