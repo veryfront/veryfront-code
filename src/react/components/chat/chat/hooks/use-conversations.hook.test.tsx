@@ -5,6 +5,7 @@
  * default.
  */
 import { createRoot } from "react-dom/client";
+import { flushSync } from "react-dom";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -49,6 +50,7 @@ function installDom(): () => void {
 
 async function settle(): Promise<void> {
   for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0));
+  flushSync(() => {});
 }
 
 function mount(store: ConversationStore) {
@@ -58,7 +60,7 @@ function mount(store: ConversationStore) {
     return null;
   }
   const root = createRoot(document.getElementById("root")!);
-  root.render(<Capture />);
+  flushSync(() => root.render(<Capture />));
   return { root, get: () => latest! };
 }
 
@@ -91,7 +93,8 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       assertEquals(view.get().activeId, "newer", "newest stored conversation should be active");
       assertEquals(view.get().active?.title, "Newer", "active conversation should load");
 
-      view.root.unmount();
+      flushSync(() => view.root.unmount());
+      await settle();
     } finally {
       restoreDom();
     }
@@ -119,7 +122,8 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       assertEquals(summary.messageCount, 1);
 
       // Persistence is debounced; unmount flushes the pending save.
-      view.root.unmount();
+      flushSync(() => view.root.unmount());
+      await settle();
       await settle();
       assertEquals((await store.load("new"))?.title, "Hello world");
     } finally {
@@ -142,7 +146,8 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       assertEquals(matches[0]?.title, "Renamed");
 
       // Persistence is debounced; unmount flushes the pending save.
-      view.root.unmount();
+      flushSync(() => view.root.unmount());
+      await settle();
       await settle();
       assertEquals((await store.load("seed"))?.title, "Renamed");
     } finally {
@@ -172,7 +177,8 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       await settle();
 
       assertEquals(await store.load("seed"), null, "removed conversation must stay deleted");
-      view.root.unmount();
+      flushSync(() => view.root.unmount());
+      await settle();
     } finally {
       restoreDom();
     }

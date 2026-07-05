@@ -122,6 +122,25 @@ describe("chat/stream-watchdog", () => {
     watchdog.dispose();
   });
 
+  it("keeps response pending watchdogs alive without requiring a stream chunk", () => {
+    using time = new FakeTime();
+    const watchdog = createChatStreamWatchdog(watchdogOptions);
+
+    time.tick(60);
+    watchdog.keepAlive();
+    time.tick(61);
+
+    assertEquals(watchdog.signal.aborted, false);
+    time.tick(60);
+
+    assertEquals(watchdog.signal.aborted, true);
+    assertEquals(watchdog.lastTimeoutState, {
+      phase: "response_pending",
+      timeoutMs: 120,
+    });
+    watchdog.dispose();
+  });
+
   it("creates a default watchdog with host timer bindings", () => {
     const watchdog = createChatStreamWatchdog();
 

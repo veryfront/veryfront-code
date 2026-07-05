@@ -3,6 +3,7 @@
  * conversation by id from the store and reports a missing id as `null`.
  */
 import { createRoot } from "react-dom/client";
+import { flushSync } from "react-dom";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -43,6 +44,7 @@ function installDom(): () => void {
 
 async function settle(): Promise<void> {
   for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0));
+  flushSync(() => {});
 }
 
 function conversation(id: string, title: string): Conversation {
@@ -56,7 +58,7 @@ function mount(store: ConversationStore, id: string | null) {
     return null;
   };
   const root = createRoot(document.getElementById("root")!);
-  root.render(<Capture />);
+  flushSync(() => root.render(<Capture />));
   return { root, get: () => latest! };
 }
 
@@ -69,7 +71,8 @@ describe("react/components/chat/hooks/useConversation", () => {
       await settle();
       assertEquals(view.get().conversation?.title, "Alpha");
       assertEquals(view.get().isLoading, false);
-      view.root.unmount();
+      flushSync(() => view.root.unmount());
+      await settle();
     } finally {
       restoreDom();
     }
@@ -82,7 +85,8 @@ describe("react/components/chat/hooks/useConversation", () => {
       const view = mount(store, "does-not-exist");
       await settle();
       assert(view.get().conversation === null, "unknown id resolves to null");
-      view.root.unmount();
+      flushSync(() => view.root.unmount());
+      await settle();
     } finally {
       restoreDom();
     }

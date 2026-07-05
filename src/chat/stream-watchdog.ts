@@ -194,6 +194,14 @@ export function createChatStreamWatchdog(options?: ChatStreamWatchdogOptions) {
     get lastTimeoutState(): ChatStreamWatchdogState | null {
       return lastTimeoutState;
     },
+    keepAlive() {
+      if (isLongRunningToolRunning(state, resolvedOptions.longRunningToolNames)) {
+        return;
+      }
+
+      state = createChatStreamWatchdogState("response_pending", undefined, resolvedOptions);
+      arm();
+    },
     observe(chunk: ChatUiMessageChunk<MessageMetadata>) {
       if (isHeartbeatOnlyMetadataChunk(chunk)) {
         return;

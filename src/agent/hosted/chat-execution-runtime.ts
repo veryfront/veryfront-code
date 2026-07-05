@@ -54,6 +54,7 @@ import {
   createChatStreamWatchdog,
   DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS,
 } from "../../chat/stream-watchdog.ts";
+import { unrefTimer } from "../../platform/compat/process.ts";
 import type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
 export type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
 
@@ -252,12 +253,7 @@ function createStreamBootstrapWatchdogKeepalive(input: {
   const timeoutMs = resolveStreamBootstrapTimeoutMs(input.timeoutMs);
   const timeoutController = new AbortController();
   const interval = setInterval(() => {
-    input.rootStreamWatchdog.observe({
-      type: "message-metadata",
-      messageMetadata: {
-        createdAt: new Date().toISOString(),
-      },
-    });
+    input.rootStreamWatchdog.keepAlive();
   }, intervalMs);
   const timeout = setTimeout(() => {
     timeoutController.abort(
@@ -265,6 +261,8 @@ function createStreamBootstrapWatchdogKeepalive(input: {
     );
     clearInterval(interval);
   }, timeoutMs);
+  unrefTimer(interval);
+  unrefTimer(timeout);
 
   return {
     signal: timeoutController.signal,
