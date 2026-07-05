@@ -20,11 +20,77 @@ import {
 import { historicalToolSummaries } from "../integrations/_tool_summaries.ts";
 import type { IntegrationEndpointHistoricalSummary } from "../integrations/schema.ts";
 
-const CHARS_PER_TOKEN = 4;
+/** Tunable limits used while preparing chat history for model context. */
+export type MessagePrepLimits = {
+  charsPerToken: number;
+  historicalToolOutputMaskChars: number;
+  historicalToolInputMaskChars: number;
+  retainedMetadataStringMaxChars: number;
+  retainedMetadataArrayMaxItems: number;
+  retainedMetadataObjectMaxEntries: number;
+};
+
+/** Default limits for chat history preparation. */
+export const DEFAULT_MESSAGE_PREP_LIMITS: MessagePrepLimits = {
+  charsPerToken: 4,
+  historicalToolOutputMaskChars: 500,
+  historicalToolInputMaskChars: 1_000,
+  retainedMetadataStringMaxChars: 200,
+  retainedMetadataArrayMaxItems: 20,
+  retainedMetadataObjectMaxEntries: 20,
+};
+
+const CHARS_PER_TOKEN = DEFAULT_MESSAGE_PREP_LIMITS.charsPerToken;
+
+/** Field selector retained in a historical tool-input summary. */
+export type HistoricalToolInputRetainedField =
+  | string
+  | {
+    inputName: string;
+    outputName?: string;
+  }
+  | {
+    inputNames: readonly string[];
+    outputName: string;
+  };
+
+/** Policy for compacting a completed historical tool-call input. */
+export type HistoricalToolInputRetentionPolicy = {
+  compactCompletedInput: boolean;
+  compactAfterChars?: number;
+  retainInputFields?: readonly HistoricalToolInputRetainedField[];
+};
+
+/** Resolves the retention policy for a completed historical tool input. */
+export type HistoricalToolInputRetentionPolicyResolver = (
+  toolName: string,
+  input: Record<string, unknown>,
+) => HistoricalToolInputRetentionPolicy | null | undefined;
+
+/** Diagnostic emitted when a completed historical tool input is compacted. */
+export type HistoricalToolInputCompactionDiagnostic = {
+  source: "provider" | "ui";
+  toolName: string;
+  toolCallId: string;
+  originalInputChars: number;
+  retainedInputChars: number;
+  originalInputTokens: number;
+  retainedInputTokens: number;
+  originalInputHash: string;
+  reason: "completed_historical_tool_input";
+};
+
+/** Options for historical tool-input compaction. */
+export type HistoricalToolInputRetentionOptions = {
+  resolvePolicy?: HistoricalToolInputRetentionPolicyResolver;
+  diagnostics?: HistoricalToolInputCompactionDiagnostic[];
+  limits?: Partial<MessagePrepLimits>;
+};
 
 /** Options accepted by prepare provider model messages from UI messages. */
 export interface PrepareProviderModelMessagesFromUiMessagesOptions {
   providerOwnedToolNames?: readonly string[];
+  historicalToolInputRetention?: HistoricalToolInputRetentionOptions;
 }
 
 /** Estimate tokens. */
@@ -308,8 +374,7 @@ const DEFAULT_CONTEXT_WINDOW = 200_000;
 const DEFAULT_TOKEN_BUDGET = Math.floor(DEFAULT_CONTEXT_WINDOW * BUDGET_RATIO);
 const TOKENS_PER_TOOL = 250;
 
-const MASK_THRESHOLD = 500;
-const TOOL_INPUT_MASK_THRESHOLD = 1_000;
+const MASK_THRESHOLD = DEFAULT_MESSAGE_PREP_LIMITS.historicalToolOutputMaskChars;
 const HISTORICAL_TOOL_INPUT_SUMMARY_KIND = "historical_tool_input_summary";
 const WRITE_TOOL_INPUT_NAMES = new Set([
   "create_file",
@@ -321,6 +386,27 @@ const WRITE_TOOL_INPUT_NAMES = new Set([
   "edit",
 ]);
 const CHILD_AGENT_TOOL_INPUT_NAMES = new Set(["invoke_agent"]);
+const DEFAULT_WRITE_TOOL_INPUT_RETAIN_FIELDS: readonly HistoricalToolInputRetainedField[] = [{
+  outputName: "path",
+  inputNames: [
+    "path",
+    "filePath",
+    "file_path",
+    "targetPath",
+    "target_path",
+    "filename",
+  ],
+}];
+const DEFAULT_CHILD_AGENT_TOOL_INPUT_RETAIN_FIELDS: readonly HistoricalToolInputRetainedField[] = [
+  "agent_id",
+  "agentId",
+  "model",
+  "description",
+  "tools",
+  "max_steps",
+  "maxSteps",
+  "thinking",
+];
 
 function serializedLength(value: unknown): number {
   return JSON.stringify(value ?? "").length;
@@ -369,29 +455,71 @@ function isChildAgentToolInput(toolName: string): boolean {
   return CHILD_AGENT_TOOL_INPUT_NAMES.has(normalizeToolInputName(toolName));
 }
 
-function shouldCompactHistoricalToolInput(
-  toolName: string,
-  input: unknown,
-): input is Record<string, unknown> {
-  return isRecord(input) && (isWriteToolInput(toolName) || isChildAgentToolInput(toolName));
+function resolveMessagePrepLimits(overrides?: Partial<MessagePrepLimits>): MessagePrepLimits {
+  return overrides ? { ...DEFAULT_MESSAGE_PREP_LIMITS, ...overrides } : DEFAULT_MESSAGE_PREP_LIMITS;
 }
 
-function compactMetadataValue(value: unknown): unknown {
-  if (typeof value === "string") return truncate(value, 200);
+function getDefaultHistoricalToolInputRetentionPolicy(
+  toolName: string,
+): HistoricalToolInputRetentionPolicy | undefined {
+  if (isWriteToolInput(toolName)) {
+    return {
+      compactCompletedInput: true,
+      retainInputFields: DEFAULT_WRITE_TOOL_INPUT_RETAIN_FIELDS,
+    };
+  }
+
+  if (isChildAgentToolInput(toolName)) {
+    return {
+      compactCompletedInput: true,
+      retainInputFields: DEFAULT_CHILD_AGENT_TOOL_INPUT_RETAIN_FIELDS,
+    };
+  }
+
+  return undefined;
+}
+
+function resolveHistoricalToolInputRetentionPolicy(
+  toolName: string,
+  input: Record<string, unknown>,
+  options: HistoricalToolInputRetentionOptions | undefined,
+): HistoricalToolInputRetentionPolicy | undefined {
+  if (options?.resolvePolicy) {
+    const resolved = options.resolvePolicy(toolName, input);
+    if (resolved !== undefined) {
+      return resolved ?? undefined;
+    }
+  }
+
+  return getDefaultHistoricalToolInputRetentionPolicy(toolName);
+}
+
+function shouldCompactHistoricalToolInput(
+  policy: HistoricalToolInputRetentionPolicy | undefined,
+  input: unknown,
+): input is Record<string, unknown> {
+  return policy?.compactCompletedInput === true && isRecord(input);
+}
+
+function compactMetadataValue(value: unknown, limits: MessagePrepLimits): unknown {
+  if (typeof value === "string") return truncate(value, limits.retainedMetadataStringMaxChars);
   if (typeof value === "number" || typeof value === "boolean") return value;
   if (Array.isArray(value)) {
     const compact = value
       .filter((entry) =>
         typeof entry === "string" || typeof entry === "number" || typeof entry === "boolean"
       )
-      .slice(0, 20);
+      .slice(0, limits.retainedMetadataArrayMaxItems);
     return compact.length > 0 ? compact : undefined;
   }
   if (isRecord(value)) {
     const compact: Record<string, unknown> = {};
-    for (const [key, entry] of Object.entries(value).slice(0, 20)) {
-      if (typeof entry === "string") compact[key] = truncate(entry, 200);
-      else if (typeof entry === "number" || typeof entry === "boolean") compact[key] = entry;
+    for (
+      const [key, entry] of Object.entries(value).slice(0, limits.retainedMetadataObjectMaxEntries)
+    ) {
+      if (typeof entry === "string") {
+        compact[key] = truncate(entry, limits.retainedMetadataStringMaxChars);
+      } else if (typeof entry === "number" || typeof entry === "boolean") compact[key] = entry;
     }
     return Object.keys(compact).length > 0 ? compact : undefined;
   }
@@ -403,9 +531,10 @@ function copyFirstMetadataField(
   input: Record<string, unknown>,
   outputName: string,
   inputNames: readonly string[],
+  limits: MessagePrepLimits,
 ): void {
   for (const name of inputNames) {
-    const value = compactMetadataValue(input[name]);
+    const value = compactMetadataValue(input[name], limits);
     if (value !== undefined) {
       target[outputName] = value;
       return;
@@ -417,11 +546,36 @@ function copyNamedMetadataFields(
   target: Record<string, unknown>,
   input: Record<string, unknown>,
   names: readonly string[],
+  limits: MessagePrepLimits,
 ): void {
   for (const name of names) {
-    const value = compactMetadataValue(input[name]);
+    const value = compactMetadataValue(input[name], limits);
     if (value !== undefined) {
       target[name] = value;
+    }
+  }
+}
+
+function copyRetainedMetadataFields(
+  target: Record<string, unknown>,
+  input: Record<string, unknown>,
+  fields: readonly HistoricalToolInputRetainedField[] | undefined,
+  limits: MessagePrepLimits,
+): void {
+  for (const field of fields ?? []) {
+    if (typeof field === "string") {
+      copyNamedMetadataFields(target, input, [field], limits);
+      continue;
+    }
+
+    if ("inputNames" in field) {
+      copyFirstMetadataField(target, input, field.outputName, field.inputNames, limits);
+      continue;
+    }
+
+    const value = compactMetadataValue(input[field.inputName], limits);
+    if (value !== undefined) {
+      target[field.outputName ?? field.inputName] = value;
     }
   }
 }
@@ -430,36 +584,19 @@ function compactHistoricalToolInput(
   toolName: string,
   input: Record<string, unknown>,
   charCount: number,
+  policy: HistoricalToolInputRetentionPolicy,
+  limits: MessagePrepLimits,
+  originalInputHash: string,
 ): Record<string, unknown> {
   const compact: Record<string, unknown> = {
     kind: HISTORICAL_TOOL_INPUT_SUMMARY_KIND,
     toolName,
     originalInputChars: charCount,
-    originalInputHash: stableHash(input),
+    originalInputHash,
     omitted: "Full historical tool input omitted after the tool completed.",
   };
 
-  if (isWriteToolInput(toolName)) {
-    copyFirstMetadataField(compact, input, "path", [
-      "path",
-      "filePath",
-      "file_path",
-      "targetPath",
-      "target_path",
-      "filename",
-    ]);
-  } else if (isChildAgentToolInput(toolName)) {
-    copyNamedMetadataFields(compact, input, [
-      "agent_id",
-      "agentId",
-      "model",
-      "description",
-      "tools",
-      "max_steps",
-      "maxSteps",
-      "thinking",
-    ]);
-  }
+  copyRetainedMetadataFields(compact, input, policy.retainInputFields, limits);
 
   return compact;
 }
@@ -886,7 +1023,7 @@ export function prepareProviderModelMessagesFromUiMessages(
   const patchedMessages = ensureToolCallInputs(dedupeToolHistory(providerModelMessages));
   const sanitized = sanitizeProviderModelMessages(patchedMessages);
   const masked = maskOldToolOutputs(sanitized);
-  const compactedInputs = compactOldToolInputs(masked);
+  const compactedInputs = compactOldToolInputs(masked, options.historicalToolInputRetention);
   const compacted = enforceTokenBudget(compactedInputs);
   const filtered = filterValidMessages(compacted);
   return repairToolPairs(filtered);
@@ -1244,8 +1381,30 @@ export function maskOldToolOutputs(messages: ProviderModelMessage[]): ProviderMo
   });
 }
 
+function recordHistoricalToolInputCompaction(
+  diagnostics: HistoricalToolInputCompactionDiagnostic[] | undefined,
+  input: {
+    source: "provider" | "ui";
+    toolName: string;
+    toolCallId: string;
+    originalInputChars: number;
+    retainedInputChars: number;
+    originalInputTokens: number;
+    retainedInputTokens: number;
+    originalInputHash: string;
+  },
+): void {
+  diagnostics?.push({
+    ...input,
+    reason: "completed_historical_tool_input",
+  });
+}
+
 /** Compact large historical tool-call inputs after matching results are available. */
-export function compactOldToolInputs(messages: ProviderModelMessage[]): ProviderModelMessage[] {
+export function compactOldToolInputs(
+  messages: ProviderModelMessage[],
+  options: HistoricalToolInputRetentionOptions = {},
+): ProviderModelMessage[] {
   let lastUserIdx = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i];
@@ -1258,6 +1417,7 @@ export function compactOldToolInputs(messages: ProviderModelMessage[]): Provider
   if (lastUserIdx <= 0) return messages;
 
   const historicalResultIds = collectHistoricalToolResultIds(messages, lastUserIdx);
+  const limits = resolveMessagePrepLimits(options.limits);
   let mutated = false;
 
   const result = messages.map((msg, idx) => {
@@ -1275,19 +1435,44 @@ export function compactOldToolInputs(messages: ProviderModelMessage[]): Provider
         return part;
       }
 
-      if (!shouldCompactHistoricalToolInput(part.toolName, part.input)) {
+      if (!isRecord(part.input)) {
+        return part;
+      }
+
+      const policy = resolveHistoricalToolInputRetentionPolicy(part.toolName, part.input, options);
+      if (!policy || !shouldCompactHistoricalToolInput(policy, part.input)) {
         return part;
       }
 
       const charCount = serializedLength(part.input);
-      if (charCount < TOOL_INPUT_MASK_THRESHOLD) {
+      if (charCount < (policy.compactAfterChars ?? limits.historicalToolInputMaskChars)) {
         return part;
       }
 
+      const originalInputHash = stableHash(part.input);
+      const compactedInput = compactHistoricalToolInput(
+        part.toolName,
+        part.input,
+        charCount,
+        policy,
+        limits,
+        originalInputHash,
+      );
+      const retainedInputChars = serializedLength(compactedInput);
+      recordHistoricalToolInputCompaction(options.diagnostics, {
+        source: "provider",
+        toolName: part.toolName,
+        toolCallId: part.toolCallId,
+        originalInputChars: charCount,
+        retainedInputChars,
+        originalInputTokens: Math.ceil(charCount / limits.charsPerToken),
+        retainedInputTokens: Math.ceil(retainedInputChars / limits.charsPerToken),
+        originalInputHash,
+      });
       messageMutated = true;
       return {
         ...part,
-        input: compactHistoricalToolInput(part.toolName, part.input, charCount),
+        input: compactedInput,
       };
     });
 
@@ -1303,7 +1488,10 @@ export function compactOldToolInputs(messages: ProviderModelMessage[]): Provider
 }
 
 /** Compact large historical UI-message tool inputs after matching results are available. */
-export function compactHistoricalUiMessageToolInputs(messages: ChatUiMessage[]): ChatUiMessage[] {
+export function compactHistoricalUiMessageToolInputs(
+  messages: ChatUiMessage[],
+  options: HistoricalToolInputRetentionOptions = {},
+): ChatUiMessage[] {
   let lastUserIdx = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i];
@@ -1316,6 +1504,7 @@ export function compactHistoricalUiMessageToolInputs(messages: ChatUiMessage[]):
   if (lastUserIdx <= 0) return messages;
 
   const historicalResultIds = collectHistoricalUiToolResultIds(messages, lastUserIdx);
+  const limits = resolveMessagePrepLimits(options.limits);
   let mutated = false;
 
   const result = messages.map((message, index) => {
@@ -1335,19 +1524,44 @@ export function compactHistoricalUiMessageToolInputs(messages: ChatUiMessage[]):
       }
 
       const toolName = getMessagePartToolName(part);
-      if (!toolName || !shouldCompactHistoricalToolInput(toolName, part.input)) {
+      if (!toolName || !isRecord(part.input)) {
+        return part;
+      }
+
+      const policy = resolveHistoricalToolInputRetentionPolicy(toolName, part.input, options);
+      if (!policy || !shouldCompactHistoricalToolInput(policy, part.input)) {
         return part;
       }
 
       const charCount = serializedLength(part.input);
-      if (charCount < TOOL_INPUT_MASK_THRESHOLD) {
+      if (charCount < (policy.compactAfterChars ?? limits.historicalToolInputMaskChars)) {
         return part;
       }
 
+      const originalInputHash = stableHash(part.input);
+      const compactedInput = compactHistoricalToolInput(
+        toolName,
+        part.input,
+        charCount,
+        policy,
+        limits,
+        originalInputHash,
+      );
+      const retainedInputChars = serializedLength(compactedInput);
+      recordHistoricalToolInputCompaction(options.diagnostics, {
+        source: "ui",
+        toolName,
+        toolCallId,
+        originalInputChars: charCount,
+        retainedInputChars,
+        originalInputTokens: Math.ceil(charCount / limits.charsPerToken),
+        retainedInputTokens: Math.ceil(retainedInputChars / limits.charsPerToken),
+        originalInputHash,
+      });
       messageMutated = true;
       return {
         ...part,
-        input: compactHistoricalToolInput(toolName, part.input, charCount),
+        input: compactedInput,
       };
     });
 
@@ -1555,9 +1769,12 @@ export function ensureToolCallInputs(messages: ProviderModelMessage[]): Provider
 export function compactForStep(
   messages: ProviderModelMessage[],
   overhead: number = 0,
+  options: {
+    historicalToolInputRetention?: HistoricalToolInputRetentionOptions;
+  } = {},
 ): ProviderModelMessage[] {
   const compacted = enforceTokenBudget(
-    compactOldToolInputs(maskOldToolOutputs(messages)),
+    compactOldToolInputs(maskOldToolOutputs(messages), options.historicalToolInputRetention),
     DEFAULT_TOKEN_BUDGET,
     overhead,
   );

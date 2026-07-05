@@ -1,5 +1,9 @@
 import { parseProviderError } from "../../chat/provider-errors.ts";
-import { compactHistoricalUiMessageToolInputs } from "../../chat/message-prep.ts";
+import {
+  compactHistoricalUiMessageToolInputs,
+  type HistoricalToolInputCompactionDiagnostic,
+  type HistoricalToolInputRetentionOptions,
+} from "../../chat/message-prep.ts";
 import type { ChatUiMessage } from "../../chat/types.ts";
 import {
   AgUiDetachedStartAcceptedSchema,
@@ -28,6 +32,7 @@ export type HostedDurableRunAuthErrorResponse = {
 
 /** Public API contract for hosted durable run logger. */
 export type HostedDurableRunLogger = {
+  debug?: (message: string, metadata?: Record<string, unknown>) => void;
   error(message: string, metadata?: Record<string, unknown>): void;
 };
 
@@ -58,14 +63,6 @@ export type ExecuteHostedDurableChatRunInput<TExecution> = {
   resolveAuthError?: (error: unknown) => HostedDurableRunAuthErrorResponse | null | undefined;
   logger?: HostedDurableRunLogger;
 };
-
-function readBooleanProperty(input: object | null, propertyName: string): boolean {
-  if (!input) {
-    return false;
-  }
-
-  return Object.getOwnPropertyDescriptor(input, propertyName)?.value === true;
-}
 
 function isDurableRunSetupErrorStatusCode(
   status: number | undefined,
@@ -117,25 +114,32 @@ async function parseAcceptedDetachedStartResponse(
     return { accepted: false, duplicate: false };
   }
 
-  const payload = await response.json().catch((): null => null);
-  const parsed = AgUiDetachedStartAcceptedSchema.safeParse(payload);
-  if (parsed.success) {
-    return {
-      accepted: parsed.data.accepted,
-      duplicate: parsed.data.duplicate,
-    };
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch (error) {
+    throw new Error("Invalid detached start accepted response: malformed JSON", { cause: error });
   }
 
-  const payloadObject = typeof payload === "object" ? payload : null;
+  const parsed = AgUiDetachedStartAcceptedSchema.safeParse(payload);
+  if (!parsed.success) {
+    throw new Error("Invalid detached start accepted response: invalid payload");
+  }
+
   return {
-    accepted: readBooleanProperty(payloadObject, "accepted"),
-    duplicate: readBooleanProperty(payloadObject, "duplicate"),
+    accepted: parsed.data.accepted,
+    duplicate: parsed.data.duplicate,
   };
 }
 
 /** Prepare durable detached-start messages without carrying completed large historical tool inputs. */
-export function prepareDetachedStartMessages(messages: ChatUiMessage[]): ChatUiMessage[] {
-  return compactHistoricalUiMessageToolInputs(messages);
+export function prepareDetachedStartMessages(
+  messages: ChatUiMessage[],
+  options: {
+    historicalToolInputRetention?: HistoricalToolInputRetentionOptions;
+  } = {},
+): ChatUiMessage[] {
+  return compactHistoricalUiMessageToolInputs(messages, options.historicalToolInputRetention);
 }
 
 async function executeHostedDurableChatRunStart<TExecution>(
@@ -147,13 +151,25 @@ async function executeHostedDurableChatRunStart<TExecution>(
   }
 
   const execution = await input.prepareExecution(input.req);
+  const historicalToolInputCompactions: HistoricalToolInputCompactionDiagnostic[] = [];
   const detachedStartRequest = buildDetachedAgUiStartRequest({
     runId: durableRootRun.runId,
     threadId: conversationId,
-    messages: prepareDetachedStartMessages(input.req.messages),
+    messages: prepareDetachedStartMessages(input.req.messages, {
+      historicalToolInputRetention: {
+        diagnostics: historicalToolInputCompactions,
+      },
+    }),
     model: input.req.model,
     forwardedProps: input.req.forwardedProps,
   });
+  if (historicalToolInputCompactions.length > 0) {
+    input.logger?.debug?.("Detached durable start historical tool inputs compacted", {
+      runId: durableRootRun.runId,
+      conversationId,
+      toolInputCompactions: historicalToolInputCompactions,
+    });
+  }
   const detachedStartResponse = await executeAgUiDetachedStart(
     {
       sessionManager: input.tracker.sessionManager,
@@ -197,6 +213,11 @@ async function executeHostedDurableChatRunStart<TExecution>(
 
   return await parseAcceptedDetachedStartResponse(detachedStartResponse);
 }
+
+/** Test-only internals for durable chat run start behavior. */
+export const durableChatRunStartInternals = {
+  parseAcceptedDetachedStartResponse,
+};
 
 /** Execute hosted durable chat run. */
 export async function executeHostedDurableChatRun<TExecution>(

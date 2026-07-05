@@ -356,6 +356,7 @@ export interface DurableRunCanaryPreparedCase {
   artifactPaths?: string[] | ((runId: string) => string[]);
   cleanup: (input?: { runId: string }) => Promise<void>;
   conversationId: string;
+  followUpPrompt?: string;
   prompt: string;
   startSidecar?: () => Promise<(() => Promise<void>) | void>;
   title: string;
@@ -384,6 +385,16 @@ interface RunSummaryLocator {
 
 interface WaitForRunInput extends RunSummaryLocator {
   getRunSummary: (input: RunSummaryLocator) => Promise<DurableRunCanaryRunSummary>;
+}
+
+interface ExecuteDurableRunPromptInput {
+  conversationId: string;
+  prompt: string;
+}
+
+interface ExecuteDurableRunPromptResult {
+  run: DurableRunCanaryRunSummary;
+  runId: string;
 }
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -459,6 +470,15 @@ function isTerminalRunStatus(status: string): boolean {
   return status === "completed" || status === "failed" || status === "cancelled";
 }
 
+function assertCompletedSetupRunBeforeFollowUp(run: DurableRunCanaryRunSummary): void {
+  if (run.status === "completed") {
+    return;
+  }
+
+  const reason = run.terminalErrorMessage ?? run.terminalErrorCode ?? `status ${run.status}`;
+  throw new Error(`Setup durable run did not complete before follow-up: ${reason}`);
+}
+
 function createDurableRunCanaryRunId(): string {
   return `run_${crypto.randomUUID()}`;
 }
@@ -521,6 +541,46 @@ export function createDurableRunCanaryRunner(
     return [...messages, ...childMessages.flat()];
   }
 
+  async function executeDurableRunPrompt(
+    input: ExecuteDurableRunPromptInput,
+  ): Promise<ExecuteDurableRunPromptResult> {
+    const userMessage = await apiClient.sendUserMessageForCanary({
+      conversationId: input.conversationId,
+      prompt: input.prompt,
+    });
+    const currentRunId = createDurableRunCanaryRunId();
+
+    await apiClient.createDurableRootRun({
+      conversationId: input.conversationId,
+      runId: currentRunId,
+    });
+    const visibleRun = await waitForRunSummaryVisibility({
+      conversationId: input.conversationId,
+      getRunSummary,
+      runId: currentRunId,
+    });
+
+    await apiClient.startDurableRun({
+      conversationId: input.conversationId,
+      messageId: visibleRun.messageId,
+      prompt: input.prompt,
+      runId: currentRunId,
+      userMessageId: userMessage.id,
+    });
+
+    const terminalRun = await waitForTerminalRun({
+      conversationId: input.conversationId,
+      getRunSummary,
+      requestTimeoutMs: config.requestTimeoutMs,
+      runId: currentRunId,
+    });
+
+    return {
+      run: terminalRun,
+      runId: currentRunId,
+    };
+  }
+
   async function runCase(testCase: DurableRunCanaryCase): Promise<DurableRunCanaryResult> {
     const startedAt = Date.now();
     const prepared = await testCase.prepare();
@@ -532,41 +592,26 @@ export function createDurableRunCanaryRunner(
         : prepared.artifactPaths;
 
     try {
-      const userMessage = await apiClient.sendUserMessageForCanary({
+      const initialRun = await executeDurableRunPrompt({
         conversationId: prepared.conversationId,
         prompt: prepared.prompt,
       });
-      runId = createDurableRunCanaryRunId();
-
-      await apiClient.createDurableRootRun({
-        conversationId: prepared.conversationId,
-        runId,
-      });
-      const visibleRun = await waitForRunSummaryVisibility({
-        conversationId: prepared.conversationId,
-        getRunSummary,
-        runId,
-      });
-
-      await apiClient.startDurableRun({
-        conversationId: prepared.conversationId,
-        messageId: visibleRun.messageId,
-        prompt: prepared.prompt,
-        runId,
-        userMessageId: userMessage.id,
-      });
-
-      const terminalRun = await waitForTerminalRun({
-        conversationId: prepared.conversationId,
-        getRunSummary,
-        requestTimeoutMs: config.requestTimeoutMs,
-        runId,
-      });
+      runId = initialRun.runId;
+      if (prepared.followUpPrompt) {
+        assertCompletedSetupRunBeforeFollowUp(initialRun.run);
+      }
+      const terminalRun = prepared.followUpPrompt
+        ? await executeDurableRunPrompt({
+          conversationId: prepared.conversationId,
+          prompt: prepared.followUpPrompt,
+        })
+        : initialRun;
+      runId = terminalRun.runId;
       const messages = await listMessagesWithReferencedChildren(prepared.conversationId);
 
       await prepared.validate({
         messages,
-        run: terminalRun,
+        run: terminalRun.run,
       });
 
       const artifactPaths = resolveArtifactPaths(runId);

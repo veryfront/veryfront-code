@@ -6,7 +6,11 @@ import { datasets, evalAgent, metrics, runEval } from "veryfront/eval";
 import {
   buildAgentServiceEvalRequestBody,
   createAgentServiceEvalAdapter,
+  createDurableRunCanaryRunner,
+  createDurableRunTokenGrowthCanaryCase,
   createLiveEvalCaseSupport,
+  type DurableRunCanaryApiClient,
+  type DurableRunCanaryRunSummary,
   evaluateAgentServiceEvalEnvironment,
   evaluateRuntimeConfidenceEnv,
   resolveAgentServiceEvalEnvironment,
@@ -516,10 +520,101 @@ describe("eval/agent-service", () => {
     assertEquals(typeof mod.createAgentServiceEvalAdapter, "function");
     assertEquals(typeof mod.runLiveEvalCli, "function");
     assertEquals(typeof mod.runDurableRunCanaryCli, "function");
+    assertEquals(typeof mod.createDurableRunTokenGrowthCanaryCase, "function");
     assertEquals(typeof mod.evaluateRuntimeConfidenceEnv, "function");
     assertEquals(typeof runLiveEvalCli, "function");
     assertEquals(typeof runDurableRunCanaryCli, "function");
+    assertEquals(typeof createDurableRunTokenGrowthCanaryCase, "function");
     assertEquals(typeof evaluateRuntimeConfidenceEnv, "function");
+  });
+
+  it("builds a two-turn durable token-growth canary", async () => {
+    const testCase = createDurableRunTokenGrowthCanaryCase({
+      conversationId: "11111111-1111-4111-8111-111111111111",
+      marker: "TOKEN_GROWTH_TEST_MARKER",
+    });
+
+    const prepared = await testCase.prepare();
+
+    assertEquals(testCase.id, "durable-token-growth-follow-up");
+    assertEquals(prepared.conversationId, "11111111-1111-4111-8111-111111111111");
+    assertStringIncludes(prepared.prompt, "TOKEN_GROWTH_TEST_MARKER");
+    assertStringIncludes(prepared.followUpPrompt ?? "", "TOKEN_GROWTH_TEST_MARKER");
+  });
+
+  it("fails a follow-up durable canary when its setup run fails", async () => {
+    const conversationId = "11111111-1111-4111-8111-111111111111";
+    const createdRunIds: string[] = [];
+    const startRunInputs: Array<{ prompt: string; runId: string }> = [];
+
+    function createRunSummary(
+      runId: string,
+      status: DurableRunCanaryRunSummary["status"],
+    ): DurableRunCanaryRunSummary {
+      return {
+        runId,
+        conversationId,
+        messageId: "22222222-2222-4222-8222-222222222222",
+        agentId: "veryfront",
+        status,
+        latestEventId: 1,
+        latestExternalEventSequence: null,
+        waitingToolCallId: null,
+        waitingToolName: null,
+        terminalErrorCode: status === "failed" ? "setup_failed" : null,
+        terminalErrorMessage: status === "failed" ? "setup failed" : null,
+        startedAt: "2026-07-05T19:00:00.000Z",
+        finishedAt: "2026-07-05T19:00:01.000Z",
+      };
+    }
+
+    const apiClient: DurableRunCanaryApiClient = {
+      createDurableRootRun: async ({ runId }) => {
+        createdRunIds.push(runId);
+      },
+      getRunSummary: async ({ runId }) =>
+        createRunSummary(runId, createdRunIds[0] === runId ? "failed" : "completed"),
+      listMessagesForCanary: async () => [],
+      sendUserMessageForCanary: async () => ({
+        id: "33333333-3333-4333-8333-333333333333",
+        role: "user",
+        parts: [],
+      }),
+      startDurableRun: async (input) => {
+        startRunInputs.push({ prompt: input.prompt, runId: input.runId });
+      },
+    };
+
+    const runner = createDurableRunCanaryRunner(
+      {
+        agentId: "veryfront",
+        apiUrl: "https://api.example.test",
+        authToken: "token",
+        keepSuccessfulEvidence: false,
+        projectId: "project_123",
+        requestTimeoutMs: 1_000,
+      },
+      apiClient,
+    );
+
+    const result = await runner.runCase({
+      id: "setup-failure",
+      label: "Setup failure",
+      prepare: async () => ({
+        cleanup: async () => {},
+        conversationId,
+        followUpPrompt: "follow up",
+        prompt: "setup",
+        title: "Setup failure",
+        validate: ({ run }) => {
+          assertEquals(run.status, "completed");
+        },
+      }),
+    });
+
+    assertEquals(result.status, "fail");
+    assertStringIncludes(result.details, "setup failed");
+    assertEquals(startRunInputs.map((input) => input.prompt), ["setup"]);
   });
 
   it("does not revive the legacy agent testing import path", async () => {
