@@ -93,12 +93,16 @@ export const getConversationRunProjectionSchema = defineSchema((v) =>
       const runId = (d.runId ?? d.run_id) as string | undefined;
       const conversationId = (d.conversationId ?? d.conversation_id) as string | undefined;
       const messageId = (d.messageId ?? d.message_id) as string | undefined;
-      const latestEventId = ((d.latestEventId ?? d.latest_event_id) as number | undefined) ?? 0;
+      const latestEventId = (d.latestEventId ?? d.latest_event_id) as number | undefined;
       const latestExternalEventSequence = (d.latestExternalEventSequence ??
         d.latest_external_event_sequence) as number | undefined;
 
       if (!runId || !conversationId || !messageId) {
         throw new Error("Missing run identifiers in durable run response");
+      }
+
+      if (latestEventId === undefined) {
+        throw new Error("Missing latestEventId in durable run response");
       }
 
       if (latestExternalEventSequence === undefined) {
@@ -250,7 +254,18 @@ export const getCompleteConversationRunResponseSchema = defineSchema((v) =>
     run: v.object({
       runId: v.string().min(1).optional(),
       run_id: v.string().min(1).optional(),
-      status: v.enum(["pending", "running", "waiting", "completed", "failed", "cancelled"]),
+      status: v.enum([
+        "pending",
+        "running",
+        // The completion API has historically reported "waiting" where run
+        // projections use "waiting_for_tool"; accept both so a server-side
+        // normalization to either value cannot break finalization.
+        "waiting",
+        "waiting_for_tool",
+        "completed",
+        "failed",
+        "cancelled",
+      ]),
     }).passthrough(),
   }).passthrough()
 );
@@ -352,6 +367,7 @@ export interface CreateConversationAgentRunInput {
   implementationKind?: string | null;
   projectId?: string | null;
   branchId?: string | null;
+  abortSignal?: AbortSignal;
 }
 
 /** Input payload for finalize conversation agent run. */
@@ -364,6 +380,7 @@ export interface FinalizeConversationAgentRunInput {
   model: string;
   provider: string;
   usage?: ConversationAgentRunUsage;
+  finishReason?: string;
   terminalErrorCode?: string | null;
   terminalErrorMessage?: string | null;
 }

@@ -293,7 +293,9 @@ export function addLoadSkillContinuationReminder(
   instructions: string | ChatSystemMessage[],
 ): string | ChatSystemMessage[] {
   if (typeof instructions === "string") {
-    return `${instructions}\n\n${LOAD_SKILL_CONTINUATION_REMINDER}`;
+    return instructions.includes(LOAD_SKILL_CONTINUATION_REMINDER)
+      ? instructions
+      : `${instructions}\n\n${LOAD_SKILL_CONTINUATION_REMINDER}`;
   }
 
   if (instructions.some((message) => message.content.includes(LOAD_SKILL_CONTINUATION_REMINDER))) {
@@ -314,7 +316,9 @@ export function addSlashCommandArtifactReminder(
   instructions: string | ChatSystemMessage[],
 ): string | ChatSystemMessage[] {
   if (typeof instructions === "string") {
-    return `${instructions}\n\n${SLASH_COMMAND_ARTIFACT_REMINDER}`;
+    return instructions.includes(SLASH_COMMAND_ARTIFACT_REMINDER)
+      ? instructions
+      : `${instructions}\n\n${SLASH_COMMAND_ARTIFACT_REMINDER}`;
   }
 
   if (instructions.some((message) => message.content.includes(SLASH_COMMAND_ARTIFACT_REMINDER))) {

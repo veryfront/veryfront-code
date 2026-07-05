@@ -287,7 +287,8 @@ export function isDataUiPart(
 /** Check whether a chat part is a tool UI part. */
 export function isToolUiPart(part: ChatUiMessagePart): part is ToolUiPart {
   return (
-    (part.type === "dynamic-tool" || part.type.startsWith("tool-")) &&
+    (part.type === "dynamic-tool" || part.type === "tool_call" ||
+      part.type.startsWith("tool-")) &&
     typeof getOptionalStringField(part, "toolCallId") === "string" &&
     typeof getOptionalStringField(part, "state") === "string"
   );

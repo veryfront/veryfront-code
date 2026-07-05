@@ -92,6 +92,13 @@ export class ConversationRunEventEncoder {
     };
   }
 
+  // Tool call state is only needed until the call resolves; keeping it for the
+  // whole run would grow unbounded over long agent sessions.
+  private releaseToolCallState(toolCallId: string): void {
+    this.toolInputs.delete(toolCallId);
+    this.streamedToolInputs.delete(toolCallId);
+  }
+
   private serializeToolResultContent(value: unknown): string {
     if (typeof value === "string") {
       return value;
@@ -198,12 +205,12 @@ export class ConversationRunEventEncoder {
             : {}),
           isError: true,
         });
-        this.toolInputs.delete(chunk.toolCallId);
+        this.releaseToolCallState(chunk.toolCallId);
         return events;
       }
 
-      case "tool-output-available":
-        return [{
+      case "tool-output-available": {
+        const events: ConversationRunEvent[] = [{
           type: conversationRunEventTypes.toolCallResult,
           messageId: this.getToolResultMessageId(chunk.toolCallId),
           toolCallId: chunk.toolCallId,
@@ -213,9 +220,12 @@ export class ConversationRunEventEncoder {
             ? { input: this.toolInputs.get(chunk.toolCallId) }
             : {}),
         }];
+        this.releaseToolCallState(chunk.toolCallId);
+        return events;
+      }
 
-      case "tool-output-error":
-        return [{
+      case "tool-output-error": {
+        const events: ConversationRunEvent[] = [{
           type: conversationRunEventTypes.toolCallResult,
           messageId: this.getToolResultMessageId(chunk.toolCallId),
           toolCallId: chunk.toolCallId,
@@ -226,9 +236,12 @@ export class ConversationRunEventEncoder {
             : {}),
           isError: true,
         }];
+        this.releaseToolCallState(chunk.toolCallId);
+        return events;
+      }
 
-      case "tool-output-denied":
-        return [{
+      case "tool-output-denied": {
+        const events: ConversationRunEvent[] = [{
           type: conversationRunEventTypes.toolCallResult,
           messageId: this.getToolResultMessageId(chunk.toolCallId),
           toolCallId: chunk.toolCallId,
@@ -239,6 +252,9 @@ export class ConversationRunEventEncoder {
             : {}),
           isError: true,
         }];
+        this.releaseToolCallState(chunk.toolCallId);
+        return events;
+      }
 
       case "error":
       case "finish":
