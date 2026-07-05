@@ -51,6 +51,24 @@ Deno.test("root npm build metadata does not inject extension implementation depe
   }
 });
 
+Deno.test("root npm CLI package declares the bundler extension after local install", async () => {
+  const source = await Deno.readTextFile("scripts/build/build-npm-dnt.ts");
+  const installIndex = source.indexOf('const { code } = await npmInstall.output();');
+  const dependencyIndex = source.indexOf(
+    'pkg.dependencies["@veryfront/ext-bundler-esbuild"] = `^${version}`;',
+  );
+
+  assertStringIncludes(
+    source,
+    'pkg.dependencies["@veryfront/ext-bundler-esbuild"] = `^${version}`;',
+  );
+  assertEquals(
+    dependencyIndex > installIndex,
+    true,
+    "bundler extension dependency must be added after build-local npm install so prerelease builds do not require the extension to already be published",
+  );
+});
+
 // Extensions whose implementations are statically imported by
 // src/extensions/builtin-extensions.ts and therefore ship inside the root
 // npm package. Their dependencies must stay in root; every other workspace
