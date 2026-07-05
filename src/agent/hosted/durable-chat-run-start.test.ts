@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import {
@@ -8,6 +8,7 @@ import {
 } from "../index.ts";
 import {
   executeHostedDurableChatRun,
+  prepareDetachedStartMessages,
   resolveHostedDurableRunSetupErrorResponse,
 } from "./durable-chat-run-start.ts";
 
@@ -83,6 +84,45 @@ describe("agent/hosted-durable-chat-run-start", () => {
     assertEquals(await readJson(response), { accepted: true, duplicate: false });
     assertEquals(prepared, true);
     assertEquals(started, true);
+  });
+
+  it("bounds historical tool inputs before building detached start payloads", () => {
+    const childPromptMarker = "DETACHED_CHILD_PROMPT_MARKER";
+    const messages: ChatUiMessage[] = [
+      {
+        id: "user-old",
+        role: "user",
+        parts: [{ type: "text", text: "Build the graph viewer." }],
+      },
+      {
+        id: "assistant-old",
+        role: "assistant",
+        parts: [{
+          type: "dynamic-tool",
+          toolName: "invoke_agent",
+          toolCallId: "tool-invoke",
+          input: {
+            agent_id: "codegen",
+            description: "Build WebGL graph renderer",
+            prompt: `${childPromptMarker}:${"child prompt ".repeat(4000)}`,
+          },
+          state: "output-available",
+          output: { error: "timeout" },
+        }],
+      },
+      {
+        id: "user-new",
+        role: "user",
+        parts: [{ type: "text", text: "Make it draggable." }],
+      },
+    ];
+
+    const prepared = prepareDetachedStartMessages(messages);
+    const serialized = JSON.stringify(prepared);
+
+    assertEquals(serialized.includes(childPromptMarker), false);
+    assertStringIncludes(serialized, "historical_tool_input_summary");
+    assertStringIncludes(serialized, "Build WebGL graph renderer");
   });
 
   it("short-circuits duplicate active runs before preparing execution", async () => {

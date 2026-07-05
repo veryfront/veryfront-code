@@ -4,6 +4,7 @@
  * props, and it also works controlled from explicit `conversations`/`activeId`.
  */
 import { createRoot } from "react-dom/client";
+import { flushSync } from "react-dom";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -48,6 +49,7 @@ function installDom(): () => void {
 
 async function settle(): Promise<void> {
   for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0));
+  flushSync(() => {});
 }
 
 function conversation(id: string, title: string, updatedAt: number): Conversation {
@@ -67,18 +69,21 @@ describe("ChatSidebar — conversation-native", () => {
     ]);
     try {
       const root = createRoot(document.getElementById("root")!);
-      root.render(
-        <ConversationsProvider store={store} id="a">
-          <ChatSidebar fill />
-        </ConversationsProvider>,
-      );
+      flushSync(() => {
+        root.render(
+          <ConversationsProvider store={store} id="a">
+            <ChatSidebar fill />
+          </ConversationsProvider>,
+        );
+      });
       await settle();
 
       const html = document.getElementById("root")!.innerHTML;
       assert(html.includes("First chat"), "lists the first conversation from context");
       assert(html.includes("Second chat"), "lists the second conversation from context");
 
-      root.unmount();
+      flushSync(() => root.unmount());
+      await settle();
     } finally {
       restoreDom();
     }
@@ -88,15 +93,17 @@ describe("ChatSidebar — conversation-native", () => {
     const restoreDom = installDom();
     try {
       const root = createRoot(document.getElementById("root")!);
-      root.render(
-        <ChatSidebar
-          fill
-          conversations={[summary("x", "Controlled chat", 5000)]}
-          activeId="x"
-          onSelect={() => {}}
-          onDelete={() => {}}
-        />,
-      );
+      flushSync(() => {
+        root.render(
+          <ChatSidebar
+            fill
+            conversations={[summary("x", "Controlled chat", 5000)]}
+            activeId="x"
+            onSelect={() => {}}
+            onDelete={() => {}}
+          />,
+        );
+      });
       await settle();
 
       assert(
@@ -104,7 +111,8 @@ describe("ChatSidebar — conversation-native", () => {
         "lists the controlled conversation",
       );
 
-      root.unmount();
+      flushSync(() => root.unmount());
+      await settle();
     } finally {
       restoreDom();
     }

@@ -123,11 +123,13 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       assertEquals(items[0]!.type, "text/plain");
       assert((localStorage.getItem(key) ?? "").includes("srv-1"), "persisted to localStorage");
       flushSync(() => a.root.unmount());
+      await flush(() => {});
 
       // Remount → the item is loaded back from localStorage.
       const b = mount(key);
       assertEquals(b.get().items.map((f) => f.id), ["srv-1"]);
       flushSync(() => b.root.unmount());
+      await flush(() => {});
     } finally {
       fetchStub.restore();
       restoreDom();
@@ -144,6 +146,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       await flush(() => {});
       assertEquals(reg.get().isLoading, false, "cleared once the initial fetch resolves");
       flushSync(() => reg.root.unmount());
+      await flush(() => {});
     } finally {
       fetchStub.restore();
       restoreDom();
@@ -168,9 +171,10 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       await flush(() => {});
       await flush(() => {});
 
-      assertEquals(latest?.isLoading, false);
+      assertEquals((latest as unknown as UseUploadsRegistryResult).isLoading, false);
       assertEquals(fetchStub.gets.length, 1, "inline headers should not retrigger refresh");
       flushSync(() => root.unmount());
+      await flush(() => {});
     } finally {
       fetchStub.restore();
       restoreDom();
@@ -193,6 +197,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       assert(fetchStub.deletes.includes(id), "a DELETE was sent for the removed id");
       assertEquals(reg.get().items.length, 0, "the item is gone from the registry");
       flushSync(() => reg.root.unmount());
+      await flush(() => {});
     } finally {
       fetchStub.restore();
       restoreDom();

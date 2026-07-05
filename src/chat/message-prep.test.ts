@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertMatch, assertStringIncludes } from "#std/assert";
 import type { ProviderModelMessage } from "./types.ts";
 import {
+  compactForStep,
   compressTurn,
   enforceTokenBudget,
   estimateTokens,
@@ -926,6 +927,124 @@ Deno.test("prepareProviderModelMessagesFromUiMessages prefers completed tool out
       content: [{ type: "text", text: "Create a template I can use." }],
     },
   ]);
+});
+
+Deno.test("prepareProviderModelMessagesFromUiMessages compacts large historical write and child-agent inputs", () => {
+  const childPromptMarker = "CHILD_PROMPT_MARKER";
+  const fileBodyMarker = "GENERATED_FILE_BODY_MARKER";
+  const prepared = prepareProviderModelMessagesFromUiMessages([
+    {
+      id: "user-1",
+      role: "user",
+      parts: [{ type: "text", text: "Build a graph viewer." }],
+    },
+    {
+      id: "assistant-1",
+      role: "assistant",
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolName: "invoke_agent",
+          toolCallId: "tool-invoke",
+          input: {
+            agent_id: "codegen",
+            model: "sonnet",
+            description: "Build WebGL graph renderer",
+            tools: ["create_file", "update_file", "get_file"],
+            max_steps: 30,
+            prompt: `${childPromptMarker}:${"child prompt ".repeat(4000)}`,
+          },
+          state: "output-available",
+          output: {
+            error: "Chat stream idle timeout after 120000ms during response_pending",
+          },
+        },
+        {
+          type: "dynamic-tool",
+          toolName: "update_file",
+          toolCallId: "tool-update",
+          input: {
+            path: "components/GraphViewer.tsx",
+            content: `${fileBodyMarker}:${"const x = 1;\n".repeat(3000)}`,
+          },
+          state: "output-available",
+          output: { ok: true },
+        },
+      ],
+    },
+    {
+      id: "user-2",
+      role: "user",
+      parts: [{ type: "text", text: "Make each node draggable." }],
+    },
+  ]);
+
+  const serialized = JSON.stringify(prepared);
+  assertEquals(serialized.includes(childPromptMarker), false);
+  assertEquals(serialized.includes(fileBodyMarker), false);
+  assertStringIncludes(serialized, "historical_tool_input_summary");
+  assertStringIncludes(serialized, "Build WebGL graph renderer");
+  assertStringIncludes(serialized, "components/GraphViewer.tsx");
+  assertStringIncludes(serialized, "originalInputChars");
+  assertStringIncludes(serialized, "originalInputHash");
+});
+
+Deno.test("compactForStep compacts old tool inputs while preserving latest-turn tool inputs", () => {
+  const oldFileBodyMarker = "OLD_FILE_BODY_MARKER";
+  const latestFileBodyMarker = "LATEST_FILE_BODY_MARKER";
+  const messages = [
+    { role: "user", content: "Create the file." },
+    {
+      role: "assistant",
+      content: [{
+        type: "tool-call",
+        toolCallId: "tool-old-update",
+        toolName: "update_file",
+        input: {
+          path: "components/GraphViewer.tsx",
+          content: `${oldFileBodyMarker}:${"old body ".repeat(3000)}`,
+        },
+      }],
+    },
+    {
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "tool-old-update",
+        toolName: "update_file",
+        output: { type: "json", value: { ok: true } },
+      }],
+    },
+    { role: "user", content: "Patch the current turn." },
+    {
+      role: "assistant",
+      content: [{
+        type: "tool-call",
+        toolCallId: "tool-latest-update",
+        toolName: "update_file",
+        input: {
+          path: "components/GraphViewer.tsx",
+          content: `${latestFileBodyMarker}:${"new body ".repeat(3000)}`,
+        },
+      }],
+    },
+    {
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "tool-latest-update",
+        toolName: "update_file",
+        output: { type: "json", value: { ok: true } },
+      }],
+    },
+  ] satisfies ProviderModelMessage[];
+
+  const compacted = compactForStep(messages);
+  const serialized = JSON.stringify(compacted);
+
+  assertEquals(serialized.includes(oldFileBodyMarker), false);
+  assertEquals(serialized.includes(latestFileBodyMarker), true);
+  assertStringIncludes(serialized, "historical_tool_input_summary");
 });
 
 Deno.test("prepareProviderModelMessagesFromUiMessages omits provider-owned tool history", () => {
