@@ -1043,6 +1043,60 @@ Deno.test("prepareHostedChatRuntimeMessages omits provider-owned remote tool his
   }]);
 });
 
+Deno.test("prepareHostedChatRuntimeMessages reports historical tool input compaction diagnostics", async () => {
+  const diagnostics: unknown[] = [];
+  const marker = "HOSTED_TOOL_INPUT_MARKER";
+  const messages = await prepareHostedChatRuntimeMessages(
+    [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Render the widget." }],
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{
+          type: "dynamic-tool",
+          toolName: "render_widget",
+          toolCallId: "tool-render-widget",
+          input: {
+            targetPath: "components/Widget.tsx",
+            source: `${marker}:${"export const widget = true;\n".repeat(2000)}`,
+          },
+          state: "output-available",
+          output: { ok: true },
+        }],
+      },
+      {
+        id: "user-2",
+        role: "user",
+        parts: [{ type: "text", text: "Update the widget." }],
+      },
+    ],
+    {
+      historicalToolInputRetention: {
+        diagnostics,
+        resolvePolicy: (toolName) =>
+          toolName === "render_widget"
+            ? {
+              compactCompletedInput: true,
+              compactAfterChars: 100,
+              retainInputFields: [{ inputName: "targetPath", outputName: "path" }],
+            }
+            : undefined,
+      },
+    },
+  );
+
+  const serialized = JSON.stringify(messages);
+  assertEquals(serialized.includes(marker), false);
+  assertEquals(diagnostics.length, 1);
+  assertEquals((diagnostics[0] as { source?: string }).source, "provider");
+  assertEquals((diagnostics[0] as { toolName?: string }).toolName, "render_widget");
+  assertEquals((diagnostics[0] as { toolCallId?: string }).toolCallId, "tool-render-widget");
+});
+
 Deno.test("prepareHostedChatRuntimeCreationOptions filters skills to the run agent's owner scope", async () => {
   const skills = [
     {

@@ -1,4 +1,4 @@
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import {
@@ -7,6 +7,7 @@ import {
   type ParsedHostedChatRequest,
 } from "../index.ts";
 import {
+  durableChatRunStartInternals,
   executeHostedDurableChatRun,
   prepareDetachedStartMessages,
   resolveHostedDurableRunSetupErrorResponse,
@@ -123,6 +124,17 @@ describe("agent/hosted-durable-chat-run-start", () => {
     assertEquals(serialized.includes(childPromptMarker), false);
     assertStringIncludes(serialized, "historical_tool_input_summary");
     assertStringIncludes(serialized, "Build WebGL graph renderer");
+  });
+
+  it("rejects malformed accepted detached-start responses", async () => {
+    await assertRejects(
+      () =>
+        durableChatRunStartInternals.parseAcceptedDetachedStartResponse(
+          new Response("{", { status: 202 }),
+        ),
+      Error,
+      "Invalid detached start accepted response",
+    );
   });
 
   it("short-circuits duplicate active runs before preparing execution", async () => {

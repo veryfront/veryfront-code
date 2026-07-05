@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertMatch, assertStringIncludes } from "#std/assert";
+import { assert, assertEquals, assertMatch, assertStringIncludes } from "#std/assert";
 import type { ProviderModelMessage } from "./types.ts";
 import {
   compactForStep,
@@ -987,6 +987,63 @@ Deno.test("prepareProviderModelMessagesFromUiMessages compacts large historical 
   assertStringIncludes(serialized, "components/GraphViewer.tsx");
   assertStringIncludes(serialized, "originalInputChars");
   assertStringIncludes(serialized, "originalInputHash");
+});
+
+Deno.test("prepareProviderModelMessagesFromUiMessages compacts custom tools through retention policy", () => {
+  const customMarker = "RENDER_CANVAS_SOURCE_MARKER";
+  const diagnostics: unknown[] = [];
+  const prepared = prepareProviderModelMessagesFromUiMessages(
+    [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Render the canvas." }],
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{
+          type: "dynamic-tool",
+          toolName: "render_canvas",
+          toolCallId: "tool-render",
+          input: {
+            targetPath: "components/Canvas.tsx",
+            source: `${customMarker}:${"const node = 1;\n".repeat(3000)}`,
+          },
+          state: "output-available",
+          output: { ok: true },
+        }],
+      },
+      {
+        id: "user-2",
+        role: "user",
+        parts: [{ type: "text", text: "Now make it interactive." }],
+      },
+    ],
+    {
+      historicalToolInputRetention: {
+        diagnostics,
+        resolvePolicy: (toolName) =>
+          toolName === "render_canvas"
+            ? {
+              compactCompletedInput: true,
+              compactAfterChars: 100,
+              retainInputFields: [{ inputName: "targetPath", outputName: "path" }],
+            }
+            : undefined,
+      },
+    },
+  );
+
+  const serialized = JSON.stringify(prepared);
+  assertEquals(serialized.includes(customMarker), false);
+  assertStringIncludes(serialized, "historical_tool_input_summary");
+  assertStringIncludes(serialized, "components/Canvas.tsx");
+  assertEquals(diagnostics.length, 1);
+  assertEquals((diagnostics[0] as { toolName?: string }).toolName, "render_canvas");
+  assertEquals((diagnostics[0] as { toolCallId?: string }).toolCallId, "tool-render");
+  assert((diagnostics[0] as { originalInputChars?: number }).originalInputChars! > 1_000);
+  assert((diagnostics[0] as { retainedInputChars?: number }).retainedInputChars! < 1_000);
 });
 
 Deno.test("compactForStep compacts old tool inputs while preserving latest-turn tool inputs", () => {
