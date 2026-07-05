@@ -482,6 +482,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
     if (!options.quiet) {
       await createPackageJson(projectDir, projectName, {
         dependencies: templateConfig?.npmDependencies,
+        firstPartyExtensions: templateConfig?.firstPartyExtensions,
         integrations: loadedIntegrations.map((integration) => ({
           name: integration.config.name,
           npmDependencies: integration.config.npmDependencies,
