@@ -85,6 +85,7 @@ function createRuntimeOptions(input?: {
       get lastTimeoutState() {
         return null;
       },
+      keepAlive: () => {},
       observe: () => {},
       dispose: () => {},
     }),
@@ -164,29 +165,35 @@ describe("agent/prepared-hosted-chat-execution", () => {
     assertEquals(capturedOptions.generateMessageId?.(), "ag-ui-run-1:assistant");
   });
 
-  it("passes stream bootstrap watchdog timing through prepared runtime options", async () => {
+  it("runs a prepared execution detached and waits for finalization", async () => {
+    const traces: string[] = [];
+    let cleanupCount = 0;
+
+    await runPreparedHostedChatExecutionDetached({
+      execution: {
+        ...createPreparedExecution({
+          cleanup: async () => {
+            cleanupCount += 1;
+          },
+        }),
+        abortSignal: new AbortController().signal,
+      },
+      runtime: createRuntimeOptions({ traces }),
+    });
+
+    assertEquals(traces, ["chat.runDetached"]);
+    assertEquals(cleanupCount, 1);
+  });
+
+  it("passes bootstrap keepalive settings to the bootstrapped runtime", async () => {
     using time = new FakeTime();
-    const observedChunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+    let keepAliveCount = 0;
+    let observeCount = 0;
     let releaseStream!: () => void;
     const streamGate = new Promise<void>((resolve) => {
       releaseStream = resolve;
     });
-    const runtime = {
-      ...createRuntimeOptions(),
-      streamBootstrapKeepaliveIntervalMs: 1,
-      createRootStreamWatchdog: () => ({
-        signal: new AbortController().signal,
-        get lastTimeoutState() {
-          return null;
-        },
-        observe: (chunk) => {
-          observedChunks.push(chunk);
-        },
-        dispose: () => {},
-      }),
-    } as PreparedHostedChatExecutionRuntimeOptions & {
-      streamBootstrapKeepaliveIntervalMs: number;
-    };
+
     const responsePromise = streamPreparedHostedChatExecutionToAgUiResponse({
       execution: {
         ...createPreparedExecution({
@@ -201,14 +208,31 @@ describe("agent/prepared-hosted-chat-execution", () => {
         requestAbortSignal: new AbortController().signal,
         agUiInput: createAgUiInput(),
       },
-      runtime,
+      runtime: {
+        ...createRuntimeOptions(),
+        streamBootstrapKeepaliveIntervalMs: 1,
+        createRootStreamWatchdog: () => ({
+          signal: new AbortController().signal,
+          get lastTimeoutState() {
+            return null;
+          },
+          keepAlive: () => {
+            keepAliveCount += 1;
+          },
+          observe: () => {
+            observeCount += 1;
+          },
+          dispose: () => {},
+        }),
+      },
     });
 
     try {
       time.tick(1);
       await Promise.resolve();
 
-      assertEquals(observedChunks.length > 0, true);
+      assertEquals(keepAliveCount > 0, true);
+      assertEquals(observeCount, 0);
     } finally {
       releaseStream();
       const response = await responsePromise;
@@ -216,13 +240,15 @@ describe("agent/prepared-hosted-chat-execution", () => {
     }
   });
 
-  it("preserves stream bootstrap watchdog timing from prepared execution input", async () => {
+  it("preserves bootstrap keepalive settings from prepared execution input", async () => {
     using time = new FakeTime();
-    const observedChunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+    let keepAliveCount = 0;
+    let observeCount = 0;
     let releaseStream!: () => void;
     const streamGate = new Promise<void>((resolve) => {
       releaseStream = resolve;
     });
+
     const responsePromise = streamPreparedHostedChatExecutionToAgUiResponse({
       execution: {
         ...createPreparedExecution({
@@ -245,8 +271,11 @@ describe("agent/prepared-hosted-chat-execution", () => {
           get lastTimeoutState() {
             return null;
           },
-          observe: (chunk) => {
-            observedChunks.push(chunk);
+          keepAlive: () => {
+            keepAliveCount += 1;
+          },
+          observe: () => {
+            observeCount += 1;
           },
           dispose: () => {},
         }),
@@ -257,31 +286,12 @@ describe("agent/prepared-hosted-chat-execution", () => {
       time.tick(1);
       await Promise.resolve();
 
-      assertEquals(observedChunks.length > 0, true);
+      assertEquals(keepAliveCount > 0, true);
+      assertEquals(observeCount, 0);
     } finally {
       releaseStream();
       const response = await responsePromise;
       await response.body?.cancel();
     }
-  });
-
-  it("runs a prepared execution detached and waits for finalization", async () => {
-    const traces: string[] = [];
-    let cleanupCount = 0;
-
-    await runPreparedHostedChatExecutionDetached({
-      execution: {
-        ...createPreparedExecution({
-          cleanup: async () => {
-            cleanupCount += 1;
-          },
-        }),
-        abortSignal: new AbortController().signal,
-      },
-      runtime: createRuntimeOptions({ traces }),
-    });
-
-    assertEquals(traces, ["chat.runDetached"]);
-    assertEquals(cleanupCount, 1);
   });
 });

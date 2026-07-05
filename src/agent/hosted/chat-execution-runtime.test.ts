@@ -33,6 +33,7 @@ function createRootStreamWatchdog(input?: {
     get lastTimeoutState() {
       return null;
     },
+    keepAlive: () => {},
     observe: () => {},
     dispose: () => {
       input?.disposed?.();
@@ -340,7 +341,8 @@ describe("agent/hosted-chat-execution-runtime", () => {
 
   it("keeps the root stream watchdog active while stream bootstrap is pending", async () => {
     using time = new FakeTime();
-    const observedChunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+    let keepAliveCount = 0;
+    let observeCount = 0;
     let releaseStream!: () => void;
     const streamGate = new Promise<void>((resolve) => {
       releaseStream = resolve;
@@ -364,8 +366,11 @@ describe("agent/hosted-chat-execution-runtime", () => {
       streamBootstrapKeepaliveIntervalMs: 1,
       createRootStreamWatchdog: () => ({
         ...createRootStreamWatchdog(),
-        observe: (chunk) => {
-          observedChunks.push(chunk);
+        keepAlive: () => {
+          keepAliveCount += 1;
+        },
+        observe: () => {
+          observeCount += 1;
         },
       }),
     });
@@ -374,14 +379,8 @@ describe("agent/hosted-chat-execution-runtime", () => {
       time.tick(1);
       await Promise.resolve();
 
-      assertEquals(observedChunks.length > 0, true);
-      assertEquals(
-        observedChunks.every((chunk) =>
-          chunk.type === "message-metadata" &&
-          typeof chunk.messageMetadata.createdAt === "string"
-        ),
-        true,
-      );
+      assertEquals(keepAliveCount > 0, true);
+      assertEquals(observeCount, 0);
     } finally {
       releaseStream();
       await bootstrapPromise;
