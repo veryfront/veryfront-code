@@ -3,7 +3,7 @@
 #
 # Verifies, against the real `deno task build:npm` artifacts installed into a
 # throwaway npm project, that:
-#   1. a bare `veryfront` install runs the CLI under Node
+#   1. a `veryfront` install with co-published required packages runs the CLI under Node
 #   2. the @huggingface/transformers optional peer is declared
 #   3. loading a missing extension fails naming the installable package
 #   4. installing @veryfront/ext-auth-jwt makes the extension load
@@ -23,29 +23,31 @@ fail() {
 }
 
 [ -d "$ROOT_DIR/npm" ] || fail "npm build output missing; run 'deno task build:npm' first"
+[ -d "$ROOT_DIR/npm/extensions/ext-bundler-esbuild" ] || fail "ext-bundler-esbuild package output missing"
 [ -d "$ROOT_DIR/npm/extensions/ext-auth-jwt" ] || fail "ext-auth-jwt package output missing"
 
 (cd "$ROOT_DIR/npm" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
+(cd "$ROOT_DIR/npm/extensions/ext-bundler-esbuild" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
 (cd "$ROOT_DIR/npm/extensions/ext-auth-jwt" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
 
 cd "$WORKDIR"
 npm init -y >/dev/null 2>&1
-npm install --no-fund --no-audit --silent --ignore-scripts ./veryfront-[0-9]*.tgz
+npm install --no-fund --no-audit --silent --ignore-scripts ./veryfront-[0-9]*.tgz ./veryfront-ext-bundler-esbuild-*.tgz
 
-echo "== 1. bare install: CLI runs under Node"
+echo "== 1. root install: CLI runs under Node"
 node node_modules/veryfront/bin/veryfront.js --version | grep -q "Veryfront CLI" ||
-  fail "CLI --version failed on bare install"
+  fail "CLI --version failed on root install"
 node node_modules/veryfront/bin/veryfront.js schema --json >/dev/null ||
-  fail "CLI schema --json failed on bare install (bundled ext-schema-zod broken)"
+  fail "CLI schema --json failed on root install (bundled ext-schema-zod broken)"
 
-echo "== 2. bare install: transformers optional peer declared"
+echo "== 2. root install: transformers optional peer declared"
 node -e "
 const p = require('./node_modules/veryfront/package.json');
 if (!p.peerDependencies?.['@huggingface/transformers']) process.exit(1);
 if (p.peerDependenciesMeta?.['@huggingface/transformers']?.optional !== true) process.exit(1);
 " || fail "@huggingface/transformers optional peer missing from root package.json"
 
-echo "== 3. bare install: missing extension failure names the installable package"
+echo "== 3. root install: missing extension failure names the installable package"
 set +e
 MISSING_OUTPUT="$(node -e "
 import('./node_modules/veryfront/esm/src/extensions/first-party-import.js').then(async (m) => {

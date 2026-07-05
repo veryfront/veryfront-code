@@ -55,9 +55,17 @@ package_names_from_workspace() {
 update_package_version() {
   PACKAGE_DIR="$1"
   jq --arg v "$VERSION" '
+    def update_first_party_extension_deps:
+      if .dependencies then
+        .dependencies |= with_entries(
+          if (.key | startswith("@veryfront/ext-")) then .value = $v else . end
+        )
+      else . end;
+
     .version = $v
     | if .peerDependencies?.veryfront then .peerDependencies.veryfront = "^" + $v else . end
     | if .dependencies?.veryfront then .dependencies.veryfront = "^" + $v else . end
+    | update_first_party_extension_deps
   ' "${PACKAGE_DIR}/package.json" > "${PACKAGE_DIR}/package.json.tmp"
   mv "${PACKAGE_DIR}/package.json.tmp" "${PACKAGE_DIR}/package.json"
 }
@@ -163,10 +171,12 @@ run_release_publish() {
   done
 }
 
-MODE="${1:-}"
-case "${MODE}" in
-  rc-publish) run_rc_publish ;;
-  preflight) run_preflight ;;
-  release-publish) run_release_publish ;;
-  *) usage ;;
-esac
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  MODE="${1:-}"
+  case "${MODE}" in
+    rc-publish) run_rc_publish ;;
+    preflight) run_preflight ;;
+    release-publish) run_release_publish ;;
+    *) usage ;;
+  esac
+fi

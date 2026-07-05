@@ -256,6 +256,10 @@ await build({
 		pkg.type = "module"; // Required for ESM imports without warnings
 		pkg.types = "./esm/src/index.d.ts";
 		pkg.bin = { veryfront: "bin/veryfront.js" };
+		pkg.dependencies ??= {};
+		// Add after build-local npm install so releases do not require the
+		// just-built extension version to already exist in the registry.
+		pkg.dependencies["@veryfront/ext-bundler-esbuild"] = version;
 		pkg.files = ["esm", "script", "bin", "assets", "tsconfig.json", "LICENSE", "NOTICE", "README.md"];
 		pkg.exports["./tsconfig.json"] = "./tsconfig.json";
 		addTypesExportEntries(pkg.exports);

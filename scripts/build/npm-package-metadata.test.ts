@@ -51,6 +51,91 @@ Deno.test("root npm build metadata does not inject extension implementation depe
   }
 });
 
+Deno.test("root npm CLI package declares the bundler extension after local install", async () => {
+  const source = await Deno.readTextFile("scripts/build/build-npm-dnt.ts");
+  const installIndex = source.indexOf(
+    "const { code } = await npmInstall.output();",
+  );
+  const dependencyIndex = source.indexOf(
+    'pkg.dependencies["@veryfront/ext-bundler-esbuild"] = version;',
+  );
+
+  assertStringIncludes(
+    source,
+    'pkg.dependencies["@veryfront/ext-bundler-esbuild"] = version;',
+  );
+  assertEquals(
+    dependencyIndex > installIndex,
+    true,
+    "bundler extension dependency must be added after build-local npm install so prerelease builds do not require the extension to already be published",
+  );
+});
+
+Deno.test("npm publish version bump pins first-party extension dependencies to the publish version", async () => {
+  const packageDir = await Deno.makeTempDir();
+  const packagePath = `${packageDir}/package.json`;
+  const publishVersion = "0.1.1016-rc.123";
+
+  try {
+    await Deno.writeTextFile(
+      packagePath,
+      JSON.stringify(
+        {
+          name: "veryfront",
+          version: "0.1.1016",
+          dependencies: {
+            veryfront: "^0.1.1016",
+            "@veryfront/ext-bundler-esbuild": "0.1.1016",
+            "@veryfront/ext-content-mdx": "^0.1.1016",
+            "@veryfront/not-an-extension": "^0.1.1016",
+            zod: "4.3.6",
+          },
+          peerDependencies: {
+            veryfront: "^0.1.1016",
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const output = await new Deno.Command("bash", {
+      args: [
+        "-c",
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          'VERSION="$PUBLISH_VERSION" update_package_version "$PACKAGE_DIR"',
+        ].join("\n"),
+      ],
+      env: {
+        PACKAGE_DIR: packageDir,
+        PUBLISH_VERSION: publishVersion,
+        SCRIPT_PATH: `${Deno.cwd()}/scripts/ci/publish-npm-packages.sh`,
+      },
+      stderr: "piped",
+      stdout: "piped",
+    }).output();
+
+    assertEquals(output.code, 0, new TextDecoder().decode(output.stderr));
+
+    const pkg = JSON.parse(await Deno.readTextFile(packagePath));
+    assertEquals(pkg.version, publishVersion);
+    assertEquals(pkg.dependencies, {
+      veryfront: `^${publishVersion}`,
+      "@veryfront/ext-bundler-esbuild": publishVersion,
+      "@veryfront/ext-content-mdx": publishVersion,
+      "@veryfront/not-an-extension": "^0.1.1016",
+      zod: "4.3.6",
+    });
+    assertEquals(pkg.peerDependencies, {
+      veryfront: `^${publishVersion}`,
+    });
+  } finally {
+    await Deno.remove(packageDir, { recursive: true });
+  }
+});
+
 // Extensions whose implementations are statically imported by
 // src/extensions/builtin-extensions.ts and therefore ship inside the root
 // npm package. Their dependencies must stay in root; every other workspace
