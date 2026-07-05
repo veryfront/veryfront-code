@@ -174,7 +174,7 @@ async function runShard(args: string[]): Promise<void> {
 }
 
 async function runMerge(args: string[]): Promise<void> {
-  const threshold = Number(readOption(args, "--threshold") ?? "68");
+  const threshold = Number(readOption(args, "--threshold") ?? "80");
   const coveragePaths = args.filter((arg) => !arg.startsWith("--"));
 
   if (!Number.isFinite(threshold)) {

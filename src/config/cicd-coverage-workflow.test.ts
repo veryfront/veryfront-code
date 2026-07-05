@@ -2,6 +2,7 @@ import { assert, assertEquals, assertStringIncludes } from "#std/assert";
 
 const workflow = await Deno.readTextFile(".github/workflows/cicd.yml");
 const denoJson = JSON.parse(await Deno.readTextFile("deno.json"));
+const coverageCiScript = await Deno.readTextFile("scripts/test/coverage-ci.ts");
 
 Deno.test("CI shards Deno unit coverage as portable lcov artifacts", () => {
   assertStringIncludes(workflow, "coverage-shards:");
@@ -52,5 +53,20 @@ Deno.test("deno tasks expose shard and merge coverage entrypoints", () => {
   assertEquals(
     denoJson.tasks["coverage:ci:merge"],
     "deno run --allow-read --allow-write --allow-run --allow-env scripts/test/coverage-ci.ts merge",
+  );
+});
+
+Deno.test("coverage gates require the ratcheted 80 percent floor", () => {
+  assertStringIncludes(
+    denoJson.tasks["coverage:gate"],
+    "scripts/lint/check-coverage.ts 80",
+  );
+  assertStringIncludes(
+    denoJson.tasks["coverage:report"],
+    "scripts/lint/check-coverage.ts 80",
+  );
+  assertStringIncludes(
+    coverageCiScript,
+    'readOption(args, "--threshold") ?? "80"',
   );
 });
