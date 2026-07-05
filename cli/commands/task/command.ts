@@ -14,10 +14,22 @@ import type { TaskArgs } from "./handler.ts";
 
 export interface TaskOptions extends TaskArgs {}
 
+function logRuntimeDiscoveryWarnings(
+  errors: Array<{ file: string; error: Error }>,
+  debug: boolean | undefined,
+): void {
+  if (errors.length === 0 || !debug) return;
+
+  for (const err of errors) {
+    cliLogger.warn(`  Warning: ${err.file}: ${err.error.message}`);
+  }
+}
+
 export async function taskCommand(options: TaskOptions): Promise<void> {
-  const { discoverTasks } = await import(
-    "../../../src/task/discovery.ts"
-  );
+  const { discoverProjectTaskRuntime, findProjectRuntimeTask, listProjectRuntimeTasks } =
+    await import(
+      "../../../src/task/project-runtime.ts"
+    );
   const { runTask } = await import(
     "../../../src/task/runner.ts"
   );
@@ -32,7 +44,7 @@ export async function taskCommand(options: TaskOptions): Promise<void> {
   const projectDir = Deno.cwd();
   await withProjectSourceContext(
     projectDir,
-    async ({ adapter, config, projectId, proxyContext }) => {
+    async ({ adapter, config, configCacheKey, projectId, proxyContext }) => {
       const sourceLabel = proxyContext?.branchRef
         ? `branch ${proxyContext.branchRef}`
         : proxyContext
@@ -41,22 +53,25 @@ export async function taskCommand(options: TaskOptions): Promise<void> {
 
       cliLogger.info(`Discovering tasks in ${sourceLabel}`);
 
-      const { tasks, errors } = await discoverTasks({
+      const discovery = await discoverProjectTaskRuntime({
         projectDir,
         adapter,
         config,
+        fsAdapter: adapter.fs,
+        cacheKey: configCacheKey,
         debug: options.debug,
       });
+      logRuntimeDiscoveryWarnings(discovery.errors, options.debug);
 
-      if (errors.length > 0 && options.debug) {
-        for (const err of errors) {
-          cliLogger.warn(`  Warning: ${err.filePath}: ${err.error}`);
-        }
-      }
-
-      const task = tasks.find((t) => t.id === taskName);
+      const task = findProjectRuntimeTask(discovery, taskName);
       if (!task) {
         cliLogger.error(`Task "${taskName}" not found.`);
+        if (discovery.errors.length > 0 && !options.debug) {
+          cliLogger.warn(
+            "Some project files could not be loaded. Re-run with --debug for details.",
+          );
+        }
+        const tasks = listProjectRuntimeTasks(discovery);
         if (tasks.length > 0) {
           cliLogger.info("Available tasks:");
           for (const t of tasks) {

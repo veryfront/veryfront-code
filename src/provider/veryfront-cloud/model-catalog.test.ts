@@ -22,11 +22,17 @@ describe("provider/veryfront-cloud/model-catalog", () => {
     assertEquals(findVeryfrontCloudModel("sonnet")?.provider, "anthropic");
     assertEquals(opus.modelId, "anthropic/claude-opus-4-8");
     assertEquals(findVeryfrontCloudModel("gpt-5.5")?.provider, "openai");
+    assertEquals(findVeryfrontCloudModel("gpt-5.4-mini")?.provider, "openai");
+    assertEquals(findVeryfrontCloudModel("gpt-5.4")?.provider, "openai");
     assertEquals(findVeryfrontCloudModel("gpt-5.4-nano")?.provider, "openai");
+    assertEquals(findVeryfrontCloudModel("gpt-5.2")?.provider, "openai");
     assertEquals(findVeryfrontCloudModel("gemini-3.1-pro-preview")?.provider, "google");
     assertEquals(findVeryfrontCloudModel("gemini-3.5-flash")?.provider, "google");
+    assertEquals(findVeryfrontCloudModel("gemini-2.5-pro")?.provider, "google");
+    assertEquals(findVeryfrontCloudModel("gemini-2.5-flash")?.provider, "google");
     assertEquals(findVeryfrontCloudModel("mistral-large-2512")?.provider, "mistral");
     assertEquals(findVeryfrontCloudModel("kimi-k2.6")?.provider, "moonshotai");
+    assertEquals(findVeryfrontCloudModel("kimi-k2.5")?.provider, "moonshotai");
     assertEquals(findVeryfrontCloudModel("nonexistent"), undefined);
   });
 
@@ -59,7 +65,7 @@ describe("provider/veryfront-cloud/model-catalog", () => {
     assertEquals(
       findVeryfrontCloudModelByModelId("veryfront-cloud/anthropic/claude-opus-4-8")
         ?.thinkingBudgetTokens,
-      undefined,
+      2048,
     );
   });
 
@@ -83,7 +89,10 @@ describe("provider/veryfront-cloud/model-catalog", () => {
     assertEquals(resolveVeryfrontCloudModelId("opus"), "anthropic/claude-opus-4-8");
     assertEquals(resolveVeryfrontCloudModelId(), "openai/gpt-5.4-nano");
     assertEquals(resolveVeryfrontCloudModelId("gpt-5.5"), "openai/gpt-5.5");
+    assertEquals(resolveVeryfrontCloudModelId("gpt-5.4-mini"), "openai/gpt-5.4-mini");
+    assertEquals(resolveVeryfrontCloudModelId("gpt-5.4"), "openai/gpt-5.4");
     assertEquals(resolveVeryfrontCloudModelId("gpt-5.4-nano"), "openai/gpt-5.4-nano");
+    assertEquals(resolveVeryfrontCloudModelId("gpt-5.2"), "openai/gpt-5.2");
     assertEquals(resolveVeryfrontCloudModelId("mistral-large-2512"), "mistral/mistral-large-2512");
     assertEquals(resolveVeryfrontCloudModelId("openai/gpt-5.5"), "openai/gpt-5.5");
     assertThrows(
@@ -104,18 +113,44 @@ describe("provider/veryfront-cloud/model-catalog", () => {
   });
 
   it("resolves default thinking budgets for catalog models", () => {
-    assertEquals(resolveVeryfrontCloudModelThinking("anthropic/claude-opus-4-8"), undefined);
+    const thinkingModelIds = [
+      "anthropic/claude-opus-4-8",
+      "veryfront-cloud/anthropic/claude-opus-4-8",
+      "anthropic/claude-opus-4-6",
+      "anthropic/claude-sonnet-4-6",
+      "anthropic/claude-haiku-4-5-20251001",
+      "openai/gpt-5.5",
+      "openai/gpt-5.4-mini",
+      "openai/gpt-5.4",
+      "openai/gpt-5.4-nano",
+      "openai/gpt-5.2",
+      "google-ai-studio/gemini-3.1-pro-preview",
+      "google-ai-studio/gemini-2.5-pro",
+      "moonshotai/kimi-k2.6",
+      "moonshotai/kimi-k2.5",
+    ];
+
+    for (const modelId of thinkingModelIds) {
+      assertEquals(resolveVeryfrontCloudModelThinking(modelId)?.enabled, true);
+    }
+
     assertEquals(
-      resolveVeryfrontCloudModelThinking("veryfront-cloud/anthropic/claude-opus-4-8"),
+      resolveVeryfrontCloudModelThinking("anthropic/claude-sonnet-4-6")?.budgetTokens,
+      2048,
+    );
+    assertEquals(
+      resolveVeryfrontCloudModelThinking("anthropic/claude-haiku-4-5-20251001")?.budgetTokens,
+      1024,
+    );
+    assertEquals(
+      resolveVeryfrontCloudModelThinking("google-ai-studio/gemini-3.5-flash"),
       undefined,
     );
-    assertEquals(resolveVeryfrontCloudModelThinking("openai/gpt-5.5"), undefined);
-    assertEquals(resolveVeryfrontCloudModelThinking("openai/gpt-5.4-nano"), undefined);
-    assertEquals(resolveVeryfrontCloudModelThinking("anthropic/claude-sonnet-4-6")?.enabled, true);
     assertEquals(
-      resolveVeryfrontCloudModelThinking("anthropic/claude-haiku-4-5-20251001")?.enabled,
-      true,
+      resolveVeryfrontCloudModelThinking("google-ai-studio/gemini-2.5-flash"),
+      undefined,
     );
+    assertEquals(resolveVeryfrontCloudModelThinking("mistral/mistral-large-2512"), undefined);
   });
 
   it("prefixes direct provider model ids for the Veryfront Cloud gateway", () => {

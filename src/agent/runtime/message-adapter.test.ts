@@ -514,7 +514,7 @@ describe("agent runtime message adapter", () => {
     ]);
   });
 
-  it("drops a data: URL image part when converting back to provider messages", () => {
+  it("keeps a data: URL image part when converting back to provider messages", () => {
     const providerMessages = convertAgentRuntimeMessagesToProviderMessages([
       agentRuntimeMessage(
         "user",
@@ -531,7 +531,17 @@ describe("agent runtime message adapter", () => {
     ]);
 
     assertEquals(providerMessages, [
-      { role: "user", content: "Here is my image." },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Here is my image." },
+          {
+            type: "image",
+            url: "data:image/png;base64,abc123==",
+            mediaType: "image/png",
+          },
+        ],
+      },
     ]);
   });
 

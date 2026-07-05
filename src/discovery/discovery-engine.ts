@@ -32,7 +32,6 @@ import {
 } from "./handlers/index.ts";
 import { discoverRuntimeAgentMarkdownDefinitions } from "./handlers/runtime-agent-markdown-handler.ts";
 import { filenameToId } from "./discovery-utils.ts";
-import { join } from "#veryfront/compat/path";
 
 const logger = agentLogger.component("discovery");
 
@@ -51,6 +50,11 @@ function compareDiscoveryFiles(a: string, b: string): number {
   const bIsIndex = isIndexModule(b);
   if (aIsIndex !== bIsIndex) return aIsIndex ? 1 : -1;
   return a.localeCompare(b);
+}
+
+function resolveDiscoveryDir(baseDir: string, dir: string): string {
+  if (baseDir === "") return dir;
+  return `${baseDir}/${dir}`;
 }
 
 function collectDiscoveryCandidates<T>(
@@ -152,6 +156,26 @@ async function discoverItems<T>(
   }
 }
 
+async function discoverConfiguredItems<T>(
+  dirs: string[] | undefined,
+  defaultDirs: string[],
+  baseDir: string,
+  result: DiscoveryResult,
+  context: FileDiscoveryContext,
+  handler: DiscoveryHandler<T>,
+  verbose?: boolean,
+): Promise<void> {
+  for (const dir of dirs ?? defaultDirs) {
+    await discoverItems(
+      resolveDiscoveryDir(baseDir, dir),
+      result,
+      context,
+      handler,
+      verbose,
+    );
+  }
+}
+
 /**
  * Discover all items in configured directories
  */
@@ -180,9 +204,15 @@ export async function discoverAll(config: DiscoveryConfig): Promise<DiscoveryRes
   };
 
   // Discover tools
-  for (const dir of config.toolDirs ?? ["tools"]) {
-    await discoverItems(`${baseDir}/${dir}`, result, context, toolHandler, config.verbose);
-  }
+  await discoverConfiguredItems(
+    config.toolDirs,
+    ["tools"],
+    baseDir,
+    result,
+    context,
+    toolHandler,
+    config.verbose,
+  );
 
   // Clear stale skills before any skill registration so deleted/renamed
   // skills are removed. Global skills are discovered BEFORE agents so that
@@ -194,7 +224,7 @@ export async function discoverAll(config: DiscoveryConfig): Promise<DiscoveryRes
   // Discover skills (parallel path — markdown-based, not TypeScript import)
   for (const dir of config.skillDirs ?? ["skills"]) {
     const skillResult = await discoverSkills(
-      join(baseDir, dir),
+      resolveDiscoveryDir(baseDir, dir),
       context,
       config.verbose,
     );
@@ -213,49 +243,98 @@ export async function discoverAll(config: DiscoveryConfig): Promise<DiscoveryRes
 
   // Discover agents
   for (const dir of config.agentDirs ?? ["agents"]) {
-    await discoverItems(`${baseDir}/${dir}`, result, context, agentHandler, config.verbose);
-    await discoverRuntimeAgentMarkdownDefinitions(`${baseDir}/${dir}`, result, context);
+    const agentDir = resolveDiscoveryDir(baseDir, dir);
+    await discoverItems(agentDir, result, context, agentHandler, config.verbose);
+    await discoverRuntimeAgentMarkdownDefinitions(agentDir, result, context);
   }
 
   // Discover resources
-  for (const dir of config.resourceDirs ?? ["resources"]) {
-    await discoverItems(`${baseDir}/${dir}`, result, context, resourceHandler, config.verbose);
-  }
+  await discoverConfiguredItems(
+    config.resourceDirs,
+    ["resources"],
+    baseDir,
+    result,
+    context,
+    resourceHandler,
+    config.verbose,
+  );
 
   // Discover prompts
-  for (const dir of config.promptDirs ?? ["prompts"]) {
-    await discoverItems(`${baseDir}/${dir}`, result, context, promptHandler, config.verbose);
-  }
+  await discoverConfiguredItems(
+    config.promptDirs,
+    ["prompts"],
+    baseDir,
+    result,
+    context,
+    promptHandler,
+    config.verbose,
+  );
 
   // Discover workflows
-  for (const dir of config.workflowDirs ?? ["workflows"]) {
-    await discoverItems(`${baseDir}/${dir}`, result, context, workflowHandler, config.verbose);
-  }
+  await discoverConfiguredItems(
+    config.workflowDirs,
+    ["workflows"],
+    baseDir,
+    result,
+    context,
+    workflowHandler,
+    config.verbose,
+  );
 
   // Discover Work definitions
-  for (const dir of config.workDirs ?? ["work"]) {
-    await discoverItems(`${baseDir}/${dir}`, result, context, workHandler, config.verbose);
-  }
+  await discoverConfiguredItems(
+    config.workDirs,
+    ["work"],
+    baseDir,
+    result,
+    context,
+    workHandler,
+    config.verbose,
+  );
 
   // Discover tasks
-  for (const dir of config.taskDirs ?? ["tasks"]) {
-    await discoverItems(`${baseDir}/${dir}`, result, context, taskHandler, config.verbose);
-  }
+  await discoverConfiguredItems(
+    config.taskDirs,
+    ["tasks"],
+    baseDir,
+    result,
+    context,
+    taskHandler,
+    config.verbose,
+  );
 
   // Discover schedules
-  for (const dir of config.scheduleDirs ?? ["schedules"]) {
-    await discoverItems(`${baseDir}/${dir}`, result, context, scheduleHandler, config.verbose);
-  }
+  await discoverConfiguredItems(
+    config.scheduleDirs,
+    ["schedules"],
+    baseDir,
+    result,
+    context,
+    scheduleHandler,
+    config.verbose,
+  );
 
   // Discover webhooks
-  for (const dir of config.webhookDirs ?? ["webhooks"]) {
-    await discoverItems(`${baseDir}/${dir}`, result, context, webhookHandler, config.verbose);
-  }
+  await discoverConfiguredItems(
+    config.webhookDirs,
+    ["webhooks"],
+    baseDir,
+    result,
+    context,
+    webhookHandler,
+    config.verbose,
+  );
 
   // Discover eval definitions
-  for (const dir of config.evalDirs ?? ["evals"]) {
-    await discoverItems(`${baseDir}/${dir}`, result, context, evalHandler, config.verbose);
-  }
+  await discoverConfiguredItems(
+    config.evalDirs,
+    ["evals"],
+    baseDir,
+    result,
+    context,
+    evalHandler,
+    config.verbose,
+  );
 
   return result;
 }

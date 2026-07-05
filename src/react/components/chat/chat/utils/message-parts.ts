@@ -5,6 +5,7 @@
 
 import type {
   ChatDynamicToolPart,
+  ChatFilePart,
   ChatMessage,
   ChatMessagePart,
   ChatToolPart,
@@ -89,6 +90,7 @@ export function isReasoningPart(
  */
 export type PartGroup =
   | { type: "text"; content: string }
+  | { type: "file"; file: ChatFilePart }
   | { type: "tool"; tool: ChatToolPart | ChatDynamicToolPart }
   | { type: "reasoning"; text: string; isStreaming: boolean }
   | { type: "step"; stepIndex: number; isComplete: boolean };
@@ -119,6 +121,11 @@ export function groupPartsInOrder(parts: ChatMessagePart[]): PartGroup[] {
     }
 
     flushText();
+
+    if (part.type === "file") {
+      groups.push({ type: "file", file: part });
+      continue;
+    }
 
     if (isToolPart(part)) {
       groups.push({ type: "tool", tool: part });

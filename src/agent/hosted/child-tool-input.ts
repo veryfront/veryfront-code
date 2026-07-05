@@ -141,6 +141,7 @@ export type ResolveHostedChildForkRuntimeConfigInput = {
   runId: string;
   resolveModelId: (modelId: string) => string;
   resolveProvider: (modelId: string) => string;
+  resolveModelThinking?: (modelId: string) => RuntimeAgentThinkingConfig | undefined;
 };
 
 /** Resolves hosted child fork thinking override. */
@@ -190,6 +191,8 @@ export function resolveHostedChildForkRuntimeConfig(
   const { description, prompt, context, tools, model, thinking, max_steps } = input.forkInput;
   const forkModel = input.resolveModelId(model || input.contextModel || input.defaultModel);
   const requestedMaxSteps = typeof max_steps === "number" ? max_steps : undefined;
+  const thinkingConfig = resolveHostedChildForkThinkingOverride(thinking) ??
+    input.resolveModelThinking?.(forkModel);
 
   return {
     description,
@@ -203,6 +206,6 @@ export function resolveHostedChildForkRuntimeConfig(
     forkModel,
     provider: input.resolveProvider(forkModel),
     maxSteps: Math.max(requestedMaxSteps ?? input.defaultMaxSteps, input.defaultMaxSteps),
-    thinkingConfig: resolveHostedChildForkThinkingOverride(thinking),
+    thinkingConfig,
   };
 }

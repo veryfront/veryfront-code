@@ -1,7 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { isWebSocketUpgrade, upgradeWebSocket } from "./websocket.ts";
+import {
+  isWebSocketUpgrade,
+  resolveDenoUpgradeWebSocketOptions,
+  upgradeWebSocket,
+} from "./websocket.ts";
 
 describe("platform/compat/http/websocket", () => {
   describe("isWebSocketUpgrade", () => {
@@ -60,6 +64,14 @@ describe("platform/compat/http/websocket", () => {
       } catch (e) {
         assertExists(e);
       }
+    });
+
+    it("passes idleTimeout through to Deno upgrade options", () => {
+      assertEquals(resolveDenoUpgradeWebSocketOptions({ idleTimeout: 0 }), { idleTimeout: 0 });
+      assertEquals(resolveDenoUpgradeWebSocketOptions({ protocol: "hmr", idleTimeout: 60 }), {
+        protocol: "hmr",
+        idleTimeout: 60,
+      });
     });
   });
 });

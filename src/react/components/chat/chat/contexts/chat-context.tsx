@@ -37,6 +37,11 @@ export interface ChatContextValue {
   models: ModelOption[];
   onModelChange?: (modelId: string) => void;
 
+  // Agent identity — fallback for assistant message headers when a message's
+  // own metadata omits `agentName` / `agentAvatarUrl` (e.g. the AG-UI stream
+  // only carries `agentId`). Populated by `<Chat agentId>` from agent metadata.
+  agent?: { name?: string; avatarUrl?: string };
+
   // Attachments
   attachments: AttachmentInfo[];
   onAttach?: (files: FileList) => void;

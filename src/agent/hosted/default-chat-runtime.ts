@@ -6,6 +6,8 @@ import {
 import { runWithRequestContextAsync, serverLogger } from "#veryfront/utils";
 import {
   resolveVeryfrontCloudModelId,
+  resolveVeryfrontCloudModelThinking,
+  resolveVeryfrontCloudReasoningOption,
   resolveVeryfrontCloudThinkingProviderOptions,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import {
@@ -246,11 +248,14 @@ function createRuntimeAgentConfig(input: {
     temperature: input.options.temperature,
     maxSteps: input.options.maxSteps ?? 50,
     resolveModelTransport: ({ resolvedModel }) => {
+      const thinking = input.options.thinking ??
+        resolveVeryfrontCloudModelThinking(resolvedModel);
       const providerOptions = resolveVeryfrontCloudThinkingProviderOptions(
         resolvedModel,
-        input.options.thinking,
+        thinking,
       );
-      return providerOptions ? { providerOptions } : {};
+      const reasoning = resolveVeryfrontCloudReasoningOption(resolvedModel, thinking);
+      return providerOptions || reasoning ? { providerOptions, reasoning } : {};
     },
     resolveRuntimeState: createHostedRuntimeStateResolver({
       taskContext: input.taskContext,

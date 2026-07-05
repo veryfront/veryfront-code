@@ -275,6 +275,7 @@ export class HTMLGenerator {
       pagePath,
       projectDir: this.config.projectDir,
       isClientPage,
+      params: context.options?.params,
       environment: context.options?.environment,
       isLocalProject: this.config.mode === "development",
       nonce: context.options?.nonce,

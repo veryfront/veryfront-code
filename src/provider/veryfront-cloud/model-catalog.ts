@@ -3,6 +3,7 @@ import type { VeryfrontCloudProviderId } from "./shared.ts";
 /** Configuration used by Veryfront Cloud model thinking. */
 export type VeryfrontCloudModelThinkingConfig = {
   enabled: boolean;
+  effort?: "low" | "medium" | "high" | "max";
   budgetTokens?: number;
 };
 
@@ -13,6 +14,7 @@ export type VeryfrontCloudChatModel = {
   provider: VeryfrontCloudProviderId;
   name: string;
   description: string;
+  thinking?: boolean;
   thinkingBudgetTokens?: number;
 };
 
@@ -46,6 +48,15 @@ export const VERYFRONT_CLOUD_CHAT_MODELS: VeryfrontCloudChatModel[] = [
     provider: "anthropic",
     name: "Claude Opus 4.8",
     description: "Most capable for ambitious work",
+    thinkingBudgetTokens: 2048,
+  },
+  {
+    id: "claude-opus-4-6",
+    modelId: "anthropic/claude-opus-4-6",
+    provider: "anthropic",
+    name: "Claude Opus 4.6",
+    description: "Previous Opus generation for compatibility-sensitive agents",
+    thinkingBudgetTokens: 2048,
   },
   {
     id: "sonnet",
@@ -69,13 +80,39 @@ export const VERYFRONT_CLOUD_CHAT_MODELS: VeryfrontCloudChatModel[] = [
     provider: "openai",
     name: "GPT-5.5",
     description: "Most capable OpenAI model",
+    thinking: true,
+  },
+  {
+    id: "gpt-5.4-mini",
+    modelId: "openai/gpt-5.4-mini",
+    provider: "openai",
+    name: "GPT-5.4 Mini",
+    description: "Fast OpenAI model for cost-efficient everyday work",
+    thinking: true,
+  },
+  {
+    id: "gpt-5.4",
+    modelId: "openai/gpt-5.4",
+    provider: "openai",
+    name: "GPT-5.4",
+    description: "Production-proven OpenAI frontier model",
+    thinking: true,
   },
   {
     id: "gpt-5.4-nano",
     modelId: "openai/gpt-5.4-nano",
     provider: "openai",
     name: "GPT-5.4 Nano",
-    description: "Default model for fast everyday tasks",
+    description: "Lowest-cost OpenAI model for lightweight work",
+    thinking: true,
+  },
+  {
+    id: "gpt-5.2",
+    modelId: "openai/gpt-5.2",
+    provider: "openai",
+    name: "GPT-5.2",
+    description: "Previous OpenAI frontier generation",
+    thinking: true,
   },
   {
     id: "gemini-3.1-pro-preview",
@@ -83,6 +120,7 @@ export const VERYFRONT_CLOUD_CHAT_MODELS: VeryfrontCloudChatModel[] = [
     provider: "google",
     name: "Gemini 3.1 Pro Preview",
     description: "Advanced reasoning and analysis",
+    thinking: true,
   },
   {
     id: "gemini-3.5-flash",
@@ -90,6 +128,21 @@ export const VERYFRONT_CLOUD_CHAT_MODELS: VeryfrontCloudChatModel[] = [
     provider: "google",
     name: "Gemini 3.5 Flash",
     description: "Fast and cost-efficient",
+  },
+  {
+    id: "gemini-2.5-pro",
+    modelId: "google-ai-studio/gemini-2.5-pro",
+    provider: "google",
+    name: "Gemini 2.5 Pro",
+    description: "Previous Google Pro model",
+    thinking: true,
+  },
+  {
+    id: "gemini-2.5-flash",
+    modelId: "google-ai-studio/gemini-2.5-flash",
+    provider: "google",
+    name: "Gemini 2.5 Flash",
+    description: "Previous Google Flash model",
   },
   {
     id: "mistral-large-2512",
@@ -104,6 +157,15 @@ export const VERYFRONT_CLOUD_CHAT_MODELS: VeryfrontCloudChatModel[] = [
     provider: "moonshotai",
     name: "Kimi K2.6",
     description: "Deep thinking and multimodal",
+    thinking: true,
+  },
+  {
+    id: "kimi-k2.5",
+    modelId: "moonshotai/kimi-k2.5",
+    provider: "moonshotai",
+    name: "Kimi K2.5",
+    description: "Previous Kimi generation",
+    thinking: true,
   },
 ];
 
@@ -218,13 +280,47 @@ export function resolveVeryfrontCloudModelThinking(
   }
 
   const model = findVeryfrontCloudModelByModelId(modelId) ?? findVeryfrontCloudModel(modelId);
-  if (typeof model?.thinkingBudgetTokens !== "number" || model.thinkingBudgetTokens <= 0) {
+  const budgetTokens = typeof model?.thinkingBudgetTokens === "number" &&
+      model.thinkingBudgetTokens > 0
+    ? model.thinkingBudgetTokens
+    : undefined;
+  if (model?.thinking !== true && budgetTokens === undefined) {
     return undefined;
   }
 
   return {
     enabled: true,
-    budgetTokens: model.thinkingBudgetTokens,
+    ...(budgetTokens !== undefined ? { budgetTokens } : {}),
+  };
+}
+
+/** Resolves provider-neutral runtime reasoning for a Veryfront Cloud model. */
+export function resolveVeryfrontCloudReasoningOption(
+  modelId: string,
+  thinking: VeryfrontCloudModelThinkingConfig | undefined,
+): VeryfrontCloudModelThinkingConfig | undefined {
+  if (!tryGetVeryfrontCloudProviderFromModelId(modelId)) {
+    return undefined;
+  }
+
+  if (!thinking) {
+    return undefined;
+  }
+
+  if (thinking.enabled === false) {
+    return { enabled: false };
+  }
+
+  if (thinking.enabled !== true) {
+    return undefined;
+  }
+
+  return {
+    enabled: true,
+    ...(thinking.effort ? { effort: thinking.effort } : {}),
+    ...(typeof thinking.budgetTokens === "number" && thinking.budgetTokens > 0
+      ? { budgetTokens: Math.floor(thinking.budgetTokens) }
+      : {}),
   };
 }
 
@@ -233,9 +329,7 @@ export function resolveVeryfrontCloudThinkingProviderOptions(
   modelId: string,
   thinking: VeryfrontCloudModelThinkingConfig | undefined,
 ): Record<string, unknown> | undefined {
-  if (
-    !thinking?.enabled || typeof thinking.budgetTokens !== "number" || thinking.budgetTokens <= 0
-  ) {
+  if (!thinking?.enabled) {
     return undefined;
   }
 
@@ -257,6 +351,10 @@ export function resolveVeryfrontCloudThinkingProviderOptions(
         },
       },
     };
+  }
+
+  if (typeof thinking.budgetTokens !== "number" || thinking.budgetTokens <= 0) {
+    return undefined;
   }
 
   return {

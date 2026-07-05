@@ -93,7 +93,6 @@ const BROWSER_CSP_SAFE_MODULE_PATHS = [
   "/_vf_modules/_veryfront/react/components/chat/chat/contexts/chat-context.js",
   "/_vf_modules/_veryfront/react/components/chat/chat/contexts/composer-context.js",
   "/_vf_modules/_veryfront/react/components/chat/chat/contexts/message-context.js",
-  "/_vf_modules/_veryfront/react/components/chat/chat/contexts/thread-list-context.js",
   "/_vf_modules/_veryfront/react/components/chat/markdown.js",
   "/_vf_modules/_veryfront/security/client/html-sanitizer.js",
   "/_vf_modules/_veryfront/rendering/rsc/client-boot.js",

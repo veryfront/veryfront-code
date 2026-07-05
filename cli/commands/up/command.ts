@@ -11,6 +11,7 @@ import { createSpinner, shouldUseColor } from "#cli/ui";
 import { isTTY, promptUser } from "#cli/utils";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 import { readConfigFile, type VeryfrontConfig } from "#cli/shared/config";
+import { resolveCliApiUrl } from "#cli/shared/constants";
 import { pushCommand } from "../push/index.ts";
 import { deployCommand } from "../deploy/index.ts";
 
@@ -112,7 +113,7 @@ export async function upCommand(
 
   const projectDir = cwd();
 
-  const userInfo = await ensureAuthenticated();
+  const userInfo = await ensureAuthenticated(env);
   if (!userInfo) return;
 
   const spinner = createSpinner("Analyzing project...");
@@ -153,8 +154,8 @@ export async function upCommand(
       const projectSpinner = createSpinner(`Creating project "${slug}"...`);
 
       try {
-        const apiUrl = env.apiUrl ?? "https://api.veryfront.com";
-        const resolvedToken = env.apiToken ?? (await readToken());
+        const apiUrl = resolveCliApiUrl(env);
+        const resolvedToken = env.apiToken ?? (await readToken(env));
 
         if (!resolvedToken) {
           projectSpinner.stop();

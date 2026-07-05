@@ -20,4 +20,5 @@ export interface WebSocketUpgradeResult {
 export interface WebSocketUpgradeOptions {
   protocol?: string;
   headers?: Headers | Record<string, string>;
+  idleTimeout?: number;
 }

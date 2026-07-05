@@ -604,13 +604,18 @@ export const getRouterScript = () => `
           window.history.pushState({ pageData, scrollY: 0 }, '', href);
         }
 
-        perfStart('nav:render:' + href);
-        await renderPageFromData(pageData, targetPath);
-        perfEnd('nav:render:' + href);
-
+        // Update the shared router snapshot BEFORE rendering. RouterProvider
+        // reads router.params during render, so mutating after renderPageFromData
+        // would leave the new page's first render with the previous route's
+        // params (issue #2741). pathname/query move up for the same reason.
         currentPath = targetPath;
         window.__veryfrontRouter.pathname = targetPath;
         window.__veryfrontRouter.query = Object.fromEntries(new URLSearchParams(window.location.search));
+        window.__veryfrontRouter.params = normalizeRouteParams(pageData.params);
+
+        perfStart('nav:render:' + href);
+        await renderPageFromData(pageData, targetPath);
+        perfEnd('nav:render:' + href);
 
         if (restoreScroll) {
           restoreScrollPosition(targetPath);
@@ -708,9 +713,15 @@ export const getRouterScript = () => `
         }
       }
 
+      // Normalize catch-all params (arrays -> joined strings) so page props and
+      // page context match the server render exactly. SSR emits joined strings
+      // via flattenRouteParams; without this the client would hand raw arrays to
+      // props and usePageContext() after navigation (issue #2742).
+      const normalizedParams = normalizeRouteParams(pageData.params);
+
       let tree = React.createElement(PageComponent, {
         ...pageData.props,
-        params: pageData.params
+        params: normalizedParams
       });
 
       if (pageData.layouts?.length) {
@@ -733,7 +744,7 @@ export const getRouterScript = () => `
       const pageContext = {
         slug: pageData.slug || '',
         path: pageData.pagePath || targetPath,
-        params: pageData.params || {},
+        params: normalizedParams,
         query: Object.fromEntries(new URLSearchParams(window.location.search)),
         frontmatter: pageData.frontmatter || {},
         headings: headingsArray,
@@ -952,6 +963,22 @@ export const getRouterScript = () => `
     }
 
     // ============================================
+    // Route params normalization
+    // ============================================
+    // Catch-all segments arrive as arrays and are joined so no path info is
+    // lost, matching the server flattenRouteParams + RSC hydration normalizer.
+    function normalizeRouteParams(raw) {
+      const out = {};
+      if (!raw) return out;
+      for (const key in raw) {
+        const value = raw[key];
+        if (value === undefined) continue;
+        out[key] = Array.isArray(value) ? value.join('/') : value;
+      }
+      return out;
+    }
+
+    // ============================================
     // Router object
     // ============================================
     const router = {
@@ -974,7 +1001,17 @@ export const getRouterScript = () => `
       },
       pathname: window.location.pathname,
       query: Object.fromEntries(new URLSearchParams(window.location.search)),
-      params: {},
+      // Seed route params from the hydration data (issue #2741). Catch-all
+      // segments arrive as arrays and are joined so no path info is lost.
+      params: (function () {
+        try {
+          const el = document.getElementById('veryfront-hydration-data');
+          const raw = (JSON.parse(el && el.textContent ? el.textContent : '{}') || {}).params || {};
+          return normalizeRouteParams(raw);
+        } catch (_) {
+          return {};
+        }
+      })(),
       isPreview: false,
       isMounted: true,
       navigate: (path) => navigateSPA(path, true),
@@ -999,10 +1036,14 @@ export const getRouterScript = () => `
 
       showNavigationProgress();
       try {
-        await renderPageFromData(e.state.pageData, path);
+        // Update the router snapshot before rendering so RouterProvider reads
+        // this route's params, not the previous route's (issue #2741).
         currentPath = path;
         window.__veryfrontRouter.pathname = path;
         window.__veryfrontRouter.query = Object.fromEntries(new URLSearchParams(window.location.search));
+        window.__veryfrontRouter.params = normalizeRouteParams(e.state.pageData.params);
+
+        await renderPageFromData(e.state.pageData, path);
 
         restoreScrollPosition(path);
         hideNavigationProgress();

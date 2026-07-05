@@ -1,10 +1,8 @@
 "use client";
 
-import { Chat, useChat } from "veryfront/chat";
+import { Chat } from "veryfront/chat";
 
 export default function ChatPage(): React.JSX.Element {
-  const chat = useChat({ api: "/api/ag-ui" });
-
   return (
     <div className="min-h-screen bg-neutral-50 dark:bg-neutral-950">
       <div className="mx-auto max-w-3xl py-8">
@@ -17,7 +15,8 @@ export default function ChatPage(): React.JSX.Element {
           </p>
         </header>
         <Chat
-          {...chat}
+          agentId="assistant"
+          api="/api/ag-ui"
           className="h-[600px] overflow-hidden rounded-2xl border border-neutral-200 dark:border-neutral-800"
         />
       </div>

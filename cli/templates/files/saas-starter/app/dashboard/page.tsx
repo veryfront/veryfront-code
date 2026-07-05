@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Chat, useChat } from "veryfront/chat";
+import { Chat } from "veryfront/chat";
 
 interface Conversation {
   id: string;
@@ -16,7 +16,6 @@ const INITIAL_CONVERSATIONS: Conversation[] = [
 export default function Dashboard(): React.JSX.Element {
   const [conversations] = useState<Conversation[]>(INITIAL_CONVERSATIONS);
   const [activeId, setActiveId] = useState("1");
-  const chat = useChat({ api: "/api/ag-ui" });
 
   return (
     <div className="flex h-screen bg-white dark:bg-neutral-950">
@@ -79,7 +78,12 @@ export default function Dashboard(): React.JSX.Element {
 
       {/* Chat */}
       <main className="flex-1 flex flex-col">
-        <Chat {...chat} className="flex-1 min-h-0" placeholder="Message..." />
+        <Chat
+          agentId="assistant"
+          api="/api/ag-ui"
+          className="flex-1 min-h-0"
+          placeholder="Message..."
+        />
       </main>
     </div>
   );

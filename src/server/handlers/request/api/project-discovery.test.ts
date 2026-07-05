@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { getAgent } from "#veryfront/agent";
 import { toolRegistry } from "#veryfront/tool";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import type { HandlerContext } from "../../types.ts";
@@ -246,6 +246,68 @@ describe(
       assertExists(discoveredAgent);
       assertEquals(toolRegistry.has("getWeather"), true);
       assertExists(skillRegistry.get("writer-helper"));
+    });
+
+    it("uses relative discovery paths for API-backed project files", async () => {
+      agentRegistry.clearAll();
+      toolRegistry.clearAll();
+      skillRegistry.clearAll();
+
+      const ctx = createHandlerContext(
+        "/runtime/project",
+        "api-backed-project",
+        "preview",
+      );
+      ctx.config = {
+        fs: { type: "veryfront-api" },
+      } as HandlerContext["config"];
+
+      await ctx.adapter.fs.writeFile(
+        "tools/relative-tool.ts",
+        [
+          'import { tool } from "veryfront/tool";',
+          'import { defineSchema } from "veryfront/schemas";',
+          "",
+          "export default tool({",
+          '  id: "relative_tool",',
+          '  description: "Uses API-backed relative discovery.",',
+          "  inputSchema: defineSchema((v) => v.object({}))(),",
+          "  execute: async () => ({ ok: true }),",
+          "});",
+          "",
+        ].join("\n"),
+      );
+
+      const discovery = await ensureProjectDiscovery(ctx);
+
+      assertEquals(discovery.tools.has("relative_tool"), true);
+      assertEquals(toolRegistry.has("relative_tool"), true);
+    });
+
+    it("rethrows hard primitive discovery failures instead of returning an empty result", async () => {
+      agentRegistry.clearAll();
+      toolRegistry.clearAll();
+      skillRegistry.clearAll();
+
+      const ctx = createHandlerContext(
+        "/hard-failure-project",
+        "hard-failure-project",
+        "preview",
+      );
+      const exists = ctx.adapter.fs.exists.bind(ctx.adapter.fs);
+      ctx.adapter.fs.exists = (path: string) => {
+        if (path === `${ctx.projectDir}/skills`) {
+          throw new Error("VFS unavailable");
+        }
+        return exists(path);
+      };
+
+      const error = await assertRejects(
+        () => ensureProjectDiscovery(ctx),
+        Error,
+        "Runtime discovery failed: VFS unavailable",
+      );
+      assertExists(error);
     });
 
     it("does not warn about zero agents and tools when AI primitive discovery is disabled", async () => {

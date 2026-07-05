@@ -7,7 +7,10 @@
  * `AgentConfig.resolveModelTransport`.
  */
 
-import { resolveVeryfrontCloudModelThinking } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
+import {
+  resolveVeryfrontCloudModelThinking,
+  resolveVeryfrontCloudThinkingProviderOptions,
+} from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 
 const VERYFRONT_CLOUD_PREFIX = "veryfront-cloud/";
 const ANTHROPIC_PREFIX = "anthropic/";
@@ -26,17 +29,6 @@ function hasAnthropicThinkingConfig(existing: Record<string, unknown> | undefine
   return "thinking" in (anthropic as Record<string, unknown>);
 }
 
-function resolveAnthropicThinkingBudgetTokens(modelString: string): number | undefined {
-  const thinking = resolveVeryfrontCloudModelThinking(modelString);
-  if (
-    thinking?.enabled !== true || typeof thinking.budgetTokens !== "number" ||
-    thinking.budgetTokens <= 0
-  ) {
-    return undefined;
-  }
-  return Math.floor(thinking.budgetTokens);
-}
-
 export function resolveProviderOptionsWithDefaults(
   modelString: string,
   existing: Record<string, unknown> | undefined,
@@ -49,8 +41,12 @@ export function resolveProviderOptionsWithDefaults(
     return existing;
   }
 
-  const budgetTokens = resolveAnthropicThinkingBudgetTokens(modelString);
-  if (!budgetTokens) {
+  const thinking = resolveVeryfrontCloudModelThinking(modelString);
+  const defaults = thinking
+    ? resolveVeryfrontCloudThinkingProviderOptions(modelString, thinking)
+    : undefined;
+  const defaultAnthropic = defaults?.anthropic as Record<string, unknown> | undefined;
+  if (!defaultAnthropic) {
     return existing;
   }
 
@@ -60,9 +56,9 @@ export function resolveProviderOptionsWithDefaults(
     anthropic: {
       // Defaults first; host-supplied fields (e.g. temperature) override them.
       // Only `thinking` is forced because we already confirmed it isn't set.
-      temperature: 1,
+      ...defaultAnthropic,
       ...existingAnthropic,
-      thinking: { type: "enabled", budget_tokens: budgetTokens },
+      thinking: defaultAnthropic.thinking,
     },
   };
 }

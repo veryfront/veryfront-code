@@ -58,6 +58,23 @@ export function isIgnorableConversationRunAppendError(
   );
 }
 
+/**
+ * A payload-too-large rejection is permanent: the same bytes will be rejected on
+ * every retry, so the mirror must stop rather than retry-storm the API. The runtime
+ * normalizes events under the limit before appending, so reaching this is a bug —
+ * classify it distinctly so it can be surfaced loudly instead of silently ignored.
+ */
+export function isPayloadTooLargeConversationRunAppendError(
+  error: unknown,
+): error is AppendConversationRunEventsError {
+  return (
+    error instanceof AppendConversationRunEventsError &&
+    error.status === 400 &&
+    typeof error.detail === "string" &&
+    error.detail.includes("payload must be less than")
+  );
+}
+
 /** Error shape for is cursor mismatch conversation run append. */
 export function isCursorMismatchConversationRunAppendError(
   error: unknown,

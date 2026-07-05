@@ -145,6 +145,37 @@ export class LocalBlobStorage implements BlobStorage {
   }
 
   /**
+   * Enumerate every stored (non-expired) blob, newest first. Walks the same
+   * two-char-prefix partitions as {@link cleanupExpiredBlobs}, reading each
+   * `.meta.json` sidecar. Used by the chat upload handler's list endpoint.
+   */
+  async list(): Promise<BlobRef[]> {
+    const now = this.now();
+    const refs: BlobRef[] = [];
+
+    for (let i = 0; i < 256; i++) {
+      const prefix = i.toString(16).padStart(2, "0");
+      const prefixDir = join(this.rootDir, prefix);
+
+      try {
+        for await (const entry of this.fs.readDir(prefixDir)) {
+          if (!entry.isFile || !entry.name.endsWith(".meta.json")) continue;
+
+          const id = entry.name.replace(".meta.json", "");
+          const ref = await this.stat(id);
+          if (!ref) continue;
+          if (ref.expiresAt && ref.expiresAt < now) continue;
+          refs.push(ref);
+        }
+      } catch (_) {
+        /* expected: partition directory may not exist yet */
+      }
+    }
+
+    return refs.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+  }
+
+  /**
    * Cleans up all expired blobs from storage.
    * This method should typically be run periodically by an external process.
    */

@@ -44,6 +44,9 @@ export interface ChatRootProps extends Omit<React.HTMLAttributes<HTMLDivElement>
   models?: ModelOption[];
   onModelChange?: (modelId: string) => void;
 
+  // Agent identity — fallback for assistant message headers.
+  agent?: { name?: string; avatarUrl?: string };
+
   // Attachments
   attachments?: AttachmentInfo[];
   onAttach?: (files: FileList) => void;
@@ -82,6 +85,7 @@ export const ChatRoot = React.forwardRef<HTMLDivElement, ChatRootProps>(
       model,
       models = [],
       onModelChange,
+      agent,
       attachments = [],
       onAttach,
       onRemoveAttachment,
@@ -125,6 +129,7 @@ export const ChatRoot = React.forwardRef<HTMLDivElement, ChatRootProps>(
         model,
         models,
         onModelChange,
+        agent,
         attachments,
         onAttach,
         onRemoveAttachment,
@@ -151,6 +156,7 @@ export const ChatRoot = React.forwardRef<HTMLDivElement, ChatRootProps>(
         model,
         models,
         onModelChange,
+        agent,
         attachments,
         onAttach,
         onRemoveAttachment,

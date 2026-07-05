@@ -17,6 +17,7 @@ import { resolveConfiguredEmbeddingModel } from "./model-resolution.ts";
 import type {
   RagChunk,
   RagDocumentMeta,
+  RagRefreshOptions,
   RagSearchOptions,
   RagSearchResult,
   RagStore,
@@ -190,6 +191,13 @@ export function ragStore(config: RagStoreConfig): RagStore {
   return {
     ingest(title, text, meta) {
       return getStore().ingest(title, text, meta);
+    },
+    refreshDocument(id, text, meta) {
+      const store = getStore();
+      if (!store.refreshDocument) {
+        throw INVALID_ARGUMENT.create({ detail: "RAG store does not support document refresh" });
+      }
+      return store.refreshDocument(id, text, meta);
     },
     search(query, options) {
       return getStore().search(query, options);
@@ -498,6 +506,46 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
         await save(data);
 
         return documentId;
+      });
+    },
+
+    async refreshDocument(
+      id: string,
+      text: string,
+      meta?: RagRefreshOptions,
+    ): Promise<void> {
+      return withLock(async () => {
+        const data = await load();
+        const document = data.documents.find((doc) => doc.id === id);
+        if (!document) {
+          throw INVALID_ARGUMENT.create({ detail: `RAG document not found: ${id}` });
+        }
+
+        if (text.length > MAX_TEXT_LENGTH) {
+          throw INVALID_ARGUMENT.create({
+            detail: `Upload text exceeds ${MAX_TEXT_LENGTH / 1024 / 1024} MB limit`,
+          });
+        }
+
+        const chunks = await chunk(text, chunkOptions);
+        if (chunks.length === 0) {
+          throw INVALID_ARGUMENT.create({ detail: "Upload contains no extractable text" });
+        }
+
+        document.title = meta?.title ?? document.title;
+        document.source = meta?.source ?? document.source;
+        document.type = meta?.type ?? document.type;
+        data.chunks = data.chunks.filter((chunk) => chunk.documentId !== id);
+        data.chunks.push(
+          ...chunks.map((chunkText, index) => ({
+            id: crypto.randomUUID(),
+            documentId: id,
+            text: chunkText,
+            embedding: [] as number[],
+            index,
+          })),
+        );
+        await save(data);
       });
     },
 

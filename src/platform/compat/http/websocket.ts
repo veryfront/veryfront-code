@@ -34,10 +34,20 @@ function upgradeWebSocketDeno(
     });
   }
 
-  const denoOptions: Deno.UpgradeWebSocketOptions | undefined = options?.protocol
-    ? { protocol: options.protocol }
-    : undefined;
-
-  const { socket, response } = nativeDeno.upgradeWebSocket(request, denoOptions);
+  const { socket, response } = nativeDeno.upgradeWebSocket(
+    request,
+    resolveDenoUpgradeWebSocketOptions(options),
+  );
   return { socket, response };
+}
+
+export function resolveDenoUpgradeWebSocketOptions(
+  options?: WebSocketUpgradeOptions,
+): Deno.UpgradeWebSocketOptions | undefined {
+  if (!options?.protocol && options?.idleTimeout === undefined) return undefined;
+
+  return {
+    ...(options.protocol ? { protocol: options.protocol } : {}),
+    ...(options.idleTimeout !== undefined ? { idleTimeout: options.idleTimeout } : {}),
+  };
 }

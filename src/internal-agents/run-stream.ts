@@ -6,7 +6,10 @@ import {
 } from "#veryfront/agent";
 import { normalizeAgUiRuntimeMessages } from "#veryfront/agent/ag-ui/runtime-support.ts";
 import { compactForStep, estimateOverhead } from "#veryfront/chat/message-prep.ts";
-import type { RuntimeRemoteToolConfig } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
+import {
+  getRuntimeRemoteToolSources,
+  type RuntimeRemoteToolConfig,
+} from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
 import {
   convertAgentRuntimeMessagesToProviderMessages,
   convertProviderMessagesToAgentRuntimeMessages,
@@ -22,8 +25,14 @@ import {
   type SandboxShellToolsProvider,
   SandboxShellToolsProviderName,
 } from "#veryfront/extensions/sandbox/index.ts";
+import { resolveHostedRuntimeAllowedToolNames } from "#veryfront/agent/hosted/runtime-essential-tools.ts";
 import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
-import { isToolVisibleTo, type Tool, toolRegistry } from "#veryfront/tool";
+import {
+  isToolVisibleTo,
+  type Tool,
+  type ToolExecutionContext,
+  toolRegistry,
+} from "#veryfront/tool";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import {
@@ -74,6 +83,7 @@ function mergeRemoteToolNames(source: string[], forwarded: string[]): string[] {
 
 export interface RuntimeAgentStreamExecutionDeps {
   sessionManager: AgentRunSessionManager;
+  localTools?: Record<string, Tool | boolean>;
   projectAgentSandbox?: {
     apiUrl?: string;
     authToken?: string;
@@ -339,6 +349,79 @@ function getAllowedRemoteToolNames(
   return allowedTools.every((toolName) => typeof toolName === "string") ? allowedTools : [];
 }
 
+/**
+ * Reads the restrictive `runtimeOverrides.toolAllowlist` override.
+ *
+ * Unlike `runtimeOverrides.allowedTools` — which this path treats as an
+ * additive grant list (Studio forwards integration/studio tool names it wants
+ * attached on top of the agent's own surface) — `toolAllowlist` is a hard
+ * restriction: the model-visible tool set of the run is intersected with it.
+ * Scheduled automations declare it via schedule `input.runtimeOverrides` for
+ * defense in depth. Returns null when absent (no restriction); a present but
+ * malformed value fails closed to an empty allowlist.
+ */
+function getRuntimeToolAllowlist(
+  forwardedProps: RuntimeRunAgentInput["forwardedProps"],
+): ReadonlySet<string> | null {
+  const runtimeOverrides = isRecord(forwardedProps?.runtimeOverrides)
+    ? forwardedProps.runtimeOverrides
+    : null;
+  if (!runtimeOverrides || !Object.hasOwn(runtimeOverrides, "toolAllowlist")) {
+    return null;
+  }
+  const toolAllowlist = runtimeOverrides.toolAllowlist;
+  if (!Array.isArray(toolAllowlist)) {
+    return new Set();
+  }
+  return new Set(
+    toolAllowlist.filter((toolName): toolName is string =>
+      typeof toolName === "string" && toolName.length > 0
+    ),
+  );
+}
+
+/**
+ * Intersects the merged run tool set with the restrictive tool allowlist.
+ * Skill runtime/delegation tools are preserved for skill-enabled agents,
+ * mirroring the hosted chat runtime's allowlist semantics.
+ *
+ * The allowlist bounds this run's direct tool surface only: preserved skill
+ * delegation tools (`invoke_agent`) can spawn child runs whose tool assembly
+ * derives from the child agent's own config and is not capped by this run's
+ * allowlist. Strict schedules must exclude delegation via agent config.
+ */
+function applyRuntimeToolAllowlist(
+  mergedTools: Agent["config"]["tools"],
+  toolAllowlist: ReadonlySet<string> | null,
+  agent: Agent,
+): Agent["config"]["tools"] {
+  if (!toolAllowlist || !mergedTools) {
+    return mergedTools;
+  }
+  if (mergedTools === true) {
+    // buildMergedTools always expands `tools: true` into a concrete record,
+    // so this is unreachable; if that invariant ever breaks, fail closed
+    // rather than silently skipping enforcement.
+    return {};
+  }
+  const availableSkillIds = agent.config.skills === true
+    ? ["*"]
+    : Array.isArray(agent.config.skills)
+    ? agent.config.skills
+    : undefined;
+  const allowedToolNames = resolveHostedRuntimeAllowedToolNames({
+    allowedToolNames: toolAllowlist,
+    localToolNames: Object.keys(mergedTools),
+    ...(availableSkillIds ? { availableSkillIds } : {}),
+  });
+  if (!allowedToolNames) {
+    return mergedTools;
+  }
+  return Object.fromEntries(
+    Object.entries(mergedTools).filter(([toolName]) => allowedToolNames.has(toolName)),
+  );
+}
+
 function getServerResolvedProjectToolNames(
   forwardedProps: RuntimeRunAgentInput["forwardedProps"],
 ): Set<string> {
@@ -384,6 +467,58 @@ function getForwardedIntegrationToolDefinitions(
   }));
 }
 
+function getRemoteToolDiscoveryContext(input: {
+  agent: Agent;
+  runInput: RuntimeRunAgentInput;
+  deps: RuntimeAgentStreamExecutionDeps;
+}): ToolExecutionContext {
+  return {
+    agentId: input.agent.id,
+    runId: input.runInput.runId,
+    ...(input.deps.projectAgentSandbox?.authToken
+      ? { authToken: input.deps.projectAgentSandbox.authToken }
+      : {}),
+    ...(input.deps.projectAgentSandbox?.projectId
+      ? { projectId: input.deps.projectAgentSandbox.projectId }
+      : {}),
+    ...(input.runInput.parentRunId ? { parentRunId: input.runInput.parentRunId } : {}),
+    ...(input.runInput.state !== undefined ? { state: input.runInput.state } : {}),
+    context: input.runInput.context,
+    forwardedProps: input.runInput.forwardedProps,
+  };
+}
+
+async function getDeclaredRemoteSourceToolNames(input: {
+  agent: Agent;
+  runInput: RuntimeRunAgentInput;
+  deps: RuntimeAgentStreamExecutionDeps;
+}): Promise<string[]> {
+  const sources = getRuntimeRemoteToolSources(input.agent.config);
+  if (!sources?.length) {
+    return [];
+  }
+
+  const context = getRemoteToolDiscoveryContext(input);
+  const toolNames = new Set<string>();
+  for (const source of sources) {
+    try {
+      for (const definition of await source.listTools(context)) {
+        if (typeof definition.name === "string" && definition.name.length > 0) {
+          toolNames.add(definition.name);
+        }
+      }
+    } catch (error) {
+      logger.warn("Failed to inspect remote tool source for restrictive allowlist fallback", {
+        runId: input.runInput.runId,
+        agentId: input.agent.id,
+        sourceId: source.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return [...toolNames];
+}
+
 function compactRuntimeMessagesForStream(
   messages: Message[],
   mergedTools: Agent["config"]["tools"],
@@ -417,27 +552,70 @@ export async function createRuntimeAgentStreamResponse(
 
   const forwardedAllowedRemoteToolNames = getAllowedRemoteToolNames(input.forwardedProps);
   const sourceAllowedRemoteToolNames = getAgentAllowedRemoteToolNames(agent);
-  const allowedRemoteToolNames = forwardedAllowedRemoteToolNames === undefined
+  const grantedRemoteToolNames = forwardedAllowedRemoteToolNames === undefined
     ? undefined
     : mergeRemoteToolNames(
       sourceAllowedRemoteToolNames,
       forwardedAllowedRemoteToolNames,
     );
+  const runtimeToolAllowlist = getRuntimeToolAllowlist(input.forwardedProps);
+  if (runtimeToolAllowlist === null && forwardedAllowedRemoteToolNames !== undefined) {
+    logger.debug(
+      "runtimeOverrides.allowedTools is additive on internal runs; use runtimeOverrides.toolAllowlist to restrict the run tool surface",
+      { runId: input.runId, agentId: agent.id },
+    );
+  }
   const forwardedIntegrationToolDefs = getForwardedIntegrationToolDefinitions(input.forwardedProps);
   const availableForwardedToolNames = forwardedIntegrationToolDefs?.map((tool) => tool.name);
+  // A restrictive toolAllowlist caps remote exposure too: it intersects the
+  // tightest existing remote filter (forwarded grants, else the agent source's
+  // own __vfAllowedRemoteTools). With neither present, discover the agent's
+  // declared remote-source surface and intersect with that. A bare allowlist
+  // entry can narrow actual remote sources, but never becomes an implicit
+  // project-scoped integration grant (#2768).
+  const sourceRemoteFilterBase = Object.hasOwn(agent.config, "__vfAllowedRemoteTools")
+    ? sourceAllowedRemoteToolNames
+    : undefined;
+  const remoteFallbackBase = runtimeToolAllowlist !== null &&
+      grantedRemoteToolNames === undefined &&
+      sourceRemoteFilterBase === undefined
+    ? await getDeclaredRemoteSourceToolNames({ agent, runInput: input, deps })
+    : undefined;
+  const allowedRemoteToolNames = runtimeToolAllowlist === null
+    ? grantedRemoteToolNames
+    : (grantedRemoteToolNames ?? sourceRemoteFilterBase ?? remoteFallbackBase ?? []).filter(
+      (toolName) => runtimeToolAllowlist.has(toolName),
+    );
   const sandboxTools = await buildProjectAgentSandboxTools({ agent, deps });
-  const mergedTools = buildMergedTools(
+  const availableLocalTools = {
+    ...(deps.localTools ?? {}),
+    ...(sandboxTools.tools ?? {}),
+  };
+  const mergedTools = applyRuntimeToolAllowlist(
+    buildMergedTools(
+      agent,
+      input,
+      deps.sessionManager,
+      availableForwardedToolNames,
+      Object.keys(availableLocalTools).length > 0 ? availableLocalTools : undefined,
+    ),
+    runtimeToolAllowlist,
     agent,
-    input,
-    deps.sessionManager,
-    availableForwardedToolNames,
-    sandboxTools.tools,
   );
+  // Provider-native tools (e.g. web_search) are provider-side and bypass the
+  // merged tool record, so cap them against the allowlist explicitly.
+  const cappedProviderTools =
+    runtimeToolAllowlist !== null && Array.isArray(agent.config.providerTools)
+      ? agent.config.providerTools.filter(
+        (toolName) => typeof toolName === "string" && runtimeToolAllowlist.has(toolName),
+      )
+      : undefined;
   const runtimeAgent: RuntimeFilteredAgent = {
     ...agent,
     config: {
       ...agent.config,
       tools: mergedTools,
+      ...(cappedProviderTools !== undefined ? { providerTools: cappedProviderTools } : {}),
       ...(allowedRemoteToolNames !== undefined
         ? { __vfAllowedRemoteTools: allowedRemoteToolNames }
         : {}),

@@ -629,4 +629,43 @@ describe("agent/fork-runtime-stream", () => {
       "Artifact written.",
     ]);
   });
+
+  it("passes reasoning options to fork run steps", async () => {
+    let capturedReasoning: unknown;
+    const streamResult = startAgentRuntimeFork(
+      {
+        apiUrl: "https://api.example.com",
+        authToken: "auth-token",
+        projectId: null,
+        model: "model-1",
+        maxSteps: 1,
+        prompt: "Prepare.",
+        forkToolNames: [],
+        runtimeTools: {},
+        reasoning: { enabled: true, budgetTokens: 2048 },
+        buildInstructions: () => "Base instructions.",
+        runStep: async (input) => {
+          capturedReasoning = (input as Record<string, unknown>).reasoning;
+          return {
+            stream: createRuntimeEventStream([{ type: "text-delta", delta: "Ready." }]),
+            responsePromise: Promise.resolve({
+              text: "Ready.",
+              messages: [],
+              toolCalls: [],
+              status: "completed",
+              metadata: { finishReason: "stop" },
+            }),
+          };
+        },
+      } as Parameters<typeof startAgentRuntimeFork>[0] & {
+        reasoning: { enabled: boolean; budgetTokens: number };
+      },
+    );
+
+    for await (const _part of streamResult.fullStream) {
+      // Drain stream.
+    }
+
+    assertEquals(capturedReasoning, { enabled: true, budgetTokens: 2048 });
+  });
 });

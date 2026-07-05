@@ -8,10 +8,23 @@ import type {
   AgentServiceSandboxToolsResult,
   CreateSandboxBashTool,
 } from "#veryfront/sandbox";
-import { type Tool, toolRegistry } from "#veryfront/tool";
+import { type RemoteToolSource, type Tool, toolRegistry } from "#veryfront/tool";
 import { __resetLoggerConfigForTests, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import { AgentRunSessionManager } from "./session-manager.ts";
 import { createRuntimeAgentStreamResponse } from "./run-stream.ts";
+
+function remoteToolSource(toolNames: string[]): RemoteToolSource {
+  return {
+    id: "test-remote-source",
+    listTools: async () =>
+      toolNames.map((name) => ({
+        name,
+        description: `${name} description`,
+        parameters: { type: "object", properties: {} },
+      })),
+    executeTool: async () => ({}),
+  };
+}
 
 function captureConsoleJsonLogs(): { getEntries: () => LogEntry[]; restore: () => void } {
   const originalLog = console.log;
@@ -124,6 +137,65 @@ describe("internal-agents/run-stream", () => {
     );
 
     assertEquals(capturedToolNames, ["gmail__list_emails", "web_search"]);
+  });
+
+  it("uses supplied local tool objects for boolean source tool declarations", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedTool: unknown;
+
+    const agent = {
+      id: "ops-agent",
+      config: {
+        id: "ops-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        tools: {
+          read_baseline: true,
+        },
+      },
+    } as unknown as Agent;
+
+    const readBaselineTool = {
+      id: "read_baseline",
+      description: "Read baseline",
+      inputSchema: { parse: (value: unknown) => value },
+      execute: () => ({ ok: true }),
+    } as unknown as Tool;
+
+    const input = {
+      agentId: "ops-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(
+      input,
+      agent,
+      {
+        sessionManager,
+        localTools: {
+          read_baseline: readBaselineTool,
+        },
+        createRuntime: (_agent, mergedTools) => {
+          capturedTool = typeof mergedTools === "object" && mergedTools !== null
+            ? (mergedTools as Record<string, unknown>).read_baseline
+            : undefined;
+          return {
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              }),
+          };
+        },
+      },
+    );
+
+    assertEquals(capturedTool, readBaselineTool);
   });
 
   it("preserves explicitly allowed source remote tool declarations before constructing the runtime", async () => {
@@ -267,6 +339,638 @@ describe("internal-agents/run-stream", () => {
 
     assertEquals(capturedAllowedRemoteTools, ["list_projects", "gmail__list_emails"]);
     assertEquals(capturedToolNames, ["gmail__list_emails", "list_projects"]);
+  });
+
+  it("restricts the run tool surface to runtimeOverrides.toolAllowlist", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedToolNames: string[] = [];
+
+    const agent = {
+      id: "ops-agent",
+      config: {
+        id: "ops-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        tools: {
+          read_baseline: { description: "Read the telemetry baseline" },
+          create_issue: { description: "File a GitHub issue" },
+        },
+      },
+    } as unknown as Agent;
+
+    const input = {
+      agentId: "ops-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [
+        {
+          name: "web_search",
+          description: "Search the web",
+          parameters: { type: "object", properties: {} },
+        },
+      ],
+      context: [],
+      forwardedProps: {
+        runtimeOverrides: {
+          toolAllowlist: ["read_baseline"],
+          allowedTools: ["gmail__list_emails"],
+          integrationToolDefinitions: [
+            {
+              name: "gmail__list_emails",
+              description: "List emails",
+              parameters: { type: "object", properties: {} },
+            },
+          ],
+        },
+      },
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(
+      input,
+      agent,
+      {
+        sessionManager,
+        createRuntime: (_agent, mergedTools) => {
+          capturedToolNames = Object.keys(mergedTools ?? {}).sort();
+          return {
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              }),
+          };
+        },
+      },
+    );
+
+    // Agent source tools outside the allowlist, injected caller tools, and
+    // granted integration tools are all withheld from the model.
+    assertEquals(capturedToolNames, ["read_baseline"]);
+  });
+
+  it("preserves skill runtime tools for skill-enabled agents under toolAllowlist", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedToolNames: string[] = [];
+
+    const agent = {
+      id: "ops-agent",
+      config: {
+        id: "ops-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        skills: true,
+        tools: {
+          read_baseline: { description: "Read the telemetry baseline" },
+          create_issue: { description: "File a GitHub issue" },
+          load_skill: { description: "Load a skill" },
+        },
+      },
+    } as unknown as Agent;
+
+    const input = {
+      agentId: "ops-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {
+        runtimeOverrides: {
+          toolAllowlist: ["read_baseline"],
+        },
+      },
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(
+      input,
+      agent,
+      {
+        sessionManager,
+        createRuntime: (_agent, mergedTools) => {
+          capturedToolNames = Object.keys(mergedTools ?? {}).sort();
+          return {
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              }),
+          };
+        },
+      },
+    );
+
+    assertEquals(capturedToolNames, ["load_skill", "read_baseline"]);
+  });
+
+  it("intersects toolAllowlist with the agent source remote tool filter", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedAllowedRemoteTools: string[] | undefined;
+
+    const agent = {
+      id: "ops-agent",
+      config: {
+        id: "ops-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        __vfAllowedRemoteTools: ["list_projects", "search_knowledge"],
+      },
+    } as unknown as Agent;
+
+    const input = {
+      agentId: "ops-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {
+        runtimeOverrides: {
+          // create_issue is not source-allowed as a remote tool: the
+          // restrictive allowlist must not widen remote exposure.
+          toolAllowlist: ["search_knowledge", "create_issue"],
+        },
+      },
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(
+      input,
+      agent,
+      {
+        sessionManager,
+        createRuntime: (runtimeAgent) => {
+          capturedAllowedRemoteTools = (
+            runtimeAgent.config as Agent["config"] & { __vfAllowedRemoteTools?: string[] }
+          ).__vfAllowedRemoteTools;
+          return {
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              }),
+          };
+        },
+      },
+    );
+
+    assertEquals(capturedAllowedRemoteTools, ["search_knowledge"]);
+  });
+
+  it("fails closed when toolAllowlist is present but malformed", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedToolNames: string[] = [];
+
+    const agent = {
+      id: "ops-agent",
+      config: {
+        id: "ops-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        tools: {
+          read_baseline: { description: "Read the telemetry baseline" },
+        },
+      },
+    } as unknown as Agent;
+
+    const input = {
+      agentId: "ops-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {
+        runtimeOverrides: {
+          toolAllowlist: "read_baseline",
+        },
+      },
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(
+      input,
+      agent,
+      {
+        sessionManager,
+        createRuntime: (_agent, mergedTools) => {
+          capturedToolNames = Object.keys(mergedTools ?? {}).sort();
+          return {
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              }),
+          };
+        },
+      },
+    );
+
+    assertEquals(capturedToolNames, []);
+  });
+
+  it("does not grant remote integration tools via the toolAllowlist fallback", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedAllowedRemoteTools: string[] | undefined;
+
+    const agent = {
+      id: "ops-agent",
+      config: {
+        id: "ops-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        tools: {
+          read_baseline: { description: "Read the telemetry baseline" },
+        },
+      },
+    } as unknown as Agent;
+
+    const input = {
+      agentId: "ops-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {
+        runtimeOverrides: {
+          // gmail__list_emails is integration-patterned and was neither
+          // granted nor forwarded as a definition: the fallback remote filter
+          // must not turn the allowlist entry into an implicit grant.
+          toolAllowlist: ["read_baseline", "gmail__list_emails"],
+        },
+      },
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(
+      input,
+      agent,
+      {
+        sessionManager,
+        createRuntime: (runtimeAgent) => {
+          capturedAllowedRemoteTools = (
+            runtimeAgent.config as Agent["config"] & { __vfAllowedRemoteTools?: string[] }
+          ).__vfAllowedRemoteTools;
+          return {
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              }),
+          };
+        },
+      },
+    );
+
+    assertEquals(capturedAllowedRemoteTools, []);
+  });
+
+  it("does not treat forwarded integration defs as grants without allowedTools", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedAllowedRemoteTools: string[] | undefined;
+
+    const agent = {
+      id: "ops-agent",
+      config: {
+        id: "ops-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        tools: {
+          read_baseline: { description: "Read the telemetry baseline" },
+        },
+      },
+    } as unknown as Agent;
+
+    const input = {
+      agentId: "ops-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {
+        runtimeOverrides: {
+          // The caller forwarded a definition for gmail__list_emails, so the
+          // runtime can render metadata if it is otherwise granted, but the
+          // definition itself is not the grant channel.
+          toolAllowlist: ["gmail__list_emails"],
+          integrationToolDefinitions: [
+            {
+              name: "gmail__list_emails",
+              description: "List emails",
+              parameters: { type: "object", properties: {} },
+            },
+          ],
+        },
+      },
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(
+      input,
+      agent,
+      {
+        sessionManager,
+        createRuntime: (runtimeAgent) => {
+          capturedAllowedRemoteTools = (
+            runtimeAgent.config as Agent["config"] & { __vfAllowedRemoteTools?: string[] }
+          ).__vfAllowedRemoteTools;
+          return {
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              }),
+          };
+        },
+      },
+    );
+
+    assertEquals(capturedAllowedRemoteTools, []);
+  });
+
+  it("keeps allowlisted forwarded integration tools granted by allowedTools", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedAllowedRemoteTools: string[] | undefined;
+
+    const agent = {
+      id: "ops-agent",
+      config: {
+        id: "ops-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        tools: {
+          read_baseline: { description: "Read the telemetry baseline" },
+        },
+      },
+    } as unknown as Agent;
+
+    const input = {
+      agentId: "ops-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {
+        runtimeOverrides: {
+          toolAllowlist: ["gmail__list_emails"],
+          allowedTools: ["gmail__list_emails"],
+          integrationToolDefinitions: [
+            {
+              name: "gmail__list_emails",
+              description: "List emails",
+              parameters: { type: "object", properties: {} },
+            },
+          ],
+        },
+      },
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(
+      input,
+      agent,
+      {
+        sessionManager,
+        createRuntime: (runtimeAgent) => {
+          capturedAllowedRemoteTools = (
+            runtimeAgent.config as Agent["config"] & { __vfAllowedRemoteTools?: string[] }
+          ).__vfAllowedRemoteTools;
+          return {
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              }),
+          };
+        },
+      },
+    );
+
+    assertEquals(capturedAllowedRemoteTools, ["gmail__list_emails"]);
+  });
+
+  it("allows a toolAllowlist subset of declared remote-source tools named like integrations", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedAllowedRemoteTools: string[] | undefined;
+
+    const agent = {
+      id: "ops-agent",
+      config: {
+        id: "ops-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        tools: true,
+        __vfRemoteToolSources: [remoteToolSource([
+          "github__list_issues",
+          "github__delete_issue",
+        ])],
+      },
+    } as unknown as Agent;
+
+    const input = {
+      agentId: "ops-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {
+        runtimeOverrides: {
+          toolAllowlist: ["github__list_issues"],
+        },
+      },
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(
+      input,
+      agent,
+      {
+        sessionManager,
+        createRuntime: (runtimeAgent) => {
+          capturedAllowedRemoteTools = (
+            runtimeAgent.config as Agent["config"] & { __vfAllowedRemoteTools?: string[] }
+          ).__vfAllowedRemoteTools;
+          return {
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              }),
+          };
+        },
+      },
+    );
+
+    assertEquals(capturedAllowedRemoteTools, ["github__list_issues"]);
+  });
+
+  it("strips all tools for an explicitly empty toolAllowlist", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedToolNames: string[] = [];
+
+    const agent = {
+      id: "ops-agent",
+      config: {
+        id: "ops-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        tools: {
+          read_baseline: { description: "Read the telemetry baseline" },
+        },
+      },
+    } as unknown as Agent;
+
+    const input = {
+      agentId: "ops-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {
+        runtimeOverrides: {
+          toolAllowlist: [],
+        },
+      },
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(
+      input,
+      agent,
+      {
+        sessionManager,
+        createRuntime: (_agent, mergedTools) => {
+          capturedToolNames = Object.keys(mergedTools ?? {}).sort();
+          return {
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              }),
+          };
+        },
+      },
+    );
+
+    assertEquals(capturedToolNames, []);
+  });
+
+  it("caps providerTools to the toolAllowlist", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedProviderTools: string[] | undefined;
+
+    const agent = {
+      id: "ops-agent",
+      config: {
+        id: "ops-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        providerTools: ["web_search"],
+        tools: {
+          read_baseline: { description: "Read the telemetry baseline" },
+        },
+      },
+    } as unknown as Agent;
+
+    const input = {
+      agentId: "ops-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {
+        runtimeOverrides: {
+          toolAllowlist: ["read_baseline"],
+        },
+      },
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(
+      input,
+      agent,
+      {
+        sessionManager,
+        createRuntime: (runtimeAgent) => {
+          capturedProviderTools = runtimeAgent.config.providerTools;
+          return {
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              }),
+          };
+        },
+      },
+    );
+
+    assertEquals(capturedProviderTools, []);
+  });
+
+  it("preserves invoke_agent delegation for skill-enabled agents under toolAllowlist", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedToolNames: string[] = [];
+
+    const agent = {
+      id: "ops-agent",
+      config: {
+        id: "ops-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        skills: true,
+        tools: {
+          read_baseline: { description: "Read the telemetry baseline" },
+          create_issue: { description: "File a GitHub issue" },
+          invoke_agent: { description: "Delegate to another agent" },
+        },
+      },
+    } as unknown as Agent;
+
+    const input = {
+      agentId: "ops-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {
+        runtimeOverrides: {
+          toolAllowlist: ["read_baseline"],
+        },
+      },
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(
+      input,
+      agent,
+      {
+        sessionManager,
+        createRuntime: (_agent, mergedTools) => {
+          capturedToolNames = Object.keys(mergedTools ?? {}).sort();
+          return {
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              }),
+          };
+        },
+      },
+    );
+
+    // Documented semantics (see applyRuntimeToolAllowlist): delegation tools
+    // survive the allowlist for skill-enabled agents, and child runs are NOT
+    // capped by this run's allowlist.
+    assertEquals(capturedToolNames, ["invoke_agent", "read_baseline"]);
   });
 
   it("compacts oversized internal runtime message history before streaming", async () => {

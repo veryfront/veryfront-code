@@ -1,6 +1,7 @@
 import type { RouteMatch } from "./api-route-matcher.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { parseCookies } from "#veryfront/utils/cookie-utils.ts";
+import { flattenRouteParams } from "../flatten-route-params.ts";
 
 export { parseCookies };
 
@@ -57,14 +58,12 @@ export function createContext(
   };
 }
 
+/**
+ * @deprecated Use {@link flattenRouteParams} directly. Kept as a thin alias so
+ * the routing barrel exposes a single flattener implementation (issue #2742).
+ */
 export function normalizeParams(
   params: Record<string, string | string[]>,
 ): Record<string, string> {
-  const out: Record<string, string> = {};
-
-  for (const [key, value] of Object.entries(params)) {
-    out[key] = Array.isArray(value) ? value.join("/") : value;
-  }
-
-  return out;
+  return flattenRouteParams(params);
 }

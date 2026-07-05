@@ -10,7 +10,15 @@ export interface CodeBlockProps {
   className?: string;
 }
 
-/** Render rich code block. */
+/**
+ * Render rich code block.
+ *
+ * @deprecated Use the shared `CodeBlock` primitive (`chat/ui/code-block.tsx`)
+ * instead — it does real shiki syntax highlighting, an icon-only copy button
+ * with tooltip, a file-type/language label, collapsible + mermaid support. This
+ * plain `<pre>` fork (no highlighting) is kept only for back-compat and will be
+ * removed. `Markdown` already renders fenced blocks through `CodeBlock`.
+ */
 export const RichCodeBlock = React.forwardRef<HTMLDivElement, CodeBlockProps>(
   function RichCodeBlock({ language, code, inline, className }, ref) {
     const [copied, setCopied] = React.useState(false);
@@ -35,7 +43,7 @@ export const RichCodeBlock = React.forwardRef<HTMLDivElement, CodeBlockProps>(
       return (
         <code
           className={cn(
-            "bg-[var(--accent)] px-1.5 py-0.5 rounded text-sm font-mono",
+            "rounded-[var(--radius-xs)] bg-[var(--accent)] px-1 py-0.5 font-mono text-sm font-medium",
             className,
           )}
         >
@@ -48,16 +56,16 @@ export const RichCodeBlock = React.forwardRef<HTMLDivElement, CodeBlockProps>(
       <div
         ref={ref}
         className={cn(
-          "my-4 rounded-xl overflow-hidden border border-[var(--border)]",
+          "my-4 overflow-hidden rounded-[var(--radius-lg)] border border-[var(--edge)]",
           className,
         )}
       >
-        <div className="flex items-center justify-between px-4 py-2 text-[var(--muted-foreground)] text-xs">
+        <div className="flex items-center justify-between px-4 py-2 text-xs text-[var(--faint)]">
           <span className="font-mono font-medium">{language || "text"}</span>
           <button
             type="button"
             onClick={handleCopy}
-            className="inline-flex items-center gap-1.5 text-[var(--input-placeholder)] hover:text-[var(--foreground)] transition-colors"
+            className="inline-flex items-center gap-1.5 text-[var(--faint)] transition-colors hover:text-[var(--foreground)]"
           >
             {copied
               ? (
@@ -74,8 +82,8 @@ export const RichCodeBlock = React.forwardRef<HTMLDivElement, CodeBlockProps>(
               )}
           </button>
         </div>
-        <pre className="p-4 text-[var(--foreground)] bg-[var(--accent)] overflow-auto text-sm [&_.hljs]:bg-transparent [&_.hljs]:p-0">
-        <code className={language ? `language-${language}` : undefined}>{code}</code>
+        <pre className="overflow-auto bg-[var(--secondary)] p-4 text-sm text-[var(--foreground)] [&_.hljs]:bg-transparent [&_.hljs]:p-0">
+          <code className={language ? `language-${language}` : undefined}>{code}</code>
         </pre>
       </div>
     );

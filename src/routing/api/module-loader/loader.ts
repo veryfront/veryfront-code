@@ -370,7 +370,7 @@ function loadAndTranspileModule(
         plugins: [
           createImportMapPlugin(projectDir, adapter, config),
           createAdapterResolvePlugin(adapter, projectDir),
-          createHTTPPlugin(allowedHosts),
+          createHTTPPlugin({ allowedHosts, projectDir }),
         ],
       });
 

@@ -21,6 +21,12 @@ export interface ClientRuntimeHydrationData {
   pagePath?: string;
   clientModuleStrategy?: ClientModuleStrategy;
   dev?: boolean;
+  /** Route slug for the current page (from the route match). */
+  slug?: string;
+  /** Route params from the initial match — used to seed the reactive router. */
+  params?: Record<string, string | string[]>;
+  /** Page frontmatter — exposed reactively via `usePageContext()`. */
+  frontmatter?: Record<string, unknown>;
 }
 
 export interface ClientModuleUrlOptions {
@@ -97,4 +103,16 @@ export function getHydrationReactImportSpecifiers(
       ? "react-dom/client"
       : getReactDOMClientCDNUrl(version),
   };
+}
+
+/**
+ * The import specifier for the framework router module, or `null` if the page's
+ * import map does not own it. Returned as a value (not a literal) so callers can
+ * `import(specifier)` and have the bundler leave it as a runtime import — the
+ * module resolves to the app's React instance, which is required for the
+ * provider's hooks to run under the same React as the hydrated component.
+ */
+export function getHydrationRouterImportSpecifier(doc: Document = document): string | null {
+  const imports = getDocumentImportMapImports(doc);
+  return importMapOwnsSpecifier("veryfront/router", imports) ? "veryfront/router" : null;
 }

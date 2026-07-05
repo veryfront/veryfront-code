@@ -86,6 +86,8 @@ scripts/code-optimize/.venv/
 docs/api/
 
 # Local working files
+.context/
+docs/superpowers/
 .local/
 .refactor/
 .omc/

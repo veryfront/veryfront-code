@@ -5,23 +5,37 @@ import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { clearTranspileCache, importModule } from "./transpiler.ts";
 import type { FileDiscoveryContext } from "./types.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
+import { reset, tryResolve } from "#veryfront/extensions/contracts.ts";
 import * as embeddingMod from "#veryfront/embedding/index.ts";
 import * as knowledgeMod from "#veryfront/knowledge";
 
 /**
  * Creates a mock FileSystemAdapter backed by an in-memory file map.
+ *
+ * When `projectDir` is given, absolute paths under it are converted back to
+ * project-relative keys, mirroring the real veryfront adapter's
+ * PathNormalizer (hosted runs address the VFS with relative paths while the
+ * transpiler resolves imports against the process cwd).
  */
 function createMockAdapter(
   files: Record<string, string>,
+  options: { projectDir?: string } = {},
 ): FileSystemAdapter {
+  const normalize = (path: string): string => {
+    const { projectDir } = options;
+    if (projectDir && path.startsWith(projectDir)) {
+      return path.slice(projectDir.length).replace(/^\/+/, "");
+    }
+    return path;
+  };
   return {
     async readFile(path: string): Promise<string> {
-      const content = files[path];
+      const content = files[normalize(path)];
       if (content === undefined) throw new Error(`File not found: ${path}`);
       return content;
     },
     async exists(path: string): Promise<boolean> {
-      return path in files;
+      return normalize(path) in files;
     },
     async *readDir(path: string) {
       const prefix = path.endsWith("/") ? path : `${path}/`;
@@ -126,6 +140,33 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assertEquals(mod.default.name, "test-agent");
     });
 
+    it("lazily registers the installed default bundler before discovery transpilation", async () => {
+      reset();
+      assertEquals(tryResolve("Bundler"), undefined);
+      assertEquals(tryResolve("ModuleLexer"), undefined);
+
+      const files: Record<string, string> = {
+        "/project/schedules/daily.ts":
+          `export default { id: "daily", schedule: "0 8 * * *", target: "noop" };`,
+      };
+
+      const adapter = createMockAdapter(files);
+      const context: FileDiscoveryContext = {
+        platform: "node",
+        fsAdapter: adapter,
+        baseDir: "/project",
+      };
+
+      const mod = await importModule(
+        "file:///project/schedules/daily.ts",
+        context,
+      ) as { default: { id: string } };
+
+      assertEquals(mod.default.id, "daily");
+      assertEquals(typeof tryResolve<{ bundle?: unknown }>("Bundler")?.bundle, "function");
+      assertEquals(typeof tryResolve<{ parse?: unknown }>("ModuleLexer")?.parse, "function");
+    });
+
     it("should resolve relative imports via fsAdapter plugin", async () => {
       const files: Record<string, string> = {
         "/project/agents/assistant.ts": [
@@ -177,6 +218,106 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       ) as { default: { value: number } };
 
       assertEquals(mod.default.value, 42);
+    });
+
+    it("should resolve parent-directory imports on hosted runs with relative baseDir", async () => {
+      // Hosted (cloud) discovery uses baseDir "" and addresses the VFS with
+      // project-relative paths like "tools/foo.ts". Regression test for the
+      // esbuild stdin sourcefile doubling the directory prefix
+      // ("tools/tools/foo.ts"), which anchored ../ imports one directory too
+      // deep and made discovery skip every tool/agent.
+      const files: Record<string, string> = {
+        "tools/read-baseline.ts": [
+          `import { helper } from "../lib/util";`,
+          `export default { value: helper() };`,
+        ].join("\n"),
+        "lib/util.ts": `export function helper() { return "baseline"; }`,
+      };
+
+      const adapter = createMockAdapter(files, { projectDir: Deno.cwd() });
+      const context: FileDiscoveryContext = {
+        platform: "node",
+        fsAdapter: adapter,
+        baseDir: "",
+      };
+
+      const mod = await importModule(
+        "file://tools/read-baseline.ts",
+        context,
+      ) as { default: { value: string } };
+
+      assertEquals(mod.default.value, "baseline");
+    });
+
+    it("should not serve a stale cached module when content changes at the same path", async () => {
+      // The shared hosted runtime serves many projects and releases from one
+      // process; the same relative path recurs across them. A path-only cache
+      // key kept serving the previous release's module after a deploy.
+      const path = "/project/agents/assistant.ts";
+      const contextFor = (content: string): FileDiscoveryContext => ({
+        platform: "node",
+        fsAdapter: createMockAdapter({ [path]: content }),
+        baseDir: "/project",
+      });
+
+      const first = await importModule(
+        `file://${path}`,
+        contextFor(`export default { version: "release-1" };`),
+      ) as { default: { version: string } };
+      assertEquals(first.default.version, "release-1");
+
+      const second = await importModule(
+        `file://${path}`,
+        contextFor(`export default { version: "release-2" };`),
+      ) as { default: { version: string } };
+      assertEquals(second.default.version, "release-2");
+
+      // Unchanged content is still served from the cache (same module object).
+      const third = await importModule(
+        `file://${path}`,
+        contextFor(`export default { version: "release-2" };`),
+      );
+      assertEquals(third === second, true);
+    });
+
+    it("should not serve a stale cached module when a bundled dependency changes", async () => {
+      // esbuild inlines relative imports into the bundle, so an unchanged
+      // entry file does not mean an unchanged module: a release that only
+      // edits lib/ code (or another project sharing the same entry source)
+      // must not be served the previously bundled dependency contents.
+      const entryPath = "/project/agents/assistant.ts";
+      const entrySource = [
+        `import { CONFIG } from "./config";`,
+        `export default { model: CONFIG.model };`,
+      ].join("\n");
+      const contextFor = (depSource: string): FileDiscoveryContext => ({
+        platform: "node",
+        fsAdapter: createMockAdapter({
+          [entryPath]: entrySource,
+          "/project/agents/config.ts": depSource,
+        }),
+        baseDir: "/project",
+      });
+
+      const first = await importModule(
+        `file://${entryPath}`,
+        contextFor(`export const CONFIG = { model: "gpt-4" };`),
+      ) as { default: { model: string } };
+      assertEquals(first.default.model, "gpt-4");
+
+      const second = await importModule(
+        `file://${entryPath}`,
+        contextFor(`export const CONFIG = { model: "gpt-5.5" };`),
+      ) as { default: { model: string } };
+      assertEquals(second.default.model, "gpt-5.5");
+
+      // Both dependency versions stay cached: reverting to the original
+      // dependency contents serves the originally built module object.
+      const third = await importModule(
+        `file://${entryPath}`,
+        contextFor(`export const CONFIG = { model: "gpt-4" };`),
+      );
+      assertEquals(third === first, true);
     });
 
     it("should throw when file is not found via fsAdapter", async () => {

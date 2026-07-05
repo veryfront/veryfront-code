@@ -1,6 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { register, unregister } from "#veryfront/extensions/contracts.ts";
+import type { DocumentExtractor } from "#veryfront/extensions/compat/native-services.ts";
 import { loadUpload } from "./upload-loader.ts";
 
 function toBuffer(text: string): ArrayBuffer {
@@ -125,6 +127,28 @@ describe("upload-loader", () => {
         true,
         `expected actionable DocumentExtractor error, got: ${err.message}`,
       );
+    });
+
+    it("returns structured markdown from the DocumentExtractor unchanged", async () => {
+      const extracted = "# Extracted Upload\n\n## Section\n\nBody text.";
+      const calls: Array<{ bytes: string; mimeType: string }> = [];
+      const extractor: DocumentExtractor = {
+        extractInWorker: (buffer, mimeType) => {
+          calls.push({ bytes: new TextDecoder().decode(buffer), mimeType });
+          return Promise.resolve(extracted);
+        },
+      };
+
+      try {
+        register<DocumentExtractor>("DocumentExtractor", extractor);
+
+        const result = await loadUpload(toBuffer("pdf bytes"), "application/pdf");
+
+        assertEquals(result, extracted);
+        assertEquals(calls, [{ bytes: "pdf bytes", mimeType: "application/pdf" }]);
+      } finally {
+        unregister("DocumentExtractor");
+      }
     });
   });
 });

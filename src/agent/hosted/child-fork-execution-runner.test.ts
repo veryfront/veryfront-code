@@ -268,7 +268,7 @@ Deno.test("executeHostedChildForkWithPreparedTools allows injecting the run cont
 Deno.test("executeHostedChildForkToolInput resolves runtime config and prepares tools", async () => {
   const callbacks: string[] = [];
 
-  const result = await executeHostedChildForkToolInput({
+  const input = {
     authToken: "token",
     apiUrl: "https://api.example.com",
     projectId: "project-1",
@@ -298,6 +298,7 @@ Deno.test("executeHostedChildForkToolInput resolves runtime config and prepares 
       forkModel,
       thinkingConfig,
     }),
+    resolveReasoning: (_forkModel: string, thinkingConfig: unknown) => thinkingConfig,
     onRuntimeConfig: (runtimeConfig) => {
       callbacks.push(`runtime:${runtimeConfig.forkModel}`);
     },
@@ -343,6 +344,10 @@ Deno.test("executeHostedChildForkToolInput resolves runtime config and prepares 
         forkModel: "resolved-sonnet",
         thinkingConfig: { enabled: true, budgetTokens: 256 },
       });
+      assertEquals((input as { reasoning?: unknown }).reasoning, {
+        enabled: true,
+        budgetTokens: 256,
+      });
       return {
         forkStreamAbortController: new AbortController(),
         childRunMonitorAbortController: null,
@@ -365,7 +370,11 @@ Deno.test("executeHostedChildForkToolInput resolves runtime config and prepares 
         },
       };
     },
-  });
+  } as Parameters<typeof executeHostedChildForkToolInput>[0] & {
+    resolveReasoning: (forkModel: string, thinkingConfig: unknown) => unknown;
+  };
+
+  const result = await executeHostedChildForkToolInput(input);
 
   assertEquals(callbacks, [
     "project:project-2",

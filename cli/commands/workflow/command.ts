@@ -165,7 +165,8 @@ export async function runWorkflowCommand(
   ) => Promise<DiscoveryResult> = dependencies.discoverProjectAgentRuntime ??
     discoverProjectAgentRuntime;
 
-  await withProjectSourceContext(projectDir, async ({ adapter, proxyContext }) => {
+  await withProjectSourceContext(projectDir, async (context) => {
+    const { adapter, config, configCacheKey, proxyContext } = context;
     const sourceLabel = proxyContext?.branchRef
       ? `branch ${proxyContext.branchRef}`
       : proxyContext
@@ -177,6 +178,9 @@ export async function runWorkflowCommand(
     const discovery = await discoverRuntime({
       projectDir,
       adapter,
+      config,
+      fsAdapter: adapter.fs,
+      cacheKey: configCacheKey,
       verbose: options.debug,
     });
 

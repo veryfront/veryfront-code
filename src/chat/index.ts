@@ -30,7 +30,7 @@
  *     <Chat.Root messages={chat.messages} input={chat.input}>
  *       <Chat.Empty title="Ask me anything" />
  *       <Chat.MessageList messages={chat.messages} />
- *       <Chat.Composer input={chat.input} onChange={chat.handleInputChange} onSubmit={chat.handleSubmit} />
+ *       <Chat.Input input={chat.input} onChange={chat.handleInputChange} onSubmit={chat.handleSubmit} />
  *     </Chat.Root>
  *   );
  * }
@@ -51,10 +51,14 @@
 export { Chat, ChatComponents, type ChatProps } from "#veryfront/react/components/chat/chat.tsx";
 
 export {
-  ChatComposer,
-  type ChatComposerProps,
   ChatEmpty,
   type ChatEmptyProps,
+  ChatEmptyState,
+  type ChatEmptyStateAvatarProps,
+  type ChatEmptyStateHeadingProps,
+  type ChatEmptyStateRootProps,
+  type ChatEmptyStateSuggestionProps,
+  type ChatEmptyStateSuggestionsProps,
   ChatIf,
   type ChatIfProps,
   ChatMessageList,
@@ -64,6 +68,7 @@ export {
   ErrorBanner,
   type ErrorBannerProps,
   Message,
+  type MessageProps,
   type MessageRootProps,
   ModelAvatar,
   type ModelAvatarProps,
@@ -76,39 +81,41 @@ export {
   type ComposerContextValue,
   MessageContextProvider,
   type MessageContextValue,
-  ThreadListContextProvider,
-  type ThreadListContextValue,
   useChatContext,
   useChatContextOptional,
   useComposerContext,
   useComposerContextOptional,
   useMessageContext,
   useMessageContextOptional,
-  useThreadListContext,
-  useThreadListContextOptional,
 } from "#veryfront/react/components/chat/chat.tsx";
 
 export {
+  AgentAvatar,
+  type AgentAvatarProps,
   type AttachmentInfo,
-  AttachmentPill,
-  type AttachmentPillProps,
+  AttachmentsPanel,
+  type AttachmentsPanelActionProps,
+  type AttachmentsPanelContextValue,
+  type AttachmentsPanelEmptyProps,
+  type AttachmentsPanelItemProps,
+  type AttachmentsPanelListProps,
+  type AttachmentsPanelLoadingProps,
+  type AttachmentsPanelProps,
   BranchPicker,
   type BranchPickerProps,
+  ChatMessagesSkeleton,
+  type ChatMessagesSkeletonProps,
   ChatSidebar,
+  type ChatSidebarComponent,
+  type ChatSidebarEmptyProps,
+  type ChatSidebarGroupProps,
+  type ChatSidebarIcons,
+  type ChatSidebarItemProps,
+  type ChatSidebarListProps,
+  type ChatSidebarNewButtonProps,
   type ChatSidebarProps,
+  type ChatSidebarRootProps,
   type ChatTab,
-  ChatWithSidebar,
-  type ChatWithSidebarAttachmentConfig,
-  type ChatWithSidebarChatController,
-  type ChatWithSidebarFeatureConfig,
-  type ChatWithSidebarGroupedProps,
-  type ChatWithSidebarMessageConfig,
-  type ChatWithSidebarModelConfig,
-  type ChatWithSidebarProps,
-  type ChatWithSidebarQuickActionsConfig,
-  type ChatWithSidebarSidebarConfig,
-  type ChatWithSidebarTabsConfig,
-  type ChatWithSidebarVoiceConfig,
   type CodeBlockProps,
   ConversationEmptyState,
   type ConversationEmptyStateProps,
@@ -131,15 +138,19 @@ export {
   isSkillToolPart,
   isToolPart,
   Loader,
-  MessageActions,
-  type MessageActionsProps,
+  MessageActionBar,
+  type MessageActionBarProps,
   MessageEditForm,
   type MessageEditFormProps,
   MessageFeedback,
   type MessageFeedbackProps,
   type ModelOption,
   ModelSelector,
+  type ModelSelectorContentProps,
+  type ModelSelectorContextValue,
+  type ModelSelectorItemProps,
   type ModelSelectorProps,
+  type ModelSelectorTriggerProps,
   type PartGroup,
   type QuickAction,
   QuickActions,
@@ -150,9 +161,14 @@ export {
   SkillBadge,
   type SkillBadgeProps,
   type Source,
+  SourcePill,
+  type SourcePillProps,
   Sources,
+  type SourcesContextValue,
+  type SourcesListProps,
   type SourcesProps,
   StepIndicator,
+  type StepIndicatorContextValue,
   type StepIndicatorProps,
   Suggestion,
   type SuggestionProps,
@@ -160,25 +176,157 @@ export {
   type SuggestionsProps,
   TabSwitcher,
   type TabSwitcherProps,
-  type Thread,
   ToolCallCard,
   ToolStatusBadge,
   type UploadedFile,
-  UploadsPanel,
-  type UploadsPanelProps,
-  useThreads,
-  type UseThreadsOptions,
-  type UseThreadsResult,
+  useAttachmentsPanel,
+  useModelSelector,
+  useSources,
+  useStepIndicator,
+  useStickToBottom,
+  type UseStickToBottomOptions,
+  type UseStickToBottomResult,
+  useUpload,
+  type UseUploadOptions,
+  type UseUploadResult,
+  useUploadsRegistry,
+  type UseUploadsRegistryOptions,
+  type UseUploadsRegistryResult,
 } from "#veryfront/react/components/chat/chat.tsx";
 
+// Conversation persistence adapters — swappable async stores behind the
+// (upcoming) `useConversations` hook. localStorage default; idb/api are follow-ups.
 export {
-  Message as StandaloneMessage,
-  type MessageProps,
-  StreamingMessage,
-  type StreamingMessageProps,
-} from "#veryfront/react/components/chat/message.tsx";
+  type Conversation,
+  type ConversationPatch,
+  ConversationsContextProvider,
+  ConversationsProvider,
+  type ConversationsProviderProps,
+  type ConversationStore,
+  type ConversationSummary,
+  localConversationStore,
+  memoryConversationStore,
+  type StorageLike,
+  useConversation,
+  type UseConversationOptions,
+  type UseConversationResult,
+  useConversations,
+  useConversationsContext,
+  useConversationsContextOptional,
+  type UseConversationsOptions,
+  type UseConversationsResult,
+} from "#veryfront/react/components/chat/chat.tsx";
 
-export { AgentCard, type AgentCardProps } from "#veryfront/react/components/chat/agent-card.tsx";
+// ---------------------------------------------------------------------------
+// Target component names. This chat surface intentionally completes the
+// migration away from the old Thread, Composer, and standalone message exports.
+// Use these names for new code and see the chat UI guide for migration notes.
+// ---------------------------------------------------------------------------
+export {
+  AttachmentPill,
+  AttachmentPill as Attachment,
+  type AttachmentPillContextValue,
+  type AttachmentPillProps,
+  type AttachmentPillProps as AttachmentProps,
+  AttachmentsPanel as UploadsPanel,
+  type AttachmentsPanelProps as UploadsPanelProps,
+  ChatInput,
+  ChatInput as ChatComposer,
+  type ChatInputProps,
+  type ChatInputProps as ChatComposerProps,
+  Message as StandaloneMessage,
+  Message as StreamingMessage,
+  MessageActionBar as MessageActions,
+  type MessageActionBarProps as MessageActionsProps,
+  type MessageProps as StandaloneMessageProps,
+  type MessageProps as StreamingMessageProps,
+  Reasoning,
+  type ReasoningContextValue,
+  type ReasoningProps,
+  type ReasoningTriggerProps,
+  ToolCall,
+  type ToolCallContextValue,
+  type ToolCallProps,
+  type ToolCallTriggerProps,
+  useAttachmentPill,
+  useReasoning,
+  useToolCall,
+} from "#veryfront/react/components/chat/chat.tsx";
+export { Markdown, type MarkdownProps } from "#veryfront/react/components/chat/markdown.tsx";
+
+// Layout primitives — chat-independent, promoted from the private `chat/ui`
+// barrel so consuming apps can compose their own shell (sidebar in the layout,
+// pages in the content slot). Eventual home is a top-level `veryfront/ui`.
+export {
+  AppShell,
+  type AppShellHeaderProps,
+  type AppShellOpenState,
+  type AppShellProps,
+  type AppShellSide,
+  type AppShellSidebarProps,
+  type AppShellTriggerProps,
+  useAppShell,
+} from "#veryfront/react/components/chat/ui/app-shell.tsx";
+export {
+  Tabs,
+  TabsItem,
+  type TabsItemProps,
+  type TabsProps,
+} from "#veryfront/react/components/chat/ui/tabs.tsx";
+export {
+  ChatThemeScope,
+  type ChatThemeScopeProps,
+} from "#veryfront/react/components/chat/chat-theme-scope.tsx";
+
+// New target components (Studio 1:1, dependency-light forks).
+export {
+  type AgentOption,
+  AgentPicker,
+  type AgentPickerContentProps,
+  type AgentPickerContextValue,
+  type AgentPickerItemProps,
+  type AgentPickerProps,
+  type AgentPickerSection,
+  type AgentPickerTriggerProps,
+  useAgentPicker,
+} from "#veryfront/react/components/chat/agent-picker.tsx";
+export {
+  agentsToPickerOptions,
+  ChatAgentPicker,
+  type ChatAgentPickerProps,
+} from "#veryfront/react/components/chat/chat-agent-picker.tsx";
+export {
+  type ChatActionItem,
+  ChatActions,
+  type ChatActionsContentProps,
+  type ChatActionsContextValue,
+  type ChatActionsItemProps,
+  type ChatActionsProps,
+  type ChatActionsSettings,
+  type ChatActionsTriggerProps,
+  useChatActions,
+} from "#veryfront/react/components/chat/chat-actions.tsx";
+// `SkillTool` retired as a standalone export — a skill tool is now a presentation
+// variant of `ToolCall` (`<ToolCall variant="compact" />`, auto-default for skill
+// parts). The row impl stays internal to `tool-ui.tsx`.
+// Shared syntax-highlight primitive (`CodeBlockProps` name is already taken by
+// the Markdown code-block props, so only the runtime `CodeBlock` is re-exported).
+export {
+  CodeBlock,
+  CodeSurface,
+  type CodeSurfaceProps,
+  CopyButton,
+  type CopyButtonProps,
+  useClipboard,
+  type UseClipboardResult,
+} from "#veryfront/react/components/chat/ui/code-block.tsx";
+
+export {
+  AgentCard,
+  type AgentCardContextValue,
+  type AgentCardProps,
+  useAgentCard,
+} from "#veryfront/react/components/chat/agent-card.tsx";
 export {
   ChatErrorBoundary,
   type ChatErrorBoundaryProps,
@@ -229,10 +377,18 @@ export {
   type AgentMetadataSuggestions,
   type AgentMetadataTaskSuggestion,
   getAgentPromptSuggestions,
+  normalizeAgentMetadata,
   normalizeAgentMetadataResponse,
   useAgentMetadata,
   type UseAgentMetadataResult,
 } from "#veryfront/agent/react/use-agent-metadata.ts";
+
+export {
+  normalizeAgentsListResponse,
+  useAgents,
+  type UseAgentsOptions,
+  type UseAgentsResult,
+} from "#veryfront/agent/react/use-agents.ts";
 
 export {
   buildChatStreamChunkMessageMetadata,

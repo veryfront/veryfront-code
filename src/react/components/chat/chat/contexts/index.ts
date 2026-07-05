@@ -29,8 +29,9 @@ export {
 } from "./composer-context.tsx";
 
 export {
-  ThreadListContextProvider,
-  type ThreadListContextValue,
-  useThreadListContext,
-  useThreadListContextOptional,
-} from "./thread-list-context.tsx";
+  ConversationsContextProvider,
+  ConversationsProvider,
+  type ConversationsProviderProps,
+  useConversationsContext,
+  useConversationsContextOptional,
+} from "./conversations-context.tsx";

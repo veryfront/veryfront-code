@@ -23,7 +23,11 @@
 import { createProxyHandler, INTERNAL_PROXY_HEADERS, type ProxyConfig } from "./handler.ts";
 import { createCacheFromEnv } from "./cache/index.ts";
 import { isRetryableConnectionError } from "./retry.ts";
-import { closeBridgePeer, getServerWebSocketErrorLogLevel } from "./websocket-bridge.ts";
+import {
+  closeBridgePeer,
+  createProxyClientWebSocketUpgradeOptions,
+  getServerWebSocketErrorLogLevel,
+} from "./websocket-bridge.ts";
 import { register } from "../extensions/contracts.ts";
 import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
 import type { AuthProvider } from "#veryfront/extensions/auth/index.ts";
@@ -199,7 +203,10 @@ function handleWebSocketUpgrade(req: Request, url: URL): Response {
     targetUrl: targetUrl.toString(),
   });
 
-  const { socket: clientSocket, response } = upgradeWebSocket(req);
+  const { socket: clientSocket, response } = upgradeWebSocket(
+    req,
+    createProxyClientWebSocketUpgradeOptions(),
+  );
 
   let serverSocket: WebSocket | null = null;
   let connectTimeoutId: ReturnType<typeof setTimeout> | null = null;

@@ -1,10 +1,12 @@
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
-import { discoverProjectAgentRuntime } from "#veryfront/agent/project/agent-runtime.ts";
 import type { RuntimeAdapter } from "#veryfront/platform";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
 import { createWorkflowClient } from "#veryfront/workflow/api/workflow-client.ts";
-import { discoverTasks } from "#veryfront/task/discovery.ts";
+import {
+  discoverProjectTaskRuntime,
+  findProjectRuntimeTask,
+} from "#veryfront/task/project-runtime.ts";
 import { runTask } from "#veryfront/task/runner.ts";
 import type { TriggerTarget } from "./target.ts";
 
@@ -12,6 +14,7 @@ export interface RunTriggerTargetOptions {
   projectDir: string;
   adapter: RuntimeAdapter;
   config?: VeryfrontConfig;
+  cacheKey?: string;
   projectId?: string;
   target: TriggerTarget;
   input?: unknown;
@@ -33,18 +36,21 @@ function toRecordInput(input: unknown): Record<string, unknown> {
   return { payload: input };
 }
 
-async function runTaskTarget(options: RunTriggerTargetOptions): Promise<TriggerTargetRunResult> {
-  const { tasks, errors } = await discoverTasks({
+async function discoverRuntimeOrThrow(options: RunTriggerTargetOptions) {
+  return await discoverProjectTaskRuntime({
     projectDir: options.projectDir,
     adapter: options.adapter,
     config: options.config,
+    fsAdapter: options.adapter.fs,
+    cacheKey: options.cacheKey,
     debug: options.debug,
+    throwOnErrors: true,
   });
-  if (errors.length > 0) {
-    throw new Error(`Task discovery failed: ${errors[0]?.filePath}: ${errors[0]?.error}`);
-  }
+}
 
-  const task = tasks.find((candidate) => candidate.id === options.target.id);
+async function runTaskTarget(options: RunTriggerTargetOptions): Promise<TriggerTargetRunResult> {
+  const discovery = await discoverRuntimeOrThrow(options);
+  const task = findProjectRuntimeTask(discovery, options.target.id);
   if (!task) {
     throw new Error(`Task target "${options.target.id}" not found.`);
   }
@@ -72,15 +78,7 @@ async function runWorkflowTarget(
   options: RunTriggerTargetOptions,
 ): Promise<TriggerTargetRunResult> {
   const start = Date.now();
-  const discovery = await discoverProjectAgentRuntime({
-    projectDir: options.projectDir,
-    adapter: options.adapter,
-    verbose: options.debug,
-  });
-  if (discovery.errors.length > 0) {
-    const first = discovery.errors[0];
-    throw new Error(`Runtime discovery failed: ${first?.file}: ${first?.error.message}`);
-  }
+  const discovery = await discoverRuntimeOrThrow(options);
 
   const workflow = discovery.workflows.get(options.target.id);
   if (!workflow) {

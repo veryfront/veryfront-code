@@ -19,6 +19,7 @@ export interface ProjectSourceExecutionContext {
   adapter: RuntimeAdapter;
   config: VeryfrontConfig;
   projectDir: string;
+  configCacheKey?: string;
   projectId?: string;
   proxyContext?: ProxyProjectSourceContext;
 }
@@ -48,8 +49,14 @@ async function loadProjectConfig(
   adapter: RuntimeAdapter,
   proxyContext?: ProxyProjectSourceContext,
 ): Promise<VeryfrontConfig> {
-  const cacheKey = proxyContext?.projectId ?? proxyContext?.projectSlug;
+  const cacheKey = getProjectSourceConfigCacheKey(proxyContext);
   return await getConfig(projectDir, adapter, cacheKey ? { cacheKey } : undefined);
+}
+
+function getProjectSourceConfigCacheKey(
+  proxyContext?: ProxyProjectSourceContext,
+): string | undefined {
+  return proxyContext?.projectId ?? proxyContext?.projectSlug;
 }
 
 export async function applyProjectSourceRuntimeAuth(
@@ -86,6 +93,7 @@ export async function withProjectSourceContext<T>(
           adapter,
           config,
           projectDir,
+          configCacheKey: getProjectSourceConfigCacheKey(proxyContext),
           projectId: proxyContext.projectId,
           proxyContext,
         });
@@ -103,6 +111,7 @@ export async function withProjectSourceContext<T>(
     adapter,
     config,
     projectDir,
+    configCacheKey: getProjectSourceConfigCacheKey(proxyContext ?? undefined),
     projectId: proxyContext?.projectId,
     proxyContext: proxyContext ?? undefined,
   });

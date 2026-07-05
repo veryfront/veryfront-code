@@ -81,6 +81,41 @@ describe("agent/agent-service-runtime", () => {
     assertEquals(ready.status, 200);
   });
 
+  it("preserves configured skills and tools on the service agent", () => {
+    const bundle = createAgentServiceRuntime({
+      serviceName: "test-agent-service",
+      getConfig: () => ({
+        VERYFRONT_API_URL: "https://api.example.test",
+        NODE_ENV: "test",
+        PORT: 3180,
+        ALLOWED_ORIGINS: ["https://studio.example.test"],
+      }),
+      getAgentConfig: () => ({
+        id: "assistant",
+        name: "Assistant",
+        description: "",
+        instructions: "You are a test assistant.",
+        skills: ["support-triage"],
+        tools: ["search_knowledge", "get_file"],
+      }),
+      logger: createLogger(),
+      prepareExecution: async () => ({ ok: true }),
+      streamExecutionToAgUiResponse: () => new Response("streamed"),
+      startDetachedExecution: async () => {},
+    });
+
+    const serviceAgent = bundle.runtime.contract.agents.assistant;
+
+    assertEquals(serviceAgent?.config.skills, ["support-triage"]);
+    assertEquals(serviceAgent?.config.tools, {
+      search_knowledge: true,
+      get_file: true,
+      load_skill: true,
+      load_skill_reference: true,
+      execute_skill_script: true,
+    });
+  });
+
   it("starts the node agent service server from the assembled runtime", async () => {
     const service = await startNodeAgentService({
       serviceName: "node-test-agent-service",

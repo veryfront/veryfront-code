@@ -177,7 +177,7 @@ export type ControlPlaneClaims = InferSchema<ReturnType<typeof getControlPlaneCl
 
 /** Public API contract for runtime agent discovery deps. */
 export interface RuntimeAgentDiscoveryDeps {
-  ensureProjectDiscovery: (ctx: HandlerContext) => Promise<void>;
+  ensureProjectDiscovery: (ctx: HandlerContext) => Promise<unknown>;
   getAgent: (id: string) => Agent | undefined;
   getAllAgentIds: () => string[];
 }

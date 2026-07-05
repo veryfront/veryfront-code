@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { flattenRouteParams } from "#veryfront/routing";
 import type { LayoutApplicationOptions } from "./layout-applicator.ts";
 
 function isDotPath(pageFilePath: string): boolean {
@@ -27,13 +28,9 @@ function buildSSRRouter(
   replace: () => void;
   reload: () => void;
 } {
-  const flatParams = params
-    ? Object.fromEntries(
-      Object.entries(params)
-        .map(([key, value]) => [key, Array.isArray(value) ? value[0] : value])
-        .filter((entry): entry is [string, string] => entry[1] !== undefined),
-    )
-    : {};
+  // Mirror production: reuse the shared helper so this test can't drift back
+  // to the old first-segment-only contract (issue #2742).
+  const flatParams = flattenRouteParams(params);
 
   return {
     domain: requestUrl?.origin ?? "",
@@ -123,12 +120,12 @@ describe("LayoutApplicator helpers", () => {
       assertEquals(router.query, {});
     });
 
-    it("should flatten params into string values", () => {
-      const url = new URL("https://example.com/blog/123");
-      const router = buildSSRRouter(url, "/pages/blog/[id].tsx", "blog/123", {
-        id: ["123", "ignored"],
+    it("should join catch-all params instead of dropping segments", () => {
+      const url = new URL("https://example.com/blog/123/extra");
+      const router = buildSSRRouter(url, "/pages/blog/[...id].tsx", "blog/123/extra", {
+        id: ["123", "extra"],
       });
-      assertEquals(router.params, { id: "123" });
+      assertEquals(router.params, { id: "123/extra" });
     });
 
     it("should handle URL with multiple search params", () => {

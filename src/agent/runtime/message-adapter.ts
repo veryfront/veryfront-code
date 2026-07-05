@@ -152,7 +152,9 @@ function toNativeFilePart(
 } | null {
   const url = getOptionalStringField(part, "url");
   const mediaType = getOptionalStringField(part, "mediaType");
-  if (!url || url.startsWith("data:") || !mediaType) {
+  // `data:` URLs (inline base64) are kept: guest / no-project attachments ride
+  // inline so the model sees them without a fetchable upload URL.
+  if (!url || !mediaType) {
     return null;
   }
   return type === "file"

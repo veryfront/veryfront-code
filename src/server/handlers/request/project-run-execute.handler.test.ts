@@ -4,6 +4,8 @@ import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import type { Agent } from "#veryfront/agent";
 import type { Message } from "#veryfront/agent/types.ts";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
+import type { DiscoveryResult } from "#veryfront/discovery";
+import type { HandlerContext } from "#veryfront/types";
 import { createAgentServiceEvalAdapter } from "#veryfront/eval/agent-service.ts";
 import { runEval as runEvalDefinition } from "#veryfront/eval/runner.ts";
 import { datasets, evalAgent, type EvalReport, metrics } from "veryfront/eval";
@@ -85,16 +87,6 @@ function createDeps(
   overrides: Partial<ProjectRunExecuteHandlerDeps> = {},
 ): ProjectRunExecuteHandlerDeps {
   return {
-    findTaskById: async (target) =>
-      target === "sync-calendar-events"
-        ? {
-          id: "sync-calendar-events",
-          name: "Sync calendar events",
-          filePath: "tasks/sync-calendar-events.ts",
-          exportName: "default",
-          definition: { name: "Sync calendar events", run: async () => ({ ok: true }) },
-        }
-        : null,
     runTask: async (_options) => ({
       success: true,
       result: { synced: 12 },
@@ -159,10 +151,34 @@ function createDeps(
       logs: null,
       duration_ms: 10,
     }),
-    ensureProjectDiscovery: async () => {},
+    ensureProjectDiscovery: async () => {
+      const discovery = createEmptyDiscoveryResult();
+      discovery.tasks.set("sync-calendar-events", {
+        name: "Sync calendar events",
+        run: async () => ({ ok: true }),
+      });
+      return discovery;
+    },
     sleep: async () => {},
     now: () => 0,
     ...overrides,
+  };
+}
+
+function createEmptyDiscoveryResult(): DiscoveryResult {
+  return {
+    tools: new Map(),
+    agents: new Map(),
+    skills: new Map(),
+    resources: new Map(),
+    prompts: new Map(),
+    workflows: new Map(),
+    works: new Map(),
+    tasks: new Map(),
+    schedules: new Map(),
+    webhooks: new Map(),
+    evals: new Map(),
+    errors: [],
   };
 }
 
@@ -247,6 +263,82 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       logs: null,
     });
     assertEquals(receivedConfig, { dry_run: true });
+  });
+
+  it("runs cloud task targets from project runtime discovery", async () => {
+    const order: string[] = [];
+    const discovery = createEmptyDiscoveryResult();
+    discovery.tasks.set("sync-calendar-events", {
+      name: "Sync calendar events",
+      run: async () => ({ ok: true }),
+    });
+
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      ensureProjectDiscovery: async () => {
+        order.push("discover");
+        return discovery;
+      },
+      runTask: async (options) => {
+        order.push(`run:${options.task.id}`);
+        return {
+          success: true,
+          result: { synced: 12 },
+          durationMs: 42,
+        };
+      },
+    }));
+    const body = {
+      runId: "run_task_runtime_1",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+      config: { dry_run: true },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_runtime_1/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(await result.response.json(), {
+      success: true,
+      result: { synced: 12 },
+      duration_ms: 42,
+      logs: null,
+    });
+    assertEquals(order, ["discover", "run:sync-calendar-events"]);
+  });
+
+  it("reports runtime discovery failures before task lookup", async () => {
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      ensureProjectDiscovery: async () => {
+        throw new Error("Runtime discovery failed: VFS unavailable");
+      },
+    }));
+    const body = {
+      runId: "run_task_discovery_failed",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_discovery_failed/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(await result.response.json(), {
+      success: false,
+      error: "Runtime discovery failed: VFS unavailable",
+      logs: null,
+      duration_ms: 0,
+    });
   });
 
   it("dispatches built-in knowledge ingest runs through the reusable ingest executor", async () => {
@@ -761,6 +853,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const handler = new ProjectRunExecuteHandler(createDeps({
       ensureProjectDiscovery: async () => {
         order.push("discover");
+        return createEmptyDiscoveryResult();
       },
       createWorkflowClient: (config) => {
         hasAgentRegistry = typeof config?.executor?.stepExecutor?.agentRegistry?.get ===
@@ -886,7 +979,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           mode: "preview",
         },
         resolvedEnvironment: "preview",
-      };
+      } as HandlerContext;
 
       const result = await runWithRequestContext(
         {

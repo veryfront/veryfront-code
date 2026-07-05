@@ -47,6 +47,12 @@ const getUploadSignedUrlResponseSchema = defineSchema((v) =>
   })
 );
 
+const getUploadListResponseSchema = defineSchema((v) =>
+  v.object({
+    data: v.array(v.object({ path: v.string().optional() }).passthrough()).optional(),
+  })
+);
+
 const getBlobMetadataSchema = defineSchema((v) =>
   v.object({
     version: v.literal(1),
@@ -62,6 +68,7 @@ const getBlobMetadataSchema = defineSchema((v) =>
 const UploadCreateResponseSchema = lazySchema(getUploadCreateResponseSchema);
 const UploadMetadataResponseSchema = lazySchema(getUploadMetadataResponseSchema);
 const UploadSignedUrlResponseSchema = lazySchema(getUploadSignedUrlResponseSchema);
+const UploadListResponseSchema = lazySchema(getUploadListResponseSchema);
 const BlobMetadataSchema = lazySchema(getBlobMetadataSchema);
 
 type UploadMetadataResponse = InferSchema<ReturnType<typeof getUploadMetadataResponseSchema>>;
@@ -306,6 +313,43 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
 
     const ref = mapUploadMetadataToRef(upload, id);
     return await attachSignedUrl(ref, dataPath, resolved, this.getDownloadUrl.bind(this));
+  }
+
+  /**
+   * Enumerate blobs under this store's prefix, newest first. The list endpoint
+   * (`GET /projects/{slug}/uploads`) carries only paths — the original filename
+   * lives in each blob's sidecar — so ids are recovered from the `.blob` data
+   * paths and enriched via {@link stat} (one extra request per blob). Suitable
+   * for an uploads panel; not a hot path.
+   *
+   * Note: a single page is fetched. If the project accumulates more uploads than
+   * one page, pagination will need wiring here.
+   */
+  async list(): Promise<BlobRef[]> {
+    const resolved = this.resolveConfig();
+    const raw = await this.requestJson(
+      "GET",
+      `/projects/${encodeURIComponent(resolved.projectSlug)}/uploads`,
+      resolved,
+      { headers: { Accept: "application/json" }, allowNotFound: true },
+    );
+    if (!raw) return [];
+
+    const parsed = UploadListResponseSchema.parse(raw);
+    const ids: string[] = [];
+    for (const item of parsed.data ?? []) {
+      const path = item.path;
+      // Only the data objects under our prefix — skip `.meta.json` sidecars and
+      // anything another store namespaced elsewhere.
+      if (!path || !path.startsWith(resolved.prefix) || !path.endsWith(DATA_SUFFIX)) continue;
+      const id = path.slice(resolved.prefix.length, path.length - DATA_SUFFIX.length);
+      if (SAFE_BLOB_ID_PATTERN.test(id)) ids.push(id);
+    }
+
+    const refs = await Promise.all(ids.map((id) => this.stat(id)));
+    return refs
+      .filter((ref): ref is BlobRef => ref !== null)
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
   }
 
   private resolveConfig(): ResolvedConfig {

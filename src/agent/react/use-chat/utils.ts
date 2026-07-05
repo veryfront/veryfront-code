@@ -9,10 +9,14 @@ export function createAssistantMessage(
   parts: ChatMessagePart[],
   metadata?: ChatMessage["metadata"],
 ): ChatMessage {
+  // Prefer a server-supplied timestamp (from message metadata); otherwise stamp
+  // the client clock so the message header always has a time to render.
+  const metaCreatedAt = typeof metadata?.createdAt === "string" ? metadata.createdAt : undefined;
   return {
     id: messageId || generateClientId("msg"),
     role: "assistant",
     parts,
+    createdAt: metaCreatedAt ?? new Date().toISOString(),
     ...(metadata && Object.keys(metadata).length > 0 ? { metadata } : {}),
   };
 }

@@ -36,7 +36,15 @@ export type LinkProps = React.AnchorHTMLAttributes<HTMLAnchorElement> & {
 export interface RouterProviderProps {
   /** React children rendered within the router context. */
   children: React.ReactNode;
-  /** Router value to expose to descendants. */
+  /**
+   * The router snapshot. On the server it is exposed verbatim. On the client it
+   * seeds `params`/`domain`/`isPreview` and the initial `pathname`/`query` — the
+   * server-render snapshot the first client render must match — after which
+   * `pathname`/`query` track the live URL through the navigation store.
+   *
+   * This is the single source for everything the URL and route match know;
+   * callers hand over one `RouterValue` rather than loose href/param fields.
+   */
   router?: RouterValue;
 }
 
@@ -151,19 +159,211 @@ function collectHead(data: Parameters<CollectHeadFn>[0]): void {
   collector?.(data);
 }
 
-/** Provides the router context value used by `useRouter()`. */
-export function RouterProvider({
-  children,
-  router,
-}: RouterProviderProps): React.ReactElement {
-  return React.createElement(
-    RouterContext.Provider,
-    { value: router ?? defaultRouter },
-    children,
-  );
+/** How a navigation should affect the history stack. */
+type HistoryMode = "push" | "replace" | "none";
+
+/** Options accepted by the navigation store's `navigate`. */
+interface NavigateOptions {
+  history?: HistoryMode;
 }
 
-/** Reads the current router context. */
+/**
+ * The cross-bundle navigation store the client router and this React runtime
+ * share. This is an inline mirror of `rendering/client/navigation-store.ts`,
+ * kept here so the public React runtime bundle does not import the rendering
+ * layer. The shared `Symbol.for` key guarantees both bundles resolve the *same*
+ * runtime object regardless of which one evaluates first — so `RouterProvider`
+ * can subscribe synchronously on its first render, with no boot-order race.
+ */
+interface NavigationStore {
+  subscribe(listener: () => void): () => void;
+  getHref(): string;
+  notify(): void;
+  navigate(href: string, options?: NavigateOptions): Promise<void>;
+  setNavigator(navigator: (href: string, options?: NavigateOptions) => Promise<void>): void;
+}
+
+const NAVIGATION_STORE_KEY = Symbol.for("veryfront.navigation.store.v1");
+
+function getNavigationStore(): NavigationStore {
+  const holder = globalThis as Record<symbol, unknown>;
+  const existing = holder[NAVIGATION_STORE_KEY] as NavigationStore | undefined;
+  if (existing) return existing;
+
+  const listeners = new Set<() => void>();
+  let navigator: ((href: string, options?: NavigateOptions) => Promise<void>) | null = null;
+
+  const store: NavigationStore = {
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    getHref() {
+      const loc = globalThis.location;
+      return loc ? `${loc.pathname}${loc.search}${loc.hash}` : "/";
+    },
+    notify() {
+      for (const listener of [...listeners]) {
+        try {
+          listener();
+        } catch {
+          // A subscriber threw; ignore it and continue notifying the others.
+        }
+      }
+    },
+    navigate(href, options) {
+      if (navigator) return navigator(href, options);
+      globalThis.location?.assign(href);
+      return Promise.resolve();
+    },
+    setNavigator(next) {
+      navigator = next;
+    },
+  };
+
+  holder[NAVIGATION_STORE_KEY] = store;
+  return store;
+}
+
+function hrefFromRouter(router: RouterValue | undefined): string | undefined {
+  if (!router) return undefined;
+  const search = new URLSearchParams(router.query ?? {}).toString();
+  return search ? `${router.pathname}?${search}` : router.pathname;
+}
+
+function splitHref(href: string): { pathname: string; search: string } {
+  const queryIndex = href.indexOf("?");
+  if (queryIndex === -1) {
+    const hashIndex = href.indexOf("#");
+    return { pathname: hashIndex === -1 ? href : href.slice(0, hashIndex), search: "" };
+  }
+  const afterQuery = href.slice(queryIndex + 1);
+  const hashIndex = afterQuery.indexOf("#");
+  return {
+    pathname: href.slice(0, queryIndex),
+    search: hashIndex === -1 ? afterQuery : afterQuery.slice(0, hashIndex),
+  };
+}
+
+/**
+ * Provides the router context. `pathname`/`query` track the live URL through the
+ * shared navigation store's `useSyncExternalStore` surface; `params`/`domain`
+ * are seeded from the `router` prop. One component serves both sides: React uses
+ * `getServerSnapshot` (the seed href) during SSR and the live store on the
+ * client, so there is no environment branch — the server render and the first
+ * client render match by construction.
+ *
+ * The store is a stable singleton that exists on first access, so there is no
+ * "is the router mounted yet?" race: the subscription is live from the first
+ * render, and the router's navigations notify through the same object. Page
+ * context (frontmatter/slug/headings) is a separate concern, provided by
+ * `PageContextProvider`, which derives its live location from this router.
+ */
+export function RouterProvider({ router, children }: RouterProviderProps): React.ReactElement {
+  const store = getNavigationStore();
+  const seed = router ?? defaultRouter;
+  // The server snapshot is derived from the router itself, so the first client
+  // render matches the server exactly (both come from one `RouterValue`).
+  const seedHref = hrefFromRouter(router) ?? "/";
+  const getServerSnapshot = React.useCallback(() => seedHref, [seedHref]);
+
+  const href = React.useSyncExternalStore(store.subscribe, store.getHref, getServerSnapshot);
+  const { pathname, search } = splitHref(href);
+
+  const query = React.useMemo(
+    () => Object.fromEntries(new URLSearchParams(search)) as Record<string, string>,
+    [search],
+  );
+
+  // `isMounted` is `false` on the server and the first client render (so they
+  // agree — hydration-safe), then flips `true` after mount. Consumers guard on
+  // this (e.g. `if (!router.isMounted) return null`).
+  const [isMounted, setIsMounted] = React.useState(false);
+  React.useEffect(() => setIsMounted(true), []);
+
+  const routerValue = React.useMemo<RouterValue>(
+    () => ({
+      domain: seed.domain || (globalThis.location?.hostname ?? ""),
+      path: pathname,
+      pathname,
+      params: seed.params,
+      query,
+      isPreview: seed.isPreview,
+      isMounted,
+      navigate: (url: string) => store.navigate(url, { history: "push" }),
+      push: (url: string) => store.navigate(url, { history: "push" }),
+      replace: (url: string) => store.navigate(url, { history: "replace" }),
+      reload: async () => {
+        globalThis.location?.reload();
+      },
+    }),
+    [pathname, query, seed.params, seed.domain, seed.isPreview, isMounted, store],
+  );
+
+  return React.createElement(RouterContext.Provider, { value: routerValue }, children);
+}
+
+/** Options for {@link wrapForHydration}. */
+export interface HydrationWrapOptions {
+  /** Route params from the initial match. */
+  params?: Record<string, string>;
+  /** Page frontmatter, exposed reactively through `usePageContext()`. */
+  frontmatter?: Record<string, unknown>;
+}
+
+/**
+ * Wraps a hydrated client component in `RouterProvider` (router state) nested
+ * with `PageContextProvider` (frontmatter), seeded from the live location plus
+ * the initial route match — mirroring how SSR wraps the tree.
+ *
+ * The RSC hydration path calls this through a runtime import of
+ * `veryfront/router`, so it runs under the app's React instance — the same one
+ * the hydrated component uses, and the same providers and `React` this module
+ * already reference. That is why the caller does not (and must not) pass a
+ * `React` across the module boundary: the wrapping happens here, inside the
+ * module that owns React.
+ */
+export function wrapForHydration(
+  child: React.ReactNode,
+  options: HydrationWrapOptions = {},
+): React.ReactElement {
+  const loc = globalThis.location;
+  const pathname = loc?.pathname ?? "/";
+  const params = options.params ?? {};
+  const query = loc
+    ? (Object.fromEntries(new URLSearchParams(loc.search)) as Record<string, string>)
+    : {};
+  const router: RouterValue = {
+    ...defaultRouter,
+    domain: loc?.hostname ?? "",
+    path: pathname,
+    pathname,
+    params,
+    query,
+  };
+  // `PageContextProvider` derives its live location from the router above; only
+  // the page-authored bits (frontmatter/slug) are seeded here.
+  const pageContext: PageContextValue = {
+    ...defaultPageContext,
+    slug: pathname,
+    path: pathname,
+    params,
+    query,
+    frontmatter: options.frontmatter ?? {},
+  };
+  return React.createElement(RouterProvider, {
+    router,
+    children: React.createElement(PageContextProvider, { pageContext, children: child }),
+  });
+}
+
+/**
+ * Reads the router context: `pathname`, `query`, `params`, and the navigation
+ * actions. Reactive across client-side navigation — this is the single hook for
+ * location and navigation state.
+ */
 export function useRouter(): RouterValue {
   return React.useContext(RouterContext);
 }
@@ -181,16 +381,31 @@ export function Link({
   );
 }
 
-/** Provides page context to route and MDX descendants. */
+/**
+ * Provides page context to route and MDX descendants. Page-authored fields
+ * (`frontmatter`, `slug`, `headings`) come from the `pageContext` prop; the
+ * location fields (`path`, `query`, `params`) are derived from the router so
+ * they stay reactive and there is a single source of truth — `usePageContext()`
+ * exposes the same `query`/`pathname` as `useRouter()`. When rendered outside a
+ * `RouterProvider` (no live router) it falls back to the seed's own location.
+ */
 export function PageContextProvider({
   children,
   pageContext,
 }: PageContextProviderProps): React.ReactElement {
-  return React.createElement(
-    PageContextContext.Provider,
-    { value: pageContext ?? defaultPageContext },
-    children,
+  const seed = pageContext ?? defaultPageContext;
+  const router = React.useContext(RouterContext);
+  const hasRouter = router !== defaultRouter;
+
+  const value = React.useMemo<PageContextValue>(
+    () =>
+      hasRouter
+        ? { ...seed, path: router.pathname, query: router.query, params: router.params }
+        : seed,
+    [seed, hasRouter, router.pathname, router.query, router.params],
   );
+
+  return React.createElement(PageContextContext.Provider, { value }, children);
 }
 
 /** Reads the current page context. */

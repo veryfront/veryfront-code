@@ -18,6 +18,7 @@ import type {
   ModelRuntime,
   ModelRuntimeGenerateResult,
 } from "#veryfront/provider/types.ts";
+import type { RuntimeReasoningOption } from "#veryfront/agent/types.ts";
 
 type GenerateTextOptions = {
   model: ModelRuntime;
@@ -36,6 +37,7 @@ type GenerateTextOptions = {
   frequencyPenalty?: number;
   headers?: HeadersInit;
   providerOptions?: Record<string, unknown>;
+  reasoning?: RuntimeReasoningOption;
   abortSignal?: AbortSignal;
 };
 
@@ -56,6 +58,7 @@ type StreamTextOptions = {
   frequencyPenalty?: number;
   headers?: HeadersInit;
   providerOptions?: Record<string, unknown>;
+  reasoning?: RuntimeReasoningOption;
   includeRawChunks?: boolean;
   abortSignal?: AbortSignal;
 };
@@ -505,6 +508,7 @@ function buildDirectModelOptions(
       : {}),
     ...(options.headers ? { headers: options.headers } : {}),
     ...(options.providerOptions ? { providerOptions: options.providerOptions } : {}),
+    ...(options.reasoning ? { reasoning: options.reasoning } : {}),
     ...("includeRawChunks" in options && options.includeRawChunks !== undefined
       ? { includeRawChunks: options.includeRawChunks }
       : {}),

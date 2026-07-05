@@ -5,6 +5,7 @@ import {
   AppendConversationRunEventsError,
   isCursorMismatchConversationRunAppendError,
   isIgnorableConversationRunAppendError,
+  isPayloadTooLargeConversationRunAppendError,
   parseAppendConversationRunEventsErrorBody,
 } from "./durable-append-errors.ts";
 
@@ -50,5 +51,31 @@ describe("agent/durable-append-errors", () => {
     assertEquals(isIgnorableConversationRunAppendError(upstreamFailure), false);
     assertEquals(isCursorMismatchConversationRunAppendError(cursorMismatch), true);
     assertEquals(isCursorMismatchConversationRunAppendError(terminal), false);
+  });
+
+  it("classifies oversized payload append failures as permanent", () => {
+    const oversizedEvent = new AppendConversationRunEventsError({
+      status: 400,
+      detail: "Agent run event payload must be less than 256 KB",
+    });
+    const oversizedSnapshot = new AppendConversationRunEventsError({
+      status: 400,
+      detail: "Agent run request snapshot payload must be less than 2 MB",
+    });
+    const cursorMismatch = new AppendConversationRunEventsError({
+      status: 400,
+      detail: "External run event cursor mismatch",
+    });
+    const upstreamFailure = new AppendConversationRunEventsError({
+      status: 500,
+      detail: "internal failure",
+    });
+
+    assertEquals(isPayloadTooLargeConversationRunAppendError(oversizedEvent), true);
+    assertEquals(isPayloadTooLargeConversationRunAppendError(oversizedSnapshot), true);
+    assertEquals(isPayloadTooLargeConversationRunAppendError(cursorMismatch), false);
+    assertEquals(isPayloadTooLargeConversationRunAppendError(upstreamFailure), false);
+    // A permanent oversize rejection must NOT be retried as a transient failure.
+    assertEquals(isIgnorableConversationRunAppendError(oversizedEvent), false);
   });
 });

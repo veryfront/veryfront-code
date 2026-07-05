@@ -42,6 +42,7 @@ describe("ext-llm-openai/openai-responses-request-builder", () => {
     );
 
     assertEquals(body.reasoning, { effort: "medium", summary: "auto" });
+    assertEquals(body.store, false);
     assertEquals(body.temperature, undefined);
     assertEquals(warnings.drain().map((warning) => warning.setting), ["temperature"]);
   });
@@ -60,6 +61,33 @@ describe("ext-llm-openai/openai-responses-request-builder", () => {
     );
 
     assertEquals(body.reasoning, { effort: "medium" });
+    assertEquals(body.store, false);
+  });
+
+  it("merges the legacy openai-compatible provider options bucket below openai keys", () => {
+    const warnings = createWarningCollector();
+
+    const body = buildOpenAIResponsesRequest(
+      "gpt-4o-mini",
+      "openai",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        providerOptions: {
+          "openai-compatible": {
+            custom_compat: true,
+            service_tier: "flex",
+          },
+          openai: {
+            service_tier: "default",
+          },
+        },
+      },
+      true,
+      warnings,
+    );
+
+    assertEquals(body.custom_compat, true);
+    assertEquals(body.service_tier, "default");
   });
 
   it("keeps explicit reasoning summaries for direct OpenAI requests", () => {
@@ -226,6 +254,7 @@ describe("ext-llm-openai/openai-responses-request-builder", () => {
 
     assertEquals(body, {
       model: "o4-mini",
+      store: false,
       input: [
         {
           role: "user",

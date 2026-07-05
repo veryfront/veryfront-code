@@ -1,5 +1,6 @@
 import { dirname, join } from "#veryfront/compat/path";
 import { rendererLogger } from "#veryfront/utils";
+import { flattenRouteParams } from "#veryfront/routing";
 import * as BundledReact from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { LayoutItem, MdxBundle, MDXComponents } from "#veryfront/types";
@@ -119,13 +120,7 @@ export class LayoutApplicator {
         const React = await getProjectReact();
 
         const headingsArray = this.headings ?? [];
-        const flatParams = this.params
-          ? Object.fromEntries(
-            Object.entries(this.params)
-              .map(([key, value]) => [key, Array.isArray(value) ? value[0] : value])
-              .filter((entry): entry is [string, string] => entry[1] !== undefined),
-          )
-          : {};
+        const flatParams = flattenRouteParams(this.params);
         const query = this.requestUrl ? Object.fromEntries(this.requestUrl.searchParams) : {};
         const pageContext = {
           slug: pageInfo.entity.slug || "",

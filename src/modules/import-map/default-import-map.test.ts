@@ -75,6 +75,12 @@ describe("modules/import-map/default-import-map", () => {
       assert(workflowUrl.includes("?ssr=true"), `Expected ssr=true param but got: ${workflowUrl}`);
     });
 
+    it("should not map veryfront/embedding to removed React upload hooks", () => {
+      const imports = getImports();
+
+      assertEquals(imports["veryfront/embedding"], undefined);
+    });
+
     it("should map React to esm.sh URLs", () => {
       const imports = getImports();
 

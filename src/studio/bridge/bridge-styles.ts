@@ -3,8 +3,8 @@
  * CSS injection for overlay, editor, and inspector styles.
  *
  * Design tokens are hardcoded to match Studio's visual language (oklch color
- * space, radii, shadows, spacing). Uses system font stack since Studio's
- * Gellix font is proprietary and unavailable in the preview iframe.
+ * space, radii, shadows, spacing). Uses an open font/system stack because the
+ * Studio app font is not distributed with the framework.
  */
 
 import {
@@ -41,7 +41,7 @@ const OVERLAY_CSS = `
         background: oklch(0.6852 0.162 241.8);
         color: white;
         font-size: 11px;
-        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
         padding: 2px 6px;
         border-radius: 3px 3px 0 0;
         white-space: nowrap;
@@ -66,7 +66,7 @@ const OVERLAY_CSS = `
         border-radius: 9999px;
         background: oklch(0.2768 0 0);
         color: oklch(0.9512 0.008 98.88);
-        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
         font-size: 13px;
         font-weight: 500;
         line-height: 1;
@@ -91,7 +91,7 @@ const OVERLAY_CSS = `
         inset: 0;
         z-index: 100000;
         background: oklch(1 0 0);
-        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
         display: none;
       }
 
@@ -100,7 +100,7 @@ const OVERLAY_CSS = `
         border-radius: 6px;
         background: oklch(1 0 0);
         color: oklch(0.2768 0 0);
-        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
         font-size: 13px;
         line-height: 1;
         min-width: 28px;
@@ -207,7 +207,7 @@ const OVERLAY_CSS = `
         border: 0;
         border-radius: 6px;
         background: transparent;
-        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
         text-align: left;
         padding: 6px 10px;
         cursor: pointer;
@@ -310,7 +310,7 @@ const OVERLAY_CSS = `
         border-radius: 6px;
         background: transparent;
         color: oklch(0.2768 0 0);
-        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
         font-size: 12px;
         font-weight: 600;
         line-height: 1;
@@ -351,7 +351,7 @@ const OVERLAY_CSS = `
         border-radius: 6px;
         background: transparent;
         color: oklch(0.2768 0 0);
-        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
         font-size: 12px;
         font-weight: 600;
         line-height: 1;
@@ -400,7 +400,7 @@ const OVERLAY_CSS = `
         border: 0;
         border-radius: 6px;
         background: transparent;
-        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
         text-align: left;
         padding: 6px 10px;
         font-size: 13px;
@@ -472,7 +472,7 @@ const OVERLAY_CSS = `
         border: 1px solid oklch(0.6852 0.162 241.8 / 0.24);
         background: oklch(1 0 0 / 0.96);
         color: oklch(0.2768 0 0);
-        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
         font-size: 11px;
         font-weight: 600;
         line-height: 1.2;
@@ -551,7 +551,7 @@ const OVERLAY_CSS = `
         border-radius: 6px;
         background: oklch(1 0 0);
         color: oklch(0.2768 0 0);
-        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
         font-size: 11px;
         line-height: 1;
         padding: 5px 7px;

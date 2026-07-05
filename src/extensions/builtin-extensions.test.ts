@@ -105,7 +105,7 @@ describe("createBuiltinExtensions", () => {
   });
 
   it("does not statically import optional implementation extensions", async () => {
-    const source = await Deno.readTextFile("src/extensions/builtin-extensions.ts");
+    const source = await Deno.readTextFile(new URL("./builtin-extensions.ts", import.meta.url));
 
     assertEquals(source.includes('from "../../extensions/ext-auth-jwt/src/index.ts"'), false);
     assertEquals(

@@ -15,12 +15,13 @@ import type {
   KreuzbergExtractor,
 } from "veryfront/extensions/compat";
 import { isMissingPackageError, loadKreuzberg, loadKreuzbergNative } from "./kreuzberg.ts";
+import { extractionConfigForMimeType } from "./extraction-config.ts";
 import { isDeno } from "./runtime.ts";
 
-/** Maximum time to wait for fallback worker extraction before aborting. */
-export const EXTRACTION_TIMEOUT_MS = 120_000;
 export const NATIVE_PROGRESS_IDLE_TIMEOUT_MS = 120_000;
 export const NATIVE_PROGRESS_HARD_TIMEOUT_MS = 10 * 60_000;
+/** Maximum time to wait for fallback worker extraction before aborting. */
+export const EXTRACTION_TIMEOUT_MS = NATIVE_PROGRESS_HARD_TIMEOUT_MS;
 
 function extractInWorkerDeno(
   buffer: ArrayBuffer,
@@ -98,7 +99,11 @@ async function extractWithNativeKreuzberg(
   loadNative: () => Promise<KreuzbergExtractor>,
 ): Promise<string> {
   const { extractBytes } = await loadNative();
-  const result = await extractBytes(new Uint8Array(buffer), mimeType);
+  const result = await extractBytes(
+    new Uint8Array(buffer),
+    mimeType,
+    extractionConfigForMimeType(mimeType),
+  );
   return result.content;
 }
 
@@ -220,7 +225,11 @@ export class KreuzbergDocumentExtractor implements DocumentExtractor {
     // PDF path can hang on valid large manuals.
     if (!isDenoRuntime) {
       const { extractBytes } = await loadKreuzberg();
-      const result = await extractBytes(new Uint8Array(buffer), mimeType);
+      const result = await extractBytes(
+        new Uint8Array(buffer),
+        mimeType,
+        extractionConfigForMimeType(mimeType),
+      );
       return result.content;
     }
 

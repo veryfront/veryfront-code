@@ -54,6 +54,14 @@ function createMockUploadService() {
       }
 
       const createMatch = url.pathname.match(/^\/projects\/([^/]+)\/uploads$/);
+      if (createMatch && method === "GET") {
+        const projectSlug = decodeURIComponent(createMatch[1] ?? "");
+        const prefix = `${projectSlug}:`;
+        const data = [...uploads.keys()]
+          .filter((key) => key.startsWith(prefix))
+          .map((key) => ({ path: key.slice(prefix.length) }));
+        return Response.json({ data });
+      }
       if (createMatch && method === "POST") {
         const projectSlug = decodeURIComponent(createMatch[1] ?? "");
         const body = await request.json() as {
@@ -243,6 +251,62 @@ describe("VeryfrontCloudBlobStorage", () => {
       );
       assertExists(firstCreate);
       assertEquals(firstCreate.headers.get("Authorization"), "Bearer vf_config_token");
+    } finally {
+      service.restore();
+    }
+  });
+
+  it("lists stored blobs (newest first) with sidecar filenames", async () => {
+    const service = createMockUploadService();
+    const storage = new VeryfrontCloudBlobStorage({
+      apiBaseUrl: "https://api.test",
+      apiToken: "vf_config_token",
+      projectSlug: "demo-project",
+      prefix: ".vf-test/",
+      now: () => FIXED_NOW,
+    });
+
+    try {
+      const first = await storage.put("one", {
+        mimeType: "text/plain",
+        metadata: { filename: "first.txt" },
+      });
+      const second = await storage.put("two", {
+        mimeType: "text/plain",
+        metadata: { filename: "second.txt" },
+      });
+
+      const refs = await storage.list();
+
+      // Both data blobs surface (the `.meta.json` sidecars are filtered out),
+      // enriched with the original filename from each sidecar.
+      assertEquals(refs.length, 2);
+      const byId = new Map(refs.map((ref) => [ref.id, ref]));
+      assertEquals(byId.get(first.id)?.metadata?.filename, "first.txt");
+      assertEquals(byId.get(second.id)?.metadata?.filename, "second.txt");
+      assertExists(byId.get(first.id)?.url);
+
+      const listCall = service.fetchCalls.find((call) =>
+        call.method === "GET" && call.url === "https://api.test/projects/demo-project/uploads"
+      );
+      assertExists(listCall);
+    } finally {
+      service.restore();
+    }
+  });
+
+  it("returns an empty list when nothing is stored", async () => {
+    const service = createMockUploadService();
+    const storage = new VeryfrontCloudBlobStorage({
+      apiBaseUrl: "https://api.test",
+      apiToken: "vf_config_token",
+      projectSlug: "demo-project",
+      prefix: ".vf-test/",
+      now: () => FIXED_NOW,
+    });
+
+    try {
+      assertEquals(await storage.list(), []);
     } finally {
       service.restore();
     }

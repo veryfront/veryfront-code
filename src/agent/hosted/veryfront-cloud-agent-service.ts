@@ -37,6 +37,8 @@ import { nodeAdapter } from "../../platform/adapters/node.ts";
 import {
   getVeryfrontCloudProviderFromModelId,
   resolveVeryfrontCloudModelId,
+  resolveVeryfrontCloudModelThinking,
+  resolveVeryfrontCloudReasoningOption,
   resolveVeryfrontCloudThinkingProviderOptions,
 } from "../../provider/index.ts";
 import { __registerTraceContextGetter } from "../../utils/logger/logger.ts";
@@ -712,7 +714,9 @@ function createInvokeAgentTool(
     createBashTool: context.options.createBashTool,
     resolveModelId: resolveVeryfrontCloudModelId,
     resolveProvider: getVeryfrontCloudProviderFromModelId,
+    resolveModelThinking: resolveVeryfrontCloudModelThinking,
     resolveProviderOptions: resolveVeryfrontCloudThinkingProviderOptions,
+    resolveReasoning: resolveVeryfrontCloudReasoningOption,
     shouldRethrowError: shouldRethrowInvokeAgentError,
     buildGlobalTools: (globalToolContext) => ({
       load_skill: createLoadSkillTool(context, globalToolContext),

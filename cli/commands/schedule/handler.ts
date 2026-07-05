@@ -33,7 +33,8 @@ export async function handleScheduleCommand(args: ParsedArgs): Promise<void> {
   const projectDir = Deno.cwd();
   const input = opts.input ? await readJsonFile(opts.input, "--input JSON file") : undefined;
 
-  await withProjectSourceContext(projectDir, async ({ adapter, config, projectId }) => {
+  await withProjectSourceContext(projectDir, async (context) => {
+    const { adapter, config, configCacheKey, projectId } = context;
     const result = await discoverSchedules({ projectDir, adapter, config });
     if (result.errors.length > 0) {
       throw new Error(`Schedule discovery failed: ${result.errors[0]?.message}`);
@@ -48,6 +49,7 @@ export async function handleScheduleCommand(args: ParsedArgs): Promise<void> {
       projectDir,
       adapter,
       config,
+      cacheKey: configCacheKey,
       projectId,
       target: schedule.target,
       input: input ?? schedule.input ?? {},

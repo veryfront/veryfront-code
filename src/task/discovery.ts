@@ -40,7 +40,11 @@ const TASK_IGNORE_PATTERNS = [
 ] as const;
 
 /**
- * Discovered task info
+ * Discovered task info.
+ *
+ * @deprecated Use project runtime discovery helpers from `veryfront/task`
+ * instead. Runtime discovery keeps tasks, tools, agents, and cloud runs on the
+ * same project discovery path.
  */
 export interface DiscoveredTask {
   /** Task ID derived from file path (e.g., "sync-data" from tasks/sync-data.ts) */
@@ -60,7 +64,9 @@ export interface DiscoveredTask {
 }
 
 /**
- * Options for task discovery
+ * Options for file-based task discovery.
+ *
+ * @deprecated Use `discoverProjectTaskRuntime` instead.
  */
 export interface TaskDiscoveryOptions {
   /** Project directory */
@@ -80,7 +86,9 @@ export interface TaskDiscoveryOptions {
 }
 
 /**
- * Result of task discovery
+ * Result of file-based task discovery.
+ *
+ * @deprecated Use `DiscoveryResult` from project runtime discovery instead.
  */
 export interface TaskDiscoveryResult {
   /** All discovered tasks */
@@ -161,7 +169,10 @@ function logDiscoveredTask(task: DiscoveredTask, debug: boolean): void {
 }
 
 /**
- * Derive task ID from file path (e.g., "tasks/sync-data.ts" → "sync-data")
+ * Derive task ID from file path (e.g., "tasks/sync-data.ts" -> "sync-data").
+ *
+ * @deprecated Use project runtime task IDs from `discoverProjectTaskRuntime`
+ * instead.
  */
 export function deriveTaskId(filePath: string, tasksDir: string): string {
   // Remove the tasks dir prefix and extension
@@ -175,7 +186,9 @@ export function deriveTaskId(filePath: string, tasksDir: string): string {
 }
 
 /**
- * Discover all tasks in a project
+ * Discover all tasks in a project with the legacy file-based path.
+ *
+ * @deprecated Use `discoverProjectTaskRuntime` instead.
  */
 export async function discoverTasks(
   options: TaskDiscoveryOptions,
@@ -247,7 +260,10 @@ export async function discoverTasks(
 }
 
 /**
- * Find a specific task by ID, short-circuiting discovery once found.
+ * Find a specific task by ID through the legacy file-based path.
+ *
+ * @deprecated Use `discoverProjectTaskRuntime` and `findProjectRuntimeTask`
+ * instead.
  */
 export async function findTaskById(
   taskId: string,

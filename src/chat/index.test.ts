@@ -3,7 +3,6 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import * as chatModule from "./index.ts";
 import * as chatUI from "#veryfront/react/components/chat/chat.tsx";
-import * as messageModule from "#veryfront/react/components/chat/message.tsx";
 import * as agentCardModule from "#veryfront/react/components/chat/agent-card.tsx";
 import * as errorBoundaryModule from "#veryfront/react/components/chat/error-boundary.tsx";
 import * as useChatModule from "#veryfront/agent/react/use-chat/index.ts";
@@ -14,20 +13,46 @@ import * as useStreamingModule from "#veryfront/agent/react/use-streaming.ts";
 import * as useVoiceInputModule from "#veryfront/agent/react/use-voice-input.ts";
 
 const expectedRuntimeExports = [
-  "AgentCard",
+  // Target component names (renamed public API; v1 aliases retained below).
+  "Attachment",
   "AttachmentPill",
+  "Reasoning",
+  "ToolCall",
+  "useToolCall",
+  "useReasoning",
+  "ChatInput",
+  "ChatComposer",
+  "AgentAvatar",
+  "AgentPicker",
+  "ChatActions",
+  "ChatAgentPicker",
+  "ChatMessagesSkeleton",
+  "agentsToPickerOptions",
+  "normalizeAgentMetadata",
+  "normalizeAgentsListResponse",
+  "useAgents",
+  "CodeBlock",
+  "CodeSurface",
+  "CopyButton",
+  "useClipboard",
+  "Markdown",
+  "AppShell",
+  "useAppShell",
+  "Tabs",
+  "TabsItem",
+  "ChatThemeScope",
+  "AgentCard",
   "BranchPicker",
   "Chat",
   "ChatErrorBoundary",
   "ChatComponents",
-  "ChatComposer",
   "ChatContextProvider",
   "ChatEmpty",
+  "ChatEmptyState",
   "ChatIf",
   "ChatMessageList",
   "ChatRoot",
   "ChatSidebar",
-  "ChatWithSidebar",
   "DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS",
   "DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS",
   "ChatStreamIdleTimeoutError",
@@ -41,6 +66,7 @@ const expectedRuntimeExports = [
   "InlineCitation",
   "Loader",
   "Message",
+  "MessageActionBar",
   "MessageActions",
   "MessageContextProvider",
   "MessageEditForm",
@@ -52,17 +78,19 @@ const expectedRuntimeExports = [
   "RichCodeBlock",
   "Shimmer",
   "SkillBadge",
+  "SourcePill",
   "Sources",
-  "StandaloneMessage",
+  "useSources",
   "StepIndicator",
-  "StreamingMessage",
   "Suggestion",
   "Suggestions",
   "TabSwitcher",
-  "ThreadListContextProvider",
   "ToolCallCard",
   "ToolStatusBadge",
+  "AttachmentsPanel",
   "UploadsPanel",
+  "StandaloneMessage",
+  "StreamingMessage",
   "buildChatStreamChunkMessageMetadata",
   "isLongRunningToolRunning",
   "isHeartbeatOnlyMetadataChunk",
@@ -81,6 +109,8 @@ const expectedRuntimeExports = [
   "isReasoningPart",
   "isSkillToolPart",
   "isToolPart",
+  "localConversationStore",
+  "memoryConversationStore",
   "normalizeChatMessageMetadata",
   "normalizeAgentMetadataResponse",
   "normalizeChatUiMessageChunk",
@@ -88,19 +118,33 @@ const expectedRuntimeExports = [
   "useAgent",
   "useAgentMetadata",
   "useChat",
+  "useConversation",
+  "useConversations",
+  "useConversationsContext",
+  "useConversationsContextOptional",
+  "ConversationsProvider",
+  "ConversationsContextProvider",
   "useChatErrorHandler",
   "useChatContext",
   "useChatContextOptional",
   "useCompletion",
   "useComposerContext",
+  "useStickToBottom",
   "useComposerContextOptional",
   "useMessageContext",
   "useMessageContextOptional",
   "useStreaming",
-  "useThreadListContext",
-  "useThreadListContextOptional",
-  "useThreads",
+  "useUpload",
+  "useUploadsRegistry",
   "useVoiceInput",
+  // Compound sub-part hooks (each throws outside its provider).
+  "useAgentCard",
+  "useAgentPicker",
+  "useAttachmentPill",
+  "useChatActions",
+  "useModelSelector",
+  "useStepIndicator",
+  "useAttachmentsPanel",
 ].sort();
 
 describe("chat/index.ts exports", () => {
@@ -110,10 +154,12 @@ describe("chat/index.ts exports", () => {
 
   it("keeps core re-exports wired to their source modules", () => {
     assertEquals(chatModule.Chat, chatUI.Chat);
-    assertEquals(chatModule.ChatWithSidebar, chatUI.ChatWithSidebar);
     assertEquals(chatModule.useChat, useChatModule.useChat);
     assertEquals(chatModule.useAgent, useAgentModule.useAgent);
-    assertEquals(chatModule.useAgentMetadata, useAgentMetadataModule.useAgentMetadata);
+    assertEquals(
+      chatModule.useAgentMetadata,
+      useAgentMetadataModule.useAgentMetadata,
+    );
     assertEquals(
       chatModule.getAgentPromptSuggestions,
       useAgentMetadataModule.getAgentPromptSuggestions,
@@ -122,17 +168,27 @@ describe("chat/index.ts exports", () => {
     assertEquals(chatModule.useStreaming, useStreamingModule.useStreaming);
     assertEquals(chatModule.useVoiceInput, useVoiceInputModule.useVoiceInput);
     assertEquals(chatModule.AgentCard, agentCardModule.AgentCard);
-    assertEquals(chatModule.ChatErrorBoundary, errorBoundaryModule.ChatErrorBoundary);
+    assertEquals(
+      chatModule.ChatErrorBoundary,
+      errorBoundaryModule.ChatErrorBoundary,
+    );
   });
 
-  it("keeps standalone message aliases separate from the chat compound export", () => {
+  it("exposes deprecated message aliases as the single render-or-compose Message", () => {
+    // `Message` is both the default component (`<Message message={…} />`) and
+    // the compound root (`<Message.Root>…`). The old standalone names stay as
+    // one-release aliases, not separate implementations.
     assertEquals(chatModule.Message, chatUI.Message);
-    assertEquals(chatModule.StandaloneMessage, messageModule.Message);
-    assertEquals(chatModule.StreamingMessage, messageModule.StreamingMessage);
+    assertEquals(chatModule.StandaloneMessage, chatUI.Message);
+    assertEquals(chatModule.StreamingMessage, chatUI.Message);
+    assertEquals(chatModule.ChatComposer, chatUI.ChatInput);
+    assertEquals(chatModule.ChatComponents.Composer, chatUI.ChatInput);
+    assertEquals(typeof (chatModule.Message as { Root?: unknown }).Root, "object");
   });
 
   it("does not widen the barrel with react-only non-chat exports", () => {
-    assertEquals("Markdown" in chatModule, false);
+    // `Markdown` is intentionally part of the chat public API (message body renderer).
+    assertEquals("Markdown" in chatModule, true);
     assertEquals("chatTokens" in chatModule, false);
     assertEquals("getChatTokensCSS" in chatModule, false);
     assertEquals("ColorModeProvider" in chatModule, false);

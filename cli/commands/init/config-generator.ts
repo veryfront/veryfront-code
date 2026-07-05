@@ -4,6 +4,12 @@ import { createFileSystem } from "veryfront/platform";
 
 // Keep init scaffold aligned with current framework default React major/minor.
 const DEFAULT_INIT_REACT_VERSION = "19.2.4";
+const REQUIRED_INIT_EXTENSION_PACKAGES = [
+  "@veryfront/ext-bundler-esbuild",
+  "@veryfront/ext-content-mdx",
+  "@veryfront/ext-css-tailwind",
+  "@veryfront/ext-parser-babel",
+] as const;
 
 export interface CreatePackageJsonOptions {
   /** Template-owned dependencies that must be installed for generated apps. */
@@ -54,6 +60,10 @@ export async function createPackageJson(
   }
 
   const dirName = projectDir.split(/[/\\]/).pop();
+  const veryfrontVersionRange = `^${VERSION}`;
+  const requiredExtensionDeps = Object.fromEntries(
+    REQUIRED_INIT_EXTENSION_PACKAGES.map((packageName) => [packageName, veryfrontVersionRange]),
+  );
   const packageJson = {
     name: projectName ?? dirName ?? "veryfront-project",
     version: "0.1.0",
@@ -69,9 +79,10 @@ export async function createPackageJson(
     dependencies: {
       ...templateDeps,
       ...integrationDeps,
+      ...requiredExtensionDeps,
       react: `^${DEFAULT_INIT_REACT_VERSION}`,
       "react-dom": `^${DEFAULT_INIT_REACT_VERSION}`,
-      veryfront: `^${VERSION}`,
+      veryfront: veryfrontVersionRange,
       zod: "^3.24.0",
     },
   };

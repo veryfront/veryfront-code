@@ -1,0 +1,27 @@
+{
+  "private": true,
+  "name": "veryfront-code-storybook",
+  "type": "module",
+  "scripts": {
+    "prestorybook": "npm install",
+    "storybook": "storybook dev -p 6006 --host 0.0.0.0",
+    "prebuild-storybook": "npm install",
+    "build-storybook": "storybook build -o dist"
+  },
+  "devDependencies": {
+    "@storybook/addon-docs": "^10.3.6",
+    "@storybook/addon-links": "^10.3.6",
+    "@storybook/react-vite": "^10.3.6",
+    "@tailwindcss/vite": "^4.1.18",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^4.0.4",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "shiki": "^2.3.2",
+    "storybook": "^10.3.6",
+    "tailwindcss": "^4.1.18",
+    "typescript": "^5.1.6",
+    "vite": "^6.3.0"
+  }
+}

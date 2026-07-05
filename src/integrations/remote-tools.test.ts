@@ -58,14 +58,14 @@ afterEach(() => {
 
 describe("integrations/remote-tools", () => {
   it("does not keep a legacy string end-user overload for remote tool execution", async () => {
-    const source = await Deno.readTextFile("src/integrations/remote-tools.ts");
+    const source = await Deno.readTextFile(new URL("./remote-tools.ts", import.meta.url));
 
     assertEquals(source.includes("contextOrEndUserId"), false);
     assertEquals(source.includes('typeof contextOrEndUserId === "string"'), false);
   });
 
   it("does not keep legacy OAuth caller identity URL sanitizers in live remote tools", async () => {
-    const source = await Deno.readTextFile("src/integrations/remote-tools.ts");
+    const source = await Deno.readTextFile(new URL("./remote-tools.ts", import.meta.url));
     const legacyCallerIdentityParam = ["end", "User", "Id"].join("");
 
     assertEquals(source.includes(legacyCallerIdentityParam), false);

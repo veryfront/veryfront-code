@@ -12,7 +12,8 @@ import {
 import type { RuntimeAdapter } from "#veryfront/platform";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
-import { type DiscoveredTask, findTaskById } from "#veryfront/task/discovery.ts";
+import type { DiscoveryResult } from "#veryfront/discovery";
+import { findProjectRuntimeTask } from "#veryfront/task/project-runtime.ts";
 import { runTask, type RunTaskOptions, type TaskRunResult } from "#veryfront/task/runner.ts";
 import { type DiscoveredEval, findEvalById } from "#veryfront/eval/discovery.ts";
 import { runEval } from "#veryfront/eval/runner.ts";
@@ -100,15 +101,6 @@ interface WorkflowClientView {
 }
 
 export interface ProjectRunExecuteHandlerDeps {
-  findTaskById(
-    taskId: string,
-    options: {
-      projectDir: string;
-      adapter: RuntimeAdapter;
-      config?: VeryfrontConfig;
-      debug?: boolean;
-    },
-  ): Promise<DiscoveredTask | null>;
   runTask(options: RunTaskOptions): Promise<TaskRunResult>;
   findWorkflowById(
     workflowId: string,
@@ -134,7 +126,7 @@ export interface ProjectRunExecuteHandlerDeps {
   runEval(definition: EvalDefinition, options: RunEvalOptions): Promise<EvalReport>;
   createEvalAgentAdapter(config: AgentServiceEvalAdapterConfig): EvalAgentAdapter;
   uploadEvalReport(input: EvalReportUploadInput): Promise<string | null>;
-  ensureProjectDiscovery(ctx: HandlerContext): Promise<void>;
+  ensureProjectDiscovery(ctx: HandlerContext): Promise<DiscoveryResult>;
   executeKnowledgeIngest(input: {
     request: ProjectRunExecuteRequest;
     ctx: HandlerContext;
@@ -291,12 +283,8 @@ async function executeTaskRun(
     throw new Error("Knowledge ingest must be executed through the knowledge ingest executor");
   }
 
-  const task = await deps.findTaskById(taskId, {
-    projectDir: ctx.projectDir,
-    adapter: ctx.adapter,
-    config: ctx.config,
-    debug: ctx.debug,
-  });
+  const discovery = await deps.ensureProjectDiscovery(ctx);
+  const task = findProjectRuntimeTask(discovery, taskId);
 
   if (!task) {
     return {
@@ -1109,7 +1097,6 @@ async function executeReleaseAssetBuildRun(input: {
 }
 
 const defaultDeps: ProjectRunExecuteHandlerDeps = {
-  findTaskById,
   runTask,
   findWorkflowById,
   findEvalById,

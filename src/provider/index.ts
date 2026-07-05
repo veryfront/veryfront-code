@@ -42,6 +42,7 @@ export {
   resolveVeryfrontCloudGatewayModelId,
   resolveVeryfrontCloudModelId,
   resolveVeryfrontCloudModelThinking,
+  resolveVeryfrontCloudReasoningOption,
   resolveVeryfrontCloudThinkingProviderOptions,
   tryGetVeryfrontCloudProviderFromModelId,
   VERYFRONT_CLOUD_CHAT_MODELS,

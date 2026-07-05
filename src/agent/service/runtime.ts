@@ -1,4 +1,5 @@
 import { agent } from "../factory.ts";
+import type { AgentConfig } from "../types.ts";
 import {
   type AgentServiceRoute,
   type AgentServiceRuntime,
@@ -171,6 +172,16 @@ function defaultTrace<TResult>(
   return operation();
 }
 
+function normalizeAgentServiceTools(
+  tools: RuntimeAgentMarkdownDefinition["tools"],
+): AgentConfig["tools"] {
+  if (tools === undefined || tools === true) {
+    return tools;
+  }
+
+  return Object.fromEntries(tools.map((toolId) => [toolId, true]));
+}
+
 function combineAgentServiceLifecycle(
   primary: AgentServiceServerLifecycle,
   secondary: AgentServiceServerLifecycle | undefined,
@@ -228,6 +239,9 @@ export function createAgentServiceRuntime<
       model: agentConfig.model,
       temperature: agentConfig.temperature,
       maxSteps: agentConfig.maxSteps,
+      providerTools: agentConfig.providerTools,
+      skills: agentConfig.skills,
+      tools: normalizeAgentServiceTools(agentConfig.tools),
     }),
     server: {
       port: config.PORT,

@@ -8,6 +8,7 @@ export { useChat } from "./use-chat/index.ts";
 export type {
   BranchInfo,
   ChatDynamicToolPart,
+  ChatFilePart,
   ChatFinishReason,
   ChatMessage,
   ChatMessagePart,
@@ -30,6 +31,7 @@ export type { UseAgentOptions, UseAgentResult } from "./use-agent.ts";
 
 export {
   getAgentPromptSuggestions,
+  normalizeAgentMetadata,
   normalizeAgentMetadataResponse,
   useAgentMetadata,
 } from "./use-agent-metadata.ts";
@@ -41,6 +43,9 @@ export type {
   AgentMetadataTaskSuggestion,
   UseAgentMetadataResult,
 } from "./use-agent-metadata.ts";
+
+export { normalizeAgentsListResponse, useAgents } from "./use-agents.ts";
+export type { UseAgentsOptions, UseAgentsResult } from "./use-agents.ts";
 
 export { useCompletion } from "./use-completion.ts";
 export type { UseCompletionOptions, UseCompletionResult } from "./use-completion.ts";

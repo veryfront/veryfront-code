@@ -56,13 +56,21 @@ function resolveDiscoveryPaths(
   return discovery?.paths ?? defaultPaths;
 }
 
+function resolveProjectDiscoveryBaseDir(
+  projectDir: string,
+  config?: VeryfrontConfig | null,
+): string {
+  const fsType = config?.fs?.type ?? "local";
+  return fsType === "github" || fsType === "veryfront-api" ? "" : projectDir;
+}
+
 export function createProjectDiscoveryConfig(
   input: ProjectDiscoveryConfigInput,
 ): ProjectDiscoveryConfig {
   const aiConfig = input.config?.ai;
 
   return {
-    baseDir: input.projectDir,
+    baseDir: resolveProjectDiscoveryBaseDir(input.projectDir, input.config),
     toolDirs: resolveDiscoveryPaths(
       aiConfig?.tools?.discovery,
       DEFAULT_PROJECT_DISCOVERY_DIRS.toolDirs,

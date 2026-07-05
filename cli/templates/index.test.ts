@@ -90,6 +90,71 @@ describe("cli/templates", () => {
     assertEquals(calculator.includes("execute: ({ operation, a, b }) =>"), true);
   });
 
+  it("uses the current app-mode chat surface in starter templates", async () => {
+    const simpleStarters: Array<{ template: TemplateName; page: string; agentId: string }> = [
+      { template: "ai-agent", page: "app/page.tsx", agentId: "assistant" },
+      { template: "multi-agent-system", page: "app/page.tsx", agentId: "orchestrator" },
+      { template: "coding-agent", page: "app/page.tsx", agentId: "coder" },
+      { template: "saas-starter", page: "app/dashboard/page.tsx", agentId: "assistant" },
+    ];
+
+    for (const { template, page, agentId } of simpleStarters) {
+      const pageSource = await Deno.readTextFile(
+        new URL(`./files/${template}/${page}`, import.meta.url),
+      );
+      assertEquals(
+        pageSource.includes("useChat"),
+        false,
+        `${template} should use app-mode Chat instead of wiring useChat manually`,
+      );
+      assertEquals(
+        pageSource.includes(`agentId="${agentId}"`),
+        true,
+        `${template} should pass its generated agent id to Chat`,
+      );
+    }
+
+    const featureChat = await Deno.readTextFile(
+      new URL("./features/ai/files/app/chat/page.tsx", import.meta.url),
+    );
+    assertEquals(featureChat.includes("useChat"), false);
+    assertEquals(featureChat.includes('agentId="assistant"'), true);
+  });
+
+  it("keeps docs-agent on the shared chat shell and uploads components", async () => {
+    const layout = await Deno.readTextFile(
+      new URL("./files/docs-agent/app/layout.tsx", import.meta.url),
+    );
+    const page = await Deno.readTextFile(
+      new URL("./files/docs-agent/app/page.tsx", import.meta.url),
+    );
+    const uploadsPage = await Deno.readTextFile(
+      new URL("./files/docs-agent/app/uploads/page.tsx", import.meta.url),
+    );
+    const agent = await Deno.readTextFile(
+      new URL("./files/docs-agent/agents/rag.ts", import.meta.url),
+    );
+
+    for (
+      const needle of [
+        "ChatThemeScope",
+        "ConversationsProvider",
+        "AppShell",
+        "ChatSidebar",
+        "Tabs",
+      ]
+    ) {
+      assertEquals(layout.includes(needle), true, `docs-agent layout should use ${needle}`);
+    }
+
+    assertEquals(page.includes("useChat"), false);
+    assertEquals(page.includes('agentId="rag"'), true);
+    assertEquals(page.includes('uploadApi="/api/uploads"'), true);
+    assertEquals(uploadsPage.includes("AttachmentsPanel"), true);
+    assertEquals(uploadsPage.includes("useUploadsRegistry"), true);
+    assertEquals(agent.includes("suggestions:"), true);
+  });
+
   it("integration token store fails closed instead of silently using memory in production", async () => {
     const tokenStorePath = new URL(
       "./integrations/_base/files/lib/token-store.ts",

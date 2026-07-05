@@ -9,6 +9,7 @@ export { useChat } from "#veryfront/agent/react/use-chat/use-chat.ts";
 export type {
   BranchInfo,
   ChatDynamicToolPart,
+  ChatFilePart,
   ChatMessage,
   ChatMessagePart,
   ChatReasoningPart,

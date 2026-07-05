@@ -1,5 +1,12 @@
 import * as React from "react";
 
+// SSR-safe layout effect: run before paint on the client (so the textarea's
+// auto-resize height is applied in the same frame as hydration — no visible
+// jump), and fall back to a no-op effect on the server.
+const useIsomorphicLayoutEffect = typeof document !== "undefined"
+  ? React.useLayoutEffect
+  : React.useEffect;
+
 export interface InputBoxProps extends
   Omit<
     React.InputHTMLAttributes<HTMLInputElement | HTMLTextAreaElement>,
@@ -18,7 +25,8 @@ export const InputBox = React.forwardRef<
   InputBoxProps
 >(({ className, value, onChange, onSubmit, multiline, ...props }, ref) => {
   const internalRef = React.useRef<HTMLTextAreaElement>(null);
-  const textareaRef = (ref as React.RefObject<HTMLTextAreaElement>) || internalRef;
+  const textareaRef = (ref as React.RefObject<HTMLTextAreaElement>) ||
+    internalRef;
 
   const handleKeyDown = (
     e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>,
@@ -28,8 +36,11 @@ export const InputBox = React.forwardRef<
     onSubmit();
   };
 
-  // Auto-resize textarea to fit content
-  React.useEffect(() => {
+  // Auto-resize textarea to fit content. Runs in a layout effect (before paint)
+  // so the height is set in the same frame as hydration — the fixed `min-h`
+  // class on the textarea holds the SSR height, so there is no post-hydration
+  // jump.
+  useIsomorphicLayoutEffect(() => {
     const el = textareaRef.current;
     if (!el || !multiline) return;
     el.style.height = "auto";
@@ -43,6 +54,9 @@ export const InputBox = React.forwardRef<
       <textarea
         ref={textareaRef as React.RefObject<HTMLTextAreaElement>}
         className={className}
+        // The auto-resize height is applied client-side only, so the inline
+        // `height` differs between SSR and first client render.
+        suppressHydrationWarning
         style={{ resize: "none", border: "none", outline: "none" }}
         value={value}
         onChange={onChange}

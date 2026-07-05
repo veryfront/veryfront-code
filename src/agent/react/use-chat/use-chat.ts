@@ -15,7 +15,9 @@ import { createError, ensureError, toError } from "#veryfront/errors/veryfront-e
 import { handleAgUiStreamingResponse } from "#veryfront/agent/react/use-chat/streaming/index.ts";
 import type {
   BranchInfo,
+  ChatFilePart,
   ChatMessage,
+  ChatMessagePart,
   InferenceMode,
   ToolOutput,
   UseChatOptions,
@@ -58,6 +60,35 @@ export function findBranchUserMessageIndex(
   return messages.findIndex((m) =>
     m.role === "user" && branchKeyByMessageId.get(m.id) === branchKey
   );
+}
+
+/**
+ * Build the parts for an outgoing user message. File attachments lead (before
+ * the text) so the model sees the referenced files first — matching how AI-SDK
+ * orders multimodal parts. Exported for unit testing.
+ */
+export function buildUserMessageParts(
+  text: string,
+  files?: ChatFilePart[],
+): ChatMessagePart[] {
+  return [...(files ?? []), { type: "text", text }];
+}
+
+function isFilePart(part: ChatMessagePart): part is ChatFilePart {
+  return part.type === "file";
+}
+
+/** Extract the text and file payload from a user message for regenerate. */
+export function userMessagePayload(
+  message: ChatMessage,
+): { text: string; files?: ChatFilePart[] } | null {
+  const text = message.parts
+    .filter((part): part is { type: "text"; text: string } => part.type === "text")
+    .map((part) => part.text)
+    .join("");
+  const files = message.parts.filter(isFilePart);
+  if (!text && files.length === 0) return null;
+  return { text, ...(files.length > 0 ? { files } : {}) };
 }
 
 export function resolveUseChatStreamHandler(
@@ -132,7 +163,14 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
    * Send a message and stream assistant updates.
    */
   const sendMessage = useCallback(
-    async (message: { text: string; baseMessages?: ChatMessage[]; userMessageId?: string }) => {
+    async (
+      message: {
+        text: string;
+        files?: ChatFilePart[];
+        baseMessages?: ChatMessage[];
+        userMessageId?: string;
+      },
+    ) => {
       // Abort any in-flight request before starting a new one
       abortControllerRef.current?.abort();
       abortControllerRef.current = null;
@@ -141,7 +179,8 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
       const userMessage: ChatMessage = {
         id: message.userMessageId ?? generateClientId("msg"),
         role: "user",
-        parts: [{ type: "text", text: message.text }],
+        parts: buildUserMessageParts(message.text, message.files),
+        createdAt: new Date().toISOString(),
       };
 
       const base = message.baseMessages ?? messagesRef.current;
@@ -215,7 +254,12 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
               return prev.map((
                 m,
               ) => (m.id === currentMessageIdRef.current
-                ? { ...withMeta, metadata: { ...m.metadata, ...withMeta.metadata } }
+                ? {
+                  ...withMeta,
+                  // Keep the timestamp from when the turn first streamed in.
+                  createdAt: m.createdAt ?? withMeta.createdAt,
+                  metadata: { ...m.metadata, ...withMeta.metadata },
+                }
                 : m)
               );
             });
@@ -263,7 +307,17 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
               hasAddedStreamingMessage = true;
               setMessages((
                 prev,
-              ) => [...prev, { id, role: "assistant", parts, metadata }]);
+              ) => [
+                ...prev,
+                {
+                  id,
+                  role: "assistant",
+                  parts,
+                  metadata,
+                  // Stamp when the turn first appears; `onMessage` preserves it.
+                  createdAt: new Date().toISOString(),
+                },
+              ]);
               return;
             }
 
@@ -305,11 +359,12 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     if (lastUserIndex === -1) return;
 
     const lastUserMessage = currentMessages[lastUserIndex];
-    const textPart = lastUserMessage?.parts.find((p) => p.type === "text");
-    if (!textPart || !("text" in textPart)) return;
+    if (!lastUserMessage) return;
+    const payload = userMessagePayload(lastUserMessage);
+    if (!payload) return;
 
     const base = currentMessages.slice(0, lastUserIndex);
-    await sendMessage({ text: textPart.text, baseMessages: base });
+    await sendMessage({ ...payload, baseMessages: base });
   }, [sendMessage]);
 
   /**
@@ -481,7 +536,7 @@ export function useChat(options: UseChatOptions = {}): UseChatResult {
     data,
     handleInputChange,
     handleSubmit,
-    // Aliases that match ChatProps / ChatWithSidebarProps so users can spread {...chat}
+    // Aliases that match ChatProps so users can spread {...chat}
     onChange: handleInputChange,
     onSubmit: handleSubmit,
     onModelChange: setModel,

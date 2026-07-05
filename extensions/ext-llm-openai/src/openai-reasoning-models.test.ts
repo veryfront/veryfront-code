@@ -3,6 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   getDefaultOpenAIReasoningEffort,
   rejectsOpenAISamplingParams,
+  shouldRequestOpenAIReasoningSummary,
 } from "./openai-reasoning-models.ts";
 
 describe("ext-llm-openai/openai-reasoning-models", () => {
@@ -32,6 +33,28 @@ describe("ext-llm-openai/openai-reasoning-models", () => {
     assertEquals(getDefaultOpenAIReasoningEffort("gpt-5.4-nano", "veryfront-cloud"), "medium");
     assertEquals(getDefaultOpenAIReasoningEffort("gpt-5.4-nano", "azure"), undefined);
     assertEquals(getDefaultOpenAIReasoningEffort("gpt-5.4-nano", "moonshot"), undefined);
+  });
+
+  it("requests reasoning summaries only for explicit reasoning or Veryfront Cloud", () => {
+    assertEquals(
+      shouldRequestOpenAIReasoningSummary("openai", { effort: "medium", source: "default" }),
+      false,
+    );
+    assertEquals(
+      shouldRequestOpenAIReasoningSummary("openai", { effort: "high", source: "explicit" }),
+      true,
+    );
+    assertEquals(
+      shouldRequestOpenAIReasoningSummary("veryfront-cloud", {
+        effort: "medium",
+        source: "default",
+      }),
+      true,
+    );
+    assertEquals(
+      shouldRequestOpenAIReasoningSummary("azure", { effort: "medium", source: "default" }),
+      false,
+    );
   });
 
   it("detects models that reject sampling params separately from default reasoning params", () => {

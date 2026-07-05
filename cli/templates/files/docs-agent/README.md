@@ -112,20 +112,20 @@ content/
 app/
   api/ag-ui/route.ts             AG-UI endpoint
   api/ingest/route.ts            Bundled content ingestion
-  api/uploads/route.ts           Upload (POST) and list (GET) uploads
-  api/uploads/[id]/route.ts     Delete upload
-  page.tsx                      Chat UI with document upload panel
-  layout.tsx                    Root layout with header
+  api/uploads/route.ts           Upload, list, and delete uploads
+  uploads/page.tsx               Upload management panel
+  page.tsx                       Chat UI
+  layout.tsx                     Chat shell with sidebar and tabs
 ```
 
 ## Framework usage
 
 | What | Framework | Template code |
 |------|-----------|---------------|
-| Chat UI + streaming | `Chat`, `useChat` | `page.tsx` |
-| Upload management | `useUploads` hook | `page.tsx` |
+| Chat UI + streaming | app-mode `Chat` | `page.tsx` |
+| Upload management | `AttachmentsPanel`, `useUploadsRegistry` | `uploads/page.tsx` |
 | Source display | `showSources` prop on `Chat` | `page.tsx` |
-| Upload API routes | `createUploadHandler` | 1-line per route file |
+| Upload API route | `createUploadHandler` | 1 line in `route.ts` |
 | AG-UI route | `createAgUiHandler` | 1 line in `route.ts` |
 | Agent definition | `agent()` | Config object in `agents/rag.ts` |
 | RAG retrieval | `beforeStream` hook | Context injection in `api/ag-ui/route.ts` |

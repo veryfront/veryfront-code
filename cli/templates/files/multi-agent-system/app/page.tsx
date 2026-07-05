@@ -1,9 +1,14 @@
 'use client'
 
-import { Chat, useChat } from 'veryfront/chat'
+import { Chat } from 'veryfront/chat'
 
 export default function MultiAgentChat(): React.JSX.Element {
-  const chat = useChat({ api: '/api/ag-ui' })
-
-  return <Chat {...chat} className="flex-1 min-h-0" placeholder="Give the team a task..." />
+  return (
+    <Chat
+      agentId="orchestrator"
+      api="/api/ag-ui"
+      className="flex-1 min-h-0"
+      placeholder="Give the team a task..."
+    />
+  )
 }

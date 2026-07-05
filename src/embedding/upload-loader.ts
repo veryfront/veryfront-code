@@ -2,16 +2,17 @@ import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { DocumentExtractor } from "#veryfront/extensions/compat/native-services.ts";
 
 /**
- * Extracts plain text from various upload formats.
+ * Extracts embedding-ready text or Markdown from upload formats.
  *
  * Text and CSV are handled inline (CSV uses a RAG-optimized format that
  * denormalizes headers into every row). All other formats (PDF, DOCX, XLSX,
- * PPTX, HTML, RTF, EPUB, etc.) are delegated to the `DocumentExtractor` extension
- * contract, which owns kreuzberg and the Worker isolation on Deno.
+ * PPTX, HTML, RTF, EPUB, etc.) are delegated to the `DocumentExtractor`
+ * extension contract, which owns kreuzberg, Markdown extraction, and Worker
+ * isolation on Deno.
  *
  * @example
  * ```ts
- * const text = await loadUpload(buffer, "application/pdf");
+ * const markdown = await loadUpload(buffer, "application/pdf");
  * ```
  */
 export async function loadUpload(buffer: ArrayBuffer, mimeType: string): Promise<string> {
