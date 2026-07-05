@@ -28,6 +28,12 @@ export {
 } from "./runner.ts";
 
 export {
+  createDurableRunTokenGrowthCanaryCase,
+  DURABLE_RUN_TOKEN_GROWTH_CANARY_MARKER,
+  type DurableRunTokenGrowthCanaryCaseInput,
+} from "./token-growth.ts";
+
+export {
   assertCompleted,
   assertNoMalformedCreateFileToolCalls,
   collectAssistantText,

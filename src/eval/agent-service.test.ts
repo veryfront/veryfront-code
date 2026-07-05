@@ -6,6 +6,7 @@ import { datasets, evalAgent, metrics, runEval } from "veryfront/eval";
 import {
   buildAgentServiceEvalRequestBody,
   createAgentServiceEvalAdapter,
+  createDurableRunTokenGrowthCanaryCase,
   createLiveEvalCaseSupport,
   evaluateAgentServiceEvalEnvironment,
   evaluateRuntimeConfidenceEnv,
@@ -516,10 +517,26 @@ describe("eval/agent-service", () => {
     assertEquals(typeof mod.createAgentServiceEvalAdapter, "function");
     assertEquals(typeof mod.runLiveEvalCli, "function");
     assertEquals(typeof mod.runDurableRunCanaryCli, "function");
+    assertEquals(typeof mod.createDurableRunTokenGrowthCanaryCase, "function");
     assertEquals(typeof mod.evaluateRuntimeConfidenceEnv, "function");
     assertEquals(typeof runLiveEvalCli, "function");
     assertEquals(typeof runDurableRunCanaryCli, "function");
+    assertEquals(typeof createDurableRunTokenGrowthCanaryCase, "function");
     assertEquals(typeof evaluateRuntimeConfidenceEnv, "function");
+  });
+
+  it("builds a two-turn durable token-growth canary", async () => {
+    const testCase = createDurableRunTokenGrowthCanaryCase({
+      conversationId: "11111111-1111-4111-8111-111111111111",
+      marker: "TOKEN_GROWTH_TEST_MARKER",
+    });
+
+    const prepared = await testCase.prepare();
+
+    assertEquals(testCase.id, "durable-token-growth-follow-up");
+    assertEquals(prepared.conversationId, "11111111-1111-4111-8111-111111111111");
+    assertStringIncludes(prepared.prompt, "TOKEN_GROWTH_TEST_MARKER");
+    assertStringIncludes(prepared.followUpPrompt ?? "", "TOKEN_GROWTH_TEST_MARKER");
   });
 
   it("does not revive the legacy agent testing import path", async () => {

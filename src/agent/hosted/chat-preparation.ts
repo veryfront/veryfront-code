@@ -3,6 +3,7 @@ import type {
   ChatSystemMessage,
   ChatUiMessage,
 } from "#veryfront/chat/types.ts";
+import type { HistoricalToolInputCompactionDiagnostic } from "#veryfront/chat/message-prep.ts";
 import type { AgentRuntimeMessage } from "../runtime/message-adapter.ts";
 import type { ConversationRunEvent } from "../conversation/run-events.ts";
 import type {
@@ -50,6 +51,7 @@ export type PrepareHostedChatRuntimeMessagesOptions =
     | "providerOwnedToolNames"
     | "abortSignal"
     | "fileContentFetchTimeoutMs"
+    | "historicalToolInputRetention"
   >
   & {
     authToken?: string;
@@ -220,6 +222,7 @@ export type HostedChatExecutionPreparationResult<
   runtime: TRuntimeResult;
   finalMessages: AgentRuntimeMessage[];
   contextBudgetDiagnostics?: ContextBudgetDiagnostics;
+  historicalToolInputCompactions?: HistoricalToolInputCompactionDiagnostic[];
   steering: HostedChatRuntimeCreationPreparationResult<
     TRuntimeAgentDefinition
   >["steering"];
@@ -407,6 +410,7 @@ export async function prepareHostedChatExecution<
     buildInstructions: input.buildInstructions,
   });
   const submittedFormInputResult = findSubmittedFormInputResult(normalized.effectiveMessages);
+  const historicalToolInputCompactions: HistoricalToolInputCompactionDiagnostic[] = [];
   const finalMessages = await prepareHostedChatRuntimeMessages(
     normalized.effectiveMessages,
     {
@@ -415,8 +419,16 @@ export async function prepareHostedChatExecution<
       projectId: input.request.projectId,
       providerOwnedToolNames: getProviderToolNames(input.agentConfig),
       abortSignal: input.abortSignal,
+      historicalToolInputRetention: {
+        diagnostics: historicalToolInputCompactions,
+      },
     },
   );
+  if (historicalToolInputCompactions.length > 0) {
+    input.contextBudget?.logger?.debug?.("Hosted chat historical tool inputs compacted", {
+      toolInputCompactions: historicalToolInputCompactions,
+    });
+  }
   let budgetedContext: Awaited<ReturnType<typeof applyContextBudget>> | undefined;
   if (input.contextBudget) {
     try {
@@ -451,6 +463,7 @@ export async function prepareHostedChatExecution<
     runtime,
     finalMessages: budgetedContext?.messages ?? finalMessages,
     contextBudgetDiagnostics: budgetedContext?.diagnostics,
+    ...(historicalToolInputCompactions.length > 0 ? { historicalToolInputCompactions } : {}),
     steering: runtimePreparation.steering,
     runtimeConfig: runtimePreparation.runtimeConfig,
   };
@@ -468,6 +481,7 @@ export async function prepareHostedChatRuntimeMessages(
       providerOwnedToolNames: options.providerOwnedToolNames,
       abortSignal: options.abortSignal,
       fileContentFetchTimeoutMs: options.fileContentFetchTimeoutMs,
+      historicalToolInputRetention: options.historicalToolInputRetention,
     });
   }
   const authToken = options.authToken;
@@ -479,6 +493,7 @@ export async function prepareHostedChatRuntimeMessages(
     providerOwnedToolNames: options.providerOwnedToolNames,
     abortSignal: options.abortSignal,
     fileContentFetchTimeoutMs: options.fileContentFetchTimeoutMs,
+    historicalToolInputRetention: options.historicalToolInputRetention,
     resolveFileUrl: ({ uploadId }) =>
       getRuntimeUploadUrl({
         apiUrl,
