@@ -50,13 +50,18 @@ import {
   shouldFailEmptyHostedFinalizedMessage,
 } from "./stream-terminal-error.ts";
 import type { BuildChatStreamChunkMessageMetadataInput } from "../../chat/chat-ui-message-helpers.ts";
-import { createChatStreamWatchdog } from "../../chat/stream-watchdog.ts";
+import {
+  createChatStreamWatchdog,
+  DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS,
+} from "../../chat/stream-watchdog.ts";
 import type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
 export type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
 
 const INCOMPLETE_TOOL_CALLS_PART_ERROR_TEXT = "Assistant ended before tool execution completed";
 
 const FINALIZATION_TERMINAL_STATE_FALLBACK_MODEL_ID = "";
+const DEFAULT_STREAM_BOOTSTRAP_KEEPALIVE_INTERVAL_MS = 30_000;
+const DEFAULT_STREAM_BOOTSTRAP_TIMEOUT_MS = DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS;
 
 /** Public API contract for hosted chat execution runtime. */
 export interface HostedChatExecutionRuntime {
@@ -102,6 +107,8 @@ export interface CreateHostedChatExecutionRuntimeBootstrapInput {
   abortSignal: AbortSignal;
   traceStream?: <T>(operation: () => Promise<T>) => Promise<T>;
   createRootStreamWatchdog?: () => HostedChatExecutionRootStreamWatchdog;
+  streamBootstrapKeepaliveIntervalMs?: number;
+  streamBootstrapTimeoutMs?: number;
 }
 
 /** Input payload for create hosted chat execution runtime. */
@@ -149,6 +156,12 @@ export interface CreateBootstrappedHostedChatExecutionRuntimeInput {
   incompleteToolCallsPartErrorText?: string;
   createRootStreamWatchdog?: CreateHostedChatExecutionRuntimeBootstrapInput[
     "createRootStreamWatchdog"
+  ];
+  streamBootstrapKeepaliveIntervalMs?: CreateHostedChatExecutionRuntimeBootstrapInput[
+    "streamBootstrapKeepaliveIntervalMs"
+  ];
+  streamBootstrapTimeoutMs?: CreateHostedChatExecutionRuntimeBootstrapInput[
+    "streamBootstrapTimeoutMs"
   ];
   createTerminalAdapter?: CreateHostedRootRunLifecycleRuntimeAdapterInput[
     "createTerminalAdapter"
@@ -211,6 +224,57 @@ function createDefaultHostedChatExecutionRootStreamWatchdog(): HostedChatExecuti
   return createChatStreamWatchdog();
 }
 
+function resolveStreamBootstrapKeepaliveIntervalMs(intervalMs: number | undefined): number {
+  if (typeof intervalMs !== "number" || !Number.isFinite(intervalMs) || intervalMs <= 0) {
+    return DEFAULT_STREAM_BOOTSTRAP_KEEPALIVE_INTERVAL_MS;
+  }
+
+  return intervalMs;
+}
+
+function resolveStreamBootstrapTimeoutMs(timeoutMs: number | undefined): number {
+  if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return DEFAULT_STREAM_BOOTSTRAP_TIMEOUT_MS;
+  }
+
+  return timeoutMs;
+}
+
+function createStreamBootstrapWatchdogKeepalive(input: {
+  rootStreamWatchdog: HostedChatExecutionRootStreamWatchdog;
+  intervalMs?: number;
+  timeoutMs?: number;
+}): {
+  signal: AbortSignal;
+  dispose: () => void;
+} {
+  const intervalMs = resolveStreamBootstrapKeepaliveIntervalMs(input.intervalMs);
+  const timeoutMs = resolveStreamBootstrapTimeoutMs(input.timeoutMs);
+  const timeoutController = new AbortController();
+  const interval = setInterval(() => {
+    input.rootStreamWatchdog.observe({
+      type: "message-metadata",
+      messageMetadata: {
+        createdAt: new Date().toISOString(),
+      },
+    });
+  }, intervalMs);
+  const timeout = setTimeout(() => {
+    timeoutController.abort(
+      new DOMException(`Chat stream bootstrap timeout after ${timeoutMs}ms`, "AbortError"),
+    );
+    clearInterval(interval);
+  }, timeoutMs);
+
+  return {
+    signal: timeoutController.signal,
+    dispose: () => {
+      clearInterval(interval);
+      clearTimeout(timeout);
+    },
+  };
+}
+
 function traceHostedChatRuntimeStream<T>(
   traceStream: CreateHostedChatExecutionRuntimeBootstrapInput["traceStream"],
   operation: () => Promise<T>,
@@ -235,7 +299,16 @@ export async function createHostedChatExecutionRuntimeBootstrap(
   const rootStreamWatchdog = input.createRootStreamWatchdog
     ? input.createRootStreamWatchdog()
     : createDefaultHostedChatExecutionRootStreamWatchdog();
-  const streamAbortSignal = AbortSignal.any([input.abortSignal, rootStreamWatchdog.signal]);
+  const bootstrapKeepalive = createStreamBootstrapWatchdogKeepalive({
+    rootStreamWatchdog,
+    intervalMs: input.streamBootstrapKeepaliveIntervalMs,
+    timeoutMs: input.streamBootstrapTimeoutMs,
+  });
+  const streamAbortSignal = AbortSignal.any([
+    input.abortSignal,
+    rootStreamWatchdog.signal,
+    bootstrapKeepalive.signal,
+  ]);
 
   let streamResult: HostedChatRuntimeStreamResult;
   try {
@@ -250,6 +323,8 @@ export async function createHostedChatExecutionRuntimeBootstrap(
   } catch (error) {
     rootStreamWatchdog.dispose();
     throw error;
+  } finally {
+    bootstrapKeepalive.dispose();
   }
 
   return {
@@ -291,6 +366,8 @@ async function createBootstrappedHostedChatRuntime(
       ...(input.createRootStreamWatchdog
         ? { createRootStreamWatchdog: input.createRootStreamWatchdog }
         : {}),
+      streamBootstrapKeepaliveIntervalMs: input.streamBootstrapKeepaliveIntervalMs,
+      streamBootstrapTimeoutMs: input.streamBootstrapTimeoutMs,
     });
   } catch (error) {
     await dispatchConversationHostedStreamErrorState(lifecycleAdapter, error).catch(
