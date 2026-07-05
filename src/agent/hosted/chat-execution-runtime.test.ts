@@ -1,5 +1,6 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "../../chat/types.ts";
 import type { HostedAgentRunSpan, HostedAgentRunTracer } from "./agent-run-lifecycle.ts";
 import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
@@ -335,6 +336,56 @@ describe("agent/hosted-chat-execution-runtime", () => {
       "DURABLE_CHAT_ROOT_REQUIRES_CONVERSATION",
     );
     assertEquals(streamCalls, 0);
+  });
+
+  it("keeps the root stream watchdog active while stream bootstrap is pending", async () => {
+    using time = new FakeTime();
+    const observedChunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+    let releaseStream!: () => void;
+    const streamGate = new Promise<void>((resolve) => {
+      releaseStream = resolve;
+    });
+    const agent: HostedChatRuntimeAgent = {
+      stream: async () => {
+        await streamGate;
+        return createStreamResult({
+          finalStep: {},
+          captureOptions: () => {},
+        });
+      },
+    };
+
+    const bootstrapPromise = createHostedChatExecutionRuntimeBootstrap({
+      agent,
+      cleanup: async () => {},
+      lifecycleAdapter: createLifecycleAdapter(),
+      finalMessages: [],
+      abortSignal: new AbortController().signal,
+      streamBootstrapKeepaliveIntervalMs: 1,
+      createRootStreamWatchdog: () => ({
+        ...createRootStreamWatchdog(),
+        observe: (chunk) => {
+          observedChunks.push(chunk);
+        },
+      }),
+    });
+
+    try {
+      time.tick(1);
+      await Promise.resolve();
+
+      assertEquals(observedChunks.length > 0, true);
+      assertEquals(
+        observedChunks.every((chunk) =>
+          chunk.type === "message-metadata" &&
+          typeof chunk.messageMetadata.createdAt === "string"
+        ),
+        true,
+      );
+    } finally {
+      releaseStream();
+      await bootstrapPromise;
+    }
   });
 
   it("creates a bootstrapped hosted chat execution runtime", async () => {
