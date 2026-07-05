@@ -94,8 +94,11 @@ export function createConversationRunMirror(input: {
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let inFlightFlush: Promise<void> | null = null;
   // Failures that escaped the queue controller (which only counts append
-  // failures it recovered itself) still need to back off exponentially.
+  // failures it recovered itself) still need to back off exponentially, and
+  // explicit flush() calls must surface them so callers do not finalize a run
+  // while its last events are still queued.
   let escapedFlushFailures = 0;
+  let escapedFlushError: { error: unknown } | null = null;
 
   function getSnapshot(): ConversationRunMirrorSnapshot {
     const snapshot = input.queueController.getSnapshot();
@@ -190,6 +193,7 @@ export function createConversationRunMirror(input: {
     emitHighBacklogIfNeeded();
     const flushed = await input.queueController.flush();
     escapedFlushFailures = 0;
+    escapedFlushError = null;
 
     if (flushed.outcome === "idle" || flushed.outcome === "flushed") {
       return;
@@ -220,12 +224,14 @@ export function createConversationRunMirror(input: {
     }
 
     inFlightFlush = runFlushLoop()
-      .catch(() => {
+      .catch((error) => {
         // The queue controller re-queues its events before rethrowing, so an
         // error escaping here (unexpected controller failure or a throwing
         // observability callback) must not become an unhandled rejection from
-        // a timer-triggered loop — back off and retry instead.
+        // a timer-triggered loop — back off and retry instead. Explicit
+        // flush() rethrows it from the recorded value.
         escapedFlushFailures += 1;
+        escapedFlushError = { error };
         scheduleRetry();
       })
       .finally(() => {
@@ -294,6 +300,14 @@ export function createConversationRunMirror(input: {
           startFlushLoop();
         }
       }
+
+      if (escapedFlushError !== null) {
+        // Callers like hosted finalization treat a resolved flush() as "safe
+        // to complete the run"; a flush error that escaped the controller
+        // must reject here instead of silently leaving events queued.
+        throw escapedFlushError.error;
+      }
+
       return getSnapshot();
     },
     getSnapshot,
