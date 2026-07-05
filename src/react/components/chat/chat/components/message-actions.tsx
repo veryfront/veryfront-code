@@ -1,65 +1,87 @@
 import * as React from "react";
 import { cn } from "../../theme.ts";
-import { CheckIcon, CopyIcon } from "../../icons/index.ts";
+import { CheckIcon, CopyIcon, PencilIcon, RefreshCwIcon } from "../../icons/index.ts";
+import { useClipboard } from "../hooks/use-clipboard.ts";
 
 const ACTION_BUTTON =
-  "inline-flex items-center justify-center size-7 text-[var(--input-placeholder)] hover:text-[var(--foreground)] hover:bg-[var(--foreground)]/5 rounded-full transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2";
+  "inline-flex items-center justify-center size-7 rounded-full text-[var(--faint)] transition-colors hover:bg-[var(--tertiary)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--background)]";
 
-/** Props accepted by message actions. */
-export interface MessageActionsProps {
-  content: string;
-  className?: string;
-  /** When provided, renders an edit button that calls this handler */
-  onEdit?: (content: string) => void;
+/**
+ * Icon overrides for {@link MessageActionBar}. Each defaults to the built-in
+ * glyph; `copied` shows briefly after a successful copy.
+ */
+export interface MessageActionBarIcons {
+  copy?: React.ReactNode;
+  copied?: React.ReactNode;
+  edit?: React.ReactNode;
+  regenerate?: React.ReactNode;
 }
 
-/** Render message actions. */
-export const MessageActions = React.forwardRef<HTMLDivElement, MessageActionsProps>(
-  function MessageActions({ content, className, onEdit }, ref) {
-    const [copied, setCopied] = React.useState(false);
+/** Props accepted by the context-free message action bar. */
+export interface MessageActionBarProps {
+  content: string;
+  className?: string;
+  /** Override any of the action icons. */
+  icons?: MessageActionBarIcons;
+  /** Wrap the built-in copy; call `next()` to run it (or skip it). */
+  onCopy?: (event: React.MouseEvent<HTMLButtonElement>, next: () => void) => void;
+  /** When provided, renders an edit button that calls this handler. */
+  onEdit?: (content: string) => void;
+  /** When provided, renders a regenerate button that calls this handler. */
+  onRegenerate?: () => void;
+}
 
-    const setCopiedWithTimeout = React.useCallback((): void => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }, []);
-
-    const fallbackCopy = React.useCallback((): void => {
-      const textarea = document.createElement("textarea");
-      textarea.value = content;
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand("copy");
-      document.body.removeChild(textarea);
-    }, [content]);
-
-    const handleCopy = React.useCallback(async (): Promise<void> => {
-      try {
-        await navigator.clipboard.writeText(content);
-      } catch (_) {
-        /* expected: clipboard API unavailable in older browsers */
-        fallbackCopy();
-      } finally {
-        setCopiedWithTimeout();
-      }
-    }, [content, fallbackCopy, setCopiedWithTimeout]);
+/**
+ * MessageActionBar — the low-level, context-free hover action bar (copy / edit /
+ * regenerate). Used where there is no `Message.Root` context (e.g. the legacy
+ * message-list row). Inside a `Message`, prefer `Message.Actions` +
+ * `Message.CopyAction`/… which read from context.
+ *
+ * Renamed from `MessageActions` to end the collision with `Message.Actions`.
+ */
+export const MessageActionBar = React.forwardRef<
+  HTMLDivElement,
+  MessageActionBarProps
+>(
+  function MessageActionBar(
+    { content, className, icons, onCopy, onEdit, onRegenerate },
+    ref,
+  ) {
+    const { copied, copy } = useClipboard();
+    const doCopy = React.useCallback(() => void copy(content), [copy, content]);
 
     return (
       <div
         ref={ref}
         className={cn(
-          "flex items-center gap-0.5 mt-1.5 opacity-0 group-hover/msg:opacity-100 transition-all duration-200",
+          // No vertical margin here — the footer row owns spacing/alignment so
+          // the buttons stay centered with the token count beside them.
+          "flex items-center gap-0.5 opacity-0 group-hover/msg:opacity-100 transition-all duration-200",
           className,
         )}
       >
         <button
           type="button"
-          onClick={handleCopy}
+          onClick={(e) => (onCopy ? onCopy(e, doCopy) : doCopy())}
           className={ACTION_BUTTON}
           title={copied ? "Copied!" : "Copy to clipboard"}
           aria-label={copied ? "Copied!" : "Copy to clipboard"}
         >
-          {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+          {copied
+            ? (icons?.copied ?? <CheckIcon className="size-3.5" />)
+            : (icons?.copy ?? <CopyIcon className="size-3.5" />)}
         </button>
+        {onRegenerate && (
+          <button
+            type="button"
+            onClick={onRegenerate}
+            className={ACTION_BUTTON}
+            title="Regenerate response"
+            aria-label="Regenerate response"
+          >
+            {icons?.regenerate ?? <RefreshCwIcon className="size-3.5" />}
+          </button>
+        )}
         {onEdit && (
           <button
             type="button"
@@ -68,22 +90,11 @@ export const MessageActions = React.forwardRef<HTMLDivElement, MessageActionsPro
             title="Edit message"
             aria-label="Edit message"
           >
-            <svg
-              className="size-3.5"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-              <path d="m15 5 4 4" />
-            </svg>
+            {icons?.edit ?? <PencilIcon className="size-3.5" />}
           </button>
         )}
       </div>
     );
   },
 );
-MessageActions.displayName = "MessageActions";
+MessageActionBar.displayName = "MessageActionBar";

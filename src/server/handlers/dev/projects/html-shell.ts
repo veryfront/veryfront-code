@@ -6,23 +6,12 @@ export const PROJECTS_SHELL_HTML = `<!DOCTYPE html>
   <title>Veryfront - Projects</title>
   <link rel="icon" type="image/png" href="https://cdn.veryfront.com/images/veryfront-favicon.png"/>
   <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    @font-face {
-      font-family: 'Gellix';
-      src:
-        url('https://cdn.veryfront.com/5b74466b-ad05-4594-82f6-8ed08ad1c37c/fonts/GellixVF.woff2') format('woff2'),
-        url('https://cdn.veryfront.com/5b74466b-ad05-4594-82f6-8ed08ad1c37c/fonts/GellixVF.woff') format('woff');
-      font-weight: 100 900;
-      font-style: normal;
-      font-display: swap;
-    }
-  </style>
   <script>
     tailwind.config = {
       theme: {
         extend: {
           fontFamily: {
-            sans: ['Gellix', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+            sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
           },
           colors: {
             'vf-bg': '#f0efea',

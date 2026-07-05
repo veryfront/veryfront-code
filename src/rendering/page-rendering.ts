@@ -6,6 +6,7 @@ import type { EntityInfo, MdxBundle, MDXComponents, MDXModule, PageBundle } from
 import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import { clearMdxEsmCacheNamespace } from "#veryfront/transforms/mdx/esm-module-loader/index.ts";
 import { getProjectReact } from "#veryfront/react";
+import { flattenRouteParams } from "#veryfront/routing";
 import { compileContent } from "#veryfront/transforms/mdx/compiler/index.ts";
 import { ensureError, getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -177,13 +178,7 @@ export function handleMDXPage(
 
         if (typeof mod.generateMetadata === "function") {
           try {
-            const params = options?.params
-              ? (Object.fromEntries(
-                Object.entries(options.params)
-                  .map(([k, v]) => [k, Array.isArray(v) ? v[0] : v])
-                  .filter((entry): entry is [string, string] => entry[1] !== undefined),
-              ) as Record<string, string>)
-              : {};
+            const params = flattenRouteParams(options?.params);
             const query = options?.url ? Object.fromEntries(options.url.searchParams) : {};
 
             const gen = await mod.generateMetadata({

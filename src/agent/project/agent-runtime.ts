@@ -5,8 +5,9 @@ import {
   createProjectDiscoveryConfig,
   discoverAll,
 } from "#veryfront/discovery/index.ts";
-import { getConfig } from "#veryfront/config";
+import { getConfig, type VeryfrontConfig } from "#veryfront/config";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { clearMCPRegistry } from "#veryfront/mcp";
 import { workflowRegistry } from "#veryfront/workflow/registry.ts";
 import { agentRegistry } from "../composition/index.ts";
@@ -30,6 +31,9 @@ export type ProjectAgentRuntimeAgentIdCandidates = {
 export type DiscoverProjectAgentRuntimeInput = {
   projectDir: string;
   adapter: RuntimeAdapter;
+  config?: VeryfrontConfig | null;
+  fsAdapter?: FileSystemAdapter;
+  cacheKey?: string;
   verbose?: boolean;
 };
 
@@ -69,10 +73,16 @@ export async function discoverProjectAgentRuntime(
 ): Promise<DiscoveryResult> {
   clearProjectAgentRuntimeRegistries();
 
-  const config = await getConfig(input.projectDir, input.adapter);
+  const config = input.config ??
+    await getConfig(
+      input.projectDir,
+      input.adapter,
+      input.cacheKey ? { cacheKey: input.cacheKey } : undefined,
+    );
   const discoveryOptions = createProjectDiscoveryConfig({
     projectDir: input.projectDir,
     config,
+    fsAdapter: input.fsAdapter,
     verbose: input.verbose,
   });
 

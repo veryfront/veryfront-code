@@ -15,6 +15,7 @@ export async function collectAsync<T>(iterable: AsyncIterable<T>): Promise<T[]> 
 type TestRuntimeOptions = {
   prompt: unknown[];
   tools?: unknown[];
+  reasoning?: unknown;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -29,6 +30,7 @@ export function getTestRuntimeOptions(options: unknown): TestRuntimeOptions {
   return {
     prompt: options.prompt,
     ...(Array.isArray(options.tools) ? { tools: options.tools } : {}),
+    ...("reasoning" in options ? { reasoning: options.reasoning } : {}),
   };
 }
 

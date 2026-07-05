@@ -1,0 +1,40 @@
+<link rel="icon" type="image/svg+xml" href="./logomark.svg" />
+<style>
+  /* Override Storybook's blue hover/selected tints with neutral greys. */
+  div.sidebar-item[data-nodetype] {
+    --tree-node-background-hover: rgba(0, 0, 0, 0.04);
+  }
+
+  div.sidebar-item[data-nodetype]:hover,
+  div.sidebar-item[data-nodetype]:focus {
+    --tree-node-background-hover: rgba(0, 0, 0, 0.04);
+    background: rgba(0, 0, 0, 0.04) !important;
+  }
+
+  div.sidebar-item[data-nodetype][data-selected="true"] {
+    background: rgba(0, 0, 0, 0.06) !important;
+    color: #0f0f0f !important;
+    font-weight: 500 !important;
+  }
+
+  div.sidebar-item[data-nodetype][data-selected="true"] svg {
+    color: inherit !important;
+  }
+
+  /* Hide the experimental "create / review new stories" affordance — the
+     "Create a new story" button, the "Review new stories" link, and the
+     per-row ✦ status indicators (whose row-fade gradient renders as a dark
+     block on the selected item). */
+  button[aria-label="Create a new story"],
+  button[aria-label="Review new stories"],
+  [data-testid="tree-change-status-button"] {
+    display: none !important;
+  }
+
+  /* Context menu button. */
+  div.sidebar-item [data-testid="context-menu"] {
+    color: rgba(0, 0, 0, 0.4) !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+</style>

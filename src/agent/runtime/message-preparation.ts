@@ -5,7 +5,10 @@ import {
   convertProviderMessagesToAgentRuntimeMessages,
 } from "./message-adapter.ts";
 import {
+  createRuntimeFileContentFetcher,
+  inlineRuntimeMessageFileContents,
   resolveRuntimeMessageFileUrls,
+  type RuntimeFileContentFetcher,
   type RuntimeFileUrlResolver,
 } from "./message-file-url-refresh.ts";
 
@@ -17,6 +20,9 @@ export type PrepareAgentRuntimeMessagesFromUiMessagesOptions = {
   messages: readonly ChatUiMessage[];
   emptyConversationPrompt?: string;
   resolveFileUrl?: RuntimeFileUrlResolver;
+  fetchFileContent?: RuntimeFileContentFetcher;
+  abortSignal?: AbortSignal;
+  fileContentFetchTimeoutMs?: number;
   providerOwnedToolNames?: readonly string[];
 };
 
@@ -33,12 +39,32 @@ export async function prepareAgentRuntimeMessagesFromUiMessages(
     ]);
   }
 
-  const refreshedMessages = options.resolveFileUrl
-    ? await resolveRuntimeMessageFileUrls(options.messages, options.resolveFileUrl)
+  const trustedFileContentUrls = new Set<string>();
+  const resolveFileUrl = options.resolveFileUrl;
+  const refreshedMessages = resolveFileUrl
+    ? await resolveRuntimeMessageFileUrls(options.messages, async (input) => {
+      const url = await resolveFileUrl(input);
+      if (url) {
+        trustedFileContentUrls.add(url);
+      }
+      return url;
+    })
     : [...options.messages];
+  const messagesWithFileContent = await inlineRuntimeMessageFileContents(
+    refreshedMessages,
+    options.fetchFileContent ?? createRuntimeFileContentFetcher({
+      trustedUrls: trustedFileContentUrls,
+    }),
+    {
+      ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
+      ...(options.fileContentFetchTimeoutMs != null
+        ? { fetchTimeoutMs: options.fileContentFetchTimeoutMs }
+        : {}),
+    },
+  );
 
   return convertProviderMessagesToAgentRuntimeMessages(
-    prepareProviderModelMessagesFromUiMessages(refreshedMessages, {
+    prepareProviderModelMessagesFromUiMessages(messagesWithFileContent, {
       providerOwnedToolNames: options.providerOwnedToolNames,
     }),
   );

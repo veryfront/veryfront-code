@@ -10,7 +10,7 @@ import * as React from "react";
 import { cn } from "../../theme.ts";
 
 /** Public API contract for chat tab. */
-export type ChatTab = "chat" | "uploads";
+export type ChatTab = "chat" | "attachments";
 
 /** Props accepted by tab switcher. */
 export interface TabSwitcherProps {
@@ -21,7 +21,7 @@ export interface TabSwitcherProps {
 
 const TABS: { value: ChatTab; label: string }[] = [
   { value: "chat", label: "Chat" },
-  { value: "uploads", label: "Uploads" },
+  { value: "attachments", label: "Attachments" },
 ];
 
 /** Render tab switcher. */
@@ -50,13 +50,13 @@ export function TabSwitcher({
               onKeyDown={(e) => {
                 if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
                   e.preventDefault();
-                  const next = tab.value === "chat" ? "uploads" : "chat";
+                  const next = tab.value === "chat" ? "attachments" : "chat";
                   onTabChange(next);
                 }
               }}
               className={cn(
                 "inline-flex items-center h-full px-5 text-sm font-medium rounded-full transition-colors cursor-pointer",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)]",
                 isActive
                   ? "bg-[var(--tab-active-background)] text-[var(--tab-active-foreground)]"
                   : "text-[var(--tab-foreground)]",

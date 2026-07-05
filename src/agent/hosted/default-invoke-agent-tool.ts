@@ -59,6 +59,7 @@ import type {
 } from "./child-requested-tools.ts";
 import { prepareDefaultHostedChildForkToolAssembly } from "./child-requested-tools.ts";
 import type { RuntimeClientProfile } from "../runtime/client-profile.ts";
+import type { RuntimeReasoningOption } from "../types.ts";
 import { withRootOwnedChildResultHint } from "../conversation/delegation-policy.ts";
 
 /** Context for default hosted invoke agent. */
@@ -130,6 +131,11 @@ export type DefaultHostedInvokeAgentToolOptions<TContext extends DefaultHostedIn
       forkModel: string,
       thinkingConfig: HostedChildForkRuntimeConfig["thinkingConfig"],
     ) => Record<string, unknown> | undefined;
+    resolveReasoning?: (
+      forkModel: string,
+      thinkingConfig: HostedChildForkRuntimeConfig["thinkingConfig"],
+    ) => RuntimeReasoningOption | undefined;
+    resolveModelThinking?: (modelId: string) => HostedChildForkRuntimeConfig["thinkingConfig"];
     shouldRethrowError?: (error: unknown) => boolean;
     buildGlobalTools?: (context: TContext) => HostToolSet;
     refreshProjectSkillIds?: DefaultHostedInvokeAgentProjectRefresh<TContext>;
@@ -355,6 +361,7 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
     defaultMaxSteps: options.defaultMaxSteps ?? DEFAULT_USER_AGENT_MAX_STEPS,
     resolveModelId: options.resolveModelId,
     resolveProvider: options.resolveProvider,
+    resolveModelThinking: options.resolveModelThinking,
     onRequestedProjectId: (projectId) => applyRequestedProjectId(options, projectId),
     onRuntimeConfig: (runtimeConfig) => {
       options.logger.info("Starting child fork", {
@@ -376,6 +383,7 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
         abortSignal,
       }),
     resolveProviderOptions: options.resolveProviderOptions,
+    resolveReasoning: options.resolveReasoning,
     forkContext: options.context,
     abortSignal: execution.abortSignal,
     durableChildRun: runtimeOptions.durableChildRun,

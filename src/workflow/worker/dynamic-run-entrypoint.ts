@@ -144,6 +144,8 @@ export async function runDynamicWorkflowRun(
         const discoveryResult = await discoverProjectAgentRuntime({
           projectDir: "", // Root of project (relative paths with API)
           adapter,
+          fsAdapter: adapter.fs,
+          cacheKey: tenant.projectId ?? tenant.projectSlug,
           verbose: debug,
         });
 

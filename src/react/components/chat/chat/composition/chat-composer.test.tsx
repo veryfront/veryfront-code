@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { ChatComposer } from "./chat-composer.tsx";
+import { ChatInput } from "./chat-composer.tsx";
 
 function installDomGlobals(dom: JSDOM): () => void {
   const window = dom.window;
@@ -52,7 +52,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       const root = createRoot(rootElement);
       flushSync(() => {
         root.render(
-          <ChatComposer
+          <ChatInput
             input=""
             onChange={() => {}}
             placeholder="Ask Veryfront"
@@ -84,7 +84,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       const root = createRoot(rootElement);
       flushSync(() => {
         root.render(
-          <ChatComposer
+          <ChatInput
             input=""
             onChange={() => {}}
             onAttach={() => {}}
@@ -105,7 +105,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       });
 
       const uploadAction = Array.from(document.querySelectorAll("button")).find(
-        (button) => button.textContent?.trim() === "Upload document",
+        (button) => button.textContent?.trim() === "Attach files to chat",
       );
       const selectAction = Array.from(document.querySelectorAll("button")).find(
         (button) => button.textContent?.trim() === "Select document",
@@ -113,11 +113,10 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       const menu = document.querySelector('[role="menu"]');
       assert(uploadAction, "Expected upload action to render");
       assert(selectAction, "Expected select action to render");
+      // The menu is now the portalled DropdownMenu primitive (escapes the
+      // composer overflow) — it renders under <body>, not inline.
       assert(menu, "Expected attachment menu to render");
-      assertEquals(
-        (menu as HTMLElement).style.minWidth,
-        "224px",
-      );
+      assertEquals(menu.parentElement, document.body);
 
       flushSync(() => {
         selectAction.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -145,7 +144,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       const root = createRoot(rootElement);
       flushSync(() => {
         root.render(
-          <ChatComposer
+          <ChatInput
             input="Review Article 30"
             onChange={() => {}}
             onSubmit={() => {
@@ -163,7 +162,11 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
         reactPropsKey
       ] as {
         onKeyDown?: (
-          event: { key: string; shiftKey?: boolean; preventDefault: () => void },
+          event: {
+            key: string;
+            shiftKey?: boolean;
+            preventDefault: () => void;
+          },
         ) => void;
       };
       assert(reactProps.onKeyDown, "Expected input keydown handler to exist");
@@ -194,7 +197,56 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
     }
   });
 
-  it("uses the shared rounded prompt shell and non-scaling primary submit button", () => {
+  it("enables send for a resolved attachment without text", () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { url: "https://example.com/" },
+    );
+    const restore = installDomGlobals(dom);
+    let submitCalls = 0;
+
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement, "Expected root element to exist");
+
+      const root = createRoot(rootElement);
+      flushSync(() => {
+        root.render(
+          <ChatInput
+            input=""
+            onChange={() => {}}
+            onSubmit={() => {
+              submitCalls += 1;
+            }}
+            attachments={[{
+              id: "file-1",
+              name: "brief.pdf",
+              state: "uploaded",
+              type: "application/pdf",
+              url: "https://example.com/brief.pdf",
+            }]}
+          />,
+        );
+      });
+
+      const submitButton = document.querySelector<HTMLButtonElement>(
+        'button[aria-label="Send"]',
+      );
+      assert(submitButton, "Expected submit button to render for attachment-only input");
+      assertEquals(submitButton.disabled, false, "resolved attachments should be submittable");
+
+      flushSync(() => {
+        submitButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+
+      assertEquals(submitCalls, 1, "attachment-only send should submit");
+      root.unmount();
+    } finally {
+      restore();
+    }
+  });
+
+  it("uses the copied Studio prompt shell and non-scaling primary submit button", () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/" },
@@ -208,7 +260,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       const root = createRoot(rootElement);
       flushSync(() => {
         root.render(
-          <ChatComposer
+          <ChatInput
             input="Hej"
             onChange={() => {}}
             onSubmit={() => {}}
@@ -217,15 +269,27 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       });
 
       const composer = document.querySelector("form > div");
+      // The submit control is now the shared `Button` primitive (icon-primary),
+      // labelled "Send" — no more bespoke `data-submit-button` element.
       const submitButton = document.querySelector<HTMLButtonElement>(
-        'button[data-submit-button=""]',
+        'button[aria-label="Send"]',
       );
       assert(composer, "Expected composer shell to render");
       assert(submitButton, "Expected submit button to render");
 
-      assert((composer as HTMLElement).className.includes("rounded-full"));
-      assert((composer as HTMLElement).className.includes("focus-within:border"));
-      assert(submitButton.className.includes("hover:shadow"));
+      assert(
+        (composer as HTMLElement).className.includes(
+          "rounded-[var(--radius-lg)]",
+        ),
+      );
+      assert(
+        (composer as HTMLElement).className.includes("bg-[var(--secondary)]"),
+      );
+      assertEquals(
+        (composer as HTMLElement).className.includes("focus-within:border"),
+        false,
+      );
+      // Studio's submit button does not scale on press.
       assertEquals(submitButton.className.includes("active:scale"), false);
       root.unmount();
     } finally {

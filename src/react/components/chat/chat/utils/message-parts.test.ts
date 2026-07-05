@@ -184,6 +184,26 @@ describe("message-parts", () => {
     it("handles empty parts array", () => {
       assertEquals(groupPartsInOrder([]).length, 0);
     });
+
+    it("emits a file group for file parts, in order, without swallowing text", () => {
+      const parts: ChatMessagePart[] = [
+        { type: "file", mediaType: "image/png", url: "https://x/img.png", filename: "img.png" },
+        { type: "text", text: "look at this" },
+      ];
+
+      const groups = groupPartsInOrder(parts);
+      assertEquals(groups.length, 2, "file part and text should be separate groups");
+
+      const [file, text] = groups;
+      assertExists(file);
+      assertEquals(file.type, "file", "the first group should be the file");
+      assertEquals(
+        (file as { file: { url: string } }).file.url,
+        "https://x/img.png",
+        "the file part should be carried through intact",
+      );
+      assertEquals((text as { content: string }).content, "look at this", "text follows the file");
+    });
   });
 
   describe("getAnswerPartsForRendering", () => {

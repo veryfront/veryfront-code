@@ -115,6 +115,68 @@ describe("provider/veryfront-cloud", () => {
     });
   });
 
+  it("routes reasoning-capable OpenAI models through Responses with default reasoning", async () => {
+    setCloudBootstrap();
+    const encoder = new TextEncoder();
+    let capturedRequest: Request | undefined;
+    let capturedBody: Record<string, unknown> | undefined;
+
+    globalThis.fetch = (async (input: URL | Request | string, init?: RequestInit) => {
+      const request = new Request(input, init);
+      capturedRequest = request;
+      capturedBody = JSON.parse(await request.text()) as Record<string, unknown>;
+      const requestUrl = request.url;
+
+      if (requestUrl.endsWith("/responses")) {
+        return new Response(
+          ReadableStream.from([
+            encoder.encode(
+              'data: {"type":"response.output_item.added","item":{"id":"rs_1","type":"reasoning"}}\n\n',
+            ),
+            encoder.encode(
+              'data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_1","delta":"Thinking."}\n\n',
+            ),
+            encoder.encode(
+              'data: {"type":"response.output_item.done","item":{"id":"rs_1","type":"reasoning"}}\n\n',
+            ),
+            encoder.encode(
+              'data: {"type":"response.output_text.delta","item_id":"msg_1","delta":"Hello"}\n\n',
+            ),
+            encoder.encode(
+              'data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":2,"output_tokens":1,"total_tokens":3}}}\n\n',
+            ),
+            encoder.encode("data: [DONE]\n\n"),
+          ]),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }
+
+      return new Response(
+        ReadableStream.from([
+          encoder.encode('data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n'),
+          encoder.encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
+          encoder.encode("data: [DONE]\n\n"),
+        ]),
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    }) as typeof fetch;
+
+    const assistant = agent({
+      model: "veryfront-cloud/openai/gpt-5.4-nano",
+      system: "You are concise.",
+    });
+
+    const result = await assistant.generate({ input: "Hi" });
+
+    assertEquals(
+      capturedRequest?.url,
+      "https://api.veryfront.com/ai/gateway/openai/v1/responses",
+    );
+    assertEquals(capturedBody?.stream, true);
+    assertEquals(capturedBody?.reasoning, { effort: "medium", summary: "auto" });
+    assertEquals(result.text, "Hello");
+  });
+
   it("resolves veryfront-cloud moonshotai models without project ext-llm-openai installed", () => {
     setCloudBootstrap();
 

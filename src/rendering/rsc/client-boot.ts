@@ -14,6 +14,7 @@ import {
 import { validateTrustedHtml } from "#veryfront/security/client/html-sanitizer.ts";
 import { consumeNdjsonStream, getContainer } from "./client-dom.ts";
 import { hydrateAllClientBoundaries } from "./hydrate-client.ts";
+import { wrapWithRouterProvider } from "./hydration-router.ts";
 import { RSC_PATH_PREFIX, RSC_ROOT_ID } from "./constants.ts";
 
 /**
@@ -173,7 +174,10 @@ async function hydratePageComponent(
     const hydrationRoot = shouldWrapPageHydrationRoot(root, document.body)
       ? createPageHydrationRoot(bodyChildren, document.body)
       : root;
-    const component = React.createElement(Component, {});
+    const component = await wrapWithRouterProvider(
+      React.createElement(Component, {}),
+      readHydrationData(document),
+    );
 
     if (shouldRenderPageComponent(strategy)) {
       ReactDOM.createRoot(hydrationRoot).render(component);

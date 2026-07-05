@@ -17,6 +17,7 @@
 /// <reference lib="deno.worker" />
 
 import { loadKreuzberg } from "./kreuzberg.ts";
+import { extractionConfigForMimeType } from "./extraction-config.ts";
 
 interface ExtractRequest {
   buffer: ArrayBuffer;
@@ -41,7 +42,11 @@ self.onmessage = async (event: MessageEvent<ExtractRequest>) => {
   try {
     const { buffer, mimeType } = event.data;
     const { extractBytes } = await loadKreuzberg();
-    const result = await extractBytes(new Uint8Array(buffer), mimeType);
+    const result = await extractBytes(
+      new Uint8Array(buffer),
+      mimeType,
+      extractionConfigForMimeType(mimeType),
+    );
     self.postMessage({ content: result.content } satisfies ExtractResponse);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

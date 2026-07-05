@@ -88,17 +88,31 @@ Pass props to enable common chat features:
 />;
 ```
 
-For attachments, keep upload handling in your app:
+For durable attachments, mount the upload handler behind your app's auth and
+point `Chat` at that route:
+
+```ts
+// app/api/uploads/route.ts
+import { createChatUploadHandler } from "veryfront/chat/uploads";
+
+function authorize(request: Request) {
+  const token = Deno.env.get("UPLOAD_TOKEN");
+  return Boolean(token && request.headers.get("authorization") === `Bearer ${token}`);
+}
+
+export const { POST, GET, DELETE } = createChatUploadHandler({ authorize });
+```
 
 ```tsx
 <Chat
   {...chat}
-  onAttach={(files) => uploadFiles(files)}
+  uploadApi="/api/uploads"
   attachAccept=".pdf,.docx,.txt"
-  attachments={uploadedFiles}
-  onRemoveAttachment={(id) => removeFile(id)}
 />;
 ```
+
+For local prototypes or intentionally public upload routes, pass
+`allowUnauthenticated: true` explicitly.
 
 ## Compose a custom layout
 
@@ -118,7 +132,7 @@ export default function CustomLayout() {
         <h1>Assistant</h1>
       </header>
       <Chat.MessageList messages={chat.messages} />
-      <Chat.Composer
+      <Chat.Input
         input={chat.input}
         onChange={chat.handleInputChange}
         onSubmit={chat.handleSubmit}
@@ -145,14 +159,38 @@ import { Message } from "veryfront/chat";
 </Message.Root>;
 ```
 
-For thread navigation, use `ChatWithSidebar`:
+## Migrate from older chat APIs
+
+This release completes the chat API migration. Use the new conversation and
+composition names instead of the older Thread and Composer exports:
+
+| Older export                | Use instead                                           |
+| --------------------------- | ----------------------------------------------------- |
+| `ChatComposer`              | `ChatInput` or `Chat.Input`                           |
+| `MessageActions`            | `MessageActionBar` or `Message.Actions`               |
+| `UploadsPanel`              | `AttachmentsPanel`                                    |
+| `StandaloneMessage`         | `Message`                                             |
+| `StreamingMessage`          | `Message`                                             |
+| `ChatWithSidebar`           | `ConversationsProvider` with `ChatSidebar` and `Chat` |
+| `useThreads`                | `useConversations`                                    |
+| `ThreadListContextProvider` | `ConversationsProvider`                               |
+
+For conversation navigation, wrap the chat + sidebar in a `ConversationsProvider`.
+The provider owns the conversation list and persistence; `<ChatSidebar>` and
+`<Chat>` both read it from context, so neither needs wiring:
 
 ```tsx
-import { ChatWithSidebar, useChat } from "veryfront/chat";
+import { Chat, ChatSidebar, ConversationsProvider } from "veryfront/chat";
 
 function App() {
-  const chat = useChat();
-  return <ChatWithSidebar chat={chat} sidebar={{ storageKey: "my-app" }} />;
+  return (
+    <ConversationsProvider storageKey="my-app">
+      <div style={{ display: "flex" }}>
+        <ChatSidebar />
+        <Chat agentId="assistant" />
+      </div>
+    </ConversationsProvider>
+  );
 }
 ```
 

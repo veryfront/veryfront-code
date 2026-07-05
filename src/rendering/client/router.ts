@@ -1,4 +1,5 @@
 import { rendererLogger } from "#veryfront/utils";
+import { getNavigationStore, type HistoryMode, type NavigateOptions } from "./navigation-store.ts";
 import ReactDOM from "react-dom/client";
 import type { Root } from "react-dom/client";
 import type { GlobalWithReactDOM } from "#veryfront/types/global-guards.ts";
@@ -38,6 +39,19 @@ export interface RouterBootOptions extends RouterOptions {
   slug?: string;
 }
 
+/**
+ * Context passed to {@link RouterOptions.shouldRevalidate} to decide whether a
+ * same-route navigation should refetch the page or update softly.
+ */
+export interface RevalidateContext {
+  /** The href before this navigation. */
+  currentHref: string;
+  /** The href being navigated to. */
+  nextHref: string;
+  /** Whether the pathname is unchanged (only query/hash differ). */
+  sameRoute: boolean;
+}
+
 export interface RouterOptions {
   baseUrl?: string;
   spaMode?: boolean;
@@ -50,6 +64,28 @@ export interface RouterOptions {
     hover?: boolean;
     viewport?: boolean;
   };
+  /**
+   * Decides whether a navigation refetches page data. Called for same-route
+   * navigations (query/hash-only changes); a route change always refetches.
+   * Return `false` to take the soft fast path — update the URL and notify
+   * subscribers without a network round-trip, for query used as client state.
+   *
+   * Defaults to always revalidating (React Router's default), because Veryfront
+   * page data can depend on the query: the SPA loader fetches by full path +
+   * query, and the render cache is keyed by query params (see the
+   * `cache.queryParams` config). So the safe default never shows stale data.
+   * Opt into the soft path when a page's query is purely client-side (tabs,
+   * filters) and does not change server output.
+   */
+  shouldRevalidate?: (context: RevalidateContext) => boolean;
+}
+
+/** Normalize the deprecated boolean `pushState` arg or an options object. */
+function toHistoryMode(options?: boolean | NavigateOptions): HistoryMode {
+  // Deprecated boolean form: `navigate(url, pushState)` — true pushes, false
+  // leaves history untouched (used by the popstate handler).
+  if (typeof options === "boolean") return options ? "push" : "none";
+  return options?.history ?? "push";
 }
 
 export class VeryfrontRouter {
@@ -93,19 +129,43 @@ export class VeryfrontRouter {
       onPrefetch: (url) => this.prefetch(url),
     });
     this.handlePopState = this.navigationHandlers.createPopStateHandler({
-      onNavigate: (url) => this.navigate(url, false),
+      // The browser already updated the URL for a popstate, so don't touch history.
+      onNavigate: (url) => this.navigate(url, { history: "none" }),
       onPrefetch: (url) => this.prefetch(url),
     });
     this.handleMouseOver = this.navigationHandlers.createMouseOverHandler({
       onNavigate: (url) => this.navigate(url),
       onPrefetch: (url) => this.prefetch(url),
     });
+
+    // Attach this router as the navigation implementation behind the shared
+    // store, so `useRouter().push`/`replace` (in the React bundle) route through
+    // real navigation. `navigate` accepts the store's options object directly.
+    getNavigationStore().setNavigator((href, options) => this.navigate(href, options));
   }
 
   registerNavigationHandler(handler: SpaNavigationHandler): void {
     logger.debug("Registering SPA navigation handler");
     this.spaNavigationHandler = handler;
     this.spaMode = true;
+  }
+
+  /**
+   * Notify React (and any other) subscribers that a navigation completed —
+   * after full page loads, soft same-route changes, and popstate. Delegates to
+   * the shared navigation store, the single subscription surface both bundles
+   * share.
+   */
+  private notify(): void {
+    getNavigationStore().notify();
+  }
+
+  private pathnameOf(url: string): string {
+    try {
+      return new URL(url, this.baseUrl).pathname;
+    } catch {
+      return (url.split("?")[0]?.split("#")[0]) || this.currentPath;
+    }
   }
 
   private loadGlobalOptions(): Partial<RouterOptions> {
@@ -147,13 +207,35 @@ export class VeryfrontRouter {
     if (pageData) this.pageLoader.setCache(this.currentPath, pageData);
   }
 
-  async navigate(url: string, pushState = true): Promise<void> {
+  /**
+   * Navigate to a URL. `options` selects the history behaviour: `{ history:
+   * "push" }` (default), `"replace"`, or `"none"` (the URL already reflects the
+   * target, as after popstate). A boolean is accepted for backward
+   * compatibility — `true` pushes, `false` maps to `"none"`.
+   */
+  async navigate(url: string, options?: boolean | NavigateOptions): Promise<void> {
     logger.debug(`Navigating to ${url} (SPA mode: ${this.spaMode})`);
+
+    const history = toHistoryMode(options);
+    const sameRoute = this.pathnameOf(url) === this.pathnameOf(this.currentPath);
 
     this.navigationHandlers.saveScrollPosition(this.currentPath);
     this.options.onStart?.(url);
 
-    if (pushState) globalThis.history.pushState({}, "", url);
+    if (history === "replace") globalThis.history.replaceState({}, "", url);
+    else if (history === "push") globalThis.history.pushState({}, "", url);
+
+    if (sameRoute && !this.shouldRevalidate(url, sameRoute)) {
+      // Soft same-route navigation: the app opted out of revalidation because a
+      // query-only (or hash-only) change is client state here. Update the URL
+      // and notify subscribers so `useRouter()` / `usePageContext()` re-render,
+      // without reloading or refetching the page.
+      this.currentPath = url;
+      this.notify();
+      this.options.onComplete?.(url);
+      this.options.onNavigate?.(url);
+      return;
+    }
 
     if (this.spaMode && this.spaNavigationHandler) {
       await this.loadSpaPage(url);
@@ -161,7 +243,19 @@ export class VeryfrontRouter {
       await this.loadPage(url);
     }
 
+    this.notify();
     this.options.onNavigate?.(url);
+  }
+
+  /**
+   * Whether a navigation should refetch page data. A route change always does;
+   * a same-route (query/hash-only) change consults `options.shouldRevalidate`,
+   * defaulting to `true` so server data is never shown stale.
+   */
+  private shouldRevalidate(nextUrl: string, sameRoute: boolean): boolean {
+    const policy = this.options.shouldRevalidate;
+    if (!policy) return true;
+    return policy({ currentHref: this.currentPath, nextHref: nextUrl, sameRoute });
   }
 
   private async loadSpaPage(path: string): Promise<void> {

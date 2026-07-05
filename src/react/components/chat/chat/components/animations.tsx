@@ -25,7 +25,7 @@ export function Loader({
       {["0ms", "150ms", "300ms"].map((animationDelay) => (
         <span
           key={animationDelay}
-          className="animate-bounce rounded-full bg-[var(--muted-foreground)]"
+          className="animate-bounce rounded-full bg-[var(--faint)]"
           style={{ width: dotSize, height: dotSize, animationDelay }}
         />
       ))}

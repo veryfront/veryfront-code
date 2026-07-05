@@ -7,6 +7,7 @@ import {
 } from "#veryfront/tool";
 import { defaultChannelInvokeDeps } from "#veryfront/channels/invoke.ts";
 import { type RuntimeAgentDiscoveryDeps } from "#veryfront/channels/control-plane.ts";
+import { getDiscoveredHostTools } from "#veryfront/agent/hosted/veryfront-cloud-agent-service.ts";
 import {
   createRuntimeAgentStreamResponse,
   type RuntimeAgentStreamExecutionDeps,
@@ -63,12 +64,15 @@ import {
 export interface AgentStreamHandlerDeps
   extends RuntimeAgentDiscoveryDeps, RuntimeAgentStreamExecutionDeps {
   resolveRuntimeOwnerInvokeUrl?: typeof resolveRuntimeOwnerInvokeUrl;
+  getLocalTools?: (agentId: string) => RuntimeAgentStreamExecutionDeps["localTools"];
 }
 
 const defaultDeps: AgentStreamHandlerDeps = {
   ...defaultChannelInvokeDeps,
   sessionManager: agentRunSessionManager,
   resolveRuntimeOwnerInvokeUrl,
+  getLocalTools: (agentId) =>
+    getDiscoveredHostTools({ agentId }) as RuntimeAgentStreamExecutionDeps["localTools"],
 };
 const logger = serverLogger.component("agent-stream-handler");
 const RUN_STREAM_PATH_REGEX = /^\/api\/control-plane\/runs\/([^/]+)\/stream$/;
@@ -666,6 +670,7 @@ export class AgentStreamHandler extends BaseHandler {
               ? createRuntimeAgentFromMarkdownDefinition(payload.agentConfig)
               : agent;
             const runtimeInput = sanitizeRuntimeRunAgentInput(toRuntimeRunAgentInput(payload));
+            const localTools = this.deps.getLocalTools?.(runtimeBaseAgent.id);
             const apiAuthToken = payload.credentials?.authToken || ctx.proxyToken ||
               getHostEnv("VERYFRONT_API_TOKEN") || "";
             const platformRuntimeAgent = await withVeryfrontPlatformRemoteTools({
@@ -709,6 +714,7 @@ export class AgentStreamHandler extends BaseHandler {
             const runAgentStream = () =>
               createRuntimeAgentStreamResponse(runtimeInput, runtimeAgent, {
                 ...this.deps,
+                localTools,
                 projectAgentSandbox: {
                   apiUrl: getHostEnv("VERYFRONT_API_URL") ?? "https://api.veryfront.com",
                   authToken: apiAuthToken || undefined,

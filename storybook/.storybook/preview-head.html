@@ -1,0 +1,13 @@
+<!--
+  Load Inter (the veryfront font) into the PREVIEW iframe / story canvas — not
+  just the Storybook chrome. Without this the rendered components fall back to a
+  system font where font-medium (500) / font-semibold (600) barely differ from
+  normal, so headings/labels never look bold. veryfront serves Inter from Google
+  Fonts (its CSP allowlists fonts.googleapis.com), so we match that here.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+  rel="stylesheet"
+/>

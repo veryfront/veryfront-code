@@ -1,3 +1,5 @@
+import type { WebSocketUpgradeOptions } from "#veryfront/platform/compat/http/index.ts";
+
 type BridgePeer = Pick<WebSocket, "close" | "readyState">;
 
 export type ServerWebSocketErrorLogLevel = "warn" | "error";
@@ -19,4 +21,10 @@ export function closeBridgePeer(peer: BridgePeer | null, code: number, reason: s
   if (!peer) return;
   if (peer.readyState !== WebSocket.OPEN && peer.readyState !== WebSocket.CONNECTING) return;
   peer.close(code, reason);
+}
+
+export function createProxyClientWebSocketUpgradeOptions(): WebSocketUpgradeOptions {
+  // Proxied project sockets use app-level heartbeats; Deno's transport idle timeout
+  // can close otherwise healthy bridges before the browser sends a data frame.
+  return { idleTimeout: 0 };
 }

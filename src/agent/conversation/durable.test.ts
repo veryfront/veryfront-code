@@ -393,6 +393,48 @@ describe("agent/durable", () => {
     });
   });
 
+  it("clamps oversized events to the payload limit before appending", async () => {
+    const fetchCalls = stubFetchSequence(
+      jsonResponse(
+        {
+          latest_event_id: 2,
+          latest_external_event_sequence: 2,
+          appended_count: 1,
+          run: {
+            run_id: "run_root_1",
+            conversation_id: CONVERSATION_ID,
+            latest_event_id: 2,
+            latest_external_event_sequence: 2,
+          },
+        },
+        200,
+      ),
+    );
+
+    // A raw, un-normalized oversized tool result — as produced by any append path
+    // that skipped normalization. The chokepoint must clamp it so the API (256 KB
+    // per-event limit) never sees an oversized event.
+    await appendConversationRunEvents({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      conversationId: CONVERSATION_ID,
+      runId: "run_root_1",
+      events: [{
+        type: "TOOL_CALL_RESULT",
+        toolCallId: "tc_big",
+        content: "z".repeat(400 * 1024),
+      }],
+    });
+
+    const body = JSON.parse(String(fetchCalls[0]?.[1]?.body));
+    for (const event of body.events) {
+      assertEquals(
+        new TextEncoder().encode(JSON.stringify(event)).byteLength <= 256 * 1024,
+        true,
+      );
+    }
+  });
+
   it("appends conversation run events and parses snake_case responses", async () => {
     const fetchCalls = stubFetchSequence(
       jsonResponse(
@@ -1283,6 +1325,29 @@ describe("agent/durable", () => {
         latestEventId: 2,
         latestExternalEventSequence: 4,
         disableReason: "ignorable_append_rejection",
+      },
+    );
+
+    assertEquals(
+      await recoverConversationRunAppendFailure({
+        error: new AppendConversationRunEventsError({
+          status: 400,
+          detail: "Agent run event payload must be less than 256 KB",
+        }),
+        authToken: AUTH_TOKEN,
+        apiUrl: API_URL,
+        conversationId: CONVERSATION_ID,
+        runId: "run_append_failure_oversized",
+        latestEventId: 2,
+        latestExternalEventSequence: 4,
+        cursorResyncsThisFlush: 0,
+        maxCursorResyncsPerFlush: 3,
+      }),
+      {
+        outcome: "stopped",
+        latestEventId: 2,
+        latestExternalEventSequence: 4,
+        disableReason: "payload_too_large",
       },
     );
 

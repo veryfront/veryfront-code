@@ -68,6 +68,22 @@ describe("discovery/import-rewriter", () => {
     assertEquals(transformed.includes('from "veryfront/'), false);
   });
 
+  it("rewrites the chat uploads route handler import in compiled Deno binaries", () => {
+    // app/api/uploads/route.ts mounts the framework handler; it must resolve
+    // from the bundled module registry, not as an unresolvable bare specifier.
+    const transformed = rewriteForDeno(
+      'import { createChatUploadHandler } from "veryfront/chat/uploads";',
+      "/project/app/api/uploads",
+      { compiled: true },
+    );
+
+    assertStringIncludes(
+      transformed,
+      'const { createChatUploadHandler } = globalThis.__VERYFRONT_MODULES__["veryfront/chat/uploads"]',
+    );
+    assertEquals(transformed.includes('from "veryfront/'), false);
+  });
+
   it("prefixes arbitrary bare npm imports with npm: for Deno temp module imports", () => {
     const transformed = rewriteForDeno(
       [

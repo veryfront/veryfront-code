@@ -7,10 +7,18 @@ import {
   parseVeryfrontCloudModelId,
   requireVeryfrontCloudBootstrap,
 } from "./shared.ts";
-import { createVeryfrontCloudOpenAIModel } from "./openai.ts";
+import {
+  createVeryfrontCloudOpenAIModel,
+  createVeryfrontCloudOpenAIResponsesModel,
+} from "./openai.ts";
+import { resolveVeryfrontCloudModelThinking } from "./model-catalog.ts";
 
 function preferStreamedGenerate(model: ModelRuntime): ModelRuntime {
   return Object.assign(model, { _generateViaStream: true as const });
+}
+
+function shouldUseOpenAIResponsesRuntime(upstreamModelId: string): boolean {
+  return resolveVeryfrontCloudModelThinking(`openai/${upstreamModelId}`)?.enabled === true;
 }
 
 export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
@@ -48,7 +56,41 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
       break;
     }
 
-    case "openai":
+    case "openai": {
+      const openai = registry.get("openai");
+      if (shouldUseOpenAIResponsesRuntime(upstreamModelId)) {
+        if (openai?.createResponses) {
+          return preferStreamedGenerate(openai.createResponses(upstreamModelId, {
+            credential: apiToken,
+            baseURL,
+            name: "veryfront-cloud",
+            providerName: "veryfront-cloud",
+            fetch,
+          }));
+        }
+        return preferStreamedGenerate(createVeryfrontCloudOpenAIResponsesModel(upstreamModelId, {
+          apiToken,
+          baseURL,
+          fetch,
+        }));
+      }
+
+      if (openai) {
+        return preferStreamedGenerate(openai.createModel(upstreamModelId, {
+          credential: apiToken,
+          baseURL,
+          name: "veryfront-cloud",
+          providerName: "veryfront-cloud",
+          fetch,
+        }));
+      }
+      return preferStreamedGenerate(createVeryfrontCloudOpenAIModel(upstreamModelId, {
+        apiToken,
+        baseURL,
+        fetch,
+      }));
+    }
+
     case "mistral":
     case "moonshotai": {
       const openai = registry.get("openai");
@@ -57,6 +99,7 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
           credential: apiToken,
           baseURL,
           name: "veryfront-cloud",
+          providerName: "openai-compatible",
           fetch,
         }));
       }
