@@ -40,6 +40,27 @@ export function resolveVeryfrontCloudChatStreamWatchdogOptions(
   };
 }
 
+/** Derive hosted chat bootstrap watchdog options from resolved root stream watchdog options. */
+export function resolveVeryfrontCloudStreamBootstrapWatchdogOptions(
+  options: Pick<ChatStreamWatchdogOptions, "idleTimeoutMs" | "toolRunningTimeoutMs">,
+): Pick<
+  PreparedHostedChatExecutionRuntimeOptions,
+  "streamBootstrapKeepaliveIntervalMs" | "streamBootstrapTimeoutMs"
+> {
+  const streamBootstrapKeepaliveIntervalMs = typeof options.idleTimeoutMs === "number"
+    ? Math.max(1, Math.floor(options.idleTimeoutMs / 2))
+    : undefined;
+
+  return {
+    ...(streamBootstrapKeepaliveIntervalMs !== undefined
+      ? { streamBootstrapKeepaliveIntervalMs }
+      : {}),
+    ...(options.toolRunningTimeoutMs !== undefined
+      ? { streamBootstrapTimeoutMs: options.toolRunningTimeoutMs }
+      : {}),
+  };
+}
+
 /** Input payload for create Veryfront Cloud prepared hosted chat execution runtime options. */
 export type CreateVeryfrontCloudPreparedHostedChatExecutionRuntimeOptionsInput = {
   apiUrl: string | URL;
@@ -49,12 +70,23 @@ export type CreateVeryfrontCloudPreparedHostedChatExecutionRuntimeOptionsInput =
   traceStream?: <TResult>(operation: () => Promise<TResult>) => Promise<TResult>;
   setActiveSpanAttributes?: (attributes: AgentTraceAttributes) => void;
   createRootStreamWatchdog?: PreparedHostedChatExecutionRuntimeOptions["createRootStreamWatchdog"];
+  streamBootstrapKeepaliveIntervalMs?: PreparedHostedChatExecutionRuntimeOptions[
+    "streamBootstrapKeepaliveIntervalMs"
+  ];
+  streamBootstrapTimeoutMs?: PreparedHostedChatExecutionRuntimeOptions[
+    "streamBootstrapTimeoutMs"
+  ];
 };
 
 /** Options accepted by create Veryfront Cloud prepared hosted chat execution runtime. */
 export function createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions(
   input: CreateVeryfrontCloudPreparedHostedChatExecutionRuntimeOptionsInput,
 ): PreparedHostedChatExecutionRuntimeOptions {
+  const watchdogOptions = resolveVeryfrontCloudChatStreamWatchdogOptions();
+  const streamBootstrapOptions = resolveVeryfrontCloudStreamBootstrapWatchdogOptions(
+    watchdogOptions,
+  );
+
   return {
     apiUrl: input.apiUrl,
     tracer: input.tracer,
@@ -64,10 +96,14 @@ export function createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions(
     createRootStreamWatchdog: input.createRootStreamWatchdog ??
       (() =>
         createChatStreamWatchdog({
-          ...resolveVeryfrontCloudChatStreamWatchdogOptions(),
+          ...watchdogOptions,
           setTimeoutFn: globalThis.setTimeout,
           clearTimeoutFn: globalThis.clearTimeout,
         })),
+    streamBootstrapKeepaliveIntervalMs: input.streamBootstrapKeepaliveIntervalMs ??
+      streamBootstrapOptions.streamBootstrapKeepaliveIntervalMs,
+    streamBootstrapTimeoutMs: input.streamBootstrapTimeoutMs ??
+      streamBootstrapOptions.streamBootstrapTimeoutMs,
     logger: input.logger,
     setActiveSpanAttributes: input.setActiveSpanAttributes,
   };

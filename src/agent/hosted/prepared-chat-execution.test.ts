@@ -1,8 +1,12 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import type { ChatUiMessageChunk, MessageMetadata } from "../../chat/types.ts";
 import type { HostedAgentRunSpan, HostedAgentRunTracer } from "./agent-run-lifecycle.ts";
-import type { HostedChatRuntimeToUiMessageStreamOptions } from "./chat-runtime-contract.ts";
+import type {
+  HostedChatRuntimeAgent,
+  HostedChatRuntimeToUiMessageStreamOptions,
+} from "./chat-runtime-contract.ts";
 import type { HostedConversationRootRunContext } from "../conversation/root-run-lifecycle.ts";
 import type { AgUiRuntimeRequest } from "../runtime/ag-ui-contract.ts";
 import {
@@ -102,17 +106,18 @@ function createPreparedExecution(input?: {
   captureStreamOptions?: (options?: HostedChatRuntimeToUiMessageStreamOptions) => void;
   waitForSteps?: Promise<readonly unknown[]>;
   cleanup?: () => Promise<void>;
+  stream?: HostedChatRuntimeAgent["stream"];
 }): PreparedHostedChatExecution {
   return {
     authToken: "auth-token",
     agent: {
-      stream: async () => ({
+      stream: input?.stream ?? (async () => ({
         steps: input?.waitForSteps ?? Promise.resolve([{}]),
         toUIMessageStream: (options) => {
           input?.captureStreamOptions?.(options);
           return emptyStream();
         },
-      }),
+      })),
     },
     agentId: "agent-1",
     modelId: "openai/gpt-test",
@@ -157,6 +162,107 @@ describe("agent/prepared-hosted-chat-execution", () => {
       "agent.runtime.kind": "framework",
     }]);
     assertEquals(capturedOptions.generateMessageId?.(), "ag-ui-run-1:assistant");
+  });
+
+  it("passes stream bootstrap watchdog timing through prepared runtime options", async () => {
+    using time = new FakeTime();
+    const observedChunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+    let releaseStream!: () => void;
+    const streamGate = new Promise<void>((resolve) => {
+      releaseStream = resolve;
+    });
+    const runtime = {
+      ...createRuntimeOptions(),
+      streamBootstrapKeepaliveIntervalMs: 1,
+      createRootStreamWatchdog: () => ({
+        signal: new AbortController().signal,
+        get lastTimeoutState() {
+          return null;
+        },
+        observe: (chunk) => {
+          observedChunks.push(chunk);
+        },
+        dispose: () => {},
+      }),
+    } as PreparedHostedChatExecutionRuntimeOptions & {
+      streamBootstrapKeepaliveIntervalMs: number;
+    };
+    const responsePromise = streamPreparedHostedChatExecutionToAgUiResponse({
+      execution: {
+        ...createPreparedExecution({
+          stream: async () => {
+            await streamGate;
+            return {
+              steps: Promise.resolve([{}]),
+              toUIMessageStream: () => emptyStream(),
+            };
+          },
+        }),
+        requestAbortSignal: new AbortController().signal,
+        agUiInput: createAgUiInput(),
+      },
+      runtime,
+    });
+
+    try {
+      time.tick(1);
+      await Promise.resolve();
+
+      assertEquals(observedChunks.length > 0, true);
+    } finally {
+      releaseStream();
+      const response = await responsePromise;
+      await response.body?.cancel();
+    }
+  });
+
+  it("preserves stream bootstrap watchdog timing from prepared execution input", async () => {
+    using time = new FakeTime();
+    const observedChunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+    let releaseStream!: () => void;
+    const streamGate = new Promise<void>((resolve) => {
+      releaseStream = resolve;
+    });
+    const responsePromise = streamPreparedHostedChatExecutionToAgUiResponse({
+      execution: {
+        ...createPreparedExecution({
+          stream: async () => {
+            await streamGate;
+            return {
+              steps: Promise.resolve([{}]),
+              toUIMessageStream: () => emptyStream(),
+            };
+          },
+        }),
+        streamBootstrapKeepaliveIntervalMs: 1,
+        requestAbortSignal: new AbortController().signal,
+        agUiInput: createAgUiInput(),
+      },
+      runtime: {
+        ...createRuntimeOptions(),
+        createRootStreamWatchdog: () => ({
+          signal: new AbortController().signal,
+          get lastTimeoutState() {
+            return null;
+          },
+          observe: (chunk) => {
+            observedChunks.push(chunk);
+          },
+          dispose: () => {},
+        }),
+      },
+    });
+
+    try {
+      time.tick(1);
+      await Promise.resolve();
+
+      assertEquals(observedChunks.length > 0, true);
+    } finally {
+      releaseStream();
+      const response = await responsePromise;
+      await response.body?.cancel();
+    }
   });
 
   it("runs a prepared execution detached and waits for finalization", async () => {

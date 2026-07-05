@@ -41,6 +41,8 @@ export type PreparedHostedChatExecutionRuntimeOptions =
     | "terminalErrorCode"
     | "incompleteToolCallsPartErrorText"
     | "createRootStreamWatchdog"
+    | "streamBootstrapKeepaliveIntervalMs"
+    | "streamBootstrapTimeoutMs"
     | "createTerminalAdapter"
   >
   & {
@@ -104,6 +106,12 @@ function createBootstrappedPreparedHostedChatExecutionRuntime(input: {
     terminalErrorCode: input.runtime.terminalErrorCode,
     incompleteToolCallsPartErrorText: input.runtime.incompleteToolCallsPartErrorText,
     createRootStreamWatchdog: input.runtime.createRootStreamWatchdog,
+    ...(input.runtime.streamBootstrapKeepaliveIntervalMs !== undefined
+      ? { streamBootstrapKeepaliveIntervalMs: input.runtime.streamBootstrapKeepaliveIntervalMs }
+      : {}),
+    ...(input.runtime.streamBootstrapTimeoutMs !== undefined
+      ? { streamBootstrapTimeoutMs: input.runtime.streamBootstrapTimeoutMs }
+      : {}),
     createTerminalAdapter: input.runtime.createTerminalAdapter,
     ...(input.responseMessageId ? { responseMessageId: input.responseMessageId } : {}),
   });
