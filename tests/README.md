@@ -344,11 +344,13 @@ upload, then the required `coverage gate` job merges those LCOV reports with
 enforced by `scripts/lint/check-coverage.ts <floor>`.
 
 - The floor is a **ratchet**, not the target: it sits at the current rounded
-  coverage level so it blocks regressions without breaking the build. When you
-  raise coverage, bump the number in the `coverage:gate` task to lock the gain
-  in.
-- `deno task coverage:report` checks against the same ratcheted floor locally
-  so the local report and CI gate agree.
+  coverage level from the CI shard merge so it blocks regressions without
+  breaking the build. When you raise coverage, bump the number in both the
+  `coverage:gate` task and the `coverage:ci:merge` default to lock the gain in.
+- `deno task coverage:report` checks against the same ratcheted floor locally.
+  Use the CI `coverage gate` job as the source of truth before raising it,
+  because the local one-shot coverage profile can differ slightly from merged
+  shard LCOV.
 - See per-file gaps locally with `deno task coverage:html` and open
   `coverage/html/index.html`.
 

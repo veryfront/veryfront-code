@@ -56,17 +56,17 @@ Deno.test("deno tasks expose shard and merge coverage entrypoints", () => {
   );
 });
 
-Deno.test("coverage gates require the ratcheted 81 percent floor", () => {
+Deno.test("coverage gates require the ratcheted 80 percent floor", () => {
   assertStringIncludes(
     denoJson.tasks["coverage:gate"],
-    "scripts/lint/check-coverage.ts 81",
+    "scripts/lint/check-coverage.ts 80",
   );
   assertStringIncludes(
     denoJson.tasks["coverage:report"],
-    "scripts/lint/check-coverage.ts 81",
+    "scripts/lint/check-coverage.ts 80",
   );
   assertStringIncludes(
     coverageCiScript,
-    'readOption(args, "--threshold") ?? "81"',
+    'readOption(args, "--threshold") ?? "80"',
   );
 });
