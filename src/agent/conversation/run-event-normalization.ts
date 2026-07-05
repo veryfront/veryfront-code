@@ -1,4 +1,5 @@
 export const MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES = 240 * 1024;
+const OMITTED_CONVERSATION_RUN_EVENT_TYPE = "CUSTOM";
 const MAX_SUMMARY_DEPTH = 4;
 const MAX_SUMMARY_ARRAY_ITEMS = 8;
 const MAX_SUMMARY_OBJECT_KEYS = 24;
@@ -74,13 +75,7 @@ function enforceEventSizeLimit(event: ConversationRunEventRecord): ConversationR
     }
   }
 
-  return {
-    type: event.type,
-    ...(typeof event.messageId === "string" ? { messageId: event.messageId } : {}),
-    ...(typeof event.toolCallId === "string" ? { toolCallId: event.toolCallId } : {}),
-    truncated: true,
-    note: "Conversation-run event payload exceeded the size limit and was omitted.",
-  };
+  return buildOmittedEvent(event);
 }
 
 /** Normalizes conversation run events. */
@@ -143,7 +138,7 @@ function summarizeToolResultEvent(event: ConversationRunEventRecord): Conversati
  */
 function truncateEventStringFieldToLimit(
   event: ConversationRunEventRecord,
-  field: "content" | "delta",
+  field: string,
   suffix: string,
 ): ConversationRunEventRecord | null {
   const value = event[field];
@@ -189,6 +184,50 @@ function truncateEventStringFieldToLimit(
   return buildCandidate(best);
 }
 
+function addStringFieldWithinLimit(
+  event: ConversationRunEventRecord,
+  field: string,
+  value: string,
+): ConversationRunEventRecord {
+  const candidate = { ...event, [field]: value };
+  if (
+    getConversationRunEventJsonByteLength(candidate) <= MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES
+  ) {
+    return candidate;
+  }
+
+  return truncateEventStringFieldToLimit(candidate, field, " [truncated]") ?? event;
+}
+
+function buildOmittedEvent(event: ConversationRunEventRecord): ConversationRunEventRecord {
+  let omitted: ConversationRunEventRecord = {
+    type: OMITTED_CONVERSATION_RUN_EVENT_TYPE,
+    name: "conversation-run-event-omitted",
+    truncated: true,
+    note: "Conversation-run event payload exceeded the size limit and was omitted.",
+  };
+
+  omitted = addStringFieldWithinLimit(omitted, "originalType", event.type);
+
+  if (typeof event.messageId === "string") {
+    omitted = addStringFieldWithinLimit(omitted, "originalMessageId", event.messageId);
+  }
+
+  if (typeof event.toolCallId === "string") {
+    omitted = addStringFieldWithinLimit(omitted, "originalToolCallId", event.toolCallId);
+  }
+
+  if (getConversationRunEventJsonByteLength(omitted) <= MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES) {
+    return omitted;
+  }
+
+  return {
+    type: OMITTED_CONVERSATION_RUN_EVENT_TYPE,
+    name: "conversation-run-event-omitted",
+    truncated: true,
+  };
+}
+
 function summarizeGenericEvent(event: ConversationRunEventRecord): ConversationRunEventRecord {
   const { type, ...rest } = event;
   return {
@@ -203,25 +242,45 @@ function splitStringFieldEvent<TField extends "delta" | "content">(
   event: ConversationRunEventRecord & Record<TField, string>,
   field: TField,
 ): ConversationRunEventRecord[] {
-  const maxBytes = getStringFieldBudget(event, field);
-  const parts = splitUtf8String(event[field], maxBytes);
-  return parts.map((part) => ({ ...event, [field]: part }));
-}
+  const value = event[field];
+  const buildPart = (slice: string): ConversationRunEventRecord => ({ ...event, [field]: slice });
 
-function getStringFieldBudget(
-  event: ConversationRunEventRecord,
-  field: "delta" | "content",
-): number {
-  const eventWithEmptyField = {
-    ...event,
-    [field]: "",
-  };
+  const parts: ConversationRunEventRecord[] = [];
+  let startIndex = 0;
 
-  return Math.max(
-    1,
-    MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES -
-      getConversationRunEventJsonByteLength(eventWithEmptyField),
-  );
+  while (startIndex < value.length) {
+    // Largest prefix whose WHOLE serialized event fits the byte limit. Measuring the
+    // event (not the raw slice) keeps the split correct for escape-heavy content that
+    // expands under JSON.stringify — the same unit the API enforces — so every part
+    // fits without the size-limit backstop having to truncate (drop) any data.
+    let low = startIndex + 1;
+    let high = value.length;
+    let bestEndIndex = -1;
+
+    while (low <= high) {
+      const mid = Math.floor((low + high) / 2);
+      if (
+        getConversationRunEventJsonByteLength(buildPart(value.slice(startIndex, mid))) <=
+          MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES
+      ) {
+        bestEndIndex = mid;
+        low = mid + 1;
+      } else {
+        high = mid - 1;
+      }
+    }
+
+    if (bestEndIndex <= startIndex) {
+      // Even a single character overflows the envelope; hand off to the size-limit
+      // backstop rather than loop forever emitting zero-progress parts.
+      return [event];
+    }
+
+    parts.push(buildPart(value.slice(startIndex, bestEndIndex)));
+    startIndex = bestEndIndex;
+  }
+
+  return parts.length > 0 ? parts : [event];
 }
 
 function splitUtf8String(value: string, maxBytes: number): string[] {
