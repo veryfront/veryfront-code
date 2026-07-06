@@ -7,7 +7,7 @@ import { describe, it } from "#veryfront/testing/bdd";
 import { Head } from "../Head.tsx";
 import { ChatStyleProvider } from "./chat-style-provider.tsx";
 import { ChatRoot } from "./chat/composition/chat-root.tsx";
-import { ColorModeScript } from "./color-mode.tsx";
+import { ColorModeScript } from "../ui/color-mode.tsx";
 
 const TEST_NONCE = "nonce-123";
 

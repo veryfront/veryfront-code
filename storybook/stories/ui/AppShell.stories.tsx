@@ -12,12 +12,12 @@ import {
   ListLabel,
   Tabs,
   TabsItem,
-} from "../../../src/react/components/chat/ui/index.ts";
+} from "../../../src/react/components/ui/index.ts";
 import {
   MoreHorizontalIcon,
   PencilIcon,
   TrashIcon,
-} from "../../../src/react/components/chat/icons/index.ts";
+} from "../../../src/react/components/ui/icons/index.ts";
 import {
   DocsCode,
   DocsComposition,
@@ -28,7 +28,7 @@ import {
   DocsSection,
 } from "../../.storybook/docs";
 
-const importCode = `import { AppShell, useAppShell } from "veryfront/chat/ui"`;
+const importCode = `import { AppShell, useAppShell } from "veryfront/ui"`;
 
 const usageCode = `<AppShell storageKey="app-shell">
   <AppShell.Sidebar side="left" aria-label="Conversations">
@@ -299,7 +299,7 @@ function AppShellDocsPage() {
 }
 
 const meta = {
-  title: "Chat/UI/AppShell",
+  title: "UI/AppShell",
   component: AppShell,
   tags: ["autodocs"],
   parameters: {

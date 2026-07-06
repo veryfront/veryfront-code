@@ -13,7 +13,7 @@
 
 import * as React from "react";
 import { cn } from "../../theme.ts";
-import { Skeleton } from "../../ui/skeleton.tsx";
+import { Skeleton } from "../../../ui/skeleton.tsx";
 
 /** Props accepted by `<PendingMessage>`. */
 export interface PendingMessageProps {

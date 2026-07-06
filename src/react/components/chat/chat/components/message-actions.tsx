@@ -1,6 +1,6 @@
 import * as React from "react";
 import { cn } from "../../theme.ts";
-import { CheckIcon, CopyIcon, PencilIcon, RefreshCwIcon } from "../../icons/index.ts";
+import { CheckIcon, CopyIcon, PencilIcon, RefreshCwIcon } from "../../../ui/icons/index.ts";
 import { useClipboard } from "../hooks/use-clipboard.ts";
 
 const ACTION_BUTTON =

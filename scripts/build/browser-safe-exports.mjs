@@ -3,6 +3,7 @@ export const BROWSER_SAFE_EXPORTS = [
   "./router",
   "./context",
   "./fonts",
+  "./ui",
   "./chat",
   "./chat/ag-ui",
   "./chat/protocol",

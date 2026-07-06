@@ -4,13 +4,13 @@ import {
   AlertAction,
   AlertContent,
   AlertIcon,
-} from "../../../src/react/components/chat/ui/index.ts";
+} from "../../../src/react/components/ui/index.ts";
 import {
   AlertTriangleIcon,
   CheckCircleIcon,
   InfoIcon,
   XCircleIcon,
-} from "../../../src/react/components/chat/icons/index.ts";
+} from "../../../src/react/components/ui/icons/index.ts";
 import {
   DocsCode,
   DocsComposition,
@@ -22,7 +22,7 @@ import {
 } from "../../.storybook/docs";
 import { ReviewSurface, StoryFrame } from "../support/StoryFrame";
 
-const importCode = `import { Alert } from "veryfront/chat/ui"`;
+const importCode = `import { Alert } from "veryfront/ui"`;
 
 const compositionTree =
   `Alert  <- soft-fill status callout (default / warning / error / success)
@@ -83,7 +83,7 @@ function AlertDocsPage() {
 }
 
 const meta = {
-  title: "Chat/UI/Alert",
+  title: "UI/Alert",
   component: Alert,
   tags: ["autodocs"],
   parameters: {
@@ -104,7 +104,7 @@ export const Variants: Story = {
   Alert,
   AlertContent,
   AlertIcon,
-} from "veryfront/chat/ui";
+} from "veryfront/ui";
 import { InfoIcon } from "veryfront/chat/icons";
 
 <Alert>
@@ -166,7 +166,7 @@ export const WithAction: Story = {
   AlertAction,
   AlertContent,
   AlertIcon,
-} from "veryfront/chat/ui";
+} from "veryfront/ui";
 import { XCircleIcon } from "veryfront/chat/icons";
 
 <Alert variant="error">

@@ -1,6 +1,6 @@
 import * as React from "react";
 import { cn } from "../../theme.ts";
-import { ArrowDownIcon } from "../../icons/index.ts";
+import { ArrowDownIcon } from "../../../ui/icons/index.ts";
 
 /** Props accepted by suggestion. */
 export interface SuggestionProps {

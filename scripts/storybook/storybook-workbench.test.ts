@@ -50,12 +50,14 @@ describe("Storybook UI workbench", () => {
     assertEquals(dupes, [], `duplicate Overview links: ${dupes.join(", ")}`);
 
     // Every linkable docs page: an autodocs story titled under one of the three
-    // linked sections. (`Chat/Overview` and any non-autodocs story are excluded.)
+    // linked sections — the top-level `UI/*` primitives, plus `Chat/Components`
+    // and `Chat/Composition`. (`Chat/Overview` and any non-autodocs story are
+    // excluded.)
     const expected = new Set<string>();
     for await (const path of storyFiles("storybook/stories")) {
       const src = await readText(path);
       const title = src.match(
-        /title:\s*"(Chat\/(?:UI|Components|Composition)\/[^"]+)"/,
+        /title:\s*"((?:Chat\/(?:Components|Composition)|UI)\/[^"]+)"/,
       )?.[1];
       if (title && /tags:\s*\[[^\]]*"autodocs"/.test(src)) {
         expected.add(`${toStorybookId(title)}--docs`);
@@ -77,7 +79,7 @@ describe("Storybook UI workbench", () => {
       const [name, prefix] of [
         ["COMPONENTS", "chat-components-"],
         ["COMPOSITION", "chat-composition-"],
-        ["UI", "chat-ui-"],
+        ["UI", "ui-"],
       ] as const
     ) {
       const block = overview.match(
@@ -318,22 +320,22 @@ describe("Storybook UI workbench", () => {
     );
   });
 
-  it("has a CodeBlock primitive under Chat/UI (driver)", async () => {
+  it("has a CodeBlock primitive under UI (driver)", async () => {
     // CodeBlock is the shared syntax-highlight primitive (Markdown + ToolCall).
     // Renamed from RichCodeBlock, moved to the ui barrel, shiki github-light/dark
     // + mermaid, lazy-loaded from esm.sh (no bundled dep).
     const problems: string[] = [];
 
-    const uiBarrel = await readText("src/react/components/chat/ui/index.ts");
+    const uiBarrel = await readText("src/react/components/ui/index.ts");
     if (!/\bCodeBlock\b/.test(uiBarrel)) {
-      problems.push("src/react/components/chat/ui/index.ts must export CodeBlock");
+      problems.push("src/react/components/ui/index.ts must export CodeBlock");
     }
 
     const storyPath = "storybook/stories/ui/CodeBlock.stories.tsx";
     try {
       const story = await readText(storyPath);
-      if (!story.includes("Chat/UI/CodeBlock")) {
-        problems.push(`${storyPath} must use title "Chat/UI/CodeBlock"`);
+      if (!story.includes("UI/CodeBlock")) {
+        problems.push(`${storyPath} must use title "UI/CodeBlock"`);
       }
     } catch {
       problems.push(`missing story ${storyPath}`);

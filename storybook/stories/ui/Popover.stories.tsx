@@ -9,7 +9,7 @@ import {
   PopoverFooter,
   PopoverTitle,
   PopoverTrigger,
-} from "../../../src/react/components/chat/ui/index.ts";
+} from "../../../src/react/components/ui/index.ts";
 import {
   DocsCode,
   DocsComposition,
@@ -28,7 +28,7 @@ const importCode = `import {
   PopoverBody,
   PopoverFooter,
   PopoverActions,
-} from "veryfront/chat/ui"`;
+} from "veryfront/ui"`;
 
 const compositionTree = `Popover                    <- Root
 +-- PopoverTrigger         <- toggles the popover
@@ -148,7 +148,7 @@ function PopoverDocsPage() {
 }
 
 const meta = {
-  title: "Chat/UI/Popover",
+  title: "UI/Popover",
   component: Popover,
   subcomponents: { PopoverTrigger, PopoverContent, PopoverTitle, PopoverBody, PopoverFooter, PopoverActions },
   tags: ["autodocs"],

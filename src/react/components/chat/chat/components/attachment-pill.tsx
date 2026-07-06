@@ -1,7 +1,7 @@
 import * as React from "react";
 import { cn } from "../../theme.ts";
-import { CheckIcon, ClockIcon, FileTextIcon, RefreshCwIcon } from "../../icons/index.ts";
-import { Button } from "../../ui/button.tsx";
+import { CheckIcon, ClockIcon, FileTextIcon, RefreshCwIcon } from "../../../ui/icons/index.ts";
+import { Button } from "../../../ui/button.tsx";
 import { Shimmer } from "./animations.tsx";
 import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
 

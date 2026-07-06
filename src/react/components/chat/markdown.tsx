@@ -2,7 +2,7 @@ import * as React from "react";
 import { cn } from "./theme.ts";
 import { isBrowserEnvironment } from "#veryfront/platform/compat/runtime.ts";
 import { validateTrustedHtml } from "#veryfront/security/client/html-sanitizer.ts";
-import { CodeBlock as SyntaxCodeBlock } from "./ui/code-block.tsx";
+import { CodeBlock as SyntaxCodeBlock } from "../ui/code-block.tsx";
 
 /**
  * Custom element renderers keyed by HTML tag name, the shape of

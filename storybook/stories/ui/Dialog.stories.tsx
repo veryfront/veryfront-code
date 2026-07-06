@@ -13,7 +13,7 @@ import {
   DialogTrigger,
   Input,
   Label,
-} from "../../../src/react/components/chat/ui/index.ts";
+} from "../../../src/react/components/ui/index.ts";
 import {
   DocsCode,
   DocsComposition,
@@ -36,7 +36,7 @@ const importCode = `import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "veryfront/chat/ui"`;
+} from "veryfront/ui"`;
 
 const compositionTree = `Dialog                           <- Root
 +-- DialogTrigger                <- opens the dialog
@@ -137,7 +137,7 @@ function DialogDocsPage() {
 }
 
 const meta = {
-  title: "Chat/UI/Dialog",
+  title: "UI/Dialog",
   component: Dialog,
   tags: ["autodocs"],
   parameters: {

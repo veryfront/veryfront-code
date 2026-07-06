@@ -15,16 +15,22 @@
 import * as React from "react";
 import { InputBox } from "#veryfront/react/primitives/index.ts";
 import { cn } from "../../theme.ts";
-import { ArrowUpIcon, FileTextIcon, PaperclipIcon, PlusIcon, StopIcon } from "../../icons/index.ts";
-import { Button } from "../../ui/button.tsx";
-import { IconButton } from "../../ui/icon-button.tsx";
-import { Slot } from "../../ui/slot.tsx";
+import {
+  ArrowUpIcon,
+  FileTextIcon,
+  PaperclipIcon,
+  PlusIcon,
+  StopIcon,
+} from "../../../ui/icons/index.ts";
+import { Button } from "../../../ui/button.tsx";
+import { IconButton } from "../../../ui/icon-button.tsx";
+import { Slot } from "../../../ui/slot.tsx";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "../../ui/dropdown-menu.tsx";
+} from "../../../ui/dropdown-menu.tsx";
 import { type ModelOption, ModelSelector } from "../../model-selector.tsx";
 import type { ChatTheme } from "../../theme.ts";
 import { AttachmentPill } from "../components/attachment-pill.tsx";

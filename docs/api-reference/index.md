@@ -43,6 +43,7 @@ order: 1
 | [`veryfront/testing`](./veryfront/testing.md) | Test utilities. |
 | [`veryfront/tool`](./veryfront/tool.md) | Tool definitions and execution. |
 | [`veryfront/trigger`](./veryfront/trigger.md) | Shared source-trigger discovery and local execution primitives. |
+| [`veryfront/ui`](./veryfront/ui.md) | Dependency-light UI primitives (Button, Card, Dialog, Select, color-mode…) — the base layer the `veryfront/chat` components are built on. |
 | [`veryfront/utils`](./veryfront/utils.md) | Runtime utilities. |
 | [`veryfront/webhook`](./veryfront/webhook.md) | Source-defined webhooks for Veryfront projects. |
 | [`veryfront/work`](./veryfront/work.md) | Business process outcome definitions. |

@@ -10,7 +10,7 @@
  *
  * Notes vs Studio:
  * - No `@radix-ui/*`, no `class-variance-authority`, no `@/` imports, no
- *   licensed fonts / motion — the logic is forked onto our `chat/ui` primitives.
+ *   licensed fonts / motion — the logic is forked onto our `ui` primitives.
  * - Our `dropdown-menu.tsx` has NO submenu primitive (radix `Sub*`), so the
  *   Settings submenu is a nested `DropdownMenu` anchored to its trigger row and
  *   portalled via `Floating` (same overlay pattern), aligned to the side.
@@ -28,11 +28,11 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "./ui/dropdown-menu.tsx";
-import { Switch } from "./ui/switch.tsx";
-import { Floating } from "./ui/floating.tsx";
-import { Button } from "./ui/button.tsx";
-import { PaperclipIcon, PlusIcon } from "./icons/index.ts";
+} from "../ui/dropdown-menu.tsx";
+import { Switch } from "../ui/switch.tsx";
+import { Floating } from "../ui/floating.tsx";
+import { Button } from "../ui/button.tsx";
+import { PaperclipIcon, PlusIcon } from "../ui/icons/index.ts";
 import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
 
 /* -------------------------------------------------------------------------------------------------

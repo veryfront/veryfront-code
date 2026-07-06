@@ -134,7 +134,7 @@ function CodeBlockDocsPage() {
 }
 
 const meta = {
-  title: "Chat/UI/CodeBlock",
+  title: "UI/CodeBlock",
   component: CodeBlock,
   tags: ["autodocs"],
   parameters: {

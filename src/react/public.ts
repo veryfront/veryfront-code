@@ -196,7 +196,7 @@ export {
   ColorModeScript,
   ColorModeToggle,
   useColorMode,
-} from "./components/chat/color-mode.tsx";
+} from "./components/ui/color-mode.tsx";
 
 // Design tokens
 export { chatTokens, getChatTokensCSS } from "./components/chat/chat-tokens.ts";
