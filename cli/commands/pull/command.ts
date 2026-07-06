@@ -20,9 +20,11 @@ import {
   resolveConfigWithAuth,
   type ResolvedConfig,
 } from "#cli/shared/config";
-import { confirmPrompt, logInfo, logSuccess, logWarning } from "#cli/utils";
+import { confirmPrompt, isTTY, logInfo, logSuccess, logWarning } from "#cli/utils";
 import { createNoopSpinner, createSpinner } from "#cli/ui";
+import { isInteractive } from "../../shared/interactive.ts";
 import { getApiTokenEnv, getEnvironmentConfig } from "veryfront/config";
+import { INVALID_ARGUMENT, RESOURCE_NOT_FOUND } from "#veryfront/errors";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 
@@ -125,6 +127,19 @@ interface ListFilesResponse {
 interface WriteOp {
   path: string;
   relativePath: string;
+}
+
+interface PullProjectResult {
+  written: number;
+  skipped: number;
+  cancelled: boolean;
+}
+
+interface FailedProject {
+  project: string;
+  message: string;
+  status?: number;
+  slug?: string;
 }
 
 /**
@@ -312,6 +327,54 @@ function formatPullSource(source: PullSource): string {
   }
 }
 
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function errorStatus(error: unknown): number | undefined {
+  const status = (error as { status?: unknown })?.status;
+  return typeof status === "number" ? status : undefined;
+}
+
+function errorSlug(error: unknown): string | undefined {
+  const slug = (error as { slug?: unknown })?.slug;
+  return typeof slug === "string" ? slug : undefined;
+}
+
+function pullProjectListError(projectSlug: string, sourceLabel: string, error: unknown): Error {
+  const message = [
+    `Failed to list files for project "${projectSlug}" from ${sourceLabel}: ${
+      describeError(error)
+    }.`,
+    "Check that the project slug is exact, the selected branch/env/release exists, and your token has access.",
+  ].join(" ");
+  const status = errorStatus(error);
+  if (status === 404) {
+    return RESOURCE_NOT_FOUND.create({ detail: message, cause: error, status });
+  }
+
+  const wrapped = new Error(message, { cause: error });
+  if (typeof status === "number") {
+    (wrapped as Error & { status?: number }).status = status;
+  }
+  return wrapped;
+}
+
+async function confirmPullWrite(projectDir: string): Promise<boolean> {
+  if (isInteractive() && !isTTY()) {
+    throw INVALID_ARGUMENT.create({
+      detail:
+        `Pull requires confirmation before writing files, but no interactive prompt is available. ` +
+        `Re-run with --force to write into ${projectDir} without prompting.`,
+    });
+  }
+
+  return await confirmPrompt(
+    `This will overwrite local files in ${projectDir}. Continue?`,
+    false,
+  );
+}
+
 async function pullSingleProject(
   projectSlug: string,
   projectDir: string,
@@ -320,7 +383,7 @@ async function pullSingleProject(
   dryRun: boolean,
   config: ResolvedConfig,
   quiet = false,
-): Promise<{ written: number; skipped: number }> {
+): Promise<PullProjectResult> {
   const sourceLabel = formatPullSource(source);
   let spinner = quiet
     ? createNoopSpinner()
@@ -331,13 +394,15 @@ async function pullSingleProject(
   let files: ProjectFile[];
   try {
     files = await listAllFiles(client, projectSlug, source);
+  } catch (error) {
+    throw pullProjectListError(projectSlug, sourceLabel, error);
   } finally {
     spinner.stop();
   }
 
   if (files.length === 0) {
     if (!quiet) logInfo(`No files to pull from ${projectSlug}.`);
-    return { written: 0, skipped: 0 };
+    return { written: 0, skipped: 0, cancelled: false };
   }
 
   const writeOps: WriteOp[] = [];
@@ -356,13 +421,10 @@ async function pullSingleProject(
   }
 
   if (!force && !dryRun) {
-    const confirmed = await confirmPrompt(
-      `This will overwrite local files in ${projectDir}. Continue?`,
-      false,
-    );
+    const confirmed = await confirmPullWrite(projectDir);
     if (!confirmed) {
       cliLogger.info("Pull cancelled.");
-      return { written: 0, skipped: 0 };
+      return { written: 0, skipped: 0, cancelled: true };
     }
   }
 
@@ -381,7 +443,17 @@ async function pullSingleProject(
     }
   }
 
-  return result;
+  return { ...result, cancelled: false };
+}
+
+function formatProjectCount(count: number): string {
+  return `${count} project${count === 1 ? "" : "s"}`;
+}
+
+function failedProjectsDetail(failedProjects: FailedProject[]): string {
+  const names = failedProjects.map(({ project }) => project).join(", ");
+  const details = failedProjects.map(({ project, message }) => `${project}: ${message}`).join(" ");
+  return `Failed to pull ${formatProjectCount(failedProjects.length)}: ${names}. ${details}`;
 }
 
 /**
@@ -447,14 +519,13 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
         return;
       }
 
-      const fs = createFileSystem();
       let totalWritten = 0;
-      let totalSkipped = 0;
+      let totalSkippedFiles = 0;
+      const failedProjects: FailedProject[] = [];
+      const cancelledProjects: string[] = [];
 
       for (const project of projects) {
         const targetDir = join(projectDir, project);
-
-        if (!dryRun) await fs.mkdir(targetDir, { recursive: true });
 
         if (!quiet) cliLogger.info(`\n--- Pulling ${project} into ${targetDir} ---`);
 
@@ -469,10 +540,16 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
             quiet,
           );
           totalWritten += result.written;
-          totalSkipped += result.skipped;
+          totalSkippedFiles += result.skipped;
+          if (result.cancelled) cancelledProjects.push(project);
         } catch (error) {
-          cliLogger.error(`Failed to pull ${project}:`, error);
-          totalSkipped++;
+          cliLogger.error(`Failed to pull ${project}: ${describeError(error)}`);
+          failedProjects.push({
+            project,
+            message: describeError(error),
+            status: errorStatus(error),
+            slug: errorSlug(error),
+          });
         }
       }
 
@@ -482,10 +559,41 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
           logInfo(
             `Dry run complete. Would write ${totalWritten} files total across ${projects.length} projects.`,
           );
-        } else {
+        } else if (totalWritten > 0) {
           logSuccess(`Pulled ${totalWritten} files total across ${projects.length} projects.`);
-          if (totalSkipped > 0) logWarning(`Skipped ${totalSkipped} files due to errors.`);
+        } else {
+          logInfo(`No files were pulled across ${projects.length} projects.`);
         }
+
+        if (cancelledProjects.length > 0) {
+          logWarning(
+            `Cancelled ${formatProjectCount(cancelledProjects.length)}: ${
+              cancelledProjects.join(", ")
+            }.`,
+          );
+        }
+        if (failedProjects.length > 0) {
+          logWarning(
+            `Failed to pull ${formatProjectCount(failedProjects.length)}: ${
+              failedProjects.map(({ project }) => project).join(", ")
+            }.`,
+          );
+        }
+        if (totalSkippedFiles > 0) {
+          logWarning(`Skipped ${totalSkippedFiles} files due to write errors.`);
+        }
+      }
+
+      if (failedProjects.length > 0) {
+        const detail = failedProjectsDetail(failedProjects);
+        if (
+          failedProjects.every((failure) =>
+            failure.slug === "resource-not-found" || failure.status === 404
+          )
+        ) {
+          throw RESOURCE_NOT_FOUND.create({ detail });
+        }
+        throw new Error(detail);
       }
     },
     { "cli.dryRun": options.dryRun ?? false, "cli.source_type": source.type },

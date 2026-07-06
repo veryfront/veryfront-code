@@ -213,6 +213,10 @@ describe("cli/shared/args", () => {
       assertEquals(parseCliArgs(["-p", "9000"]).port, 9000);
     });
 
+    it("should preserve the raw short key for command-specific parsers", () => {
+      assertEquals(parseCliArgs(["pull", "-p", "my-project"]).p, "my-project");
+    });
+
     it("should resolve -h to help", () => {
       assertEquals(parseCliArgs(["-h"]).help, true);
     });

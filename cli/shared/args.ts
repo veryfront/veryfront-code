@@ -234,11 +234,13 @@ function parse(
 
       if (isValue(next)) {
         setValue(key, next);
+        if (key !== short) setValue(short, next);
         i++;
         continue;
       }
 
       setValue(key, true);
+      if (key !== short) setValue(short, true);
       continue;
     }
 
