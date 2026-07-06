@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { VERSION } from "#cli/utils";
 import { join } from "veryfront/platform/path";
 
 import { createDenoConfig } from "./deno-config-generator.ts";
@@ -20,19 +21,35 @@ describe("deno-config-generator", () => {
       }
     });
 
-    it("writes dev, build, preview tasks invoking npm:veryfront@latest", async () => {
+    it("writes dev, build, preview tasks through pinned Deno npm specs", async () => {
       const tmpDir = await Deno.makeTempDir();
       try {
         await createDenoConfig(tmpDir);
         const parsed = JSON.parse(
           await Deno.readTextFile(join(tmpDir, "deno.json")),
         );
-        assertEquals(parsed.tasks.dev, "deno run -A npm:veryfront@latest dev");
-        assertEquals(parsed.tasks.build, "deno run -A npm:veryfront@latest build");
+        assertEquals(parsed.tasks.dev, `deno run -A npm:veryfront@${VERSION} dev`);
+        assertEquals(parsed.tasks.build, `deno run -A npm:veryfront@${VERSION} build`);
         assertEquals(
           parsed.tasks.preview,
-          "deno run -A npm:veryfront@latest preview",
+          `deno run -A npm:veryfront@${VERSION} preview`,
         );
+      } finally {
+        await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+
+    it("does not use @latest or the Node-based local npm bin wrapper", async () => {
+      const tmpDir = await Deno.makeTempDir();
+      try {
+        await createDenoConfig(tmpDir);
+        const parsed = JSON.parse(
+          await Deno.readTextFile(join(tmpDir, "deno.json")),
+        );
+        for (const task of Object.values(parsed.tasks)) {
+          assertEquals(String(task).includes("@latest"), false);
+          assertEquals(String(task).startsWith("veryfront "), false);
+        }
       } finally {
         await Deno.remove(tmpDir, { recursive: true });
       }

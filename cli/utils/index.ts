@@ -1,4 +1,5 @@
 import denoConfig from "../../deno.json" with { type: "json" };
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import {
   exit,
   getEnv,
@@ -212,8 +213,10 @@ export async function confirmPrompt(
   defaultValue = false,
 ): Promise<boolean> {
   const { isInteractive } = await import("../shared/interactive.ts");
-  if (!isInteractive()) return true;
-  if (!isTTY()) return defaultValue;
+  const interactive = isInteractive();
+  if (!interactive) return true;
+
+  ensureConfirmPromptAvailable({ interactive, stdoutTTY: isTTY() });
 
   const hint = defaultValue ? "[Y/n]" : "[y/N]";
   const response = await promptUser(`${message} ${hint} `);
@@ -222,6 +225,18 @@ export async function confirmPrompt(
 
   const normalized = response.toLowerCase().trim();
   return normalized === "y" || normalized === "yes";
+}
+
+export function ensureConfirmPromptAvailable(options: {
+  interactive: boolean;
+  stdoutTTY: boolean;
+}): void {
+  if (!options.interactive || options.stdoutTTY) return;
+
+  throw INVALID_ARGUMENT.create({
+    detail:
+      "Confirmation required but no interactive prompt is available. Re-run with --yes to confirm without prompting, or use --force when the command supports it.",
+  });
 }
 
 /** Exit the process with the given code. */

@@ -3,6 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { handlePushCommand } from "./handler.ts";
 import { parsePushArgs } from "./command.ts";
+import { parseCliArgs } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 
 function createArgs(flags: Record<string, unknown> = {}): ParsedArgs {
@@ -40,6 +41,12 @@ describe("Push Handler", () => {
 
     it("should parse positional project slug", () => {
       const result = parsePushArgs({ _: ["push", "my-project"] } as ParsedArgs);
+      assertSuccess(result);
+      assertEquals(result.data.projectSlug, "my-project");
+    });
+
+    it("should parse -p as project slug from raw push argv", () => {
+      const result = parsePushArgs(parseCliArgs(["push", "-p", "my-project"]));
       assertSuccess(result);
       assertEquals(result.data.projectSlug, "my-project");
     });

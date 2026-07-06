@@ -1,8 +1,19 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "#veryfront/errors";
+import { resetInteractiveMode } from "../shared/interactive.ts";
+import {
+  confirmPrompt,
+  ensureConfirmPromptAvailable,
   formatBytes,
+  isTTY,
   logError,
   logInfo,
   logSuccess,
@@ -165,6 +176,35 @@ describe("promptUser", () => {
       () => promptUser("Enter something:"),
     );
     assertEquals(result, "test with spaces");
+  });
+});
+
+describe("confirmPrompt", () => {
+  it("throws when interactive confirmation cannot prompt", () => {
+    assertThrows(
+      () => ensureConfirmPromptAvailable({ interactive: true, stdoutTTY: false }),
+      VeryfrontError,
+      "no interactive prompt is available",
+    );
+  });
+
+  it("allows explicit non-interactive confirmation without a TTY", () => {
+    ensureConfirmPromptAvailable({ interactive: false, stdoutTTY: false });
+  });
+
+  it("allows interactive confirmation when stdout is a TTY", () => {
+    ensureConfirmPromptAvailable({ interactive: true, stdoutTTY: true });
+  });
+
+  it("does not consume the default answer when interactive confirmation cannot prompt", async () => {
+    if (isTTY()) return;
+
+    resetInteractiveMode();
+    await assertRejects(
+      () => confirmPrompt("Delete everything?", false),
+      VeryfrontError,
+      "no interactive prompt is available",
+    );
   });
 });
 
