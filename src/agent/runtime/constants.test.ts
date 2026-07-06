@@ -27,6 +27,12 @@ describe("getModelMaxOutputTokens", () => {
     assertEquals(getModelMaxOutputTokens("veryfront-cloud/mistral/mistral-large-2512"), 1_024);
   });
 
+  it("returns a large limit for Kimi thinking models so reasoning_content does not exhaust the budget", () => {
+    assertEquals(getModelMaxOutputTokens("moonshotai/kimi-k2.6"), 32_000);
+    assertEquals(getModelMaxOutputTokens("veryfront-cloud/moonshotai/kimi-k2.6"), 32_000);
+    assertEquals(getModelMaxOutputTokens("moonshotai/kimi-k2.5"), 32_000);
+  });
+
   it("returns undefined for unknown models", () => {
     assertEquals(getModelMaxOutputTokens("unknown/model"), undefined);
   });
