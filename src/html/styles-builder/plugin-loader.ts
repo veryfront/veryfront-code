@@ -16,7 +16,8 @@ import {
   VeryfrontError,
 } from "#veryfront/errors";
 import { getTailwindPluginBundleUrl } from "#veryfront/build/binary-plugin-includes.ts";
-import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import { getDenoRuntime, isDeno } from "#veryfront/platform/compat/runtime.ts";
+import { join, toFileUrl } from "#veryfront/platform/compat/path/index.ts";
 import {
   bareName,
   PACKAGE_SPEC_RE,
@@ -118,16 +119,24 @@ async function importBundledModule(code: string): Promise<unknown> {
     return await import(dataUrl);
   }
 
-  const tempPath = await Deno.makeTempFile({ prefix: "vf_tw_plugin_", suffix: ".mjs" });
-  await Deno.writeTextFile(tempPath, code);
+  const deno = getDenoRuntime();
+  if (!deno) {
+    throw IMPORT_RESOLUTION_ERROR.create({
+      detail: "Deno runtime was expected while importing a Tailwind plugin module",
+    });
+  }
+
+  const tempDir = await deno.makeTempDir({ prefix: "vf_tw_plugin_" });
+  const tempPath = join(tempDir, "plugin.mjs");
+  await deno.writeTextFile(tempPath, code);
   logger.debug("Wrote plugin to temp file", { path: tempPath });
 
   try {
-    return await import(`file://${tempPath}`);
+    return await import(toFileUrl(tempPath).href);
   } finally {
-    await Deno.remove(tempPath).catch((error) => {
-      logger.error("Failed to clean up temp plugin file", {
-        path: tempPath,
+    await deno.remove(tempDir, { recursive: true }).catch((error) => {
+      logger.error("Failed to clean up temp plugin directory", {
+        path: tempDir,
         error: error instanceof Error ? error.message : String(error),
       });
     });
