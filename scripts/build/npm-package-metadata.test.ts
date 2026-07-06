@@ -51,24 +51,29 @@ Deno.test("root npm build metadata does not inject extension implementation depe
   }
 });
 
-Deno.test("root npm CLI package declares the bundler extension after local install", async () => {
+Deno.test("root npm CLI package declares auto-loaded first-party extensions after local install", async () => {
   const source = await Deno.readTextFile("scripts/build/build-npm-dnt.ts");
   const installIndex = source.indexOf(
     "const { code } = await npmInstall.output();",
   );
-  const dependencyIndex = source.indexOf(
-    'pkg.dependencies["@veryfront/ext-bundler-esbuild"] = version;',
-  );
+  for (
+    const packageName of [
+      "@veryfront/ext-bundler-esbuild",
+      "@veryfront/ext-content-mdx",
+      "@veryfront/ext-css-tailwind",
+    ]
+  ) {
+    const dependencyAssignment =
+      `pkg.dependencies["${packageName}"] = version;`;
+    const dependencyIndex = source.indexOf(dependencyAssignment);
 
-  assertStringIncludes(
-    source,
-    'pkg.dependencies["@veryfront/ext-bundler-esbuild"] = version;',
-  );
-  assertEquals(
-    dependencyIndex > installIndex,
-    true,
-    "bundler extension dependency must be added after build-local npm install so prerelease builds do not require the extension to already be published",
-  );
+    assertStringIncludes(source, dependencyAssignment);
+    assertEquals(
+      dependencyIndex > installIndex,
+      true,
+      `${packageName} dependency must be added after build-local npm install so prerelease builds do not require the extension to already be published`,
+    );
+  }
 });
 
 Deno.test("npm publish version bump pins first-party extension dependencies to the publish version", async () => {
@@ -87,6 +92,7 @@ Deno.test("npm publish version bump pins first-party extension dependencies to t
             veryfront: "^0.1.1016",
             "@veryfront/ext-bundler-esbuild": "0.1.1016",
             "@veryfront/ext-content-mdx": "^0.1.1016",
+            "@veryfront/ext-css-tailwind": "^0.1.1016",
             "@veryfront/not-an-extension": "^0.1.1016",
             zod: "4.3.6",
           },
@@ -125,6 +131,7 @@ Deno.test("npm publish version bump pins first-party extension dependencies to t
       veryfront: `^${publishVersion}`,
       "@veryfront/ext-bundler-esbuild": publishVersion,
       "@veryfront/ext-content-mdx": publishVersion,
+      "@veryfront/ext-css-tailwind": publishVersion,
       "@veryfront/not-an-extension": "^0.1.1016",
       zod: "4.3.6",
     });
