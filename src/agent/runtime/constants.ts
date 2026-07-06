@@ -20,10 +20,7 @@ const MODEL_MAX_OUTPUT_TOKENS: Record<string, number> = {
   "google-ai-studio/gemini-2.5-pro": 65_536,
   "google-ai-studio/gemini-2.5-flash": 65_536,
   "mistral/mistral-large-2512": 1_024,
-  // Kimi K2 models are thinking models: reasoning_content can consume several
-  // thousand tokens before any answer content is emitted. Without an entry here
-  // they fall back to DEFAULT_MAX_TOKENS and hit finish_reason "length"
-  // mid-reasoning, returning an empty final message. Give them ample budget.
+  "moonshotai/kimi-k2": 32_000,
   "moonshotai/kimi-k2.6": 32_000,
   "moonshotai/kimi-k2.5": 32_000,
 };

@@ -28,6 +28,8 @@ describe("getModelMaxOutputTokens", () => {
   });
 
   it("returns a large limit for Kimi thinking models so reasoning_content does not exhaust the budget", () => {
+    assertEquals(getModelMaxOutputTokens("moonshotai/kimi-k2"), 32_000);
+    assertEquals(getModelMaxOutputTokens("veryfront-cloud/moonshotai/kimi-k2"), 32_000);
     assertEquals(getModelMaxOutputTokens("moonshotai/kimi-k2.6"), 32_000);
     assertEquals(getModelMaxOutputTokens("veryfront-cloud/moonshotai/kimi-k2.6"), 32_000);
     assertEquals(getModelMaxOutputTokens("moonshotai/kimi-k2.5"), 32_000);
