@@ -19,7 +19,12 @@ import { PathNormalizer } from "./path-normalizer.ts";
 import { ReadOperations } from "./read-operations.ts";
 import { DirectoryOperations } from "./directory-operations.ts";
 import { StatOperations } from "./stat-operations.ts";
-import { buildFileCacheKeyPrefix, buildFileListCacheKey } from "./cache-keys.ts";
+import {
+  buildDirCacheKeyPrefix,
+  buildFileCacheKeyPrefix,
+  buildFileListCacheKey,
+  buildStatCacheKeyPrefix,
+} from "./cache-keys.ts";
 import { isPrefixBeingInvalidated } from "./invalidation-state.ts";
 import { WebSocketManager } from "./websocket-manager.ts";
 import {
@@ -34,6 +39,7 @@ import {
   buildRetryConfig,
   shouldBackgroundPregenerateStyles,
 } from "./adapter-helpers.ts";
+import { isNotFoundLikeError } from "./read-operations-helpers.ts";
 
 import {
   clearCachedReleaseAssetManifests,
@@ -43,6 +49,7 @@ import {
 import { parseReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 
 const logger = baseLogger.component("veryfront-fs-adapter");
+const BRANCH_MISS_RECOVERY_FAILURE_TTL_MS = 5_000;
 
 /**
  * Build a project-scoped manifest fetcher backed by the given API client.
@@ -79,6 +86,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
   /** Single-flight background rewarm when the file list cache disappears */
   private fileListWarmupPromise: Promise<void> | null = null;
   private fileListWarmupKey: string | null = null;
+  /** Single-flight foreground refresh when a branch preview read misses a newly pushed file. */
+  private branchMissRecoveryPromise: Promise<void> | null = null;
+  private readonly branchMissRecoveryFailures = new Map<string, number>();
 
   private projectData?: Project;
   private apiBaseUrl: string;
@@ -445,6 +455,83 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return shouldBackgroundPregenerateStyles(this.contentContext);
   }
 
+  private getBranchMissRecoveryKey(path: string): string {
+    const normalizedPath = this.normalizer.normalize(path);
+    const branch = this.requestBranch ?? this.contentContext?.branch ?? "main";
+    return `${this.projectSlug}:${branch}:${normalizedPath}`;
+  }
+
+  private hasRecentBranchMissRecoveryFailure(key: string): boolean {
+    const failedAt = this.branchMissRecoveryFailures.get(key);
+    if (!failedAt) return false;
+
+    if (Date.now() - failedAt < BRANCH_MISS_RECOVERY_FAILURE_TTL_MS) return true;
+
+    this.branchMissRecoveryFailures.delete(key);
+    return false;
+  }
+
+  private shouldRecoverBranchMiss(path: string, error: unknown): boolean {
+    if (this.contentContext?.sourceType !== "branch") return false;
+    if (!isNotFoundLikeError(error)) return false;
+
+    const recoveryKey = this.getBranchMissRecoveryKey(path);
+    return !this.hasRecentBranchMissRecoveryFailure(recoveryKey);
+  }
+
+  private async refreshBranchSnapshotAfterMiss(path: string): Promise<void> {
+    if (this.branchMissRecoveryPromise) {
+      await this.branchMissRecoveryPromise;
+      return;
+    }
+
+    const normalizedPath = this.normalizer.normalize(path);
+    const recoveryPromise = this.refreshSourceSnapshot(`branch-miss:${normalizedPath}`);
+    this.branchMissRecoveryPromise = recoveryPromise;
+
+    try {
+      await recoveryPromise;
+    } finally {
+      if (this.branchMissRecoveryPromise === recoveryPromise) {
+        this.branchMissRecoveryPromise = null;
+      }
+    }
+  }
+
+  private async withBranchSnapshotRecovery<T>(
+    path: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!this.shouldRecoverBranchMiss(path, error)) throw error;
+
+      const recoveryKey = this.getBranchMissRecoveryKey(path);
+      try {
+        await this.refreshBranchSnapshotAfterMiss(path);
+      } catch (refreshError) {
+        this.branchMissRecoveryFailures.set(recoveryKey, Date.now());
+        logger.warn("Branch snapshot recovery failed after not-found miss", {
+          path: this.normalizer.normalize(path),
+          projectSlug: this.projectSlug,
+          branch: this.requestBranch ?? this.contentContext?.branch,
+          error: refreshError instanceof Error ? refreshError.message : String(refreshError),
+        });
+        throw error;
+      }
+
+      try {
+        return await operation();
+      } catch (retryError) {
+        if (isNotFoundLikeError(retryError)) {
+          this.branchMissRecoveryFailures.set(recoveryKey, Date.now());
+        }
+        throw retryError;
+      }
+    }
+  }
+
   private scheduleFileListWarmup(reason: string, cacheKey?: string): void {
     if (!this.initialized || !this.contentContext) return;
 
@@ -539,11 +626,17 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.statOps.clearIndex();
     this.dirOps.clearTree();
 
-    await this.cache.deleteAsync(cacheKey);
+    await Promise.all([
+      this.cache.deleteByPrefixAsync(buildFileCacheKeyPrefix(refreshContext)),
+      this.cache.deleteByPrefixAsync(buildStatCacheKeyPrefix(refreshContext)),
+      this.cache.deleteByPrefixAsync(buildDirCacheKeyPrefix(refreshContext)),
+      this.cache.deleteAsync(cacheKey),
+    ]);
 
     const files = await fetchFileListForContext(this.client, refreshContext);
     await this.cache.setAsync(cacheKey, files);
     const fileSummary = summarizeFileList(files);
+    this.branchMissRecoveryFailures.clear();
 
     if (fileSummary.sourceFilesWithContent > 0 && this.shouldBackgroundPregenerateStyles()) {
       this.triggerCSSPregeneration(files).catch(() => {
@@ -575,32 +668,37 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   async readFile(path: string): Promise<string> {
     await this.ensureInitialized();
-    return this.readOps.readTextFile(path);
+    return this.withBranchSnapshotRecovery(path, () => this.readOps.readTextFile(path));
   }
 
   async readFileBytes(path: string): Promise<Uint8Array> {
     await this.ensureInitialized();
-    return this.readOps.readFile(path);
+    return this.withBranchSnapshotRecovery(path, () => this.readOps.readFile(path));
   }
 
   async readTextFile(path: string): Promise<string> {
     await this.ensureInitialized();
-    return this.readOps.readTextFile(path);
+    return this.withBranchSnapshotRecovery(path, () => this.readOps.readTextFile(path));
   }
 
   async readdir(path: string): Promise<DirectoryEntry[]> {
     await this.ensureInitialized();
-    return this.dirOps.readdir(path);
+    return this.withBranchSnapshotRecovery(path, () => this.dirOps.readdir(path));
   }
 
   async stat(path: string): Promise<FileInfo> {
     await this.ensureInitialized();
-    return this.statOps.stat(path);
+    return this.withBranchSnapshotRecovery(path, () => this.statOps.stat(path));
   }
 
   async exists(path: string): Promise<boolean> {
     await this.ensureInitialized();
-    return this.statOps.exists(path);
+    try {
+      await this.withBranchSnapshotRecovery(path, () => this.statOps.stat(path));
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   async resolveFile(
@@ -608,7 +706,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
     options?: ResolveFileOptions,
   ): Promise<string | null> {
     await this.ensureInitialized();
-    return this.statOps.resolveFile(basePath, options);
+    return this.withBranchSnapshotRecovery(
+      basePath,
+      () => this.statOps.resolveFile(basePath, options),
+    );
   }
 
   dispose(): void {
@@ -619,6 +720,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.initialized = false;
     this.fileListWarmupPromise = null;
     this.fileListWarmupKey = null;
+    this.branchMissRecoveryPromise = null;
+    this.branchMissRecoveryFailures.clear();
 
     logger.debug("Disposed");
   }
@@ -775,6 +878,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
       this.dirOps.clearTree();
       this.fileListWarmupPromise = null;
       this.fileListWarmupKey = null;
+      this.branchMissRecoveryPromise = null;
+      this.branchMissRecoveryFailures.clear();
       logger.debug("Cleared index and dirTree due to context change", {
         oldContext,
         newContext: context,

@@ -717,6 +717,76 @@ describe("VeryfrontFSAdapter", () => {
       });
     });
 
+    it("refreshes a stale branch snapshot once when a pushed file is missing", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+
+      const staleFiles = [{
+        path: "components/GraphViewer.tsx",
+        content: "import '../lib/graph-performance';",
+      }];
+      const refreshedFiles = [
+        ...staleFiles,
+        {
+          path: "lib/graph-performance.ts",
+          content: "export const chooseSampleSize = () => 10000;",
+        },
+      ];
+      const secondRefreshFiles = [
+        ...refreshedFiles,
+        {
+          path: "lib/second-pushed-file.ts",
+          content: "export const second = true;",
+        },
+      ];
+
+      let listAllFilesCalls = 0;
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
+          getFileContent: (path: string) => Promise<string>;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = () => {
+        listAllFilesCalls++;
+        if (listAllFilesCalls === 1) return Promise.resolve(staleFiles);
+        if (listAllFilesCalls === 2) return Promise.resolve(refreshedFiles);
+        return Promise.resolve(secondRefreshFiles);
+      };
+      client.getFileContent = (path: string) => Promise.resolve(`network content for ${path}`);
+
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.initialize();
+
+      const content = await adapter.readTextFile("lib/graph-performance.ts");
+
+      assertEquals(content, "export const chooseSampleSize = () => 10000;");
+      assertEquals(listAllFilesCalls, 2);
+
+      const secondContent = await adapter.readTextFile("lib/second-pushed-file.ts");
+
+      assertEquals(secondContent, "export const second = true;");
+      assertEquals(listAllFilesCalls, 3);
+    });
+
     it("should rehydrate a missing file list cache in the background", async () => {
       const adapter = createAdapter({
         veryfront: {
