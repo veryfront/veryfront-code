@@ -86,6 +86,7 @@ console.log(`[prebundle-client-scripts] Written to ${templatesPath}`);
 console.log("[prebundle-client-scripts] Extracting framework component candidates...");
 
 const FRAMEWORK_DIRS = [
+  join(projectRoot, "src", "react", "components", "ui"),
   join(projectRoot, "src", "react", "components", "chat"),
   join(projectRoot, "src", "react", "primitives"),
 ];
