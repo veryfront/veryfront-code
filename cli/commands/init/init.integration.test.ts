@@ -11,6 +11,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { VERSION } from "#cli/utils";
 import { join } from "#veryfront/compat/path/index.ts";
 import { exists, makeTempDir, readTextFile, remove, stat } from "#veryfront/testing/deno-compat.ts";
 import { runCommand } from "#veryfront/compat/process.ts";
@@ -426,7 +427,7 @@ describe("init command integration", () => {
         await readTextFile(join(projectDir, "deno.json")),
       );
       assertEquals(parsed.nodeModulesDir, "auto");
-      assertEquals(parsed.tasks.dev, "deno run -A npm:veryfront@latest dev");
+      assertEquals(parsed.tasks.dev, `deno run -A npm:veryfront@${VERSION} dev`);
       assertExists(parsed.tasks.build);
       assertExists(parsed.tasks.preview);
     });
