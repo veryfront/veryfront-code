@@ -20,18 +20,18 @@ describe("deno-config-generator", () => {
       }
     });
 
-    it("writes dev, build, preview tasks invoking npm:veryfront@latest", async () => {
+    it("writes dev, build, preview tasks invoking the installed Veryfront CLI", async () => {
       const tmpDir = await Deno.makeTempDir();
       try {
         await createDenoConfig(tmpDir);
         const parsed = JSON.parse(
           await Deno.readTextFile(join(tmpDir, "deno.json")),
         );
-        assertEquals(parsed.tasks.dev, "deno run -A npm:veryfront@latest dev");
-        assertEquals(parsed.tasks.build, "deno run -A npm:veryfront@latest build");
+        assertEquals(parsed.tasks.dev, "veryfront dev");
+        assertEquals(parsed.tasks.build, "veryfront build");
         assertEquals(
           parsed.tasks.preview,
-          "deno run -A npm:veryfront@latest preview",
+          "veryfront preview",
         );
       } finally {
         await Deno.remove(tmpDir, { recursive: true });

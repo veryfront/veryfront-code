@@ -4,9 +4,9 @@ import { createFileSystem } from "veryfront/platform";
 const DENO_CONFIG = {
   nodeModulesDir: "auto",
   tasks: {
-    dev: "deno run -A npm:veryfront@latest dev",
-    build: "deno run -A npm:veryfront@latest build",
-    preview: "deno run -A npm:veryfront@latest preview",
+    dev: "veryfront dev",
+    build: "veryfront build",
+    preview: "veryfront preview",
   },
 };
 

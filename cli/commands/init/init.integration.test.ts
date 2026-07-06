@@ -426,7 +426,7 @@ describe("init command integration", () => {
         await readTextFile(join(projectDir, "deno.json")),
       );
       assertEquals(parsed.nodeModulesDir, "auto");
-      assertEquals(parsed.tasks.dev, "deno run -A npm:veryfront@latest dev");
+      assertEquals(parsed.tasks.dev, "veryfront dev");
       assertExists(parsed.tasks.build);
       assertExists(parsed.tasks.preview);
     });
