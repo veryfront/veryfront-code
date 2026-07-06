@@ -412,6 +412,28 @@ describe("npm supply-chain policy", () => {
     assertEquals(source.includes("importFirstPartyExtensionModule"), false);
   });
 
+  it("packs auto-loaded extension tarballs for npm install smoke tests", async () => {
+    const source = await Deno.readTextFile("scripts/test/npm-install-smoke.sh");
+    const autoLoadedExtensions = [
+      "ext-bundler-esbuild",
+      "ext-content-mdx",
+      "ext-css-tailwind",
+    ];
+
+    for (const extensionName of autoLoadedExtensions) {
+      const tarballName = `veryfront-${extensionName}-*.tgz`;
+
+      assertStringIncludes(
+        source,
+        `npm/extensions/${extensionName}`,
+      );
+      assertStringIncludes(
+        source,
+        tarballName,
+      );
+    }
+  });
+
   it("loads CLI command handlers after global routing decisions", async () => {
     const source = await Deno.readTextFile("cli/router.ts");
 
