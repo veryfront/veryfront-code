@@ -53,6 +53,7 @@ const BRANCH_MISS_RECOVERY_FAILURE_TTL_MS = 5_000;
 
 interface BranchSnapshotRecoveryOptions<T> {
   isRecoverableMissResult?: (result: T) => boolean;
+  requirePendingSourceInvalidation?: boolean;
 }
 
 /**
@@ -491,6 +492,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
   ): boolean {
     if (this.contentContext?.sourceType !== "branch") return false;
     if (!options?.isRecoverableMissResult?.(result)) return false;
+    if (
+      options.requirePendingSourceInvalidation &&
+      !this.isPersistentCacheInvalidated(buildFileCacheKeyPrefix(this.contentContext))
+    ) {
+      return false;
+    }
 
     const recoveryKey = this.getBranchMissRecoveryKey(path);
     return !this.hasRecentBranchMissRecoveryFailure(recoveryKey);
@@ -728,7 +735,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return this.withBranchSnapshotRecovery(
       path,
       () => this.dirOps.readdir(path),
-      { isRecoverableMissResult: (entries) => entries.length === 0 },
+      {
+        isRecoverableMissResult: (entries) => entries.length === 0,
+        requirePendingSourceInvalidation: true,
+      },
     );
   }
 
@@ -755,7 +765,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return this.withBranchSnapshotRecovery(
       basePath,
       () => this.statOps.resolveFile(basePath, options),
-      { isRecoverableMissResult: (resolvedPath) => resolvedPath === null },
+      {
+        isRecoverableMissResult: (resolvedPath) => resolvedPath === null,
+        requirePendingSourceInvalidation: true,
+      },
     );
   }
 

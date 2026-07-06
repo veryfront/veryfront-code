@@ -3,9 +3,14 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { VeryfrontFSAdapter } from "./adapter.ts";
-import { buildFileListCacheKey } from "./cache-keys.ts";
+import { buildFileCacheKeyPrefix, buildFileListCacheKey } from "./cache-keys.ts";
 import { createAdapter, seedCachedFiles, waitFor } from "./adapter.test-helpers.ts";
 import type { ResolvedContentContext } from "./types.ts";
+import {
+  addPendingInvalidation,
+  clearAllPendingInvalidations,
+  removePendingInvalidation,
+} from "./invalidation-state.ts";
 import {
   clearReleaseAssetManifestCache,
   getReadyManifestForRender,
@@ -13,6 +18,10 @@ import {
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 
 describe("VeryfrontFSAdapter", () => {
+  afterEach(() => {
+    clearAllPendingInvalidations();
+  });
+
   describe("class", () => {
     it("should export VeryfrontFSAdapter class", () => {
       assertExists(VeryfrontFSAdapter);
@@ -836,11 +845,69 @@ describe("VeryfrontFSAdapter", () => {
         .connect = () => {};
 
       await adapter.initialize();
+      assertEquals(
+        await adapter.resolveFile("components/GraphViewer"),
+        "components/GraphViewer.tsx",
+      );
 
-      const resolvedPath = await adapter.resolveFile("lib/graph-performance");
+      const branchSourcePrefix = buildFileCacheKeyPrefix(adapter.getContentContext());
+      let resolvedPath: string | null;
+      try {
+        addPendingInvalidation(branchSourcePrefix);
+        resolvedPath = await adapter.resolveFile("lib/graph-performance");
+      } finally {
+        removePendingInvalidation(branchSourcePrefix);
+      }
 
       assertEquals(resolvedPath, "lib/graph-performance.ts");
-      assertEquals(listAllFilesCalls, 2);
+      assertEquals(listAllFilesCalls, 3);
+    });
+
+    it("does not refresh a normal resolveFile miss without pending branch invalidation", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+
+      let listAllFilesCalls = 0;
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
+          searchFiles: (_pattern: string) => Promise<Array<{ path: string }>>;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = () => {
+        listAllFilesCalls++;
+        return Promise.resolve([{
+          path: "pages/index.tsx",
+          content: "export default function Page() { return null; }",
+        }]);
+      };
+      client.searchFiles = () => Promise.resolve([]);
+
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.initialize();
+
+      const resolvedPath = await adapter.resolveFile("optional/missing-page");
+
+      assertEquals(resolvedPath, null);
+      assertEquals(listAllFilesCalls, 1);
     });
 
     it("refreshes a stale branch snapshot when readdir sees a new empty directory miss", async () => {
@@ -890,11 +957,66 @@ describe("VeryfrontFSAdapter", () => {
         .connect = () => {};
 
       await adapter.initialize();
+      assertEquals((await adapter.readdir("components")).map((entry) => entry.path), [
+        "components/GraphViewer.tsx",
+      ]);
 
-      const entries = await adapter.readdir("lib");
+      const branchSourcePrefix = buildFileCacheKeyPrefix(adapter.getContentContext());
+      let entries: Array<{ path: string }>;
+      try {
+        addPendingInvalidation(branchSourcePrefix);
+        entries = await adapter.readdir("lib");
+      } finally {
+        removePendingInvalidation(branchSourcePrefix);
+      }
 
       assertEquals(entries.map((entry) => entry.path), ["lib/graph-performance.ts"]);
-      assertEquals(listAllFilesCalls, 2);
+      assertEquals(listAllFilesCalls, 3);
+    });
+
+    it("does not refresh a normal empty directory listing without pending branch invalidation", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+
+      let listAllFilesCalls = 0;
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = () => {
+        listAllFilesCalls++;
+        return Promise.resolve([{
+          path: "pages/index.tsx",
+          content: "export default function Page() { return null; }",
+        }]);
+      };
+
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.initialize();
+
+      const entries = await adapter.readdir("optional");
+
+      assertEquals(entries, []);
+      assertEquals(listAllFilesCalls, 1);
     });
 
     it("should rehydrate a missing file list cache in the background", async () => {
