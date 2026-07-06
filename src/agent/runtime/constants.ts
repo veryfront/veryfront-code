@@ -20,6 +20,9 @@ const MODEL_MAX_OUTPUT_TOKENS: Record<string, number> = {
   "google-ai-studio/gemini-2.5-pro": 65_536,
   "google-ai-studio/gemini-2.5-flash": 65_536,
   "mistral/mistral-large-2512": 1_024,
+  "moonshotai/kimi-k2": 32_000,
+  "moonshotai/kimi-k2.6": 32_000,
+  "moonshotai/kimi-k2.5": 32_000,
 };
 
 const MODEL_MAX_OUTPUT_TOKEN_ALIASES: Record<string, string> = {
