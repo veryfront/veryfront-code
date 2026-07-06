@@ -228,6 +228,37 @@ describe("styles-builder/plugin-loader", () => {
     }
   });
 
+  it("does not depend on Deno.makeTempFile for plugin module imports", async () => {
+    const originalFetch = globalThis.fetch;
+    const originalMakeTempFile = Deno.makeTempFile;
+    let fetchCallCount = 0;
+
+    globalThis.fetch = (() => {
+      fetchCallCount++;
+      if (fetchCallCount === 1) {
+        return Promise.resolve(
+          new Response(`export * from "/v1/temp-dir-plugin.bundle.mjs";`, { status: 200 }),
+        );
+      }
+      return Promise.resolve(
+        new Response(`export default { id: "temp-dir-plugin" };`, { status: 200 }),
+      );
+    }) as typeof fetch;
+
+    Deno.makeTempFile = (() =>
+      Promise.reject(
+        new Error("Deno.makeTempFile must not be used for plugin module imports"),
+      )) as typeof Deno.makeTempFile;
+
+    try {
+      const plugin = await loadModuleFromEsmSh("@tailwindcss/typography");
+      assertEquals((plugin as { default?: { id?: string } }).default?.id, "temp-dir-plugin");
+    } finally {
+      globalThis.fetch = originalFetch;
+      Deno.makeTempFile = originalMakeTempFile;
+    }
+  });
+
   it("uses the non-Deno import path in Node-like runtimes with Deno shims", async () => {
     const originalFetch = globalThis.fetch;
     const originalProcess = Object.getOwnPropertyDescriptor(globalThis, "process");

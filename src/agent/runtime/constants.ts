@@ -12,6 +12,9 @@ const MODEL_MAX_OUTPUT_TOKENS: Record<string, number> = {
   "anthropic/claude-sonnet-4-6": 64_000,
   "anthropic/claude-haiku-4-5-20251001": 64_000,
   "openai/gpt-5.5": 128_000,
+  "openai/gpt-5.4": 128_000,
+  "openai/gpt-5.4-mini": 128_000,
+  "openai/gpt-5.4-nano": 128_000,
   "openai/gpt-5.2": 128_000,
   "google-ai-studio/gemini-3.1-pro-preview": 65_536,
   "google-ai-studio/gemini-3.5-flash": 65_536,
@@ -20,6 +23,9 @@ const MODEL_MAX_OUTPUT_TOKENS: Record<string, number> = {
   "google-ai-studio/gemini-2.5-pro": 65_536,
   "google-ai-studio/gemini-2.5-flash": 65_536,
   "mistral/mistral-large-2512": 1_024,
+  "moonshotai/kimi-k2": 32_000,
+  "moonshotai/kimi-k2.6": 32_000,
+  "moonshotai/kimi-k2.5": 32_000,
 };
 
 const MODEL_MAX_OUTPUT_TOKEN_ALIASES: Record<string, string> = {

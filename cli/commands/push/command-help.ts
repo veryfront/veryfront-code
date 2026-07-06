@@ -11,6 +11,10 @@ export const pushHelp: CommandHelp = {
       description: "Source directory (default: current directory)",
     },
     {
+      flag: "-p, --project-slug <slug>",
+      description: "Project slug to push to (overrides inferred project)",
+    },
+    {
       flag: "-b, --branch <name>",
       description: "Branch name (default: cli/push-<timestamp>, use 'main' for direct push)",
     },
@@ -25,6 +29,7 @@ export const pushHelp: CommandHelp = {
   ],
   examples: [
     "veryfront push",
+    "veryfront push -p my-project",
     "veryfront push --dir ./my-project",
     "veryfront push --branch feature-header",
     "veryfront push --branch main             # Push directly to main",
