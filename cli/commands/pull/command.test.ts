@@ -454,6 +454,67 @@ describe("pullCommand", () => {
     }
   });
 
+  it("preserves invalid-argument classification when --projects cannot prompt for confirmation", async () => {
+    const tempDir = await Deno.makeTempDir();
+    const originalFetch = globalThis.fetch;
+    const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+    const originalProjectSlug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
+
+    try {
+      Deno.env.set("VERYFRONT_API_TOKEN", "token");
+      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      _resetEnvironmentConfig();
+
+      globalThis.fetch = ((input: string | URL | Request) => {
+        const url = String(input);
+        if (url.includes("/projects/alpha/files") && !url.includes("app%2Fpage.tsx")) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                data: [{
+                  path: "app/page.tsx",
+                  size: 12,
+                  type: "file",
+                  created_at: "2026-01-01T00:00:00Z",
+                  updated_at: "2026-01-01T00:00:00Z",
+                }],
+                page_info: {},
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        }
+
+        return Promise.resolve(
+          new Response(JSON.stringify({ path: "app/page.tsx", content: "export default null;" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }) as typeof fetch;
+
+      const error = await assertRejects(
+        () =>
+          pullCommand({
+            projectDir: tempDir,
+            projects: ["alpha"],
+          }),
+        Error,
+      );
+      const message = error instanceof Error ? error.message : String(error);
+      assertEquals((error as { slug?: string }).slug, "invalid-argument");
+      assertStringIncludes(message, "requires confirmation");
+      assertStringIncludes(message, "--force");
+      assertEquals(await exists(join(tempDir, "alpha")), false);
+    } finally {
+      globalThis.fetch = originalFetch;
+      restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
+      restoreEnv("VERYFRONT_PROJECT_SLUG", originalProjectSlug);
+      _resetEnvironmentConfig();
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
   it("uses explicit env API base URL before veryfront.json apiUrl in the --projects fallback", async () => {
     const tempDir = await Deno.makeTempDir();
     const originalFetch = globalThis.fetch;

@@ -24,7 +24,14 @@ import { confirmPrompt, isTTY, logInfo, logSuccess, logWarning } from "#cli/util
 import { createNoopSpinner, createSpinner } from "#cli/ui";
 import { isInteractive } from "../../shared/interactive.ts";
 import { getApiTokenEnv, getEnvironmentConfig } from "veryfront/config";
-import { INVALID_ARGUMENT, RESOURCE_NOT_FOUND } from "#veryfront/errors";
+import {
+  ERROR_REGISTRY,
+  type ErrorSlug,
+  getErrorBySlug,
+  INVALID_ARGUMENT,
+  RESOURCE_NOT_FOUND,
+  VeryfrontError,
+} from "#veryfront/errors";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 
@@ -140,6 +147,7 @@ interface FailedProject {
   message: string;
   status?: number;
   slug?: string;
+  error?: unknown;
 }
 
 /**
@@ -456,6 +464,23 @@ function failedProjectsDetail(failedProjects: FailedProject[]): string {
   return `Failed to pull ${formatProjectCount(failedProjects.length)}: ${names}. ${details}`;
 }
 
+function isErrorSlug(slug: string | undefined): slug is ErrorSlug {
+  return typeof slug === "string" && slug in ERROR_REGISTRY;
+}
+
+function structuredFailureAggregate(failedProjects: FailedProject[], detail: string): Error | null {
+  if (failedProjects.length === 1) {
+    const error = failedProjects[0]?.error;
+    if (error instanceof VeryfrontError) return error;
+  }
+
+  const slug = failedProjects[0]?.slug;
+  if (!isErrorSlug(slug)) return null;
+  if (!failedProjects.every((failure) => failure.slug === slug)) return null;
+
+  return getErrorBySlug(slug).create({ detail });
+}
+
 /**
  * Pull files from Veryfront API
  */
@@ -549,6 +574,7 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
             message: describeError(error),
             status: errorStatus(error),
             slug: errorSlug(error),
+            error,
           });
         }
       }
@@ -593,6 +619,8 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
         ) {
           throw RESOURCE_NOT_FOUND.create({ detail });
         }
+        const structuredError = structuredFailureAggregate(failedProjects, detail);
+        if (structuredError) throw structuredError;
         throw new Error(detail);
       }
     },
