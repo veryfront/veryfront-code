@@ -787,6 +787,116 @@ describe("VeryfrontFSAdapter", () => {
       assertEquals(listAllFilesCalls, 3);
     });
 
+    it("refreshes a stale branch snapshot when resolveFile returns a cached miss", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+
+      const staleFiles = [{
+        path: "components/GraphViewer.tsx",
+        content: "import '../lib/graph-performance';",
+      }];
+      const refreshedFiles = [
+        ...staleFiles,
+        {
+          path: "lib/graph-performance.ts",
+          content: "export const chooseSampleSize = () => 10000;",
+        },
+      ];
+
+      let listAllFilesCalls = 0;
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
+          searchFiles: (_pattern: string) => Promise<Array<{ path: string }>>;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = () => {
+        listAllFilesCalls++;
+        return Promise.resolve(listAllFilesCalls === 1 ? staleFiles : refreshedFiles);
+      };
+      client.searchFiles = () => Promise.resolve([]);
+
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.initialize();
+
+      const resolvedPath = await adapter.resolveFile("lib/graph-performance");
+
+      assertEquals(resolvedPath, "lib/graph-performance.ts");
+      assertEquals(listAllFilesCalls, 2);
+    });
+
+    it("refreshes a stale branch snapshot when readdir sees a new empty directory miss", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+
+      const staleFiles = [{
+        path: "components/GraphViewer.tsx",
+        content: "import '../lib/graph-performance';",
+      }];
+      const refreshedFiles = [
+        ...staleFiles,
+        {
+          path: "lib/graph-performance.ts",
+          content: "export const chooseSampleSize = () => 10000;",
+        },
+      ];
+
+      let listAllFilesCalls = 0;
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = () => {
+        listAllFilesCalls++;
+        return Promise.resolve(listAllFilesCalls === 1 ? staleFiles : refreshedFiles);
+      };
+
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.initialize();
+
+      const entries = await adapter.readdir("lib");
+
+      assertEquals(entries.map((entry) => entry.path), ["lib/graph-performance.ts"]);
+      assertEquals(listAllFilesCalls, 2);
+    });
+
     it("should rehydrate a missing file list cache in the background", async () => {
       const adapter = createAdapter({
         veryfront: {

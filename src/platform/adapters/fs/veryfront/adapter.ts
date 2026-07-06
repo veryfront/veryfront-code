@@ -51,6 +51,10 @@ import { parseReleaseAssetManifest } from "#veryfront/release-assets/manifest-sc
 const logger = baseLogger.component("veryfront-fs-adapter");
 const BRANCH_MISS_RECOVERY_FAILURE_TTL_MS = 5_000;
 
+interface BranchSnapshotRecoveryOptions<T> {
+  isRecoverableMissResult?: (result: T) => boolean;
+}
+
 /**
  * Build a project-scoped manifest fetcher backed by the given API client.
  *
@@ -88,6 +92,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private fileListWarmupKey: string | null = null;
   /** Single-flight foreground refresh when a branch preview read misses a newly pushed file. */
   private branchMissRecoveryPromise: Promise<void> | null = null;
+  private branchMissRecoveryGeneration = 0;
   private readonly branchMissRecoveryFailures = new Map<string, number>();
 
   private projectData?: Project;
@@ -479,20 +484,35 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return !this.hasRecentBranchMissRecoveryFailure(recoveryKey);
   }
 
-  private async refreshBranchSnapshotAfterMiss(path: string): Promise<void> {
-    if (this.branchMissRecoveryPromise) {
-      await this.branchMissRecoveryPromise;
-      return;
-    }
+  private shouldRecoverBranchMissResult<T>(
+    path: string,
+    result: T,
+    options?: BranchSnapshotRecoveryOptions<T>,
+  ): boolean {
+    if (this.contentContext?.sourceType !== "branch") return false;
+    if (!options?.isRecoverableMissResult?.(result)) return false;
 
-    const normalizedPath = this.normalizer.normalize(path);
-    const recoveryPromise = this.refreshSourceSnapshot(`branch-miss:${normalizedPath}`);
-    this.branchMissRecoveryPromise = recoveryPromise;
+    const recoveryKey = this.getBranchMissRecoveryKey(path);
+    return !this.hasRecentBranchMissRecoveryFailure(recoveryKey);
+  }
+
+  private async refreshBranchSnapshotAfterMiss(path: string): Promise<void> {
+    let recoveryPromise = this.branchMissRecoveryPromise;
+    let ownsRecovery = false;
+    let recoveryGeneration = this.branchMissRecoveryGeneration;
+
+    if (!recoveryPromise) {
+      const normalizedPath = this.normalizer.normalize(path);
+      recoveryPromise = this.refreshSourceSnapshot(`branch-miss:${normalizedPath}`);
+      this.branchMissRecoveryPromise = recoveryPromise;
+      recoveryGeneration = ++this.branchMissRecoveryGeneration;
+      ownsRecovery = true;
+    }
 
     try {
       await recoveryPromise;
     } finally {
-      if (this.branchMissRecoveryPromise === recoveryPromise) {
+      if (ownsRecovery && this.branchMissRecoveryGeneration === recoveryGeneration) {
         this.branchMissRecoveryPromise = null;
       }
     }
@@ -501,9 +521,31 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private async withBranchSnapshotRecovery<T>(
     path: string,
     operation: () => Promise<T>,
+    options?: BranchSnapshotRecoveryOptions<T>,
   ): Promise<T> {
     try {
-      return await operation();
+      const result = await operation();
+      if (!this.shouldRecoverBranchMissResult(path, result, options)) return result;
+
+      const recoveryKey = this.getBranchMissRecoveryKey(path);
+      try {
+        await this.refreshBranchSnapshotAfterMiss(path);
+      } catch (refreshError) {
+        this.branchMissRecoveryFailures.set(recoveryKey, Date.now());
+        logger.warn("Branch snapshot recovery failed after result miss", {
+          path: this.normalizer.normalize(path),
+          projectSlug: this.projectSlug,
+          branch: this.requestBranch ?? this.contentContext?.branch,
+          error: refreshError instanceof Error ? refreshError.message : String(refreshError),
+        });
+        return result;
+      }
+
+      const retryResult = await operation();
+      if (options?.isRecoverableMissResult?.(retryResult)) {
+        this.branchMissRecoveryFailures.set(recoveryKey, Date.now());
+      }
+      return retryResult;
     } catch (error) {
       if (!this.shouldRecoverBranchMiss(path, error)) throw error;
 
@@ -683,7 +725,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   async readdir(path: string): Promise<DirectoryEntry[]> {
     await this.ensureInitialized();
-    return this.withBranchSnapshotRecovery(path, () => this.dirOps.readdir(path));
+    return this.withBranchSnapshotRecovery(
+      path,
+      () => this.dirOps.readdir(path),
+      { isRecoverableMissResult: (entries) => entries.length === 0 },
+    );
   }
 
   async stat(path: string): Promise<FileInfo> {
@@ -709,6 +755,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return this.withBranchSnapshotRecovery(
       basePath,
       () => this.statOps.resolveFile(basePath, options),
+      { isRecoverableMissResult: (resolvedPath) => resolvedPath === null },
     );
   }
 
@@ -721,6 +768,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.fileListWarmupPromise = null;
     this.fileListWarmupKey = null;
     this.branchMissRecoveryPromise = null;
+    this.branchMissRecoveryGeneration++;
     this.branchMissRecoveryFailures.clear();
 
     logger.debug("Disposed");
@@ -879,6 +927,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       this.fileListWarmupPromise = null;
       this.fileListWarmupKey = null;
       this.branchMissRecoveryPromise = null;
+      this.branchMissRecoveryGeneration++;
       this.branchMissRecoveryFailures.clear();
       logger.debug("Cleared index and dirTree due to context change", {
         oldContext,
