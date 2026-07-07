@@ -1,5 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertObjectMatch } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertObjectMatch,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildChildRunResultSummary,
@@ -16,11 +20,25 @@ describe("child-run-result-summary", () => {
     });
 
     it("truncates text exceeding the default limit", () => {
-      const longText = "a".repeat(5000);
+      const longText = "a".repeat(65_000);
       const result = summarizeChildRunResultText(longText);
 
       assertEquals(result.length < longText.length, true);
       assertEquals(result.includes("… [truncated"), true);
+    });
+
+    it("preserves docs contract lines that appear after the previous short cutoff", () => {
+      const text = [
+        "# Create an agent",
+        "x".repeat(4_500),
+        '    "model": "anthropic/claude-sonnet-4-6",',
+        '    "tool_ids": ["gmail__list_emails"]',
+      ].join("\n");
+
+      const result = summarizeChildRunResultText(text);
+
+      assertStringIncludes(result, '"model": "anthropic/claude-sonnet-4-6"');
+      assertStringIncludes(result, '"tool_ids": ["gmail__list_emails"]');
     });
 
     it("respects custom maxLength", () => {
