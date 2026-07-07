@@ -28,6 +28,11 @@ const historicalToolSummaries: [string, NonNullable<
 >["historicalSummary"]][] = [];
 const errors: string[] = [];
 
+function getNamespacedToolId(connectorName: string, toolId: string): string {
+  const prefix = `${connectorName}__`;
+  return toolId.startsWith(prefix) ? toolId : `${prefix}${toolId}`;
+}
+
 for await (const entry of Deno.readDir(integrationsDir)) {
   if (!entry.isDirectory || entry.name === "_base") continue;
 
@@ -85,7 +90,10 @@ for await (const entry of Deno.readDir(integrationsDir)) {
     for (const tool of result.data.tools) {
       const historicalSummary = tool.endpoint?.response?.historicalSummary;
       if (!tool.id || !historicalSummary) continue;
-      historicalToolSummaries.push([`${result.data.name}__${tool.id}`, historicalSummary]);
+      historicalToolSummaries.push([
+        getNamespacedToolId(result.data.name, tool.id),
+        historicalSummary,
+      ]);
     }
 
     if (result.data.icon) {

@@ -26385,7 +26385,7 @@ export const connectors: IntegrationConfig[] = [
       "docsUrl": "https://id.getharvest.com/developers",
     }],
     "tools": [{
-      "id": "list_accounts",
+      "id": "harvest__list_accounts",
       "name": "List Accounts",
       "description":
         "List all Harvest accounts the authenticated user can access. Call this first to get your Harvest-Account-Id for subsequent API calls.",
@@ -26404,7 +26404,7 @@ export const connectors: IntegrationConfig[] = [
         },
       },
     }, {
-      "id": "get_current_user",
+      "id": "harvest__get_current_user",
       "name": "Get Current User",
       "description":
         "Get the authenticated user's Harvest profile (id, name, email, timezone, roles)",
@@ -26416,14 +26416,14 @@ export const connectors: IntegrationConfig[] = [
           "account_id": {
             "type": "string",
             "in": "header",
-            "description": "Harvest Account ID (get it from list_accounts)",
+            "description": "Harvest Account ID (get it from harvest__list_accounts)",
             "required": true,
             "headerName": "Harvest-Account-Id",
           },
         },
       },
     }, {
-      "id": "list_users",
+      "id": "harvest__list_users",
       "name": "List Users",
       "description": "List all active users in the Harvest account",
       "requiresWrite": false,
@@ -26434,7 +26434,7 @@ export const connectors: IntegrationConfig[] = [
           "account_id": {
             "type": "string",
             "in": "header",
-            "description": "Harvest Account ID (get it from list_accounts)",
+            "description": "Harvest Account ID (get it from harvest__list_accounts)",
             "required": true,
             "headerName": "Harvest-Account-Id",
           },
@@ -26484,7 +26484,7 @@ export const connectors: IntegrationConfig[] = [
         },
       },
     }, {
-      "id": "list_time_entries",
+      "id": "harvest__list_time_entries",
       "name": "List Time Entries",
       "description":
         "List time entries (timesheets). Filter by user, project, client, or date range.",
@@ -26496,7 +26496,7 @@ export const connectors: IntegrationConfig[] = [
           "account_id": {
             "type": "string",
             "in": "header",
-            "description": "Harvest Account ID (get it from list_accounts)",
+            "description": "Harvest Account ID (get it from harvest__list_accounts)",
             "required": true,
             "headerName": "Harvest-Account-Id",
           },
@@ -26566,7 +26566,7 @@ export const connectors: IntegrationConfig[] = [
         },
       },
     }, {
-      "id": "get_time_entry",
+      "id": "harvest__get_time_entry",
       "name": "Get Time Entry",
       "description": "Get details of a specific time entry by ID",
       "requiresWrite": false,
@@ -26577,7 +26577,7 @@ export const connectors: IntegrationConfig[] = [
           "account_id": {
             "type": "string",
             "in": "header",
-            "description": "Harvest Account ID (get it from list_accounts)",
+            "description": "Harvest Account ID (get it from harvest__list_accounts)",
             "required": true,
             "headerName": "Harvest-Account-Id",
           },
@@ -26590,7 +26590,7 @@ export const connectors: IntegrationConfig[] = [
         },
       },
     }, {
-      "id": "create_time_entry",
+      "id": "harvest__create_time_entry",
       "name": "Create Time Entry",
       "description":
         "Create a new time entry (timesheet). Provide either hours or start/end times.",
@@ -26602,7 +26602,7 @@ export const connectors: IntegrationConfig[] = [
           "account_id": {
             "type": "string",
             "in": "header",
-            "description": "Harvest Account ID (get it from list_accounts)",
+            "description": "Harvest Account ID (get it from harvest__list_accounts)",
             "required": true,
             "headerName": "Harvest-Account-Id",
           },
@@ -26641,7 +26641,7 @@ export const connectors: IntegrationConfig[] = [
         },
       },
     }, {
-      "id": "update_time_entry",
+      "id": "harvest__update_time_entry",
       "name": "Update Time Entry",
       "description": "Update an existing time entry",
       "requiresWrite": true,
@@ -26652,7 +26652,7 @@ export const connectors: IntegrationConfig[] = [
           "account_id": {
             "type": "string",
             "in": "header",
-            "description": "Harvest Account ID (get it from list_accounts)",
+            "description": "Harvest Account ID (get it from harvest__list_accounts)",
             "required": true,
             "headerName": "Harvest-Account-Id",
           },
@@ -26675,7 +26675,7 @@ export const connectors: IntegrationConfig[] = [
         },
       },
     }, {
-      "id": "delete_time_entry",
+      "id": "harvest__delete_time_entry",
       "name": "Delete Time Entry",
       "description": "Delete a time entry. Only unlocked, non-billed entries can be deleted.",
       "requiresWrite": true,
@@ -26686,7 +26686,7 @@ export const connectors: IntegrationConfig[] = [
           "account_id": {
             "type": "string",
             "in": "header",
-            "description": "Harvest Account ID (get it from list_accounts)",
+            "description": "Harvest Account ID (get it from harvest__list_accounts)",
             "required": true,
             "headerName": "Harvest-Account-Id",
           },
@@ -26699,7 +26699,7 @@ export const connectors: IntegrationConfig[] = [
         },
       },
     }, {
-      "id": "stop_timer",
+      "id": "harvest__stop_timer",
       "name": "Stop Timer",
       "description": "Stop a running timer for a time entry",
       "requiresWrite": true,
@@ -26710,7 +26710,7 @@ export const connectors: IntegrationConfig[] = [
           "account_id": {
             "type": "string",
             "in": "header",
-            "description": "Harvest Account ID (get it from list_accounts)",
+            "description": "Harvest Account ID (get it from harvest__list_accounts)",
             "required": true,
             "headerName": "Harvest-Account-Id",
           },
@@ -26723,7 +26723,7 @@ export const connectors: IntegrationConfig[] = [
         },
       },
     }, {
-      "id": "restart_timer",
+      "id": "harvest__restart_timer",
       "name": "Restart Timer",
       "description": "Restart a stopped timer for a time entry",
       "requiresWrite": true,
@@ -26734,7 +26734,7 @@ export const connectors: IntegrationConfig[] = [
           "account_id": {
             "type": "string",
             "in": "header",
-            "description": "Harvest Account ID (get it from list_accounts)",
+            "description": "Harvest Account ID (get it from harvest__list_accounts)",
             "required": true,
             "headerName": "Harvest-Account-Id",
           },
@@ -26747,7 +26747,7 @@ export const connectors: IntegrationConfig[] = [
         },
       },
     }, {
-      "id": "list_projects",
+      "id": "harvest__list_projects",
       "name": "List Projects",
       "description": "List all projects in the Harvest account",
       "requiresWrite": false,
@@ -26758,7 +26758,7 @@ export const connectors: IntegrationConfig[] = [
           "account_id": {
             "type": "string",
             "in": "header",
-            "description": "Harvest Account ID (get it from list_accounts)",
+            "description": "Harvest Account ID (get it from harvest__list_accounts)",
             "required": true,
             "headerName": "Harvest-Account-Id",
           },
@@ -26808,7 +26808,7 @@ export const connectors: IntegrationConfig[] = [
         },
       },
     }, {
-      "id": "get_project",
+      "id": "harvest__get_project",
       "name": "Get Project",
       "description": "Get details of a specific project",
       "requiresWrite": false,
@@ -26819,7 +26819,7 @@ export const connectors: IntegrationConfig[] = [
           "account_id": {
             "type": "string",
             "in": "header",
-            "description": "Harvest Account ID (get it from list_accounts)",
+            "description": "Harvest Account ID (get it from harvest__list_accounts)",
             "required": true,
             "headerName": "Harvest-Account-Id",
           },
@@ -26832,7 +26832,7 @@ export const connectors: IntegrationConfig[] = [
         },
       },
     }, {
-      "id": "list_tasks",
+      "id": "harvest__list_tasks",
       "name": "List Tasks",
       "description": "List all tasks available in the Harvest account",
       "requiresWrite": false,
@@ -26843,7 +26843,7 @@ export const connectors: IntegrationConfig[] = [
           "account_id": {
             "type": "string",
             "in": "header",
-            "description": "Harvest Account ID (get it from list_accounts)",
+            "description": "Harvest Account ID (get it from harvest__list_accounts)",
             "required": true,
             "headerName": "Harvest-Account-Id",
           },
@@ -26887,7 +26887,7 @@ export const connectors: IntegrationConfig[] = [
         },
       },
     }, {
-      "id": "list_project_task_assignments",
+      "id": "harvest__list_project_task_assignments",
       "name": "List Project Task Assignments",
       "description":
         "List all task assignments for a specific project (tasks billable to this project)",
@@ -26899,7 +26899,7 @@ export const connectors: IntegrationConfig[] = [
           "account_id": {
             "type": "string",
             "in": "header",
-            "description": "Harvest Account ID (get it from list_accounts)",
+            "description": "Harvest Account ID (get it from harvest__list_accounts)",
             "required": true,
             "headerName": "Harvest-Account-Id",
           },
@@ -26953,7 +26953,7 @@ export const connectors: IntegrationConfig[] = [
         },
       },
     }, {
-      "id": "list_clients",
+      "id": "harvest__list_clients",
       "name": "List Clients",
       "description": "List all clients in the Harvest account",
       "requiresWrite": false,
@@ -26964,7 +26964,7 @@ export const connectors: IntegrationConfig[] = [
           "account_id": {
             "type": "string",
             "in": "header",
-            "description": "Harvest Account ID (get it from list_accounts)",
+            "description": "Harvest Account ID (get it from harvest__list_accounts)",
             "required": true,
             "headerName": "Harvest-Account-Id",
           },
@@ -27008,7 +27008,7 @@ export const connectors: IntegrationConfig[] = [
         },
       },
     }, {
-      "id": "get_client",
+      "id": "harvest__get_client",
       "name": "Get Client",
       "description": "Get details of a specific client",
       "requiresWrite": false,
@@ -27019,7 +27019,7 @@ export const connectors: IntegrationConfig[] = [
           "account_id": {
             "type": "string",
             "in": "header",
-            "description": "Harvest Account ID (get it from list_accounts)",
+            "description": "Harvest Account ID (get it from harvest__list_accounts)",
             "required": true,
             "headerName": "Harvest-Account-Id",
           },
@@ -27032,7 +27032,7 @@ export const connectors: IntegrationConfig[] = [
         },
       },
     }, {
-      "id": "list_invoices",
+      "id": "harvest__list_invoices",
       "name": "List Invoices",
       "description": "List all invoices. Filter by client, status, or date range.",
       "requiresWrite": false,
@@ -27043,7 +27043,7 @@ export const connectors: IntegrationConfig[] = [
           "account_id": {
             "type": "string",
             "in": "header",
-            "description": "Harvest Account ID (get it from list_accounts)",
+            "description": "Harvest Account ID (get it from harvest__list_accounts)",
             "required": true,
             "headerName": "Harvest-Account-Id",
           },
@@ -27105,7 +27105,7 @@ export const connectors: IntegrationConfig[] = [
         },
       },
     }, {
-      "id": "get_invoice",
+      "id": "harvest__get_invoice",
       "name": "Get Invoice",
       "description": "Get details of a specific invoice including line items",
       "requiresWrite": false,
@@ -27116,7 +27116,7 @@ export const connectors: IntegrationConfig[] = [
           "account_id": {
             "type": "string",
             "in": "header",
-            "description": "Harvest Account ID (get it from list_accounts)",
+            "description": "Harvest Account ID (get it from harvest__list_accounts)",
             "required": true,
             "headerName": "Harvest-Account-Id",
           },
@@ -27129,7 +27129,7 @@ export const connectors: IntegrationConfig[] = [
         },
       },
     }, {
-      "id": "create_invoice",
+      "id": "harvest__create_invoice",
       "name": "Create Invoice",
       "description": "Create a new invoice for a client",
       "requiresWrite": true,
@@ -27140,7 +27140,7 @@ export const connectors: IntegrationConfig[] = [
           "account_id": {
             "type": "string",
             "in": "header",
-            "description": "Harvest Account ID (get it from list_accounts)",
+            "description": "Harvest Account ID (get it from harvest__list_accounts)",
             "required": true,
             "headerName": "Harvest-Account-Id",
           },
@@ -27175,7 +27175,7 @@ export const connectors: IntegrationConfig[] = [
         },
       },
     }, {
-      "id": "update_invoice",
+      "id": "harvest__update_invoice",
       "name": "Update Invoice",
       "description": "Update an existing invoice (subject, notes, dates, line items, state)",
       "requiresWrite": true,
@@ -27186,7 +27186,7 @@ export const connectors: IntegrationConfig[] = [
           "account_id": {
             "type": "string",
             "in": "header",
-            "description": "Harvest Account ID (get it from list_accounts)",
+            "description": "Harvest Account ID (get it from harvest__list_accounts)",
             "required": true,
             "headerName": "Harvest-Account-Id",
           },
@@ -27206,7 +27206,7 @@ export const connectors: IntegrationConfig[] = [
         },
       },
     }, {
-      "id": "list_invoice_payments",
+      "id": "harvest__list_invoice_payments",
       "name": "List Invoice Payments",
       "description": "List all payments recorded for an invoice",
       "requiresWrite": false,
@@ -27217,7 +27217,7 @@ export const connectors: IntegrationConfig[] = [
           "account_id": {
             "type": "string",
             "in": "header",
-            "description": "Harvest Account ID (get it from list_accounts)",
+            "description": "Harvest Account ID (get it from harvest__list_accounts)",
             "required": true,
             "headerName": "Harvest-Account-Id",
           },
@@ -27262,7 +27262,7 @@ export const connectors: IntegrationConfig[] = [
         },
       },
     }, {
-      "id": "create_invoice_payment",
+      "id": "harvest__create_invoice_payment",
       "name": "Create Invoice Payment",
       "description": "Record a payment for an invoice",
       "requiresWrite": true,
@@ -27273,7 +27273,7 @@ export const connectors: IntegrationConfig[] = [
           "account_id": {
             "type": "string",
             "in": "header",
-            "description": "Harvest Account ID (get it from list_accounts)",
+            "description": "Harvest Account ID (get it from harvest__list_accounts)",
             "required": true,
             "headerName": "Harvest-Account-Id",
           },
@@ -27303,7 +27303,7 @@ export const connectors: IntegrationConfig[] = [
         },
       },
     }, {
-      "id": "time_report_by_project",
+      "id": "harvest__time_report_by_project",
       "name": "Time Report by Project",
       "description": "Get a time report aggregated by project. Requires from and to date range.",
       "requiresWrite": false,
@@ -27314,7 +27314,7 @@ export const connectors: IntegrationConfig[] = [
           "account_id": {
             "type": "string",
             "in": "header",
-            "description": "Harvest Account ID (get it from list_accounts)",
+            "description": "Harvest Account ID (get it from harvest__list_accounts)",
             "required": true,
             "headerName": "Harvest-Account-Id",
           },
@@ -27375,7 +27375,7 @@ export const connectors: IntegrationConfig[] = [
         },
       },
     }, {
-      "id": "time_report_by_team",
+      "id": "harvest__time_report_by_team",
       "name": "Time Report by Team",
       "description":
         "Get a time report aggregated by team member. Requires from and to date range.",
@@ -27387,7 +27387,7 @@ export const connectors: IntegrationConfig[] = [
           "account_id": {
             "type": "string",
             "in": "header",
-            "description": "Harvest Account ID (get it from list_accounts)",
+            "description": "Harvest Account ID (get it from harvest__list_accounts)",
             "required": true,
             "headerName": "Harvest-Account-Id",
           },
@@ -27441,7 +27441,7 @@ export const connectors: IntegrationConfig[] = [
         },
       },
     }, {
-      "id": "time_report_by_client",
+      "id": "harvest__time_report_by_client",
       "name": "Time Report by Client",
       "description": "Get a time report aggregated by client. Requires from and to date range.",
       "requiresWrite": false,
@@ -27452,7 +27452,7 @@ export const connectors: IntegrationConfig[] = [
           "account_id": {
             "type": "string",
             "in": "header",
-            "description": "Harvest Account ID (get it from list_accounts)",
+            "description": "Harvest Account ID (get it from harvest__list_accounts)",
             "required": true,
             "headerName": "Harvest-Account-Id",
           },
@@ -27506,7 +27506,7 @@ export const connectors: IntegrationConfig[] = [
         },
       },
     }, {
-      "id": "time_report_by_task",
+      "id": "harvest__time_report_by_task",
       "name": "Time Report by Task",
       "description": "Get a time report aggregated by task. Requires from and to date range.",
       "requiresWrite": false,
@@ -27517,7 +27517,7 @@ export const connectors: IntegrationConfig[] = [
           "account_id": {
             "type": "string",
             "in": "header",
-            "description": "Harvest Account ID (get it from list_accounts)",
+            "description": "Harvest Account ID (get it from harvest__list_accounts)",
             "required": true,
             "headerName": "Harvest-Account-Id",
           },
@@ -27571,7 +27571,7 @@ export const connectors: IntegrationConfig[] = [
         },
       },
     }, {
-      "id": "invoice_report",
+      "id": "harvest__invoice_report",
       "name": "Invoice Report",
       "description": "Get an invoiced time and expenses report. Requires from and to date range.",
       "requiresWrite": false,
@@ -27582,7 +27582,7 @@ export const connectors: IntegrationConfig[] = [
           "account_id": {
             "type": "string",
             "in": "header",
-            "description": "Harvest Account ID (get it from list_accounts)",
+            "description": "Harvest Account ID (get it from harvest__list_accounts)",
             "required": true,
             "headerName": "Harvest-Account-Id",
           },

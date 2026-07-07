@@ -19,6 +19,16 @@ function getTool(connectorName: string, toolId: string) {
   return tool;
 }
 
+function getNamespacedToolId(connectorName: string, toolId: string): string {
+  const prefix = `${connectorName}__`;
+  return toolId.startsWith(prefix) ? toolId : `${prefix}${toolId}`;
+}
+
+function getConnectorLocalToolId(connectorName: string, toolId: string): string {
+  const prefix = `${connectorName}__`;
+  return toolId.startsWith(prefix) ? toolId.slice(prefix.length) : toolId;
+}
+
 describe("integration endpoint specs", () => {
   it("keeps all source connectors while showing only the supported end-user surface by default", () => {
     const supportedConnectors = [
@@ -520,6 +530,16 @@ describe("integration endpoint specs", () => {
         `Expected ${connectorName} to expose ${expectedEndpointCount} callable endpoint tools`,
       );
     }
+  });
+
+  it("publishes Harvest tool IDs with the Harvest namespace prefix", () => {
+    const harvest = getConnector("harvest");
+
+    assertEquals(
+      harvest.tools.every((tool) => tool.id?.startsWith("harvest__")),
+      true,
+    );
+    assertExists(getTool("harvest", "harvest__list_accounts"));
   });
 
   it("uses the documented SAP supplier invoice release function import", () => {
@@ -1910,17 +1930,17 @@ describe("integration endpoint specs", () => {
           tool.requiresWrite !== false ||
           !tool.endpoint ||
           !tool.id ||
-          !collectionToolPattern.test(tool.id)
+          !collectionToolPattern.test(getConnectorLocalToolId(connectorName, tool.id))
         ) {
           continue;
         }
 
         assertExists(
           tool.endpoint.response?.historicalSummary,
-          `Expected ${connectorName}__${tool.id} to declare historicalSummary`,
+          `Expected ${getNamespacedToolId(connectorName, tool.id)} to declare historicalSummary`,
         );
         assertEquals(
-          historicalToolSummaries[`${connectorName}__${tool.id}`],
+          historicalToolSummaries[getNamespacedToolId(connectorName, tool.id)],
           tool.endpoint.response?.historicalSummary,
         );
       }
