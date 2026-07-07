@@ -35,7 +35,7 @@
   ],
   "tools": [
     {
-      "id": "list_reviews",
+      "id": "trusted-shops__list_reviews",
       "name": "List Reviews",
       "description": "List service and product reviews for the whole account or specific channels, with filters and cursor pagination",
       "requiresWrite": false,
@@ -119,7 +119,7 @@
       }
     },
     {
-      "id": "get_review",
+      "id": "trusted-shops__get_review",
       "name": "Get Review",
       "description": "Get a single review with full comment, customer, transaction, product, and reply details",
       "requiresWrite": false,
@@ -137,7 +137,7 @@
       }
     },
     {
-      "id": "list_channels",
+      "id": "trusted-shops__list_channels",
       "name": "List Channels",
       "description": "List all review channels (shops/touchpoints) of the account with their IDs, names, URLs, and locales",
       "requiresWrite": false,
@@ -147,7 +147,7 @@
       }
     },
     {
-      "id": "get_channel_rating",
+      "id": "trusted-shops__get_channel_rating",
       "name": "Get Channel Aggregate Rating",
       "description": "Get aggregate service review ratings for a channel across 7-day, 30-day, 90-day, 365-day, and overall periods, including star distribution",
       "requiresWrite": false,
@@ -165,7 +165,7 @@
       }
     },
     {
-      "id": "create_review_invites",
+      "id": "trusted-shops__create_review_invites",
       "name": "Create Review Invites",
       "description": "Schedule review invite emails for one or more customers of a channel after a transaction",
       "requiresWrite": true,
@@ -197,7 +197,7 @@
       }
     },
     {
-      "id": "get_reviews_count",
+      "id": "trusted-shops__get_reviews_count",
       "name": "Get Reviews Count",
       "description": "Get the total number of reviews matching a filter — cheap KPI queries without paging through review lists",
       "requiresWrite": false,
@@ -250,7 +250,7 @@
       }
     },
     {
-      "id": "reply_to_review",
+      "id": "trusted-shops__reply_to_review",
       "name": "Reply to Review",
       "description": "Save a public reply on a review — the natural follow-up to negative reviews",
       "requiresWrite": true,

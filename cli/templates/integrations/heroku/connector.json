@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "list_apps",
+      "id": "heroku__list_apps",
       "name": "List Apps",
       "description": "List apps the authenticated user can access",
       "requiresWrite": false,
@@ -68,7 +68,7 @@
       }
     },
     {
-      "id": "get_app",
+      "id": "heroku__get_app",
       "name": "Get App",
       "description": "Get details of an app",
       "requiresWrite": false,
@@ -93,7 +93,7 @@
       }
     },
     {
-      "id": "list_dynos",
+      "id": "heroku__list_dynos",
       "name": "List Dynos",
       "description": "List the dynos of an app with their state",
       "requiresWrite": false,
@@ -135,7 +135,7 @@
       }
     },
     {
-      "id": "restart_dyno",
+      "id": "heroku__restart_dyno",
       "name": "Restart Dyno",
       "description": "Restart a specific dyno of an app",
       "requiresWrite": true,
@@ -166,7 +166,7 @@
       }
     },
     {
-      "id": "restart_all_dynos",
+      "id": "heroku__restart_all_dynos",
       "name": "Restart All Dynos",
       "description": "Restart every dyno of an app",
       "requiresWrite": true,
@@ -191,7 +191,7 @@
       }
     },
     {
-      "id": "get_config_vars",
+      "id": "heroku__get_config_vars",
       "name": "Get Config Vars",
       "description": "Get the config vars (environment variables) of an app",
       "requiresWrite": false,
@@ -216,7 +216,7 @@
       }
     },
     {
-      "id": "list_releases",
+      "id": "heroku__list_releases",
       "name": "List Releases",
       "description": "List the release history of an app",
       "requiresWrite": false,

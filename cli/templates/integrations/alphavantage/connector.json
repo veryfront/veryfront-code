@@ -27,7 +27,7 @@
   ],
   "tools": [
     {
-      "id": "quote",
+      "id": "alphavantage__quote",
       "name": "Get Quote",
       "description": "Get the latest price and volume information for an equity ticker",
       "requiresWrite": false,
@@ -51,7 +51,7 @@
       }
     },
     {
-      "id": "daily_time_series",
+      "id": "alphavantage__daily_time_series",
       "name": "Daily Time Series",
       "description": "Get daily open, high, low, close, and volume history for an equity ticker",
       "requiresWrite": false,
@@ -81,7 +81,7 @@
       }
     },
     {
-      "id": "symbol_search",
+      "id": "alphavantage__symbol_search",
       "name": "Symbol Search",
       "description": "Search for ticker symbols and companies matching keywords",
       "requiresWrite": false,
@@ -105,7 +105,7 @@
       }
     },
     {
-      "id": "company_overview",
+      "id": "alphavantage__company_overview",
       "name": "Company Overview",
       "description": "Get company information and key fundamentals (market cap, PE ratio, EPS, sector) for an equity ticker",
       "requiresWrite": false,
@@ -129,7 +129,7 @@
       }
     },
     {
-      "id": "fx_rate",
+      "id": "alphavantage__fx_rate",
       "name": "FX Exchange Rate",
       "description": "Get the realtime exchange rate between two currencies (physical or digital, e.g. USD to EUR or BTC to USD)",
       "requiresWrite": false,

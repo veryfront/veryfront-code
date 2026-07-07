@@ -33,7 +33,7 @@
   ],
   "tools": [
     {
-      "id": "list_calls",
+      "id": "gong__list_calls",
       "name": "List Calls",
       "description": "List calls in a date window (max 90 days per request)",
       "requiresWrite": false,
@@ -79,7 +79,7 @@
       }
     },
     {
-      "id": "get_call",
+      "id": "gong__get_call",
       "name": "Get Call",
       "description": "Get metadata for a single call",
       "requiresWrite": false,
@@ -100,7 +100,7 @@
       }
     },
     {
-      "id": "get_calls_extensive",
+      "id": "gong__get_calls_extensive",
       "name": "Get Calls Extensive",
       "description": "Retrieve detailed call data with content selectors (read-only retrieval via POST)",
       "requiresWrite": false,
@@ -125,7 +125,7 @@
       }
     },
     {
-      "id": "get_call_transcripts",
+      "id": "gong__get_call_transcripts",
       "name": "Get Call Transcripts",
       "description": "Retrieve transcripts for specific calls (read-only retrieval via POST)",
       "requiresWrite": false,
@@ -149,7 +149,7 @@
       }
     },
     {
-      "id": "list_users",
+      "id": "gong__list_users",
       "name": "List Users",
       "description": "List Gong users in the company",
       "requiresWrite": false,
@@ -166,7 +166,7 @@
       }
     },
     {
-      "id": "get_user",
+      "id": "gong__get_user",
       "name": "Get User",
       "description": "Get a Gong user by ID",
       "requiresWrite": false,

@@ -14,7 +14,8 @@ function getConnector(name: string) {
 
 function getTool(connectorName: string, toolId: string) {
   const connector = getConnector(connectorName);
-  const tool = connector.tools.find((item) => item.id === toolId);
+  const namespacedToolId = getNamespacedToolId(connectorName, toolId);
+  const tool = connector.tools.find((item) => item.id === toolId || item.id === namespacedToolId);
   assertExists(tool, `Expected ${connectorName}:${toolId} to exist`);
   return tool;
 }
@@ -27,6 +28,10 @@ function getNamespacedToolId(connectorName: string, toolId: string): string {
 function getConnectorLocalToolId(connectorName: string, toolId: string): string {
   const prefix = `${connectorName}__`;
   return toolId.startsWith(prefix) ? toolId.slice(prefix.length) : toolId;
+}
+
+function getLocalToolIds(connectorName: string, tools: { id?: string }[]): (string | undefined)[] {
+  return tools.map((tool) => tool.id ? getConnectorLocalToolId(connectorName, tool.id) : tool.id);
 }
 
 describe("integration endpoint specs", () => {
@@ -342,7 +347,7 @@ describe("integration endpoint specs", () => {
 
   it("keeps Salesforce write tools curated instead of exposing generic record mutation", () => {
     const salesforce = getConnector("salesforce");
-    const toolIds = salesforce.tools.map((tool) => tool.id);
+    const toolIds = getLocalToolIds("salesforce", salesforce.tools);
 
     assertEquals(toolIds.includes("create_record"), false);
     assertEquals(toolIds.includes("update_record"), false);
@@ -367,7 +372,7 @@ describe("integration endpoint specs", () => {
     const connector = getConnector("salesforce");
 
     assertEquals(
-      connector.tools.map((tool) => tool.id),
+      getLocalToolIds("salesforce", connector.tools),
       [
         "find_customer",
         "search_accounts",
@@ -440,7 +445,7 @@ describe("integration endpoint specs", () => {
 
   it("publishes HubSpot lead and form submission endpoint tools", () => {
     const hubspot = getConnector("hubspot");
-    const toolIds = hubspot.tools.map((tool) => tool.id);
+    const toolIds = getLocalToolIds("hubspot", hubspot.tools);
 
     assertEquals(hubspot.auth.provider, "hubspot");
     assertEquals(hubspot.auth.scopes?.includes("oauth"), true);
@@ -532,14 +537,61 @@ describe("integration endpoint specs", () => {
     }
   });
 
-  it("publishes Harvest tool IDs with the Harvest namespace prefix", () => {
-    const harvest = getConnector("harvest");
+  it("publishes all connector tool IDs with their integration namespace prefix", () => {
+    for (const connector of connectors) {
+      const prefix = `${connector.name}__`;
 
-    assertEquals(
-      harvest.tools.every((tool) => tool.id?.startsWith("harvest__")),
-      true,
-    );
+      for (const tool of connector.tools) {
+        if (!tool.id) continue;
+        assertEquals(
+          tool.id.startsWith(prefix),
+          true,
+          `Expected ${connector.name}:${tool.id} to start with ${prefix}`,
+        );
+        assertEquals(
+          tool.id.indexOf("__"),
+          tool.id.lastIndexOf("__"),
+          `Expected ${connector.name}:${tool.id} to contain a single namespace separator`,
+        );
+      }
+    }
+
     assertExists(getTool("harvest", "harvest__list_accounts"));
+  });
+
+  it("keeps source connector template tool IDs prefixed before generation", async () => {
+    for await (const entry of Deno.readDir("cli/templates/integrations")) {
+      if (!entry.isDirectory || entry.name === "_base") continue;
+
+      try {
+        const raw = await Deno.readTextFile(
+          `cli/templates/integrations/${entry.name}/connector.json`,
+        );
+        const connector = JSON.parse(raw) as {
+          name?: string;
+          tools?: Array<{ id?: string }>;
+        };
+        const connectorName = connector.name ?? entry.name;
+        const prefix = `${connectorName}__`;
+
+        for (const tool of connector.tools ?? []) {
+          if (!tool.id) continue;
+          assertEquals(
+            tool.id.startsWith(prefix),
+            true,
+            `Expected ${entry.name}:${tool.id} to start with ${prefix}`,
+          );
+          assertEquals(
+            tool.id.indexOf("__"),
+            tool.id.lastIndexOf("__"),
+            `Expected ${entry.name}:${tool.id} to contain a single namespace separator`,
+          );
+        }
+      } catch (error) {
+        if (error instanceof Deno.errors.NotFound) continue;
+        throw error;
+      }
+    }
   });
 
   it("uses the documented SAP supplier invoice release function import", () => {
@@ -587,8 +639,18 @@ describe("integration endpoint specs", () => {
 
   it("does not expose unsupported Figma project listing tools for public OAuth apps", () => {
     const figma = getConnector("figma");
-    assertEquals(figma.tools.some((tool) => tool.id === "list_projects"), false);
-    assertEquals(figma.tools.some((tool) => tool.id === "list_files"), false);
+    assertEquals(
+      figma.tools.some((tool) =>
+        tool.id && getConnectorLocalToolId("figma", tool.id) === "list_projects"
+      ),
+      false,
+    );
+    assertEquals(
+      figma.tools.some((tool) =>
+        tool.id && getConnectorLocalToolId("figma", tool.id) === "list_files"
+      ),
+      false,
+    );
 
     const getFile = getTool("figma", "get_file");
     assertStringIncludes(getFile.description, "pages");
@@ -654,7 +716,7 @@ describe("integration endpoint specs", () => {
       false,
     );
     assertEquals(
-      endpointTools.map((tool) => tool.id).sort(),
+      getLocalToolIds("sentry", endpointTools).sort(),
       [
         "get_issue",
         "get_latest_event",
@@ -789,7 +851,7 @@ describe("integration endpoint specs", () => {
 
     const jira = getConnector("jira");
     assertEquals(
-      jira.tools.map((tool) => tool.id),
+      getLocalToolIds("jira", jira.tools),
       [
         "list_sites",
         "list_projects",
@@ -806,8 +868,8 @@ describe("integration endpoint specs", () => {
       ],
     );
     assertEquals(
-      jira.tools.filter((tool) => tool.endpoint).map((tool) => tool.id),
-      jira.tools.map((tool) => tool.id),
+      getLocalToolIds("jira", jira.tools.filter((tool) => tool.endpoint)),
+      getLocalToolIds("jira", jira.tools),
     );
 
     const jiraListProjects = getTool("jira", "list_projects");
@@ -1196,7 +1258,7 @@ describe("integration endpoint specs", () => {
 
   it("exposes Airtable CRUD and schema mutation endpoint tools", () => {
     const airtable = getConnector("airtable");
-    const toolIds = airtable.tools.map((tool) => tool.id);
+    const toolIds = getLocalToolIds("airtable", airtable.tools);
 
     assertEquals(toolIds, [
       "list_bases",
@@ -1269,7 +1331,9 @@ describe("integration endpoint specs", () => {
       }
     }
 
-    const expectedFiles = airtable.tools.map((tool) => tool.id?.replaceAll("_", "-")).sort();
+    const expectedFiles = getLocalToolIds("airtable", airtable.tools).map((toolId) =>
+      toolId?.replaceAll("_", "-")
+    ).sort();
     assertEquals(toolFiles.sort(), expectedFiles);
   });
 
@@ -1312,7 +1376,7 @@ describe("integration endpoint specs", () => {
 
     const expectedFiles = github.tools.map((tool) => {
       assertExists(tool.id);
-      return tool.id.replaceAll("_", "-");
+      return getConnectorLocalToolId("github", tool.id).replaceAll("_", "-");
     }).sort();
     assertEquals(toolFiles.sort(), expectedFiles);
   });
@@ -1333,7 +1397,7 @@ describe("integration endpoint specs", () => {
 
     const expectedFiles = gmail.tools.map((tool) => {
       assertExists(tool.id);
-      return tool.id.replaceAll("_", "-");
+      return getConnectorLocalToolId("gmail", tool.id).replaceAll("_", "-");
     }).sort();
     assertEquals(toolFiles.sort(), expectedFiles);
   });
@@ -1375,7 +1439,7 @@ describe("integration endpoint specs", () => {
       "set_data_validation",
     ];
 
-    assertEquals(sheets.tools.map((tool) => tool.id), expectedToolIds);
+    assertEquals(getLocalToolIds("sheets", sheets.tools), expectedToolIds);
 
     const toolFiles: string[] = [];
     for await (
@@ -1647,7 +1711,7 @@ describe("integration endpoint specs", () => {
       "offline_access",
     ]);
 
-    assertEquals(outlook.tools.map((tool) => tool.id), [
+    assertEquals(getLocalToolIds("outlook", outlook.tools), [
       "list_emails",
       "get_email",
       "send_email",

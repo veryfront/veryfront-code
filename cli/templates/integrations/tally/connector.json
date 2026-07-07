@@ -21,7 +21,7 @@
   ],
   "tools": [
     {
-      "id": "list_forms",
+      "id": "tally__list_forms",
       "name": "List Forms",
       "description": "List forms in the Tally account, optionally filtered by workspace",
       "requiresWrite": false,
@@ -50,7 +50,7 @@
       }
     },
     {
-      "id": "get_form",
+      "id": "tally__get_form",
       "name": "Get Form",
       "description": "Retrieve a single form by ID with all its blocks and settings",
       "requiresWrite": false,
@@ -68,7 +68,7 @@
       }
     },
     {
-      "id": "list_submissions",
+      "id": "tally__list_submissions",
       "name": "List Submissions",
       "description": "List submissions of a form with their responses, filterable by status and date range",
       "requiresWrite": false,
@@ -118,7 +118,7 @@
       }
     },
     {
-      "id": "get_submission",
+      "id": "tally__get_submission",
       "name": "Get Submission",
       "description": "Retrieve a specific form submission with all its responses and the form questions",
       "requiresWrite": false,
@@ -142,7 +142,7 @@
       }
     },
     {
-      "id": "list_form_questions",
+      "id": "tally__list_form_questions",
       "name": "List Form Questions",
       "description": "List a form's questions with their IDs, types, and response counts — lighter than parsing the full form blocks for mapping answers",
       "requiresWrite": false,
@@ -160,7 +160,7 @@
       }
     },
     {
-      "id": "list_workspaces",
+      "id": "tally__list_workspaces",
       "name": "List Workspaces",
       "description": "List workspaces with their members and pending invites",
       "requiresWrite": false,

@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "verify_token",
+      "id": "cloudflare__verify_token",
       "name": "Verify Token",
       "description": "Check that the configured Cloudflare API token is valid and active",
       "requiresWrite": false,
@@ -39,7 +39,7 @@
       }
     },
     {
-      "id": "list_zones",
+      "id": "cloudflare__list_zones",
       "name": "List Zones",
       "description": "List zones (domains) the token can access",
       "requiresWrite": false,
@@ -108,7 +108,7 @@
       }
     },
     {
-      "id": "get_zone",
+      "id": "cloudflare__get_zone",
       "name": "Get Zone",
       "description": "Get details of a zone by ID",
       "requiresWrite": false,
@@ -129,7 +129,7 @@
       }
     },
     {
-      "id": "list_dns_records",
+      "id": "cloudflare__list_dns_records",
       "name": "List DNS Records",
       "description": "List DNS records in a zone",
       "requiresWrite": false,
@@ -207,7 +207,7 @@
       }
     },
     {
-      "id": "create_dns_record",
+      "id": "cloudflare__create_dns_record",
       "name": "Create DNS Record",
       "description": "Create a DNS record in a zone",
       "requiresWrite": true,
@@ -259,7 +259,7 @@
       }
     },
     {
-      "id": "update_dns_record",
+      "id": "cloudflare__update_dns_record",
       "name": "Update DNS Record",
       "description": "Update fields of an existing DNS record",
       "requiresWrite": true,
@@ -308,7 +308,7 @@
       }
     },
     {
-      "id": "list_accounts",
+      "id": "cloudflare__list_accounts",
       "name": "List Accounts",
       "description": "List Cloudflare accounts the token can access (account IDs are needed for account-scoped APIs)",
       "requiresWrite": false,

@@ -28,7 +28,7 @@
   ],
   "tools": [
     {
-      "id": "get_bot_user",
+      "id": "discord__get_bot_user",
       "name": "Get Bot User",
       "description": "Get the bot's own user account to confirm the token works and learn the bot's ID and username",
       "requiresWrite": false,
@@ -38,7 +38,7 @@
       }
     },
     {
-      "id": "list_guilds",
+      "id": "discord__list_guilds",
       "name": "List Guilds",
       "description": "List the servers (guilds) the bot has been added to, so an agent can find a guild ID",
       "requiresWrite": false,
@@ -72,7 +72,7 @@
       }
     },
     {
-      "id": "list_guild_channels",
+      "id": "discord__list_guild_channels",
       "name": "List Guild Channels",
       "description": "List the channels in a server so an agent can find the right channel ID before reading or posting",
       "requiresWrite": false,
@@ -90,7 +90,7 @@
       }
     },
     {
-      "id": "get_channel_messages",
+      "id": "discord__get_channel_messages",
       "name": "Get Channel Messages",
       "description": "Read recent messages from a channel for summaries, support triage, or context before replying",
       "requiresWrite": false,
@@ -129,7 +129,7 @@
       }
     },
     {
-      "id": "send_message",
+      "id": "discord__send_message",
       "name": "Send Message",
       "description": "Post a message to a channel, optionally as a reply to an existing message",
       "requiresWrite": true,
@@ -163,7 +163,7 @@
       }
     },
     {
-      "id": "create_dm",
+      "id": "discord__create_dm",
       "name": "Create DM Channel",
       "description": "Open (or return the existing) direct-message channel with a user; use the returned channel ID with Send Message to DM the user",
       "requiresWrite": true,
@@ -180,7 +180,7 @@
       }
     },
     {
-      "id": "edit_message",
+      "id": "discord__edit_message",
       "name": "Edit Message",
       "description": "Edit the text of a message the bot previously sent, e.g. to update a status post or correct an announcement",
       "requiresWrite": true,
@@ -211,7 +211,7 @@
       }
     },
     {
-      "id": "search_guild_members",
+      "id": "discord__search_guild_members",
       "name": "Search Guild Members",
       "description": "Find members of a server whose username or nickname starts with a string, e.g. to resolve a name to a user ID for mentions or DMs",
       "requiresWrite": false,
@@ -241,7 +241,7 @@
       }
     },
     {
-      "id": "add_reaction",
+      "id": "discord__add_reaction",
       "name": "Add Reaction",
       "description": "React to a message with an emoji, e.g. to acknowledge or label it",
       "requiresWrite": true,
@@ -271,7 +271,7 @@
       }
     },
     {
-      "id": "create_thread",
+      "id": "discord__create_thread",
       "name": "Create Thread",
       "description": "Start a thread from an existing message to keep a discussion organized",
       "requiresWrite": true,

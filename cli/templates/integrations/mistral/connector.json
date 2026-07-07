@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "list_models",
+      "id": "mistral__list_models",
       "name": "List Models",
       "description": "List the Mistral models available to the API key",
       "requiresWrite": false,
@@ -50,7 +50,7 @@
       }
     },
     {
-      "id": "get_model",
+      "id": "mistral__get_model",
       "name": "Get Model",
       "description": "Get details about a specific Mistral model",
       "requiresWrite": false,
@@ -68,7 +68,7 @@
       }
     },
     {
-      "id": "create_chat_completion",
+      "id": "mistral__create_chat_completion",
       "name": "Create Chat Completion",
       "description": "Generate a chat completion from a list of messages",
       "requiresWrite": true,
@@ -98,7 +98,7 @@
       }
     },
     {
-      "id": "create_embedding",
+      "id": "mistral__create_embedding",
       "name": "Create Embedding",
       "description": "Create embedding vectors for input text",
       "requiresWrite": true,

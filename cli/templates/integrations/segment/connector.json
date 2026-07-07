@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "list_sources",
+      "id": "segment__list_sources",
       "name": "List Sources",
       "description": "List sources in the Segment workspace",
       "requiresWrite": false,
@@ -95,7 +95,7 @@
       }
     },
     {
-      "id": "get_source",
+      "id": "segment__get_source",
       "name": "Get Source",
       "description": "Get a source by ID",
       "requiresWrite": false,
@@ -122,7 +122,7 @@
       }
     },
     {
-      "id": "create_source",
+      "id": "segment__create_source",
       "name": "Create Source",
       "description": "Create a new source in the workspace",
       "requiresWrite": true,
@@ -164,7 +164,7 @@
       }
     },
     {
-      "id": "update_source",
+      "id": "segment__update_source",
       "name": "Update Source",
       "description": "Update a source's name, slug, enabled state, or settings",
       "requiresWrite": true,
@@ -209,7 +209,7 @@
       }
     },
     {
-      "id": "list_destinations",
+      "id": "segment__list_destinations",
       "name": "List Destinations",
       "description": "List destinations in the Segment workspace",
       "requiresWrite": false,
@@ -275,7 +275,7 @@
       }
     },
     {
-      "id": "get_destination",
+      "id": "segment__get_destination",
       "name": "Get Destination",
       "description": "Get a destination by ID",
       "requiresWrite": false,
@@ -302,7 +302,7 @@
       }
     },
     {
-      "id": "create_destination",
+      "id": "segment__create_destination",
       "name": "Create Destination",
       "description": "Connect a new destination to a source",
       "requiresWrite": true,

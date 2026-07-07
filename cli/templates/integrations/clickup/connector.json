@@ -36,7 +36,7 @@
   ],
   "tools": [
     {
-      "id": "list_workspaces",
+      "id": "clickup__list_workspaces",
       "name": "List Workspaces",
       "description": "List ClickUp Workspaces (teams) the authorized user can access",
       "requiresWrite": false,
@@ -46,7 +46,7 @@
       }
     },
     {
-      "id": "list_spaces",
+      "id": "clickup__list_spaces",
       "name": "List Spaces",
       "description": "List Spaces in a ClickUp Workspace",
       "requiresWrite": false,
@@ -70,7 +70,7 @@
       }
     },
     {
-      "id": "list_lists",
+      "id": "clickup__list_lists",
       "name": "List Lists",
       "description": "List folderless Lists in a ClickUp Space",
       "requiresWrite": false,
@@ -94,7 +94,7 @@
       }
     },
     {
-      "id": "list_tasks",
+      "id": "clickup__list_tasks",
       "name": "List Tasks",
       "description": "List tasks in a ClickUp List",
       "requiresWrite": false,
@@ -148,7 +148,7 @@
       }
     },
     {
-      "id": "get_task",
+      "id": "clickup__get_task",
       "name": "Get Task",
       "description": "Get details of a ClickUp task",
       "requiresWrite": false,
@@ -172,7 +172,7 @@
       }
     },
     {
-      "id": "create_task",
+      "id": "clickup__create_task",
       "name": "Create Task",
       "description": "Create a new task in a ClickUp List",
       "requiresWrite": true,
@@ -217,7 +217,7 @@
       }
     },
     {
-      "id": "update_task",
+      "id": "clickup__update_task",
       "name": "Update Task",
       "description": "Update fields on an existing ClickUp task",
       "requiresWrite": true,

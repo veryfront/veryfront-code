@@ -36,7 +36,7 @@
   ],
   "tools": [
     {
-      "id": "list_audiences",
+      "id": "mailchimp__list_audiences",
       "name": "List Audiences",
       "description": "List audiences (lists) in the Mailchimp account",
       "requiresWrite": false,
@@ -80,7 +80,7 @@
       }
     },
     {
-      "id": "list_members",
+      "id": "mailchimp__list_members",
       "name": "List Members",
       "description": "List members of a Mailchimp audience",
       "requiresWrite": false,
@@ -121,7 +121,7 @@
       }
     },
     {
-      "id": "get_member",
+      "id": "mailchimp__get_member",
       "name": "Get Member",
       "description": "Get a single audience member by email (MD5 hash of the lowercase address) or contact ID",
       "requiresWrite": false,
@@ -151,7 +151,7 @@
       }
     },
     {
-      "id": "add_member",
+      "id": "mailchimp__add_member",
       "name": "Add Member",
       "description": "Add a new member to a Mailchimp audience",
       "requiresWrite": true,
@@ -196,7 +196,7 @@
       }
     },
     {
-      "id": "list_campaigns",
+      "id": "mailchimp__list_campaigns",
       "name": "List Campaigns",
       "description": "List campaigns in the Mailchimp account",
       "requiresWrite": false,

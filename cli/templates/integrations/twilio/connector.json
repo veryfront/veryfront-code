@@ -40,19 +40,19 @@
   ],
   "tools": [
     {
-      "id": "send_sms",
+      "id": "twilio__send_sms",
       "name": "Send SMS",
       "description": "Send an SMS text message to a phone number",
       "requiresWrite": true
     },
     {
-      "id": "send_whatsapp",
+      "id": "twilio__send_whatsapp",
       "name": "Send WhatsApp Message",
       "description": "Send a WhatsApp message to a phone number",
       "requiresWrite": true
     },
     {
-      "id": "list_messages",
+      "id": "twilio__list_messages",
       "name": "List Messages",
       "description": "List recent SMS and WhatsApp messages",
       "requiresWrite": false,
@@ -112,7 +112,7 @@
       }
     },
     {
-      "id": "get_message",
+      "id": "twilio__get_message",
       "name": "Get Message",
       "description": "Get details about a specific message",
       "requiresWrite": false,
@@ -136,7 +136,7 @@
       }
     },
     {
-      "id": "list_calls",
+      "id": "twilio__list_calls",
       "name": "List Calls",
       "description": "List recent phone calls",
       "requiresWrite": false,

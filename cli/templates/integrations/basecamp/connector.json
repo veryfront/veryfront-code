@@ -36,7 +36,7 @@
   ],
   "tools": [
     {
-      "id": "list_projects",
+      "id": "basecamp__list_projects",
       "name": "List Projects",
       "description": "List active projects in a Basecamp account",
       "requiresWrite": false,
@@ -102,7 +102,7 @@
       }
     },
     {
-      "id": "get_project",
+      "id": "basecamp__get_project",
       "name": "Get Project",
       "description": "Get a project including its dock (the todoset ID needed for to-do tools is in the dock entry named 'todoset')",
       "requiresWrite": false,
@@ -126,7 +126,7 @@
       }
     },
     {
-      "id": "create_project",
+      "id": "basecamp__create_project",
       "name": "Create Project",
       "description": "Create a new Basecamp project",
       "requiresWrite": true,
@@ -155,7 +155,7 @@
       }
     },
     {
-      "id": "list_todolists",
+      "id": "basecamp__list_todolists",
       "name": "List To-do Lists",
       "description": "List to-do lists in a project's todoset (get the todoset ID from Get Project's dock)",
       "requiresWrite": false,
@@ -227,7 +227,7 @@
       }
     },
     {
-      "id": "list_todos",
+      "id": "basecamp__list_todos",
       "name": "List To-dos",
       "description": "List to-dos in a to-do list",
       "requiresWrite": false,
@@ -303,7 +303,7 @@
       }
     },
     {
-      "id": "create_todo",
+      "id": "basecamp__create_todo",
       "name": "Create To-do",
       "description": "Create a to-do in a to-do list",
       "requiresWrite": true,
@@ -354,7 +354,7 @@
       }
     },
     {
-      "id": "complete_todo",
+      "id": "basecamp__complete_todo",
       "name": "Complete To-do",
       "description": "Mark a Basecamp to-do as completed",
       "requiresWrite": true,

@@ -27,7 +27,7 @@
   ],
   "tools": [
     {
-      "id": "create_embeddings",
+      "id": "voyage-ai__create_embeddings",
       "name": "Create Embeddings",
       "description": "Create embedding vectors for one or more texts — use input_type to optimize for retrieval queries vs documents",
       "requiresWrite": false,
@@ -65,7 +65,7 @@
       }
     },
     {
-      "id": "rerank_documents",
+      "id": "voyage-ai__rerank_documents",
       "name": "Rerank Documents",
       "description": "Rank candidate documents by relevance to a query with a Voyage reranker — use as a precision pass after vector search",
       "requiresWrite": false,
@@ -104,7 +104,7 @@
       }
     },
     {
-      "id": "create_contextualized_embeddings",
+      "id": "voyage-ai__create_contextualized_embeddings",
       "name": "Create Contextualized Embeddings",
       "description": "Embed document chunks with document-level context (voyage-context-3) so each chunk vector also captures the surrounding document",
       "requiresWrite": false,
@@ -138,7 +138,7 @@
       }
     },
     {
-      "id": "create_multimodal_embeddings",
+      "id": "voyage-ai__create_multimodal_embeddings",
       "name": "Create Multimodal Embeddings",
       "description": "Embed interleaved text and images into one vector space (voyage-multimodal models) for visual RAG over screenshots, slides, and PDFs",
       "requiresWrite": false,

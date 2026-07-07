@@ -34,7 +34,7 @@
   ],
   "tools": [
     {
-      "id": "list_projects",
+      "id": "mongodb-atlas__list_projects",
       "name": "List Projects",
       "description": "List Atlas projects (groups) the service account can access",
       "requiresWrite": false,
@@ -80,7 +80,7 @@
       }
     },
     {
-      "id": "list_clusters",
+      "id": "mongodb-atlas__list_clusters",
       "name": "List Clusters",
       "description": "List clusters in an Atlas project",
       "requiresWrite": false,
@@ -134,7 +134,7 @@
       }
     },
     {
-      "id": "get_cluster",
+      "id": "mongodb-atlas__get_cluster",
       "name": "Get Cluster",
       "description": "Get details of a cluster, including state and connection strings",
       "requiresWrite": false,
@@ -165,7 +165,7 @@
       }
     },
     {
-      "id": "list_database_users",
+      "id": "mongodb-atlas__list_database_users",
       "name": "List Database Users",
       "description": "List database users configured in an Atlas project",
       "requiresWrite": false,

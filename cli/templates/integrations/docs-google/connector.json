@@ -44,7 +44,7 @@
   ],
   "tools": [
     {
-      "id": "list_documents",
+      "id": "docs-google__list_documents",
       "name": "List Documents",
       "description": "List recent Google Docs documents from Drive",
       "requiresWrite": false,
@@ -82,7 +82,7 @@
       }
     },
     {
-      "id": "get_document",
+      "id": "docs-google__get_document",
       "name": "Get Document",
       "description": "Get document content and metadata",
       "requiresWrite": false,
@@ -105,7 +105,7 @@
       }
     },
     {
-      "id": "create_document",
+      "id": "docs-google__create_document",
       "name": "Create Document",
       "description": "Create a new document with optional initial content",
       "requiresWrite": true,
@@ -122,7 +122,7 @@
       }
     },
     {
-      "id": "update_document",
+      "id": "docs-google__update_document",
       "name": "Update Document",
       "description": "Update document content using batch requests",
       "requiresWrite": true,
@@ -151,7 +151,7 @@
       }
     },
     {
-      "id": "search_documents",
+      "id": "docs-google__search_documents",
       "name": "Search Documents",
       "description": "Search for documents by query string",
       "requiresWrite": false,

@@ -37,7 +37,7 @@
   ],
   "tools": [
     {
-      "id": "list_tasks",
+      "id": "asana__list_tasks",
       "name": "List Tasks",
       "description": "List tasks in a project or assigned to a user",
       "requiresWrite": false,
@@ -188,7 +188,7 @@
       }
     },
     {
-      "id": "get_task",
+      "id": "asana__get_task",
       "name": "Get Task",
       "description": "Get details of a specific task",
       "requiresWrite": false,
@@ -214,7 +214,7 @@
       }
     },
     {
-      "id": "create_task",
+      "id": "asana__create_task",
       "name": "Create Task",
       "description": "Create a new task in a project",
       "requiresWrite": true,
@@ -234,7 +234,7 @@
       }
     },
     {
-      "id": "update_task",
+      "id": "asana__update_task",
       "name": "Update Task",
       "description": "Update an existing task",
       "requiresWrite": true,
@@ -262,7 +262,7 @@
       }
     },
     {
-      "id": "delete_task",
+      "id": "asana__delete_task",
       "name": "Delete Task",
       "description": "Delete an Asana task by GID",
       "requiresWrite": true,
@@ -280,7 +280,7 @@
       }
     },
     {
-      "id": "list_projects",
+      "id": "asana__list_projects",
       "name": "List Projects",
       "description": "List all projects in the workspace",
       "requiresWrite": false,
@@ -426,7 +426,7 @@
       }
     },
     {
-      "id": "list_workspaces",
+      "id": "asana__list_workspaces",
       "name": "List Workspaces",
       "description": "List Asana workspaces accessible to the authenticated user",
       "requiresWrite": false,
@@ -556,7 +556,7 @@
       }
     },
     {
-      "id": "list_users",
+      "id": "asana__list_users",
       "name": "List Users",
       "description": "List users in an Asana workspace",
       "requiresWrite": false,
@@ -641,7 +641,7 @@
       }
     },
     {
-      "id": "list_teams",
+      "id": "asana__list_teams",
       "name": "List Teams",
       "description": "List teams in an Asana workspace",
       "requiresWrite": false,
@@ -783,7 +783,7 @@
       }
     },
     {
-      "id": "add_task_comment",
+      "id": "asana__add_task_comment",
       "name": "Add Task Comment",
       "description": "Add a story/comment to an Asana task",
       "requiresWrite": true,
@@ -811,7 +811,7 @@
       }
     },
     {
-      "id": "list_task_comments",
+      "id": "asana__list_task_comments",
       "name": "List Task Comments",
       "description": "List comment stories for an Asana task",
       "requiresWrite": false,
@@ -900,7 +900,7 @@
       }
     },
     {
-      "id": "get_project",
+      "id": "asana__get_project",
       "name": "Get Project",
       "description": "Get details of a specific Asana project",
       "requiresWrite": false,

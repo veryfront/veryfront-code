@@ -36,7 +36,7 @@
   ],
   "tools": [
     {
-      "id": "get_employee_directory",
+      "id": "bamboohr__get_employee_directory",
       "name": "Get Employee Directory",
       "description": "Get the company employee directory with names, job titles, departments, and contact details",
       "requiresWrite": false,
@@ -64,7 +64,7 @@
       }
     },
     {
-      "id": "get_employee",
+      "id": "bamboohr__get_employee",
       "name": "Get Employee",
       "description": "Get a single employee record with the specific fields you request",
       "requiresWrite": false,
@@ -107,7 +107,7 @@
       }
     },
     {
-      "id": "list_time_off_requests",
+      "id": "bamboohr__list_time_off_requests",
       "name": "List Time-Off Requests",
       "description": "List time-off requests that overlap a date range, optionally filtered by employee or status",
       "requiresWrite": false,
@@ -164,7 +164,7 @@
       }
     },
     {
-      "id": "create_time_off_request",
+      "id": "bamboohr__create_time_off_request",
       "name": "Create Time-Off Request",
       "description": "Create a time-off request for an employee; it must be approved before it appears in history",
       "requiresWrite": true,
@@ -230,7 +230,7 @@
       }
     },
     {
-      "id": "list_time_off_types",
+      "id": "bamboohr__list_time_off_types",
       "name": "List Time-Off Types",
       "description": "List the company's time-off types and their IDs - needed to fill the timeOffTypeId field when creating a time-off request",
       "requiresWrite": false,
@@ -255,7 +255,7 @@
       }
     },
     {
-      "id": "update_time_off_request_status",
+      "id": "bamboohr__update_time_off_request_status",
       "name": "Update Time-Off Request Status",
       "description": "Approve, deny, or cancel an existing time-off request (the API user must have approval permissions)",
       "requiresWrite": true,
@@ -297,7 +297,7 @@
       }
     },
     {
-      "id": "list_fields",
+      "id": "bamboohr__list_fields",
       "name": "List Field Metadata",
       "description": "List all employee fields available in the account (standard and custom) so agents know which field names Get Employee accepts",
       "requiresWrite": false,
@@ -322,7 +322,7 @@
       }
     },
     {
-      "id": "list_whos_out",
+      "id": "bamboohr__list_whos_out",
       "name": "List Who's Out",
       "description": "List approved time off and company holidays in a date range to see who is out of office",
       "requiresWrite": false,

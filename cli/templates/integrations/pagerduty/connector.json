@@ -42,7 +42,7 @@
   ],
   "tools": [
     {
-      "id": "list_incidents",
+      "id": "pagerduty__list_incidents",
       "name": "List Incidents",
       "description": "List PagerDuty incidents with optional status, service, and time filters",
       "requiresWrite": false,
@@ -137,7 +137,7 @@
       }
     },
     {
-      "id": "get_incident",
+      "id": "pagerduty__get_incident",
       "name": "Get Incident",
       "description": "Get a PagerDuty incident by ID or incident number",
       "requiresWrite": false,
@@ -155,7 +155,7 @@
       }
     },
     {
-      "id": "create_incident",
+      "id": "pagerduty__create_incident",
       "name": "Create Incident",
       "description": "Manually trigger a new incident on a service",
       "requiresWrite": true,
@@ -181,7 +181,7 @@
       }
     },
     {
-      "id": "manage_incident",
+      "id": "pagerduty__manage_incident",
       "name": "Manage Incident",
       "description": "Acknowledge, resolve, reassign, or escalate an incident",
       "requiresWrite": true,
@@ -213,7 +213,7 @@
       }
     },
     {
-      "id": "list_services",
+      "id": "pagerduty__list_services",
       "name": "List Services",
       "description": "List PagerDuty services",
       "requiresWrite": false,
@@ -281,7 +281,7 @@
       }
     },
     {
-      "id": "list_oncalls",
+      "id": "pagerduty__list_oncalls",
       "name": "List On-Calls",
       "description": "List on-call entries for schedules, escalation policies, and users",
       "requiresWrite": false,

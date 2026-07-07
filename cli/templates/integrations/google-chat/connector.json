@@ -39,7 +39,7 @@
   ],
   "tools": [
     {
-      "id": "list_spaces",
+      "id": "google-chat__list_spaces",
       "name": "List Spaces",
       "description": "List Google Chat spaces (rooms and direct messages) the authenticated user is a member of",
       "requiresWrite": false,
@@ -82,7 +82,7 @@
       }
     },
     {
-      "id": "get_space",
+      "id": "google-chat__get_space",
       "name": "Get Space",
       "description": "Get details of a Google Chat space",
       "requiresWrite": false,
@@ -100,7 +100,7 @@
       }
     },
     {
-      "id": "list_messages",
+      "id": "google-chat__list_messages",
       "name": "List Messages",
       "description": "List messages in a Google Chat space, including messages in threads",
       "requiresWrite": false,
@@ -155,7 +155,7 @@
       }
     },
     {
-      "id": "get_message",
+      "id": "google-chat__get_message",
       "name": "Get Message",
       "description": "Get details of a specific Google Chat message",
       "requiresWrite": false,
@@ -179,7 +179,7 @@
       }
     },
     {
-      "id": "send_message",
+      "id": "google-chat__send_message",
       "name": "Send Message",
       "description": "Send a text message to a Google Chat space",
       "requiresWrite": true,

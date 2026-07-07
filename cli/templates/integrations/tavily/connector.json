@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "search",
+      "id": "tavily__search",
       "name": "Search",
       "description": "Search the web and get ranked results with optional LLM answer",
       "requiresWrite": false,
@@ -81,7 +81,7 @@
       }
     },
     {
-      "id": "extract",
+      "id": "tavily__extract",
       "name": "Extract",
       "description": "Extract clean page content from one or more URLs",
       "requiresWrite": false,
@@ -108,7 +108,7 @@
       }
     },
     {
-      "id": "crawl",
+      "id": "tavily__crawl",
       "name": "Crawl",
       "description": "Crawl a website from a root URL and extract content from discovered pages",
       "requiresWrite": false,
@@ -139,7 +139,7 @@
       }
     },
     {
-      "id": "map",
+      "id": "tavily__map",
       "name": "Map",
       "description": "Get a list of URLs discovered on a website without extracting content",
       "requiresWrite": false,

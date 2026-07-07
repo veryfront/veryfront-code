@@ -28,7 +28,7 @@
   ],
   "tools": [
     {
-      "id": "list_bookings",
+      "id": "cal-com__list_bookings",
       "name": "List Bookings",
       "description": "List bookings for the authenticated user with optional status, event type, and attendee filters",
       "requiresWrite": false,
@@ -76,7 +76,7 @@
       }
     },
     {
-      "id": "list_event_types",
+      "id": "cal-com__list_event_types",
       "name": "List Event Types",
       "description": "List event types so the agent can find the event type ID needed for slots and bookings",
       "requiresWrite": false,
@@ -113,7 +113,7 @@
       }
     },
     {
-      "id": "get_available_slots",
+      "id": "cal-com__get_available_slots",
       "name": "Get Available Slots",
       "description": "Find available time slots for an event type within a date range, e.g. before creating a booking",
       "requiresWrite": false,
@@ -172,7 +172,7 @@
       }
     },
     {
-      "id": "create_booking",
+      "id": "cal-com__create_booking",
       "name": "Create Booking",
       "description": "Book a time slot on an event type for an attendee",
       "requiresWrite": true,
@@ -226,7 +226,7 @@
       }
     },
     {
-      "id": "get_booking",
+      "id": "cal-com__get_booking",
       "name": "Get Booking",
       "description": "Get a single booking by UID, e.g. to confirm details before rescheduling or cancelling",
       "requiresWrite": false,
@@ -254,7 +254,7 @@
       }
     },
     {
-      "id": "reschedule_booking",
+      "id": "cal-com__reschedule_booking",
       "name": "Reschedule Booking",
       "description": "Move an existing booking to a new start time (only accepted or pending bookings can be rescheduled)",
       "requiresWrite": true,
@@ -297,7 +297,7 @@
       }
     },
     {
-      "id": "confirm_booking",
+      "id": "cal-com__confirm_booking",
       "name": "Confirm Booking",
       "description": "Confirm a booking that is awaiting host approval (status unconfirmed in list_bookings)",
       "requiresWrite": true,
@@ -325,7 +325,7 @@
       }
     },
     {
-      "id": "cancel_booking",
+      "id": "cal-com__cancel_booking",
       "name": "Cancel Booking",
       "description": "Cancel an existing booking, optionally recording a cancellation reason",
       "requiresWrite": true,

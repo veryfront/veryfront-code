@@ -42,7 +42,7 @@
   ],
   "tools": [
     {
-      "id": "list_sites",
+      "id": "sharepoint__list_sites",
       "name": "List SharePoint Sites",
       "description": "List all SharePoint sites the user has access to",
       "requiresWrite": false,
@@ -69,7 +69,7 @@
       }
     },
     {
-      "id": "get_site",
+      "id": "sharepoint__get_site",
       "name": "Get Site Details",
       "description": "Get detailed information about a specific SharePoint site",
       "requiresWrite": false,
@@ -87,7 +87,7 @@
       }
     },
     {
-      "id": "list_files",
+      "id": "sharepoint__list_files",
       "name": "List Files",
       "description": "List files and folders in a SharePoint document library",
       "requiresWrite": false,
@@ -111,7 +111,7 @@
       }
     },
     {
-      "id": "get_file",
+      "id": "sharepoint__get_file",
       "name": "Get File",
       "description": "Get file metadata and content from SharePoint",
       "requiresWrite": false,
@@ -135,7 +135,7 @@
       }
     },
     {
-      "id": "upload_file",
+      "id": "sharepoint__upload_file",
       "name": "Upload File",
       "description": "Upload a file to a SharePoint document library",
       "requiresWrite": true,
@@ -173,7 +173,7 @@
       }
     },
     {
-      "id": "search_files",
+      "id": "sharepoint__search_files",
       "name": "Search Files",
       "description": "Search for files and folders in a SharePoint document library by name or content",
       "requiresWrite": false,
@@ -206,7 +206,7 @@
       }
     },
     {
-      "id": "download_file",
+      "id": "sharepoint__download_file",
       "name": "Download File",
       "description": "Download file content from a SharePoint document library",
       "requiresWrite": false,
