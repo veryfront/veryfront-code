@@ -1,4 +1,4 @@
-const CHILD_RUN_RESULT_TEXT_LIMIT = 4_000;
+const CHILD_RUN_RESULT_TEXT_LIMIT = 64_000;
 const CHILD_RUN_VALUE_STRING_LIMIT = 500;
 const CHILD_RUN_VALUE_SUMMARY_MAX_DEPTH = 5;
 const MALFORMED_TOOL_RESPONSE_PATTERN = /<tool_response(?:\s[^>]*)?>([\s\S]*?)<\/tool_response>/gi;
