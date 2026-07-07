@@ -154,7 +154,10 @@ describe("RuntimeConfig", () => {
         createTestEnvironmentConfig({
           proxyMode: true,
           otelEnabled: false,
+          otelEndpoint: undefined,
+          otelServiceName: undefined,
           otelMetricsEnabled: false,
+          otelMetricsEndpoint: undefined,
         }),
       );
 
@@ -163,6 +166,31 @@ describe("RuntimeConfig", () => {
       expect(config.observability?.tracing?.serviceName).toBeUndefined();
       expect(config.observability?.metrics?.enabled).toBe(false);
       expect(config.observability?.metrics?.endpoint).toBeUndefined();
+    });
+
+    it("keeps host OTel routing while allowing project tracing service identity", () => {
+      const config = createRuntimeConfig(
+        {
+          projectSlug: "veryfront-ops-agent",
+          observability: {
+            tracing: {
+              serviceName: "veryfront-ops-agent",
+            },
+          },
+        },
+        createTestEnvironmentConfig({
+          proxyMode: false,
+          otelEnabled: true,
+          otelEndpoint: "https://platform-collector.example/otlp",
+          otelServiceName: "veryfront-agent",
+        }),
+      );
+
+      expect(config.observability?.tracing?.enabled).toBe(true);
+      expect(config.observability?.tracing?.endpoint).toBe(
+        "https://platform-collector.example/otlp",
+      );
+      expect(config.observability?.tracing?.serviceName).toBe("veryfront-ops-agent");
     });
   });
 
